@@ -1,5 +1,9 @@
 import { Schema } from 'effect';
-import { PositiveRelationshipRevisionSchema, RelationshipErrorBase } from './shared.ts';
+
+import {
+  PositiveRelationshipRevisionSchema,
+  RelationshipErrorBase,
+} from './shared.ts';
 
 export class PartyRelationshipRevisionConflict extends Schema.TaggedError<PartyRelationshipRevisionConflict>()(
   'PartyRelationshipRevisionConflict',
@@ -8,5 +12,5 @@ export class PartyRelationshipRevisionConflict extends Schema.TaggedError<PartyR
     actualRevision: PositiveRelationshipRevisionSchema,
     code: Schema.Literal('party_relationship_revision_conflict'),
     expectedRevision: PositiveRelationshipRevisionSchema,
-  },
+  }
 ) {}

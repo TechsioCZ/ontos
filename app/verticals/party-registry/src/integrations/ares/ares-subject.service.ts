@@ -12,7 +12,12 @@ import {
   Schema,
   Semaphore,
 } from 'effect';
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from 'effect/unstable/http';
+
 import {
   AresDateOnlySchema,
   AresDicSchema,
@@ -43,9 +48,15 @@ const AresRawAddressSchema = Schema.Struct({
   textovaAdresa: Schema.OptionFromOptionalNullOr(boundedRawText(500)),
 });
 const AresRawSubjectSchema = Schema.Struct({
-  datumAktualizace: Schema.OptionFromOptionalNullOr(Schema.toEncoded(AresDateOnlySchema)),
-  datumVzniku: Schema.OptionFromOptionalNullOr(Schema.toEncoded(AresDateOnlySchema)),
-  datumZaniku: Schema.OptionFromOptionalNullOr(Schema.toEncoded(AresDateOnlySchema)),
+  datumAktualizace: Schema.OptionFromOptionalNullOr(
+    Schema.toEncoded(AresDateOnlySchema)
+  ),
+  datumVzniku: Schema.OptionFromOptionalNullOr(
+    Schema.toEncoded(AresDateOnlySchema)
+  ),
+  datumZaniku: Schema.OptionFromOptionalNullOr(
+    Schema.toEncoded(AresDateOnlySchema)
+  ),
   dic: Schema.OptionFromOptionalNullOr(AresDicSchema),
   ico: AresSubjectLookupIcoSchema,
   icoId: Schema.OptionFromOptionalNullOr(RawStringOrNumberSchema),
@@ -54,19 +65,25 @@ const AresRawSubjectSchema = Schema.Struct({
   sidlo: Schema.OptionFromOptionalNullOr(AresRawAddressSchema),
 });
 
-const makeAresSubjectError = <const Tag extends string, const Fields extends Schema.Struct.Fields>(
+const makeAresSubjectError = <
+  const Tag extends string,
+  const Fields extends Schema.Struct.Fields,
+>(
   tag: Tag,
-  fields: Fields,
+  fields: Fields
 ) => {
   const schema = Schema.TaggedStruct(tag, fields);
   return Schema.TaggedError<Schema.Schema.Type<typeof schema>>()(tag, fields);
 };
 
-export const AresSubjectInvalidIco = makeAresSubjectError('AresSubjectInvalidIco', {
-  cause: Schema.optionalKey(Schema.Unknown),
-  code: Schema.Literal('ares_subject_invalid_ico'),
-  reason: Schema.String,
-});
+export const AresSubjectInvalidIco = makeAresSubjectError(
+  'AresSubjectInvalidIco',
+  {
+    cause: Schema.optionalKey(Schema.Unknown),
+    code: Schema.Literal('ares_subject_invalid_ico'),
+    reason: Schema.String,
+  }
+);
 export const AresSubjectNotFound = makeAresSubjectError('AresSubjectNotFound', {
   cause: Schema.optionalKey(Schema.Unknown),
   code: Schema.Literal('ares_subject_not_found'),
@@ -77,26 +94,35 @@ export const AresSubjectDenied = makeAresSubjectError('AresSubjectDenied', {
   code: Schema.Literal('ares_subject_denied'),
   reason: Schema.String,
 });
-export const AresSubjectThrottled = makeAresSubjectError('AresSubjectThrottled', {
-  cause: Schema.optionalKey(Schema.Unknown),
-  code: Schema.Literal('ares_subject_throttled'),
-  reason: Schema.String,
-});
+export const AresSubjectThrottled = makeAresSubjectError(
+  'AresSubjectThrottled',
+  {
+    cause: Schema.optionalKey(Schema.Unknown),
+    code: Schema.Literal('ares_subject_throttled'),
+    reason: Schema.String,
+  }
+);
 export const AresSubjectTimeout = makeAresSubjectError('AresSubjectTimeout', {
   cause: Schema.optionalKey(Schema.Unknown),
   code: Schema.Literal('ares_subject_timeout'),
   reason: Schema.String,
 });
-export const AresSubjectUnavailable = makeAresSubjectError('AresSubjectUnavailable', {
-  cause: Schema.optionalKey(Schema.Unknown),
-  code: Schema.Literal('ares_subject_unavailable'),
-  reason: Schema.String,
-});
-export const AresSubjectResponseInvalid = makeAresSubjectError('AresSubjectResponseInvalid', {
-  cause: Schema.optionalKey(Schema.Unknown),
-  code: Schema.Literal('ares_subject_response_invalid'),
-  reason: Schema.String,
-});
+export const AresSubjectUnavailable = makeAresSubjectError(
+  'AresSubjectUnavailable',
+  {
+    cause: Schema.optionalKey(Schema.Unknown),
+    code: Schema.Literal('ares_subject_unavailable'),
+    reason: Schema.String,
+  }
+);
+export const AresSubjectResponseInvalid = makeAresSubjectError(
+  'AresSubjectResponseInvalid',
+  {
+    cause: Schema.optionalKey(Schema.Unknown),
+    code: Schema.Literal('ares_subject_response_invalid'),
+    reason: Schema.String,
+  }
+);
 
 export type AresSubjectError =
   | Schema.Schema.Type<typeof AresSubjectDenied>
@@ -107,18 +133,22 @@ export type AresSubjectError =
   | Schema.Schema.Type<typeof AresSubjectTimeout>
   | Schema.Schema.Type<typeof AresSubjectUnavailable>;
 
-export interface AresSubjectLookup extends Readonly<Record<'correlationId', string>> {
+export interface AresSubjectLookup extends Readonly<
+  Record<'correlationId', string>
+> {
   readonly ico: string;
 }
 export interface AresSubjectServiceContract {
   readonly subject: (
-    input: AresSubjectLookup,
+    input: AresSubjectLookup
   ) => Effect.Effect<AresSubjectEvidence, AresSubjectError>;
 }
 export class AresSubjectService extends Context.Service<
   AresSubjectService,
   AresSubjectServiceContract
->()('@app/party-registry/integrations/ares/ares-subject.service/AresSubjectService') {}
+>()(
+  '@app/party-registry/integrations/ares/ares-subject.service/AresSubjectService'
+) {}
 
 const invalidIco = (cause?: unknown) =>
   new AresSubjectInvalidIco({
@@ -186,8 +216,11 @@ const AresRetryableErrorSchema = Schema.Union([
   AresSubjectUnavailable,
 ]);
 const isRetryable = Schema.is(AresRetryableErrorSchema);
-const retrySchedule = Schedule.exponential('100 millis').pipe(Schedule.upTo({ times: 2 }));
-const failTimedOut = (error: Cause.TimeoutError) => Effect.fail(timedOut(error));
+const retrySchedule = Schedule.exponential('100 millis').pipe(
+  Schedule.upTo({ times: 2 })
+);
+const failTimedOut = (error: Cause.TimeoutError) =>
+  Effect.fail(timedOut(error));
 
 const safeCorrelationId = (correlationId: string): string => {
   const sanitized = correlationId
@@ -201,14 +234,18 @@ const aresSubjectLogAnnotations = (input: AresSubjectLookup) => ({
   operation: 'subject',
   provider: 'ares',
 });
-const asBoundedString = (value: string | number | null | undefined): string | null => {
+const asBoundedString = (
+  value: string | number | null | undefined
+): string | null => {
   if (value === null || value === undefined) {
     return null;
   }
   const text = String(value).trim();
   return text.length === 0 ? null : text;
 };
-const asPostalCode = (value: string | number | null | undefined): string | null => {
+const asPostalCode = (
+  value: string | number | null | undefined
+): string | null => {
   const text = asBoundedString(value)?.replaceAll(/\s/gu, '') ?? null;
   return text !== null && /^\d{5}$/u.test(text) ? text : null;
 };
@@ -227,11 +264,14 @@ interface CachedAresEvidence {
 
 const decodeSubject = (
   response: HttpClientResponse.HttpClientResponse,
-  requestedIco: string,
-): Effect.Effect<CachedAresEvidence, Schema.Schema.Type<typeof AresSubjectResponseInvalid>> =>
-  HttpClientResponse.schemaBodyJson(AresRawSubjectSchema, { onExcessProperty: 'ignore' })(
-    response,
-  ).pipe(
+  requestedIco: string
+): Effect.Effect<
+  CachedAresEvidence,
+  Schema.Schema.Type<typeof AresSubjectResponseInvalid>
+> =>
+  HttpClientResponse.schemaBodyJson(AresRawSubjectSchema, {
+    onExcessProperty: 'ignore',
+  })(response).pipe(
     Effect.mapError(responseInvalid),
     Effect.flatMap((subject) => {
       if (subject.ico !== requestedIco) {
@@ -244,21 +284,30 @@ const decodeSubject = (
         const mappedAddress = Option.match(subject.sidlo, {
           onNone: () => null,
           onSome: (address) => ({
-            buildingNumber: asBoundedString(Option.getOrNull(address.cisloDomovni)),
+            buildingNumber: asBoundedString(
+              Option.getOrNull(address.cisloDomovni)
+            ),
             countryCode: asCountryCode(Option.getOrNull(address.kodStatu)),
             formatted: asBoundedString(Option.getOrNull(address.textovaAdresa)),
             municipality: asBoundedString(Option.getOrNull(address.nazevObce)),
-            municipalityPart: asBoundedString(Option.getOrNull(address.nazevCastiObce)),
-            orientationNumber: asBoundedString(Option.getOrNull(address.cisloOrientacni)),
+            municipalityPart: asBoundedString(
+              Option.getOrNull(address.nazevCastiObce)
+            ),
+            orientationNumber: asBoundedString(
+              Option.getOrNull(address.cisloOrientacni)
+            ),
             postalCode: asPostalCode(Option.getOrNull(address.psc)),
             street: asBoundedString(Option.getOrNull(address.nazevUlice)),
           }),
         });
         const address =
-          mappedAddress !== null && Object.values(mappedAddress).every((value) => value === null)
+          mappedAddress !== null &&
+          Object.values(mappedAddress).every((value) => value === null)
             ? null
             : mappedAddress;
-        const evidence = yield* Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)({
+        const evidence = yield* Schema.decodeUnknownEffect(
+          AresSubjectEvidenceSchema
+        )({
           cacheAgeSeconds: 0,
           observedAt: observedAtIso,
           provider: 'ares',
@@ -279,71 +328,83 @@ const decodeSubject = (
         }).pipe(Effect.mapError(responseInvalid));
         return { evidence, observedAtMillis };
       });
-    }),
+    })
   );
 
 const requestSubject = (
   httpClient: HttpClient.HttpClient,
-  ico: string,
+  ico: string
 ): Effect.Effect<CachedAresEvidence, AresSubjectError> => {
   const url = new URL(encodeURIComponent(ico), ARES_SUBJECT_BASE_URL);
   const request = HttpClientRequest.get(url, { acceptJson: true });
   return httpClient.execute(request).pipe(
-    Effect.tapCause((cause) => Effect.logError('ARES subject request failed', Cause.pretty(cause))),
+    Effect.tapCause((cause) =>
+      Effect.logError('ARES subject request failed', Cause.pretty(cause))
+    ),
     Effect.mapError(unavailable),
     Effect.flatMap((response) =>
       response.status === 200
         ? decodeSubject(response, ico)
         : Effect.andThen(
             Effect.annotateLogs(
-              Effect.logError('ARES subject request returned an upstream failure'),
-              { upstreamStatus: response.status },
+              Effect.logError(
+                'ARES subject request returned an upstream failure'
+              ),
+              { upstreamStatus: response.status }
             ),
-            Effect.fail(classifyStatus(response.status)),
-          ),
+            Effect.fail(classifyStatus(response.status))
+          )
     ),
     Effect.timeout(ARES_REQUEST_TIMEOUT),
-    Effect.catchIf(Cause.isTimeoutError, failTimedOut),
+    Effect.catchIf(Cause.isTimeoutError, failTimedOut)
   );
 };
 
-const makeAresSubjectService = Effect.gen(function* makeAresSubjectServiceEffect() {
-  const httpClient = yield* HttpClient.HttpClient;
-  const concurrency = yield* Semaphore.make(ARES_MAX_CONCURRENCY);
-  const loadSubject = (ico: string) =>
-    concurrency.withPermit(
-      requestSubject(httpClient, ico).pipe(
-        Effect.retry({ schedule: retrySchedule, while: isRetryable }),
-      ),
-    );
-  const cache = yield* Cache.makeWith(loadSubject, {
-    capacity: ARES_CACHE_CAPACITY,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? ARES_SUCCESS_CACHE_TTL : 0),
-  });
-  return {
-    subject: (input) =>
-      Schema.decodeUnknownEffect(AresSubjectLookupIcoSchema)(input.ico).pipe(
-        Effect.mapError(invalidIco),
-        Effect.flatMap((ico) =>
-          Cache.get(cache, ico).pipe(
-            Effect.flatMap(({ evidence, observedAtMillis }) =>
-              DateTime.now.pipe(
-                Effect.map((servedAt) => ({
-                  ...evidence,
-                  cacheAgeSeconds: Math.max(
-                    0,
-                    Math.floor((DateTime.toEpochMillis(servedAt) - observedAtMillis) / 1000),
-                  ),
-                  servedAt,
-                })),
-              ),
-            ),
+const makeAresSubjectService = Effect.gen(
+  function* makeAresSubjectServiceEffect() {
+    const httpClient = yield* HttpClient.HttpClient;
+    const concurrency = yield* Semaphore.make(ARES_MAX_CONCURRENCY);
+    const loadSubject = (ico: string) =>
+      concurrency.withPermit(
+        requestSubject(httpClient, ico).pipe(
+          Effect.retry({ schedule: retrySchedule, while: isRetryable })
+        )
+      );
+    const cache = yield* Cache.makeWith(loadSubject, {
+      capacity: ARES_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? ARES_SUCCESS_CACHE_TTL : 0),
+    });
+    return {
+      subject: (input) =>
+        Schema.decodeUnknownEffect(AresSubjectLookupIcoSchema)(input.ico).pipe(
+          Effect.mapError(invalidIco),
+          Effect.flatMap((ico) =>
+            Cache.get(cache, ico).pipe(
+              Effect.flatMap(({ evidence, observedAtMillis }) =>
+                DateTime.now.pipe(
+                  Effect.map((servedAt) => ({
+                    ...evidence,
+                    cacheAgeSeconds: Math.max(
+                      0,
+                      Math.floor(
+                        (DateTime.toEpochMillis(servedAt) - observedAtMillis) /
+                          1000
+                      )
+                    ),
+                    servedAt,
+                  }))
+                )
+              )
+            )
           ),
+          Effect.annotateLogs(aresSubjectLogAnnotations(input)),
+          Effect.withSpan('PartyRegistry.ARES.subject')
         ),
-        Effect.annotateLogs(aresSubjectLogAnnotations(input)),
-        Effect.withSpan('PartyRegistry.ARES.subject'),
-      ),
-  } satisfies AresSubjectServiceContract;
-});
+    } satisfies AresSubjectServiceContract;
+  }
+);
 
-export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresSubjectService);
+export const AresSubjectServiceLive = Layer.effect(
+  AresSubjectService,
+  makeAresSubjectService
+);

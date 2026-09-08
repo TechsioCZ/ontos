@@ -1,10 +1,12 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import test from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit } from 'effect';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+
 import type { CoreDatabase } from '../../src/db/client.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
@@ -24,22 +26,26 @@ import {
 type DatabaseService = (typeof CoreDatabase)['Service'];
 
 const withDatabase = <Value, Error>(
-  operation: (database: DatabaseService) => Effect.Effect<Value, Error>,
+  operation: (database: DatabaseService) => Effect.Effect<Value, Error>
 ) =>
   Effect.scoped(
     Effect.gen(function* moduleStateGateDatabaseScope() {
       const configuration = yield* loadDatabaseConfig();
       const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database);
-    }),
+    })
   );
 
 const databasePromise = async <Value>(
-  operation: (database: DatabaseService) => PromiseLike<Value>,
+  operation: (database: DatabaseService) => PromiseLike<Value>
 ): Promise<Value> =>
-  await runEffectTestPromise(withDatabase((database) => Effect.promise(() => operation(database))));
+  await runEffectTestPromise(
+    withDatabase((database) => Effect.promise(() => operation(database)))
+  );
 
-const unavailableStateService = (reason: string): TenantModuleStateServiceContract => {
+const unavailableStateService = (
+  reason: string
+): TenantModuleStateServiceContract => {
   const failure = new TenantModuleStateReadUnavailableError({
     code: 'tenant_module_state_read_unavailable',
     reason,
@@ -55,8 +61,9 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
   const tenantOne = randomUUID();
   const tenantTwo = randomUUID();
   const moduleKey = `gate.integration-${tenantOne}`;
-  const stateModuleKey = (state: (typeof TENANT_MODULE_STATES)[number]): string =>
-    `${moduleKey}.${state.replaceAll('_', '-')}`;
+  const stateModuleKey = (
+    state: (typeof TENANT_MODULE_STATES)[number]
+  ): string => `${moduleKey}.${state.replaceAll('_', '-')}`;
   await databasePromise(async (database) => {
     await runEffectTestPromise(
       database.executor.insert(tenants).values([
@@ -74,7 +81,7 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           status: 'active',
           tenantId: tenantTwo,
         },
-      ]),
+      ])
     );
     await runEffectTestPromise(
       database.executor.insert(tenantModuleStates).values([
@@ -85,12 +92,14 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           state,
           tenantId: tenantOne,
         })),
-      ]),
+      ])
     );
 
     try {
       let selects = 0;
-      const countingExecutor: DatabaseService['executor'] = Object.create(database.executor);
+      const countingExecutor: DatabaseService['executor'] = Object.create(
+        database.executor
+      );
       Object.defineProperty(countingExecutor, 'select', {
         configurable: true,
         get: () => {
@@ -99,24 +108,30 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
         },
       });
       const gate = makeModuleStateGate(
-        makeTenantModuleStateService({ executor: countingExecutor }),
+        makeTenantModuleStateService({ executor: countingExecutor })
       );
       const read = defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: `${moduleKey}.page`,
         moduleKey,
         role: 'page',
       });
       const write = defineTenantModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization: {
+          kind: 'action_execution',
+          provisioning: 'tenant_membership_default',
+        },
         entrypointKey: `${moduleKey}.write`,
         moduleKey,
         role: 'action',
       });
       const snapshot = await runEffectTestPromise(
-        gate.prepareSnapshot(tenantOne, [read, read, write]),
+        gate.prepareSnapshot(tenantOne, [read, read, write])
       );
       await runEffectTestPromise(gate.check(snapshot, read));
       await runEffectTestPromise(gate.check(snapshot, read));
@@ -125,17 +140,23 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
       const persistedStateDescriptors = TENANT_MODULE_STATES.map((state) =>
         defineTenantModuleEntrypoint({
           access: 'read',
-          authorization: { kind: 'context_permission', permission: 'module.access' },
+          authorization: {
+            kind: 'context_permission',
+            permission: 'module.access',
+          },
           entrypointKey: `${stateModuleKey(state)}.page`,
           moduleKey: stateModuleKey(state),
           role: 'page',
-        }),
+        })
       );
       selects = 0;
       const [firstPersistedDescriptor] = persistedStateDescriptors;
       assert.ok(firstPersistedDescriptor);
       const persistedStateSnapshot = await runEffectTestPromise(
-        gate.prepareSnapshot(tenantOne, [...persistedStateDescriptors, firstPersistedDescriptor]),
+        gate.prepareSnapshot(tenantOne, [
+          ...persistedStateDescriptors,
+          firstPersistedDescriptor,
+        ])
       );
       assert.equal(selects, 1);
       const persistedStateExits = await Promise.all(
@@ -143,9 +164,9 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           const descriptor = persistedStateDescriptors[index];
           assert.ok(descriptor);
           return await runEffectTestPromise(
-            Effect.exit(gate.check(persistedStateSnapshot, descriptor)),
+            Effect.exit(gate.check(persistedStateSnapshot, descriptor))
           );
-        }),
+        })
       );
       for (const [index, state] of TENANT_MODULE_STATES.entries()) {
         const descriptor = persistedStateDescriptors[index];
@@ -155,35 +176,40 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
         assert.equal(
           Exit.isSuccess(exit),
           decideModuleStateAccess(state, 'read') === 'allow',
-          state,
+          state
         );
       }
 
-      const tenantTwoSnapshot = await runEffectTestPromise(gate.prepareSnapshot(tenantTwo, [read]));
+      const tenantTwoSnapshot = await runEffectTestPromise(
+        gate.prepareSnapshot(tenantTwo, [read])
+      );
       const quarantined = await runEffectTestPromise(
-        Effect.flip(gate.check(tenantTwoSnapshot, read)),
+        Effect.flip(gate.check(tenantTwoSnapshot, read))
       );
       assert.equal(quarantined._tag, 'ModuleStateDeniedError');
 
       const missingDescriptor = defineTenantModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: `${moduleKey}.missing`,
         moduleKey: `${moduleKey}.missing-module`,
         role: 'page',
       });
       const missingSnapshot = await runEffectTestPromise(
-        gate.prepareSnapshot(tenantOne, [missingDescriptor]),
+        gate.prepareSnapshot(tenantOne, [missingDescriptor])
       );
       const missing = await runEffectTestPromise(
-        Effect.flip(gate.check(missingSnapshot, missingDescriptor)),
+        Effect.flip(gate.check(missingSnapshot, missingDescriptor))
       );
       assert.equal(missing._tag, 'ModuleStateDeniedError');
 
       await runEffectTestPromise(
         database.executor.transaction((transaction) =>
-          gate.recheckWrite(transaction, tenantOne, write),
-        ),
+          gate.recheckWrite(transaction, tenantOne, write)
+        )
       );
       await runEffectTestPromise(
         database.executor
@@ -192,35 +218,33 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           .where(
             and(
               eq(tenantModuleStates.tenantId, tenantOne),
-              eq(tenantModuleStates.moduleKey, moduleKey),
-            ),
-          ),
+              eq(tenantModuleStates.moduleKey, moduleKey)
+            )
+          )
       );
       const lockedDenial = await runEffectTestPromise(
         database.executor.transaction((transaction) =>
-          Effect.flip(gate.recheckWrite(transaction, tenantOne, write)),
-        ),
+          Effect.flip(gate.recheckWrite(transaction, tenantOne, write))
+        )
       );
       assert.equal(lockedDenial._tag, 'ModuleStateDeniedError');
 
       const unavailable = await runEffectTestPromise(
         Effect.flip(
-          makeModuleStateGate(unavailableStateService('secret db failure')).prepareSnapshot(
-            tenantOne,
-            [read],
-          ),
-        ),
+          makeModuleStateGate(
+            unavailableStateService('secret db failure')
+          ).prepareSnapshot(tenantOne, [read])
+        )
       );
       assert.equal(unavailable._tag, 'ModuleStateCheckUnavailableError');
       assert.doesNotMatch(unavailable.reason, /secret|db failure/u);
 
       const malformed = await runEffectTestPromise(
         Effect.flip(
-          makeModuleStateGate(unavailableStateService('corrupt-storage-value')).prepareSnapshot(
-            tenantOne,
-            [read],
-          ),
-        ),
+          makeModuleStateGate(
+            unavailableStateService('corrupt-storage-value')
+          ).prepareSnapshot(tenantOne, [read])
+        )
       );
       assert.equal(malformed._tag, 'ModuleStateCheckUnavailableError');
       assert.doesNotMatch(malformed.reason, /corrupt|storage/u);
@@ -231,11 +255,14 @@ void test('batches tenant-isolated states once, rejects malformed/unavailable re
           (table) =>
             Effect.forEach(
               [tenantOne, tenantTwo],
-              (tenantId) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
-              { discard: true },
+              (tenantId) =>
+                database.executor
+                  .delete(table)
+                  .where(eq(table.tenantId, tenantId)),
+              { discard: true }
             ),
-          { discard: true },
-        ),
+          { discard: true }
+        )
       );
     }
   });

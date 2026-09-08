@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Schema, Predicate } from 'effect';
+
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,
@@ -50,15 +51,21 @@ class RetireContributionScaffoldError extends Schema.TaggedError<RetireContribut
   {
     cause: Schema.optionalKey(Schema.Unknown),
     message: Schema.String,
-  },
+  }
 ) {}
 
-const scaffoldError = (message: string, cause?: unknown): RetireContributionScaffoldError =>
-  new RetireContributionScaffoldError(cause === undefined ? { message } : { cause, message });
+const scaffoldError = (
+  message: string,
+  cause?: unknown
+): RetireContributionScaffoldError =>
+  new RetireContributionScaffoldError(
+    cause === undefined ? { message } : { cause, message }
+  );
 
 const trySync = <Value,>(operation: () => Value, fallback: string) =>
   Effect.try({
-    catch: (cause) => scaffoldError(Predicate.isError(cause) ? cause.message : fallback, cause),
+    catch: (cause) =>
+      scaffoldError(Predicate.isError(cause) ? cause.message : fallback, cause),
     try: operation,
   });
 
@@ -66,280 +73,357 @@ const readGeneratedArtifact = Effect.fn('readGeneratedArtifact')(
   function* readGeneratedArtifactEffect(
     filePath: string,
     label: string,
-    checks: readonly string[],
+    checks: readonly string[]
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const content = yield* fileSystem
       .readFileString(filePath)
       .pipe(
         Effect.mapError((cause) =>
-          scaffoldError(`matching generated ${label} is missing at ${filePath}`, cause),
-        ),
+          scaffoldError(
+            `matching generated ${label} is missing at ${filePath}`,
+            cause
+          )
+        )
       );
     if (checks.some((check) => !content.includes(check))) {
-      return yield* scaffoldError(`matching generated ${label} metadata is missing at ${filePath}`);
+      return yield* scaffoldError(
+        `matching generated ${label} metadata is missing at ${filePath}`
+      );
     }
     return content;
-  },
+  }
 );
 
-const removeOptionalGeneratedSlotEntry = Effect.fn('removeOptionalGeneratedSlotEntry')(
-  function* removeOptionalGeneratedSlotEntryEffect(
-    content: string,
-    start: string,
-    end: string,
-    matches: (candidate: string) => boolean,
-    label: string,
-  ) {
-    const count = yield* trySync(
-      () => readGeneratedSlotEntries(content, start, end).filter(matches).length,
-      `failed to inspect generated ${label}`,
-    );
-    if (count === 0) {
-      return content;
-    }
-    if (count > 1) {
-      return yield* scaffoldError(`expected at most one generated ${label}; found ${count}`);
-    }
-    return yield* trySync(
-      () => removeGeneratedSlotEntry(content, start, end, matches, label),
-      `failed to remove generated ${label}`,
-    );
-  },
-);
-
-const planActionRetirement = Effect.fn('planActionRetirement')(function* planActionRetirementEffect(
-  vertical: OntosVerticalMetadata,
-  name: string,
+const removeOptionalGeneratedSlotEntry = Effect.fn(
+  'removeOptionalGeneratedSlotEntry'
+)(function* removeOptionalGeneratedSlotEntryEffect(
+  content: string,
+  start: string,
+  end: string,
+  matches: (candidate: string) => boolean,
+  label: string
 ) {
-  const symbol = `${toCamelCase(name)}Action`;
-  const artifactPath = yield* trySync(
-    () => resolveContainedPath(vertical.directory, 'src', 'actions', `${name}.action.ts`),
-    `failed to resolve generated Action ${name}`,
+  const count = yield* trySync(
+    () => readGeneratedSlotEntries(content, start, end).filter(matches).length,
+    `failed to inspect generated ${label}`
   );
-  const artifact = yield* readGeneratedArtifact(artifactPath, 'Action', [
-    `${ACTION_GENERATOR_HEADER}\n`,
-    `// @ontos-action-owner ${vertical.moduleId}\n`,
-    `// @ontos-action-slug ${name}\n`,
-    `export const ${symbol}`,
-  ]);
-  const dependentCount = yield* trySync(
-    () => readGeneratedSlotEntries(artifact, OUTBOX_SLOT_START, OUTBOX_SLOT_END).length,
-    `failed to inspect Action ${name} Outbox dependents`,
-  );
-  if (dependentCount > 0) {
+  if (count === 0) {
+    return content;
+  }
+  if (count > 1) {
     return yield* scaffoldError(
-      `cannot retire Action ${name} while it has published Outbox dependents`,
+      `expected at most one generated ${label}; found ${count}`
     );
   }
-  const importLine = `import { ${symbol} } from './src/actions/${name}.action.ts';`;
-  const { nextManifest, nextRegistration } = yield* trySync(
-    () => ({
-      nextManifest: removeGeneratedSlotEntry(
+  return yield* trySync(
+    () => removeGeneratedSlotEntry(content, start, end, matches, label),
+    `failed to remove generated ${label}`
+  );
+});
+
+const planActionRetirement = Effect.fn('planActionRetirement')(
+  function* planActionRetirementEffect(
+    vertical: OntosVerticalMetadata,
+    name: string
+  ) {
+    const symbol = `${toCamelCase(name)}Action`;
+    const artifactPath = yield* trySync(
+      () =>
+        resolveContainedPath(
+          vertical.directory,
+          'src',
+          'actions',
+          `${name}.action.ts`
+        ),
+      `failed to resolve generated Action ${name}`
+    );
+    const artifact = yield* readGeneratedArtifact(artifactPath, 'Action', [
+      `${ACTION_GENERATOR_HEADER}\n`,
+      `// @ontos-action-owner ${vertical.moduleId}\n`,
+      `// @ontos-action-slug ${name}\n`,
+      `export const ${symbol}`,
+    ]);
+    const dependentCount = yield* trySync(
+      () =>
+        readGeneratedSlotEntries(artifact, OUTBOX_SLOT_START, OUTBOX_SLOT_END)
+          .length,
+      `failed to inspect Action ${name} Outbox dependents`
+    );
+    if (dependentCount > 0) {
+      return yield* scaffoldError(
+        `cannot retire Action ${name} while it has published Outbox dependents`
+      );
+    }
+    const importLine = `import { ${symbol} } from './src/actions/${name}.action.ts';`;
+    const { nextManifest, nextRegistration } = yield* trySync(
+      () => ({
+        nextManifest: removeGeneratedSlotEntry(
+          removeGeneratedSlotEntry(
+            vertical.manifestContent,
+            MODULE_MANIFEST_IMPORT_SLOT_START,
+            MODULE_MANIFEST_IMPORT_SLOT_END,
+            (entry) => entry === importLine,
+            `Action import ${name}`
+          ),
+          MODULE_MANIFEST_ACTION_SLOT_START,
+          MODULE_MANIFEST_ACTION_SLOT_END,
+          (entry) => entry === `${symbol},`,
+          `Action descriptor ${name}`
+        ),
+        nextRegistration: removeGeneratedSlotEntry(
+          removeGeneratedSlotEntry(
+            vertical.registrationContent,
+            MODULE_REGISTRATION_IMPORT_SLOT_START,
+            MODULE_REGISTRATION_IMPORT_SLOT_END,
+            (entry) => entry === importLine,
+            `Action registration import ${name}`
+          ),
+          MODULE_REGISTRATION_ACTION_SLOT_START,
+          MODULE_REGISTRATION_ACTION_SLOT_END,
+          (entry) => entry === `${symbol},`,
+          `Action registration ${name}`
+        ),
+      }),
+      `failed to retire generated Action ${name}`
+    );
+    return [
+      {
+        content: nextManifest,
+        kind: 'update' as const,
+        path: vertical.manifestPath,
+      },
+      {
+        content: nextRegistration,
+        kind: 'update' as const,
+        path: vertical.registrationPath,
+      },
+      yield* deleteMutationEffect(artifactPath),
+    ];
+  }
+);
+
+const planApiRetirement = Effect.fn('planApiRetirement')(
+  function* planApiRetirementEffect(
+    vertical: OntosVerticalMetadata,
+    name: string
+  ) {
+    const type = toPascalCase(name);
+    const value = `${type}Api`;
+    const paths = yield* trySync(
+      () =>
+        [
+          resolveContainedPath(
+            vertical.directory,
+            'shared',
+            'apis',
+            `${name}.ts`
+          ),
+          resolveContainedPath(
+            vertical.directory,
+            'src',
+            'api',
+            `${name}.read.ts`
+          ),
+          resolveContainedPath(
+            vertical.directory,
+            'src',
+            'api',
+            `${name}-client.ts`
+          ),
+          resolveContainedPath(
+            vertical.directory,
+            'api',
+            `${name}-read-server.ts`
+          ),
+        ] as const,
+      `failed to resolve generated module API ${name}`
+    );
+    const checks = [
+      [`${API_GENERATOR_HEADER}\n`, `export const ${value}`],
+      [`${API_GENERATOR_HEADER}\n`, `export const ${toCamelCase(name)}Read`],
+      [`${API_GENERATOR_HEADER}\n`, `execute${type}WithAuthorization`],
+      [
+        `${API_GENERATOR_HEADER}\n`,
+        `export const ${toCamelCase(name)}ReadApiLive`,
+      ],
+    ] as const;
+    yield* Effect.all(
+      paths.map((filePath, index) =>
+        readGeneratedArtifact(
+          filePath,
+          `module API ${name}`,
+          checks[index] ?? []
+        )
+      ),
+      { concurrency: 'unbounded' }
+    );
+    const { nextManifest, nextRegistration } = yield* trySync(
+      () => ({
+        nextManifest: removeGeneratedSlotEntry(
+          removeGeneratedSlotEntry(
+            vertical.manifestContent,
+            MODULE_MANIFEST_IMPORT_SLOT_START,
+            MODULE_MANIFEST_IMPORT_SLOT_END,
+            (entry) =>
+              entry === `import { ${value} } from './shared/apis/${name}.ts';`,
+            `module API import ${name}`
+          ),
+          MODULE_MANIFEST_API_SLOT_START,
+          MODULE_MANIFEST_API_SLOT_END,
+          (entry) => entry === `'${name}': ${value},`,
+          `module API descriptor ${name}`
+        ),
+        nextRegistration: removeGeneratedSlotEntry(
+          vertical.registrationContent,
+          MODULE_REGISTRATION_API_SLOT_START,
+          MODULE_REGISTRATION_API_SLOT_END,
+          (entry) =>
+            entry === `'${name}': () => import('./src/api/${name}-client.ts'),`,
+          `module API registration ${name}`
+        ),
+      }),
+      `failed to retire generated module API ${name}`
+    );
+    const deletes = yield* Effect.all(paths.map(deleteMutationEffect), {
+      concurrency: 'unbounded',
+    });
+    return [
+      {
+        content: nextManifest,
+        kind: 'update' as const,
+        path: vertical.manifestPath,
+      },
+      {
+        content: nextRegistration,
+        kind: 'update' as const,
+        path: vertical.registrationPath,
+      },
+      ...deletes,
+    ];
+  }
+);
+
+const planPageRetirement = Effect.fn('planPageRetirement')(
+  function* planPageRetirementEffect(
+    vertical: OntosVerticalMetadata,
+    name: string
+  ) {
+    const type = `${toPascalCase(name)}Page`;
+    const componentKey = `${vertical.moduleId}.page-${name}`;
+    const contributionKey = `${vertical.moduleId}.page.${name}`;
+    const importPattern = new RegExp(
+      `^import \\{ ${type} \\} from '\\.\\/src\\/routes\\/.+\\/page\\.tsx';$`,
+      'u'
+    );
+    let nextManifest = yield* trySync(
+      () =>
         removeGeneratedSlotEntry(
           vertical.manifestContent,
           MODULE_MANIFEST_IMPORT_SLOT_START,
           MODULE_MANIFEST_IMPORT_SLOT_END,
-          (entry) => entry === importLine,
-          `Action import ${name}`,
+          (entry) => importPattern.test(entry),
+          `page import ${name}`
         ),
-        MODULE_MANIFEST_ACTION_SLOT_START,
-        MODULE_MANIFEST_ACTION_SLOT_END,
-        (entry) => entry === `${symbol},`,
-        `Action descriptor ${name}`,
-      ),
-      nextRegistration: removeGeneratedSlotEntry(
+      `failed to remove generated page import ${name}`
+    );
+    nextManifest = yield* trySync(
+      () =>
+        removeGeneratedSlotEntry(
+          nextManifest,
+          MODULE_MANIFEST_COMPONENT_SLOT_START,
+          MODULE_MANIFEST_COMPONENT_SLOT_END,
+          (entry) => entry === `'page-${name}': ${type},`,
+          `page component ${name}`
+        ),
+      `failed to remove generated page component ${name}`
+    );
+    nextManifest = yield* trySync(
+      () =>
+        removeGeneratedSlotEntry(
+          nextManifest,
+          MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
+          MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
+          (entry) =>
+            entry.includes(`componentKey: '${componentKey}'`) &&
+            entry.includes(`contributionKey: '${contributionKey}'`),
+          `shell page ${name}`
+        ),
+      `failed to remove generated shell page ${name}`
+    );
+    nextManifest = yield* removeOptionalGeneratedSlotEntry(
+      nextManifest,
+      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
+      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
+      (entry) =>
+        entry.includes(
+          `contributionKey: '${vertical.moduleId}.navigation.${name}'`
+        ) && entry.includes(`pageKey: '${contributionKey}'`),
+      `shell navigation ${name}`
+    );
+    const nextRegistration = yield* trySync(
+      () =>
         removeGeneratedSlotEntry(
           vertical.registrationContent,
-          MODULE_REGISTRATION_IMPORT_SLOT_START,
-          MODULE_REGISTRATION_IMPORT_SLOT_END,
-          (entry) => entry === importLine,
-          `Action registration import ${name}`,
+          MODULE_REGISTRATION_PAGE_SLOT_START,
+          MODULE_REGISTRATION_PAGE_SLOT_END,
+          (entry) =>
+            entry.startsWith(`'page-${name}':`) &&
+            entry.includes("import('./src/routes/") &&
+            entry.includes("/page.tsx')"),
+          `page registration ${name}`
         ),
-        MODULE_REGISTRATION_ACTION_SLOT_START,
-        MODULE_REGISTRATION_ACTION_SLOT_END,
-        (entry) => entry === `${symbol},`,
-        `Action registration ${name}`,
-      ),
-    }),
-    `failed to retire generated Action ${name}`,
-  );
-  return [
-    { content: nextManifest, kind: 'update' as const, path: vertical.manifestPath },
-    { content: nextRegistration, kind: 'update' as const, path: vertical.registrationPath },
-    yield* deleteMutationEffect(artifactPath),
-  ];
-});
-
-const planApiRetirement = Effect.fn('planApiRetirement')(function* planApiRetirementEffect(
-  vertical: OntosVerticalMetadata,
-  name: string,
-) {
-  const type = toPascalCase(name);
-  const value = `${type}Api`;
-  const paths = yield* trySync(
-    () =>
-      [
-        resolveContainedPath(vertical.directory, 'shared', 'apis', `${name}.ts`),
-        resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
-        resolveContainedPath(vertical.directory, 'src', 'api', `${name}-client.ts`),
-        resolveContainedPath(vertical.directory, 'api', `${name}-read-server.ts`),
-      ] as const,
-    `failed to resolve generated module API ${name}`,
-  );
-  const checks = [
-    [`${API_GENERATOR_HEADER}\n`, `export const ${value}`],
-    [`${API_GENERATOR_HEADER}\n`, `export const ${toCamelCase(name)}Read`],
-    [`${API_GENERATOR_HEADER}\n`, `execute${type}WithAuthorization`],
-    [`${API_GENERATOR_HEADER}\n`, `export const ${toCamelCase(name)}ReadApiLive`],
-  ] as const;
-  yield* Effect.all(
-    paths.map((filePath, index) =>
-      readGeneratedArtifact(filePath, `module API ${name}`, checks[index] ?? []),
-    ),
-    { concurrency: 'unbounded' },
-  );
-  const { nextManifest, nextRegistration } = yield* trySync(
-    () => ({
-      nextManifest: removeGeneratedSlotEntry(
-        removeGeneratedSlotEntry(
-          vertical.manifestContent,
-          MODULE_MANIFEST_IMPORT_SLOT_START,
-          MODULE_MANIFEST_IMPORT_SLOT_END,
-          (entry) => entry === `import { ${value} } from './shared/apis/${name}.ts';`,
-          `module API import ${name}`,
-        ),
-        MODULE_MANIFEST_API_SLOT_START,
-        MODULE_MANIFEST_API_SLOT_END,
-        (entry) => entry === `'${name}': ${value},`,
-        `module API descriptor ${name}`,
-      ),
-      nextRegistration: removeGeneratedSlotEntry(
-        vertical.registrationContent,
-        MODULE_REGISTRATION_API_SLOT_START,
-        MODULE_REGISTRATION_API_SLOT_END,
-        (entry) => entry === `'${name}': () => import('./src/api/${name}-client.ts'),`,
-        `module API registration ${name}`,
-      ),
-    }),
-    `failed to retire generated module API ${name}`,
-  );
-  const deletes = yield* Effect.all(paths.map(deleteMutationEffect), {
-    concurrency: 'unbounded',
-  });
-  return [
-    { content: nextManifest, kind: 'update' as const, path: vertical.manifestPath },
-    { content: nextRegistration, kind: 'update' as const, path: vertical.registrationPath },
-    ...deletes,
-  ];
-});
-
-const planPageRetirement = Effect.fn('planPageRetirement')(function* planPageRetirementEffect(
-  vertical: OntosVerticalMetadata,
-  name: string,
-) {
-  const type = `${toPascalCase(name)}Page`;
-  const componentKey = `${vertical.moduleId}.page-${name}`;
-  const contributionKey = `${vertical.moduleId}.page.${name}`;
-  const importPattern = new RegExp(
-    `^import \\{ ${type} \\} from '\\.\\/src\\/routes\\/.+\\/page\\.tsx';$`,
-    'u',
-  );
-  let nextManifest = yield* trySync(
-    () =>
-      removeGeneratedSlotEntry(
-        vertical.manifestContent,
-        MODULE_MANIFEST_IMPORT_SLOT_START,
-        MODULE_MANIFEST_IMPORT_SLOT_END,
-        (entry) => importPattern.test(entry),
-        `page import ${name}`,
-      ),
-    `failed to remove generated page import ${name}`,
-  );
-  nextManifest = yield* trySync(
-    () =>
-      removeGeneratedSlotEntry(
-        nextManifest,
-        MODULE_MANIFEST_COMPONENT_SLOT_START,
-        MODULE_MANIFEST_COMPONENT_SLOT_END,
-        (entry) => entry === `'page-${name}': ${type},`,
-        `page component ${name}`,
-      ),
-    `failed to remove generated page component ${name}`,
-  );
-  nextManifest = yield* trySync(
-    () =>
-      removeGeneratedSlotEntry(
-        nextManifest,
-        MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
-        MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
-        (entry) =>
-          entry.includes(`componentKey: '${componentKey}'`) &&
-          entry.includes(`contributionKey: '${contributionKey}'`),
-        `shell page ${name}`,
-      ),
-    `failed to remove generated shell page ${name}`,
-  );
-  nextManifest = yield* removeOptionalGeneratedSlotEntry(
-    nextManifest,
-    MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
-    MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
-    (entry) =>
-      entry.includes(`contributionKey: '${vertical.moduleId}.navigation.${name}'`) &&
-      entry.includes(`pageKey: '${contributionKey}'`),
-    `shell navigation ${name}`,
-  );
-  const nextRegistration = yield* trySync(
-    () =>
-      removeGeneratedSlotEntry(
-        vertical.registrationContent,
-        MODULE_REGISTRATION_PAGE_SLOT_START,
-        MODULE_REGISTRATION_PAGE_SLOT_END,
-        (entry) =>
-          entry.startsWith(`'page-${name}':`) &&
-          entry.includes("import('./src/routes/") &&
-          entry.includes("/page.tsx')"),
-        `page registration ${name}`,
-      ),
-    `failed to remove generated page registration ${name}`,
-  );
-  return [
-    { content: nextManifest, kind: 'update' as const, path: vertical.manifestPath },
-    { content: nextRegistration, kind: 'update' as const, path: vertical.registrationPath },
-  ];
-});
-
-const planRetireContributionScaffold = Effect.fn('RetireContributionScaffold.plan')(
-  function* planRetireContributionScaffoldEffect(
-    workspaceRoot: string,
-    config: RetireContributionScaffoldConfig,
-  ): Effect.fn.Return<
-    ScaffoldPlan<RetireContributionScaffoldResult>,
-    RetireContributionScaffoldError | ScaffoldFailure,
-    FileSystem.FileSystem
-  > {
-    const name = yield* trySync(
-      () => requireCanonicalSlug(config.name, 'name'),
-      'failed to validate retirement contribution name',
+      `failed to remove generated page registration ${name}`
     );
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
-    let mutations: readonly Mutation[];
-    if (config.kind === 'action') {
-      mutations = yield* planActionRetirement(vertical, name);
-    } else if (config.kind === 'api') {
-      mutations = yield* planApiRetirement(vertical, name);
-    } else {
-      mutations = yield* planPageRetirement(vertical, name);
-    }
-    yield* trySync(
-      () => ensureUniqueMutationPaths(mutations),
-      'failed to validate retirement mutation paths',
-    );
-    const deletedPaths = mutations
-      .filter((mutation) => mutation.kind === 'delete')
-      .map(({ path }) => path);
-    return { mutations, result: { deletedPaths, kind: config.kind, name } };
-  },
+    return [
+      {
+        content: nextManifest,
+        kind: 'update' as const,
+        path: vertical.manifestPath,
+      },
+      {
+        content: nextRegistration,
+        kind: 'update' as const,
+        path: vertical.registrationPath,
+      },
+    ];
+  }
 );
+
+const planRetireContributionScaffold = Effect.fn(
+  'RetireContributionScaffold.plan'
+)(function* planRetireContributionScaffoldEffect(
+  workspaceRoot: string,
+  config: RetireContributionScaffoldConfig
+): Effect.fn.Return<
+  ScaffoldPlan<RetireContributionScaffoldResult>,
+  RetireContributionScaffoldError | ScaffoldFailure,
+  FileSystem.FileSystem
+> {
+  const name = yield* trySync(
+    () => requireCanonicalSlug(config.name, 'name'),
+    'failed to validate retirement contribution name'
+  );
+  const vertical = yield* discoverOntosModuleEffect(
+    workspaceRoot,
+    config.vertical
+  );
+  let mutations: readonly Mutation[];
+  if (config.kind === 'action') {
+    mutations = yield* planActionRetirement(vertical, name);
+  } else if (config.kind === 'api') {
+    mutations = yield* planApiRetirement(vertical, name);
+  } else {
+    mutations = yield* planPageRetirement(vertical, name);
+  }
+  yield* trySync(
+    () => ensureUniqueMutationPaths(mutations),
+    'failed to validate retirement mutation paths'
+  );
+  const deletedPaths = mutations
+    .filter((mutation) => mutation.kind === 'delete')
+    .map(({ path }) => path);
+  return { mutations, result: { deletedPaths, kind: config.kind, name } };
+});
 
 export default createCodesmithGenerator(planRetireContributionScaffold);

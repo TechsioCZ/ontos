@@ -1,5 +1,10 @@
+import {
+  LanguageVariant,
+  SyntaxKind,
+  createScanner,
+} from '@typescript/native/unstable/ast';
+
 import { DelimiterDepth, toCamelCase } from './boundary-source-structure.mts';
-import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 
 const REGISTRATION_API_SLOT = [
   '// <generated-module-registration-apis>',
@@ -38,10 +43,14 @@ export interface GovernedClientToken {
 }
 
 /** Out-of-range lookahead is a nonmatching token, never an invented identifier. */
-const tokenKind = (tokens: readonly GovernedClientToken[], index: number): SyntaxKind | undefined =>
-  tokens[index]?.kind;
-const tokenValue = (tokens: readonly GovernedClientToken[], index: number): string | undefined =>
-  tokens[index]?.value;
+const tokenKind = (
+  tokens: readonly GovernedClientToken[],
+  index: number
+): SyntaxKind | undefined => tokens[index]?.kind;
+const tokenValue = (
+  tokens: readonly GovernedClientToken[],
+  index: number
+): string | undefined => tokens[index]?.value;
 
 const tokenDelimiter = new Map([
   [SyntaxKind.OpenBraceToken, '{'],
@@ -74,7 +83,7 @@ const REGULAR_EXPRESSION_PRECEDERS = new Set([
 const scanTemplateDelimiter = (
   scanner: ReturnType<typeof createScanner>,
   scannedKind: SyntaxKind,
-  templateExpressionBraceDepths: number[],
+  templateExpressionBraceDepths: number[]
 ): SyntaxKind => {
   let kind = scannedKind;
   const templateDepthIndex = templateExpressionBraceDepths.length - 1;
@@ -97,7 +106,9 @@ const scanTemplateDelimiter = (
   return kind;
 };
 
-export const tokenizeGovernedClient = (source: string): readonly GovernedClientToken[] => {
+export const tokenizeGovernedClient = (
+  source: string
+): readonly GovernedClientToken[] => {
   const scanner = createScanner(true, LanguageVariant.Standard, source);
   const tokens: GovernedClientToken[] = [];
   const templateExpressionBraceDepths: number[] = [];
@@ -107,7 +118,9 @@ export const tokenizeGovernedClient = (source: string): readonly GovernedClientT
     if (
       kind === SyntaxKind.SlashToken &&
       (tokens.length === 0 ||
-        REGULAR_EXPRESSION_PRECEDERS.has(tokens.at(-1)?.kind ?? SyntaxKind.Unknown))
+        REGULAR_EXPRESSION_PRECEDERS.has(
+          tokens.at(-1)?.kind ?? SyntaxKind.Unknown
+        ))
     ) {
       kind = scanner.reScanSlashToken();
     }
@@ -118,27 +131,35 @@ export const tokenizeGovernedClient = (source: string): readonly GovernedClientT
   return tokens;
 };
 
-const matchesToken = (token: GovernedClientToken | undefined, expected: ExpectedToken): boolean =>
-  token?.kind === expected[0] && (expected[1] === undefined || token.value === expected[1]);
+const matchesToken = (
+  token: GovernedClientToken | undefined,
+  expected: ExpectedToken
+): boolean =>
+  token?.kind === expected[0] &&
+  (expected[1] === undefined || token.value === expected[1]);
 
 const matchesSequence = (
   tokens: readonly GovernedClientToken[],
   start: number,
-  expected: readonly ExpectedToken[],
-): boolean => expected.every((token, offset) => matchesToken(tokens[start + offset], token));
+  expected: readonly ExpectedToken[]
+): boolean =>
+  expected.every((token, offset) =>
+    matchesToken(tokens[start + offset], token)
+  );
 
 const isOptionalTrailingComma = (
   tokens: readonly GovernedClientToken[],
   next: number,
-  close: number,
+  close: number
 ): boolean =>
-  next === close || (tokenKind(tokens, next) === SyntaxKind.CommaToken && next + 1 === close);
+  next === close ||
+  (tokenKind(tokens, next) === SyntaxKind.CommaToken && next + 1 === close);
 
 const findSequence = (
   tokens: readonly GovernedClientToken[],
   expected: readonly ExpectedToken[],
   start = 0,
-  end = tokens.length,
+  end = tokens.length
 ): number | undefined => {
   for (let index = start; index < end; index += 1) {
     if (matchesSequence(tokens, index, expected)) {
@@ -153,11 +174,14 @@ const findSequenceAtBraceDepth = (
   expected: readonly ExpectedToken[],
   start: number,
   end: number,
-  expectedDepth: number,
+  expectedDepth: number
 ): number | undefined => {
   let braceDepth = 0;
   for (let index = start; index < end; index += 1) {
-    if (braceDepth === expectedDepth && matchesSequence(tokens, index, expected)) {
+    if (
+      braceDepth === expectedDepth &&
+      matchesSequence(tokens, index, expected)
+    ) {
       return index;
     }
     braceDepth += tokenBraceDelta(tokenKind(tokens, index));
@@ -168,12 +192,15 @@ const findSequenceAtBraceDepth = (
 const sequenceOccurrencesAtBraceDepth = (
   tokens: readonly GovernedClientToken[],
   expected: readonly ExpectedToken[],
-  expectedDepth: number,
+  expectedDepth: number
 ): number => {
   let count = 0;
   let braceDepth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
-    if (braceDepth === expectedDepth && matchesSequence(tokens, index, expected)) {
+    if (
+      braceDepth === expectedDepth &&
+      matchesSequence(tokens, index, expected)
+    ) {
       count += 1;
     }
     braceDepth += tokenBraceDelta(tokenKind(tokens, index));
@@ -183,7 +210,7 @@ const sequenceOccurrencesAtBraceDepth = (
 
 const generatedSlotSource = (
   source: string,
-  [start, end]: readonly [string, string],
+  [start, end]: readonly [string, string]
 ): string | undefined => {
   const startIndex = source.indexOf(start);
   const endIndex = source.indexOf(end);
@@ -203,33 +230,37 @@ const findTopLevelSequence = (
   tokens: readonly GovernedClientToken[],
   expected: readonly ExpectedToken[],
   start: number,
-  end: number,
-): number | undefined => findSequenceAtBraceDepth(tokens, expected, start, end, 0);
+  end: number
+): number | undefined =>
+  findSequenceAtBraceDepth(tokens, expected, start, end, 0);
 
 const hasTopLevelSequence = (
   tokens: readonly GovernedClientToken[],
-  expected: readonly ExpectedToken[],
-): boolean => findTopLevelSequence(tokens, expected, 0, tokens.length) !== undefined;
+  expected: readonly ExpectedToken[]
+): boolean =>
+  findTopLevelSequence(tokens, expected, 0, tokens.length) !== undefined;
 
 const findRootExpressionSequence = (
   tokens: readonly GovernedClientToken[],
   expected: readonly ExpectedToken[],
   start: number,
-  end: number,
+  end: number
 ): number | undefined => {
   const depth = new DelimiterDepth();
   for (let index = start; index < end; index += 1) {
     if (depth.isTopLevel() && matchesSequence(tokens, index, expected)) {
       return index;
     }
-    depth.update(tokenDelimiter.get(tokenKind(tokens, index) ?? SyntaxKind.Unknown));
+    depth.update(
+      tokenDelimiter.get(tokenKind(tokens, index) ?? SyntaxKind.Unknown)
+    );
   }
   return undefined;
 };
 
 const findClosingBrace = (
   tokens: readonly GovernedClientToken[],
-  openBraceIndex: number,
+  openBraceIndex: number
 ): number | undefined => {
   let depth = 0;
   for (let index = openBraceIndex; index < tokens.length; index += 1) {
@@ -249,7 +280,7 @@ const findClosingBrace = (
 const findClosingParenthesis = (
   tokens: readonly GovernedClientToken[],
   openParenthesisIndex: number,
-  end: number,
+  end: number
 ): number | undefined => {
   let depth = 0;
   for (let index = openParenthesisIndex; index < end; index += 1) {
@@ -269,11 +300,12 @@ const findClosingParenthesis = (
 const isNamedObjectProperty = (
   tokens: readonly GovernedClientToken[],
   index: number,
-  property: string,
+  property: string
 ): boolean => {
   const token = tokens[index];
   return (
-    (token?.kind === SyntaxKind.Identifier || token?.kind === SyntaxKind.StringLiteral) &&
+    (token?.kind === SyntaxKind.Identifier ||
+      token?.kind === SyntaxKind.StringLiteral) &&
     token.value === property &&
     tokenKind(tokens, index + 1) === SyntaxKind.ColonToken
   );
@@ -283,7 +315,7 @@ const objectPropertyValuePositions = (
   tokens: readonly GovernedClientToken[],
   openBraceIndex: number,
   closeBraceIndex: number,
-  property: string,
+  property: string
 ): readonly number[] => {
   const positions: number[] = [];
   let depth = 0;
@@ -304,33 +336,50 @@ const findObjectPropertyValue = (
   tokens: readonly GovernedClientToken[],
   openBraceIndex: number,
   closeBraceIndex: number,
-  property: string,
+  property: string
 ): number | undefined =>
-  objectPropertyValuePositions(tokens, openBraceIndex, closeBraceIndex, property)[0];
+  objectPropertyValuePositions(
+    tokens,
+    openBraceIndex,
+    closeBraceIndex,
+    property
+  )[0];
 
 const directObjectPropertyOccurrences = (
   tokens: readonly GovernedClientToken[],
   openBraceIndex: number,
   closeBraceIndex: number,
-  property: string,
-): number => objectPropertyValuePositions(tokens, openBraceIndex, closeBraceIndex, property).length;
+  property: string
+): number =>
+  objectPropertyValuePositions(
+    tokens,
+    openBraceIndex,
+    closeBraceIndex,
+    property
+  ).length;
 
 const hasExactObjectPropertyValue = (
   tokens: readonly GovernedClientToken[],
   valueStart: number | undefined,
-  expected: readonly ExpectedToken[],
+  expected: readonly ExpectedToken[]
 ): boolean => {
-  if (valueStart === undefined || !matchesSequence(tokens, valueStart, expected)) {
+  if (
+    valueStart === undefined ||
+    !matchesSequence(tokens, valueStart, expected)
+  ) {
     return false;
   }
   const follower = tokenKind(tokens, valueStart + expected.length);
-  return follower === SyntaxKind.CommaToken || follower === SyntaxKind.CloseBraceToken;
+  return (
+    follower === SyntaxKind.CommaToken ||
+    follower === SyntaxKind.CloseBraceToken
+  );
 };
 
 const directObjectPropertyNames = (
   tokens: readonly GovernedClientToken[],
   openBraceIndex: number,
-  closeBraceIndex: number,
+  closeBraceIndex: number
 ): readonly string[] | undefined => {
   const properties: string[] = [];
   let depth = 0;
@@ -340,7 +389,10 @@ const directObjectPropertyNames = (
     if (depth !== 1) {
       continue;
     }
-    if (kind === SyntaxKind.DotDotDotToken || kind === SyntaxKind.OpenBracketToken) {
+    if (
+      kind === SyntaxKind.DotDotDotToken ||
+      kind === SyntaxKind.OpenBracketToken
+    ) {
       return undefined;
     }
     const value = tokenValue(tokens, index);
@@ -353,7 +405,7 @@ const directObjectPropertyNames = (
 
 const hasExactProperties = (
   properties: readonly string[] | undefined,
-  expected: ReadonlySet<string>,
+  expected: ReadonlySet<string>
 ): boolean =>
   properties !== undefined &&
   properties.length === expected.size &&
@@ -362,7 +414,7 @@ const hasExactProperties = (
 const directObjectHasNoSpread = (
   tokens: readonly GovernedClientToken[],
   openBraceIndex: number,
-  closeBraceIndex: number,
+  closeBraceIndex: number
 ): boolean => {
   let depth = 0;
   for (let index = openBraceIndex; index < closeBraceIndex; index += 1) {
@@ -394,19 +446,25 @@ const MODULE_API_INVOCATION_KIND = 'module-api';
 export const hasUniqueExactNamedImport = (
   source: string,
   importedName: string,
-  moduleSpecifier: string,
+  moduleSpecifier: string
 ): boolean => {
   const tokens = tokenizeGovernedClient(source);
   let matchCount = 0;
   let bindingCount = 0;
   for (let index = 0; index < tokens.length; index += 1) {
-    if (matchesSequence(tokens, index, [[SyntaxKind.ImportKeyword], [SyntaxKind.OpenBraceToken]])) {
+    if (
+      matchesSequence(tokens, index, [
+        [SyntaxKind.ImportKeyword],
+        [SyntaxKind.OpenBraceToken],
+      ])
+    ) {
       const closeBrace = findClosingBrace(tokens, index + 1);
       if (closeBrace !== undefined) {
         bindingCount += tokens
           .slice(index + 2, closeBrace)
           .filter(
-            ({ kind, value }) => kind === SyntaxKind.Identifier && value === importedName,
+            ({ kind, value }) =>
+              kind === SyntaxKind.Identifier && value === importedName
           ).length;
       }
     }
@@ -427,11 +485,13 @@ export const hasUniqueExactNamedImport = (
   return matchCount === 1 && bindingCount === 1;
 };
 
-export const hasGeneratedOperationPrincipalContract = (source: string): boolean =>
+export const hasGeneratedOperationPrincipalContract = (
+  source: string
+): boolean =>
   hasUniqueExactNamedImport(
     source,
     'makeMicroverticalHttpPrincipalAuthentication',
-    '@app/core-runtime/http/principal-authentication',
+    '@app/core-runtime/http/principal-authentication'
   ) &&
   hasTopLevelSequence(tokenizeGovernedClient(source), [
     [SyntaxKind.ExportKeyword],
@@ -448,14 +508,17 @@ export const hasGeneratedOperationPrincipalContract = (source: string): boolean 
 const hasExclusiveNamedImportFrom = (
   source: string,
   importedName: string,
-  moduleSpecifier: string,
+  moduleSpecifier: string
 ): boolean => {
   const tokens = tokenizeGovernedClient(source);
   let bindingCount = 0;
   let exactBindingCount = 0;
   for (let index = 0; index < tokens.length; index += 1) {
     if (
-      !matchesSequence(tokens, index, [[SyntaxKind.ImportKeyword], [SyntaxKind.OpenBraceToken]])
+      !matchesSequence(tokens, index, [
+        [SyntaxKind.ImportKeyword],
+        [SyntaxKind.OpenBraceToken],
+      ])
     ) {
       continue;
     }
@@ -465,7 +528,10 @@ const hasExclusiveNamedImportFrom = (
     }
     const importBindingCount = tokens
       .slice(index + 2, closeBrace)
-      .filter(({ kind, value }) => kind === SyntaxKind.Identifier && value === importedName).length;
+      .filter(
+        ({ kind, value }) =>
+          kind === SyntaxKind.Identifier && value === importedName
+      ).length;
     bindingCount += importBindingCount;
     if (
       importBindingCount === 1 &&
@@ -481,11 +547,17 @@ const hasExclusiveNamedImportFrom = (
   return bindingCount === 1 && exactBindingCount === 1;
 };
 
-export const hasNamedImportBinding = (source: string, importedName: string): boolean => {
+export const hasNamedImportBinding = (
+  source: string,
+  importedName: string
+): boolean => {
   const tokens = tokenizeGovernedClient(source);
   for (let index = 0; index < tokens.length; index += 1) {
     if (
-      !matchesSequence(tokens, index, [[SyntaxKind.ImportKeyword], [SyntaxKind.OpenBraceToken]])
+      !matchesSequence(tokens, index, [
+        [SyntaxKind.ImportKeyword],
+        [SyntaxKind.OpenBraceToken],
+      ])
     ) {
       continue;
     }
@@ -494,7 +566,10 @@ export const hasNamedImportBinding = (source: string, importedName: string): boo
       closeBrace !== undefined &&
       tokens
         .slice(index + 2, closeBrace)
-        .some(({ kind, value }) => kind === SyntaxKind.Identifier && value === importedName)
+        .some(
+          ({ kind, value }) =>
+            kind === SyntaxKind.Identifier && value === importedName
+        )
     ) {
       return true;
     }
@@ -509,7 +584,7 @@ const governedRequestType = (expectation: GovernedClientExpectation): string =>
 
 const hasExactGeneratedImports = (
   tokens: readonly GovernedClientToken[],
-  expectation: GovernedClientExpectation,
+  expectation: GovernedClientExpectation
 ): boolean => {
   const expected = [
     [
@@ -568,14 +643,19 @@ const hasExactGeneratedImports = (
     }
     cursor += statement.length;
   }
-  return tokens.filter(({ kind }) => kind === SyntaxKind.ImportKeyword).length === expected.length;
+  return (
+    tokens.filter(({ kind }) => kind === SyntaxKind.ImportKeyword).length ===
+    expected.length
+  );
 };
 
 const identifierOccurrences = (
   tokens: readonly GovernedClientToken[],
-  identifier: string,
+  identifier: string
 ): number =>
-  tokens.filter(({ kind, value }) => kind === SyntaxKind.Identifier && value === identifier).length;
+  tokens.filter(
+    ({ kind, value }) => kind === SyntaxKind.Identifier && value === identifier
+  ).length;
 
 interface ExportedConst {
   readonly end: number;
@@ -592,7 +672,9 @@ interface GovernedClientHelper {
   readonly start: number;
 }
 
-const exportedConsts = (tokens: readonly GovernedClientToken[]): readonly ExportedConst[] => {
+const exportedConsts = (
+  tokens: readonly GovernedClientToken[]
+): readonly ExportedConst[] => {
   const declarations: ExportedConst[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     if (
@@ -609,7 +691,7 @@ const exportedConsts = (tokens: readonly GovernedClientToken[]): readonly Export
           tokens,
           [[SyntaxKind.ExportKeyword]],
           index + 1,
-          tokens.length,
+          tokens.length
         );
         declarations.push({
           end: nextExport ?? tokens.length,
@@ -625,7 +707,7 @@ const exportedConsts = (tokens: readonly GovernedClientToken[]): readonly Export
 const clientHelperAt = (
   tokens: readonly GovernedClientToken[],
   index: number,
-  end: number,
+  end: number
 ): GovernedClientHelper | undefined => {
   if (
     !matchesSequence(tokens, index, [
@@ -665,7 +747,7 @@ const clientHelperAt = (
 
 const findClientHelper = (
   tokens: readonly GovernedClientToken[],
-  authorizedExportStart: number,
+  authorizedExportStart: number
 ): GovernedClientHelper | undefined => {
   for (let index = 0; index < authorizedExportStart; index += 1) {
     const helper = clientHelperAt(tokens, index, authorizedExportStart);
@@ -678,16 +760,24 @@ const findClientHelper = (
 
 const findStatementSemicolon = (
   tokens: readonly GovernedClientToken[],
-  start: number,
+  start: number
 ): number | undefined =>
-  findRootExpressionSequence(tokens, [[SyntaxKind.SemicolonToken]], start, tokens.length);
+  findRootExpressionSequence(
+    tokens,
+    [[SyntaxKind.SemicolonToken]],
+    start,
+    tokens.length
+  );
 
 const hasOnlyAllowedModuleStatements = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
-  expectation: GovernedClientExpectation,
+  expectation: GovernedClientExpectation
 ): boolean => {
-  const allowedOperations = new Set([expectation.authorizedOperation, expectation.publicOperation]);
+  const allowedOperations = new Set([
+    expectation.authorizedOperation,
+    expectation.publicOperation,
+  ]);
   const apiStem = expectation.ownerApiValue.replace(/Api$/u, '');
   const operationStem = expectation.authorizedOperation
     .replace(/WithAuthorization$/u, '')
@@ -701,7 +791,11 @@ const hasOnlyAllowedModuleStatements = (
   let optionsInterfaceSeen = false;
   const consumeOptionsInterface = (index: number): number | undefined => {
     const name = tokenValue(tokens, index + 2);
-    if (name === undefined || optionsInterfaceSeen || !allowedOptionsInterfaces.has(name)) {
+    if (
+      name === undefined ||
+      optionsInterfaceSeen ||
+      !allowedOptionsInterfaces.has(name)
+    ) {
       return undefined;
     }
     optionsInterfaceSeen = true;
@@ -713,7 +807,9 @@ const hasOnlyAllowedModuleStatements = (
     if (close === undefined) {
       return undefined;
     }
-    return tokenKind(tokens, close + 1) === SyntaxKind.SemicolonToken ? close + 2 : close + 1;
+    return tokenKind(tokens, close + 1) === SyntaxKind.SemicolonToken
+      ? close + 2
+      : close + 1;
   };
   const isAllowedOperation = (index: number): boolean =>
     matchesSequence(tokens, index, [
@@ -728,7 +824,7 @@ const hasOnlyAllowedModuleStatements = (
     }
     if (
       [SyntaxKind.ImportKeyword, SyntaxKind.TypeKeyword].includes(
-        tokenKind(tokens, index) ?? SyntaxKind.Unknown,
+        tokenKind(tokens, index) ?? SyntaxKind.Unknown
       )
     ) {
       const end = findStatementSemicolon(tokens, index);
@@ -761,7 +857,7 @@ const hasGovernedTransportInvocation = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
   ownerApiValue: string,
-  defaultApiPrefix: string,
+  defaultApiPrefix: string
 ): boolean => {
   const expected = [
     [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
@@ -787,7 +883,8 @@ const hasGovernedTransportInvocation = (
     [SyntaxKind.SemicolonToken],
   ] satisfies readonly ExpectedToken[];
   return (
-    helper.end === helper.start + expected.length && matchesSequence(tokens, helper.start, expected)
+    helper.end === helper.start + expected.length &&
+    matchesSequence(tokens, helper.start, expected)
   );
 };
 
@@ -795,7 +892,7 @@ const parametersBindIdentifier = (
   tokens: readonly GovernedClientToken[],
   start: number,
   end: number,
-  names: ReadonlySet<string>,
+  names: ReadonlySet<string>
 ): boolean => {
   const bindingFollowers = new Set([
     SyntaxKind.CloseParenToken,
@@ -810,7 +907,9 @@ const parametersBindIdentifier = (
       ({ kind, value }, offset) =>
         kind === SyntaxKind.Identifier &&
         names.has(value) &&
-        bindingFollowers.has(tokenKind(tokens, start + offset + 1) ?? SyntaxKind.Unknown),
+        bindingFollowers.has(
+          tokenKind(tokens, start + offset + 1) ?? SyntaxKind.Unknown
+        )
     );
 };
 
@@ -818,7 +917,7 @@ const hasTopLevelDeclaration = (
   tokens: readonly GovernedClientToken[],
   start: number,
   end: number,
-  names: ReadonlySet<string>,
+  names: ReadonlySet<string>
 ): boolean => {
   const declarationKinds = new Set([
     SyntaxKind.ClassKeyword,
@@ -847,8 +946,10 @@ const hasExactParameterTokens = (
   tokens: readonly GovernedClientToken[],
   open: number,
   close: number,
-  expected: readonly ExpectedToken[],
-): boolean => close === open + expected.length + 1 && matchesSequence(tokens, open + 1, expected);
+  expected: readonly ExpectedToken[]
+): boolean =>
+  close === open + expected.length + 1 &&
+  matchesSequence(tokens, open + 1, expected);
 
 interface GeneratedClientTypeNames {
   authorizedInvocation: string;
@@ -858,7 +959,7 @@ interface GeneratedClientTypeNames {
 }
 
 const generatedClientTypeNames = (
-  expectation: GovernedClientExpectation,
+  expectation: GovernedClientExpectation
 ): GeneratedClientTypeNames => {
   const operationBase =
     expectation.invocationKind === MODULE_API_INVOCATION_KIND
@@ -882,14 +983,22 @@ const hasExactGeneratedOperationParameters = (
   authorizedArrow: number,
   operation: ExportedConst,
   operationArrow: number,
-  expectation: GovernedClientExpectation,
+  expectation: GovernedClientExpectation
 ): boolean => {
   const types = generatedClientTypeNames(expectation);
   const helperOpen = helper.parametersStart - 1;
   const authorizedOpen = authorized.start + 4;
-  const authorizedClose = findClosingParenthesis(tokens, authorizedOpen, authorizedArrow);
+  const authorizedClose = findClosingParenthesis(
+    tokens,
+    authorizedOpen,
+    authorizedArrow
+  );
   const operationOpen = operation.start + 4;
-  const operationClose = findClosingParenthesis(tokens, operationOpen, operationArrow);
+  const operationClose = findClosingParenthesis(
+    tokens,
+    operationOpen,
+    operationArrow
+  );
   const authorizedExpected = (trailingComma: boolean) =>
     [
       [SyntaxKind.Identifier, 'payload'],
@@ -950,7 +1059,7 @@ const hasExactGeneratedOperationParameters = (
         [SyntaxKind.ColonToken],
         [SyntaxKind.Identifier, optionsType],
         [SyntaxKind.CommaToken],
-      ]),
+      ])
     ) &&
     authorizedClose !== undefined &&
     [false, true].some((trailingComma) =>
@@ -958,8 +1067,8 @@ const hasExactGeneratedOperationParameters = (
         tokens,
         authorizedOpen,
         authorizedClose,
-        authorizedExpected(trailingComma),
-      ),
+        authorizedExpected(trailingComma)
+      )
     ) &&
     operationClose !== undefined &&
     [false, true].some((trailingComma) =>
@@ -967,19 +1076,25 @@ const hasExactGeneratedOperationParameters = (
         tokens,
         operationOpen,
         operationClose,
-        operationExpected(trailingComma),
-      ),
+        operationExpected(trailingComma)
+      )
     )
   );
 };
 
 const generatedOperationDeclarations = (
   tokens: readonly GovernedClientToken[],
-  expectation: GovernedClientExpectation,
-): readonly [authorized: ExportedConst, operation: ExportedConst] | undefined => {
+  expectation: GovernedClientExpectation
+):
+  | readonly [authorized: ExportedConst, operation: ExportedConst]
+  | undefined => {
   const declarations = exportedConsts(tokens);
-  const authorized = declarations.filter(({ name }) => name === expectation.authorizedOperation);
-  const operations = declarations.filter(({ name }) => name === expectation.publicOperation);
+  const authorized = declarations.filter(
+    ({ name }) => name === expectation.authorizedOperation
+  );
+  const operations = declarations.filter(
+    ({ name }) => name === expectation.publicOperation
+  );
   const [authorizedDeclaration] = authorized;
   const [operationDeclaration] = operations;
   return declarations.length === 2 &&
@@ -994,15 +1109,17 @@ const generatedOperationDeclarations = (
 const matchingSequenceEnd = (
   tokens: readonly GovernedClientToken[],
   start: number,
-  alternatives: readonly (readonly ExpectedToken[])[],
+  alternatives: readonly (readonly ExpectedToken[])[]
 ): number | undefined => {
-  const match = alternatives.find((sequence) => matchesSequence(tokens, start, sequence));
+  const match = alternatives.find((sequence) =>
+    matchesSequence(tokens, start, sequence)
+  );
   return match === undefined ? undefined : start + match.length;
 };
 
 const hasInvocationClosure = (
   tokens: readonly GovernedClientToken[],
-  start: number | undefined,
+  start: number | undefined
 ): boolean =>
   start !== undefined &&
   [false, true].some((trailingComma) =>
@@ -1012,11 +1129,11 @@ const hasInvocationClosure = (
       [SyntaxKind.CommaToken],
       [SyntaxKind.CloseParenToken],
       [SyntaxKind.SemicolonToken],
-    ]),
+    ])
   );
 
 const generatedInvocationPayloads = (
-  kind: GovernedClientExpectation['invocationKind'],
+  kind: GovernedClientExpectation['invocationKind']
 ): readonly (readonly ExpectedToken[])[] =>
   kind === MODULE_API_INVOCATION_KIND
     ? ([false, true] as const).map(
@@ -1042,7 +1159,7 @@ const generatedInvocationPayloads = (
             ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
             [SyntaxKind.CloseBraceToken],
             [SyntaxKind.CloseParenToken],
-          ] satisfies readonly ExpectedToken[],
+          ] satisfies readonly ExpectedToken[]
       )
     : ([false, true] as const).map(
         (hasTrailingComma) =>
@@ -1052,13 +1169,13 @@ const generatedInvocationPayloads = (
             ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
             [SyntaxKind.CloseBraceToken],
             [SyntaxKind.CloseParenToken],
-          ] satisfies readonly ExpectedToken[],
+          ] satisfies readonly ExpectedToken[]
       );
 
 const clientHelperShadowsImports = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
-  expectation: GovernedClientExpectation,
+  expectation: GovernedClientExpectation
 ): boolean => {
   const requiredHelperImports = new Set([
     'Effect',
@@ -1071,8 +1188,14 @@ const clientHelperShadowsImports = (
       tokens,
       helper.parametersStart,
       helper.parametersEnd,
-      requiredHelperImports,
-    ) || hasTopLevelDeclaration(tokens, helper.start, helper.end, requiredHelperImports)
+      requiredHelperImports
+    ) ||
+    hasTopLevelDeclaration(
+      tokens,
+      helper.start,
+      helper.end,
+      requiredHelperImports
+    )
   );
 };
 
@@ -1083,19 +1206,19 @@ const operationParametersShadowBindings = (
   authorized: ExportedConst,
   authorizedArrow: number,
   operation: ExportedConst,
-  operationArrow: number,
+  operationArrow: number
 ): boolean => {
   const authorizedShadowsBindings = parametersBindIdentifier(
     tokens,
     authorized.start,
     authorizedArrow,
-    new Set([helper.name, 'Effect', 'Redacted']),
+    new Set([helper.name, 'Effect', 'Redacted'])
   );
   const operationShadowsBindings = parametersBindIdentifier(
     tokens,
     operation.start,
     operationArrow,
-    new Set(['operationGateway', expectation.authorizedOperation]),
+    new Set(['operationGateway', expectation.authorizedOperation])
   );
   return authorizedShadowsBindings || operationShadowsBindings;
 };
@@ -1103,7 +1226,7 @@ const operationParametersShadowBindings = (
 const exportedOperationsUseClientHelperAndGateway = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
-  expectation: GovernedClientExpectation,
+  expectation: GovernedClientExpectation
 ): boolean => {
   const declarations = generatedOperationDeclarations(tokens, expectation);
   if (declarations === undefined) {
@@ -1114,18 +1237,20 @@ const exportedOperationsUseClientHelperAndGateway = (
     tokens,
     [[SyntaxKind.EqualsGreaterThanToken]],
     authorized.start,
-    authorized.end,
+    authorized.end
   );
   const operationArrow = findSequence(
     tokens,
     [[SyntaxKind.EqualsGreaterThanToken]],
     operation.start,
-    operation.end,
+    operation.end
   );
   if (authorizedArrow === undefined || operationArrow === undefined) {
     return false;
   }
-  const invocationPayloads = generatedInvocationPayloads(expectation.invocationKind);
+  const invocationPayloads = generatedInvocationPayloads(
+    expectation.invocationKind
+  );
   const authorizedInvocation = [
     [SyntaxKind.Identifier, helper.name],
     [SyntaxKind.OpenParenToken],
@@ -1158,11 +1283,12 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.Identifier, 'execute'],
     [SyntaxKind.OpenParenToken],
   ] satisfies readonly ExpectedToken[];
-  const authorizedInvocationEnd = authorizedArrow + 1 + authorizedInvocation.length;
+  const authorizedInvocationEnd =
+    authorizedArrow + 1 + authorizedInvocation.length;
   const authorizedInvocationTail = matchingSequenceEnd(
     tokens,
     authorizedInvocationEnd,
-    invocationPayloads,
+    invocationPayloads
   );
   const authorizedUsesHelper =
     matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
@@ -1190,7 +1316,11 @@ const exportedOperationsUseClientHelperAndGateway = (
   const operationUsesGateway =
     matchesSequence(tokens, operationArrow + 1, gatewayInvocation) &&
     hasInvocationClosure(tokens, gatewayInvocationEnd);
-  const helperShadowsImports = clientHelperShadowsImports(tokens, helper, expectation);
+  const helperShadowsImports = clientHelperShadowsImports(
+    tokens,
+    helper,
+    expectation
+  );
   const shadowsBindings = operationParametersShadowBindings(
     tokens,
     helper,
@@ -1198,7 +1328,7 @@ const exportedOperationsUseClientHelperAndGateway = (
     authorized,
     authorizedArrow,
     operation,
-    operationArrow,
+    operationArrow
   );
   return (
     hasExactGeneratedOperationParameters(
@@ -1208,7 +1338,7 @@ const exportedOperationsUseClientHelperAndGateway = (
       authorizedArrow,
       operation,
       operationArrow,
-      expectation,
+      expectation
     ) &&
     authorizedUsesHelper &&
     operationUsesGateway &&
@@ -1217,7 +1347,10 @@ const exportedOperationsUseClientHelperAndGateway = (
   );
 };
 
-export const generatedApiGroup = (source: string, ownerApiValue: string): string | undefined => {
+export const generatedApiGroup = (
+  source: string,
+  ownerApiValue: string
+): string | undefined => {
   const tokens = tokenizeGovernedClient(source);
   const apiDeclaration = findTopLevelSequence(
     tokens,
@@ -1231,7 +1364,7 @@ export const generatedApiGroup = (source: string, ownerApiValue: string): string
       [SyntaxKind.Identifier, 'make'],
     ],
     0,
-    tokens.length,
+    tokens.length
   );
   if (apiDeclaration === undefined) {
     return undefined;
@@ -1240,7 +1373,7 @@ export const generatedApiGroup = (source: string, ownerApiValue: string): string
     tokens,
     [[SyntaxKind.SemicolonToken]],
     apiDeclaration + 7,
-    tokens.length,
+    tokens.length
   );
   if (declarationEnd === undefined) {
     return undefined;
@@ -1279,7 +1412,11 @@ export const generatedApiGroup = (source: string, ownerApiValue: string): string
     ) {
       return false;
     }
-    const endpointAddClose = findClosingParenthesis(tokens, endpointAdd + 2, outerCallClose + 1);
+    const endpointAddClose = findClosingParenthesis(
+      tokens,
+      endpointAdd + 2,
+      outerCallClose + 1
+    );
     return (
       endpointAddClose !== undefined &&
       isOptionalTrailingComma(tokens, endpointAddClose + 1, outerCallClose)
@@ -1292,13 +1429,17 @@ export const generatedApiGroup = (source: string, ownerApiValue: string): string
       : undefined;
   const hasExactApiRoot =
     makeClose !== undefined &&
-    matchesSequence(tokens, makeOpen + 1, [[SyntaxKind.StringLiteral, ownerApiValue]]) &&
+    matchesSequence(tokens, makeOpen + 1, [
+      [SyntaxKind.StringLiteral, ownerApiValue],
+    ]) &&
     isOptionalTrailingComma(tokens, makeOpen + 2, makeClose);
   if (makeClose === undefined) {
     return undefined;
   }
   const group = makeClose + 1;
-  return hasExactApiRoot && matchesSequence(tokens, group, sequence) && isExactGroupArgument(group)
+  return hasExactApiRoot &&
+    matchesSequence(tokens, group, sequence) &&
+    isExactGroupArgument(group)
     ? tokenValue(tokens, group + 7)
     : undefined;
 };
@@ -1307,7 +1448,7 @@ const hasGeneratedEndpointContract = (
   source: string,
   ownerApiValue: string,
   groupName: string,
-  endpointPath: string,
+  endpointPath: string
 ): boolean => {
   const tokens = tokenizeGovernedClient(source);
   const declaration = findTopLevelSequence(
@@ -1319,10 +1460,12 @@ const hasGeneratedEndpointContract = (
       [SyntaxKind.EqualsToken],
     ],
     0,
-    tokens.length,
+    tokens.length
   );
   const declarationEnd =
-    declaration === undefined ? undefined : findStatementSemicolon(tokens, declaration);
+    declaration === undefined
+      ? undefined
+      : findStatementSemicolon(tokens, declaration);
   if (declaration === undefined || declarationEnd === undefined) {
     return false;
   }
@@ -1340,7 +1483,7 @@ const hasGeneratedEndpointContract = (
       [SyntaxKind.OpenParenToken],
     ],
     declaration,
-    declarationEnd,
+    declarationEnd
   );
   if (groupMake === undefined) {
     return false;
@@ -1360,7 +1503,11 @@ const hasGeneratedEndpointContract = (
   const endpointClose = matchesSequence(tokens, endpoint, endpointSequence)
     ? findClosingParenthesis(tokens, endpointOpen, declarationEnd)
     : undefined;
-  const groupAddClose = findClosingParenthesis(tokens, groupAddOpen, declarationEnd);
+  const groupAddClose = findClosingParenthesis(
+    tokens,
+    groupAddOpen,
+    declarationEnd
+  );
   return (
     endpointClose !== undefined &&
     groupAddClose !== undefined &&
@@ -1372,7 +1519,7 @@ export const hasGeneratedProviderApiContract = (
   ownerApiValue: string,
   moduleId: string,
   name: string,
-  kind: 'report' | 'search',
+  kind: 'report' | 'search'
 ): boolean => {
   const groupName = generatedApiGroup(source, ownerApiValue);
   return (
@@ -1381,7 +1528,7 @@ export const hasGeneratedProviderApiContract = (
       source,
       ownerApiValue,
       groupName,
-      `/${moduleId}/${kind === 'report' ? 'reports' : 'search'}/${name}`,
+      `/${moduleId}/${kind === 'report' ? 'reports' : 'search'}/${name}`
     )
   );
 };
@@ -1390,15 +1537,23 @@ export const hasGeneratedModuleApiContract = (
   source: string,
   ownerApiValue: string,
   groupName: string,
-  stem: string,
-): boolean => hasGeneratedEndpointContract(source, ownerApiValue, groupName, `/reads/${stem}`);
+  stem: string
+): boolean =>
+  hasGeneratedEndpointContract(
+    source,
+    ownerApiValue,
+    groupName,
+    `/reads/${stem}`
+  );
 
 const topLevelCallObject = (
   tokens: readonly GovernedClientToken[],
   exportedName: string,
   callee: string,
-  requireExport = true,
-): readonly [open: number, close: number, declarationEnd: number] | undefined => {
+  requireExport = true
+):
+  | readonly [open: number, close: number, declarationEnd: number]
+  | undefined => {
   const declaration = findTopLevelSequence(
     tokens,
     [
@@ -1411,7 +1566,7 @@ const topLevelCallObject = (
       [SyntaxKind.OpenBraceToken],
     ],
     0,
-    tokens.length,
+    tokens.length
   );
   if (declaration === undefined) {
     return undefined;
@@ -1478,7 +1633,7 @@ const withoutTrailingCommas = (tokens: readonly GovernedClientToken[]) =>
         SyntaxKind.CloseBraceToken,
         SyntaxKind.CloseParenToken,
         SyntaxKind.CloseBracketToken,
-      ].includes(tokens[index + 1]?.kind ?? SyntaxKind.Unknown),
+      ].includes(tokens[index + 1]?.kind ?? SyntaxKind.Unknown)
   );
 
 const SOURCE_VALUE_TOKEN_KINDS = new Set([
@@ -1495,16 +1650,19 @@ const SOURCE_VALUE_TOKEN_KINDS = new Set([
 
 const hasExactSourceTokens = (
   tokens: readonly GovernedClientToken[],
-  expected: string,
+  expected: string
 ): boolean => {
   const actualTokens = withoutTrailingCommas(tokens);
-  const expectedTokens = withoutTrailingCommas(tokenizeGovernedClient(expected));
+  const expectedTokens = withoutTrailingCommas(
+    tokenizeGovernedClient(expected)
+  );
   return (
     actualTokens.length === expectedTokens.length &&
     expectedTokens.every(
       (token, index) =>
         actualTokens[index]?.kind === token.kind &&
-        (!SOURCE_VALUE_TOKEN_KINDS.has(token.kind) || actualTokens[index]?.value === token.value),
+        (!SOURCE_VALUE_TOKEN_KINDS.has(token.kind) ||
+          actualTokens[index]?.value === token.value)
     )
   );
 };
@@ -1512,22 +1670,23 @@ const hasExactSourceTokens = (
 export const hasEngagementLifecycleRegistrationContract = (
   source: string,
   registrationSource: string,
-  action: string,
+  action: string
 ): boolean => {
   const identity =
     /^(?<transition>archive|unarchive)-(?<subject>organization|person)-engagement$/u.exec(
-      action,
+      action
     )?.groups;
   if (
     identity === undefined ||
     !hasExactSourceTokens(
       tokenizeGovernedClient(registrationSource),
-      engagementLifecycleRegistrationContract,
+      engagementLifecycleRegistrationContract
     )
   ) {
     return false;
   }
-  const subject = identity.subject === 'organization' ? 'Organization' : 'Person';
+  const subject =
+    identity.subject === 'organization' ? 'Organization' : 'Person';
   const exportedName = `${toCamelCase(action)}Action`;
   const payload = `${subject}EngagementLifecyclePayload`;
   const result = `${subject}EngagementProfile`;
@@ -1550,7 +1709,7 @@ export const hasEngagementLifecycleRegistrationContract = (
       import { handleEngagementLifecycle } from './engagement-lifecycle-handler.ts';
       import { engagementLifecycleRegistration } from './engagement-lifecycle-registration.ts';
       export const ${exportedName} = defineAction(
-    `,
+    `
     ) &&
     hasExactSourceTokens(
       tokens.slice(open, close + 1),
@@ -1558,7 +1717,7 @@ export const hasEngagementLifecycleRegistrationContract = (
       ...engagementLifecycleRegistration<${payload}>('party.registry.${action}'),
       payloadSchema: ${payload}Schema,
       resultSchema: ${result}Schema,
-    }`,
+    }`
     ) &&
     [
       'defineAction',
@@ -1574,33 +1733,37 @@ const objectHasExactString = (
   open: number,
   close: number,
   property: string,
-  value: string,
+  value: string
 ): boolean =>
   directObjectPropertyOccurrences(tokens, open, close, property) === 1 &&
-  hasExactObjectPropertyValue(tokens, findObjectPropertyValue(tokens, open, close, property), [
-    [SyntaxKind.StringLiteral, value],
-  ]);
+  hasExactObjectPropertyValue(
+    tokens,
+    findObjectPropertyValue(tokens, open, close, property),
+    [[SyntaxKind.StringLiteral, value]]
+  );
 
 const objectHasExactStrings = (
   tokens: readonly GovernedClientToken[],
   open: number,
   close: number,
-  expected: Readonly<Record<string, string>>,
+  expected: Readonly<Record<string, string>>
 ): boolean =>
   Object.entries(expected).every(([property, value]) =>
-    objectHasExactString(tokens, open, close, property, value),
+    objectHasExactString(tokens, open, close, property, value)
   );
 
 const objectReferencesEntrypoint = (
   tokens: readonly GovernedClientToken[],
   open: number,
   close: number,
-  entrypoint: string,
+  entrypoint: string
 ): boolean =>
   directObjectPropertyOccurrences(tokens, open, close, 'entrypoint') === 1 &&
-  hasExactObjectPropertyValue(tokens, findObjectPropertyValue(tokens, open, close, 'entrypoint'), [
-    [SyntaxKind.Identifier, entrypoint],
-  ]);
+  hasExactObjectPropertyValue(
+    tokens,
+    findObjectPropertyValue(tokens, open, close, 'entrypoint'),
+    [[SyntaxKind.Identifier, entrypoint]]
+  );
 
 export interface GeneratedReadAuthorization {
   readonly kind: 'authenticated_principal' | 'context_permission' | 'public';
@@ -1611,7 +1774,7 @@ const objectStringProperty = (
   tokens: readonly GovernedClientToken[],
   open: number,
   close: number,
-  property: string,
+  property: string
 ): string | undefined => {
   const start = findObjectPropertyValue(tokens, open, close, property);
   return start !== undefined &&
@@ -1623,7 +1786,7 @@ const objectStringProperty = (
 const authorizationObject = (
   tokens: readonly GovernedClientToken[],
   open: number,
-  close: number,
+  close: number
 ): GeneratedReadAuthorization | undefined => {
   const kind = objectStringProperty(tokens, open, close, 'kind');
   const properties = directObjectPropertyNames(tokens, open, close);
@@ -1638,17 +1801,22 @@ const authorizationObject = (
   if (kind !== 'authenticated_principal' && kind !== 'public') {
     return undefined;
   }
-  return hasExactProperties(properties, new Set(['kind'])) ? { kind } : undefined;
+  return hasExactProperties(properties, new Set(['kind']))
+    ? { kind }
+    : undefined;
 };
 
 const nestedObjectRange = (
   tokens: readonly GovernedClientToken[],
   open: number,
   close: number,
-  property: string,
+  property: string
 ): readonly [number, number] | undefined => {
   const value = findObjectPropertyValue(tokens, open, close, property);
-  if (value === undefined || tokenKind(tokens, value) !== SyntaxKind.OpenBraceToken) {
+  if (
+    value === undefined ||
+    tokenKind(tokens, value) !== SyntaxKind.OpenBraceToken
+  ) {
     return undefined;
   }
   const end = findClosingBrace(tokens, value);
@@ -1658,9 +1826,11 @@ const nestedObjectRange = (
 const generatedReadAuthorization = (
   tokens: readonly GovernedClientToken[],
   open: number,
-  close: number,
+  close: number
 ): GeneratedReadAuthorization | undefined => {
-  if (directObjectPropertyOccurrences(tokens, open, close, 'authorization') !== 1) {
+  if (
+    directObjectPropertyOccurrences(tokens, open, close, 'authorization') !== 1
+  ) {
     return undefined;
   }
   const range = nestedObjectRange(tokens, open, close, 'authorization');
@@ -1671,18 +1841,19 @@ const generatedReadAuthorization = (
 
 const matchesGeneratedReadAuthorization = (
   actual: GeneratedReadAuthorization | undefined,
-  expected: GeneratedReadAuthorization | undefined,
+  expected: GeneratedReadAuthorization | undefined
 ): boolean =>
   actual !== undefined &&
   (expected === undefined ||
-    (actual.kind === expected.kind && actual.permission === expected.permission));
+    (actual.kind === expected.kind &&
+      actual.permission === expected.permission));
 
 const hasGeneratedReadContract = (
   source: string,
   moduleId: string,
   name: string,
   role: 'api' | 'report' | 'search',
-  authorization?: GeneratedReadAuthorization,
+  authorization?: GeneratedReadAuthorization
 ): boolean => {
   const tokens = tokenizeGovernedClient(source);
   const camel = toCamelCase(name);
@@ -1691,7 +1862,7 @@ const hasGeneratedReadContract = (
     tokens,
     entrypointName,
     'defineTenantModuleEntrypoint',
-    false,
+    false
   );
   const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
   if (entrypoint === undefined || read === undefined) {
@@ -1704,7 +1875,7 @@ const hasGeneratedReadContract = (
     directObjectHasNoSpread(tokens, readOpen, readClose) &&
     matchesGeneratedReadAuthorization(
       generatedReadAuthorization(tokens, entrypointOpen, entrypointClose),
-      authorization,
+      authorization
     ) &&
     matchesSequence(tokens, entrypointClose + 1, [
       [SyntaxKind.CloseParenToken],
@@ -1731,22 +1902,31 @@ export const hasGeneratedProviderReadContract = (
   moduleId: string,
   name: string,
   kind: 'report' | 'search',
-  authorization?: GeneratedReadAuthorization,
+  authorization?: GeneratedReadAuthorization
 ): boolean =>
   hasGeneratedReadContract(source, moduleId, name, kind, authorization) &&
   (() => {
     const tokens = tokenizeGovernedClient(source);
-    const read = topLevelCallObject(tokens, `${toCamelCase(name)}Read`, 'defineRead');
+    const read = topLevelCallObject(
+      tokens,
+      `${toCamelCase(name)}Read`,
+      'defineRead'
+    );
     return (
       read !== undefined &&
       objectHasExactString(tokens, read[0], read[1], 'accessKind', kind) &&
-      directObjectPropertyOccurrences(tokens, read[0], read[1], 'legalEntityScope') === 1
+      directObjectPropertyOccurrences(
+        tokens,
+        read[0],
+        read[1],
+        'legalEntityScope'
+      ) === 1
     );
   })();
 
 const enclosingBraceRange = (
   tokens: readonly GovernedClientToken[],
-  index: number,
+  index: number
 ): readonly [start: number, end: number] | undefined => {
   const openBraces: number[] = [];
   for (let cursor = 0; cursor <= index; cursor += 1) {
@@ -1766,18 +1946,18 @@ export const hasMatchingGeneratedProviderAuthorization = (
   manifest: string,
   moduleId: string,
   name: string,
-  kind: 'report' | 'search',
+  kind: 'report' | 'search'
 ): boolean => {
   const providerTokens = tokenizeGovernedClient(providerSource);
   const entrypoint = topLevelCallObject(
     providerTokens,
     `${toCamelCase(name)}Entrypoint`,
     'defineTenantModuleEntrypoint',
-    false,
+    false
   );
   const shellSlot = generatedSlotSource(
     manifest,
-    kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
+    kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT
   );
   if (entrypoint === undefined || shellSlot === undefined) {
     return false;
@@ -1792,10 +1972,12 @@ export const hasMatchingGeneratedProviderAuthorization = (
     ],
     0,
     shellTokens.length,
-    1,
+    1
   );
   const contribution =
-    identity === undefined ? undefined : enclosingBraceRange(shellTokens, identity);
+    identity === undefined
+      ? undefined
+      : enclosingBraceRange(shellTokens, identity);
   const manifestEntrypoint =
     contribution === undefined
       ? undefined
@@ -1806,17 +1988,23 @@ export const hasMatchingGeneratedProviderAuthorization = (
   const providerAuthorization = generatedReadAuthorization(
     providerTokens,
     entrypoint[0],
-    entrypoint[1],
+    entrypoint[1]
   );
-  const manifestAuthorization = generatedReadAuthorization(shellTokens, ...manifestEntrypoint);
-  return matchesGeneratedReadAuthorization(providerAuthorization, manifestAuthorization);
+  const manifestAuthorization = generatedReadAuthorization(
+    shellTokens,
+    ...manifestEntrypoint
+  );
+  return matchesGeneratedReadAuthorization(
+    providerAuthorization,
+    manifestAuthorization
+  );
 };
 
 export const hasGeneratedModuleApiReadContract = (
   source: string,
   moduleId: string,
   name: string,
-  authorization?: GeneratedReadAuthorization,
+  authorization?: GeneratedReadAuthorization
 ): boolean => {
   const tokens = tokenizeGovernedClient(source);
   const camel = toCamelCase(name);
@@ -1825,22 +2013,29 @@ export const hasGeneratedModuleApiReadContract = (
     tokens,
     entrypointName,
     'defineTenantModuleEntrypoint',
-    false,
+    false
   );
   const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
   if (entrypoint === undefined || read === undefined) {
     return false;
   }
-  const access = findObjectPropertyValue(tokens, entrypoint[0], entrypoint[1], 'access');
+  const access = findObjectPropertyValue(
+    tokens,
+    entrypoint[0],
+    entrypoint[1],
+    'access'
+  );
   return (
     directObjectHasNoSpread(tokens, entrypoint[0], entrypoint[1]) &&
     directObjectHasNoSpread(tokens, read[0], read[1]) &&
     matchesGeneratedReadAuthorization(
       generatedReadAuthorization(tokens, entrypoint[0], entrypoint[1]),
-      authorization,
+      authorization
     ) &&
     ['read', 'historical_read'].some((value) =>
-      hasExactObjectPropertyValue(tokens, access, [[SyntaxKind.StringLiteral, value]]),
+      hasExactObjectPropertyValue(tokens, access, [
+        [SyntaxKind.StringLiteral, value],
+      ])
     ) &&
     objectHasExactStrings(tokens, entrypoint[0], entrypoint[1], {
       entrypointKey: `${moduleId}.api.${name}`,
@@ -1849,7 +2044,9 @@ export const hasGeneratedModuleApiReadContract = (
     }) &&
     objectReferencesEntrypoint(tokens, read[0], read[1], entrypointName) &&
     ['legalEntityScope', 'permissionTarget', 'policies'].every(
-      (property) => directObjectPropertyOccurrences(tokens, read[0], read[1], property) === 1,
+      (property) =>
+        directObjectPropertyOccurrences(tokens, read[0], read[1], property) ===
+        1
     ) &&
     objectHasExactStrings(tokens, read[0], read[1], {
       owningModuleKey: moduleId,
@@ -1861,14 +2058,16 @@ export const hasGeneratedModuleApiReadContract = (
 
 export const hasGeneratedGovernedClientContract = (
   source: string,
-  expectation: GovernedClientExpectation,
+  expectation: GovernedClientExpectation
 ): boolean => {
   if (!source.startsWith(expectation.generatedHeader)) {
     return false;
   }
   const tokens = tokenizeGovernedClient(source);
   const declarations = exportedConsts(tokens);
-  const authorized = declarations.find(({ name }) => name.endsWith('WithAuthorization'));
+  const authorized = declarations.find(({ name }) =>
+    name.endsWith('WithAuthorization')
+  );
   if (authorized === undefined) {
     return false;
   }
@@ -1880,7 +2079,7 @@ export const hasGeneratedGovernedClientContract = (
       tokens,
       helper,
       expectation.ownerApiValue,
-      expectation.defaultApiPrefix,
+      expectation.defaultApiPrefix
     ) &&
     exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation) &&
     hasOnlyAllowedModuleStatements(tokens, helper, expectation) &&
@@ -1892,12 +2091,16 @@ export const hasGeneratedGovernedClientContract = (
       helper.name,
     ].every((name) => identifierOccurrences(tokens, name) === 2) &&
     !tokens.some(
-      ({ value }) => value === 'makeEffectHttpApiClient' || value === 'HttpClientRequest',
+      ({ value }) =>
+        value === 'makeEffectHttpApiClient' || value === 'HttpClientRequest'
     )
   );
 };
 
-const slotHasDirectPropertyKey = (source: string | undefined, key: string): boolean => {
+const slotHasDirectPropertyKey = (
+  source: string | undefined,
+  key: string
+): boolean => {
   if (source === undefined) {
     return false;
   }
@@ -1909,8 +2112,8 @@ const slotHasDirectPropertyKey = (source: string | undefined, key: string): bool
         [[keyKind, key], [SyntaxKind.ColonToken]],
         0,
         tokens.length,
-        0,
-      ) !== undefined,
+        0
+      ) !== undefined
   );
 };
 
@@ -1918,13 +2121,17 @@ const directPropertyKeyOccurrences = (source: string, key: string): number => {
   const tokens = tokenizeGovernedClient(source);
   let count = 0;
   for (const keyKind of [SyntaxKind.StringLiteral, SyntaxKind.Identifier]) {
-    count += sequenceOccurrencesAtBraceDepth(tokens, [[keyKind, key], [SyntaxKind.ColonToken]], 0);
+    count += sequenceOccurrencesAtBraceDepth(
+      tokens,
+      [[keyKind, key], [SyntaxKind.ColonToken]],
+      0
+    );
   }
   return count;
 };
 
 const topLevelCommaSeparatedRanges = (
-  tokens: readonly GovernedClientToken[],
+  tokens: readonly GovernedClientToken[]
 ): readonly (readonly [start: number, end: number])[] | undefined => {
   const ranges: (readonly [number, number])[] = [];
   const depth = new DelimiterDepth();
@@ -1951,7 +2158,9 @@ const topLevelCommaSeparatedRanges = (
   return ranges;
 };
 
-const directSlotPropertyNames = (source: string | undefined): readonly string[] | undefined => {
+const directSlotPropertyNames = (
+  source: string | undefined
+): readonly string[] | undefined => {
   if (source === undefined) {
     return undefined;
   }
@@ -1964,7 +2173,8 @@ const directSlotPropertyNames = (source: string | undefined): readonly string[] 
   for (const [start] of ranges) {
     const key = tokens[start];
     if (
-      (key?.kind !== SyntaxKind.Identifier && key?.kind !== SyntaxKind.StringLiteral) ||
+      (key?.kind !== SyntaxKind.Identifier &&
+        key?.kind !== SyntaxKind.StringLiteral) ||
       tokenKind(tokens, start + 1) !== SyntaxKind.ColonToken
     ) {
       return undefined;
@@ -1977,40 +2187,59 @@ const directSlotPropertyNames = (source: string | undefined): readonly string[] 
 const hasRelatedSequenceInObject = (
   tokens: readonly GovernedClientToken[],
   anchor: readonly ExpectedToken[],
-  related: readonly ExpectedToken[],
+  related: readonly ExpectedToken[]
 ): boolean => {
-  const anchorIndex = findSequenceAtBraceDepth(tokens, anchor, 0, tokens.length, 1);
-  const range = anchorIndex === undefined ? undefined : enclosingBraceRange(tokens, anchorIndex);
+  const anchorIndex = findSequenceAtBraceDepth(
+    tokens,
+    anchor,
+    0,
+    tokens.length,
+    1
+  );
+  const range =
+    anchorIndex === undefined
+      ? undefined
+      : enclosingBraceRange(tokens, anchorIndex);
   return (
     range !== undefined &&
-    findSequenceAtBraceDepth(tokens, related, range[0], range[1], 1) !== undefined
+    findSequenceAtBraceDepth(tokens, related, range[0], range[1], 1) !==
+      undefined
   );
 };
 
 const registrationIdentityIsExclusiveToSlot = (
   registration: string,
   name: string,
-  intendedSlot: readonly [string, string],
+  intendedSlot: readonly [string, string]
 ): boolean =>
-  [REGISTRATION_API_SLOT, REGISTRATION_REPORT_SLOT, REGISTRATION_SEARCH_SLOT].every((slot) => {
+  [
+    REGISTRATION_API_SLOT,
+    REGISTRATION_REPORT_SLOT,
+    REGISTRATION_SEARCH_SLOT,
+  ].every((slot) => {
     const source = generatedSlotSource(registration, slot);
-    return slot === intendedSlot ? source !== undefined : !slotHasDirectPropertyKey(source, name);
+    return slot === intendedSlot
+      ? source !== undefined
+      : !slotHasDirectPropertyKey(source, name);
   });
 
 export const hasGeneratedProviderRegistration = (
   registration: string,
   name: string,
-  kind: 'report' | 'search',
+  kind: 'report' | 'search'
 ): boolean => {
   const slot = generatedSlotSource(
     registration,
-    kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
+    kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT
   );
   if (slot === undefined) {
     return false;
   }
-  const intendedSlot = kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT;
-  if (!registrationIdentityIsExclusiveToSlot(registration, name, intendedSlot)) {
+  const intendedSlot =
+    kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT;
+  if (
+    !registrationIdentityIsExclusiveToSlot(registration, name, intendedSlot)
+  ) {
     return false;
   }
   const tokens = tokenizeGovernedClient(slot);
@@ -2031,8 +2260,13 @@ export const hasGeneratedProviderRegistration = (
     [SyntaxKind.StringLiteral, SyntaxKind.Identifier].some((keyKind) => {
       const key: ExpectedToken = [keyKind, name];
       return (
-        findSequenceAtBraceDepth(tokens, [key, ...registrationTail], 0, tokens.length, 0) !==
-        undefined
+        findSequenceAtBraceDepth(
+          tokens,
+          [key, ...registrationTail],
+          0,
+          tokens.length,
+          0
+        ) !== undefined
       );
     })
   );
@@ -2041,7 +2275,7 @@ export const hasGeneratedProviderRegistration = (
 const hasProviderShellEntrypoint = (
   tokens: readonly GovernedClientToken[],
   contribution: readonly [number, number],
-  identity: Readonly<Record<string, string>>,
+  identity: Readonly<Record<string, string>>
 ): boolean => {
   const range = nestedObjectRange(tokens, ...contribution, 'entrypoint');
   return (
@@ -2053,15 +2287,19 @@ const hasProviderShellEntrypoint = (
 
 const slotOmitsIdentity = (
   source: string | undefined,
-  identity: readonly ExpectedToken[],
+  identity: readonly ExpectedToken[]
 ): boolean =>
   source === undefined ||
-  sequenceOccurrencesAtBraceDepth(tokenizeGovernedClient(source), identity, 1) === 0;
+  sequenceOccurrencesAtBraceDepth(
+    tokenizeGovernedClient(source),
+    identity,
+    1
+  ) === 0;
 
 const hasOwnedProviderDescriptor = (
   tokens: readonly GovernedClientToken[],
   identity: readonly ExpectedToken[],
-  moduleId: string,
+  moduleId: string
 ): boolean =>
   sequenceOccurrencesAtBraceDepth(tokens, identity, 1) === 1 &&
   hasRelatedSequenceInObject(tokens, identity, [
@@ -2077,7 +2315,7 @@ const hasOwnedProviderShellContribution = (
   shellContributionKey: string,
   moduleId: string,
   kind: 'report' | 'search',
-  descriptorKey: string,
+  descriptorKey: string
 ): boolean =>
   sequenceOccurrencesAtBraceDepth(shellTokens, shellIdentity, 1) === 1 &&
   shellContribution !== undefined &&
@@ -2098,9 +2336,14 @@ export const hasGeneratedProviderManifest = (
   manifest: string,
   moduleId: string,
   name: string,
-  kind: 'report' | 'search',
+  kind: 'report' | 'search'
 ): boolean => {
-  const [descriptorMarkers, shellMarkers, otherDescriptorMarkers, otherShellMarkers] =
+  const [
+    descriptorMarkers,
+    shellMarkers,
+    otherDescriptorMarkers,
+    otherShellMarkers,
+  ] =
     kind === 'report'
       ? [
           MANIFEST_REPORT_SLOT,
@@ -2133,21 +2376,28 @@ export const hasGeneratedProviderManifest = (
     [SyntaxKind.ColonToken],
     [SyntaxKind.StringLiteral, shellContributionKey],
   ] satisfies readonly ExpectedToken[];
-  const otherDescriptorSlot = generatedSlotSource(manifest, otherDescriptorMarkers);
+  const otherDescriptorSlot = generatedSlotSource(
+    manifest,
+    otherDescriptorMarkers
+  );
   const otherShellSlot = generatedSlotSource(manifest, otherShellMarkers);
   const shellIdentityIndex = findSequenceAtBraceDepth(
     shellTokens,
     shellIdentity,
     0,
     shellTokens.length,
-    1,
+    1
   );
   const shellContribution =
     shellIdentityIndex === undefined
       ? undefined
       : enclosingBraceRange(shellTokens, shellIdentityIndex);
   return (
-    hasOwnedProviderDescriptor(descriptorTokens, descriptorIdentity, moduleId) &&
+    hasOwnedProviderDescriptor(
+      descriptorTokens,
+      descriptorIdentity,
+      moduleId
+    ) &&
     hasOwnedProviderShellContribution(
       shellTokens,
       shellIdentity,
@@ -2155,7 +2405,7 @@ export const hasGeneratedProviderManifest = (
       shellContributionKey,
       moduleId,
       kind,
-      descriptorKey,
+      descriptorKey
     ) &&
     slotOmitsIdentity(otherDescriptorSlot, descriptorIdentity) &&
     slotOmitsIdentity(otherShellSlot, shellIdentity)
@@ -2172,12 +2422,15 @@ const slotProviderNames = (
   moduleId: string,
   kind: GeneratedProviderIdentity['kind'],
   identityProperty: 'contributionKey' | 'key',
-  depth: number,
+  depth: number
 ): readonly string[] => {
   if (source === undefined || moduleId.length === 0) {
     return [];
   }
-  const prefix = identityProperty === 'contributionKey' ? `${moduleId}.${kind}.` : `${moduleId}.`;
+  const prefix =
+    identityProperty === 'contributionKey'
+      ? `${moduleId}.${kind}.`
+      : `${moduleId}.`;
   const tokens = tokenizeGovernedClient(source);
   const names: string[] = [];
   let braceDepth = 0;
@@ -2201,16 +2454,18 @@ const slotProviderNames = (
   return names;
 };
 
-const registrationProviderNames = (source: string | undefined): readonly string[] =>
+const registrationProviderNames = (
+  source: string | undefined
+): readonly string[] =>
   (directSlotPropertyNames(source) ?? []).filter((name) =>
-    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name),
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name)
   );
 
 const providerIdentitySlotIsExact = (
   source: string | undefined,
   names: readonly string[],
   identityProperty: 'contributionKey' | 'key',
-  depth: number,
+  depth: number
 ): boolean =>
   source !== undefined &&
   sequenceOccurrencesAtBraceDepth(
@@ -2220,10 +2475,12 @@ const providerIdentitySlotIsExact = (
       [SyntaxKind.ColonToken],
       [SyntaxKind.StringLiteral],
     ],
-    depth,
+    depth
   ) === names.length;
 
-const sameUniqueNames = (...collections: readonly (readonly string[])[]): boolean => {
+const sameUniqueNames = (
+  ...collections: readonly (readonly string[])[]
+): boolean => {
   const [first, ...remaining] = collections;
   if (first === undefined || new Set(first).size !== first.length) {
     return false;
@@ -2233,14 +2490,14 @@ const sameUniqueNames = (...collections: readonly (readonly string[])[]): boolea
     (names) =>
       names.length === expected.size &&
       new Set(names).size === names.length &&
-      names.every((name) => expected.has(name)),
+      names.every((name) => expected.has(name))
   );
 };
 
 export const hasExactGeneratedProviderIdentityTopology = (
   manifest: string,
   registration: string,
-  moduleId: string,
+  moduleId: string
 ): boolean => {
   const slotsPresent =
     [
@@ -2250,7 +2507,7 @@ export const hasExactGeneratedProviderIdentityTopology = (
       MANIFEST_SHELL_SEARCH_SLOT,
     ].some((slot) => generatedSlotSource(manifest, slot) !== undefined) ||
     [REGISTRATION_REPORT_SLOT, REGISTRATION_SEARCH_SLOT].some(
-      (slot) => generatedSlotSource(registration, slot) !== undefined,
+      (slot) => generatedSlotSource(registration, slot) !== undefined
     );
   if (!slotsPresent) {
     return true;
@@ -2258,25 +2515,44 @@ export const hasExactGeneratedProviderIdentityTopology = (
   return (['report', 'search'] as const).every((kind) => {
     const descriptorSlot = generatedSlotSource(
       manifest,
-      kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT,
+      kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT
     );
     const shellSlot = generatedSlotSource(
       manifest,
-      kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
+      kind === 'report'
+        ? MANIFEST_SHELL_REPORT_SLOT
+        : MANIFEST_SHELL_SEARCH_SLOT
     );
     const registrationSlot = generatedSlotSource(
       registration,
-      kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
+      kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT
     );
-    const descriptorNames = slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1);
-    const shellNames = slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1);
+    const descriptorNames = slotProviderNames(
+      descriptorSlot,
+      moduleId,
+      kind,
+      'key',
+      1
+    );
+    const shellNames = slotProviderNames(
+      shellSlot,
+      moduleId,
+      kind,
+      'contributionKey',
+      1
+    );
     const directRegistrationNames = directSlotPropertyNames(registrationSlot);
     const registrationNames = registrationProviderNames(registrationSlot);
     return (
       directRegistrationNames !== undefined &&
       directRegistrationNames.length === registrationNames.length &&
       providerIdentitySlotIsExact(descriptorSlot, descriptorNames, 'key', 1) &&
-      providerIdentitySlotIsExact(shellSlot, shellNames, 'contributionKey', 1) &&
+      providerIdentitySlotIsExact(
+        shellSlot,
+        shellNames,
+        'contributionKey',
+        1
+      ) &&
       sameUniqueNames(descriptorNames, shellNames, registrationNames)
     );
   });
@@ -2285,21 +2561,23 @@ export const hasExactGeneratedProviderIdentityTopology = (
 export const generatedProviderIdentities = (
   manifest: string,
   registration: string,
-  moduleId: string,
+  moduleId: string
 ): readonly GeneratedProviderIdentity[] => {
   const identities = new Map<string, GeneratedProviderIdentity>();
   for (const kind of ['report', 'search'] as const) {
     const descriptorSlot = generatedSlotSource(
       manifest,
-      kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT,
+      kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT
     );
     const shellSlot = generatedSlotSource(
       manifest,
-      kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
+      kind === 'report'
+        ? MANIFEST_SHELL_REPORT_SLOT
+        : MANIFEST_SHELL_SEARCH_SLOT
     );
     const registrationSlot = generatedSlotSource(
       registration,
-      kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
+      kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT
     );
     const names = [
       ...slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1),
@@ -2316,7 +2594,7 @@ export const generatedProviderIdentities = (
 const hasExactGeneratedGatewayFactory = (
   tokens: readonly GovernedClientToken[],
   start: number,
-  end: number,
+  end: number
 ): boolean => {
   const expected = [
     [SyntaxKind.ExportKeyword],
@@ -2339,14 +2617,25 @@ const hasExactGeneratedGatewayFactory = (
     [SyntaxKind.CloseParenToken],
     [SyntaxKind.SemicolonToken],
   ] satisfies readonly ExpectedToken[];
-  return start + expected.length === end + 1 && matchesSequence(tokens, start, expected);
+  return (
+    start + expected.length === end + 1 &&
+    matchesSequence(tokens, start, expected)
+  );
 };
 
-const hasGatewayBindingMutation = (tokens: readonly GovernedClientToken[]): boolean => {
-  const protectedBindings = new Set(['makeOperationGateway', 'operationGateway']);
+const hasGatewayBindingMutation = (
+  tokens: readonly GovernedClientToken[]
+): boolean => {
+  const protectedBindings = new Set([
+    'makeOperationGateway',
+    'operationGateway',
+  ]);
   for (let index = 0; index < tokens.length; index += 1) {
     const binding = tokens[index];
-    if (binding?.kind !== SyntaxKind.Identifier || !protectedBindings.has(binding.value)) {
+    if (
+      binding?.kind !== SyntaxKind.Identifier ||
+      !protectedBindings.has(binding.value)
+    ) {
       continue;
     }
     if (
@@ -2357,7 +2646,7 @@ const hasGatewayBindingMutation = (tokens: readonly GovernedClientToken[]): bool
           [SyntaxKind.Identifier, operation],
           [SyntaxKind.OpenParenToken],
           [SyntaxKind.Identifier, binding.value],
-        ]),
+        ])
       ) ||
       matchesSequence(tokens, index - 4, [
         [SyntaxKind.Identifier, 'Reflect'],
@@ -2371,7 +2660,7 @@ const hasGatewayBindingMutation = (tokens: readonly GovernedClientToken[]): bool
           tokens,
           [[SyntaxKind.EqualsToken]],
           index + 2,
-          findStatementSemicolon(tokens, index) ?? tokens.length,
+          findStatementSemicolon(tokens, index) ?? tokens.length
         ) !== undefined)
     ) {
       return true;
@@ -2382,7 +2671,7 @@ const hasGatewayBindingMutation = (tokens: readonly GovernedClientToken[]): bool
 
 export const hasGeneratedOperationGatewayContract = (
   source: string,
-  deploymentAppId: string,
+  deploymentAppId: string
 ): boolean => {
   const header = `// @generated by OntOS Codesmith MicroVertical Action Boundary v1\n// @ontos-action-boundary-owner ${deploymentAppId}\n`;
   if (!source.startsWith(header)) {
@@ -2402,7 +2691,7 @@ export const hasGeneratedOperationGatewayContract = (
       [SyntaxKind.SemicolonToken],
     ],
     0,
-    tokens.length,
+    tokens.length
   );
   const factory = findTopLevelSequence(
     tokens,
@@ -2413,15 +2702,16 @@ export const hasGeneratedOperationGatewayContract = (
       [SyntaxKind.EqualsToken],
     ],
     0,
-    tokens.length,
+    tokens.length
   );
-  const factoryEnd = factory === undefined ? undefined : findStatementSemicolon(tokens, factory);
+  const factoryEnd =
+    factory === undefined ? undefined : findStatementSemicolon(tokens, factory);
   const invokesFreshIssuer =
     factory !== undefined &&
     factoryEnd !== undefined &&
     hasExactGeneratedGatewayFactory(tokens, factory, factoryEnd) &&
     ['issueGatewayContext', 'makeSharedOperationGateway'].every((name) =>
-      hasExclusiveNamedImportFrom(source, name, '@app/shared-contracts'),
+      hasExclusiveNamedImportFrom(source, name, '@app/shared-contracts')
     ) &&
     findSequence(
       tokens,
@@ -2431,7 +2721,7 @@ export const hasGeneratedOperationGatewayContract = (
         [SyntaxKind.Identifier, 'makeSharedOperationGateway'],
       ],
       0,
-      tokens.length,
+      tokens.length
     ) !== undefined;
   return (
     audience !== undefined &&

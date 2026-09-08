@@ -1,12 +1,13 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { expect, test } from '@rstest/core';
 import {
   ActionTransactionError,
   IdentityTargetInvalidError,
   PrincipalBindingMissingError,
 } from '@app/core-runtime';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { expect, test } from '@rstest/core';
 import { Effect, Redacted } from 'effect';
+
 import {
   ApiKeyProviderUnavailableError,
   ApiKeyStateInconsistentError,
@@ -43,13 +44,19 @@ const issued = {
 };
 const resolver = makePrincipalResolverDouble({
   loadApiKeyBindingForAdministration: () =>
-    Effect.succeed({ providerSubjectId: 'old-provider-key-id', status: 'active' }),
+    Effect.succeed({
+      providerSubjectId: 'old-provider-key-id',
+      status: 'active',
+    }),
 });
 const actionTransactionFailure = (reason: string) =>
   new ActionTransactionError({ code: 'action_transaction_failed', reason });
 const pendingMetadata = (
   lifecycleOperationId: string,
-  scope: { readonly issuerPrincipalId?: string; readonly tenantId?: string } = {},
+  scope: {
+    readonly issuerPrincipalId?: string;
+    readonly tenantId?: string;
+  } = {}
 ) =>
   JSON.stringify({
     issuerPrincipalId: scope.issuerPrincipalId ?? principal.principalId,
@@ -69,13 +76,14 @@ test('compensates a failed Core bind and never exposes the provider key identifi
     makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
-      pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+      pendingCleanup: () =>
+        Effect.succeed({ hasMore: false, providerKeyIds: [] }),
       setEnabled: (keyId) => {
         disabled.push(keyId);
         return Effect.succeed({ ...issued, providerKeyId: keyId });
       },
     }),
-    resolver,
+    resolver
   );
 
   const failure = await runEffectTestPromise(
@@ -85,8 +93,8 @@ test('compensates a failed Core bind and never exposes the provider key identifi
         idempotencyKey: 'issue-1',
         principal,
         requestHeaders: new Headers(),
-      }),
-    ),
+      })
+    )
   );
   expect(failure).toBe(bindFailure);
   expect(failure._tag).toBe('IdentityTargetInvalidError');
@@ -100,7 +108,7 @@ test('preserves resolver lifecycle failures instead of rewriting them as an outa
     makeApiKeyServiceDouble(),
     makePrincipalResolverDouble({
       loadApiKeyBindingForAdministration: () => Effect.fail(resolverFailure),
-    }),
+    })
   );
 
   const failure = await runEffectTestPromise(
@@ -112,8 +120,8 @@ test('preserves resolver lifecycle failures instead of rewriting them as an outa
         idempotencyKey: 'status-resolver-failure',
         newStatus: 'disabled',
         principal,
-      }),
-    ),
+      })
+    )
   );
 
   expect(failure).toBe(resolverFailure);
@@ -134,7 +142,7 @@ test('preserves a typed Core status-transition failure before touching provider 
         return Effect.succeed(issued);
       },
     }),
-    resolver,
+    resolver
   );
 
   const failure = await runEffectTestPromise(
@@ -146,8 +154,8 @@ test('preserves a typed Core status-transition failure before touching provider 
         idempotencyKey: 'status-core-failure',
         newStatus: 'disabled',
         principal,
-      }),
-    ),
+      })
+    )
   );
 
   expect(failure).toBe(actionFailure);
@@ -194,7 +202,7 @@ test('reconciles only expired pending leases in the trusted tenant and issuer sc
       lifecycleOperationId: 'same-operation',
       nowEpochMillis,
       tenantId: principal.tenantId,
-    },
+    }
   );
 
   expect(selected).toEqual(['abandoned-key']);
@@ -211,10 +219,11 @@ test('returns a secret only after bind succeeds and strips the private provider 
     makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
-      pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+      pendingCleanup: () =>
+        Effect.succeed({ hasMore: false, providerKeyIds: [] }),
       setEnabled: () => Effect.succeed(issued),
     }),
-    resolver,
+    resolver
   );
 
   const result = await runEffectTestPromise(
@@ -223,7 +232,7 @@ test('returns a secret only after bind succeeds and strips the private provider 
       idempotencyKey: 'issue-2',
       principal,
       requestHeaders: new Headers(),
-    }),
+    })
   );
   expect(result.secret).toBe('ontos-secret');
   expect(Object.hasOwn(result, 'providerKeyId')).toBe(false);
@@ -245,7 +254,8 @@ test('revokes the replacement before failing when closing the old Core binding f
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       metadata: () => Effect.succeed(issued),
-      pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+      pendingCleanup: () =>
+        Effect.succeed({ hasMore: false, providerKeyIds: [] }),
       setEnabled: (keyId, enabled) => {
         if (!enabled) {
           disabled.push(keyId);
@@ -253,7 +263,7 @@ test('revokes the replacement before failing when closing the old Core binding f
         return Effect.succeed({ ...issued, providerKeyId: keyId });
       },
     }),
-    resolver,
+    resolver
   );
 
   await expect(
@@ -265,8 +275,8 @@ test('revokes the replacement before failing when closing the old Core binding f
         principal,
         reason: 'Scheduled credential rotation',
         requestHeaders: new Headers(),
-      }),
-    ),
+      })
+    )
   ).rejects.toBeDefined();
   expect(actionRuntime.invocationCount()).toBe(3);
   expect(disabled).toEqual(['old-provider-key-id']);
@@ -286,9 +296,10 @@ test('returns the replacement secret when both old closure and replacement rollb
     makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
-      pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+      pendingCleanup: () =>
+        Effect.succeed({ hasMore: false, providerKeyIds: [] }),
     }),
-    resolver,
+    resolver
   );
 
   const result = await runEffectTestPromise(
@@ -299,7 +310,7 @@ test('returns the replacement secret when both old closure and replacement rollb
       principal,
       reason: 'Scheduled credential rotation',
       requestHeaders: new Headers(),
-    }),
+    })
   );
   expect(result.secret).toBe('ontos-secret');
   expect(result.cleanupPending).toBe(true);
@@ -325,7 +336,8 @@ test('returns the replacement secret when old Core closure committed but provide
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       metadata: () => Effect.fail(providerUnavailable),
-      pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+      pendingCleanup: () =>
+        Effect.succeed({ hasMore: false, providerKeyIds: [] }),
       setEnabled: (keyId, enabled) =>
         keyId === 'old-provider-key-id' && !enabled
           ? Effect.fail(providerUnavailable)
@@ -339,7 +351,7 @@ test('returns the replacement secret when old Core closure committed but provide
           status: resolverCalls === 1 ? 'active' : 'revoked',
         });
       },
-    }),
+    })
   );
 
   const result = await runEffectTestPromise(
@@ -350,7 +362,7 @@ test('returns the replacement secret when old Core closure committed but provide
       principal,
       reason: 'Scheduled credential rotation',
       requestHeaders: new Headers(),
-    }),
+    })
   );
 
   expect(result.secret).toBe('ontos-secret');
@@ -383,7 +395,8 @@ test('does not return a replacement secret after rollback definitely revoked its
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       metadata: () => Effect.fail(providerUnavailable),
-      pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
+      pendingCleanup: () =>
+        Effect.succeed({ hasMore: false, providerKeyIds: [] }),
       setEnabled: () => Effect.fail(providerUnavailable),
     }),
     makePrincipalResolverDouble({
@@ -400,7 +413,7 @@ test('does not return a replacement secret after rollback definitely revoked its
           status: 'active',
         });
       },
-    }),
+    })
   );
 
   const failure = await runEffectTestPromise(
@@ -412,8 +425,8 @@ test('does not return a replacement secret after rollback definitely revoked its
         principal,
         reason: 'Scheduled credential rotation',
         requestHeaders: new Headers(),
-      }),
-    ),
+      })
+    )
   );
 
   expect(failure).toBe(oldFailure);
@@ -432,7 +445,8 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
         issueCalls += 1;
         return Effect.succeed(issued);
       },
-      pendingCleanup: () => Effect.succeed({ hasMore: true, providerKeyIds: ['bounded-orphan'] }),
+      pendingCleanup: () =>
+        Effect.succeed({ hasMore: true, providerKeyIds: ['bounded-orphan'] }),
       setEnabled: (keyId, enabled) => {
         if (!enabled) {
           disabled.push(keyId);
@@ -441,8 +455,9 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
       },
     }),
     makePrincipalResolverDouble({
-      resolveBetterAuthApiKey: () => Effect.fail(new PrincipalBindingMissingError()),
-    }),
+      resolveBetterAuthApiKey: () =>
+        Effect.fail(new PrincipalBindingMissingError()),
+    })
   );
 
   const failure = await runEffectTestPromise(
@@ -452,8 +467,8 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
         idempotencyKey: 'bounded-cleanup',
         principal,
         requestHeaders: new Headers(),
-      }),
-    ),
+      })
+    )
   );
 
   expect(failure._tag).toBe('IdentityLifecycleOperationError');
@@ -462,7 +477,9 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
 });
 
 test('retries provider cleanup without repeating an already committed Core transition', async () => {
-  const actionRuntime = makeActionRuntimeDouble([actionDefect(new Error('must not run'))]);
+  const actionRuntime = makeActionRuntimeDouble([
+    actionDefect(new Error('must not run')),
+  ]);
   const service = makeIdentityLifecycleService(
     actionRuntime.runtime,
     makeApiKeyServiceDouble({
@@ -471,8 +488,11 @@ test('retries provider cleanup without repeating an already committed Core trans
     }),
     makePrincipalResolverDouble({
       loadApiKeyBindingForAdministration: () =>
-        Effect.succeed({ providerSubjectId: 'old-provider-key-id', status: 'revoked' }),
-    }),
+        Effect.succeed({
+          providerSubjectId: 'old-provider-key-id',
+          status: 'revoked',
+        }),
+    })
   );
 
   const result = await runEffectTestPromise(
@@ -484,7 +504,7 @@ test('retries provider cleanup without repeating an already committed Core trans
       newStatus: 'revoked',
       principal,
       reason: 'Retry provider cleanup',
-    }),
+    })
   );
   expect(result.cleanupPending).toBe(false);
   expect(actionRuntime.invocationCount()).toBe(0);
@@ -507,10 +527,10 @@ test('preserves provider metadata failure after a safe Core disable instead of f
           new ApiKeyProviderUnavailableError({
             code: 'api_key_provider_unavailable',
             reason: 'The provider is unavailable',
-          }),
+          })
         ),
     }),
-    resolver,
+    resolver
   );
 
   const failure = await runEffectTestPromise(
@@ -523,8 +543,8 @@ test('preserves provider metadata failure after a safe Core disable instead of f
         newStatus: 'disabled',
         principal,
         reason: 'Disable a missing provider key',
-      }),
-    ),
+      })
+    )
   );
 
   expect(failure).toBe(metadataFailure);
@@ -548,7 +568,10 @@ test('reconciles a provider key left pending by failed bind compensation before 
       },
       issue: () => Effect.succeed(issued),
       pendingCleanup: () =>
-        Effect.succeed({ hasMore: false, providerKeyIds: ['orphan-provider-key-id'] }),
+        Effect.succeed({
+          hasMore: false,
+          providerKeyIds: ['orphan-provider-key-id'],
+        }),
       setEnabled: (keyId, enabled) => {
         if (!enabled) {
           disabled.push(keyId);
@@ -557,8 +580,9 @@ test('reconciles a provider key left pending by failed bind compensation before 
       },
     }),
     makePrincipalResolverDouble({
-      resolveBetterAuthApiKey: () => Effect.fail(new PrincipalBindingMissingError()),
-    }),
+      resolveBetterAuthApiKey: () =>
+        Effect.fail(new PrincipalBindingMissingError()),
+    })
   );
 
   const result = await runEffectTestPromise(
@@ -567,10 +591,13 @@ test('reconciles a provider key left pending by failed bind compensation before 
       idempotencyKey: 'issue-retry',
       principal,
       requestHeaders: new Headers(),
-    }),
+    })
   );
 
   expect(result.secret).toBe('ontos-secret');
   expect(disabled).toEqual(['orphan-provider-key-id']);
-  expect(cleared).toEqual(['orphan-provider-key-id', 'private-provider-key-id']);
+  expect(cleared).toEqual([
+    'orphan-provider-key-id',
+    'private-provider-key-id',
+  ]);
 });

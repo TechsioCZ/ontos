@@ -32,9 +32,17 @@ for (const { rule, source } of cases) {
       const alias = join(root, 'workspace-link');
       mkdirSync(directory);
       symlinkSync(directory, alias, 'dir');
-      const workspaces = ['apps/shell-super-app', 'verticals/contacts', 'packages/core-runtime'];
-      const sources = workspaces.map((workspace) => `${workspace}/src/operation.ts`);
-      const scripts = workspaces.map((workspace) => `${workspace}/scripts/operation.mts`);
+      const workspaces = [
+        'apps/shell-super-app',
+        'verticals/contacts',
+        'packages/core-runtime',
+      ];
+      const sources = workspaces.map(
+        (workspace) => `${workspace}/src/operation.ts`
+      );
+      const scripts = workspaces.map(
+        (workspace) => `${workspace}/scripts/operation.mts`
+      );
       const paths = [...sources, ...scripts];
       for (const path of paths) {
         const file = join(directory, path);
@@ -47,7 +55,10 @@ for (const { rule, source } of cases) {
           config,
           JSON.stringify({
             jsPlugins: [
-              { name: 'effect-native', specifier: join(testsDirectory, 'fixture-plugin.ts') },
+              {
+                name: 'effect-native',
+                specifier: join(testsDirectory, 'fixture-plugin.ts'),
+              },
             ],
             categories: { correctness: 'off' },
             rules: {
@@ -55,31 +66,37 @@ for (const { rule, source } of cases) {
                 ? ['error', { includeScripts: true }]
                 : 'error',
             },
-          }),
+          })
         );
         for (const pathMode of ['relative', 'absolute', 'symlink'] as const) {
           const run = runOxlint(
             config,
             pathMode === 'relative'
               ? paths
-              : paths.map((path) => join(pathMode === 'symlink' ? alias : directory, path)),
+              : paths.map((path) =>
+                  join(pathMode === 'symlink' ? alias : directory, path)
+                ),
             directory,
-            rule,
+            rule
           );
           assert.equal(
             run.numberOfFiles,
             paths.length,
-            `${rule}: every staged file must be linted`,
+            `${rule}: every staged file must be linted`
           );
-          assert.equal(run.exitCode, 1, `${rule}: ordinary source must still report`);
+          assert.equal(
+            run.exitCode,
+            1,
+            `${rule}: ordinary source must still report`
+          );
           for (const diagnostic of run.diagnostics)
             assert.equal(diagnostic.code, `effect-native(${rule})`);
           const reported = [
             ...new Set(
               // Oxlint may retain absolute spellings when input paths cross a symlink.
               run.diagnostics.map((diagnostic) =>
-                realpathSync(resolve(directory, diagnostic.filename)),
-              ),
+                realpathSync(resolve(directory, diagnostic.filename))
+              )
             ),
           ];
           assert.deepEqual(
@@ -87,7 +104,7 @@ for (const { rule, source } of cases) {
             (includeScripts ? paths : sources)
               .map((path) => realpathSync(join(directory, path)))
               .toSorted(),
-            `${rule}: includeScripts=${includeScripts}, pathMode=${pathMode}`,
+            `${rule}: includeScripts=${includeScripts}, pathMode=${pathMode}`
           );
         }
       }

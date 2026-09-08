@@ -3,7 +3,12 @@ import {
   makeProblemDetailsSchema,
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import {
   PartyMatchPreviewResponseSchema,
   PartyMatchRequestSchema as RequestSchema,
@@ -16,35 +21,33 @@ export type PartyMatchResponse = typeof PartyMatchResponseSchema.Type;
 
 export const PartyMatchAuthenticationProblemSchema = makeProblemDetailsSchema(
   'PartyMatchAuthenticationProblem',
-  401,
+  401
 );
 export const PartyMatchInvalidProblemSchema = makeProblemDetailsSchema(
   'PartyMatchInvalidProblem',
-  400,
+  400
 );
-export const PartyMatchUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartyMatchUnavailableProblem',
-  503,
-);
+export const PartyMatchUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema('PartyMatchUnavailableProblem', 503);
 export const PartyMatchForbiddenProblemSchema = makeProblemDetailsSchema(
   'PartyMatchForbiddenProblem',
-  403,
+  403
 );
 export const PartyMatchNotFoundProblemSchema = makeProblemDetailsSchema(
   'PartyMatchNotFoundProblem',
-  404,
+  404
 );
 export const PartyMatchPolicyProblemSchema = makeProblemDetailsSchema(
   'PartyMatchPolicyProblem',
-  422,
+  422
 );
 export const PartyMatchPolicyConflictProblemSchema = makeProblemDetailsSchema(
   'PartyMatchPolicyConflictProblem',
-  409,
+  409
 );
 export const PartyMatchInternalProblemSchema = makeProblemDetailsSchema(
   'PartyMatchInternalProblem',
-  500,
+  500
 );
 
 export const PartyMatchApi = HttpApi.make('PartyMatchApi').add(
@@ -65,6 +68,6 @@ export const PartyMatchApi = HttpApi.make('PartyMatchApi').add(
       payload: PartyMatchRequestSchema,
       query: {},
       success: PartyMatchResponseSchema,
-    }),
-  ),
+    })
+  )
 );

@@ -1,7 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { DateTime, Effect, Option, Schema } from 'effect';
+
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { UpdatePartyOfficialIdentifierResultSchema } from '../../shared/actions/update-party-official-identifier.ts';
@@ -31,8 +33,15 @@ const before = {
   verifiedByPrincipalId: null,
 } as const;
 const changes: readonly UpdatePartyOfficialIdentifierPayload['change'][] = [
-  { expectedVerification: 'UNVERIFIED', type: 'SET_VERIFICATION', verification: 'VERIFIED' },
-  { type: 'END_VALIDITY', validTo: DateTime.makeUnsafe('2026-01-02T00:00:00.000Z') },
+  {
+    expectedVerification: 'UNVERIFIED',
+    type: 'SET_VERIFICATION',
+    verification: 'VERIFIED',
+  },
+  {
+    type: 'END_VALIDITY',
+    validTo: DateTime.makeUnsafe('2026-01-02T00:00:00.000Z'),
+  },
 ];
 
 for (const change of changes) {
@@ -42,12 +51,14 @@ for (const change of changes) {
         const collector = createActionCollector(
           updatePartyOfficialIdentifierAction.descriptor.domainEvents,
           'party.registry',
-          updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy,
+          updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy
         );
         const handler = getActionHandler(updatePartyOfficialIdentifierAction);
         const encodedValidTo =
           change.type === 'END_VALIDITY'
-            ? yield* Schema.encodeEffect(Schema.DateTimeUtcFromString)(change.validTo)
+            ? yield* Schema.encodeEffect(Schema.DateTimeUtcFromString)(
+                change.validTo
+              )
             : null;
         const after =
           change.type === 'SET_VERIFICATION'
@@ -66,7 +77,10 @@ for (const change of changes) {
           officialIdentifierRef,
           partyRef,
           state: after.state,
-          validTo: change.type === 'END_VALIDITY' ? Option.some(change.validTo) : Option.none(),
+          validTo:
+            change.type === 'END_VALIDITY'
+              ? Option.some(change.validTo)
+              : Option.none(),
           verification: after.verification,
         };
         yield* handler(
@@ -88,8 +102,10 @@ for (const change of changes) {
               principalId: '40000000-0000-4000-8000-000000000001',
               tenantId,
             },
-            services: { update: () => Effect.succeed({ after, before, result }) },
-          },
+            services: {
+              update: () => Effect.succeed({ after, before, result }),
+            },
+          }
         );
         const snapshot = collector.snapshot();
         assert.equal(snapshot.domainEvents.length, 1);
@@ -97,13 +113,16 @@ for (const change of changes) {
         assert.equal(snapshot.outboxMessages[0]?.domainEventIndex, 0);
         assert.equal(
           snapshot.outboxMessages[0]?.message.topic,
-          'party.registry.official-identifier-updated.v1',
+          'party.registry.official-identifier-updated.v1'
         );
         assert.deepEqual(snapshot.outboxMessages[0]?.message.payloadJson, {
           officialIdentifierRef,
           partyRef,
         });
-        assert.equal(snapshot.domainEvents[0]?.subjectResourceId, officialIdentifierRef.resourceId);
+        assert.equal(
+          snapshot.domainEvents[0]?.subjectResourceId,
+          officialIdentifierRef.resourceId
+        );
         const event = snapshot.domainEvents[0]?.payloadJson;
         assert.ok(event !== undefined);
         assert.deepEqual(event, {
@@ -115,7 +134,7 @@ for (const change of changes) {
           partyRef,
           reason: 'Accepted registry evidence',
         });
-      }),
+      })
     ));
 }
 
@@ -125,13 +144,15 @@ test('rejected identifier updates publish neither Domain Event nor outbox messag
       const collector = createActionCollector(
         updatePartyOfficialIdentifierAction.descriptor.domainEvents,
         'party.registry',
-        updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy,
+        updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy
       );
       const failure = new OfficialIdentifierClaimConflict({
         code: 'party_identifier_claim_conflict',
         reason: 'Already claimed by another Party',
       });
-      const error = yield* getActionHandler(updatePartyOfficialIdentifierAction)(
+      const error = yield* getActionHandler(
+        updatePartyOfficialIdentifierAction
+      )(
         {
           change: {
             expectedVerification: 'UNVERIFIED',
@@ -155,21 +176,25 @@ test('rejected identifier updates publish neither Domain Event nor outbox messag
             tenantId,
           },
           services: { update: () => Effect.fail(failure) },
-        },
+        }
       ).pipe(Effect.flip);
       assert.equal(error, failure);
       assert.equal(collector.snapshot().domainEvents.length, 0);
       assert.equal(collector.snapshot().outboxMessages.length, 0);
-    }),
+    })
   ));
 
 test('published identifier update payload contains references only', () => {
-  const decode = Schema.decodeUnknownSync(OutboxPayloadSchema, { onExcessProperty: 'error' });
+  const decode = Schema.decodeUnknownSync(OutboxPayloadSchema, {
+    onExcessProperty: 'error',
+  });
   assert.deepEqual(decode({ officialIdentifierRef, partyRef }), {
     officialIdentifierRef,
     partyRef,
   });
-  assert.throws(() => decode({ officialIdentifierRef, partyRef, verification: 'VERIFIED' }));
+  assert.throws(() =>
+    decode({ officialIdentifierRef, partyRef, verification: 'VERIFIED' })
+  );
 });
 
 test('identifier update results keep DateTime and Option internally with nullable JSON', () =>
@@ -182,20 +207,22 @@ test('identifier update results keep DateTime and Option internally with nullabl
         validTo: '2026-01-02T00:00:00.000Z',
         verification: 'VERIFIED',
       } as const;
-      const decoded = yield* Schema.decodeUnknownEffect(UpdatePartyOfficialIdentifierResultSchema)(
-        wire,
-      );
+      const decoded = yield* Schema.decodeUnknownEffect(
+        UpdatePartyOfficialIdentifierResultSchema
+      )(wire);
       assert.equal(Option.isSome(decoded.validTo), true);
       assert.equal(
         Option.match(decoded.validTo, {
           onNone: () => null,
           onSome: DateTime.formatIso,
         }),
-        wire.validTo,
+        wire.validTo
       );
       assert.deepEqual(
-        yield* Schema.encodeEffect(UpdatePartyOfficialIdentifierResultSchema)(decoded),
-        wire,
+        yield* Schema.encodeEffect(UpdatePartyOfficialIdentifierResultSchema)(
+          decoded
+        ),
+        wire
       );
-    }),
+    })
   ));

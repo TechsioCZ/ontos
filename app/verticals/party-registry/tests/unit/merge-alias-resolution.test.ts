@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { DateTime } from 'effect';
+
 import type { PartyRef } from '../../shared/resources/party.ts';
 import {
   assertCanonicalWriteTarget,
@@ -14,7 +16,11 @@ const party = (resourceId: string, tenant = tenantId): PartyRef => ({
   resourceType: 'party.registry.party',
   tenantId: tenant,
 });
-const alias = (aliasPartyId: string, survivorPartyId: string, tenant = tenantId) => ({
+const alias = (
+  aliasPartyId: string,
+  survivorPartyId: string,
+  tenant = tenantId
+) => ({
   aliasPartyRef: party(aliasPartyId, tenant),
   createdAt: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
   mergeRef: {
@@ -46,32 +52,42 @@ test('rejects alias cycles, self aliases, and cross-tenant targets', () => {
       alias('party-a', 'party-b'),
       alias('party-b', 'party-a'),
     ])._tag,
-    'PartyAliasCycleRejected',
+    'PartyAliasCycleRejected'
   );
   assert.equal(
-    resolveCanonicalPartyRef(party('party-a'), [alias('party-a', 'party-a')])._tag,
-    'PartyAliasSelfReferenceRejected',
+    resolveCanonicalPartyRef(party('party-a'), [alias('party-a', 'party-a')])
+      ._tag,
+    'PartyAliasSelfReferenceRejected'
   );
   assert.equal(
     resolveCanonicalPartyRef(party('party-a'), [
       {
         ...alias('party-a', 'party-b'),
-        survivorPartyRef: party('party-b', '22222222-2222-4222-8222-222222222222'),
+        survivorPartyRef: party(
+          'party-b',
+          '22222222-2222-4222-8222-222222222222'
+        ),
       },
     ])._tag,
-    'PartyAliasCrossTenantRejected',
+    'PartyAliasCrossTenantRejected'
   );
 });
 
 test('rejects new writes addressed to an absorbed alias instead of forwarding them', () => {
-  assert.deepEqual(assertCanonicalWriteTarget(party('party-b'), [alias('party-b', 'party-a')]), {
-    _tag: 'AliasWriteRejected',
-    aliasPartyRef: party('party-b'),
-    canonicalPartyRef: party('party-a'),
-    code: 'ALIAS_WRITE_FORBIDDEN',
-  });
-  assert.deepEqual(assertCanonicalWriteTarget(party('party-a'), [alias('party-b', 'party-a')]), {
-    _tag: 'CanonicalWriteTargetAccepted',
-    partyRef: party('party-a'),
-  });
+  assert.deepEqual(
+    assertCanonicalWriteTarget(party('party-b'), [alias('party-b', 'party-a')]),
+    {
+      _tag: 'AliasWriteRejected',
+      aliasPartyRef: party('party-b'),
+      canonicalPartyRef: party('party-a'),
+      code: 'ALIAS_WRITE_FORBIDDEN',
+    }
+  );
+  assert.deepEqual(
+    assertCanonicalWriteTarget(party('party-a'), [alias('party-b', 'party-a')]),
+    {
+      _tag: 'CanonicalWriteTargetAccepted',
+      partyRef: party('party-a'),
+    }
+  );
 });

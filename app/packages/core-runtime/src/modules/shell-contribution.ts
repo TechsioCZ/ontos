@@ -1,10 +1,11 @@
 import { Result, Schema } from 'effect';
+
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
 const stableKey = Schema.String.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)
 );
 const actionKey = stableKey.pipe(Schema.brand('ActionKey'));
 const apiKey = stableKey.pipe(Schema.brand('ApiKey'));
@@ -16,7 +17,7 @@ const reportKey = stableKey.pipe(Schema.brand('ReportKey'));
 const searchKey = stableKey.pipe(Schema.brand('SearchKey'));
 const order = Schema.Finite.check(
   Schema.isInt(),
-  Schema.isBetween({ maximum: 10_000, minimum: 0 }),
+  Schema.isBetween({ maximum: 10_000, minimum: 0 })
 );
 const routeParameterPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
 const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
@@ -24,8 +25,8 @@ const routePath = Schema.String.check(
   Schema.isMinLength(2),
   Schema.isMaxLength(200),
   Schema.isPattern(
-    /^\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*)(?:\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*))*$/u,
-  ),
+    /^\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*)(?:\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*))*$/u
+  )
 ).pipe(
   Schema.check(
     Schema.makeFilter((value) => {
@@ -40,20 +41,23 @@ const routePath = Schema.String.check(
       return new Set(parameterNames).size === parameterNames.length
         ? undefined
         : 'page contribution routePath must not repeat a parameter name';
-    }),
-  ),
+    })
+  )
 );
 
-const allowsRead = (access: string): boolean => access === 'read' || access === 'historical_read';
+const allowsRead = (access: string): boolean =>
+  access === 'read' || access === 'historical_read';
 
 const pageEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
     Schema.makeFilter((entrypoint) =>
-      entrypoint.scope === 'tenant' && entrypoint.role === 'page' && allowsRead(entrypoint.access)
+      entrypoint.scope === 'tenant' &&
+      entrypoint.role === 'page' &&
+      allowsRead(entrypoint.access)
         ? undefined
-        : 'page contribution entrypoint must be a readable tenant page',
-    ),
-  ),
+        : 'page contribution entrypoint must be a readable tenant page'
+    )
+  )
 );
 const componentEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
@@ -62,18 +66,20 @@ const componentEntrypoint = ModuleEntrypointSchema.pipe(
       entrypoint.role === 'public_component' &&
       allowsRead(entrypoint.access)
         ? undefined
-        : 'component contribution entrypoint must be a readable tenant public component',
-    ),
-  ),
+        : 'component contribution entrypoint must be a readable tenant public component'
+    )
+  )
 );
 const searchEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
     Schema.makeFilter((entrypoint) =>
-      entrypoint.scope === 'tenant' && entrypoint.role === 'search' && allowsRead(entrypoint.access)
+      entrypoint.scope === 'tenant' &&
+      entrypoint.role === 'search' &&
+      allowsRead(entrypoint.access)
         ? undefined
-        : 'search contribution entrypoint must be a readable tenant search entrypoint',
-    ),
-  ),
+        : 'search contribution entrypoint must be a readable tenant search entrypoint'
+    )
+  )
 );
 const reportEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
@@ -82,27 +88,31 @@ const reportEntrypoint = ModuleEntrypointSchema.pipe(
       entrypoint.role === 'report' &&
       entrypoint.access !== 'background'
         ? undefined
-        : 'report contribution entrypoint must be a tenant report with compatible access',
-    ),
-  ),
+        : 'report contribution entrypoint must be a tenant report with compatible access'
+    )
+  )
 );
 const readableApiEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
     Schema.makeFilter((entrypoint) =>
-      entrypoint.scope === 'tenant' && entrypoint.role === 'api' && allowsRead(entrypoint.access)
+      entrypoint.scope === 'tenant' &&
+      entrypoint.role === 'api' &&
+      allowsRead(entrypoint.access)
         ? undefined
-        : 'resource contribution entrypoint must be a readable tenant API',
-    ),
-  ),
+        : 'resource contribution entrypoint must be a readable tenant API'
+    )
+  )
 );
 const writableApiEntrypoint = ModuleEntrypointSchema.pipe(
   Schema.check(
     Schema.makeFilter((entrypoint) =>
-      entrypoint.scope === 'tenant' && entrypoint.role === 'api' && entrypoint.access === 'write'
+      entrypoint.scope === 'tenant' &&
+      entrypoint.role === 'api' &&
+      entrypoint.access === 'write'
         ? undefined
-        : 'media contribution entrypoint must be a writable tenant API',
-    ),
-  ),
+        : 'media contribution entrypoint must be a writable tenant API'
+    )
+  )
 );
 
 export const ShellNavigationContributionSchema = Schema.Struct({
@@ -171,7 +181,9 @@ export const OntosShellContributionsSchema = Schema.Struct({
   timelines: Schema.Array(ShellTimelineContributionSchema),
 });
 
-export type OntosShellContributions = Schema.Schema.Type<typeof OntosShellContributionsSchema>;
+export type OntosShellContributions = Schema.Schema.Type<
+  typeof OntosShellContributionsSchema
+>;
 
 export interface ShellContributionReferenceSets {
   readonly actionKeys: ReadonlySet<string>;
@@ -186,26 +198,37 @@ export interface ShellContributionReferenceSets {
 const referenceIssue = (
   set: ReadonlySet<string>,
   key: string,
-  label: string,
+  label: string
 ): string | undefined =>
-  set.has(key) ? undefined : `${label} references undeclared manifest key ${key}`;
+  set.has(key)
+    ? undefined
+    : `${label} references undeclared manifest key ${key}`;
 
 const validatePageReferences = (
   contributions: OntosShellContributions,
-  references: ShellContributionReferenceSets,
+  references: ShellContributionReferenceSets
 ): string | undefined => {
-  const pageKeys = new Set(contributions.pages.map(({ contributionKey: key }) => key));
+  const pageKeys = new Set(
+    contributions.pages.map(({ contributionKey: key }) => key)
+  );
   for (const contribution of contributions.navigation) {
-    const issue = referenceIssue(pageKeys, contribution.pageKey, 'navigation contribution');
+    const issue = referenceIssue(
+      pageKeys,
+      contribution.pageKey,
+      'navigation contribution'
+    );
     if (issue !== undefined) {
       return issue;
     }
   }
-  for (const contribution of [...contributions.pages, ...contributions.publicComponents]) {
+  for (const contribution of [
+    ...contributions.pages,
+    ...contributions.publicComponents,
+  ]) {
     const issue = referenceIssue(
       references.componentKeys,
       contribution.componentKey,
-      'component contribution',
+      'component contribution'
     );
     if (issue !== undefined) {
       return issue;
@@ -217,13 +240,13 @@ const validatePageReferences = (
 
 const validateDiscoveryReferences = (
   contributions: OntosShellContributions,
-  references: ShellContributionReferenceSets,
+  references: ShellContributionReferenceSets
 ): string | undefined => {
   for (const contribution of contributions.search) {
     const issue = referenceIssue(
       references.searchKeys,
       contribution.searchKey,
-      'search contribution',
+      'search contribution'
     );
     if (issue !== undefined) {
       return issue;
@@ -233,7 +256,7 @@ const validateDiscoveryReferences = (
     const issue = referenceIssue(
       references.reportKeys,
       contribution.reportKey,
-      'report contribution',
+      'report contribution'
     );
     if (issue !== undefined) {
       return issue;
@@ -245,13 +268,16 @@ const validateDiscoveryReferences = (
 
 const validateResourceReferences = (
   contributions: OntosShellContributions,
-  references: ShellContributionReferenceSets,
+  references: ShellContributionReferenceSets
 ): string | undefined => {
-  for (const contribution of [...contributions.resourceDetails, ...contributions.timelines]) {
+  for (const contribution of [
+    ...contributions.resourceDetails,
+    ...contributions.timelines,
+  ]) {
     const apiIssue = referenceIssue(
       references.apiKeys,
       contribution.apiKey,
-      'resource contribution',
+      'resource contribution'
     );
     if (apiIssue !== undefined) {
       return apiIssue;
@@ -259,7 +285,7 @@ const validateResourceReferences = (
     const resourceIssue = referenceIssue(
       references.resourceTypeKeys,
       contribution.resourceType,
-      'resource contribution',
+      'resource contribution'
     );
     if (resourceIssue !== undefined) {
       return resourceIssue;
@@ -271,25 +297,29 @@ const validateResourceReferences = (
 
 const validateMediaReferences = (
   contributions: OntosShellContributions,
-  references: ShellContributionReferenceSets,
+  references: ShellContributionReferenceSets
 ): string | undefined => {
   for (const contribution of contributions.mediaAttachments) {
     const actionIssue = referenceIssue(
       references.actionKeys,
       contribution.actionKey,
-      'media contribution',
+      'media contribution'
     );
     if (actionIssue !== undefined) {
       return actionIssue;
     }
-    const apiIssue = referenceIssue(references.apiKeys, contribution.apiKey, 'media contribution');
+    const apiIssue = referenceIssue(
+      references.apiKeys,
+      contribution.apiKey,
+      'media contribution'
+    );
     if (apiIssue !== undefined) {
       return apiIssue;
     }
     const resourceIssue = referenceIssue(
       references.resourceTypeKeys,
       contribution.resourceType,
-      'media contribution',
+      'media contribution'
     );
     if (resourceIssue !== undefined) {
       return resourceIssue;
@@ -300,7 +330,7 @@ const validateMediaReferences = (
 
 const validateReferences = (
   contributions: OntosShellContributions,
-  references: ShellContributionReferenceSets,
+  references: ShellContributionReferenceSets
 ): string | undefined => {
   const all = [
     ...contributions.mediaAttachments,
@@ -319,7 +349,9 @@ const validateReferences = (
   for (const contribution of all) {
     if (
       contribution.entrypoint.moduleKey !== references.moduleId ||
-      !contribution.entrypoint.entrypointKey.startsWith(`${references.moduleId}.`)
+      !contribution.entrypoint.entrypointKey.startsWith(
+        `${references.moduleId}.`
+      )
     ) {
       return 'Shell contribution entrypoint owner must match the manifest module';
     }
@@ -334,14 +366,16 @@ const validateReferences = (
 
 export const validateShellContributions = <Input>(
   input: Input,
-  references: ShellContributionReferenceSets,
+  references: ShellContributionReferenceSets
 ): OntosShellContributions => {
   const schema = OntosShellContributionsSchema.pipe(
     Schema.check(
-      Schema.makeFilter((contributions) => validateReferences(contributions, references)),
-    ),
+      Schema.makeFilter((contributions) =>
+        validateReferences(contributions, references)
+      )
+    )
   );
   return Result.getOrThrow(
-    Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(input),
+    Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(input)
   );
 };

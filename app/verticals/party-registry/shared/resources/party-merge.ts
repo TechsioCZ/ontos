@@ -3,6 +3,7 @@
 // @ontos-resource-slug party-merge
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import {
   ConfirmedDuplicateDecisionIdSchema,
@@ -28,14 +29,15 @@ export type PartyMergeRef = typeof PartyMergeRefSchema.Type;
 const selectionEvidenceIsInvalid = (
   selectionEvidenceChain: readonly (typeof MergeSelectionEvidenceStepSchema.Type)[],
   selectionReason: typeof MergeSurvivorSelectionReasonSchema.Type,
-  survivorPartyRef: PartyRef,
+  survivorPartyRef: PartyRef
 ): boolean => {
   const finalSelectionStep = selectionEvidenceChain.at(-1);
   return (
     selectionEvidenceChain[0]?.criterion !== 'CONFIRMED_DUPLICATE_SET' ||
     selectionEvidenceChain[1]?.criterion !== 'IDENTITY_SAFETY' ||
     finalSelectionStep?.criterion !== selectionReason ||
-    finalSelectionStep.winnerPartyRef?.resourceId !== survivorPartyRef.resourceId ||
+    finalSelectionStep.winnerPartyRef?.resourceId !==
+      survivorPartyRef.resourceId ||
     finalSelectionStep.winnerPartyRef.tenantId !== survivorPartyRef.tenantId
   );
 };
@@ -46,17 +48,20 @@ const selectionEvidenceIsInvalid = (
  */
 export const PartyMergeSchema = Schema.Struct({
   absorbedPartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(1)),
-  confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema).check(
-    Schema.isMaxLength(300),
-  ),
+  confirmedDuplicateDecisionId: Schema.toEncoded(
+    ConfirmedDuplicateDecisionIdSchema
+  ).check(Schema.isMaxLength(300)),
   createdAt: IsoTimestampSchema,
-  decisionActorPrincipalId: Schema.toEncoded(DecisionActorPrincipalIdSchema).check(
-    Schema.isMaxLength(300),
-  ),
+  decisionActorPrincipalId: Schema.toEncoded(
+    DecisionActorPrincipalIdSchema
+  ).check(Schema.isMaxLength(300)),
   mergeRef: PartyMergeRefSchema,
-  policyVersion: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  policyVersion: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(300)
+  ),
   selectionEvidenceChain: Schema.Array(MergeSelectionEvidenceStepSchema).check(
-    Schema.isMinLength(3),
+    Schema.isMinLength(3)
   ),
   selectionReason: MergeSurvivorSelectionReasonSchema,
   state: Schema.Literal('PREPARED'),
@@ -70,12 +75,15 @@ export const PartyMergeSchema = Schema.Struct({
       selectionReason,
       survivorPartyRef,
     }) => {
-      const identities = new Set(absorbedPartyRefs.map(({ resourceId }) => resourceId));
+      const identities = new Set(
+        absorbedPartyRefs.map(({ resourceId }) => resourceId)
+      );
       const allRefs = [survivorPartyRef, ...absorbedPartyRefs];
       const issues: Schema.FilterIssue[] = [];
       if (allRefs.some(({ tenantId }) => tenantId !== mergeRef.tenantId)) {
         issues.push({
-          issue: 'prepared merge Parties and merge Resource must share one tenant',
+          issue:
+            'prepared merge Parties and merge Resource must share one tenant',
           path: ['mergeRef'],
         });
       }
@@ -88,7 +96,13 @@ export const PartyMergeSchema = Schema.Struct({
           path: ['absorbedPartyRefs'],
         });
       }
-      if (selectionEvidenceIsInvalid(selectionEvidenceChain, selectionReason, survivorPartyRef)) {
+      if (
+        selectionEvidenceIsInvalid(
+          selectionEvidenceChain,
+          selectionReason,
+          survivorPartyRef
+        )
+      ) {
         issues.push({
           issue:
             'selection evidence must prove confirmation, safety, and the recorded survivor reason',
@@ -110,13 +124,14 @@ export const PartyMergeSchema = Schema.Struct({
         })
       ) {
         issues.push({
-          issue: 'selection evidence must describe exactly the prepared merge Party set',
+          issue:
+            'selection evidence must describe exactly the prepared merge Party set',
           path: ['selectionEvidenceChain'],
         });
       }
       return issues;
-    },
-  ),
+    }
+  )
 );
 export type PartyMerge = typeof PartyMergeSchema.Type;
 
@@ -128,7 +143,8 @@ export const partyMergeResourceDescriptor = {
     searchable: false,
     timelineVisible: false,
   },
-  description: 'Prepared, non-executable Party Merge evidence and readiness resource.',
+  description:
+    'Prepared, non-executable Party Merge evidence and readiness resource.',
   key: 'party.registry.party-merge',
   label: 'Party Merge',
   owningModuleId: 'party.registry',

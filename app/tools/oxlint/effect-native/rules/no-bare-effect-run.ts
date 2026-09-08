@@ -39,15 +39,16 @@
  *   (`export { runPromise }`), none of which start a fiber.
  */
 import { defineRule } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
+
 import { keyName, unwrapNode, walk as walkAst } from '../shared/ast.ts';
 import { isTrackedReference } from '../shared/bindings.ts';
-import { importedName } from '../shared/imports.ts';
 import {
-  isNonReferencePosition,
-  isInTypePosition as inTypePosition,
-} from '../shared/reference-positions.ts';
-
-import { bindingsFor, effectMember, type EffectBindings } from '../shared/effect-imports.ts';
+  bindingsFor,
+  effectMember,
+  type EffectBindings,
+} from '../shared/effect-imports.ts';
+import { importedName } from '../shared/imports.ts';
 import {
   globToRegExp,
   isScriptFile,
@@ -55,8 +56,10 @@ import {
   normalisePath,
   matchesGlobs,
 } from '../shared/paths.ts';
-
-import type { Context, ESTree } from '@oxlint/plugins';
+import {
+  isNonReferencePosition,
+  isInTypePosition as inTypePosition,
+} from '../shared/reference-positions.ts';
 
 /** `runPromise`, `runSync`, `runFork`, `run` — but not `runtime`. */
 const RUN_MEMBER = /^run(?:[A-Z]|$)/u;
@@ -76,7 +79,10 @@ const DEFAULT_ADAPTER_FILES: readonly string[] = [
   'packages/core-runtime/src/outbox/process.ts',
 ];
 
-const DEFAULT_BROWSER_GLOBS: readonly string[] = ['apps/*/src/**', 'verticals/*/src/**'];
+const DEFAULT_BROWSER_GLOBS: readonly string[] = [
+  'apps/*/src/**',
+  'verticals/*/src/**',
+];
 // Mirror the browser rule's server exclusions: these are still server/library code.
 const DEFAULT_SERVER_GLOBS: readonly string[] = [
   '**/src/db/**',
@@ -90,7 +96,12 @@ const DEFAULT_SERVER_GLOBS: readonly string[] = [
 const DEFAULT_EFFECT_MODULES: readonly string[] = ['effect', 'effect/**'];
 
 /** Workspace roots a scope glob is written against. */
-const WORKSPACE_MARKERS: readonly string[] = ['/apps/', '/verticals/', '/packages/', '/scripts/'];
+const WORKSPACE_MARKERS: readonly string[] = [
+  '/apps/',
+  '/verticals/',
+  '/packages/',
+  '/scripts/',
+];
 
 /**
  * Absolute filename → the workspace-relative path the scope globs are written against.
@@ -125,11 +136,18 @@ interface RuleOptions {
   readonly effectModules: readonly string[];
 }
 
-function readGlobs(option: unknown, key: string, fallback: readonly string[]): readonly string[] {
-  if (typeof option !== 'object' || option === null || Array.isArray(option)) return fallback;
+function readGlobs(
+  option: unknown,
+  key: string,
+  fallback: readonly string[]
+): readonly string[] {
+  if (typeof option !== 'object' || option === null || Array.isArray(option))
+    return fallback;
   const value = (option as Record<string, unknown>)[key];
   if (!Array.isArray(value)) return fallback;
-  const globs = value.filter((entry): entry is string => typeof entry === 'string');
+  const globs = value.filter(
+    (entry): entry is string => typeof entry === 'string'
+  );
   return globs.length === 0 ? fallback : globs;
 }
 
@@ -192,7 +210,11 @@ function isInTypePosition(node: ESTree.Node): boolean {
   return inTypePosition(node, TS_EXPRESSION_NODES);
 }
 function staticName(key: ESTree.Node, computed: boolean): string | null {
-  return keyName(key, computed, { templates: computed, rawTemplates: true, singleQuasi: true });
+  return keyName(key, computed, {
+    templates: computed,
+    rawTemplates: true,
+    singleQuasi: true,
+  });
 }
 
 /**
@@ -211,39 +233,48 @@ interface ImportSource {
 function collectNamedBinding(
   specifier: ESTree.ImportSpecifier,
   source: ImportSource,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   if (specifier.importKind === 'type') return;
   const imported = importedName(specifier);
   const local = specifier.local.name;
-  if (source.effectSubmodule) bindings.effectSubmoduleImports.set(local, imported);
+  if (source.effectSubmodule)
+    bindings.effectSubmoduleImports.set(local, imported);
   if (imported === EFFECT_NAMESPACE && source.rootLike) {
     bindings.effectNamespaces.set(local, specifier.local);
-  } else if (RUN_MEMBER.test(imported) && (source.rootLike || source.effectSubmodule)) {
-    bindings.runLocals.set(local, { declaration: specifier.local, member: imported });
+  } else if (
+    RUN_MEMBER.test(imported) &&
+    (source.rootLike || source.effectSubmodule)
+  ) {
+    bindings.runLocals.set(local, {
+      declaration: specifier.local,
+      member: imported,
+    });
   }
 }
 function collectImportBindings(
   statement: ESTree.ImportDeclaration,
   extraMatchers: readonly RegExp[],
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   if (statement.importKind === 'type') return;
   const source = statement.source.value;
   const effectModule = SHARED_EFFECT_MODULE.test(source);
-  const extraModule = !effectModule && extraMatchers.some((matcher) => matcher.test(source));
+  const extraModule =
+    !effectModule && extraMatchers.some((matcher) => matcher.test(source));
   if (!effectModule && !extraModule) return;
   const policy = {
     rootLike: extraModule || source === EFFECT_ROOT_MODULE,
     effectSubmodule: source === EFFECT_SUBMODULE,
     emptySubmodule: source.split('/').slice(1).join('/') === '',
   };
-  for (const specifier of statement.specifiers) collectImportSpecifier(specifier, policy, bindings);
+  for (const specifier of statement.specifiers)
+    collectImportSpecifier(specifier, policy, bindings);
 }
 function collectImportSpecifier(
   specifier: ESTree.ImportDeclaration['specifiers'][number],
   source: ImportSource,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   if (specifier.type === 'ImportSpecifier') {
     collectNamedBinding(specifier, source, bindings);
@@ -254,7 +285,10 @@ function collectImportSpecifier(
       bindings.packageNamespaces.set(specifier.local.name, specifier.local);
   }
 }
-function collectRunBindings(context: Context, effectModules: readonly string[]): RunBindings {
+function collectRunBindings(
+  context: Context,
+  effectModules: readonly string[]
+): RunBindings {
   const bindings: CollectedBindings = {
     effectNamespaces: new Map(),
     packageNamespaces: new Map(),
@@ -287,34 +321,41 @@ function collectRunBindings(context: Context, effectModules: readonly string[]):
 function trackedNamespace(
   context: Context,
   node: ESTree.Node,
-  namespaces: ReadonlyMap<string, ESTree.Node>,
+  namespaces: ReadonlyMap<string, ESTree.Node>
 ): boolean {
   if (node.type !== 'Identifier') return false;
   const declaration = namespaces.get(node.name);
-  return declaration !== undefined && isTrackedReference(context, node, declaration);
+  return (
+    declaration !== undefined && isTrackedReference(context, node, declaration)
+  );
 }
 function packageEffectRoot(node: ESTree.Node): ESTree.Node | null {
   if (node.type !== 'MemberExpression') return null;
-  if (staticName(node.property, node.computed) !== EFFECT_NAMESPACE) return null;
+  if (staticName(node.property, node.computed) !== EFFECT_NAMESPACE)
+    return null;
   return unwrapExpression(node.object);
 }
 function namespaceKind(
   context: Context,
   init: ESTree.Node,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): 'effect' | 'package' | null {
   if (init.type === 'Identifier') {
-    if (trackedNamespace(context, init, bindings.effectNamespaces)) return 'effect';
-    return trackedNamespace(context, init, bindings.packageNamespaces) ? 'package' : null;
+    if (trackedNamespace(context, init, bindings.effectNamespaces))
+      return 'effect';
+    return trackedNamespace(context, init, bindings.packageNamespaces)
+      ? 'package'
+      : null;
   }
   const root = packageEffectRoot(init);
-  return root !== null && trackedNamespace(context, root, bindings.packageNamespaces)
+  return root !== null &&
+    trackedNamespace(context, root, bindings.packageNamespaces)
     ? 'effect'
     : null;
 }
 function addNamespace(
   map: Map<string, ESTree.Node>,
-  target: Extract<ESTree.Node, { type: 'Identifier' }>,
+  target: Extract<ESTree.Node, { type: 'Identifier' }>
 ): boolean {
   if (map.has(target.name)) return false;
   map.set(target.name, target);
@@ -323,32 +364,45 @@ function addNamespace(
 function addDestructuredAlias(
   property: ESTree.ObjectPattern['properties'][number],
   kind: 'effect' | 'package',
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): boolean {
   if (property.type !== 'Property') return false;
   const name = staticName(property.key, property.computed);
   if (name === null) return false;
-  const value = property.value.type === 'AssignmentPattern' ? property.value.left : property.value;
+  const value =
+    property.value.type === 'AssignmentPattern'
+      ? property.value.left
+      : property.value;
   if (value.type !== 'Identifier') return false;
   if (kind === 'package')
-    return name === EFFECT_NAMESPACE && addNamespace(bindings.effectNamespaces, value);
-  if (!RUN_MEMBER.test(name) || bindings.runLocals.has(value.name)) return false;
+    return (
+      name === EFFECT_NAMESPACE &&
+      addNamespace(bindings.effectNamespaces, value)
+    );
+  if (!RUN_MEMBER.test(name) || bindings.runLocals.has(value.name))
+    return false;
   bindings.runLocals.set(value.name, { declaration: value, member: name });
   return true;
 }
 function propagateDeclarator(
   context: Context,
   declarator: ESTree.VariableDeclarator,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): boolean {
   if (declarator.init === null) return false;
-  const kind = namespaceKind(context, unwrapExpression(declarator.init), bindings);
+  const kind = namespaceKind(
+    context,
+    unwrapExpression(declarator.init),
+    bindings
+  );
   if (kind === null) return false;
   const target = declarator.id;
   if (target.type === 'Identifier')
     return addNamespace(
-      kind === 'effect' ? bindings.effectNamespaces : bindings.packageNamespaces,
-      target,
+      kind === 'effect'
+        ? bindings.effectNamespaces
+        : bindings.packageNamespaces,
+      target
     );
   if (target.type !== 'ObjectPattern') return false;
   let changed = false;
@@ -360,11 +414,12 @@ function propagateDeclarator(
 function propagateLocalAliases(
   context: Context,
   ast: ESTree.Program,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   const declarators: ESTree.VariableDeclarator[] = [];
   walk(ast, (node) => {
-    if (node.type === 'VariableDeclarator' && node.init !== null) declarators.push(node);
+    if (node.type === 'VariableDeclarator' && node.init !== null)
+      declarators.push(node);
   });
   for (let pass = 0; pass < 5; pass += 1) {
     let changed = false;
@@ -379,15 +434,18 @@ function propagateLocalAliases(
 function runEntryPoint(
   context: Context,
   node: ESTree.MemberExpression,
-  bindings: RunBindings,
+  bindings: RunBindings
 ): string | null {
   const member = staticName(node.property, node.computed);
   if (member === null || !RUN_MEMBER.test(member)) return null;
   const object = unwrapExpression(node.object);
   if (object.type === 'Identifier')
-    return trackedNamespace(context, object, bindings.effectNamespaces) ? member : null;
+    return trackedNamespace(context, object, bindings.effectNamespaces)
+      ? member
+      : null;
   const root = packageEffectRoot(object);
-  return root !== null && trackedNamespace(context, root, bindings.packageNamespaces)
+  return root !== null &&
+    trackedNamespace(context, root, bindings.packageNamespaces)
     ? member
     : null;
 }
@@ -419,7 +477,9 @@ function owningCall(fn: FunctionNode): ESTree.CallExpression | null {
   let current: ESTree.Node | null = fn.parent;
   while (current !== null) {
     if (current.type === 'CallExpression') {
-      return current.arguments.some((argument) => Object.is(argument, child)) ? current : null;
+      return current.arguments.some((argument) => Object.is(argument, child))
+        ? current
+        : null;
     }
     if (OWNERSHIP_WRAPPERS.has(current.type)) {
       child = current;
@@ -435,12 +495,13 @@ function owningCall(fn: FunctionNode): ESTree.CallExpression | null {
 function isEffectOwnedFunction(
   fn: FunctionNode,
   bindings: RunBindings,
-  shared: EffectBindings,
+  shared: EffectBindings
 ): boolean {
   const call = owningCall(fn);
   if (call === null) return false;
   // `Effect.fn("name")(function* () { ... })` and `Effect.fn()(...)`.
-  const rawCallee = call.callee.type === 'CallExpression' ? call.callee.callee : call.callee;
+  const rawCallee =
+    call.callee.type === 'CallExpression' ? call.callee.callee : call.callee;
   const callee = unwrapExpression(rawCallee);
   if (callee.type === 'Identifier') {
     // `import { gen } from "effect/Effect"` — a directly imported combinator owns its callback too.
@@ -450,12 +511,21 @@ function isEffectOwnedFunction(
   if (callee.type !== 'MemberExpression') return false;
   const member = effectMember(callee, shared);
   if (member !== null)
-    return !(member.namespace === EFFECT_NAMESPACE && RUN_MEMBER.test(member.member));
+    return !(
+      member.namespace === EFFECT_NAMESPACE && RUN_MEMBER.test(member.member)
+    );
   return isPackageCombinator(callee, bindings);
 }
-function isPackageCombinator(callee: ESTree.MemberExpression, bindings: RunBindings): boolean {
+function isPackageCombinator(
+  callee: ESTree.MemberExpression,
+  bindings: RunBindings
+): boolean {
   const root = packageEffectRoot(unwrapExpression(callee.object));
-  if (root === null || root.type !== 'Identifier' || !bindings.packageNamespaces.has(root.name))
+  if (
+    root === null ||
+    root.type !== 'Identifier' ||
+    !bindings.packageNamespaces.has(root.name)
+  )
     return false;
   const name = staticName(callee.property, callee.computed);
   return name !== null && !RUN_MEMBER.test(name);
@@ -465,11 +535,15 @@ function isPackageCombinator(callee: ESTree.MemberExpression, bindings: RunBindi
 function isInsideEffectOwnedCode(
   node: ESTree.Node,
   bindings: RunBindings,
-  shared: EffectBindings,
+  shared: EffectBindings
 ): boolean {
   let current: ESTree.Node | null = node.parent;
   while (current !== null && current.type !== 'Program') {
-    if (isFunctionNode(current) && isEffectOwnedFunction(current, bindings, shared)) return true;
+    if (
+      isFunctionNode(current) &&
+      isEffectOwnedFunction(current, bindings, shared)
+    )
+      return true;
     current = current.parent;
   }
   return false;
@@ -486,7 +560,11 @@ const DECLARATION_KEY_PARENTS = new Set([
   'TSPropertySignature',
   'TSMethodSignature',
 ]);
-const NAME_PARENTS = new Set(['LabeledStatement', 'BreakStatement', 'ContinueStatement']);
+const NAME_PARENTS = new Set([
+  'LabeledStatement',
+  'BreakStatement',
+  'ContinueStatement',
+]);
 function isDeclarationPosition(node: ESTree.Node): boolean {
   if (node.parent?.type === 'Property')
     return Object.is(node.parent.key, node) && !node.parent.computed;

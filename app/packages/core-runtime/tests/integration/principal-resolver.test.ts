@@ -1,13 +1,18 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
-
-import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
+import { and, eq } from 'drizzle-orm';
+import { DateTime, Effect } from 'effect';
+
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
-import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
+import { loadDatabaseConfig } from '../../src/db/config.ts';
+import {
+  principalAuthBindings,
+  principals,
+  tenants,
+} from '../../src/db/schema.ts';
 
 const tenantOne = '10000000-0000-4000-8000-000000000001';
 const tenantTwo = '10000000-0000-4000-8000-000000000002';
@@ -27,10 +32,20 @@ test(
         .where(eq(principalAuthBindings.providerSubjectId, subject));
       yield* database
         .delete(principals)
-        .where(and(eq(principals.principalId, principalOne), eq(principals.tenantId, tenantOne)));
+        .where(
+          and(
+            eq(principals.principalId, principalOne),
+            eq(principals.tenantId, tenantOne)
+          )
+        );
       yield* database
         .delete(principals)
-        .where(and(eq(principals.principalId, principalTwo), eq(principals.tenantId, tenantTwo)));
+        .where(
+          and(
+            eq(principals.principalId, principalTwo),
+            eq(principals.tenantId, tenantTwo)
+          )
+        );
       yield* database.delete(tenants).where(eq(tenants.tenantId, tenantOne));
       yield* database.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
     });
@@ -92,19 +107,30 @@ test(
         { name: 'Resolver tenant one', tenantId: tenantOne },
         { name: 'Resolver tenant two', tenantId: tenantTwo },
       ]);
-      const resolvedOne = yield* resolver.resolveBetterAuthUserForTenant(subject, tenantOne);
-      const resolvedTwo = yield* resolver.resolveBetterAuthUserForTenant(subject, tenantTwo);
+      const resolvedOne = yield* resolver.resolveBetterAuthUserForTenant(
+        subject,
+        tenantOne
+      );
+      const resolvedTwo = yield* resolver.resolveBetterAuthUserForTenant(
+        subject,
+        tenantTwo
+      );
       assert.equal(resolvedOne.principalId, principalOne);
       assert.equal(resolvedTwo.principalId, principalTwo);
       const foreignResolution = yield* Effect.flip(
-        resolver.resolveBetterAuthUserForTenant('foreign-better-auth-subject', tenantOne),
+        resolver.resolveBetterAuthUserForTenant(
+          'foreign-better-auth-subject',
+          tenantOne
+        )
       );
       assert.equal(foreignResolution._tag, 'PrincipalBindingMissingError');
 
       yield* database
         .update(principalAuthBindings)
         .set({
-          revokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-07T00:00:00.000Z')),
+          revokedAt: DateTime.toDateUtc(
+            DateTime.makeUnsafe('2026-09-07T00:00:00.000Z')
+          ),
           status: 'revoked',
         })
         .where(eq(principalAuthBindings.tenantId, tenantOne));
@@ -112,7 +138,7 @@ test(
         { name: 'Resolver tenant two', tenantId: tenantTwo },
       ]);
       const revokedResolution = yield* Effect.flip(
-        resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
+        resolver.resolveBetterAuthUserForTenant(subject, tenantOne)
       );
       assert.equal(revokedResolution._tag, 'PrincipalBindingInactiveError');
 
@@ -125,7 +151,7 @@ test(
         .set({ status: 'disabled' })
         .where(eq(principals.principalId, principalOne));
       const inactivePrincipal = yield* Effect.flip(
-        resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
+        resolver.resolveBetterAuthUserForTenant(subject, tenantOne)
       );
       assert.equal(inactivePrincipal._tag, 'PrincipalInactiveError');
 
@@ -138,9 +164,9 @@ test(
         .set({ status: 'suspended' })
         .where(eq(tenants.tenantId, tenantOne));
       const inactiveTenant = yield* Effect.flip(
-        resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
+        resolver.resolveBetterAuthUserForTenant(subject, tenantOne)
       );
       assert.equal(inactiveTenant._tag, 'TenantInactiveError');
     }).pipe(Effect.ensuring(cleanup.pipe(Effect.orDie)));
-  }).pipe(Effect.scoped, makeEffectTestCallback),
+  }).pipe(Effect.scoped, makeEffectTestCallback)
 );

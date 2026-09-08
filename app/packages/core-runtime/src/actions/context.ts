@@ -1,11 +1,8 @@
 import { Schema } from 'effect';
-import {
-  decodedStringBrand,
-  nonEmptyString,
-  TargetModuleKeySchema,
-  TargetResourceIdSchema,
-} from './string-schemas.ts';
 import type { Effect } from 'effect';
+
+import type { OperationalScope } from '../operations/context.ts';
+import type { ActionCollectorError } from './errors.ts';
 import type {
   DataAccessEventInput,
   DeclaredDomainEvent,
@@ -13,14 +10,21 @@ import type {
   DomainEventReference,
   OutboxMessage,
 } from './events.ts';
-import type { ActionCollectorError } from './errors.ts';
-import type { OperationalScope } from '../operations/context.ts';
+import {
+  decodedStringBrand,
+  nonEmptyString,
+  TargetModuleKeySchema,
+  TargetResourceIdSchema,
+} from './string-schemas.ts';
 
 export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
 
 const CorrelationIdSchema = decodedStringBrand(nonEmptyString, 'CorrelationId');
-const IdempotencyKeySchema = decodedStringBrand(nonEmptyString, 'IdempotencyKey');
+const IdempotencyKeySchema = decodedStringBrand(
+  nonEmptyString,
+  'IdempotencyKey'
+);
 const TraceIdSchema = decodedStringBrand(nonEmptyString, 'TraceId');
 
 export const ActionTransportMetadataSchema = Schema.Struct({
@@ -32,21 +36,25 @@ export const ActionTransportMetadataSchema = Schema.Struct({
   traceId: Schema.optionalKey(TraceIdSchema),
 });
 
-export type ActionTransportMetadata = Schema.Schema.Type<typeof ActionTransportMetadataSchema>;
+export type ActionTransportMetadata = Schema.Schema.Type<
+  typeof ActionTransportMetadataSchema
+>;
 
-export interface ActionCollectorMethods<DomainEvents extends DomainEventContractMap> {
+export interface ActionCollectorMethods<
+  DomainEvents extends DomainEventContractMap,
+> {
   readonly addDomainEvent: (
-    event: DeclaredDomainEvent<DomainEvents>,
+    event: DeclaredDomainEvent<DomainEvents>
   ) => Effect.Effect<DomainEventReference, ActionCollectorError>;
   readonly addOutboxMessage: (
     domainEvent: DomainEventReference,
-    message: OutboxMessage,
+    message: OutboxMessage
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
-    evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
+    evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordDataAccess: (
-    event: DataAccessEventInput,
+    event: DataAccessEventInput
   ) => Effect.Effect<void, ActionCollectorError>;
 }
 

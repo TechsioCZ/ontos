@@ -1,6 +1,6 @@
 export const compareTableCatalog = (
   expectedTableNames: readonly string[],
-  actualTableNames: readonly string[],
+  actualTableNames: readonly string[]
 ) => {
   const expected = new Set(expectedTableNames);
   const actual = new Set(actualTableNames);

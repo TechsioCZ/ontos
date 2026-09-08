@@ -64,11 +64,8 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { jsonExpressionSnippet } from '../shared/json-globals.ts';
-import { inJsonRuleScope } from '../shared/json-rule-scope.ts';
 import {
   EXPRESSION_WRAPPERS,
   identityUnwrap as unwrap,
@@ -78,6 +75,8 @@ import {
   staticString,
 } from '../shared/ast.ts';
 import { isUnshadowedGlobal } from '../shared/bindings.ts';
+import { jsonExpressionSnippet } from '../shared/json-globals.ts';
+import { inJsonRuleScope } from '../shared/json-rule-scope.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -85,13 +84,23 @@ type AnyNode = ESTree.Node;
 const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self']);
 
 /** Comparison operators that turn serialized text into a structural-equality verdict. */
-const COMPARISON_OPERATORS = new Set(['===', '!==', '==', '!=', '<', '>', '<=', '>=']);
+const COMPARISON_OPERATORS = new Set([
+  '===',
+  '!==',
+  '==',
+  '!=',
+  '<',
+  '>',
+  '<=',
+  '>=',
+]);
 
 /** Methods whose first argument is a lookup key (Map, Set, cache, keyed store). */
 const KEYED_METHODS = new Set(['set', 'get', 'has', 'add', 'delete']);
 
 /** A binding/property name that declares the value is an identity or hash key. */
-const IDENTITY_NAME = /(?:Key|Hash|Id|Fingerprint|Digest|Signature|Etag|Checksum|Cache)$/u;
+const IDENTITY_NAME =
+  /(?:Key|Hash|Id|Fingerprint|Digest|Signature|Etag|Checksum|Cache)$/u;
 
 const DEFAULT_INCLUDE_PATHS: readonly string[] = [
   'apps/**',
@@ -109,7 +118,9 @@ function staticPropertyName(node: ESTree.MemberExpression): string | null {
 }
 
 function keyName(key: AnyNode): string | null {
-  return sharedKeyName(key, false, { unwrap: { wrappers: EXPRESSION_WRAPPERS, sequence: true } });
+  return sharedKeyName(key, false, {
+    unwrap: { wrappers: EXPRESSION_WRAPPERS, sequence: true },
+  });
 }
 
 const OWNER_WRAPPERS = new Set([
@@ -160,7 +171,8 @@ function isGlobalContainer(context: Context, node: AnyNode): boolean {
 
 function isJsonHost(context: Context, node: AnyNode): boolean {
   const host = unwrap(node);
-  if (host.type === 'Identifier') return isUnshadowedGlobal(context, host, 'JSON', true);
+  if (host.type === 'Identifier')
+    return isUnshadowedGlobal(context, host, 'JSON', true);
   return (
     host.type === 'MemberExpression' &&
     staticPropertyName(host) === 'JSON' &&
@@ -168,20 +180,34 @@ function isJsonHost(context: Context, node: AnyNode): boolean {
   );
 }
 
-function isKeyedCall(consumer: ESTree.CallExpression, result: AnyNode): boolean {
-  if (consumer.arguments[0] !== result || consumer.callee.type !== 'MemberExpression') return false;
+function isKeyedCall(
+  consumer: ESTree.CallExpression,
+  result: AnyNode
+): boolean {
+  if (
+    consumer.arguments[0] !== result ||
+    consumer.callee.type !== 'MemberExpression'
+  )
+    return false;
   const method = staticPropertyName(consumer.callee);
   return method !== null && KEYED_METHODS.has(method);
 }
 
 function isKeyConsumer(consumer: AnyNode | null, result: AnyNode): boolean {
   if (consumer?.type === 'CallExpression') return isKeyedCall(consumer, result);
-  return consumer?.type === 'MemberExpression' && consumer.computed && consumer.property === result;
+  return (
+    consumer?.type === 'MemberExpression' &&
+    consumer.computed &&
+    consumer.property === result
+  );
 }
 
 function callMessage(call: AnyNode): string {
   const { node: result, parent: consumer } = skipWrappers(call);
-  if (consumer?.type === 'BinaryExpression' && COMPARISON_OPERATORS.has(consumer.operator))
+  if (
+    consumer?.type === 'BinaryExpression' &&
+    COMPARISON_OPERATORS.has(consumer.operator)
+  )
     return 'jsonStringifyEquality';
   if (isKeyConsumer(consumer, result)) return 'jsonStringifyIdentityKey';
   const owner = ownerName(call);
@@ -191,7 +217,10 @@ function callMessage(call: AnyNode): string {
 }
 
 /** Called references anchor at their call; point-free references anchor at capture. */
-function classify(reference: AnyNode): { readonly node: AnyNode; readonly messageId: string } {
+function classify(reference: AnyNode): {
+  readonly node: AnyNode;
+  readonly messageId: string;
+} {
   const { node: callee, parent } = skipWrappers(reference);
   if (parent?.type !== 'CallExpression' || parent.callee !== callee)
     return { node: reference, messageId: 'jsonStringifyReference' };
@@ -243,17 +272,30 @@ export const rule = defineRule({
       },
     ],
     defaultOptions: [
-      { allowPaths: [], ignoreTestFiles: true, includePaths: [...DEFAULT_INCLUDE_PATHS] },
+      {
+        allowPaths: [],
+        ignoreTestFiles: true,
+        includePaths: [...DEFAULT_INCLUDE_PATHS],
+      },
     ],
   },
   create(context) {
-    if (!inJsonRuleScope(context.filename, context.options[0], DEFAULT_INCLUDE_PATHS)) return {};
+    if (
+      !inJsonRuleScope(
+        context.filename,
+        context.options[0],
+        DEFAULT_INCLUDE_PATHS
+      )
+    )
+      return {};
 
     const report = (node: AnyNode, messageId: string): void => {
       context.report({
         node,
         messageId,
-        data: { expression: jsonExpressionSnippet(context.sourceCode.getText(node)) },
+        data: {
+          expression: jsonExpressionSnippet(context.sourceCode.getText(node)),
+        },
       });
     };
 
@@ -279,7 +321,8 @@ export const rule = defineRule({
         if (source === null || !isJsonHost(context, source)) return;
         for (const property of node.properties) {
           if (property.type !== 'Property') continue;
-          if (keyName((property as { key: AnyNode }).key) !== 'stringify') continue;
+          if (keyName((property as { key: AnyNode }).key) !== 'stringify')
+            continue;
           report(property as unknown as AnyNode, 'jsonStringifyReference');
         }
       },

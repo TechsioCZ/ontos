@@ -6,12 +6,17 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   OrganizationEngagementProfileRequestSchema,
   OrganizationEngagementProfileResponseSchema,
 } from '../../shared/apis/organization-engagement-profile.ts';
 import { findOrganizationEngagementProfile } from '../services/engagement-profile-persistence.service.ts';
-import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
+import {
+  readUnavailable,
+  requireReadValue,
+  readDetailResult,
+} from './read-outcome.ts';
 
 const organizationEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -22,11 +27,13 @@ const organizationEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
 });
 
 interface Services {
-  readonly find: (profileId: string) => ReturnType<typeof findOrganizationEngagementProfile>;
+  readonly find: (
+    profileId: string
+  ) => ReturnType<typeof findOrganizationEngagementProfile>;
 }
 
 const organizationProfileUnavailable = readUnavailable(
-  'Contacts engagement persistence is temporarily unavailable',
+  'Contacts engagement persistence is temporarily unavailable'
 );
 
 export const organizationEngagementProfileRead = defineRead(
@@ -35,7 +42,8 @@ export const organizationEngagementProfileRead = defineRead(
     entrypoint: organizationEngagementProfileEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
-      policyKey: 'party.registry.api.organization-engagement-profile.evidence.v1',
+      policyKey:
+        'party.registry.api.organization-engagement-profile.evidence.v1',
     },
     inputSchema: OrganizationEngagementProfileRequestSchema,
     legalEntityScope: 'required',
@@ -51,21 +59,28 @@ export const organizationEngagementProfileRead = defineRead(
       .find(input.profileRef.resourceId)
       .pipe(
         Effect.mapError(organizationProfileUnavailable),
-        Effect.flatMap(requireReadValue('The organization engagement profile does not exist')),
-        Effect.map(readDetailResult),
+        Effect.flatMap(
+          requireReadValue('The organization engagement profile does not exist')
+        ),
+        Effect.map(readDetailResult)
       ),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
-          reason: 'Organization engagement read requires a trusted Legal Entity scope',
-        }),
+          reason:
+            'Organization engagement read requires a trusted Legal Entity scope',
+        })
       );
     }
     return Effect.succeed({
       find: (profileId) =>
-        findOrganizationEngagementProfile(transaction, scope.tenantId, profileId),
+        findOrganizationEngagementProfile(
+          transaction,
+          scope.tenantId,
+          profileId
+        ),
     });
   },
   (input) => ({
@@ -75,5 +90,5 @@ export const organizationEngagementProfileRead = defineRead(
       resourceId: input.profileRef.resourceId,
       resourceType: input.profileRef.resourceType,
     },
-  }),
+  })
 );

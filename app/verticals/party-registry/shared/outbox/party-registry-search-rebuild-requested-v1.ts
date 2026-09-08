@@ -4,7 +4,7 @@
 import { Schema } from 'effect';
 
 const SearchRebuildRequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('SearchRebuildRequestId'),
+  Schema.brand('SearchRebuildRequestId')
 );
 
 export const OutboxPayloadSchema = Schema.Struct({
@@ -12,5 +12,6 @@ export const OutboxPayloadSchema = Schema.Struct({
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
-export const outboxTopic = 'party.registry.search-rebuild-requested.v1' as const;
+export const outboxTopic =
+  'party.registry.search-rebuild-requested.v1' as const;
 export const outboxProducerModuleKey = 'party.registry' as const;

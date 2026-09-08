@@ -4,8 +4,16 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
-import { ContactPointTypeSchema, PartyContactPointSchema } from '../domain/contact-point.ts';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
+import {
+  ContactPointTypeSchema,
+  PartyContactPointSchema,
+} from '../domain/contact-point.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const PartyContactPointsRequestSchema = Schema.Struct({
@@ -13,43 +21,40 @@ export const PartyContactPointsRequestSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   type: Schema.optionalKey(ContactPointTypeSchema),
 });
-export type PartyContactPointsRequest = typeof PartyContactPointsRequestSchema.Type;
+export type PartyContactPointsRequest =
+  typeof PartyContactPointsRequestSchema.Type;
 export const PartyContactPointsResponseSchema = Schema.Struct({
   items: Schema.Array(PartyContactPointSchema),
 });
-export type PartyContactPointsResponse = typeof PartyContactPointsResponseSchema.Type;
+export type PartyContactPointsResponse =
+  typeof PartyContactPointsResponseSchema.Type;
 
-export const PartyContactPointsAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointsAuthenticationProblem',
-  401,
-);
+export const PartyContactPointsAuthenticationProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointsAuthenticationProblem', 401);
 export const PartyContactPointsInvalidProblemSchema = makeProblemDetailsSchema(
   'PartyContactPointsInvalidProblem',
-  400,
+  400
 );
-export const PartyContactPointsUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartyContactPointsUnavailableProblem',
-  503,
-);
-export const PartyContactPointsForbiddenProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointsForbiddenProblem',
-  403,
-);
+export const PartyContactPointsUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'PartyContactPointsUnavailableProblem',
+    503
+  );
+export const PartyContactPointsForbiddenProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointsForbiddenProblem', 403);
 export const PartyContactPointsNotFoundProblemSchema = makeProblemDetailsSchema(
   'PartyContactPointsNotFoundProblem',
-  404,
+  404
 );
 export const PartyContactPointsPolicyProblemSchema = makeProblemDetailsSchema(
   'PartyContactPointsPolicyProblem',
-  422,
+  422
 );
-export const PartyContactPointsPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointsPolicyConflictProblem',
-  409,
-);
+export const PartyContactPointsPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointsPolicyConflictProblem', 409);
 export const PartyContactPointsInternalProblemSchema = makeProblemDetailsSchema(
   'PartyContactPointsInternalProblem',
-  500,
+  500
 );
 
 export const PartyContactPointsApi = HttpApi.make('PartyContactPointsApi').add(
@@ -70,6 +75,6 @@ export const PartyContactPointsApi = HttpApi.make('PartyContactPointsApi').add(
       payload: PartyContactPointsRequestSchema,
       query: {},
       success: PartyContactPointsResponseSchema,
-    }),
-  ),
+    })
+  )
 );

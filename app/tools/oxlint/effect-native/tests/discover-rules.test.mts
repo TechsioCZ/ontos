@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -13,7 +19,10 @@ test('rule discovery loads the selected production rule and rejects unknown name
   const rules = await discoverRules(['no-native-timers']);
   assert.deepEqual(Object.keys(rules), ['no-native-timers']);
   assert.equal(typeof rules['no-native-timers']?.create, 'function');
-  await assert.rejects(discoverRules(['not-a-rule']), /Unknown fixture rule: not-a-rule/u);
+  await assert.rejects(
+    discoverRules(['not-a-rule']),
+    /Unknown fixture rule: not-a-rule/u
+  );
 });
 
 test('rule discovery uses file URLs in workspaces containing spaces, URL delimiters, and Unicode', () => {
@@ -23,15 +32,21 @@ test('rule discovery uses file URLs in workspaces containing spaces, URL delimit
     const rules = join(workspace, 'rules');
     mkdirSync(shared, { recursive: true });
     mkdirSync(rules, { recursive: true });
-    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ type: 'module' }));
+    writeFileSync(
+      join(workspace, 'package.json'),
+      JSON.stringify({ type: 'module' })
+    );
     copyFileSync(
       join(pluginDirectory, 'shared', 'discover-rules.ts'),
-      join(shared, 'discover-rules.ts'),
+      join(shared, 'discover-rules.ts')
     );
-    writeFileSync(join(rules, 'selected.ts'), 'export const rule = { marker: "selected" };');
+    writeFileSync(
+      join(rules, 'selected.ts'),
+      'export const rule = { marker: "selected" };'
+    );
     writeFileSync(
       join(rules, 'unselected.ts'),
-      'throw new Error("unselected rule must not load"); export const rule = {};',
+      'throw new Error("unselected rule must not load"); export const rule = {};'
     );
     const alias = join(directory, 'workspace-link');
     symlinkSync(workspace, alias, 'dir');
@@ -68,7 +83,7 @@ test('rule discovery uses file URLs in workspaces containing spaces, URL delimit
         }
       `,
       ],
-      { cwd: workspace, encoding: 'utf8', timeout: 30_000 },
+      { cwd: workspace, encoding: 'utf8', timeout: 30_000 }
     );
     assert.equal(result.error, undefined);
     assert.equal(result.status, 0, result.stderr || result.stdout);

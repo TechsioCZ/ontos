@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
+
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 test('process termination cleans workspaces and preserves caller-owned roots', () => {
@@ -15,11 +16,15 @@ test('process termination cleans workspaces and preserves caller-owned roots', (
       ["process.emit('SIGTERM')", 143],
     ] as const) {
       const script = `import { withTemporaryWorkspace } from ${JSON.stringify(helper)}; withTemporaryWorkspace(() => { ${termination}; });`;
-      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-        encoding: 'utf8',
-        env: { ...process.env, EFFECT_NATIVE_TEST_TMPDIR: root },
-        timeout: 5000,
-      });
+      const result = spawnSync(
+        process.execPath,
+        ['--input-type=module', '-e', script],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, EFFECT_NATIVE_TEST_TMPDIR: root },
+          timeout: 5000,
+        }
+      );
       assert.equal(result.error, undefined);
       assert.equal(result.status, status, result.stderr);
       assert.equal(result.stderr, '');
@@ -35,7 +40,7 @@ test('temporary workspace is removed after success', () => {
       created = directory;
       return 42;
     }),
-    42,
+    42
   );
   assert.equal(existsSync(created), false);
 });
@@ -54,7 +59,7 @@ test('early and partially initialized failures retain their cause and clean owne
             }
             throw failure;
           }, root),
-        (error) => error === failure,
+        (error) => error === failure
       );
       assert.deepEqual(readdirSync(root), ['caller-owned']);
     }

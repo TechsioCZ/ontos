@@ -1,11 +1,13 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { betterAuth } from 'better-auth';
+import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
+import { betterAuth } from 'better-auth';
 import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+
 import {
   coreRelations,
   dataAccessEvents,
@@ -79,7 +81,7 @@ export const createAuthenticationFixture = async () => {
         inArray(dataAccessEvents.principalId, [
           e2eTenants.first.principalId,
           e2eTenants.second.principalId,
-        ]),
+        ])
       );
     const existingUsers = await authDatabase
       .select({ id: user.id })
@@ -88,10 +90,14 @@ export const createAuthenticationFixture = async () => {
 
     await Promise.all(
       existingUsers.map(async (existingUser) => {
-        await authDatabase.delete(session).where(eq(session.userId, existingUser.id));
-        await authDatabase.delete(account).where(eq(account.userId, existingUser.id));
+        await authDatabase
+          .delete(session)
+          .where(eq(session.userId, existingUser.id));
+        await authDatabase
+          .delete(account)
+          .where(eq(account.userId, existingUser.id));
         await authDatabase.delete(user).where(eq(user.id, existingUser.id));
-      }),
+      })
     );
     // A page read can finish its asynchronous evidence write while auth rows
     // are being removed. Clear that final E2E-owned batch before deleting the
@@ -102,26 +108,34 @@ export const createAuthenticationFixture = async () => {
         inArray(dataAccessEvents.principalId, [
           e2eTenants.first.principalId,
           e2eTenants.second.principalId,
-        ]),
+        ])
       );
     await Promise.all(
       existingUsers.map((existingUser) =>
         coreDatabase
           .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
-      ),
+          .where(eq(principalAuthBindings.providerSubjectId, existingUser.id))
+      )
     );
     const tenantIds = Object.values(e2eTenants).map(({ tenantId }) => tenantId);
-    const principalIds = Object.values(e2eTenants).map(({ principalId }) => principalId);
+    const principalIds = Object.values(e2eTenants).map(
+      ({ principalId }) => principalId
+    );
     await coreDatabase
       .delete(principalAuthBindings)
       .where(inArray(principalAuthBindings.principalId, principalIds));
     await coreDatabase
       .delete(tenantModuleStates)
       .where(inArray(tenantModuleStates.tenantId, tenantIds));
-    await coreDatabase.delete(legalEntities).where(inArray(legalEntities.tenantId, tenantIds));
-    await coreDatabase.delete(principals).where(inArray(principals.principalId, principalIds));
-    await coreDatabase.delete(tenants).where(inArray(tenants.tenantId, tenantIds));
+    await coreDatabase
+      .delete(legalEntities)
+      .where(inArray(legalEntities.tenantId, tenantIds));
+    await coreDatabase
+      .delete(principals)
+      .where(inArray(principals.principalId, principalIds));
+    await coreDatabase
+      .delete(tenants)
+      .where(inArray(tenants.tenantId, tenantIds));
   };
 
   await cleanup();
@@ -203,10 +217,26 @@ export const createAuthenticationFixture = async () => {
     },
   ]);
   await coreDatabase.insert(tenantModuleStates).values([
-    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.first.tenantId },
-    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.second.tenantId },
-    { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
-    { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
+    {
+      moduleKey: 'party.registry',
+      state: 'active',
+      tenantId: e2eTenants.first.tenantId,
+    },
+    {
+      moduleKey: 'party.registry',
+      state: 'active',
+      tenantId: e2eTenants.second.tenantId,
+    },
+    {
+      moduleKey: 'e2e-first-module',
+      state: 'active',
+      tenantId: e2eTenants.first.tenantId,
+    },
+    {
+      moduleKey: 'e2e-second-module',
+      state: 'active',
+      tenantId: e2eTenants.second.tenantId,
+    },
   ]);
   return async () => {
     try {

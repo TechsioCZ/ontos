@@ -1,11 +1,12 @@
 import { Match } from 'effect';
+
 import type {
   MergeReadinessBlocker,
   MergeReadinessResult,
 } from '../../shared/domain/merge-readiness.ts';
-import type { PartyRef } from '../../shared/resources/party.ts';
-import type { PartyAlias } from '../../shared/resources/party-alias.ts';
 import type { MergeSurvivorSelectionInput } from '../../shared/domain/merge-selection.ts';
+import type { PartyAlias } from '../../shared/resources/party-alias.ts';
+import type { PartyRef } from '../../shared/resources/party.ts';
 import { selectCanonicalSurvivor } from './canonical-survivor-selection.ts';
 import { analyzeMergeCollisions } from './merge-collision-analysis.ts';
 import type { MergeCollisionInput } from './merge-collision-analysis.ts';
@@ -65,28 +66,36 @@ const baseBlockers = () =>
   ] as const;
 
 export const analyzePreparedMergeReadiness = (
-  input: PreparedMergeReadinessInput,
+  input: PreparedMergeReadinessInput
 ): MergeReadinessResult => {
   const selection = selectCanonicalSurvivor(input.selectionInput);
-  const partyRefs = input.selectionInput.candidates.map(({ partyRef }) => partyRef);
+  const partyRefs = input.selectionInput.candidates.map(
+    ({ partyRef }) => partyRef
+  );
   const selectionAnalysis = Match.value(selection).pipe(
-    Match.tag('CanonicalSurvivorSelected', ({ survivorPartyRef }): SelectionReadinessAnalysis => ({
-      blockers: [],
-      selectedSurvivorPartyRef: survivorPartyRef,
-      status: 'SELECTED',
-    })),
-    Match.tag('SurvivorSelectionBlocked', ({ blocker }): SelectionReadinessAnalysis => ({
-      blockers: [
-        {
-          code: blocker,
-          detail: `Canonical survivor selection is blocked: ${blocker}.`,
-          ownerKey: 'party.registry',
-        },
-      ],
-      selectedSurvivorPartyRef: null,
-      status: 'BLOCKED',
-    })),
-    Match.exhaustive,
+    Match.tag(
+      'CanonicalSurvivorSelected',
+      ({ survivorPartyRef }): SelectionReadinessAnalysis => ({
+        blockers: [],
+        selectedSurvivorPartyRef: survivorPartyRef,
+        status: 'SELECTED',
+      })
+    ),
+    Match.tag(
+      'SurvivorSelectionBlocked',
+      ({ blocker }): SelectionReadinessAnalysis => ({
+        blockers: [
+          {
+            code: blocker,
+            detail: `Canonical survivor selection is blocked: ${blocker}.`,
+            ownerKey: 'party.registry',
+          },
+        ],
+        selectedSurvivorPartyRef: null,
+        status: 'BLOCKED',
+      })
+    ),
+    Match.exhaustive
   );
   const survivorPartyRef =
     selectionAnalysis.selectedSurvivorPartyRef ??
@@ -98,7 +107,7 @@ export const analyzePreparedMergeReadiness = (
     absorbedPartyRefs: partyRefs.filter(
       (partyRef) =>
         partyRef.resourceId !== survivorPartyRef.resourceId ||
-        partyRef.tenantId !== survivorPartyRef.tenantId,
+        partyRef.tenantId !== survivorPartyRef.tenantId
     ),
     survivorPartyRef,
   });
@@ -107,30 +116,38 @@ export const analyzePreparedMergeReadiness = (
     consumerReconciliation: input.consumerReconciliation,
     references: input.references,
   });
-  const collisionBlockers: MergeReadinessBlocker[] = collisions.map(({ code, ownerKey }) => ({
-    code,
-    detail: `Merge preflight found ${code}; owner reconciliation is required.`,
-    ownerKey,
-  }));
+  const collisionBlockers: MergeReadinessBlocker[] = collisions.map(
+    ({ code, ownerKey }) => ({
+      code,
+      detail: `Merge preflight found ${code}; owner reconciliation is required.`,
+      ownerKey,
+    })
+  );
   const referenceAnalysis = Match.value(referencePlan).pipe(
-    Match.tag('ReferencePreservationPlanned', (): ReferenceReadinessAnalysis => ({
-      blockers: [],
-      status: 'PLANNED',
-    })),
-    Match.tag('ReferencePreservationBlocked', ({ blockers }): ReferenceReadinessAnalysis => ({
-      blockers: blockers.map(({ code, ownerKey }) => ({
-        code:
-          code === 'UNSUPPORTED_REFERENCE_CLASS' ||
-          code === 'CONSUMER_RECONCILIATION_UNPROVEN' ||
-          code === 'CONSUMER_PARTIAL_RETRY_UNPROVEN'
-            ? code
-            : ('UNSUPPORTED_REFERENCE_CLASS' as const),
-        detail: `Reference preservation is blocked: ${code}.`,
-        ownerKey,
-      })),
-      status: 'BLOCKED',
-    })),
-    Match.exhaustive,
+    Match.tag(
+      'ReferencePreservationPlanned',
+      (): ReferenceReadinessAnalysis => ({
+        blockers: [],
+        status: 'PLANNED',
+      })
+    ),
+    Match.tag(
+      'ReferencePreservationBlocked',
+      ({ blockers }): ReferenceReadinessAnalysis => ({
+        blockers: blockers.map(({ code, ownerKey }) => ({
+          code:
+            code === 'UNSUPPORTED_REFERENCE_CLASS' ||
+            code === 'CONSUMER_RECONCILIATION_UNPROVEN' ||
+            code === 'CONSUMER_PARTIAL_RETRY_UNPROVEN'
+              ? code
+              : ('UNSUPPORTED_REFERENCE_CLASS' as const),
+          detail: `Reference preservation is blocked: ${code}.`,
+          ownerKey,
+        })),
+        status: 'BLOCKED',
+      })
+    ),
+    Match.exhaustive
   );
   return {
     analysis: {
@@ -152,7 +169,7 @@ export const analyzePreparedMergeReadiness = (
 };
 
 export const evaluateDisabledMergeReadiness = (
-  partyRefs: readonly PartyRef[],
+  partyRefs: readonly PartyRef[]
 ): MergeReadinessResult => {
   const unavailable = analyzePreparedMergeReadiness({
     aliases: [],

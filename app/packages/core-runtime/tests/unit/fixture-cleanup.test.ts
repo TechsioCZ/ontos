@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
 import { Effect, Schema } from 'effect';
+
 import { makeEffectTestCallback } from '../support/effect-runtime.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 
 class FixtureDeletionError extends Schema.TaggedError<FixtureDeletionError>()(
   'FixtureDeletionError',
-  {},
+  {}
 ) {}
 
 void test(
@@ -19,8 +21,8 @@ void test(
           Effect.andThen(
             Effect.sync(() => {
               deleted.push('child');
-            }),
-          ),
+            })
+          )
         ),
         Effect.sync(() => {
           assert.deepEqual(deleted, ['child']);
@@ -28,8 +30,8 @@ void test(
         }),
       ]);
       assert.deepEqual(deleted, ['child', 'parent']);
-    }),
-  ),
+    })
+  )
 );
 
 void test(
@@ -49,8 +51,8 @@ void test(
       ]).pipe(Effect.flip);
       assert.equal(error, failure);
       assert.deepEqual(deleted, ['child']);
-    }),
-  ),
+    })
+  )
 );
 
 void test(
@@ -59,6 +61,6 @@ void test(
     Effect.gen(function* verifyEmptyCleanup() {
       const result = yield* purgeFixtureRows<never, never>([]);
       assert.equal(result, undefined);
-    }),
-  ),
+    })
+  )
 );

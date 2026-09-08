@@ -1,6 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { beforeEach, expect, rstest, test } from '@rstest/core';
 import { ConfigProvider, Effect } from 'effect';
+
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
@@ -15,7 +16,8 @@ const {
 } = rstest.hoisted(() => ({
   availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
-  browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
+  browserConfigValuesMock:
+    rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
   currentSessionMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
@@ -29,14 +31,16 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: async <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
+  runBrowserEffect: async <Success, Failure>(
+    effect: Effect.Effect<Success, Failure>
+  ) =>
     await runEffectTestPromise(
       effect.pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
-          ConfigProvider.fromUnknown(browserConfigValuesMock()),
-        ),
-      ),
+          ConfigProvider.fromUnknown(browserConfigValuesMock())
+        )
+      )
     ),
 }));
 
@@ -69,7 +73,7 @@ const request = () =>
 
 const withBetterAuthUrl = async <Value>(
   baseUrl: string,
-  operation: () => Promise<Value>,
+  operation: () => Promise<Value>
 ): Promise<Value> => {
   browserConfigValuesMock.mockReturnValueOnce({ BETTER_AUTH_URL: baseUrl });
   return await operation();
@@ -77,16 +81,22 @@ const withBetterAuthUrl = async <Value>(
 
 beforeEach(() => {
   browserConfigValuesMock.mockReturnValue({});
-  currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
+  currentSessionMock.mockReturnValue(
+    Effect.succeed({ identity, state: 'authenticated' as const })
+  );
   availableLegalEntitiesMock.mockReturnValue(
     Effect.succeed({
       legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
       selectedLegalEntityId: 'legal-1',
       state: 'authenticated',
-    }),
+    })
   );
   shellCompositionMock.mockReturnValue(
-    Effect.succeed({ navigation, state: 'available' as const, unavailableDeployments: [] }),
+    Effect.succeed({
+      navigation,
+      state: 'available' as const,
+      unavailableDeployments: [],
+    })
   );
   availableTenantsMock.mockReturnValue(
     Effect.succeed({
@@ -94,7 +104,7 @@ beforeEach(() => {
         { name: 'Alpha tenant', tenantId: 'tenant-1' },
         { name: 'Zeta tenant', tenantId: 'tenant-2' },
       ],
-    }),
+    })
   );
 });
 
@@ -106,7 +116,11 @@ test('resolves trusted context before returning one serializable composition', a
       items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
       state: 'available',
     },
-    navigation: { items: navigation, state: 'available', unavailableDeployments: [] },
+    navigation: {
+      items: navigation,
+      state: 'available',
+      unavailableDeployments: [],
+    },
     selectedLegalEntityId: 'legal-1',
     state: 'authenticated',
     tenants: {
@@ -118,12 +132,14 @@ test('resolves trusted context before returning one serializable composition', a
     },
   });
   expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
-    shellCompositionMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    shellCompositionMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
   );
 });
 
 test('does not request composition for an anonymous session', async () => {
-  currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
+  currentSessionMock.mockReturnValueOnce(
+    Effect.succeed({ state: 'anonymous' as const })
+  );
   expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
   expect(shellCompositionMock).not.toHaveBeenCalled();
   expect(availableTenantsMock).not.toHaveBeenCalled();
@@ -138,10 +154,12 @@ test('does not invent a selected legal entity while a tenant session requires se
   };
   currentSessionMock.mockReturnValueOnce(
     Effect.succeed({
-      availableLegalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+      availableLegalEntities: [
+        { legalEntityId: 'legal-1', legalName: 'Alpha company' },
+      ],
       identity: tenantIdentity,
       state: 'selection_required' as const,
-    }),
+    })
   );
   const model = await loader({ request: request() });
   expect(model).toMatchObject({
@@ -159,34 +177,42 @@ test('does not invent a selected legal entity while a tenant session requires se
 });
 
 test('uses the configured HTTPS origin for the server-side session request', async () => {
-  currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
+  currentSessionMock.mockReturnValueOnce(
+    Effect.succeed({ state: 'anonymous' as const })
+  );
 
   await withBetterAuthUrl(
     'https://shell.stage.example.test',
-    async () => await loader({ request: new Request('http://shell.stage.example.test/en') }),
+    async () =>
+      await loader({
+        request: new Request('http://shell.stage.example.test/en'),
+      })
   );
 
   expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
-    'https://shell.stage.example.test/shell-super-app-api',
+    'https://shell.stage.example.test/shell-super-app-api'
   );
 });
 
 test('keeps the configured local HTTP origin for the server-side session request', async () => {
-  currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
+  currentSessionMock.mockReturnValueOnce(
+    Effect.succeed({ state: 'anonymous' as const })
+  );
 
   await withBetterAuthUrl(
     'http://localhost:3020',
-    async () => await loader({ request: new Request('http://localhost:3020/en') }),
+    async () =>
+      await loader({ request: new Request('http://localhost:3020/en') })
   );
 
   expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
-    'http://localhost:3020/shell-super-app-api',
+    'http://localhost:3020/shell-super-app-api'
   );
 });
 
 test('maps composition failure to unavailable without discarding verified context', async () => {
   shellCompositionMock.mockReturnValueOnce(
-    Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }),
+    Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' })
   );
   expect(await loader({ request: request() })).toMatchObject({
     contextState: 'authenticated',
@@ -198,17 +224,20 @@ test('maps composition failure to unavailable without discarding verified contex
 
 test('maps tenant failure to the current-tenant fallback without discarding composition', async () => {
   availableTenantsMock.mockReturnValueOnce(
-    Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' }),
+    Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' })
   );
   expect(await loader({ request: request() })).toMatchObject({
     navigation: { items: navigation, state: 'available' },
-    tenants: { items: [{ name: 'tenant-1', tenantId: 'tenant-1' }], state: 'unavailable' },
+    tenants: {
+      items: [{ name: 'tenant-1', tenantId: 'tenant-1' }],
+      state: 'unavailable',
+    },
   });
 });
 
 test('keeps legal-entity acquisition failure explicit without claiming choices are available', async () => {
   availableLegalEntitiesMock.mockReturnValueOnce(
-    Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' }),
+    Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' })
   );
   expect(await loader({ request: request() })).toMatchObject({
     legalEntities: { items: [], state: 'unavailable' },
@@ -217,13 +246,17 @@ test('keeps legal-entity acquisition failure explicit without claiming choices a
 });
 
 test('does not collapse an authentication infrastructure failure into an anonymous session', async () => {
-  currentSessionMock.mockReturnValueOnce(Effect.fail({ _tag: 'AuthenticationUnavailableProblem' }));
-  expect(await loader({ request: request() })).toEqual({ state: 'unavailable' });
+  currentSessionMock.mockReturnValueOnce(
+    Effect.fail({ _tag: 'AuthenticationUnavailableProblem' })
+  );
+  expect(await loader({ request: request() })).toEqual({
+    state: 'unavailable',
+  });
 });
 
 test('tears down stale authenticated data when tenant context requires authentication', async () => {
   availableTenantsMock.mockReturnValueOnce(
-    Effect.fail({ _tag: 'TenantAuthenticationRequiredProblem' }),
+    Effect.fail({ _tag: 'TenantAuthenticationRequiredProblem' })
   );
   expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
 });

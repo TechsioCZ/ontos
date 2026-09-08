@@ -1,7 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { Effect, Option, Schema } from 'effect';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { Effect, Option, Schema } from 'effect';
+
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
@@ -39,28 +41,38 @@ const fact = Schema.decodeUnknownSync(PartyFactAssertionSchema)(wireFact);
 test('Party fact assertion contract exposes usable correction identities without sensitive evidence', () => {
   assert.deepEqual(Schema.encodeSync(PartyFactAssertionSchema)(fact), wireFact);
   assert.throws(() =>
-    Schema.decodeUnknownSync(PartyFactAssertionSchema)({ ...wireFact, assertionId: 'not-a-uuid' }),
+    Schema.decodeUnknownSync(PartyFactAssertionSchema)({
+      ...wireFact,
+      assertionId: 'not-a-uuid',
+    })
   );
-  const decodedWithSensitiveFields = Schema.decodeUnknownSync(PartyFactAssertionSchema)({
+  const decodedWithSensitiveFields = Schema.decodeUnknownSync(
+    PartyFactAssertionSchema
+  )({
     ...wireFact,
     evidenceRefs: ['secret'],
     provenance: { source: 'secret' },
   });
   assert.deepEqual(
     Schema.encodeSync(PartyFactAssertionSchema)(decodedWithSensitiveFields),
-    wireFact,
+    wireFact
   );
 });
 
 test('Party Detail history derives reviewer authority while current fact targets retain normal read authority', () => {
-  assert.equal(partyDetailPermissionTarget({ partyRef }).permission, 'read_party_identity');
   assert.equal(
-    partyDetailPermissionTarget({ includeFactHistory: false, partyRef }).permission,
-    'read_party_identity',
+    partyDetailPermissionTarget({ partyRef }).permission,
+    'read_party_identity'
   );
   assert.equal(
-    partyDetailPermissionTarget({ includeFactHistory: true, partyRef }).permission,
-    'review_party_identity',
+    partyDetailPermissionTarget({ includeFactHistory: false, partyRef })
+      .permission,
+    'read_party_identity'
+  );
+  assert.equal(
+    partyDetailPermissionTarget({ includeFactHistory: true, partyRef })
+      .permission,
+    'review_party_identity'
   );
 });
 
@@ -100,20 +112,33 @@ test('Party Detail persistence reads safe current and immutable historical asser
       queries.push(text);
       values.push(parameters);
       return rows.map((row) =>
-        Object.fromEntries(row.map((value, index) => [String(index), value])),
+        Object.fromEntries(row.map((value, index) => [String(index), value]))
       );
-    }),
+    })
   );
   return runEffectTestPromise(
     Effect.gen(function* checkSafeHistory() {
-      const result = yield* findPartyDetailAssertions(database, tenantId, partyId, true);
+      const result = yield* findPartyDetailAssertions(
+        database,
+        tenantId,
+        partyId,
+        true
+      );
       assert.deepEqual(result.currentFactAssertions, [fact]);
       const history = Option.getOrThrow(result.factHistory);
       assert.equal(history.length, 2);
       assert.equal(history[0]?.value, 'Original name');
       assert.equal(history[0]?.state, 'SUPERSEDED');
-      const current = yield* findPartyDetailAssertions(database, tenantId, partyId, false);
-      assert.deepEqual(current, { currentFactAssertions: [fact], factHistory: Option.none() });
+      const current = yield* findPartyDetailAssertions(
+        database,
+        tenantId,
+        partyId,
+        false
+      );
+      assert.deepEqual(current, {
+        currentFactAssertions: [fact],
+        factHistory: Option.none(),
+      });
       assert.deepEqual(values, [
         [tenantId, partyId],
         [tenantId, partyId, 'ACTIVE', true],
@@ -121,7 +146,10 @@ test('Party Detail persistence reads safe current and immutable historical asser
       const [historyQuery = '', currentQuery = ''] = queries;
       assert.match(historyQuery, /"tenant_id" = \$1/u);
       assert.match(historyQuery, /"party_id" = \$2/u);
-      assert.doesNotMatch(historyQuery, /provenance|principal|invocation|verification/u);
+      assert.doesNotMatch(
+        historyQuery,
+        /provenance|principal|invocation|verification/u
+      );
       assert.doesNotMatch(currentQuery, /external_evidence/u);
       assert.match(currentQuery, /"state" = \$3/u);
       assert.match(currentQuery, /"is_current" = \$4/u);
@@ -130,7 +158,12 @@ test('Party Detail persistence reads safe current and immutable historical asser
         tenantId,
         {
           facts: (canonicalPartyId, includeHistory) =>
-            findPartyDetailAssertions(database, tenantId, canonicalPartyId, includeHistory),
+            findPartyDetailAssertions(
+              database,
+              tenantId,
+              canonicalPartyId,
+              includeHistory
+            ),
           find: () =>
             Effect.succeed({
               _tag: 'found' as const,
@@ -152,12 +185,12 @@ test('Party Detail persistence reads safe current and immutable historical asser
               wasAlias: false,
             }),
         },
-        true,
+        true
       );
       assert.equal(detail.currentFactAssertions[0]?.assertionId, assertionId);
       const detailHistory = Option.getOrThrow(detail.factHistory);
       assert.equal(detailHistory[0]?.assertionId, previousId);
       assert.equal(detailHistory[0]?.value, 'Original name');
-    }),
+    })
   );
 });

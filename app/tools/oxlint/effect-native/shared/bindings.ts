@@ -1,4 +1,5 @@
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+
 import { asNode } from './ast.ts';
 
 type Definition = Variable['defs'][number];
@@ -6,7 +7,7 @@ type Definition = Variable['defs'][number];
 export function resolveVariable(
   context: Context,
   name: string,
-  from: ESTree.Node,
+  from: ESTree.Node
 ): Variable | null {
   let scope: Scope | null = context.sourceCode.getScope(from);
   while (scope !== null) {
@@ -16,7 +17,10 @@ export function resolveVariable(
   }
   return null;
 }
-export function lookupVariable(context: Context, identifier: ESTree.Node): Variable | null {
+export function lookupVariable(
+  context: Context,
+  identifier: ESTree.Node
+): Variable | null {
   return identifier.type === 'Identifier'
     ? resolveVariable(context, identifier.name, identifier)
     : null;
@@ -26,7 +30,8 @@ function isValueImport(definition: Definition): boolean {
   return (
     definition.parent?.type === 'ImportDeclaration' &&
     definition.parent.importKind !== 'type' &&
-    (definition.node.type !== 'ImportSpecifier' || definition.node.importKind !== 'type')
+    (definition.node.type !== 'ImportSpecifier' ||
+      definition.node.importKind !== 'type')
   );
 }
 function isValueDefinition(definition: Definition): boolean {
@@ -42,7 +47,7 @@ export function isUnshadowedGlobal(
   context: Context,
   node: ESTree.Node,
   name: string,
-  ignoreTypeOnly = false,
+  ignoreTypeOnly = false
 ): boolean {
   if (node.type !== 'Identifier' || node.name !== name) return false;
   if (!ignoreTypeOnly) {
@@ -60,12 +65,14 @@ export function isUnshadowedGlobal(
 export function resolvesToImport(
   context: Context,
   identifier: ESTree.Node,
-  valueOnly = false,
+  valueOnly = false
 ): boolean {
   const variable = lookupVariable(context, identifier);
   if (variable === null || variable.defs.length === 0) return true;
   return variable.defs.some(
-    valueOnly ? isValueImport : (definition) => definition.type === 'ImportBinding',
+    valueOnly
+      ? isValueImport
+      : (definition) => definition.type === 'ImportBinding'
   );
 }
 
@@ -74,10 +81,15 @@ export function isTrackedReference(
   context: Context,
   identifier: ESTree.Node,
   declaration: ESTree.Node,
-  sameDeclaration: (left: ESTree.Node, right: ESTree.Node) => boolean = Object.is,
+  sameDeclaration: (
+    left: ESTree.Node,
+    right: ESTree.Node
+  ) => boolean = Object.is
 ): boolean {
   if (identifier.type !== 'Identifier') return false;
   const variable = lookupVariable(context, identifier);
   if (!variable) return true;
-  return variable.defs.some((definition) => sameDeclaration(definition.name, declaration));
+  return variable.defs.some((definition) =>
+    sameDeclaration(definition.name, declaration)
+  );
 }

@@ -1,7 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { DateTime, Effect } from 'effect';
+
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
@@ -56,7 +58,7 @@ test('correction publishes the corrected stable ref while returning the validate
       const collector = createActionCollector(
         updateContactPointAction.descriptor.domainEvents,
         'party.registry',
-        updateContactPointAction.descriptor.accessEvidencePolicy,
+        updateContactPointAction.descriptor.accessEvidencePolicy
       );
       const handler = getActionHandler(updateContactPointAction);
       const result = yield* handler(
@@ -94,12 +96,15 @@ test('correction publishes the corrected stable ref while returning the validate
             tenantId,
           },
           services: { update: () => Effect.succeed(replacement) },
-        },
+        }
       );
       assert.deepEqual(result.contactPointRef, replacement.contactPointRef);
       const snapshot = collector.snapshot();
       assert.equal(snapshot.domainEvents.length, 1);
-      assert.equal(snapshot.domainEvents[0]?.subjectResourceId, originalContactPointRef.resourceId);
+      assert.equal(
+        snapshot.domainEvents[0]?.subjectResourceId,
+        originalContactPointRef.resourceId
+      );
       assert.deepEqual(snapshot.domainEvents[0]?.payloadJson, {
         contactPointRef: originalContactPointRef,
         partyRef,
@@ -109,5 +114,5 @@ test('correction publishes the corrected stable ref while returning the validate
         contactPointRef: originalContactPointRef,
         partyRef,
       });
-    }),
+    })
   ));

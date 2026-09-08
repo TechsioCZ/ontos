@@ -6,5 +6,5 @@ export class CounterpartyEvidenceInsufficient extends Schema.TaggedError<Counter
     code: Schema.Literal('counterparty_evidence_insufficient'),
     method: Schema.String,
     reason: Schema.String,
-  },
+  }
 ) {}

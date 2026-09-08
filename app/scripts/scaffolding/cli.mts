@@ -1,29 +1,37 @@
 #!/usr/bin/env node
-import { NodeServices } from '@effect/platform-node';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { NodeServices } from '@effect/platform-node';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
 import { Console, Effect, flow, Option, Predicate, Schema } from 'effect';
-import { Argument, CliConfig, Command, Flag, GlobalFlag } from 'effect/unstable/cli';
+import {
+  Argument,
+  CliConfig,
+  Command,
+  Flag,
+  GlobalFlag,
+} from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import actionGenerator from './action/scaffold.mts';
+
+import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
+import actionGenerator from './action/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
+import moduleApiGenerator from './module-api/scaffold.mts';
 import moduleContractGenerator from './module-contract/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
 import outboxWorkerGenerator from './outbox-worker/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
 import publicComponentGenerator from './public-component/scaffold.mts';
-import moduleApiGenerator from './module-api/scaffold.mts';
 import reportGenerator from './report/scaffold.mts';
 import resourceGenerator from './resource/scaffold.mts';
 import retireContributionGenerator from './retire-contribution/scaffold.mts';
-import searchProviderGenerator from './search-provider/scaffold.mts';
 import searchProviderAccessGenerator from './search-provider-access/generator.mts';
-import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
+import searchProviderGenerator from './search-provider/scaffold.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
@@ -80,10 +88,13 @@ const TENANT_PERMISSION_FLAG = 'tenant-permission';
 export const ScaffoldCommandSchema = Schema.Literals(scaffoldCommandValues);
 export type ScaffoldCommand = typeof ScaffoldCommandSchema.Type;
 
-export class ScaffoldingError extends Schema.TaggedError<ScaffoldingError>()('ScaffoldingError', {
-  cause: Schema.optional(Schema.Defect()),
-  message: Schema.String,
-}) {}
+export class ScaffoldingError extends Schema.TaggedError<ScaffoldingError>()(
+  'ScaffoldingError',
+  {
+    cause: Schema.optional(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
 type GeneratorResult =
   | ActionBoundaryScaffoldResult
@@ -121,7 +132,7 @@ type TypedGeneratorContext<Config> = Omit<GeneratorContext, 'config'> & {
 
 type LocalGenerator<Config, Result extends GeneratorResult> = (
   context: TypedGeneratorContext<Config>,
-  core: GeneratorCore,
+  core: GeneratorCore
 ) => Promise<Result>;
 
 export interface RouteRefreshInput {
@@ -129,7 +140,9 @@ export interface RouteRefreshInput {
   readonly workspaceRoot: string;
 }
 
-export type RouteRefreshExecutor = (input: RouteRefreshInput) => void | Promise<void>;
+export type RouteRefreshExecutor = (
+  input: RouteRefreshInput
+) => void | Promise<void>;
 
 export interface RunScaffoldOptions {
   readonly routeRefresh?: RouteRefreshExecutor;
@@ -167,13 +180,17 @@ interface CommandDefinition {
     | ((
         result: GeneratorResult,
         options: RunScaffoldOptions,
-        workspaceRoot: string,
-      ) => Effect.Effect<void, ScaffoldingError, ChildProcessSpawner.ChildProcessSpawner>)
+        workspaceRoot: string
+      ) => Effect.Effect<
+        void,
+        ScaffoldingError,
+        ChildProcessSpawner.ChildProcessSpawner
+      >)
     | undefined;
   readonly flags: readonly string[];
   readonly generate: (
     flags: ParsedScaffoldFlags,
-    workspaceRoot: string,
+    workspaceRoot: string
   ) => Effect.Effect<GeneratorResult, ScaffoldingError>;
   readonly help: string;
   readonly requiredFlags: readonly string[];
@@ -183,13 +200,19 @@ interface CommandDefinitionInput<Config, Result extends GeneratorResult> {
   readonly afterGenerate?: (
     result: GeneratorResult,
     options: RunScaffoldOptions,
-    workspaceRoot: string,
-  ) => Effect.Effect<void, ScaffoldingError, ChildProcessSpawner.ChildProcessSpawner>;
+    workspaceRoot: string
+  ) => Effect.Effect<
+    void,
+    ScaffoldingError,
+    ChildProcessSpawner.ChildProcessSpawner
+  >;
   readonly flags: readonly string[];
   readonly generator: LocalGenerator<Config, Result>;
   readonly help: string;
   readonly requiredFlags: readonly string[];
-  readonly toConfig: (flags: ParsedScaffoldFlags) => Effect.Effect<Config, ScaffoldingError>;
+  readonly toConfig: (
+    flags: ParsedScaffoldFlags
+  ) => Effect.Effect<Config, ScaffoldingError>;
 }
 
 export type RunScaffoldResult =
@@ -198,9 +221,11 @@ export type RunScaffoldResult =
 
 const failScaffolding = (
   message: string,
-  cause?: unknown,
+  cause?: unknown
 ): Effect.Effect<never, ScaffoldingError> =>
-  Effect.fail(new ScaffoldingError(cause === undefined ? { message } : { cause, message }));
+  Effect.fail(
+    new ScaffoldingError(cause === undefined ? { message } : { cause, message })
+  );
 
 const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
   function* runCodesmithGeneratorEffect<
@@ -209,11 +234,14 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
   >(
     generator: LocalGenerator<Config, Result>,
     workspaceRoot: string,
-    config: Config,
+    config: Config
   ): Effect.fn.Return<Result, ScaffoldingError> {
     const prepared = yield* Effect.try({
       catch: (cause) =>
-        new ScaffoldingError({ cause, message: 'failed to prepare the Codesmith generator' }),
+        new ScaffoldingError({
+          cause,
+          message: 'failed to prepare the Codesmith generator',
+        }),
       try: () => {
         const smith = new CodeSmith({ namespace: 'ontos-scaffolding' });
         const core = new GeneratorCore({
@@ -222,7 +250,9 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
           outputPath: workspaceRoot,
         });
         const workspaceMaterial = new FsMaterial(workspaceRoot);
-        const generatorMaterial = new FsMaterial(path.resolve(import.meta.dirname));
+        const generatorMaterial = new FsMaterial(
+          path.resolve(import.meta.dirname)
+        );
         core.addMaterial('default', workspaceMaterial);
         core.addMaterial('ontos-local-generator', generatorMaterial);
         core._context.config = config;
@@ -235,22 +265,33 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
       catch: (cause) =>
         new ScaffoldingError({
           cause,
-          message: cause instanceof Error ? cause.message : 'Codesmith generation failed',
+          message:
+            cause instanceof Error
+              ? cause.message
+              : 'Codesmith generation failed',
         }),
-      try: async () => await generator(prepared.generatorContext, prepared.core),
-    }).pipe(Effect.ensuring(Effect.sync(() => (prepared.core._context.current = null))));
+      try: async () =>
+        await generator(prepared.generatorContext, prepared.core),
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => (prepared.core._context.current = null))
+      )
+    );
     return result;
-  },
+  }
 );
 
-const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorResult>(
-  definition: CommandDefinitionInput<Config, Result>,
+const defineCommand = <
+  Config extends GeneratorConfig,
+  Result extends GeneratorResult,
+>(
+  definition: CommandDefinitionInput<Config, Result>
 ): CommandDefinition => ({
   afterGenerate: definition.afterGenerate,
   flags: definition.flags,
   generate: (flags, workspaceRoot) =>
     Effect.flatMap(definition.toConfig(flags), (config) =>
-      runCodesmithGenerator(definition.generator, workspaceRoot, config),
+      runCodesmithGenerator(definition.generator, workspaceRoot, config)
     ),
   help: definition.help,
   requiredFlags: definition.requiredFlags,
@@ -258,7 +299,11 @@ const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorR
 
 const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
   Effect.gen(function* defaultRouteRefreshEffect() {
-    const script = path.join(workspaceRoot, 'scripts', 'generate-tanstack-routes.mts');
+    const script = path.join(
+      workspaceRoot,
+      'scripts',
+      'generate-tanstack-routes.mts'
+    );
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const exitCode = yield* spawner
       .exitCode(
@@ -267,15 +312,21 @@ const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
           stderr: 'inherit',
           stdin: 'inherit',
           stdout: 'inherit',
-        }),
+        })
       )
       .pipe(
         Effect.mapError(
-          (cause) => new ScaffoldingError({ cause, message: `route refresh failed for ${appId}` }),
-        ),
+          (cause) =>
+            new ScaffoldingError({
+              cause,
+              message: `route refresh failed for ${appId}`,
+            })
+        )
       );
     if (exitCode !== ChildProcessSpawner.ExitCode(0)) {
-      return yield* failScaffolding(`route refresh failed for ${appId}: exit ${exitCode}`);
+      return yield* failScaffolding(
+        `route refresh failed for ${appId}: exit ${exitCode}`
+      );
     }
     return yield* Effect.void;
   });
@@ -293,7 +344,7 @@ const RequestFilter = Schema.Literals(['includeArchived', 'role']);
 const isRequestFilter = Schema.is(RequestFilter);
 
 const requireReadAuthorization = (
-  flags: ParsedScaffoldFlags,
+  flags: ParsedScaffoldFlags
 ): Effect.Effect<
   Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
   ScaffoldingError
@@ -301,28 +352,37 @@ const requireReadAuthorization = (
   Effect.gen(function* requireReadAuthorizationEffect() {
     if (!isReadAuthorization(flags.authorizationMode)) {
       return yield* failScaffolding(
-        '--authorization must be public, authenticated_principal, or context_permission',
+        '--authorization must be public, authenticated_principal, or context_permission'
       );
     }
     if (flags.authorizationMode === 'context_permission') {
       if (flags.permission === undefined) {
         return yield* failScaffolding(
-          '--permission is required for context_permission authorization',
+          '--permission is required for context_permission authorization'
         );
       }
-      return { authorization: flags.authorizationMode, permission: flags.permission };
+      return {
+        authorization: flags.authorizationMode,
+        permission: flags.permission,
+      };
     }
     if (flags.permission !== undefined) {
       return yield* failScaffolding(
-        '--permission is valid only for context_permission authorization',
+        '--permission is valid only for context_permission authorization'
       );
     }
     return { authorization: flags.authorizationMode };
   });
 
-const isActionProvisioning = Schema.is(Schema.Literals(['tenant_membership_default', 'explicit']));
-const isAccessFiltering = Schema.is(Schema.Literals(['resource_permission', 'tenant_scope']));
-const isSearchLegalEntityScope = Schema.is(Schema.Literals(['required', 'optional']));
+const isActionProvisioning = Schema.is(
+  Schema.Literals(['tenant_membership_default', 'explicit'])
+);
+const isAccessFiltering = Schema.is(
+  Schema.Literals(['resource_permission', 'tenant_scope'])
+);
+const isSearchLegalEntityScope = Schema.is(
+  Schema.Literals(['required', 'optional'])
+);
 
 const commandDefinitions = {
   action: defineCommand({
@@ -355,29 +415,36 @@ Required flags:
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action', 'authorization', LEGAL_ENTITY_SCOPE_FLAG, 'provisioning'],
+    requiredFlags: [
+      'action',
+      'authorization',
+      LEGAL_ENTITY_SCOPE_FLAG,
+      'provisioning',
+    ],
     toConfig: (flags) =>
       Effect.gen(function* actionConfigEffect() {
         const action = flags.action ?? '';
         const { legalEntityScope } = flags;
         if (!isLegalEntityScope(legalEntityScope)) {
           return yield* failScaffolding(
-            '--legal-entity-scope must be required, optional, or forbidden',
+            '--legal-entity-scope must be required, optional, or forbidden'
           );
         }
         if (flags.authorizationMode !== 'action_execution') {
-          return yield* failScaffolding('--authorization must be action_execution for Actions');
+          return yield* failScaffolding(
+            '--authorization must be action_execution for Actions'
+          );
         }
         if (!isActionProvisioning(flags.provisioning)) {
           return yield* failScaffolding(
-            '--provisioning must be tenant_membership_default or explicit',
+            '--provisioning must be tenant_membership_default or explicit'
           );
         }
         const { module, scope, vertical } = flags;
         if (vertical !== undefined) {
           if (scope !== undefined || module !== undefined) {
             return yield* failScaffolding(
-              '--vertical is mutually exclusive with --scope and --module',
+              '--vertical is mutually exclusive with --scope and --module'
             );
           }
           return {
@@ -389,10 +456,14 @@ Options:
           };
         }
         if (scope !== 'core') {
-          return yield* failScaffolding('--scope core is required when --vertical is not supplied');
+          return yield* failScaffolding(
+            '--scope core is required when --vertical is not supplied'
+          );
         }
         if (module === undefined) {
-          return yield* failScaffolding('--module is required for Core Action ownership');
+          return yield* failScaffolding(
+            '--module is required for Core Action ownership'
+          );
         }
         return {
           action,
@@ -471,7 +542,9 @@ Options:
     afterGenerate: (result, options, workspaceRoot) =>
       Effect.gen(function* refreshGeneratedPagesEffect() {
         if (!('appId' in result) || !Predicate.isString(result.appId)) {
-          return yield* failScaffolding('microvertical-page generator returned an invalid result');
+          return yield* failScaffolding(
+            'microvertical-page generator returned an invalid result'
+          );
         }
         const refresh = (input: RouteRefreshInput) => {
           if (options.routeRefresh === undefined) {
@@ -481,7 +554,9 @@ Options:
             catch: (cause) =>
               new ScaffoldingError({
                 cause,
-                message: Predicate.isError(cause) ? cause.message : 'route refresh failed',
+                message: Predicate.isError(cause)
+                  ? cause.message
+                  : 'route refresh failed',
               }),
             try: async () => await options.routeRefresh?.(input),
           });
@@ -614,7 +689,7 @@ Options:
       Effect.gen(function* outboxWorkerConfigEffect() {
         if (flags.authorizationMode !== 'owner_local_background') {
           return yield* failScaffolding(
-            '--authorization must be owner_local_background for Outbox Workers',
+            '--authorization must be owner_local_background for Outbox Workers'
           );
         }
         return {
@@ -648,10 +723,14 @@ Options:
       Effect.gen(function* policyConfigEffect() {
         const { scope, vertical } = flags;
         if (scope !== 'global' && scope !== 'microvertical') {
-          return yield* failScaffolding('--scope must be global or microvertical');
+          return yield* failScaffolding(
+            '--scope must be global or microvertical'
+          );
         }
         const policy = flags.policy ?? '';
-        return vertical === undefined ? { policy, scope } : { policy, scope, vertical };
+        return vertical === undefined
+          ? { policy, scope }
+          : { policy, scope, vertical };
       }),
   }),
   'public-component': defineCommand({
@@ -820,22 +899,31 @@ Options:
     toConfig: (flags) =>
       Effect.gen(function* searchProviderAccessConfigEffect() {
         const { accessFiltering, legalEntityScope, tenantPermission } = flags;
-        const filters = (flags.requestFilters ?? '').split(',').filter((value) => value !== '');
+        const filters = (flags.requestFilters ?? '')
+          .split(',')
+          .filter((value) => value !== '');
         if (!isAccessFiltering(accessFiltering)) {
           return yield* failScaffolding(
-            '--access-filtering must be resource_permission or tenant_scope',
+            '--access-filtering must be resource_permission or tenant_scope'
           );
         }
         if (!isSearchLegalEntityScope(legalEntityScope)) {
-          return yield* failScaffolding('--legal-entity-scope must be required or optional');
+          return yield* failScaffolding(
+            '--legal-entity-scope must be required or optional'
+          );
         }
         if (!filters.every(isRequestFilter)) {
           return yield* failScaffolding(
-            '--request-filters may contain only includeArchived and role',
+            '--request-filters may contain only includeArchived and role'
           );
         }
-        if (tenantPermission !== undefined && tenantPermission !== 'read_party_identity') {
-          return yield* failScaffolding('--tenant-permission must be read_party_identity');
+        if (
+          tenantPermission !== undefined &&
+          tenantPermission !== 'read_party_identity'
+        ) {
+          return yield* failScaffolding(
+            '--tenant-permission must be read_party_identity'
+          );
         }
         const validatedFilters = filters.filter(isRequestFilter);
         const config: SearchProviderAccessScaffoldConfig = {
@@ -855,7 +943,8 @@ Options:
 
 export const isScaffoldCommand = Schema.is(ScaffoldCommandSchema);
 
-export const getHelpText = (command: ScaffoldCommand): string => commandDefinitions[command].help;
+export const getHelpText = (command: ScaffoldCommand): string =>
+  commandDefinitions[command].help;
 
 const isFlagArgument = (flag: string): boolean =>
   flag.startsWith('--') && flag !== '--' && !flag.includes('=');
@@ -865,29 +954,39 @@ const parseFlagPair = (
   allowed: ReadonlySet<string>,
   parsed: Map<string, string>,
   flag: string | undefined,
-  value: string | undefined,
+  value: string | undefined
 ) =>
   Effect.gen(function* parseFlagPairEffect() {
     if (flag === undefined || !isFlagArgument(flag)) {
       return yield* failScaffolding(
-        `invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`,
+        `invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`
       );
     }
     const name = flag.slice(2);
     if (!allowed.has(name)) {
-      return yield* failScaffolding(`unknown flag --${name} for scaffold:${command}`);
+      return yield* failScaffolding(
+        `unknown flag --${name} for scaffold:${command}`
+      );
     }
     if (parsed.has(name)) {
       return yield* failScaffolding(`flag --${name} may be supplied only once`);
     }
-    if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
-      return yield* failScaffolding(`flag --${name} requires one non-empty value`);
+    if (
+      value === undefined ||
+      value.startsWith('--') ||
+      value.trim().length === 0
+    ) {
+      return yield* failScaffolding(
+        `flag --${name} requires one non-empty value`
+      );
     }
     parsed.set(name, value);
     return yield* Effect.void;
   });
 
-const normalizeForwardedArguments = (argumentsList: readonly string[]): readonly string[] => {
+const normalizeForwardedArguments = (
+  argumentsList: readonly string[]
+): readonly string[] => {
   if (argumentsList[0] === '--') {
     return argumentsList.slice(1);
   }
@@ -896,7 +995,7 @@ const normalizeForwardedArguments = (argumentsList: readonly string[]): readonly
 
 const parseFlags = (
   command: ScaffoldCommand,
-  argumentsList: readonly string[],
+  argumentsList: readonly string[]
 ): Effect.Effect<ParsedScaffoldFlags, ScaffoldingError> =>
   Effect.gen(function* parseFlagsEffect() {
     const definition = commandDefinitions[command];
@@ -939,33 +1038,45 @@ const parseFlags = (
     };
   });
 
-const runScaffoldEffect = Effect.fn('runScaffold')(function* runScaffoldEffectGenerator(
-  command: ScaffoldCommand,
-  rawArguments: readonly string[],
-  options: RunScaffoldOptions = {},
-): Effect.fn.Return<RunScaffoldResult, ScaffoldingError, ChildProcessSpawner.ChildProcessSpawner> {
-  const argumentsList = normalizeForwardedArguments(rawArguments);
-  if (argumentsList.length === 1 && argumentsList[0] === '--help') {
-    return { help: getHelpText(command), kind: 'help' };
+const runScaffoldEffect = Effect.fn('runScaffold')(
+  function* runScaffoldEffectGenerator(
+    command: ScaffoldCommand,
+    rawArguments: readonly string[],
+    options: RunScaffoldOptions = {}
+  ): Effect.fn.Return<
+    RunScaffoldResult,
+    ScaffoldingError,
+    ChildProcessSpawner.ChildProcessSpawner
+  > {
+    const argumentsList = normalizeForwardedArguments(rawArguments);
+    if (argumentsList.length === 1 && argumentsList[0] === '--help') {
+      return { help: getHelpText(command), kind: 'help' };
+    }
+    const flags = yield* parseFlags(command, argumentsList);
+    const workspaceRoot = path.resolve(options.workspaceRoot ?? process.cwd());
+    const definition = commandDefinitions[command];
+    const result = yield* definition.generate(flags, workspaceRoot);
+    if (definition.afterGenerate !== undefined) {
+      yield* definition.afterGenerate(result, options, workspaceRoot);
+    }
+    return { kind: 'generated', result };
   }
-  const flags = yield* parseFlags(command, argumentsList);
-  const workspaceRoot = path.resolve(options.workspaceRoot ?? process.cwd());
-  const definition = commandDefinitions[command];
-  const result = yield* definition.generate(flags, workspaceRoot);
-  if (definition.afterGenerate !== undefined) {
-    yield* definition.afterGenerate(result, options, workspaceRoot);
-  }
-  return { kind: 'generated', result };
-});
+);
 
 export const runScaffold: (
   command: ScaffoldCommand,
   rawArguments: readonly string[],
-  options?: RunScaffoldOptions,
-) => Promise<RunScaffoldResult> = flow(runScaffoldEffect, scaffoldingRuntime.runPromise);
+  options?: RunScaffoldOptions
+) => Promise<RunScaffoldResult> = flow(
+  runScaffoldEffect,
+  scaffoldingRuntime.runPromise
+);
 
-const optionalTextFlag = (name: string) => Flag.string(name).pipe(Flag.optional);
-const forwardedArguments = Argument.variadic(Argument.string('forwarded flags'));
+const optionalTextFlag = (name: string) =>
+  Flag.string(name).pipe(Flag.optional);
+const forwardedArguments = Argument.variadic(
+  Argument.string('forwarded flags')
+);
 const cliFlags = {
   accessFiltering: optionalTextFlag(ACCESS_FILTERING_FLAG),
   action: optionalTextFlag('action'),
@@ -996,10 +1107,14 @@ const cliFlagName = (key: string): string =>
   key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 const toCliArguments = (
-  values: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>>,
+  values: Readonly<
+    Partial<Record<keyof typeof cliFlags, Option.Option<string>>>
+  >
 ): readonly string[] =>
   Object.entries(values).flatMap(([key, value]) =>
-    value !== undefined && Option.isSome(value) ? [`--${cliFlagName(key)}`, value.value] : [],
+    value !== undefined && Option.isSome(value)
+      ? [`--${cliFlagName(key)}`, value.value]
+      : []
   );
 
 const executeCliCommand =
@@ -1011,7 +1126,10 @@ const executeCliCommand =
     readonly forwarded: readonly string[];
   }) =>
     Effect.gen(function* executeCliCommandEffect() {
-      const result = yield* runScaffoldEffect(command, [...toCliArguments(values), ...forwarded]);
+      const result = yield* runScaffoldEffect(command, [
+        ...toCliArguments(values),
+        ...forwarded,
+      ]);
       if (result.kind === 'help') {
         yield* Console.log(result.help);
       }
@@ -1023,16 +1141,18 @@ const cliSubcommands = scaffoldCommandValues.map((command) =>
     {
       ...Object.fromEntries(
         Object.entries(cliFlags).filter(([key]) =>
-          commandDefinitions[command].flags.includes(cliFlagName(key)),
-        ),
+          commandDefinitions[command].flags.includes(cliFlagName(key))
+        )
       ),
       forwarded: forwardedArguments,
     },
-    executeCliCommand(command),
-  ),
+    executeCliCommand(command)
+  )
 );
 
-const cliRoot = Command.make('scaffold').pipe(Command.withSubcommands(cliSubcommands));
+const cliRoot = Command.make('scaffold').pipe(
+  Command.withSubcommands(cliSubcommands)
+);
 
 const customHelp = GlobalFlag.action({
   flag: Flag.boolean('help').pipe(Flag.withAlias('h')),
@@ -1040,19 +1160,25 @@ const customHelp = GlobalFlag.action({
     const command = commandPath.at(-1);
     return command !== undefined && isScaffoldCommand(command)
       ? Console.log(getHelpText(command))
-      : Console.log(`Available scaffold commands:\n${scaffoldCommandValues.join('\n')}`);
+      : Console.log(
+          `Available scaffold commands:\n${scaffoldCommandValues.join('\n')}`
+        );
   },
 });
 
 const [, entryPath] = process.argv;
-if (entryPath !== undefined && import.meta.url === pathToFileURL(path.resolve(entryPath)).href) {
+if (
+  entryPath !== undefined &&
+  import.meta.url === pathToFileURL(path.resolve(entryPath)).href
+) {
   const cliProgram = Effect.updateService(
     Effect.matchEffect(Command.run(cliRoot, { version: '0.1.0' }), {
-      onFailure: (error) => Effect.logError(`Scaffold failed: ${String(error)}`),
+      onFailure: (error) =>
+        Effect.logError(`Scaffold failed: ${String(error)}`),
       onSuccess: () => Effect.void,
     }),
     CliConfig.CliConfig,
-    () => CliConfig.make({ builtIns: [customHelp] }),
+    () => CliConfig.make({ builtIns: [customHelp] })
   ).pipe(Effect.ensuring(scaffoldingRuntime.disposeEffect));
   await Effect.runPromise(cliProgram.pipe(Effect.provide(NodeServices.layer)));
 }

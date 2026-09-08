@@ -8,11 +8,12 @@ import type {
   OutboxWorkerDescriptorError,
 } from '@app/core-runtime';
 import { Duration, Effect, Layer, Schedule } from 'effect';
+
 import { installedModuleCatalog } from './installed-module-catalog.ts';
 import type { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
 
 export type InstalledOutboxMatch<Requirements = OutboxRuntime> = (
-  input: MatchOutboxMessagesInput,
+  input: MatchOutboxMessagesInput
 ) => Effect.Effect<
   OutboxMatchResult,
   OutboxPersistenceError | OutboxWorkerDescriptorError,
@@ -21,7 +22,7 @@ export type InstalledOutboxMatch<Requirements = OutboxRuntime> = (
 
 /** One explicit provenance seam from the validated installed catalog into Core matching. */
 export function matchInstalledOutboxMessagesOnce(
-  catalog: InstalledModuleCatalog,
+  catalog: InstalledModuleCatalog
 ): Effect.Effect<
   OutboxMatchResult,
   OutboxPersistenceError | OutboxWorkerDescriptorError,
@@ -29,7 +30,7 @@ export function matchInstalledOutboxMessagesOnce(
 >;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
   catalog: InstalledModuleCatalog,
-  match: InstalledOutboxMatch<Requirements>,
+  match: InstalledOutboxMatch<Requirements>
 ): Effect.Effect<
   OutboxMatchResult,
   OutboxPersistenceError | OutboxWorkerDescriptorError,
@@ -37,7 +38,7 @@ export function matchInstalledOutboxMessagesOnce<Requirements>(
 >;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
   catalog: InstalledModuleCatalog,
-  match?: InstalledOutboxMatch<Requirements>,
+  match?: InstalledOutboxMatch<Requirements>
 ) {
   const input = { subscriptions: catalog.outboxSubscriptions };
   return match === undefined ? matchOutboxMessages(input) : match(input);
@@ -51,25 +52,31 @@ const installedOutboxMatcherTick = installedModuleCatalog.pipe(
   Effect.flatMap((catalog) => matchInstalledOutboxMessagesOnce(catalog)),
   Effect.tap((result) =>
     result.messagesMatched > 0
-      ? Effect.annotateLogs(Effect.logInfo('Installed Outbox catalog matching completed'), {
-          deliveriesCreated: result.deliveriesCreated,
-          messagesMatched: result.messagesMatched,
-        })
-      : Effect.void,
+      ? Effect.annotateLogs(
+          Effect.logInfo('Installed Outbox catalog matching completed'),
+          {
+            deliveriesCreated: result.deliveriesCreated,
+            messagesMatched: result.messagesMatched,
+          }
+        )
+      : Effect.void
   ),
   Effect.matchEffect({
-    onFailure: (error) => Effect.logError('Installed Outbox catalog matching failed', error),
+    onFailure: (error) =>
+      Effect.logError('Installed Outbox catalog matching failed', error),
     onSuccess: () => Effect.void,
-  }),
+  })
 );
 
 const installedOutboxMatcherLoop = installedOutboxMatcherTick.pipe(
   Effect.repeat(Schedule.spaced(Duration.millis(1000))),
-  Effect.asVoid,
+  Effect.asVoid
 );
 
 export const InstalledOutboxMatcherLive: Layer.Layer<
   never,
   never,
   OutboxRuntime | ShellInstalledModuleCatalog
-> = Layer.effectDiscard(installedOutboxMatcherLoop.pipe(Effect.forkScoped, Effect.asVoid));
+> = Layer.effectDiscard(
+  installedOutboxMatcherLoop.pipe(Effect.forkScoped, Effect.asVoid)
+);

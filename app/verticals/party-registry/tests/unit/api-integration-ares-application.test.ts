@@ -2,8 +2,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { DateTime, Effect, ManagedRuntime, Match, Option, Result, Schema } from 'effect';
+import {
+  DateTime,
+  Effect,
+  ManagedRuntime,
+  Match,
+  Option,
+  Result,
+  Schema,
+} from 'effect';
 import { TestClock } from 'effect/testing';
+
 import {
   AresAppliedEvidenceSchema,
   makeAresAppliedEvidence,
@@ -16,7 +25,6 @@ import {
   TargetAssertionIdSchema,
 } from '../../shared/domain/correction-contracts.ts';
 import { PartyIdSchema } from '../../shared/domain/identity-contracts.ts';
-
 import {
   AresApplySelectionInvalid,
   applyAresObservationWithActions as applyAresObservation,
@@ -42,14 +50,18 @@ const actionValidFrom = DateTime.makeUnsafe('2026-09-03T09:59:00.000Z');
 const partyCreatedAt = DateTime.makeUnsafe('2026-09-01T10:00:00.000Z');
 const partyUpdatedAt = DateTime.makeUnsafe('2026-09-03T10:00:00.000Z');
 const currentAssertionId = Result.getOrThrow(
-  Schema.decodeUnknownResult(AssertionIdSchema)('30000000-0000-4000-8000-000000000001'),
+  Schema.decodeUnknownResult(AssertionIdSchema)(
+    '30000000-0000-4000-8000-000000000001'
+  )
 );
 const aresTestRuntime = ManagedRuntime.make(TestClock.layer());
 test.after(() => aresTestRuntime.dispose());
 const runAresEffectTestPromise = <Value, Failure>(
-  effect: Effect.Effect<Value, Failure>,
+  effect: Effect.Effect<Value, Failure>
 ): Promise<Value> =>
-  aresTestRuntime.runPromise(TestClock.setTime(confirmedAtEpoch).pipe(Effect.andThen(effect)));
+  aresTestRuntime.runPromise(
+    TestClock.setTime(confirmedAtEpoch).pipe(Effect.andThen(effect))
+  );
 const application = {
   decidedAt: confirmedAt,
   evidence: {
@@ -102,7 +114,7 @@ const application = {
   userConfirmed: true,
 };
 const decodedObservation = Result.getOrThrow(
-  Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(application.evidence),
+  Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(application.evidence)
 );
 
 const request: AresApplyRequest = {
@@ -149,11 +161,13 @@ class TestFailure extends Schema.TaggedError<TestFailure>()('TestFailure', {
 
 const makeInvoker = (
   calls: string[],
-  failAction?: string,
+  failAction?: string
 ): PartyRegistryStandardActionInvoker<TestFailure> => {
   const complete = <Value>(action: string, value: Value) => {
     calls.push(action);
-    return failAction === action ? Effect.fail(new TestFailure({ action })) : Effect.succeed(value);
+    return failAction === action
+      ? Effect.fail(new TestFailure({ action }))
+      : Effect.succeed(value);
   };
   return {
     addContactPoint: () => Effect.never,
@@ -181,7 +195,7 @@ const makeInvoker = (
 };
 
 const gateway = makeOperationGateway(() =>
-  Effect.succeed({ expiresAt: 1_788_430_000, token: 'signed-gateway-token' }),
+  Effect.succeed({ expiresAt: 1_788_430_000, token: 'signed-gateway-token' })
 );
 
 const makeReads = (displayName: string | null = null): AresApplyReads => ({
@@ -195,7 +209,8 @@ const makeReads = (displayName: string | null = null): AresApplyReads => ({
       party: {
         archivedAt: Option.none(),
         createdAt: partyCreatedAt,
-        displayName: displayName === null ? Option.none() : Option.some(displayName),
+        displayName:
+          displayName === null ? Option.none() : Option.some(displayName),
         partyRef,
         partyType: 'ORGANIZATION',
         revision: 1,
@@ -213,7 +228,10 @@ const makeReads = (displayName: string | null = null): AresApplyReads => ({
 test('runs only explicitly selected standard Actions and preserves every result', async () => {
   const calls: string[] = [];
   const outcome = await runAresEffectTestPromise(
-    applyAresObservation(request, makeInvoker(calls), { gateway, reads: makeReads() }),
+    applyAresObservation(request, makeInvoker(calls), {
+      gateway,
+      reads: makeReads(),
+    })
   );
 
   assert.deepEqual(calls, [
@@ -223,7 +241,7 @@ test('runs only explicitly selected standard Actions and preserves every result'
   assert.equal(outcome._tag, 'AresApplyCompleted');
   assert.deepEqual(
     outcome.completed.map(({ route }) => route),
-    ['PARTY_UPDATE', 'IDENTIFIER_ADD'],
+    ['PARTY_UPDATE', 'IDENTIFIER_ADD']
   );
 });
 
@@ -241,7 +259,11 @@ test('propagates bounded evidence and independent command delivery keys', async 
         evidenceRef: payload.externalEvidence?.evidenceRef,
         idempotencyKey: options.idempotencyKey,
       });
-      return delegate.addPartyOfficialIdentifier(payload, authorization, options);
+      return delegate.addPartyOfficialIdentifier(
+        payload,
+        authorization,
+        options
+      );
     },
     updateParty: (payload, authorization, options) => {
       recorded.push({
@@ -257,18 +279,18 @@ test('propagates bounded evidence and independent command delivery keys', async 
       baseUrl: 'https://party.example/party-registry-api',
       gateway,
       reads: makeReads(),
-    }),
+    })
   );
 
   assert.deepEqual(
     recorded.map(({ idempotencyKey }) => idempotencyKey),
-    ['ares-name-1', 'ares-ico-1'],
+    ['ares-name-1', 'ares-ico-1']
   );
   assert.equal(
     recorded.every(({ evidenceRef }) =>
-      evidenceRef === undefined ? false : evidenceRef.includes('ares:12345678'),
+      evidenceRef === undefined ? false : evidenceRef.includes('ares:12345678')
     ),
-    true,
+    true
   );
 });
 
@@ -277,9 +299,12 @@ test('stops after the first failed Action and returns a typed partial outcome', 
   const outcome = await runAresEffectTestPromise(
     applyAresObservation(
       request,
-      makeInvoker(calls, 'add-party-official-identifier|Bearer signed-gateway-token'),
-      { gateway, reads: makeReads() },
-    ),
+      makeInvoker(
+        calls,
+        'add-party-official-identifier|Bearer signed-gateway-token'
+      ),
+      { gateway, reads: makeReads() }
+    )
   );
 
   assert.deepEqual(calls, [
@@ -288,11 +313,13 @@ test('stops after the first failed Action and returns a typed partial outcome', 
   ]);
   const partial = Match.value(outcome).pipe(
     Match.tag('AresApplyPartiallyCompleted', (value) => value),
-    Match.orElse(() => assert.fail('Expected a partially completed ARES application')),
+    Match.orElse(() =>
+      assert.fail('Expected a partially completed ARES application')
+    )
   );
   assert.deepEqual(
     partial.completed.map(({ route }) => route),
-    ['PARTY_UPDATE'],
+    ['PARTY_UPDATE']
   );
   assert.equal(partial.failed.route, 'IDENTIFIER_ADD');
   assert.equal(partial.failed.error._tag, 'TestFailure');
@@ -304,17 +331,23 @@ test('resumes a replay after a prior selected fact is already satisfied', async 
     applyAresObservation(request, makeInvoker(calls), {
       gateway,
       reads: makeReads('Example s.r.o.'),
-    }),
+    })
   );
 
-  assert.deepEqual(calls, ['add-party-official-identifier|Bearer signed-gateway-token']);
+  assert.deepEqual(calls, [
+    'add-party-official-identifier|Bearer signed-gateway-token',
+  ]);
   assert.equal(outcome._tag, 'AresApplyCompleted');
   assert.deepEqual(outcome.skipped, [
-    { fact: 'BUSINESS_NAME', reason: 'ALREADY_SATISFIED', route: 'PARTY_UPDATE' },
+    {
+      fact: 'BUSINESS_NAME',
+      reason: 'ALREADY_SATISFIED',
+      route: 'PARTY_UPDATE',
+    },
   ]);
   assert.deepEqual(
     outcome.completed.map(({ route }) => route),
-    ['IDENTIFIER_ADD'],
+    ['IDENTIFIER_ADD']
   );
 });
 
@@ -324,8 +357,11 @@ test('defers when canonical revision or refreshed evidence changed', async () =>
     ...request,
     selections: request.selections.map((selection) =>
       selection.route === 'PARTY_UPDATE'
-        ? { ...selection, payload: { ...selection.payload, expectedRevision: 2 } }
-        : selection,
+        ? {
+            ...selection,
+            payload: { ...selection.payload, expectedRevision: 2 },
+          }
+        : selection
     ),
   };
   const changedReads: AresApplyReads = {
@@ -341,10 +377,16 @@ test('defers when canonical revision or refreshed evidence changed', async () =>
   };
   const [revisionOutcome, changedOutcome] = await Promise.all([
     runAresEffectTestPromise(
-      applyAresObservation(revisionRequest, makeInvoker(calls), { gateway, reads: makeReads() }),
+      applyAresObservation(revisionRequest, makeInvoker(calls), {
+        gateway,
+        reads: makeReads(),
+      })
     ),
     runAresEffectTestPromise(
-      applyAresObservation(request, makeInvoker(calls), { gateway, reads: changedReads }),
+      applyAresObservation(request, makeInvoker(calls), {
+        gateway,
+        reads: changedReads,
+      })
     ),
   ]);
 
@@ -389,9 +431,9 @@ test('rejects unconfirmed or observation-mismatched selections before invoking a
         applyAresObservation(invalidRequest, makeInvoker(calls), {
           gateway,
           reads: makeReads(),
-        }).pipe(Effect.result),
-      ),
-    ),
+        }).pipe(Effect.result)
+      )
+    )
   );
   for (const result of results) {
     assert.equal('failure' in result, true);
@@ -446,15 +488,18 @@ test('does not accept a different street number as the observed registered addre
     userConfirmed: true,
   };
   const result = await runAresEffectTestPromise(
-    applyAresObservation(invalidRequest, makeInvoker(calls), { gateway, reads: makeReads() }).pipe(
-      Effect.result,
-    ),
+    applyAresObservation(invalidRequest, makeInvoker(calls), {
+      gateway,
+      reads: makeReads(),
+    }).pipe(Effect.result)
   );
   assert.equal('failure' in result, true);
   assert.deepEqual(calls, []);
 });
 
-const historicalEvidence = (fact: 'BUSINESS_NAME' | 'ICO'): AresAppliedEvidence => {
+const historicalEvidence = (
+  fact: 'BUSINESS_NAME' | 'ICO'
+): AresAppliedEvidence => {
   const result = deriveAresEvidenceApplication({
     canonical: {
       archived: false,
@@ -480,13 +525,17 @@ const correctionSelection: AresApplyRequest['selections'][number] = {
     evidenceRefs: ['review:ares'],
     evidenceSource: 'MANUAL_REVIEW',
     factKind: 'DISPLAY_NAME',
-    partyId: Result.getOrThrow(Schema.decodeUnknownResult(PartyIdSchema)(partyRef.resourceId)),
+    partyId: Result.getOrThrow(
+      Schema.decodeUnknownResult(PartyIdSchema)(partyRef.resourceId)
+    ),
     policyVersion: 'party-correction.v1',
     provenance: { method: 'REVIEW', source: 'ARES' },
     reasonCode: 'WRONG_IDENTITY_VALUE',
     replacementValue: 'Example s.r.o.',
     targetAssertionId: Result.getOrThrow(
-      Schema.decodeUnknownResult(TargetAssertionIdSchema)('30000000-0000-4000-8000-000000000001'),
+      Schema.decodeUnknownResult(TargetAssertionIdSchema)(
+        '30000000-0000-4000-8000-000000000001'
+      )
     ),
   },
   route: 'PARTY_CORRECTION',
@@ -497,48 +546,57 @@ test('review-authorized assertion context returns explicit Correction handoff wi
   const reads = makeReads('Wrong name');
   let reviewed = false;
   const result = await runAresEffectTestPromise(
-    applyAresObservation({ ...request, selections: [correctionSelection] }, makeInvoker(calls), {
-      gateway,
-      reads: {
-        ...reads,
-        party: (payload, ...args) => {
-          reviewed = payload.includeFactHistory === true;
-          return reads.party(payload, ...args).pipe(
-            Effect.map((detail) => ({
-              ...detail,
-              currentFactAssertions: [
-                {
-                  assertionId: currentAssertionId,
-                  externalEvidence: Option.some(historicalEvidence('BUSINESS_NAME')),
-                  factKind: 'DISPLAY_NAME' as const,
-                  isCurrent: true,
-                  partyRef,
-                  recordedAt: confirmedInstant,
-                  retractsAssertionId: Option.none(),
-                  state: 'ACTIVE' as const,
-                  supersedesAssertionId: Option.none(),
-                  validFrom: confirmedInstant,
-                  validTo: Option.none(),
-                  value: 'Wrong name',
-                },
-              ],
-            })),
-          );
+    applyAresObservation(
+      { ...request, selections: [correctionSelection] },
+      makeInvoker(calls),
+      {
+        gateway,
+        reads: {
+          ...reads,
+          party: (payload, ...args) => {
+            reviewed = payload.includeFactHistory === true;
+            return reads.party(payload, ...args).pipe(
+              Effect.map((detail) => ({
+                ...detail,
+                currentFactAssertions: [
+                  {
+                    assertionId: currentAssertionId,
+                    externalEvidence: Option.some(
+                      historicalEvidence('BUSINESS_NAME')
+                    ),
+                    factKind: 'DISPLAY_NAME' as const,
+                    isCurrent: true,
+                    partyRef,
+                    recordedAt: confirmedInstant,
+                    retractsAssertionId: Option.none(),
+                    state: 'ACTIVE' as const,
+                    supersedesAssertionId: Option.none(),
+                    validFrom: confirmedInstant,
+                    validTo: Option.none(),
+                    value: 'Wrong name',
+                  },
+                ],
+              }))
+            );
+          },
         },
-      },
-    }),
+      }
+    )
   );
   assert.equal(reviewed, true);
   const deferred = Match.value(result).pipe(
     Match.tag('AresApplyDeferred', (value) => value),
-    Match.orElse(() => assert.fail('Expected a deferred ARES application')),
+    Match.orElse(() => assert.fail('Expected a deferred ARES application'))
   );
   assert.equal(deferred.application.outcome, 'CORRECTION_CANDIDATE');
   assert.equal(
     deferred.correctionCandidates[0]?.targetAssertionId,
-    '30000000-0000-4000-8000-000000000001',
+    '30000000-0000-4000-8000-000000000001'
   );
-  assert.equal(deferred.correctionCandidates[0]?.observedValue, 'Example s.r.o.');
+  assert.equal(
+    deferred.correctionCandidates[0]?.observedValue,
+    'Example s.r.o.'
+  );
   assert.deepEqual(calls, []);
 });
 
@@ -547,41 +605,46 @@ test('governed identifier history supports ICO correction suspicion without clai
   const [, selection] = request.selections;
   assert.ok(selection);
   const outcome = await runAresEffectTestPromise(
-    applyAresObservation({ ...request, selections: [selection] }, makeInvoker(calls), {
-      gateway,
-      reads: {
-        ...makeReads(),
-        identifiers: () =>
-          Effect.succeed({
-            items: [
-              {
-                externalEvidence: Schema.encodeSync(AresAppliedEvidenceSchema)(
-                  historicalEvidence('ICO'),
-                ),
-                identifierType: 'ICO' as const,
-                namespace: 'CZ:ICO',
-                normalizedValue: '87654321',
-                officialIdentifierRef: {
-                  moduleId: 'party.registry' as const,
-                  resourceId: '40000000-0000-4000-8000-000000000001',
-                  resourceType: 'party.registry.party-official-identifier' as const,
-                  tenantId: partyRef.tenantId,
+    applyAresObservation(
+      { ...request, selections: [selection] },
+      makeInvoker(calls),
+      {
+        gateway,
+        reads: {
+          ...makeReads(),
+          identifiers: () =>
+            Effect.succeed({
+              items: [
+                {
+                  externalEvidence: Schema.encodeSync(
+                    AresAppliedEvidenceSchema
+                  )(historicalEvidence('ICO')),
+                  identifierType: 'ICO' as const,
+                  namespace: 'CZ:ICO',
+                  normalizedValue: '87654321',
+                  officialIdentifierRef: {
+                    moduleId: 'party.registry' as const,
+                    resourceId: '40000000-0000-4000-8000-000000000001',
+                    resourceType:
+                      'party.registry.party-official-identifier' as const,
+                    tenantId: partyRef.tenantId,
+                  },
+                  partyRef,
+                  recordedAt: application.decidedAt,
+                  state: 'ACTIVE' as const,
+                  validFrom: application.decidedAt,
+                  validTo: null,
+                  verification: 'VERIFIED' as const,
                 },
-                partyRef,
-                recordedAt: application.decidedAt,
-                state: 'ACTIVE' as const,
-                validFrom: application.decidedAt,
-                validTo: null,
-                verification: 'VERIFIED' as const,
-              },
-            ],
-          }),
-      },
-    }),
+              ],
+            }),
+        },
+      }
+    )
   );
   const deferred = Match.value(outcome).pipe(
     Match.tag('AresApplyDeferred', (value) => value),
-    Match.orElse(() => assert.fail('Expected a deferred ARES application')),
+    Match.orElse(() => assert.fail('Expected a deferred ARES application'))
   );
   assert.equal(deferred.application.outcome, 'CORRECTION_CANDIDATE');
   assert.equal(deferred.correctionCandidates[0]?.fact, 'ICO');
@@ -618,7 +681,10 @@ test('every governed read and selected Action receives fresh audience-scoped aut
     },
   };
   await runAresEffectTestPromise(
-    applyAresObservation(request, makeInvoker(calls), { gateway: issued, reads }),
+    applyAresObservation(request, makeInvoker(calls), {
+      gateway: issued,
+      reads,
+    })
   );
   assert.deepEqual(authorized, [
     'Bearer token-1',
@@ -645,7 +711,7 @@ test('read denial fails before writes and preserves its declared error', async (
     applyAresObservation(request, makeInvoker(calls), {
       gateway,
       reads: { ...makeReads(), party: () => Effect.fail(denied) },
-    }).pipe(Effect.result),
+    }).pipe(Effect.result)
   );
   assert.equal('failure' in result && result.failure === denied, true);
   assert.deepEqual(calls, []);
@@ -667,16 +733,22 @@ test('alias and archived targets never dispatch selected writes', async () => {
                   ...detail,
                   party: {
                     ...detail.party,
-                    archivedAt: kind === 'ARCHIVED' ? Option.some(confirmedInstant) : Option.none(),
+                    archivedAt:
+                      kind === 'ARCHIVED'
+                        ? Option.some(confirmedInstant)
+                        : Option.none(),
                   },
                   resolution: {
                     ...detail.resolution,
-                    kind: kind === 'ALIAS' ? ('ALIAS' as const) : ('DIRECT' as const),
+                    kind:
+                      kind === 'ALIAS'
+                        ? ('ALIAS' as const)
+                        : ('DIRECT' as const),
                   },
-                })),
+                }))
               ),
           },
-        }).pipe(Effect.result),
+        }).pipe(Effect.result)
       );
       if (kind === 'ALIAS') {
         assert.equal('failure' in result, true);
@@ -685,12 +757,16 @@ test('alias and archived targets never dispatch selected writes', async () => {
         if ('success' in result) {
           Match.value(result.success).pipe(
             Match.tag('AresApplyDeferred', () => null),
-            Match.orElse(() => assert.fail('Expected an archived Party to defer ARES application')),
+            Match.orElse(() =>
+              assert.fail(
+                'Expected an archived Party to defer ARES application'
+              )
+            )
           );
         }
       }
       assert.deepEqual(calls, []);
-    }),
+    })
   );
 });
 
@@ -707,10 +783,10 @@ test('provider revision change alone invalidates the earlier confirmation', asyn
             Effect.map((observed) => ({
               ...observed,
               providerChangedOn: Option.some(DateTime.makeUnsafe('2026-09-03')),
-            })),
+            }))
           ),
       },
-    }),
+    })
   );
   assert.equal(outcome._tag, 'AresApplyDeferred');
   assert.deepEqual(calls, []);
@@ -719,7 +795,10 @@ test('provider revision change alone invalidates the earlier confirmation', asyn
 test('retry preserves exact command payload and reports required standard recovery', async () => {
   const payloads: unknown[] = [];
   const calls: string[] = [];
-  const delegate = makeInvoker(calls, 'update-party|Bearer signed-gateway-token');
+  const delegate = makeInvoker(
+    calls,
+    'update-party|Bearer signed-gateway-token'
+  );
   const invoker: PartyRegistryStandardActionInvoker<TestFailure> = {
     ...delegate,
     updateParty: (payload, auth, options) => {
@@ -730,14 +809,19 @@ test('retry preserves exact command payload and reports required standard recove
   for (let retry = 0; retry < 2; retry += 1) {
     // eslint-disable-next-line no-await-in-loop -- Retry must follow the completed first attempt.
     const result = await runAresEffectTestPromise(
-      applyAresObservation(request, invoker, { gateway, reads: makeReads() }),
+      applyAresObservation(request, invoker, { gateway, reads: makeReads() })
     );
     const partial = Match.value(result).pipe(
       Match.tag('AresApplyPartiallyCompleted', (value) => value),
-      Match.orElse(() => assert.fail('Expected a partially completed ARES application')),
+      Match.orElse(() =>
+        assert.fail('Expected a partially completed ARES application')
+      )
     );
     assert.equal(partial.failed.idempotencyKey, 'ares-name-1');
-    assert.equal(partial.failed.recovery, 'RESOLVE_STANDARD_ACTION_BEFORE_RETRY');
+    assert.equal(
+      partial.failed.recovery,
+      'RESOLVE_STANDARD_ACTION_BEFORE_RETRY'
+    );
   }
   assert.deepEqual(payloads[0], payloads[1]);
   assert.deepEqual(calls, [
@@ -781,7 +865,10 @@ test('failed second Action stops the following supported address and retains pri
     },
     route: 'CONTACT_POINT_ADD',
   };
-  const delegate = makeInvoker(calls, 'add-party-official-identifier|Bearer signed-gateway-token');
+  const delegate = makeInvoker(
+    calls,
+    'add-party-official-identifier|Bearer signed-gateway-token'
+  );
   const outcome = await runAresEffectTestPromise(
     applyAresObservation(
       { ...request, selections: [...request.selections, address] },
@@ -792,8 +879,8 @@ test('failed second Action stops the following supported address and retains pri
           return Effect.fail(new TestFailure({ action: 'address' }));
         },
       },
-      { gateway, reads: makeReads() },
-    ),
+      { gateway, reads: makeReads() }
+    )
   );
   assert.equal(outcome._tag, 'AresApplyPartiallyCompleted');
   assert.equal(outcome.completed.length, 1);
@@ -817,14 +904,14 @@ test('stale refreshed evidence and missing canonical target cannot execute enric
             servedAt: DateTime.makeUnsafe('2026-09-03T10:00:00.000Z'),
           }),
       },
-    }),
+    })
   );
   assert.equal(stale._tag, 'AresApplyDeferred');
   const absent = await runAresEffectTestPromise(
     applyAresObservation({ ...request, partyRef: null }, makeInvoker(calls), {
       gateway,
       reads: makeReads(),
-    }).pipe(Effect.result),
+    }).pipe(Effect.result)
   );
   assert.equal('failure' in absent, true);
   assert.deepEqual(calls, []);
@@ -843,14 +930,19 @@ test('fresh identical refresh cannot revive an expired original confirmation', a
         },
       },
       makeInvoker(calls),
-      { gateway, reads: makeReads() },
-    ),
+      { gateway, reads: makeReads() }
+    )
   );
   const deferred = Match.value(outcome).pipe(
     Match.tag('AresApplyDeferred', (value) => value),
-    Match.orElse(() => assert.fail('Expected an expired confirmation to defer ARES application')),
+    Match.orElse(() =>
+      assert.fail('Expected an expired confirmation to defer ARES application')
+    )
   );
-  assert.equal(deferred.application.factDecisions[0]?.reasonCode, 'observation_not_fresh');
+  assert.equal(
+    deferred.application.factDecisions[0]?.reasonCode,
+    'observation_not_fresh'
+  );
   assert.deepEqual(deferred.correctionCandidates, []);
   assert.deepEqual(calls, []);
 });
@@ -858,14 +950,20 @@ test('fresh identical refresh cannot revive an expired original confirmation', a
 test('a correction route is never historical-error evidence by itself', async () => {
   const calls: string[] = [];
   const outcome = await runAresEffectTestPromise(
-    applyAresObservation({ ...request, selections: [correctionSelection] }, makeInvoker(calls), {
-      gateway,
-      reads: makeReads('Wrong name'),
-    }),
+    applyAresObservation(
+      { ...request, selections: [correctionSelection] },
+      makeInvoker(calls),
+      {
+        gateway,
+        reads: makeReads('Wrong name'),
+      }
+    )
   );
   const deferred = Match.value(outcome).pipe(
     Match.tag('AresApplyDeferred', (value) => value),
-    Match.orElse(() => assert.fail('Expected the correction selection to defer ARES application')),
+    Match.orElse(() =>
+      assert.fail('Expected the correction selection to defer ARES application')
+    )
   );
   assert.equal(deferred.application.outcome, 'NEEDS_CONFIRMATION');
   assert.deepEqual(deferred.correctionCandidates, []);

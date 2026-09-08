@@ -1,5 +1,6 @@
 import { Context } from 'effect';
 import type { Effect } from 'effect';
+
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import type { OperationContextUnavailable } from './errors.ts';
 
@@ -19,11 +20,13 @@ export interface PersistedScopeRecord {
 
 export interface OperationalScopeRepository {
   readonly load: (
-    principal: TrustedPrincipalContext,
+    principal: TrustedPrincipalContext
   ) => Effect.Effect<PersistedScopeRecord, OperationContextUnavailable>;
 }
 
 export class OperationalScopeRepositoryContext extends Context.Service<
   OperationalScopeRepositoryContext,
   OperationalScopeRepository
->()('@app/core-runtime/operations/repository-context/OperationalScopeRepositoryContext') {}
+>()(
+  '@app/core-runtime/operations/repository-context/OperationalScopeRepositoryContext'
+) {}

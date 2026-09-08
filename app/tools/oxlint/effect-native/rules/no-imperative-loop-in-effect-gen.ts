@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-imperative-loop-in-effect-gen
  *
@@ -71,7 +70,6 @@ import { optionRecord } from '../shared/options.ts';
  * those stay reported on purpose. Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import {
@@ -90,11 +88,23 @@ import {
   collectDirectMemberImports,
   collectRootNamespaces,
 } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { booleanOption as boolean, stringArray } from '../shared/options.ts';
-import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import {
+  isScriptFile,
+  isTestFile,
+  matchesGlobs,
+  scopePath,
+} from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
-const DEFAULT_IGNORE = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tools/**', '**/*.d.ts'];
+const DEFAULT_IGNORE = [
+  '**/dist/**',
+  '**/build/**',
+  '**/node_modules/**',
+  'tools/**',
+  '**/*.d.ts',
+];
 /** Wrappers whose generator argument is an Effect program body. */
 const DEFAULT_GEN_MEMBERS = ['gen', 'fn', 'fnUntraced'];
 /** Barrels that re-export `Effect` verbatim, so `Effect.gen` there is the same generator. */
@@ -175,7 +185,7 @@ function isTerminalYield(node: AnyNode, loop: AnyNode): boolean {
  */
 function containsDelegatingYield(
   loop: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
+  visitorKeys: Readonly<Record<string, readonly string[]>>
 ): boolean {
   let found = false;
   walk(loop, visitorKeys, (node) => {
@@ -196,7 +206,7 @@ function containsDelegatingYield(
 function collectLoopMutations(
   loop: AnyNode,
   context: Context,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
+  visitorKeys: Readonly<Record<string, readonly string[]>>
 ) {
   const assigned = new Set<import('@oxlint/plugins').Variable>();
   walk(loop, visitorKeys, (node) => {
@@ -208,7 +218,8 @@ function collectLoopMutations(
           : null;
     if (target === null) return true;
     target = unwrap(target);
-    while (target !== null && MEMBER_TYPES.has(target.type)) target = unwrap(target.object);
+    while (target !== null && MEMBER_TYPES.has(target.type))
+      target = unwrap(target.object);
     if (target?.type === 'Identifier') {
       const variable = lexicalVariable(context, target);
       if (variable !== null) assigned.add(variable);
@@ -217,8 +228,9 @@ function collectLoopMutations(
   });
   const mutatesOuter = [...assigned].some((variable) =>
     variable.defs.some(
-      (definition) => definition.node.start < loop.start || definition.node.end > loop.end,
-    ),
+      (definition) =>
+        definition.node.start < loop.start || definition.node.end > loop.end
+    )
   );
   return { assigned, mutatesOuter };
 }
@@ -261,7 +273,7 @@ interface DeclaredBinding {
  */
 function collectGeneratorLets(
   generator: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
+  visitorKeys: Readonly<Record<string, readonly string[]>>
 ): readonly DeclaredBinding[] {
   const declarations: DeclaredBinding[] = [];
   const body = asNode(generator.body);
@@ -297,51 +309,68 @@ function isIncludedFile(context: Context, options: RuleOptions): boolean {
   const inScripts = isScriptFile(path);
   if (!options.includeScripts && inScripts) return false;
   // Opting scripts in also widens the default include globs.
-  if (!matchesGlobs(path, options.include) && !(options.includeScripts && inScripts)) return false;
+  if (
+    !matchesGlobs(path, options.include) &&
+    !(options.includeScripts && inScripts)
+  )
+    return false;
   return options.includeTests || !isTestFile(path);
 }
 
 function allowsUnmutatingForOf(
   loop: AnyNode,
   options: RuleOptions,
-  mutatesOuter: boolean,
+  mutatesOuter: boolean
 ): boolean {
-  return options.allowForOfWithoutMutation && loop.type === 'ForOfStatement' && !mutatesOuter;
+  return (
+    options.allowForOfWithoutMutation &&
+    loop.type === 'ForOfStatement' &&
+    !mutatesOuter
+  );
 }
 
-function hasGeneratorImports(program: ESTree.Program, options: RuleOptions): boolean {
+function hasGeneratorImports(
+  program: ESTree.Program,
+  options: RuleOptions
+): boolean {
   const rootNamespaces = collectRootNamespaces(program);
   const directMembers = collectDirectMemberImports(
     program,
-    new Map([['Effect', new Set(options.genMembers)]]),
+    new Map([['Effect', new Set(options.genMembers)]])
   );
   const bindings = bindingsWithExtraModules(program, options.effectModules);
-  return bindings.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0;
+  return (
+    bindings.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0
+  );
 }
 
 function generatorDefinitionValue(
   context: Context,
   definition: import('@oxlint/plugins').Variable['defs'][number] | undefined,
-  seen: Set<unknown>,
+  seen: Set<unknown>
 ): ESTree.Node | null {
   if (definition?.type === 'FunctionName') return definition.node;
   if (definition?.type !== 'Variable') return null;
   const declaration = definition.node as ESTree.VariableDeclarator;
-  if ((definition.parent as ESTree.VariableDeclaration)?.kind !== 'const') return null;
-  return declaration.init === null ? null : generatorValue(context, declaration.init, seen);
+  if ((definition.parent as ESTree.VariableDeclaration)?.kind !== 'const')
+    return null;
+  return declaration.init === null
+    ? null
+    : generatorValue(context, declaration.init, seen);
 }
 
 function generatorValue(
   context: Context,
   value: ESTree.Node,
-  seen = new Set<unknown>(),
+  seen = new Set<unknown>()
 ): ESTree.Node | null {
   const node = identityUnwrap(value);
   if (node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration')
     return node.generator ? node : null;
   if (node.type !== 'Identifier') return null;
   const variable = lexicalVariable(context, node);
-  if (variable === null || seen.has(variable) || variable.defs.length !== 1) return null;
+  if (variable === null || seen.has(variable) || variable.defs.length !== 1)
+    return null;
   seen.add(variable);
   return generatorDefinitionValue(context, variable.defs[0], seen);
 }
@@ -414,7 +443,7 @@ export const rule = defineRule({
       loop: AnyNode,
       fn: AnyNode,
       assigned: ReadonlySet<import('@oxlint/plugins').Variable>,
-      label: string,
+      label: string
     ): void => {
       let declarations = generatorLets.get(fn.start);
       if (declarations === undefined) {
@@ -422,7 +451,8 @@ export const rule = defineRule({
         generatorLets.set(fn.start, declarations);
       }
       for (const declaration of declarations) {
-        if (declaration.start >= loop.start && declaration.end <= loop.end) continue;
+        if (declaration.start >= loop.start && declaration.end <= loop.end)
+          continue;
         const variable = lexicalVariable(context, declaration.idNode);
         if (variable === null || !assigned.has(variable)) continue;
         if (reportedCounters.has(declaration.start)) continue;
@@ -453,7 +483,8 @@ export const rule = defineRule({
         node: (keyword ?? node) as ESTree.Node,
       });
 
-      if (options.flagCounters) reportCounters(loop, fn, mutations.assigned, label);
+      if (options.flagCounters)
+        reportCounters(loop, fn, mutations.assigned, label);
     };
 
     const collectLoop = (node: ESTree.Node): void => {
@@ -461,7 +492,14 @@ export const rule = defineRule({
     };
     return {
       CallExpression(node) {
-        if (!isGenCallee(context, asNode(node.callee), options.genMembers, options.effectModules))
+        if (
+          !isGenCallee(
+            context,
+            asNode(node.callee),
+            options.genMembers,
+            options.effectModules
+          )
+        )
           return;
         for (const argument of node.arguments) {
           const generator = generatorValue(context, argument);

@@ -1,16 +1,17 @@
 // @effect-diagnostics globalConsole:off processEnv:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
+
 import { AuthConfigLive } from '../api/auth/config.ts';
-import { AuthDatabase, AuthDatabaseLive } from '../api/auth/db/client.ts';
 import { compareAuthCatalog } from '../api/auth/db/catalog.ts';
+import { AuthDatabase, AuthDatabaseLive } from '../api/auth/db/client.ts';
 import { AUTH_SCHEMA_NAME, AUTH_TABLES } from '../api/auth/db/schema.ts';
 
 class AuthDatabaseVerificationError extends Schema.TaggedError<AuthDatabaseVerificationError>()(
   'AuthDatabaseVerificationError',
   {
     reason: Schema.String,
-  },
+  }
 ) {}
 
 const verification = Effect.gen(function* verifyAuthDatabase() {
@@ -26,8 +27,8 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
           () =>
             new AuthDatabaseVerificationError({
               reason: `Typed verification failed for one ${AUTH_SCHEMA_NAME} table`,
-            }),
-        ),
+            })
+        )
       );
   }
 
@@ -66,15 +67,15 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
         select kind, schema_name, table_name from migration_bookkeeping
         order by kind, schema_name, table_name
       `,
-      'objects',
+      'objects'
     )
     .pipe(
       Effect.mapError(
         () =>
           new AuthDatabaseVerificationError({
             reason: 'Unable to compare the PostgreSQL authentication catalog',
-          }),
-      ),
+          })
+      )
     );
 
   const tableNames: string[] = [];
@@ -94,9 +95,11 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
   migrationBookkeepingTables.sort();
   const difference = compareAuthCatalog(tableNames);
   if (
-    migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
+    migrationBookkeepingTables.length !==
+      expectedMigrationBookkeepingTables.length ||
     migrationBookkeepingTables.some(
-      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
+      (tableName, index) =>
+        tableName !== expectedMigrationBookkeepingTables[index]
     ) ||
     difference.missing.length > 0 ||
     difference.unexpected.length > 0
@@ -104,7 +107,9 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
     return yield* new AuthDatabaseVerificationError({
       reason: `Auth catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${[
         ...difference.unexpected,
-      ].join(', ')}], migrationTables=[${migrationBookkeepingTables.join(', ')}]`,
+      ].join(
+        ', '
+      )}], migrationTables=[${migrationBookkeepingTables.join(', ')}]`,
     });
   }
 
@@ -116,4 +121,6 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
 const runtime = AuthDatabaseLive.pipe(Layer.provide(AuthConfigLive));
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
 
-console.log(`Verified ${result.tableCount} typed tables in PostgreSQL schema ${AUTH_SCHEMA_NAME}`);
+console.log(
+  `Verified ${result.tableCount} typed tables in PostgreSQL schema ${AUTH_SCHEMA_NAME}`
+);

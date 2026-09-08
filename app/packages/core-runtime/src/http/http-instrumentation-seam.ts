@@ -1,11 +1,12 @@
 import { Cause, Effect, Exit, Schema } from 'effect';
 import type { Redacted } from 'effect';
-import { ActionRuntime } from '../actions/runtime.ts';
-import type { ActionRegistration } from '../actions/definition.ts';
+
 import type { ActionTransportMetadata } from '../actions/context.ts';
+import type { ActionRegistration } from '../actions/definition.ts';
 import type { ActionCoreError } from '../actions/errors.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import { ActionRuntime } from '../actions/runtime.ts';
 
 export interface ActionHttpEndpointHeaders {
   readonly idempotencyKey: string | undefined;
@@ -19,12 +20,13 @@ export interface ActionHttpRequestHeaders {
 
 export interface ActionHttpPrincipalAuthentication<Problem, Requirements> {
   readonly authenticate: (
-    authorization: Redacted.Redacted<string | undefined>,
+    authorization: Redacted.Redacted<string | undefined>
   ) => Effect.Effect<TrustedPrincipalContext, Problem, Requirements>;
 }
 
 export interface GovernedActionHttpRunnerInput<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown> &
+    Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
@@ -40,9 +42,14 @@ export interface GovernedActionHttpRunnerInput<
   readonly endpointHeaders: ActionHttpEndpointHeaders;
   readonly internalProblem: () => InternalProblem;
   readonly invalidCorrelationProblem: () => InvalidProblem;
-  readonly mapError: (error: ActionCoreError | DomainErrorSchema['Type']) => MappedProblem;
+  readonly mapError: (
+    error: ActionCoreError | DomainErrorSchema['Type']
+  ) => MappedProblem;
   readonly payload: NoInfer<PayloadSchema['Type']>;
-  readonly principal: ActionHttpPrincipalAuthentication<PrincipalProblem, PrincipalRequirements>;
+  readonly principal: ActionHttpPrincipalAuthentication<
+    PrincipalProblem,
+    PrincipalRequirements
+  >;
   readonly registration: ActionRegistration<
     PayloadSchema,
     ResultSchema,
@@ -56,7 +63,8 @@ export interface GovernedActionHttpRunnerInput<
 }
 
 export type GovernedActionHttpEndpointInput<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown> &
+    Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
@@ -90,7 +98,7 @@ const recoverUnexpectedDefect = <Value, Failure, InternalFailure, Requirements>(
   effect: Effect.Effect<Value, Failure, Requirements>,
   actionKey: string,
   safeCorrelationId: string,
-  internalProblem: () => InternalFailure,
+  internalProblem: () => InternalFailure
 ): Effect.Effect<Value, Failure | InternalFailure, Requirements> =>
   Effect.exit(effect).pipe(
     Effect.flatMap((exit): Effect.Effect<Value, Failure | InternalFailure> => {
@@ -100,11 +108,14 @@ const recoverUnexpectedDefect = <Value, Failure, InternalFailure, Requirements>(
       if (!exit.cause.reasons.some(Cause.isDieReason)) {
         return Effect.failCause(exit.cause);
       }
-      return Effect.logError('Unexpected governed Action HTTP defect', exit.cause).pipe(
+      return Effect.logError(
+        'Unexpected governed Action HTTP defect',
+        exit.cause
+      ).pipe(
         Effect.annotateLogs({ actionKey, correlationId: safeCorrelationId }),
-        Effect.andThen(Effect.fail(internalProblem())),
+        Effect.andThen(Effect.fail(internalProblem()))
       );
-    }),
+    })
   );
 
 /**
@@ -112,7 +123,8 @@ const recoverUnexpectedDefect = <Value, Failure, InternalFailure, Requirements>(
  * The caller owns authentication and the exhaustive public Action/domain failure mapping.
  */
 export const runGovernedActionHttp = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown> &
+    Schema.ConstraintEncoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
@@ -138,24 +150,27 @@ export const runGovernedActionHttp = <
     InternalProblem,
     PrincipalProblem,
     PrincipalRequirements
-  >,
+  >
 ): Effect.Effect<
   ResultSchema['Type'],
   InternalProblem | InvalidProblem | MappedProblem | PrincipalProblem,
   ActionRuntime | HandlerRequirements | PrincipalRequirements
 > => {
   const correlationId = input.requestHeaders['x-correlation-id'];
-  const correlationIsInvalid = correlationId === undefined || correlationId.trim().length === 0;
+  const correlationIsInvalid =
+    correlationId === undefined || correlationId.trim().length === 0;
   const safeCorrelationId = correlationIsInvalid ? 'invalid' : correlationId;
   const program = Effect.gen(function* runGovernedActionProgram() {
     if (correlationIsInvalid) {
       return yield* Effect.fail(input.invalidCorrelationProblem());
     }
 
-    const principal = yield* input.principal.authenticate(input.requestHeaders.authorization);
-    const encodedPayload = yield* Schema.encodeEffect(input.registration.descriptor.payloadSchema)(
-      input.payload,
-    ).pipe(Effect.orDie);
+    const principal = yield* input.principal.authenticate(
+      input.requestHeaders.authorization
+    );
+    const encodedPayload = yield* Schema.encodeEffect(
+      input.registration.descriptor.payloadSchema
+    )(input.payload).pipe(Effect.orDie);
     const runtime = yield* ActionRuntime;
     let transport: ActionTransportMetadata;
     if (input.endpointHeaders.idempotencyKey === undefined) {
@@ -166,7 +181,10 @@ export const runGovernedActionHttp = <
     } else {
       transport =
         input.endpointHeaders.traceId === undefined
-          ? { correlationId, idempotencyKey: input.endpointHeaders.idempotencyKey }
+          ? {
+              correlationId,
+              idempotencyKey: input.endpointHeaders.idempotencyKey,
+            }
           : {
               correlationId,
               idempotencyKey: input.endpointHeaders.idempotencyKey,
@@ -187,19 +205,25 @@ export const runGovernedActionHttp = <
     program,
     input.registration.descriptor.actionKey,
     safeCorrelationId,
-    input.internalProblem,
+    input.internalProblem
   );
 };
 
 /** Binds one deployment's generated principal adapter without owning endpoint semantics. */
 export const bindGovernedActionHttp =
   <PrincipalProblem, PrincipalRequirements>(
-    principal: ActionHttpPrincipalAuthentication<PrincipalProblem, PrincipalRequirements>,
+    principal: ActionHttpPrincipalAuthentication<
+      PrincipalProblem,
+      PrincipalRequirements
+    >
   ) =>
   <
-    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+    PayloadSchema extends Schema.ConstraintDecoder<unknown> &
+      Schema.ConstraintEncoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{
+      readonly _tag: string;
+    }>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
     Services,
@@ -219,6 +243,6 @@ export const bindGovernedActionHttp =
       MappedProblem,
       InvalidProblem,
       InternalProblem
-    >,
+    >
   ) =>
     runGovernedActionHttp({ ...input, principal });

@@ -4,51 +4,54 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { DuplicateCandidateDetailSchema } from '../domain/matching-contracts.ts';
 import { DuplicateCandidateCaseRefSchema } from '../resources/duplicate-candidate-case.ts';
 
 export const DuplicateCandidateDetailRequestSchema = Schema.Struct({
   caseRef: DuplicateCandidateCaseRefSchema,
 });
-export type DuplicateCandidateDetailRequest = typeof DuplicateCandidateDetailRequestSchema.Type;
-export const DuplicateCandidateDetailResponseSchema = DuplicateCandidateDetailSchema;
-export type DuplicateCandidateDetailResponse = typeof DuplicateCandidateDetailResponseSchema.Type;
+export type DuplicateCandidateDetailRequest =
+  typeof DuplicateCandidateDetailRequestSchema.Type;
+export const DuplicateCandidateDetailResponseSchema =
+  DuplicateCandidateDetailSchema;
+export type DuplicateCandidateDetailResponse =
+  typeof DuplicateCandidateDetailResponseSchema.Type;
 
-export const DuplicateCandidateDetailAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'DuplicateCandidateDetailAuthenticationProblem',
-  401,
-);
-export const DuplicateCandidateDetailInvalidProblemSchema = makeProblemDetailsSchema(
-  'DuplicateCandidateDetailInvalidProblem',
-  400,
-);
-export const DuplicateCandidateDetailUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'DuplicateCandidateDetailUnavailableProblem',
-  503,
-);
-export const DuplicateCandidateDetailForbiddenProblemSchema = makeProblemDetailsSchema(
-  'DuplicateCandidateDetailForbiddenProblem',
-  403,
-);
-export const DuplicateCandidateDetailNotFoundProblemSchema = makeProblemDetailsSchema(
-  'DuplicateCandidateDetailNotFoundProblem',
-  404,
-);
-export const DuplicateCandidateDetailPolicyProblemSchema = makeProblemDetailsSchema(
-  'DuplicateCandidateDetailPolicyProblem',
-  422,
-);
-export const DuplicateCandidateDetailPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'DuplicateCandidateDetailPolicyConflictProblem',
-  409,
-);
-export const DuplicateCandidateDetailInternalProblemSchema = makeProblemDetailsSchema(
-  'DuplicateCandidateDetailInternalProblem',
-  500,
-);
+export const DuplicateCandidateDetailAuthenticationProblemSchema =
+  makeProblemDetailsSchema(
+    'DuplicateCandidateDetailAuthenticationProblem',
+    401
+  );
+export const DuplicateCandidateDetailInvalidProblemSchema =
+  makeProblemDetailsSchema('DuplicateCandidateDetailInvalidProblem', 400);
+export const DuplicateCandidateDetailUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'DuplicateCandidateDetailUnavailableProblem',
+    503
+  );
+export const DuplicateCandidateDetailForbiddenProblemSchema =
+  makeProblemDetailsSchema('DuplicateCandidateDetailForbiddenProblem', 403);
+export const DuplicateCandidateDetailNotFoundProblemSchema =
+  makeProblemDetailsSchema('DuplicateCandidateDetailNotFoundProblem', 404);
+export const DuplicateCandidateDetailPolicyProblemSchema =
+  makeProblemDetailsSchema('DuplicateCandidateDetailPolicyProblem', 422);
+export const DuplicateCandidateDetailPolicyConflictProblemSchema =
+  makeProblemDetailsSchema(
+    'DuplicateCandidateDetailPolicyConflictProblem',
+    409
+  );
+export const DuplicateCandidateDetailInternalProblemSchema =
+  makeProblemDetailsSchema('DuplicateCandidateDetailInternalProblem', 500);
 
-export const DuplicateCandidateDetailApi = HttpApi.make('DuplicateCandidateDetailApi').add(
+export const DuplicateCandidateDetailApi = HttpApi.make(
+  'DuplicateCandidateDetailApi'
+).add(
   HttpApiGroup.make('duplicateCandidateDetail').add(
     HttpApiEndpoint.post('execute', '/reads/duplicate-candidate-detail', {
       error: [
@@ -66,6 +69,6 @@ export const DuplicateCandidateDetailApi = HttpApi.make('DuplicateCandidateDetai
       payload: DuplicateCandidateDetailRequestSchema,
       query: {},
       success: DuplicateCandidateDetailResponseSchema,
-    }),
-  ),
+    })
+  )
 );

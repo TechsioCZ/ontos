@@ -8,34 +8,25 @@ created: 2026-09-01
 
 ## Chore Description
 
-Rename the existing CRM MicroVertical to Contacts across every current application, deployment,
-database, route, contract, translation, test, and documentation surface without changing its
-Customer and Contact behavior. This is a coordinated identity migration, not a second module and
-not a rewrite: the independently deployable MicroVertical seam, generated Effect BFF client,
-governed read/Action boundaries, tenant state, PostgreSQL data, SpiceDB access, and user-visible
-states must survive intact.
+Rename the existing CRM MicroVertical to Contacts across every current application, deployment, database, route, contract, translation, test, and documentation surface without changing its Customer and Contact behavior. This is a coordinated identity migration, not a second module and not a rewrite: the independently deployable MicroVertical seam, generated Effect BFF client, governed read/Action boundaries, tenant state, PostgreSQL data, SpiceDB access, and user-visible states must survive intact.
 
 The target naming contract is:
 
-| Surface                     | Current                                         | Target                                                         |
-| --------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
-| Display name                | `CRM` / `Crm`                                   | `Contacts`                                                     |
-| Deployment/topology `appId` | `crm`                                           | `contacts`                                                     |
-| Module Contract Identity    | `crm.core`                                      | `contacts.core`                                                |
-| Workspace path/package      | `verticals/crm`, `@app/crm`                     | `verticals/contacts`, `@app/contacts`                          |
-| Shell and owner routes      | `/crm/**`                                       | `/contacts/**`                                                 |
-| BFF prefix/base             | `/crm-api/crm/**`                               | `/contacts-api/contacts/**`                                    |
-| Module Federation           | `crm`, `verticalCrm`, `PageCrm`                 | `contacts`, `verticalContacts`, `PageContacts`                 |
-| Locale namespace/catalog    | `crm`, `crm.json`                               | `contacts`, `contacts.json`                                    |
-| PostgreSQL ownership        | schema/object prefix/journal `crm`              | schema/object prefix/journal `contacts`                        |
-| Environment/CI names        | `*_CRM_*`, `*_URL_CRM`, `ZEROPS_CRM_SERVICE_ID` | `*_CONTACTS_*`, `*_URL_CONTACTS`, `ZEROPS_CONTACTS_SERVICE_ID` |
-| Zerops/Cloudflare identity  | `crm`, `app-crm`                                | `contacts`, `app-contacts`                                     |
+| Surface | Current | Target |
+| --- | --- | --- |
+| Display name | `CRM` / `Crm` | `Contacts` |
+| Deployment/topology `appId` | `crm` | `contacts` |
+| Module Contract Identity | `crm.core` | `contacts.core` |
+| Workspace path/package | `verticals/crm`, `@app/crm` | `verticals/contacts`, `@app/contacts` |
+| Shell and owner routes | `/crm/**` | `/contacts/**` |
+| BFF prefix/base | `/crm-api/crm/**` | `/contacts-api/contacts/**` |
+| Module Federation | `crm`, `verticalCrm`, `PageCrm` | `contacts`, `verticalContacts`, `PageContacts` |
+| Locale namespace/catalog | `crm`, `crm.json` | `contacts`, `contacts.json` |
+| PostgreSQL ownership | schema/object prefix/journal `crm` | schema/object prefix/journal `contacts` |
+| Environment/CI names | `*_CRM_*`, `*_URL_CRM`, `ZEROPS_CRM_SERVICE_ID` | `*_CONTACTS_*`, `*_URL_CONTACTS`, `ZEROPS_CONTACTS_SERVICE_ID` |
+| Zerops/Cloudflare identity | `crm`, `app-crm` | `contacts`, `app-contacts` |
 
-The migration must preserve existing Customer and Contact rows, tenant module state, authorization,
-and structured Core references. It must fail closed on ambiguous mixed CRM/Contacts database or
-authorization state. Historical specifications, ADRs, and already-applied Drizzle migrations remain
-immutable provenance and are the only allowed legacy-name exceptions; new compatibility migrations
-may mention the old identifiers only where required to recognize and migrate them.
+The migration must preserve existing Customer and Contact rows, tenant module state, authorization, and structured Core references. It must fail closed on ambiguous mixed CRM/Contacts database or authorization state. Historical specifications, ADRs, and already-applied Drizzle migrations remain immutable provenance and are the only allowed legacy-name exceptions; new compatibility migrations may mention the old identifiers only where required to recognize and migrate them.
 
 ## Relevant Files
 
@@ -131,13 +122,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ## Testing Strategy
 
-Update existing unit, component, integration, database, contract, topology, and browser tests alongside
-each renamed surface. Add dedicated upgrade tests for the legacy Drizzle journal/schema, Core module
-identity rows, and SpiceDB relationships; run each migration twice and cover fresh, legacy,
-already-migrated, partial, and conflicting states. Existing Customer/Contact CRUD, ARES lookup,
-archival, authentication, module gating, legal-entity/tenant isolation, forbidden, unavailable,
-validation, conflict, retry, accessibility, localization, responsive layout, Module Federation,
-and deployment-readiness behaviors must remain unchanged except for Contacts naming and URLs.
+Update existing unit, component, integration, database, contract, topology, and browser tests alongside each renamed surface. Add dedicated upgrade tests for the legacy Drizzle journal/schema, Core module identity rows, and SpiceDB relationships; run each migration twice and cover fresh, legacy, already-migrated, partial, and conflicting states. Existing Customer/Contact CRUD, ARES lookup, archival, authentication, module gating, legal-entity/tenant isolation, forbidden, unavailable, validation, conflict, retry, accessibility, localization, responsive layout, Module Federation, and deployment-readiness behaviors must remain unchanged except for Contacts naming and URLs.
 
 ## Acceptance Criteria
 
@@ -194,95 +179,59 @@ Execute every command to validate the chore with zero regressions.
 
 ### Summary
 
-- Renamed the live MicroVertical, package, contracts, governed operations, routes, federation,
-  translations, topology, deployment configuration, and current documentation to Contacts.
-- Added data-preserving PostgreSQL and structured Core identity migrations, including exact journal,
-  schema, database-object, and runtime-role verification.
-- Added a bounded prepare/verify/finalize SpiceDB migration and changed fresh local, stage, and
-  development-bootstrap authorization to `contacts.core`.
-- Added an active-tree legacy-name guard while retaining byte-identical historical `0000`/`0001`
-  migration provenance.
+- Renamed the live MicroVertical, package, contracts, governed operations, routes, federation, translations, topology, deployment configuration, and current documentation to Contacts.
+- Added data-preserving PostgreSQL and structured Core identity migrations, including exact journal, schema, database-object, and runtime-role verification.
+- Added a bounded prepare/verify/finalize SpiceDB migration and changed fresh local, stage, and development-bootstrap authorization to `contacts.core`.
+- Added an active-tree legacy-name guard while retaining byte-identical historical `0000`/`0001` migration provenance.
 
 ### Changed Files
 
-- 259 paths appear in the final staged diff, including 10 new migration, specification, script, and
-  test files across the root workflow, Shell, Core, Contacts, topology, deployment configuration,
-  and current documentation. The final line totals are recorded in the implementation report.
+- 259 paths appear in the final staged diff, including 10 new migration, specification, script, and test files across the root workflow, Shell, Core, Contacts, topology, deployment configuration, and current documentation. The final line totals are recorded in the implementation report.
 
 ### Tests Written or Updated
 
-- `packages/core-runtime/tests/integration/contacts-identity-migration.test.ts` — proves populated
-  structured identity migration, UUID/timestamp/payload preservation, rerun behavior, unrelated-row
-  isolation, and collision failure.
-- `scripts/tests/migrate-contacts-authorization.test.mts` — proves fresh, legacy-only, prepared,
-  finalized, divergent, and partial authorization migration planning.
-- `scripts/tests/initialize-local-development.test.mts` — proves Contacts-only activation and that a
-  migrated module-state UUID is preserved while identity collisions fail closed.
-- `packages/core-runtime/tests/unit/spicedb-database-bootstrap.test.ts` — proves fresh development
-  authorization grants target only the encoded Contacts module-access object.
-- `verticals/contacts/tests/unit/prepare-contacts-migration.test.ts` and
-  `verticals/contacts/tests/unit/schema-contract.test.ts` — prove journal state classification,
-  immutable historical provenance, and the data-preserving schema rename contract.
-- Contacts unit/component/integration tests plus Shell unit/integration/e2e tests were renamed and
-  updated for Contacts package, API, federation, route, gateway, and localized UI identities.
+- `packages/core-runtime/tests/integration/contacts-identity-migration.test.ts` — proves populated structured identity migration, UUID/timestamp/payload preservation, rerun behavior, unrelated-row isolation, and collision failure.
+- `scripts/tests/migrate-contacts-authorization.test.mts` — proves fresh, legacy-only, prepared, finalized, divergent, and partial authorization migration planning.
+- `scripts/tests/initialize-local-development.test.mts` — proves Contacts-only activation and that a migrated module-state UUID is preserved while identity collisions fail closed.
+- `packages/core-runtime/tests/unit/spicedb-database-bootstrap.test.ts` — proves fresh development authorization grants target only the encoded Contacts module-access object.
+- `verticals/contacts/tests/unit/prepare-contacts-migration.test.ts` and `verticals/contacts/tests/unit/schema-contract.test.ts` — prove journal state classification, immutable historical provenance, and the data-preserving schema rename contract.
+- Contacts unit/component/integration tests plus Shell unit/integration/e2e tests were renamed and updated for Contacts package, API, federation, route, gateway, and localized UI identities.
 
 ### Validation
 
 - `mise exec -- pnpm install --frozen-lockfile` — passed.
 - `mise exec -- pnpm --filter @app/core-runtime db:test` — passed, 243/243.
-- `mise exec -- node --test packages/core-runtime/tests/integration/contacts-identity-migration.test.ts`
-  — passed.
+- `mise exec -- node --test packages/core-runtime/tests/integration/contacts-identity-migration.test.ts` — passed.
 - `mise exec -- node --test scripts/tests/migrate-contacts-authorization.test.mts` — passed, 6/6.
 - `mise exec -- node --test scripts/tests/initialize-local-development.test.mts` — passed, 6/6.
-- `mise exec -- node --test packages/core-runtime/tests/unit/spicedb-database-bootstrap.test.ts` —
-  passed, 4/4.
+- `mise exec -- node --test packages/core-runtime/tests/unit/spicedb-database-bootstrap.test.ts` — passed, 4/4.
 - `mise exec -- pnpm --filter @app/contacts test:unit` — passed, 53/53.
 - `mise exec -- pnpm --filter @app/contacts test:integration` — passed, 4/4.
 - `mise exec -- pnpm --filter @app/contacts test:component` — passed, 247/247.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` — passed, 173/173.
 - `mise exec -- pnpm --filter @app/shell-super-app test:integration` — passed, 7/7.
-- `mise exec -- pnpm db:migrate` — passed for the legacy-to-Contacts path and passed again as an
-  already-migrated no-op.
-- `mise exec -- pnpm db:verify` — passed with exact Core/Auth/Contacts schema, journal, table, owner,
-  RLS, grant, constraint, and index inventories.
-- `mise exec -- node scripts/migrate-contacts-authorization.mts prepare`, `verify`, and `finalize` —
-  all passed against the local authoritative context; focused tests cover legacy and divergent
-  relationship states.
-- `mise exec -- pnpm local:initialize` — passed after the Core identity migration while preserving
-  the existing tenant module-state UUID.
-- `mise exec -- pnpm --filter @app/shell-super-app test:e2e` — passed, 32/32, including authenticated
-  Contacts navigation, Customer/Contact CRUD/read journeys, localized login/logout, tenant switching,
-  keyboard retry, and mobile layout coverage.
+- `mise exec -- pnpm db:migrate` — passed for the legacy-to-Contacts path and passed again as an already-migrated no-op.
+- `mise exec -- pnpm db:verify` — passed with exact Core/Auth/Contacts schema, journal, table, owner, RLS, grant, constraint, and index inventories.
+- `mise exec -- node scripts/migrate-contacts-authorization.mts prepare`, `verify`, and `finalize` — all passed against the local authoritative context; focused tests cover legacy and divergent relationship states.
+- `mise exec -- pnpm local:initialize` — passed after the Core identity migration while preserving the existing tenant module-state UUID.
+- `mise exec -- pnpm --filter @app/shell-super-app test:e2e` — passed, 32/32, including authenticated Contacts navigation, Customer/Contact CRUD/read journeys, localized login/logout, tenant switching, keyboard retry, and mobile layout coverage.
 - `mise exec -- pnpm check:module-contracts` — passed.
 - `mise exec -- pnpm module-entrypoints:check` — passed.
 - `mise exec -- pnpm i18n:boundaries` — passed.
 - `mise exec -- pnpm contract:check` — passed, including the active-tree stale-name guard.
-- `mise exec -- pnpm build` — the literal local command correctly stopped at the promotable-envelope
-  guard because its revision was `workspace`; rerunning with
-  `ULTRAMODERN_SOURCE_REVISION=c7fb88eb33f91973d04fadc6e8ee2b5c28b61a8b` passed the full Contacts,
-  Shell, Module Federation type, deploy-output, and performance build.
+- `mise exec -- pnpm build` — the literal local command correctly stopped at the promotable-envelope guard because its revision was `workspace`; rerunning with `ULTRAMODERN_SOURCE_REVISION=c7fb88eb33f91973d04fadc6e8ee2b5c28b61a8b` passed the full Contacts, Shell, Module Federation type, deploy-output, and performance build.
 - `mise exec -- pnpm check` — passed completely after the final fixes.
-- SHA-256 comparison of Contacts `0000`/`0001` SQL and snapshots against their CRM source paths —
-  passed byte-for-byte.
+- SHA-256 comparison of Contacts `0000`/`0001` SQL and snapshots against their CRM source paths — passed byte-for-byte.
 - `git diff --check` — passed.
 
 ### Review
 
-- Re-read `../AGENTS.md`, `AGENTS.md`, `README.md`, `DEVELOPMENT.md`, the routed architecture and
-  integration documents named by this specification, and the complete specification before final
-  review.
-- Reviewed the status, diff check/stat, key migrations, authorization cutover, database bootstrap,
-  generated route/federation identities, residual legacy-token inventory, and move detection.
-- Fixed review findings in local module-state reconciliation and fresh SpiceDB bootstrap identity;
-  reran focused tests, browser validation, database verification, and the complete quality gate.
-- No screenshots were retained because this chore changes identity/copy/routes rather than visual
-  design; Playwright directly verified the localized rendered Contacts surfaces and critical flows.
+- Re-read `../AGENTS.md`, `AGENTS.md`, `README.md`, `DEVELOPMENT.md`, the routed architecture and integration documents named by this specification, and the complete specification before final review.
+- Reviewed the status, diff check/stat, key migrations, authorization cutover, database bootstrap, generated route/federation identities, residual legacy-token inventory, and move detection.
+- Fixed review findings in local module-state reconciliation and fresh SpiceDB bootstrap identity; reran focused tests, browser validation, database verification, and the complete quality gate.
+- No screenshots were retained because this chore changes identity/copy/routes rather than visual design; Playwright directly verified the localized rendered Contacts surfaces and critical flows.
 
 ### Deviations and Follow-ups
 
-- The external Zerops service/project-variable and GitHub repository-variable cutover, the
-  deployment lock, dark Contacts deployment, distributed smoke test, and old-service removal require
-  external environment authority and remain the post-merge rollout work.
-- The code implementation and all local validation gates are complete. The plan remains
-  `in_progress`, rather than `done`, until the two external cutover tasks and the external
-  Zerops/GitHub acceptance criterion are completed.
+- The external Zerops service/project-variable and GitHub repository-variable cutover, the deployment lock, dark Contacts deployment, distributed smoke test, and old-service removal require external environment authority and remain the post-merge rollout work.
+- The code implementation and all local validation gates are complete. The plan remains `in_progress`, rather than `done`, until the two external cutover tasks and the external Zerops/GitHub acceptance criterion are completed.

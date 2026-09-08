@@ -1,7 +1,3 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { expect, test } from '@rstest/core';
-import { Clock, Effect, Fiber, Function as Fn, Match, Predicate, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
@@ -15,6 +11,19 @@ import type {
   ModuleStateSnapshot,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { expect, test } from '@rstest/core';
+import {
+  Clock,
+  Effect,
+  Fiber,
+  Function as Fn,
+  Match,
+  Predicate,
+  Schema,
+} from 'effect';
+import { TestClock } from 'effect/testing';
+
 import {
   loadModuleEntrypointComposition,
   MODULE_LOAD_CONCURRENCY,
@@ -31,32 +40,40 @@ const trustedContext: TrustedPrincipalContext = {
 
 interface FakeGatewayOptions {
   readonly deniedEntrypointKeys?: ReadonlySet<string>;
-  readonly onPrepare?: (entrypoints: readonly ModuleEntrypointDescriptor[]) => void;
+  readonly onPrepare?: (
+    entrypoints: readonly ModuleEntrypointDescriptor[]
+  ) => void;
   readonly unavailable?: boolean;
 }
 
-const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGatewayService => {
-  const check: ModuleEntrypointGatewayService['check'] = (snapshot, entrypoint) => {
+const makeFakeGateway = (
+  options: FakeGatewayOptions = {}
+): ModuleEntrypointGatewayService => {
+  const check: ModuleEntrypointGatewayService['check'] = (
+    snapshot,
+    entrypoint
+  ) => {
     if (!snapshot.entrypointKeys.includes(entrypoint.entrypointKey)) {
       return Effect.fail(
         new ModuleStateCheckUnavailableError({
           code: 'module_state_check_unavailable',
           reason: 'Module state could not be checked safely',
-        }),
+        })
       );
     }
     return options.deniedEntrypointKeys?.has(entrypoint.entrypointKey) === true
       ? Effect.fail(
           new ModuleStateDeniedError({
             code: 'module_state_denied',
-            reason: 'The module entrypoint is unavailable in the current module state',
-          }),
+            reason:
+              'The module entrypoint is unavailable in the current module state',
+          })
         )
       : Effect.void;
   };
   const prepareSnapshot: ModuleEntrypointGatewayService['prepareSnapshot'] = (
     context,
-    entrypoints,
+    entrypoints
   ) => {
     options.onPrepare?.(entrypoints);
     if (options.unavailable === true || context.tenantId.length === 0) {
@@ -64,13 +81,15 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
         new ModuleStateCheckUnavailableError({
           code: 'module_state_check_unavailable',
           reason: 'Module state could not be checked safely',
-        }),
+        })
       );
     }
     const snapshot: ModuleStateSnapshot = Object.freeze({
-      entrypointKeys: Object.freeze(entrypoints.map(({ entrypointKey }) => entrypointKey)),
+      entrypointKeys: Object.freeze(
+        entrypoints.map(({ entrypointKey }) => entrypointKey)
+      ),
       moduleKeys: Object.freeze(
-        [...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted(),
+        [...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted()
       ),
       tenantId: context.tenantId,
     });
@@ -86,14 +105,14 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
             new ModuleStateCheckUnavailableError({
               code: 'module_state_check_unavailable',
               reason: 'Module state could not be checked safely',
-            }),
+            })
         ),
-        Effect.flatMap((trusted) => prepareSnapshot(trusted, entrypoints)),
+        Effect.flatMap((trusted) => prepareSnapshot(trusted, entrypoints))
       ),
     run: (input) =>
       check(input.snapshot, input.entrypoint).pipe(
         Effect.andThen(input.authorize),
-        Effect.andThen(input.load),
+        Effect.andThen(input.load)
       ),
   };
   return gateway;
@@ -119,8 +138,9 @@ const compatibleRemoteModule = (value: { readonly default: unknown }) =>
 
 type EffectTestCallback = () => Promise<void>;
 
-const runEffectTest = <Failure>(effect: Effect.Effect<void, Failure>): EffectTestCallback =>
-  Fn.flow(Fn.constant(effect), runEffectTestPromise);
+const runEffectTest = <Failure>(
+  effect: Effect.Effect<void, Failure>
+): EffectTestCallback => Fn.flow(Fn.constant(effect), runEffectTestPromise);
 
 test(
   'prepares one complete trusted composition and invokes allowed lazy loaders',
@@ -144,12 +164,12 @@ test(
             loads += 1;
             return `loaded-${loads}`;
           }),
-        })),
+        }))
       );
       expect(result).toEqual(['loaded-1', 'loaded-2']);
       expect(batches).toBe(1);
-    }),
-  ),
+    })
+  )
 );
 
 test(
@@ -174,34 +194,37 @@ test(
               loads += 1;
               return loads;
             }),
-          })),
-        ),
+          }))
+        )
       );
       expect(error).toMatchObject({ _tag: 'ModuleStateDeniedError' });
       expect(authorizations).toBe(0);
       expect(loads).toBe(0);
-    }),
-  ),
+    })
+  )
 );
 
 class RemoteLoadUnavailable extends Schema.TaggedError<RemoteLoadUnavailable>()(
   'RemoteLoadUnavailable',
-  {},
+  {}
 ) {}
-const FakeUnavailableUiStateSchema = Schema.Literals(['forbidden', 'unavailable']);
+const FakeUnavailableUiStateSchema = Schema.Literals([
+  'forbidden',
+  'unavailable',
+]);
 type FakeUnavailableUiState = typeof FakeUnavailableUiStateSchema.Type;
 
 const mapFakeUnavailableUiState = (
-  error: ModuleStateGateError | RemoteLoadUnavailable,
+  error: ModuleStateGateError | RemoteLoadUnavailable
 ): FakeUnavailableUiState =>
   Match.value(error).pipe(
     Match.tag('ModuleStateDeniedError', () => 'forbidden' as const),
     Match.tag(
       'ModuleStateCheckUnavailableError',
       'RemoteLoadUnavailable',
-      () => 'unavailable' as const,
+      () => 'unavailable' as const
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
 
 test(
@@ -209,9 +232,17 @@ test(
   runEffectTest(
     Effect.gen(function* verifyTypedFailures() {
       const gateFailure = yield* Effect.flip(
-        loadModuleEntrypointComposition(makeFakeGateway({ unavailable: true }), trustedContext, [
-          { authorize: Effect.void, entrypoint: page, load: Effect.succeed('unreachable') },
-        ]),
+        loadModuleEntrypointComposition(
+          makeFakeGateway({ unavailable: true }),
+          trustedContext,
+          [
+            {
+              authorize: Effect.void,
+              entrypoint: page,
+              load: Effect.succeed('unreachable'),
+            },
+          ]
+        )
       );
       expect(mapFakeUnavailableUiState(gateFailure)).toBe('unavailable');
 
@@ -222,12 +253,12 @@ test(
             entrypoint: page,
             load: Effect.fail(new RemoteLoadUnavailable()),
           },
-        ]),
+        ])
       );
       expect(remoteFailure).toEqual(new RemoteLoadUnavailable());
       expect(mapFakeUnavailableUiState(remoteFailure)).toBe('unavailable');
-    }),
-  ),
+    })
+  )
 );
 
 test(
@@ -240,29 +271,39 @@ test(
           settleModuleEntrypointLoad(
             Fn.constant(Promise.resolve({ default: () => null })),
             compatibleRemoteModule,
-            50,
+            50
           ),
           settleModuleEntrypointLoad(
             Fn.constant(Promise.reject(new Error('remote unavailable'))),
             compatibleRemoteModule,
-            50,
+            50
           ),
           settleModuleEntrypointLoad(
             Fn.constant(Promise.resolve({ default: 'not a component' })),
             compatibleRemoteModule,
-            50,
+            50
           ),
-          settleModuleEntrypointLoad(Fn.constant(pending.promise), compatibleRemoteModule, 1),
+          settleModuleEntrypointLoad(
+            Fn.constant(pending.promise),
+            compatibleRemoteModule,
+            1
+          ),
         ],
-        { concurrency: 'unbounded' },
+        { concurrency: 'unbounded' }
       );
 
       expect(ready.state).toBe('ready');
-      expect(unavailable).toEqual({ reason: 'unavailable', state: 'unavailable' });
-      expect(incompatible).toEqual({ reason: 'incompatible', state: 'unavailable' });
+      expect(unavailable).toEqual({
+        reason: 'unavailable',
+        state: 'unavailable',
+      });
+      expect(incompatible).toEqual({
+        reason: 'incompatible',
+        state: 'unavailable',
+      });
       expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
-    }),
-  ),
+    })
+  )
 );
 
 test(
@@ -311,8 +352,8 @@ test(
           state: 'unavailable',
         },
       ]);
-    }),
-  ),
+    })
+  )
 );
 
 interface RemoteModule {
@@ -340,8 +381,8 @@ test('never starts a queued load whose deadline expired before a permit became a
         // The first window must outlive runner jitter so every slot is really held; only the
         // queued load carries the short deadline that expires before any permit frees up.
         timeoutMs: index < MODULE_LOAD_CONCURRENCY ? 500 : 10,
-      })),
-    ),
+      }))
+    )
   );
 
   await firstWindowStarted.promise;
@@ -354,7 +395,7 @@ test('never starts a queued load whose deadline expired before a permit became a
       identity: `module-${index}/page`,
       reason: 'timeout',
       state: 'unavailable',
-    })),
+    }))
   );
   expect(loadCount).toBe(MODULE_LOAD_CONCURRENCY);
 
@@ -387,9 +428,9 @@ test('never starts an expired queued load when synchronous work delays deadline 
             return { default: () => null };
           },
           timeoutMs: index === MODULE_LOAD_CONCURRENCY ? 10 : 5000,
-        })),
-      ),
-    ),
+        }))
+      )
+    )
   );
 
   expect(started).toContain(0);
@@ -406,7 +447,7 @@ test(
   runEffectTest(
     Effect.gen(function* verifyInterruptedCaller() {
       const pendingLoads = Array.from({ length: MODULE_LOAD_CONCURRENCY }, () =>
-        Promise.withResolvers<RemoteModule>(),
+        Promise.withResolvers<RemoteModule>()
       );
       const firstWindowStarted = Promise.withResolvers<null>();
       const started: number[] = [];
@@ -423,8 +464,8 @@ test(
               return await (pendingLoads[index]?.promise ??
                 Promise.resolve({ default: () => null }));
             },
-          })),
-        ),
+          }))
+        )
       );
 
       yield* Effect.promise(async () => await firstWindowStarted.promise);
@@ -434,13 +475,16 @@ test(
         pending.resolve({ default: () => null });
       }
       yield* Effect.promise(
-        async () => await Promise.all(pendingLoads.map(async ({ promise }) => await promise)),
+        async () =>
+          await Promise.all(
+            pendingLoads.map(async ({ promise }) => await promise)
+          )
       );
       yield* TestClock.adjust('1 millis');
       expect(started).toHaveLength(8);
       expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-    }).pipe(Effect.provide(TestClock.layer())),
-  ),
+    }).pipe(Effect.provide(TestClock.layer()))
+  )
 );
 
 test(
@@ -448,7 +492,7 @@ test(
   runEffectTest(
     Effect.gen(function* verifyPermitRelease() {
       const pendingLoads = Array.from({ length: MODULE_LOAD_CONCURRENCY }, () =>
-        Promise.withResolvers<RemoteModule>(),
+        Promise.withResolvers<RemoteModule>()
       );
       const firstWindowStarted = Promise.withResolvers<null>();
       const queuedLoadStarted = Promise.withResolvers<null>();
@@ -473,19 +517,25 @@ test(
               return value;
             },
             timeoutMs: index === 0 ? 10 : 1000,
-          })),
-        ),
+          }))
+        )
       );
 
       yield* Effect.promise(async () => await firstWindowStarted.promise);
       yield* TestClock.adjust('20 millis');
       expect(events).toEqual(
-        Array.from({ length: MODULE_LOAD_CONCURRENCY }, (_, index) => `started-${index}`),
+        Array.from(
+          { length: MODULE_LOAD_CONCURRENCY },
+          (_, index) => `started-${index}`
+        )
       );
 
       pendingLoads[0]?.resolve({ default: () => null });
       yield* Effect.promise(async () => await queuedLoadStarted.promise);
-      expect(events.slice(-2)).toEqual(['settled-0', `started-${MODULE_LOAD_CONCURRENCY}`]);
+      expect(events.slice(-2)).toEqual([
+        'settled-0',
+        `started-${MODULE_LOAD_CONCURRENCY}`,
+      ]);
       for (const pending of pendingLoads) {
         pending.resolve({ default: () => null });
       }
@@ -495,9 +545,11 @@ test(
         reason: 'timeout',
         state: 'unavailable',
       });
-      expect(results.slice(1).every(({ state }) => state === 'ready')).toBe(true);
-    }).pipe(Effect.provide(TestClock.layer())),
-  ),
+      expect(results.slice(1).every(({ state }) => state === 'ready')).toBe(
+        true
+      );
+    }).pipe(Effect.provide(TestClock.layer()))
+  )
 );
 
 test('does not surface a late remote rejection after a timeout', async () => {
@@ -517,7 +569,7 @@ test('does not surface a late remote rejection after a timeout', async () => {
         },
         timeoutMs: 10,
       },
-    ]),
+    ])
   );
 
   expect(result).toEqual([
@@ -539,7 +591,12 @@ test('does not surface a late remote rejection after a timeout', async () => {
   ]);
 });
 
-test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(
+test.each([
+  'selection_required',
+  'not_found',
+  'forbidden',
+  'unavailable',
+] as const)(
   'never invokes a remote loader after a %s target resolution',
   Fn.flow((outcome) => {
     let loads = 0;
@@ -549,13 +606,13 @@ test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as con
           Effect.sync(() => {
             loads += 1;
             return 'unreachable';
-          }),
-        ),
+          })
+        )
       );
       expect(failure).toEqual({ outcome });
       expect(loads).toBe(0);
     });
-  }, runEffectTestPromise),
+  }, runEffectTestPromise)
 );
 
 test(
@@ -563,15 +620,20 @@ test(
   runEffectTest(
     Effect.gen(function* verifyApprovedTargetResolution() {
       let loads = 0;
-      const target = { appId: 'inventory-app', componentKey: 'inventory.stock.page' };
-      const result = yield* resolveThenLoadModuleTarget(Effect.succeed(target), (approved) =>
-        Effect.sync(() => {
-          loads += 1;
-          return approved.componentKey;
-        }),
+      const target = {
+        appId: 'inventory-app',
+        componentKey: 'inventory.stock.page',
+      };
+      const result = yield* resolveThenLoadModuleTarget(
+        Effect.succeed(target),
+        (approved) =>
+          Effect.sync(() => {
+            loads += 1;
+            return approved.componentKey;
+          })
       );
       expect(result).toBe('inventory.stock.page');
       expect(loads).toBe(1);
-    }),
-  ),
+    })
+  )
 );

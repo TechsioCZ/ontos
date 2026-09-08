@@ -2,14 +2,25 @@
 /// <reference types="node" />
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effect';
+import {
+  Config,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Predicate,
+  Schema,
+} from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 const packageJsonFile = 'package.json';
 const workspacePackageDirectories = ['packages', 'apps', 'verticals'];
 const DependencyMapSchema = Schema.Record(Schema.String, Schema.String);
-const PlatformFieldSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
+const PlatformFieldSchema = Schema.Union([
+  Schema.String,
+  Schema.Array(Schema.String),
+]);
 const RuntimePackageSchema = Schema.Struct({
   cpu: Schema.optional(PlatformFieldSchema),
   dependencies: Schema.optional(DependencyMapSchema),
@@ -27,7 +38,7 @@ const CompactConfigSchema = Schema.Struct({
       aliasPackageNamePrefix: Schema.optional(Schema.String),
       aliasScope: Schema.optional(Schema.String),
       modernPackageVersion: Schema.optional(Schema.String),
-    }),
+    })
   ),
 });
 const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema, {
@@ -35,11 +46,11 @@ const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema, {
 });
 const decodeRuntimePackageJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(RuntimePackageSchema),
-  { onExcessProperty: 'preserve' },
+  { onExcessProperty: 'preserve' }
 );
 const decodeCompactConfigJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(CompactConfigSchema),
-  { onExcessProperty: 'preserve' },
+  { onExcessProperty: 'preserve' }
 );
 /** @typedef {typeof Schema.Json.Type} JsonValue */
 /** @type {import('effect/Schema').Codec<JsonValue, JsonValue>} */
@@ -51,11 +62,13 @@ const JsonValueSchema = Schema.suspend(() =>
     Schema.String,
     Schema.Array(JsonValueSchema),
     Schema.Record(Schema.String, JsonValueSchema),
-  ]),
+  ])
 );
 const JsonRecordSchema = Schema.Record(Schema.String, JsonValueSchema);
 const decodeDependencyMap = Schema.decodeUnknownEffect(DependencyMapSchema);
-const encodeJson = Schema.encodeEffect(Schema.fromJsonString(JsonValueSchema, { space: 2 }));
+const encodeJson = Schema.encodeEffect(
+  Schema.fromJsonString(JsonValueSchema, { space: 2 })
+);
 const isJsonRecord = Schema.is(JsonRecordSchema);
 
 /** @typedef {typeof RuntimePackageSchema.Type} RuntimePackage */
@@ -78,7 +91,10 @@ const fail = (message) => Effect.fail(new MaterializationError(message));
  * @param {import('effect/Path').Path} pathService - Path service.
  */
 const assertRelativePath = (label, candidate, pathService) => {
-  if (pathService.isAbsolute(candidate) || candidate.split(/[\\/]/u).includes('..')) {
+  if (
+    pathService.isAbsolute(candidate) ||
+    candidate.split(/[\\/]/u).includes('..')
+  ) {
     return fail(`${label} must be a workspace-relative path`);
   }
   return Effect.void;
@@ -90,7 +106,12 @@ const assertRelativePath = (label, candidate, pathService) => {
  * @param {string} workspaceRoot - Workspace root.
  * @param {import('effect/Path').Path} pathService - Path service.
  */
-const assertInsideWorkspace = (label, targetPath, workspaceRoot, pathService) => {
+const assertInsideWorkspace = (
+  label,
+  targetPath,
+  workspaceRoot,
+  pathService
+) => {
   const relativePath = pathService.relative(workspaceRoot, targetPath);
   if (relativePath.startsWith('..') || pathService.isAbsolute(relativePath)) {
     return fail(`${label} resolved outside the workspace`);
@@ -142,21 +163,30 @@ const writeJson = (filePath, json) =>
  * @param {string} aliasPrefix - Generated package alias prefix.
  * @param {string} modernPackageVersion - Modern.js package version.
  */
-const normalizeDependencySection = (dependencies, aliasPrefix, modernPackageVersion) => {
+const normalizeDependencySection = (
+  dependencies,
+  aliasPrefix,
+  modernPackageVersion
+) => {
   if (dependencies === undefined) {
     return null;
   }
   return Object.fromEntries(
-    Object.entries(dependencies).flatMap(([dependencyName, dependencyVersion]) => {
-      if (!dependencyName.startsWith(aliasPrefix)) {
-        return [[dependencyName, dependencyVersion]];
+    Object.entries(dependencies).flatMap(
+      ([dependencyName, dependencyVersion]) => {
+        if (!dependencyName.startsWith(aliasPrefix)) {
+          return [[dependencyName, dependencyVersion]];
+        }
+        const officialPackageName = `@modern-js/${dependencyName.slice(aliasPrefix.length)}`;
+        return [
+          [dependencyName, modernPackageVersion],
+          [
+            officialPackageName,
+            `npm:${dependencyName}@${modernPackageVersion}`,
+          ],
+        ];
       }
-      const officialPackageName = `@modern-js/${dependencyName.slice(aliasPrefix.length)}`;
-      return [
-        [dependencyName, modernPackageVersion],
-        [officialPackageName, `npm:${dependencyName}@${modernPackageVersion}`],
-      ];
-    }),
+    )
   );
 };
 
@@ -165,14 +195,20 @@ const normalizeDependencySection = (dependencies, aliasPrefix, modernPackageVers
  * @param {string} workspaceRoot - Workspace root.
  * @param {import('effect/Path').Path} pathService - Path service.
  */
-const normalizeRuntimePackageDependencies = (runtimeManifest, workspaceRoot, pathService) =>
+const normalizeRuntimePackageDependencies = (
+  runtimeManifest,
+  workspaceRoot,
+  pathService
+) =>
   Effect.gen(function* normalizeRuntimePackageDependenciesEffect() {
     const compactConfig = yield* readOptionalCompactConfig(
-      pathService.join(workspaceRoot, '.modernjs/ultramodern.json'),
+      pathService.join(workspaceRoot, '.modernjs/ultramodern.json')
     );
-    const modernPackageVersion = compactConfig?.packageSource?.modernPackageVersion;
+    const modernPackageVersion =
+      compactConfig?.packageSource?.modernPackageVersion;
     const aliasScope = compactConfig?.packageSource?.aliasScope;
-    const aliasPackageNamePrefix = compactConfig?.packageSource?.aliasPackageNamePrefix;
+    const aliasPackageNamePrefix =
+      compactConfig?.packageSource?.aliasPackageNamePrefix;
     if (
       modernPackageVersion === undefined ||
       aliasScope === undefined ||
@@ -185,12 +221,12 @@ const normalizeRuntimePackageDependencies = (runtimeManifest, workspaceRoot, pat
     const dependencies = normalizeDependencySection(
       runtimeManifest.dependencies,
       aliasPrefix,
-      modernPackageVersion,
+      modernPackageVersion
     );
     const optionalDependencies = normalizeDependencySection(
       runtimeManifest.optionalDependencies,
       aliasPrefix,
-      modernPackageVersion,
+      modernPackageVersion
     );
     const normalizedManifest = { ...runtimeManifest };
     if (dependencies !== null) {
@@ -218,7 +254,11 @@ const platformFieldAllows = (field, currentValue) => {
     return false;
   }
   const allowed = values.filter((item) => !item.startsWith('!'));
-  return allowed.length === 0 || allowed.includes(currentValue) || allowed.includes('any');
+  return (
+    allowed.length === 0 ||
+    allowed.includes(currentValue) ||
+    allowed.includes('any')
+  );
 };
 
 /** @param {RuntimePackage} dependencyManifest - Installed dependency manifest. */
@@ -238,14 +278,24 @@ const readInstalledDependencyPackage = (
   dependencyVersion,
   appRoot,
   workspaceRoot,
-  pathService,
+  pathService
 ) =>
   Effect.gen(function* readInstalledDependencyPackageEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const dependencySegments = dependencyName.split('/');
     const directCandidates = [
-      pathService.join(appRoot, 'node_modules', ...dependencySegments, packageJsonFile),
-      pathService.join(workspaceRoot, 'node_modules', ...dependencySegments, packageJsonFile),
+      pathService.join(
+        appRoot,
+        'node_modules',
+        ...dependencySegments,
+        packageJsonFile
+      ),
+      pathService.join(
+        workspaceRoot,
+        'node_modules',
+        ...dependencySegments,
+        packageJsonFile
+      ),
     ];
     for (const candidate of directCandidates) {
       const dependencyManifest = yield* readOptionalRuntimePackage(candidate);
@@ -263,13 +313,15 @@ const readInstalledDependencyPackage = (
     }
     const encodedName = dependencyName.replaceAll('/', '+');
     const storeEntries = yield* fileSystem.readDirectory(virtualStore);
-    for (const storeEntry of storeEntries.filter((item) => item.startsWith(`${encodedName}@`))) {
+    for (const storeEntry of storeEntries.filter((item) =>
+      item.startsWith(`${encodedName}@`)
+    )) {
       const candidate = pathService.join(
         virtualStore,
         storeEntry,
         'node_modules',
         ...dependencySegments,
-        packageJsonFile,
+        packageJsonFile
       );
       const dependencyManifest = yield* readOptionalRuntimePackage(candidate);
       if (
@@ -288,7 +340,12 @@ const readInstalledDependencyPackage = (
  * @param {string} workspaceRoot - Workspace root.
  * @param {import('effect/Path').Path} pathService - Path service.
  */
-const removeIncompatibleDependencySection = (dependencies, appRoot, workspaceRoot, pathService) => {
+const removeIncompatibleDependencySection = (
+  dependencies,
+  appRoot,
+  workspaceRoot,
+  pathService
+) => {
   if (dependencies === undefined) {
     return Effect.succeed(null);
   }
@@ -301,19 +358,24 @@ const removeIncompatibleDependencySection = (dependencies, appRoot, workspaceRoo
           dependencyVersion,
           appRoot,
           workspaceRoot,
-          pathService,
+          pathService
         );
         const compatible =
-          dependencyManifest === null || isCurrentPlatformSupported(dependencyManifest);
+          dependencyManifest === null ||
+          isCurrentPlatformSupported(dependencyManifest);
         if (!compatible) {
           yield* Effect.log(
-            `[ultramodern:zerops] excluded ${dependencyName}@${dependencyVersion} from ${process.platform}/${process.arch} runtime`,
+            `[ultramodern:zerops] excluded ${dependencyName}@${dependencyVersion} from ${process.platform}/${process.arch} runtime`
           );
         }
         return compatible;
       }),
-    { concurrency: 'unbounded' },
-  ).pipe(Effect.flatMap((entries) => decodeDependencyMap(Object.fromEntries(entries))));
+    { concurrency: 'unbounded' }
+  ).pipe(
+    Effect.flatMap((entries) =>
+      decodeDependencyMap(Object.fromEntries(entries))
+    )
+  );
 };
 
 /**
@@ -326,7 +388,7 @@ const removeIncompatiblePlatformDependencies = (
   runtimeManifest,
   appRoot,
   workspaceRoot,
-  pathService,
+  pathService
 ) =>
   Effect.all(
     [
@@ -334,16 +396,16 @@ const removeIncompatiblePlatformDependencies = (
         runtimeManifest.dependencies,
         appRoot,
         workspaceRoot,
-        pathService,
+        pathService
       ),
       removeIncompatibleDependencySection(
         runtimeManifest.optionalDependencies,
         appRoot,
         workspaceRoot,
-        pathService,
+        pathService
       ),
     ],
-    { concurrency: 'unbounded' },
+    { concurrency: 'unbounded' }
   ).pipe(
     Effect.flatMap(([dependencies, optionalDependencies]) => {
       const compatibleManifest = { ...runtimeManifest };
@@ -354,7 +416,7 @@ const removeIncompatiblePlatformDependencies = (
         compatibleManifest.optionalDependencies = optionalDependencies;
       }
       return decodeRuntimePackage(compatibleManifest);
-    }),
+    })
   );
 
 /**
@@ -374,13 +436,13 @@ const collectPackageDirectoryEntries = (absoluteDirectory, pathService) =>
         Effect.gen(function* collectPackageManifestEffect() {
           const packageDirectory = pathService.join(absoluteDirectory, item);
           const packageManifest = yield* readOptionalRuntimePackage(
-            pathService.join(packageDirectory, packageJsonFile),
+            pathService.join(packageDirectory, packageJsonFile)
           );
           return packageManifest?.name === undefined
             ? null
             : [packageManifest.name, packageDirectory];
         }),
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     );
     return packageEntries.filter((entry) => entry !== null);
   });
@@ -397,7 +459,7 @@ const collectWorkspacePackages = (workspaceRoot, pathService) =>
         const absoluteDirectory = pathService.join(workspaceRoot, directory);
         return collectPackageDirectoryEntries(absoluteDirectory, pathService);
       },
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     );
     return new Map(packageEntries.flat());
   });
@@ -415,7 +477,9 @@ const removeWorkspaceDependencies = (runtimeManifest, workspacePackages) => {
     const entries = Object.entries(dependencies);
     return {
       dependencies: Object.fromEntries(
-        entries.filter(([dependencyName]) => !workspacePackages.has(dependencyName)),
+        entries.filter(
+          ([dependencyName]) => !workspacePackages.has(dependencyName)
+        )
       ),
       localDependencies: entries
         .filter(([dependencyName]) => workspacePackages.has(dependencyName))
@@ -423,13 +487,16 @@ const removeWorkspaceDependencies = (runtimeManifest, workspacePackages) => {
     };
   };
   const runtimeDependencies = filterSection(runtimeManifest.dependencies);
-  const runtimeOptionalDependencies = filterSection(runtimeManifest.optionalDependencies);
+  const runtimeOptionalDependencies = filterSection(
+    runtimeManifest.optionalDependencies
+  );
   const installPackage = structuredClone(runtimeManifest);
   if (runtimeDependencies.dependencies !== null) {
     installPackage.dependencies = runtimeDependencies.dependencies;
   }
   if (runtimeOptionalDependencies.dependencies !== null) {
-    installPackage.optionalDependencies = runtimeOptionalDependencies.dependencies;
+    installPackage.optionalDependencies =
+      runtimeOptionalDependencies.dependencies;
   }
   return {
     installPackage,
@@ -446,7 +513,11 @@ const removeWorkspaceDependencies = (runtimeManifest, workspacePackages) => {
  * @param {import('effect/Path').Path} pathService - Path service.
  * @returns {import('effect/Effect').Effect<void, unknown, import('effect/FileSystem').FileSystem>} Copy effect.
  */
-const copyDirectoryWithoutNodeModules = (sourceDirectory, targetDirectory, pathService) =>
+const copyDirectoryWithoutNodeModules = (
+  sourceDirectory,
+  targetDirectory,
+  pathService
+) =>
   Effect.gen(function* copyDirectoryWithoutNodeModulesEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     yield* fileSystem.makeDirectory(targetDirectory, { recursive: true });
@@ -461,12 +532,16 @@ const copyDirectoryWithoutNodeModules = (sourceDirectory, targetDirectory, pathS
           .pipe(
             Effect.flatMap((info) =>
               info.type === 'Directory'
-                ? copyDirectoryWithoutNodeModules(sourcePath, targetPath, pathService)
-                : fileSystem.copy(sourcePath, targetPath, { overwrite: true }),
-            ),
+                ? copyDirectoryWithoutNodeModules(
+                    sourcePath,
+                    targetPath,
+                    pathService
+                  )
+                : fileSystem.copy(sourcePath, targetPath, { overwrite: true })
+            )
           );
       },
-      { concurrency: 'unbounded', discard: true },
+      { concurrency: 'unbounded', discard: true }
     );
   });
 
@@ -484,7 +559,10 @@ const rewriteTsExports = (exportTarget) => {
   if (isJsonRecord(exportTarget)) {
     /** @type {Readonly<Record<string, JsonValue>>} */
     const rewritten = Object.fromEntries(
-      Object.entries(exportTarget).map(([key, entry]) => [key, rewriteTsExports(entry)]),
+      Object.entries(exportTarget).map(([key, entry]) => [
+        key,
+        rewriteTsExports(entry),
+      ])
     );
     return rewritten;
   }
@@ -495,7 +573,9 @@ const rewriteTsExports = (exportTarget) => {
 const listTsFiles = (directory) =>
   Effect.gen(function* listTsFilesEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
-    const entries = yield* fileSystem.readDirectory(directory, { recursive: true });
+    const entries = yield* fileSystem.readDirectory(directory, {
+      recursive: true,
+    });
     return entries
       .filter((item) => item.endsWith('.ts') && !item.endsWith('.d.ts'))
       .map((item) => `${directory}/${item}`);
@@ -503,10 +583,14 @@ const listTsFiles = (directory) =>
 
 /** @param {string} parameters - TypeScript parameter source. */
 const stripParameterTypes = (parameters) =>
-  parameters.replaceAll(/(?<parameter>[A-Za-z_$][\w$]*)\??:\s*[^,]+/gu, '$<parameter>');
+  parameters.replaceAll(
+    /(?<parameter>[A-Za-z_$][\w$]*)\??:\s*[^,]+/gu,
+    '$<parameter>'
+  );
 
 /** @param {string} _match - Full match. @param {string} parameters - Parameter source. */
-const rewriteArrowParameters = (_match, parameters) => `(${stripParameterTypes(parameters)}) =>`;
+const rewriteArrowParameters = (_match, parameters) =>
+  `(${stripParameterTypes(parameters)}) =>`;
 
 /** @param {string} _match - Full match. @param {string} name - Function name. @param {string} parameters - Parameter source. */
 const rewriteFunctionParameters = (_match, name, parameters) =>
@@ -521,11 +605,17 @@ const transpileGeneratedPackageTs = (source) =>
     .replaceAll(/^\s*interface\s+\w+\s*\{[^}]*\}\s*$/gmsu, '')
     .replaceAll(
       /\b(?<declaration>const|let|var)\s+(?<binding>[A-Za-z_$][\w$]*)\s*:\s*[^=]+=/gu,
-      '$<declaration> $<binding> =',
+      '$<declaration> $<binding> ='
     )
-    .replaceAll(/\((?<parameters>[^)]*)\)\s*:\s*[^=]+=>/gu, rewriteArrowParameters)
+    .replaceAll(
+      /\((?<parameters>[^)]*)\)\s*:\s*[^=]+=>/gu,
+      rewriteArrowParameters
+    )
     .replaceAll(/\((?<parameters>[^)]*)\)\s*=>/gu, rewriteArrowParameters)
-    .replaceAll(/function(?<name>\s+\w+\s*)\((?<parameters>[^)]*)\)/gu, rewriteFunctionParameters)
+    .replaceAll(
+      /function(?<name>\s+\w+\s*)\((?<parameters>[^)]*)\)/gu,
+      rewriteFunctionParameters
+    )
     .replaceAll(/\s+as\s+const\b/gu, '')
     .replaceAll(/\s+satisfies\s+[A-Za-z_$][\w$]*(?:<[^>]+>)?/gu, '');
 
@@ -534,14 +624,19 @@ const makeWorkspacePackageRuntimeSafe = (packageDirectory) =>
   Effect.gen(function* makeWorkspacePackageRuntimeSafeEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
-    const packageManifestPath = pathService.join(packageDirectory, packageJsonFile);
-    const packageManifest = yield* readOptionalRuntimePackage(packageManifestPath);
+    const packageManifestPath = pathService.join(
+      packageDirectory,
+      packageJsonFile
+    );
+    const packageManifest =
+      yield* readOptionalRuntimePackage(packageManifestPath);
     if (packageManifest !== null) {
       const runtimeSafePackage = { ...packageManifest };
       if (packageManifest.exports !== undefined) {
         runtimeSafePackage.exports = rewriteTsExports(packageManifest.exports);
       }
-      const runtimeSafeManifest = yield* decodeRuntimePackage(runtimeSafePackage);
+      const runtimeSafeManifest =
+        yield* decodeRuntimePackage(runtimeSafePackage);
       yield* writeJson(packageManifestPath, runtimeSafeManifest);
     }
     const tsFiles = yield* listTsFiles(packageDirectory);
@@ -552,10 +647,10 @@ const makeWorkspacePackageRuntimeSafe = (packageDirectory) =>
           const source = yield* fileSystem.readFileString(tsFile);
           yield* fileSystem.writeFileString(
             tsFile.replace(/\.ts$/u, '.js'),
-            transpileGeneratedPackageTs(source),
+            transpileGeneratedPackageTs(source)
           );
         }),
-      { concurrency: 'unbounded', discard: true },
+      { concurrency: 'unbounded', discard: true }
     );
   });
 
@@ -565,7 +660,12 @@ const makeWorkspacePackageRuntimeSafe = (packageDirectory) =>
  * @param {string} runtimeDir - Runtime directory.
  * @param {import('effect/Path').Path} pathService - Path service.
  */
-const copyWorkspacePackage = (workspacePackageName, workspacePackages, runtimeDir, pathService) => {
+const copyWorkspacePackage = (
+  workspacePackageName,
+  workspacePackages,
+  runtimeDir,
+  pathService
+) => {
   const sourceDirectory = workspacePackages.get(workspacePackageName);
   if (sourceDirectory === undefined) {
     return Effect.void;
@@ -575,11 +675,17 @@ const copyWorkspacePackage = (workspacePackageName, workspacePackages, runtimeDi
     const targetDirectory = pathService.join(
       runtimeDir,
       'node_modules',
-      ...workspacePackageName.split('/'),
+      ...workspacePackageName.split('/')
     );
     yield* fileSystem.remove(targetDirectory, { force: true, recursive: true });
-    yield* fileSystem.makeDirectory(pathService.dirname(targetDirectory), { recursive: true });
-    yield* copyDirectoryWithoutNodeModules(sourceDirectory, targetDirectory, pathService);
+    yield* fileSystem.makeDirectory(pathService.dirname(targetDirectory), {
+      recursive: true,
+    });
+    yield* copyDirectoryWithoutNodeModules(
+      sourceDirectory,
+      targetDirectory,
+      pathService
+    );
     yield* makeWorkspacePackageRuntimeSafe(targetDirectory);
   });
 };
@@ -596,7 +702,7 @@ const installRuntimeDependencies = (
   appId,
   runtimeDir,
   workspaceRoot,
-  pathService,
+  pathService
 ) =>
   Effect.gen(function* installRuntimeDependenciesEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -604,16 +710,33 @@ const installRuntimeDependencies = (
     const installDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: `ultramodern-zerops-${appId}-`,
     });
-    const workspacePackages = yield* collectWorkspacePackages(workspaceRoot, pathService);
+    const workspacePackages = yield* collectWorkspacePackages(
+      workspaceRoot,
+      pathService
+    );
     const { installPackage, localDependencies } = removeWorkspaceDependencies(
       runtimeManifest,
-      workspacePackages,
+      workspacePackages
     );
-    yield* writeJson(pathService.join(installDir, packageJsonFile), installPackage);
+    yield* writeJson(
+      pathService.join(installDir, packageJsonFile),
+      installPackage
+    );
     const installCommand = ChildProcess.make(
       process.platform === 'win32' ? 'npm.cmd' : 'npm',
-      ['install', '--omit=dev', '--no-audit', '--fund=false', '--legacy-peer-deps'],
-      { cwd: installDir, stderr: 'inherit', stdin: 'inherit', stdout: 'inherit' },
+      [
+        'install',
+        '--omit=dev',
+        '--no-audit',
+        '--fund=false',
+        '--legacy-peer-deps',
+      ],
+      {
+        cwd: installDir,
+        stderr: 'inherit',
+        stdin: 'inherit',
+        stdout: 'inherit',
+      }
     );
     const installExitCode = yield* childProcessSpawner.exitCode(installCommand);
     if (installExitCode !== 0) {
@@ -625,12 +748,21 @@ const installRuntimeDependencies = (
     });
     const installedModules = pathService.join(installDir, 'node_modules');
     if (yield* fileSystem.exists(installedModules)) {
-      yield* fileSystem.copy(installedModules, pathService.join(runtimeDir, 'node_modules'));
+      yield* fileSystem.copy(
+        installedModules,
+        pathService.join(runtimeDir, 'node_modules')
+      );
     }
     yield* Effect.forEach(
       localDependencies,
-      (dependency) => copyWorkspacePackage(dependency, workspacePackages, runtimeDir, pathService),
-      { discard: true },
+      (dependency) =>
+        copyWorkspacePackage(
+          dependency,
+          workspacePackages,
+          runtimeDir,
+          pathService
+        ),
+      { discard: true }
     );
   });
 
@@ -647,7 +779,9 @@ const materializeCommand = Command.make(
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const workspaceRoot = pathService.resolve(
-        yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(process.cwd())),
+        yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+          Config.withDefault(process.cwd())
+        )
       );
       yield* assertRelativePath('--package-dir', packageDir, pathService);
       const appRoot = pathService.resolve(workspaceRoot, packageDir);
@@ -655,43 +789,63 @@ const materializeCommand = Command.make(
       const runtimeDir = pathService.join(
         workspaceRoot,
         '.zerops/runtime',
-        worker ? `${appId}-worker` : appId,
+        worker ? `${appId}-worker` : appId
       );
       yield* Effect.all(
         [
-          assertInsideWorkspace('package directory', appRoot, workspaceRoot, pathService),
-          assertInsideWorkspace('runtime directory', runtimeDir, workspaceRoot, pathService),
+          assertInsideWorkspace(
+            'package directory',
+            appRoot,
+            workspaceRoot,
+            pathService
+          ),
+          assertInsideWorkspace(
+            'runtime directory',
+            runtimeDir,
+            workspaceRoot,
+            pathService
+          ),
         ],
-        { discard: true },
+        { discard: true }
       );
 
-      const appPackage = yield* readRuntimePackage(pathService.join(appRoot, packageJsonFile));
-      const prepareRuntimeDirectory = Effect.gen(function* prepareRuntimeDirectoryEffect() {
-        if (appPackage.name !== packageName) {
-          yield* fail(`--package must match ${packageDir}/package.json name`);
-        }
-        if (!worker && !(yield* fileSystem.exists(appOutputDir))) {
-          yield* fail(
-            `Modern.js package build must produce ${pathService.relative(workspaceRoot, appOutputDir)} before runtime materialization`,
-          );
-        }
+      const appPackage = yield* readRuntimePackage(
+        pathService.join(appRoot, packageJsonFile)
+      );
+      const prepareRuntimeDirectory = Effect.gen(
+        function* prepareRuntimeDirectoryEffect() {
+          if (appPackage.name !== packageName) {
+            yield* fail(`--package must match ${packageDir}/package.json name`);
+          }
+          if (!worker && !(yield* fileSystem.exists(appOutputDir))) {
+            yield* fail(
+              `Modern.js package build must produce ${pathService.relative(workspaceRoot, appOutputDir)} before runtime materialization`
+            );
+          }
 
-        yield* fileSystem.remove(runtimeDir, { force: true, recursive: true });
-        yield* fileSystem.makeDirectory(pathService.dirname(runtimeDir), { recursive: true });
-        yield* worker
-          ? fileSystem.makeDirectory(runtimeDir, { recursive: true })
-          : fileSystem.copy(appOutputDir, runtimeDir);
-        const entryPath = pathService.join(runtimeDir, 'index.js');
-        if (!worker && !(yield* fileSystem.exists(entryPath))) {
-          yield* fail(
-            `Modern.js Node deploy output is missing ${pathService.relative(workspaceRoot, entryPath)}`,
-          );
+          yield* fileSystem.remove(runtimeDir, {
+            force: true,
+            recursive: true,
+          });
+          yield* fileSystem.makeDirectory(pathService.dirname(runtimeDir), {
+            recursive: true,
+          });
+          yield* worker
+            ? fileSystem.makeDirectory(runtimeDir, { recursive: true })
+            : fileSystem.copy(appOutputDir, runtimeDir);
+          const entryPath = pathService.join(runtimeDir, 'index.js');
+          if (!worker && !(yield* fileSystem.exists(entryPath))) {
+            yield* fail(
+              `Modern.js Node deploy output is missing ${pathService.relative(workspaceRoot, entryPath)}`
+            );
+          }
         }
-      });
+      );
       yield* prepareRuntimeDirectory;
       const packageJsonPath = pathService.join(runtimeDir, packageJsonFile);
       /** @type {RuntimePackage} */
-      let runtimePackage = (yield* readOptionalRuntimePackage(packageJsonPath)) ?? {};
+      let runtimePackage =
+        (yield* readOptionalRuntimePackage(packageJsonPath)) ?? {};
       if (worker) {
         const outboxWorkerModule = yield* Effect.tryPromise({
           catch: (cause) => new MaterializationError(String(cause)),
@@ -712,13 +866,13 @@ const materializeCommand = Command.make(
       runtimePackage = yield* normalizeRuntimePackageDependencies(
         runtimePackage,
         workspaceRoot,
-        pathService,
+        pathService
       );
       runtimePackage = yield* removeIncompatiblePlatformDependencies(
         runtimePackage,
         appRoot,
         workspaceRoot,
-        pathService,
+        pathService
       );
       runtimePackage = yield* decodeRuntimePackage({
         ...runtimePackage,
@@ -735,18 +889,20 @@ const materializeCommand = Command.make(
         appId,
         runtimeDir,
         workspaceRoot,
-        pathService,
+        pathService
       );
       yield* Effect.log(
         `[ultramodern:zerops] materialized ${appId} runtime at ${pathService.relative(
           workspaceRoot,
-          runtimeDir,
-        )}`,
+          runtimeDir
+        )}`
       );
-    }),
+    })
 );
 
 const program = Command.run(materializeCommand, { version: '1.0.0' });
 
-const executableLayer = Layer.effectDiscard(program).pipe(Layer.provide(NodeServices.layer));
+const executableLayer = Layer.effectDiscard(program).pipe(
+  Layer.provide(NodeServices.layer)
+);
 await Effect.runPromise(Effect.scoped(Layer.build(executableLayer)));

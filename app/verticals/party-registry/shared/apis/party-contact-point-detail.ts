@@ -4,51 +4,47 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { PartyContactPointSchema } from '../domain/contact-point.ts';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 
 export const PartyContactPointDetailRequestSchema = Schema.Struct({
   contactPointRef: PartyContactPointRefSchema,
 });
-export type PartyContactPointDetailRequest = typeof PartyContactPointDetailRequestSchema.Type;
+export type PartyContactPointDetailRequest =
+  typeof PartyContactPointDetailRequestSchema.Type;
 export const PartyContactPointDetailResponseSchema = PartyContactPointSchema;
-export type PartyContactPointDetailResponse = typeof PartyContactPointDetailResponseSchema.Type;
+export type PartyContactPointDetailResponse =
+  typeof PartyContactPointDetailResponseSchema.Type;
 
-export const PartyContactPointDetailAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointDetailAuthenticationProblem',
-  401,
-);
-export const PartyContactPointDetailInvalidProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointDetailInvalidProblem',
-  400,
-);
-export const PartyContactPointDetailUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartyContactPointDetailUnavailableProblem',
-  503,
-);
-export const PartyContactPointDetailForbiddenProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointDetailForbiddenProblem',
-  403,
-);
-export const PartyContactPointDetailNotFoundProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointDetailNotFoundProblem',
-  404,
-);
-export const PartyContactPointDetailPolicyProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointDetailPolicyProblem',
-  422,
-);
-export const PartyContactPointDetailPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointDetailPolicyConflictProblem',
-  409,
-);
-export const PartyContactPointDetailInternalProblemSchema = makeProblemDetailsSchema(
-  'PartyContactPointDetailInternalProblem',
-  500,
-);
+export const PartyContactPointDetailAuthenticationProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointDetailAuthenticationProblem', 401);
+export const PartyContactPointDetailInvalidProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointDetailInvalidProblem', 400);
+export const PartyContactPointDetailUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'PartyContactPointDetailUnavailableProblem',
+    503
+  );
+export const PartyContactPointDetailForbiddenProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointDetailForbiddenProblem', 403);
+export const PartyContactPointDetailNotFoundProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointDetailNotFoundProblem', 404);
+export const PartyContactPointDetailPolicyProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointDetailPolicyProblem', 422);
+export const PartyContactPointDetailPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointDetailPolicyConflictProblem', 409);
+export const PartyContactPointDetailInternalProblemSchema =
+  makeProblemDetailsSchema('PartyContactPointDetailInternalProblem', 500);
 
-export const PartyContactPointDetailApi = HttpApi.make('PartyContactPointDetailApi').add(
+export const PartyContactPointDetailApi = HttpApi.make(
+  'PartyContactPointDetailApi'
+).add(
   HttpApiGroup.make('partyContactPointDetail').add(
     HttpApiEndpoint.post('execute', '/reads/party-contact-point-detail', {
       error: [
@@ -66,6 +62,6 @@ export const PartyContactPointDetailApi = HttpApi.make('PartyContactPointDetailA
       payload: PartyContactPointDetailRequestSchema,
       query: {},
       success: PartyContactPointDetailResponseSchema,
-    }),
-  ),
+    })
+  )
 );

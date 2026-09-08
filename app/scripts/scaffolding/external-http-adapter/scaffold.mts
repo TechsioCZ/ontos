@@ -1,5 +1,6 @@
-import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { Effect, Predicate } from 'effect';
+
+import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -29,7 +30,7 @@ const preserveFileSystemCause = (failure: ScaffoldFailure): ScaffoldFailure => {
 const renderExternalHttpAdapter = (
   packageName: string,
   provider: string,
-  operation: string,
+  operation: string
 ): string => {
   const providerType = toPascalCase(provider);
   const operationType = toPascalCase(operation);
@@ -79,19 +80,25 @@ export const ${adapterType}ServiceLive = Layer.effect(
 `;
 };
 
-const planExternalHttpAdapterScaffold = Effect.fn('ExternalHttpAdapterScaffold.plan')(
-  function* planExternalHttpAdapterScaffold(
-    workspaceRoot: string,
-    config: ExternalHttpAdapterScaffoldConfig,
-  ) {
-    const provider = yield* tryScaffold('provider name is invalid', () =>
-      requireCanonicalSlug(config.provider, 'provider'),
-    );
-    const operation = yield* tryScaffold('operation name is invalid', () =>
-      requireCanonicalSlug(config.operation, 'operation'),
-    );
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
-    const adapterPath = yield* tryScaffold('failed to resolve external HTTP adapter path', () =>
+const planExternalHttpAdapterScaffold = Effect.fn(
+  'ExternalHttpAdapterScaffold.plan'
+)(function* planExternalHttpAdapterScaffold(
+  workspaceRoot: string,
+  config: ExternalHttpAdapterScaffoldConfig
+) {
+  const provider = yield* tryScaffold('provider name is invalid', () =>
+    requireCanonicalSlug(config.provider, 'provider')
+  );
+  const operation = yield* tryScaffold('operation name is invalid', () =>
+    requireCanonicalSlug(config.operation, 'operation')
+  );
+  const vertical = yield* discoverOntosModuleEffect(
+    workspaceRoot,
+    config.vertical
+  );
+  const adapterPath = yield* tryScaffold(
+    'failed to resolve external HTTP adapter path',
+    () =>
       resolveContainedPath(
         workspaceRoot,
         'verticals',
@@ -99,18 +106,17 @@ const planExternalHttpAdapterScaffold = Effect.fn('ExternalHttpAdapterScaffold.p
         'src',
         'integrations',
         provider,
-        `${provider}-${operation}.service.ts`,
-      ),
-    );
-    const mutation = yield* createMutationEffect(
-      adapterPath,
-      renderExternalHttpAdapter(vertical.packageName, provider, operation),
-    ).pipe(Effect.mapError(preserveFileSystemCause));
-    return {
-      mutations: [mutation],
-      result: { adapterPath },
-    } satisfies ScaffoldPlan<ExternalHttpAdapterScaffoldResult>;
-  },
-);
+        `${provider}-${operation}.service.ts`
+      )
+  );
+  const mutation = yield* createMutationEffect(
+    adapterPath,
+    renderExternalHttpAdapter(vertical.packageName, provider, operation)
+  ).pipe(Effect.mapError(preserveFileSystemCause));
+  return {
+    mutations: [mutation],
+    result: { adapterPath },
+  } satisfies ScaffoldPlan<ExternalHttpAdapterScaffoldResult>;
+});
 
 export default createCodesmithGenerator(planExternalHttpAdapterScaffold);

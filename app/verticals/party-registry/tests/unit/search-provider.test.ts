@@ -1,13 +1,18 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
+
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
 import {
   counterpartiesRead,
   loadCounterpartySearch,
 } from '../../src/search/counterparties.provider.ts';
-import { loadPartySearch, partiesRead } from '../../src/search/parties.provider.ts';
+import {
+  loadPartySearch,
+  partiesRead,
+} from '../../src/search/parties.provider.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
@@ -39,11 +44,13 @@ test('Party provider sends only trusted tenant scope to the Core projection gate
       const result = yield* loadPartySearch(
         gateway,
         { tenantId },
-        { includeArchived: true, query: 'ACME' },
+        { includeArchived: true, query: 'ACME' }
       );
       assert.deepEqual(result, []);
-      assert.deepEqual(calls, [{ includeArchived: true, query: 'ACME', tenantId }]);
-    }),
+      assert.deepEqual(calls, [
+        { includeArchived: true, query: 'ACME', tenantId },
+      ]);
+    })
   ));
 
 test('Counterparty provider derives Legal Entity from trusted scope and never from payload', () =>
@@ -62,7 +69,7 @@ test('Counterparty provider derives Legal Entity from trusted scope and never fr
         gateway,
         { legalEntityId, tenantId },
         { includeArchived: false, query: 'ACME', role: 'SUPPLIER' },
-        '2026-09-03T12:00:00.000Z',
+        '2026-09-03T12:00:00.000Z'
       );
       assert.deepEqual(result, []);
       assert.deepEqual(calls, [
@@ -75,7 +82,7 @@ test('Counterparty provider derives Legal Entity from trusted scope and never fr
           tenantId,
         },
       ]);
-    }),
+    })
   ));
 
 test('Counterparty provider preserves typed normalization failures and omits an absent role', () =>
@@ -90,12 +97,26 @@ test('Counterparty provider preserves typed normalization failures and omits an 
         searchParties: () => Effect.succeed([]),
       };
       const error = yield* Effect.flip(
-        loadCounterpartySearch(gateway, { legalEntityId, tenantId }, { query: 'ACME' }, 'invalid'),
+        loadCounterpartySearch(
+          gateway,
+          { legalEntityId, tenantId },
+          { query: 'ACME' },
+          'invalid'
+        )
       );
       assert.equal(error.code, 'party_search_projection_unavailable');
-      assert.equal(error.reason, 'Counterparty Search effective time is invalid');
+      assert.equal(
+        error.reason,
+        'Counterparty Search effective time is invalid'
+      );
       assert.deepEqual(calls, [
-        { effectiveAt: 'invalid', includeArchived: false, legalEntityId, query: 'ACME', tenantId },
+        {
+          effectiveAt: 'invalid',
+          includeArchived: false,
+          legalEntityId,
+          query: 'ACME',
+          tenantId,
+        },
       ]);
-    }),
+    })
   ));

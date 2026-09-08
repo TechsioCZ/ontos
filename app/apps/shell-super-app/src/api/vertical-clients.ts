@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+
 import type { ResolvedModuleTarget } from '../../shared/api.ts';
 
 export type ApprovedVerticalPageComponent = ComponentType<{
@@ -9,23 +10,28 @@ export type ApprovedVerticalPageComponent = ComponentType<{
 export interface ApprovedVerticalPageClient {
   readonly appId: string;
   readonly componentKey: string;
-  readonly load: () => Promise<{ readonly default: ApprovedVerticalPageComponent }>;
+  readonly load: () => Promise<{
+    readonly default: ApprovedVerticalPageComponent;
+  }>;
 }
 
 /** Codesmith-owned allowlist. Executable imports remain lazy and owner-deployment-specific. */
-export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] = [
-  // @ontos-codegen-start shell-page-clients
-  {
-    appId: 'party-registry',
-    componentKey: 'party.registry.page-contacts',
-    load: () => import('partyRegistry/PageContacts'),
-  },
-  // @ontos-codegen-end shell-page-clients
-];
+export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] =
+  [
+    // @ontos-codegen-start shell-page-clients
+    {
+      appId: 'party-registry',
+      componentKey: 'party.registry.page-contacts',
+      load: () => import('partyRegistry/PageContacts'),
+    },
+    // @ontos-codegen-end shell-page-clients
+  ];
 
 export const findApprovedVerticalPageClient = (
-  target: Pick<ResolvedModuleTarget, 'appId' | 'componentKey'>,
+  target: Pick<ResolvedModuleTarget, 'appId' | 'componentKey'>
 ): ApprovedVerticalPageClient | undefined =>
   ultramodernVerticalClients.find(
-    (client) => client.appId === target.appId && client.componentKey === target.componentKey,
+    (client) =>
+      client.appId === target.appId &&
+      client.componentKey === target.componentKey
   );

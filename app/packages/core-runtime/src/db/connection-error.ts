@@ -4,5 +4,5 @@ export class DatabaseConnectionError extends Schema.TaggedError<DatabaseConnecti
   'DatabaseConnectionError',
   {
     reason: Schema.String,
-  },
+  }
 ) {}

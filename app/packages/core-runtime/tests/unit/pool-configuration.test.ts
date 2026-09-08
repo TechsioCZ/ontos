@@ -1,7 +1,9 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Redacted } from 'effect';
+
 import {
   DEFAULT_DATABASE_POOL_DEADLINES,
   configureDatabasePool,
@@ -18,16 +20,19 @@ test(
 
       assert.equal(
         configuration.connectionTimeoutMillis,
-        DEFAULT_DATABASE_POOL_DEADLINES.connectionTimeoutMillis,
+        DEFAULT_DATABASE_POOL_DEADLINES.connectionTimeoutMillis
       );
       assert.equal(
         configuration.statement_timeout,
-        DEFAULT_DATABASE_POOL_DEADLINES.statement_timeout,
+        DEFAULT_DATABASE_POOL_DEADLINES.statement_timeout
       );
       assert.equal(Object.hasOwn(configuration, 'lock_timeout'), false);
-      assert.equal(configuration.connectionString, `${runtimeUrl}?sslmode=require`);
-    }),
-  ),
+      assert.equal(
+        configuration.connectionString,
+        `${runtimeUrl}?sslmode=require`
+      );
+    })
+  )
 );
 
 test(
@@ -40,8 +45,8 @@ test(
       });
 
       assert.equal(configuration.lock_timeout, 250);
-    }),
-  ),
+    })
+  )
 );
 
 test(
@@ -59,16 +64,18 @@ test(
       (parameter) =>
         Effect.gen(function* verifyParameter() {
           const connectionString = Redacted.make(`${runtimeUrl}?${parameter}`);
-          const error = yield* Effect.flip(configureDatabasePool(connectionString));
+          const error = yield* Effect.flip(
+            configureDatabasePool(connectionString)
+          );
           assert.equal(error._tag, 'DatabaseConnectionError');
           assert.equal(
             error.reason,
-            'Database URL deadline parameters and startup options are unsupported; use poolDeadlines',
+            'Database URL deadline parameters and startup options are unsupported; use poolDeadlines'
           );
         }),
-      { concurrency: 'unbounded' },
-    ),
-  ),
+      { concurrency: 'unbounded' }
+    )
+  )
 );
 
 test(
@@ -77,14 +84,14 @@ test(
     Effect.gen(function* verifyInvalidDeadline() {
       const connectionString = Redacted.make(runtimeUrl);
       const error = yield* Effect.flip(
-        configureDatabasePool(connectionString, { statement_timeout: 0 }),
+        configureDatabasePool(connectionString, { statement_timeout: 0 })
       );
 
       assert.equal(error._tag, 'DatabaseConnectionError');
       assert.equal(
         error.reason,
-        'Database pool deadlines must be positive 32-bit millisecond integers',
+        'Database pool deadlines must be positive 32-bit millisecond integers'
       );
-    }),
-  ),
+    })
+  )
 );

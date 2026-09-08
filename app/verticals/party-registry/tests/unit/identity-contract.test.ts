@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { DateTime, Option, Schema } from 'effect';
+
 import {
   PartyCandidateSchema,
   IsoTimestampSchema,
@@ -11,11 +13,11 @@ import {
   makePartyRef,
   partyIdFromString,
 } from '../../shared/domain/identity-contracts.ts';
+import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
+import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { unarchivePartyAction } from '../../src/actions/unarchive-party.action.ts';
 import { updatePartyAction } from '../../src/actions/update-party.action.ts';
-import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
-import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 
 const decode = Schema.decodeUnknownSync;
 
@@ -32,7 +34,7 @@ test('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identi
       partyType: 'UNRESOLVED',
       provenance: { method: 'MANUAL', source: 'test' },
       validFrom: '2026-01-01T00:00:00.000Z',
-    }),
+    })
   );
 });
 
@@ -56,7 +58,7 @@ test('Party JSON round-trips timestamps as strings and absent values as null', (
     displayName: null,
     partyRef: makePartyRef(
       '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222',
+      '22222222-2222-4222-8222-222222222222'
     ),
     partyType: 'UNRESOLVED' as const,
     revision: 1,
@@ -67,7 +69,9 @@ test('Party JSON round-trips timestamps as strings and absent values as null', (
   assert.equal(Option.isNone(decoded.archivedAt), true);
   assert.equal(Option.isNone(decoded.displayName), true);
   assert.deepEqual(Schema.encodeSync(PartySchema)(decoded), encoded);
-  assert.throws(() => decode(PartySchema)({ ...encoded, archivedAt: undefined }));
+  assert.throws(() =>
+    decode(PartySchema)({ ...encoded, archivedAt: undefined })
+  );
   const { displayName: _displayName, ...missingDisplayName } = encoded;
   assert.throws(() => decode(PartySchema)(missingDisplayName));
 
@@ -78,14 +82,16 @@ test('Party JSON round-trips timestamps as strings and absent values as null', (
   };
   assert.deepEqual(
     Schema.encodeSync(PartySchema)(decode(PartySchema)(presentEncoded)),
-    presentEncoded,
+    presentEncoded
   );
 });
 
 test('Party Candidate accepts an evidenced identifier without inventing a display name', () => {
   const encoded = {
     evidenceRefs: ['source:official-record'],
-    officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+    officialIdentifiers: [
+      { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
+    ],
     partyType: 'ORGANIZATION' as const,
     provenance: { method: 'IMPORT', source: 'official-register' },
     validFrom: '2026-01-01T00:00:00.000Z',
@@ -98,13 +104,16 @@ test('Party Candidate accepts an evidenced identifier without inventing a displa
 
 test('Party references retain tenant, module, resource type, and resource identity', () => {
   assert.deepEqual(
-    makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'),
+    makePartyRef(
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222'
+    ),
     {
       moduleId: 'party.registry',
       resourceId: '22222222-2222-4222-8222-222222222222',
       resourceType: 'party.registry.party',
       tenantId: '11111111-1111-4111-8111-111111111111',
-    },
+    }
   );
 });
 
@@ -125,11 +134,18 @@ test('Party identity failures retain branded identifiers in encoded JSON', () =>
 });
 
 test('Party identity Actions are tenant-authorized, optionally scoped, and idempotent', () => {
-  for (const action of [createPartyAction, updatePartyAction, unarchivePartyAction]) {
+  for (const action of [
+    createPartyAction,
+    updatePartyAction,
+    unarchivePartyAction,
+  ]) {
     assert.equal(action.descriptor.legalEntityScope, 'optional');
     assert.equal(action.descriptor.idempotency, 'required');
     // SAFETY: These identity permission callbacks are constant and do not inspect payload fields.
-    assert.equal(action.descriptor.tenantPermission?.({} as never), 'manage_party_identity');
+    assert.equal(
+      action.descriptor.tenantPermission?.({} as never),
+      'manage_party_identity'
+    );
   }
 });
 

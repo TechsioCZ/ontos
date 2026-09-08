@@ -8,28 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Expand the existing owner-private `CustomerForm` with all approved Customer business fields and
-make it explicitly controlled so a parent can apply ARES-prefilled values after mount without a
-React effect that copies props into local state.
+Expand the existing owner-private `CustomerForm` with all approved Customer business fields and make it explicitly controlled so a parent can apply ARES-prefilled values after mount without a React effect that copies props into local state.
 
 ## User Story
 
-As a CRM user
-I want one consistent Customer form for manual, prefilled, create, and edit flows
-So that I can review and correct every Customer business field before saving
+As a CRM user I want one consistent Customer form for manual, prefilled, create, and edit flows So that I can review and correct every Customer business field before saving
 
 ## Problem Statement
 
-`CustomerForm` currently owns only a `name` state initialized once from props. Updating its initial
-values after an ARES response would not update the mounted form, and duplicating the form for create
-or edit would violate the established presentation boundary.
+`CustomerForm` currently owns only a `name` state initialized once from props. Updating its initial values after an ARES response would not update the mounted form, and duplicating the form for create or edit would violate the established presentation boundary.
 
 ## Solution Statement
 
-Refactor `CustomerForm` to a controlled plain-value contract and compose existing UI-kit
-`FormInput`, `Button`, and `StatusText` components for `name`, `ico`, `dic`, `legalFormCode`,
-`establishedOn`, and `dissolvedOn`. Keep BFF, Effect, route, permissions, and domain error types in
-the owning pages.
+Refactor `CustomerForm` to a controlled plain-value contract and compose existing UI-kit `FormInput`, `Button`, and `StatusText` components for `name`, `ico`, `dic`, `legalFormCode`, `establishedOn`, and `dissolvedOn`. Keep BFF, Effect, route, permissions, and domain error types in the owning pages.
 
 ## Relevant Files
 
@@ -47,18 +38,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Define a plain controlled `CustomerFormValues`/copy/error contract matching canonical editable
-fields, with no backend types or application behavior.
+Define a plain controlled `CustomerFormValues`/copy/error contract matching canonical editable fields, with no backend types or application behavior.
 
 ### Phase 2: Core Implementation
 
-Compose UI-kit inputs, normalized validation, invalid-field focus, submit guards, and responsive
-actions while removing one-time prop-to-state ownership.
+Compose UI-kit inputs, normalized validation, invalid-field focus, submit guards, and responsive actions while removing one-time prop-to-state ownership.
 
 ### Phase 3: Integration
 
-Temporarily adapt both owning pages to the controlled interface, add matching locale copy, and prove
-the form can accept a parent-driven prefill without losing accessibility or edit behavior.
+Temporarily adapt both owning pages to the controlled interface, add matching locale copy, and prove the form can accept a parent-driven prefill without losing accessibility or edit behavior.
 
 ## Step by Step Tasks
 
@@ -96,14 +84,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use Rstest/Testing Library to render the form with plain props and prove controlled prefill, all
-validation, semantic emissions, focus, keyboard, pending, accessible descriptions, and responsive
-composition contracts.
+Use Rstest/Testing Library to render the form with plain props and prove controlled prefill, all validation, semantic emissions, focus, keyboard, pending, accessible descriptions, and responsive composition contracts.
 
 ### Integration Tests
 
-Not required beyond adapting existing create/edit component tests: BFF mutations are handled by the
-dedicated create/edit specs.
+Not required beyond adapting existing create/edit component tests: BFF mutations are handled by the dedicated create/edit specs.
 
 ### Edge Cases
 

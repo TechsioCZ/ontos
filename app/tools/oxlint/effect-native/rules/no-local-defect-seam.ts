@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A4** — "Rebuild the error system around typed channels and contract-owned Problem
  * Details" and **A6** — "Activate real observability at the runtime roots"
@@ -52,20 +51,28 @@ import { optionRecord } from '../shared/options.ts';
  * rule never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { lookupVariable } from '../shared/bindings.ts';
-import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
 import {
   collectDirectMemberImports,
   collectNamespaceLocals,
   splitMembers,
 } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
-import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { isInTypePosition, isNonReferencePosition } from '../shared/reference-positions.ts';
+import {
+  isScriptFile,
+  isTestFile,
+  matchesGlobs,
+  scopePath,
+} from '../shared/paths.ts';
+import {
+  isInTypePosition,
+  isNonReferencePosition,
+} from '../shared/reference-positions.ts';
 
 const RUNTIME_TS_EXPRESSIONS = new Set([
   'TSAsExpression',
@@ -77,7 +84,12 @@ const RUNTIME_TS_EXPRESSIONS = new Set([
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 
-const DEFAULT_IGNORE = ['**/dist/**', '**/build/**', '**/node_modules/**', '**/*.d.ts'];
+const DEFAULT_IGNORE = [
+  '**/dist/**',
+  '**/build/**',
+  '**/node_modules/**',
+  '**/*.d.ts',
+];
 
 /**
  * The one outer HTTP instrumentation/error seam A4/A6 asks for. Nothing in the repository matches
@@ -126,14 +138,21 @@ function readOptions(context: Context) {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     seamPaths: stringArray(record.seamPaths, DEFAULT_SEAM_PATHS),
     members: stringArray(record.members, DEFAULT_MEMBERS),
-    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
+    reexportModules: stringArray(
+      record.reexportModules,
+      DEFAULT_REEXPORT_MODULES
+    ),
     includeTests: record.includeTests === true,
     includeScripts: record.includeScripts === true,
   };
 }
 
 function isIncludedPath(path: string, options: RuleOptions): boolean {
-  if (matchesGlobs(path, options.ignore) || matchesGlobs(path, options.seamPaths)) return false;
+  if (
+    matchesGlobs(path, options.ignore) ||
+    matchesGlobs(path, options.seamPaths)
+  )
+    return false;
   if (!matchesGlobs(path, options.include)) return false;
   if (!options.includeTests && isTestFile(path)) return false;
   return options.includeScripts || !isScriptFile(path);
@@ -195,12 +214,17 @@ export const rule = defineRule({
       program,
       bindings,
       watched,
-      options.reexportModules,
+      options.reexportModules
     );
     const directMembers = collectDirectMemberImports(program, byNamespace);
-    if (namespaced.size === 0 && barrel.size === 0 && directMembers.size === 0) return {};
+    if (namespaced.size === 0 && barrel.size === 0 && directMembers.size === 0)
+      return {};
 
-    const report = (node: ESTree.Node, namespace: string, member: string): void => {
+    const report = (
+      node: ESTree.Node,
+      namespace: string,
+      member: string
+    ): void => {
       context.report({
         node,
         messageId: namespace === 'Cause' ? 'causeInspection' : 'defectCatch',
@@ -210,7 +234,8 @@ export const rule = defineRule({
 
     const inspect = (node: ESTree.Node): void => {
       const origin = effectOrigin(context, node, options.reexportModules);
-      if (origin?.length !== 2 || !byNamespace.get(origin[0]!)?.has(origin[1]!)) return;
+      if (origin?.length !== 2 || !byNamespace.get(origin[0]!)?.has(origin[1]!))
+        return;
       report(node, origin[0]!, origin[1]!);
     };
     return {
@@ -220,7 +245,7 @@ export const rule = defineRule({
         const variable = lookupVariable(context, node);
         if (
           !variable?.references.some(
-            (reference) => reference.identifier === node && reference.isRead(),
+            (reference) => reference.identifier === node && reference.isRead()
           )
         )
           return;

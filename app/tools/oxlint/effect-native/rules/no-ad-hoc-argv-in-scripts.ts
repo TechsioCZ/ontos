@@ -11,10 +11,14 @@
  * Report-only: no fixers or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree } from '@oxlint/plugins';
 
-import { literalText, propertyText, staticString, unwrap } from '../shared/ast.ts';
+import {
+  literalText,
+  propertyText,
+  staticString,
+  unwrap,
+} from '../shared/ast.ts';
 import { importedName } from '../shared/imports.ts';
 import { stringList } from '../shared/options.ts';
 import { globToRegExp, inScriptScope, scriptScope } from '../shared/paths.ts';
@@ -64,8 +68,12 @@ const DEFAULTS: RuleOptions = {
   forbiddenCliModules: [...DEFAULT_FORBIDDEN_CLI_MODULES],
 };
 
-function numberList(value: unknown, fallback: readonly number[]): readonly number[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'number')
+function numberList(
+  value: unknown,
+  fallback: readonly number[]
+): readonly number[] {
+  return Array.isArray(value) &&
+    value.every((entry) => typeof entry === 'number')
     ? (value as readonly number[])
     : fallback;
 }
@@ -79,9 +87,12 @@ function readOptions(raw: unknown): RuleOptions {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
     allowEntryGuardIndices: numberList(
       given.allowEntryGuardIndices,
-      DEFAULTS.allowEntryGuardIndices,
+      DEFAULTS.allowEntryGuardIndices
     ),
-    forbiddenCliModules: stringList(given.forbiddenCliModules, DEFAULTS.forbiddenCliModules),
+    forbiddenCliModules: stringList(
+      given.forbiddenCliModules,
+      DEFAULTS.forbiddenCliModules
+    ),
   };
 }
 
@@ -91,7 +102,9 @@ function staticIndex(node: ESTree.MemberExpression): number | null {
   const property = unwrap(node.property, { maxDepth: 8 });
   if (property === null) return null;
   const value =
-    property.type === 'Literal' ? (property as { value?: unknown }).value : literalText(property);
+    property.type === 'Literal'
+      ? (property as { value?: unknown }).value
+      : literalText(property);
   if (typeof value === 'number') return Number.isInteger(value) ? value : null;
   if (typeof value !== 'string') return null;
   const parsed = Number(value);
@@ -117,7 +130,8 @@ function staticStringValue(node: AnyNode | null | undefined): string | null {
  */
 function boundIndices(pattern: AnyNode): readonly number[] | null {
   if (pattern.type !== 'ArrayPattern') return null;
-  const elements = (pattern as { elements?: readonly (AnyNode | null)[] }).elements ?? [];
+  const elements =
+    (pattern as { elements?: readonly (AnyNode | null)[] }).elements ?? [];
   const indices: number[] = [];
   for (let index = 0; index < elements.length; index += 1) {
     const element = elements[index] ?? null;
@@ -218,17 +232,25 @@ export const rule = defineRule({
     const options = readOptions(context.options?.[0]);
     const path = scriptScope(context.filename);
     if (!inScriptScope(path)) return {};
-    if (options.allowPaths.some((glob) => globToRegExp(glob).test(path))) return {};
+    if (options.allowPaths.some((glob) => globToRegExp(glob).test(path)))
+      return {};
 
     const allowedIndices = new Set(options.allowEntryGuardIndices);
     const forbiddenModules = new Set(options.forbiddenCliModules);
 
     const printed = (node: AnyNode): string => {
-      const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
+      const text = context.sourceCode
+        .getText(node)
+        .replace(/\s+/gu, ' ')
+        .trim();
       return text.length > 72 ? `${text.slice(0, 69)}...` : text;
     };
 
-    const report = (node: AnyNode, messageId: string, data: Record<string, string>): void => {
+    const report = (
+      node: AnyNode,
+      messageId: string,
+      data: Record<string, string>
+    ): void => {
       context.report({ node, messageId, data });
     };
 
@@ -236,16 +258,28 @@ export const rule = defineRule({
       ['process.argv', 'Bun.argv'].includes(provenance(context, node) ?? '');
 
     /** Report a binding/assignment target that is fed directly from argv, unless it is the entry guard. */
-    const reportPattern = (target: AnyNode, source: AnyNode, whole: AnyNode): void => {
+    const reportPattern = (
+      target: AnyNode,
+      source: AnyNode,
+      whole: AnyNode
+    ): void => {
       if (!isArgvSource(source)) return;
       const indices = boundIndices(target);
-      if (indices !== null && indices.every((index) => allowedIndices.has(index))) return;
+      if (
+        indices !== null &&
+        indices.every((index) => allowedIndices.has(index))
+      )
+        return;
       report(whole, 'argvDestructuring', { expression: printed(whole) });
     };
 
     const reportParseArgsImports = (node: ESTree.ImportDeclaration): void => {
       for (const specifier of node.specifiers) {
-        if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
+        if (
+          specifier.type !== 'ImportSpecifier' ||
+          specifier.importKind === 'type'
+        )
+          continue;
         if (importedName(specifier) === 'parseArgs')
           report(specifier, 'parseArgsImport', { module: node.source.value });
       }
@@ -261,7 +295,11 @@ export const rule = defineRule({
         }
         if (!forbiddenModules.has(packageName(module))) return;
         const valueSpecifiers = node.specifiers.filter(
-          (specifier) => !(specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'),
+          (specifier) =>
+            !(
+              specifier.type === 'ImportSpecifier' &&
+              specifier.importKind === 'type'
+            )
         );
         if (node.specifiers.length > 0 && valueSpecifiers.length === 0) return;
         report(node as unknown as AnyNode, 'cliPackageImport', { module });
@@ -269,7 +307,8 @@ export const rule = defineRule({
 
       ImportExpression(node) {
         const module = staticStringValue(node.source as AnyNode);
-        if (module === null || !forbiddenModules.has(packageName(module))) return;
+        if (module === null || !forbiddenModules.has(packageName(module)))
+          return;
         report(node as unknown as AnyNode, 'cliPackageImport', { module });
       },
 
@@ -310,7 +349,11 @@ export const rule = defineRule({
               report(prop, 'parseArgsImport', { module: 'node:util' });
           }
         }
-        reportPattern(declarator.id as AnyNode, init, declarator as unknown as AnyNode);
+        reportPattern(
+          declarator.id as AnyNode,
+          init,
+          declarator as unknown as AnyNode
+        );
       },
 
       AssignmentPattern(node) {
@@ -318,7 +361,7 @@ export const rule = defineRule({
         reportPattern(
           pattern.left as AnyNode,
           pattern.right as AnyNode,
-          pattern as unknown as AnyNode,
+          pattern as unknown as AnyNode
         );
       },
 
@@ -333,7 +376,11 @@ export const rule = defineRule({
           target.type !== 'ObjectPattern'
         )
           return;
-        reportPattern(target, assignment.right as AnyNode, assignment as unknown as AnyNode);
+        reportPattern(
+          target,
+          assignment.right as AnyNode,
+          assignment as unknown as AnyNode
+        );
       },
 
       SpreadElement(node) {
@@ -342,7 +389,9 @@ export const rule = defineRule({
       },
       ForOfStatement(node) {
         if (isArgvSource(node.right))
-          report(node.right, 'argvMemberAccess', { expression: printed(node.right) });
+          report(node.right, 'argvMemberAccess', {
+            expression: printed(node.right),
+          });
       },
       NewExpression(node) {
         if (
@@ -355,19 +404,27 @@ export const rule = defineRule({
         if (
           !node.source ||
           node.exportKind === 'type' ||
-          (node.specifiers.length > 0 && node.specifiers.every((s) => s.exportKind === 'type'))
+          (node.specifiers.length > 0 &&
+            node.specifiers.every((s) => s.exportKind === 'type'))
         )
           return;
         const module = node.source.value;
-        if (forbiddenModules.has(packageName(module))) report(node, 'cliPackageImport', { module });
+        if (forbiddenModules.has(packageName(module)))
+          report(node, 'cliPackageImport', { module });
       },
       ExportAllDeclaration(node) {
-        if (node.exportKind !== 'type' && forbiddenModules.has(packageName(node.source.value)))
+        if (
+          node.exportKind !== 'type' &&
+          forbiddenModules.has(packageName(node.source.value))
+        )
           report(node, 'cliPackageImport', { module: node.source.value });
       },
       CallExpression(node) {
         const identity = provenance(context, node.callee);
-        if (identity === 'Array.from' && node.arguments.some((a) => isArgvSource(a)))
+        if (
+          identity === 'Array.from' &&
+          node.arguments.some((a) => isArgvSource(a))
+        )
           report(node, 'argvMemberAccess', { expression: printed(node) });
         if (identity !== 'require') return;
         const module = staticStringValue(node.arguments[0]);

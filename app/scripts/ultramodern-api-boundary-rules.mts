@@ -1,16 +1,18 @@
+import path from 'node:path';
+
 import {
   matchingDelimiter,
   separatedSource,
   topLevelSeparators,
 } from './boundary-source-structure.mts';
 
-import path from 'node:path';
-
 export { unconstrainedHttpApiContractSchemaViolation } from './typescript-api-contract-boundary.mts';
 
-const normalize = (filePath: string): string => filePath.split(path.sep).join('/');
+const normalize = (filePath: string): string =>
+  filePath.split(path.sep).join('/');
 
-const privateOwnerSpecifierPattern = /vertical\.(?:manifest|registration)(?:\.ts)?$/u;
+const privateOwnerSpecifierPattern =
+  /vertical\.(?:manifest|registration)(?:\.ts)?$/u;
 const identifierPattern = String.raw`[$A-Z_a-z][$\w]*`;
 const effectEdgeSpecifier = '@modern-js/plugin-bff/effect-edge';
 const layerMergeAllCallee = 'Layer.mergeAll';
@@ -28,33 +30,40 @@ const mask = (value: string): string => value.replaceAll(/[^\n\r]/gu, ' ');
 const withoutRegularExpressionLiterals = (source: string): string =>
   source.replaceAll(
     regularExpressionLiteralPattern,
-    (value, prefix: string) => `${prefix}${mask(value.slice(prefix.length))}`,
+    (value, prefix: string) => `${prefix}${mask(value.slice(prefix.length))}`
   );
 
 const withoutComments = (source: string): string =>
-  withoutRegularExpressionLiterals(source).replaceAll(sourceTriviaPattern, (value) =>
-    value.startsWith('//') || value.startsWith('/*') ? mask(value) : value,
+  withoutRegularExpressionLiterals(source).replaceAll(
+    sourceTriviaPattern,
+    (value) =>
+      value.startsWith('//') || value.startsWith('/*') ? mask(value) : value
   );
 
 const withoutCommentsOrLiterals = (source: string): string =>
-  withoutRegularExpressionLiterals(source).replaceAll(sourceTriviaPattern, mask);
+  withoutRegularExpressionLiterals(source).replaceAll(
+    sourceTriviaPattern,
+    mask
+  );
 
 const importsNamedValueMatchingSpecifier = (
   source: string,
   name: string,
-  specifierPattern: string,
+  specifierPattern: string
 ): boolean => {
   const visibleSource = withoutComments(source);
   const code = withoutCommentsOrLiterals(source);
   const imports = visibleSource.matchAll(
     new RegExp(
       String.raw`^(?<indent>[\t ]*)import\s*\{(?<bindings>[^}]*)\}\s*from\s*['"]${specifierPattern}['"]`,
-      'gmu',
-    ),
+      'gmu'
+    )
   );
   return [...imports].some((candidate) => {
     const indentLength = candidate.groups?.indent?.length ?? 0;
-    const isRealImport = code.slice(candidate.index + indentLength).startsWith('import');
+    const isRealImport = code
+      .slice(candidate.index + indentLength)
+      .startsWith('import');
     return (
       isRealImport &&
       (candidate.groups?.bindings?.split(',').some((binding) => {
@@ -69,15 +78,15 @@ const importsNamedValueMatchingSpecifier = (
 const importedLocalNameMatchingSpecifier = (
   source: string,
   importedName: string,
-  specifierPattern: string,
+  specifierPattern: string
 ): string | undefined => {
   const visibleSource = withoutComments(source);
   const code = withoutCommentsOrLiterals(source);
   for (const candidate of visibleSource.matchAll(
     new RegExp(
       String.raw`^(?<indent>[\t ]*)import\s*\{(?<bindings>[^}]*)\}\s*from\s*['"]${specifierPattern}['"]`,
-      'gmu',
-    ),
+      'gmu'
+    )
   )) {
     const indentLength = candidate.groups?.indent?.length ?? 0;
     if (!code.slice(candidate.index + indentLength).startsWith('import')) {
@@ -93,25 +102,48 @@ const importedLocalNameMatchingSpecifier = (
   return undefined;
 };
 
-const importsNamedValue = (source: string, name: string, specifier: string): boolean =>
-  importsNamedValueMatchingSpecifier(source, name, escapesRegularExpression(specifier));
+const importsNamedValue = (
+  source: string,
+  name: string,
+  specifier: string
+): boolean =>
+  importsNamedValueMatchingSpecifier(
+    source,
+    name,
+    escapesRegularExpression(specifier)
+  );
 
-const importsNamedValueFromSharedApi = (source: string, name: string): boolean =>
-  importsNamedValue(source, name, '../shared/api.ts');
+const importsNamedValueFromSharedApi = (
+  source: string,
+  name: string
+): boolean => importsNamedValue(source, name, '../shared/api.ts');
 
 const withoutTerminalSatisfies = (expression: string): string =>
   expression
-    .replace(/\s+satisfies\s+[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*(?:<[^<>]*>)?$/u, '')
+    .replace(
+      /\s+satisfies\s+[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*(?:<[^<>]*>)?$/u,
+      ''
+    )
     .trim();
 
-const assignmentStart = (source: string, declarationEnd: number): number | undefined => {
-  const index = topLevelSeparators(source, '=;', declarationEnd, source.length, true).find(
-    (position) => source[position + 1] !== '>',
-  );
+const assignmentStart = (
+  source: string,
+  declarationEnd: number
+): number | undefined => {
+  const index = topLevelSeparators(
+    source,
+    '=;',
+    declarationEnd,
+    source.length,
+    true
+  ).find((position) => source[position + 1] !== '>');
   return index === undefined || source[index] === ';' ? undefined : index + 1;
 };
 
-const curlyAncestorsAt = (source: string, targetIndex: number): readonly number[] => {
+const curlyAncestorsAt = (
+  source: string,
+  targetIndex: number
+): readonly number[] => {
   const ancestors: number[] = [];
   for (let index = 0; index < targetIndex; index += 1) {
     if (source[index] === '{') {
@@ -126,33 +158,42 @@ const curlyAncestorsAt = (source: string, targetIndex: number): readonly number[
 const isScopeVisibleAt = (
   source: string,
   declarationIndex: number,
-  usageIndex: number,
+  usageIndex: number
 ): boolean => {
   if (declarationIndex >= usageIndex) {
     return false;
   }
   const declarationAncestors = curlyAncestorsAt(source, declarationIndex);
   const usageAncestors = curlyAncestorsAt(source, usageIndex);
-  return declarationAncestors.every((ancestor, index) => usageAncestors[index] === ancestor);
+  return declarationAncestors.every(
+    (ancestor, index) => usageAncestors[index] === ancestor
+  );
 };
 
 const isBindingScopeAt = (
   source: string,
   declarationIndex: number,
-  usageIndex: number,
+  usageIndex: number
 ): boolean => {
   const declarationAncestors = curlyAncestorsAt(source, declarationIndex);
   const usageAncestors = curlyAncestorsAt(source, usageIndex);
-  return declarationAncestors.every((ancestor, index) => usageAncestors[index] === ancestor);
+  return declarationAncestors.every(
+    (ancestor, index) => usageAncestors[index] === ancestor
+  );
 };
 
 const initializerFor = (
   source: string,
   name: string,
-  usageIndex = source.length,
+  usageIndex = source.length
 ): string | undefined => {
   const declarations = [
-    ...source.matchAll(new RegExp(String.raw`\bconst\s+${escapesRegularExpression(name)}\b`, 'gu')),
+    ...source.matchAll(
+      new RegExp(
+        String.raw`\bconst\s+${escapesRegularExpression(name)}\b`,
+        'gu'
+      )
+    ),
   ].filter(({ index }) => isScopeVisibleAt(source, index, usageIndex));
   let declaration: RegExpExecArray | undefined;
   for (const candidate of declarations) {
@@ -164,7 +205,8 @@ const initializerFor = (
     const declarationDepth = curlyAncestorsAt(source, declaration.index).length;
     if (
       candidateDepth > declarationDepth ||
-      (candidateDepth === declarationDepth && candidate.index > declaration.index)
+      (candidateDepth === declarationDepth &&
+        candidate.index > declaration.index)
     ) {
       declaration = candidate;
     }
@@ -172,19 +214,28 @@ const initializerFor = (
   if (declaration === undefined) {
     return undefined;
   }
-  const start = assignmentStart(source, declaration.index + declaration[0].length);
+  const start = assignmentStart(
+    source,
+    declaration.index + declaration[0].length
+  );
   if (start === undefined) {
     return undefined;
   }
 
   const [end] = topLevelSeparators(source, ';', start);
-  return end === undefined ? undefined : withoutTerminalSatisfies(source.slice(start, end).trim());
+  return end === undefined
+    ? undefined
+    : withoutTerminalSatisfies(source.slice(start, end).trim());
 };
 
-const callArguments = (expression: string, callee: string): readonly string[] | undefined => {
-  const prefix = new RegExp(String.raw`^${escapesRegularExpression(callee)}\s*\(`, 'u').exec(
-    expression,
-  );
+const callArguments = (
+  expression: string,
+  callee: string
+): readonly string[] | undefined => {
+  const prefix = new RegExp(
+    String.raw`^${escapesRegularExpression(callee)}\s*\(`,
+    'u'
+  ).exec(expression);
   if (prefix === null) {
     return undefined;
   }
@@ -194,27 +245,40 @@ const callArguments = (expression: string, callee: string): readonly string[] | 
     return undefined;
   }
   const separators = topLevelSeparators(expression, ',', open + 1, close, true);
-  const argumentsList = separatedSource(expression, separators, open + 1, close);
-  return argumentsList.at(-1) === '' ? argumentsList.slice(0, -1) : argumentsList;
+  const argumentsList = separatedSource(
+    expression,
+    separators,
+    open + 1,
+    close
+  );
+  return argumentsList.at(-1) === ''
+    ? argumentsList.slice(0, -1)
+    : argumentsList;
 };
 
-const safeLayerPipeArguments = (expression: string): readonly string[] | undefined => {
+const safeLayerPipeArguments = (
+  expression: string
+): readonly string[] | undefined => {
   const argumentsList = callArguments(expression, '.pipe');
   return argumentsList?.every(
     (argument) =>
       argument === 'Layer.orDie' ||
       argument === 'GovernedReadLayer.orDie' ||
       callArguments(argument, 'Layer.provide') !== undefined ||
-      callArguments(argument, 'GovernedReadLayer.provide') !== undefined,
+      callArguments(argument, 'GovernedReadLayer.provide') !== undefined
   ) === true
     ? argumentsList
     : undefined;
 };
 
-const layerConstructorRemainder = (expression: string, callee: string): string | undefined => {
-  const prefix = new RegExp(String.raw`^${escapesRegularExpression(callee)}\s*\(`, 'u').exec(
-    expression,
-  );
+const layerConstructorRemainder = (
+  expression: string,
+  callee: string
+): string | undefined => {
+  const prefix = new RegExp(
+    String.raw`^${escapesRegularExpression(callee)}\s*\(`,
+    'u'
+  ).exec(expression);
   if (prefix === null) {
     return undefined;
   }
@@ -233,7 +297,10 @@ const layerConstructorRemainder = (expression: string, callee: string): string |
   return undefined;
 };
 
-const hasSafeLayerConstructor = (initializer: string, callee: string): boolean => {
+const hasSafeLayerConstructor = (
+  initializer: string,
+  callee: string
+): boolean => {
   const remainder = layerConstructorRemainder(initializer, callee);
   return (
     remainder !== undefined &&
@@ -243,29 +310,35 @@ const hasSafeLayerConstructor = (initializer: string, callee: string): boolean =
 
 const leadingCallArguments = (
   expression: string,
-  callee: string,
+  callee: string
 ): readonly string[] | undefined => {
   const remainder = layerConstructorRemainder(expression, callee);
   return remainder === undefined
     ? undefined
-    : callArguments(expression.slice(0, expression.length - remainder.length).trim(), callee);
+    : callArguments(
+        expression.slice(0, expression.length - remainder.length).trim(),
+        callee
+      );
 };
 
-const groupCallbackRegistersHandler = (groupArguments: readonly string[]): boolean => {
+const groupCallbackRegistersHandler = (
+  groupArguments: readonly string[]
+): boolean => {
   const callback = groupArguments[2]?.trim();
   if (callback === undefined) {
     return false;
   }
   const binding = new RegExp(
     String.raw`^(?:\(\s*(?<parenthesized>${identifierPattern})(?:\s*:[^)]*)?\s*\)|(?<bare>${identifierPattern}))\s*=>`,
-    'u',
+    'u'
   ).exec(callback);
-  const handlerBuilder = binding?.groups?.parenthesized ?? binding?.groups?.bare;
+  const handlerBuilder =
+    binding?.groups?.parenthesized ?? binding?.groups?.bare;
   return (
     handlerBuilder !== undefined &&
     new RegExp(
       String.raw`\b${escapesRegularExpression(handlerBuilder)}\s*\.\s*handle\s*\(`,
-      'u',
+      'u'
     ).test(callback.slice(binding?.[0].length ?? 0))
   );
 };
@@ -277,7 +350,7 @@ interface RuntimeTopologyModule {
 }
 
 export type RuntimeTopologyModuleResolver = (
-  specifier: string,
+  specifier: string
 ) => RuntimeTopologyModule | undefined;
 
 interface NamedBinding {
@@ -288,7 +361,7 @@ interface NamedBinding {
 const namedBindingInDeclaration = (
   bindings: string,
   name: string,
-  specifier: string,
+  specifier: string
 ): NamedBinding | undefined => {
   for (const binding of bindings.split(',')) {
     const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
@@ -302,14 +375,19 @@ const namedBindingInDeclaration = (
 const namedModuleBinding = (
   source: string,
   name: string,
-  allowExport: boolean,
+  allowExport: boolean
 ): NamedBinding | undefined => {
   const visible = withoutComments(source);
   const code = withoutCommentsOrLiterals(source);
   for (const candidate of visible.matchAll(
-    /^(?<indent>[\t ]*)(?<keyword>import|export)\s*\{(?<bindings>[^}]*)\}\s*from\s*['"](?<specifier>[^'"]+)['"]/gmu,
+    /^(?<indent>[\t ]*)(?<keyword>import|export)\s*\{(?<bindings>[^}]*)\}\s*from\s*['"](?<specifier>[^'"]+)['"]/gmu
   )) {
-    const { bindings = '', indent = '', keyword = '', specifier = '' } = candidate.groups ?? {};
+    const {
+      bindings = '',
+      indent = '',
+      keyword = '',
+      specifier = '',
+    } = candidate.groups ?? {};
     if (
       (keyword === 'export' && !allowExport) ||
       !code.slice(candidate.index + indent.length).startsWith(keyword)
@@ -324,14 +402,20 @@ const namedModuleBinding = (
   return undefined;
 };
 
-const importedBindingFromAnyModule = (source: string, name: string): NamedBinding | undefined =>
-  namedModuleBinding(source, name, true);
+const importedBindingFromAnyModule = (
+  source: string,
+  name: string
+): NamedBinding | undefined => namedModuleBinding(source, name, true);
 const importedValueBindingFromAnyModule = (
   source: string,
-  name: string,
+  name: string
 ): NamedBinding | undefined => namedModuleBinding(source, name, false);
 
-const hasUnaliasedValueImport = (source: string, name: string, specifier: string): boolean => {
+const hasUnaliasedValueImport = (
+  source: string,
+  name: string,
+  specifier: string
+): boolean => {
   const binding = importedValueBindingFromAnyModule(source, name);
   return binding?.imported === name && binding.specifier === specifier;
 };
@@ -340,17 +424,20 @@ const initializerCalls = (
   code: string,
   name: string,
   callee: string,
-  index = code.length,
+  index = code.length
 ): boolean => {
   const initializer = initializerFor(code, name, index);
-  return initializer !== undefined && callArguments(initializer, callee) !== undefined;
+  return (
+    initializer !== undefined &&
+    callArguments(initializer, callee) !== undefined
+  );
 };
 
 const layerValueUsesCors = (
   source: string,
   name: string,
   usageIndex: number,
-  seen: ReadonlySet<string> = new Set(),
+  seen: ReadonlySet<string> = new Set()
 ): boolean => {
   if (seen.has(name)) {
     return false;
@@ -364,44 +451,77 @@ const layerValueUsesCors = (
   }
   const pipedLayer = new RegExp(
     String.raw`^(?<base>${identifierPattern})(?<pipe>\.pipe\s*\()`,
-    'u',
+    'u'
   ).exec(initializer);
-  return pipedLayer?.groups?.base === undefined || pipedLayer.groups.pipe === undefined
+  return pipedLayer?.groups?.base === undefined ||
+    pipedLayer.groups.pipe === undefined
     ? false
-    : layerValueUsesCors(source, pipedLayer.groups.base, usageIndex, new Set([...seen, name]));
+    : layerValueUsesCors(
+        source,
+        pipedLayer.groups.base,
+        usageIndex,
+        new Set([...seen, name])
+      );
 };
 
-const matchingRoundClose = (source: string, openIndex: number): number | undefined =>
-  matchingDelimiter(source, openIndex, '(', ')');
+const matchingRoundClose = (
+  source: string,
+  openIndex: number
+): number | undefined => matchingDelimiter(source, openIndex, '(', ')');
 
-const matchingCurlyClose = (source: string, openIndex: number): number | undefined =>
-  matchingDelimiter(source, openIndex, '{', '}');
+const matchingCurlyClose = (
+  source: string,
+  openIndex: number
+): number | undefined => matchingDelimiter(source, openIndex, '{', '}');
 
 const parameterBinding = (parameter: string): string =>
   parameter.slice(0, topLevelSeparators(parameter, ':=')[0]);
 
 const parameterListShadows = (parameters: string, name: string): boolean => {
-  const pattern = new RegExp(String.raw`\b${escapesRegularExpression(name)}\b`, 'u');
-  const separators = topLevelSeparators(parameters, ',', 0, parameters.length, true);
+  const pattern = new RegExp(
+    String.raw`\b${escapesRegularExpression(name)}\b`,
+    'u'
+  );
+  const separators = topLevelSeparators(
+    parameters,
+    ',',
+    0,
+    parameters.length,
+    true
+  );
   return separatedSource(parameters, separators).some((parameter) =>
-    pattern.test(parameterBinding(parameter)),
+    pattern.test(parameterBinding(parameter))
   );
 };
 
-const controlFlowParentheses = new Set(['for', 'if', 'switch', 'while', 'with']);
+const controlFlowParentheses = new Set([
+  'for',
+  'if',
+  'switch',
+  'while',
+  'with',
+]);
 
 const hasParameterDeclarationPrefix = (prefix: string): boolean => {
   const withoutGeneric = prefix.replace(/<[^<>]*>$/u, '').trimEnd();
-  if (new RegExp(String.raw`\bfunction(?:\s+${identifierPattern})?$`, 'u').test(withoutGeneric)) {
+  if (
+    new RegExp(String.raw`\bfunction(?:\s+${identifierPattern})?$`, 'u').test(
+      withoutGeneric
+    )
+  ) {
     return true;
   }
   if (withoutGeneric.endsWith(']')) {
     return true;
   }
-  const precedingWord = new RegExp(String.raw`(?<word>${identifierPattern})$`, 'u').exec(
-    withoutGeneric,
-  )?.groups?.word;
-  if (precedingWord === undefined || controlFlowParentheses.has(precedingWord)) {
+  const precedingWord = new RegExp(
+    String.raw`(?<word>${identifierPattern})$`,
+    'u'
+  ).exec(withoutGeneric)?.groups?.word;
+  if (
+    precedingWord === undefined ||
+    controlFlowParentheses.has(precedingWord)
+  ) {
     return false;
   }
   if (precedingWord === 'catch') {
@@ -410,7 +530,11 @@ const hasParameterDeclarationPrefix = (prefix: string): boolean => {
   return /[{};]\s*$/u.test(withoutGeneric.slice(0, -precedingWord.length));
 };
 
-const isParameterList = (code: string, openIndex: number, closeIndex: number): boolean => {
+const isParameterList = (
+  code: string,
+  openIndex: number,
+  closeIndex: number
+): boolean => {
   const suffix = code.slice(closeIndex + 1).trimStart();
   if (suffix.startsWith('=>')) {
     return true;
@@ -424,7 +548,11 @@ const isParameterList = (code: string, openIndex: number, closeIndex: number): b
   );
 };
 
-const parameterScopeContains = (code: string, closeIndex: number, usageIndex: number): boolean => {
+const parameterScopeContains = (
+  code: string,
+  closeIndex: number,
+  usageIndex: number
+): boolean => {
   for (let index = closeIndex + 1; index < usageIndex; index += 1) {
     if (code[index] === '{') {
       const close = matchingCurlyClose(code, index);
@@ -436,7 +564,11 @@ const parameterScopeContains = (code: string, closeIndex: number, usageIndex: nu
   return false;
 };
 
-const parameterBindingsShadow = (code: string, name: string, usageIndex: number): boolean => {
+const parameterBindingsShadow = (
+  code: string,
+  name: string,
+  usageIndex: number
+): boolean => {
   for (
     let openIndex = code.indexOf('(');
     openIndex >= 0;
@@ -455,18 +587,35 @@ const parameterBindingsShadow = (code: string, name: string, usageIndex: number)
   return false;
 };
 
-const patternHasVisibleMatch = (code: string, pattern: RegExp, usageIndex: number): boolean =>
-  [...code.matchAll(pattern)].some(({ index }) => isBindingScopeAt(code, index, usageIndex));
+const patternHasVisibleMatch = (
+  code: string,
+  pattern: RegExp,
+  usageIndex: number
+): boolean =>
+  [...code.matchAll(pattern)].some(({ index }) =>
+    isBindingScopeAt(code, index, usageIndex)
+  );
 
-const singleArrowBindingShadows = (code: string, name: string, usageIndex: number): boolean => {
-  const pattern = new RegExp(String.raw`\b${escapesRegularExpression(name)}\s*=>`, 'gu');
+const singleArrowBindingShadows = (
+  code: string,
+  name: string,
+  usageIndex: number
+): boolean => {
+  const pattern = new RegExp(
+    String.raw`\b${escapesRegularExpression(name)}\s*=>`,
+    'gu'
+  );
   return [...code.matchAll(pattern)].some((candidate) => {
     const arrowEnd = candidate.index + candidate[0].length;
-    if (arrowEnd >= usageIndex || !isScopeVisibleAt(code, candidate.index, usageIndex)) {
+    if (
+      arrowEnd >= usageIndex ||
+      !isScopeVisibleAt(code, candidate.index, usageIndex)
+    ) {
       return false;
     }
     const relativeBodyStart = code.slice(arrowEnd).search(/\S/u);
-    const bodyStart = relativeBodyStart < 0 ? code.length : relativeBodyStart + arrowEnd;
+    const bodyStart =
+      relativeBodyStart < 0 ? code.length : relativeBodyStart + arrowEnd;
     if (code[bodyStart] === '{') {
       const bodyEnd = matchingCurlyClose(code, bodyStart);
       return bodyEnd !== undefined && usageIndex < bodyEnd;
@@ -476,38 +625,50 @@ const singleArrowBindingShadows = (code: string, name: string, usageIndex: numbe
   });
 };
 
-const shadowsBinding = (code: string, name: string, usageIndex: number): boolean => {
+const shadowsBinding = (
+  code: string,
+  name: string,
+  usageIndex: number
+): boolean => {
   const escapedName = escapesRegularExpression(name);
   return (
     patternHasVisibleMatch(
       code,
       new RegExp(
         String.raw`\b(?:class|const|function|let|module|namespace|using|var)\s+${escapedName}\b`,
-        'gu',
+        'gu'
       ),
-      usageIndex,
+      usageIndex
     ) ||
     singleArrowBindingShadows(code, name, usageIndex) ||
     patternHasVisibleMatch(
       code,
       new RegExp(
         String.raw`\b(?:const|let|var)\s*(?:\{[^;=]*\b${escapedName}\b[^;=]*\}|\[[^;=]*\b${escapedName}\b[^;=]*\])\s*(?:=|\bof\b|\bin\b)`,
-        'gu',
+        'gu'
       ),
-      usageIndex,
+      usageIndex
     ) ||
     parameterBindingsShadow(code, name, usageIndex)
   );
 };
 
-const usesTrustedGovernedLayer = (source: string, code: string, usageIndex: number): boolean => {
+const usesTrustedGovernedLayer = (
+  source: string,
+  code: string,
+  usageIndex: number
+): boolean => {
   if (!/\bGovernedReadLayer\s*\./u.test(code)) {
     return true;
   }
-  const binding = importedValueBindingFromAnyModule(source, 'GovernedReadLayer');
+  const binding = importedValueBindingFromAnyModule(
+    source,
+    'GovernedReadLayer'
+  );
   return (
     binding?.imported === 'Layer' &&
-    (binding.specifier === 'effect' || binding.specifier === effectEdgeSpecifier) &&
+    (binding.specifier === 'effect' ||
+      binding.specifier === effectEdgeSpecifier) &&
     !shadowsBinding(code, 'GovernedReadLayer', usageIndex)
   );
 };
@@ -515,20 +676,25 @@ const usesTrustedGovernedLayer = (source: string, code: string, usageIndex: numb
 const canonicalApiExport = (
   source: string,
   name: string,
-  seen: ReadonlySet<string> = new Set(),
+  seen: ReadonlySet<string> = new Set()
 ): string | undefined => {
   if (seen.has(name)) {
     return undefined;
   }
   const code = withoutCommentsOrLiterals(source);
   if (
-    !new RegExp(String.raw`\bexport\s+const\s+${escapesRegularExpression(name)}\s*=`, 'u').test(
-      code,
-    )
+    !new RegExp(
+      String.raw`\bexport\s+const\s+${escapesRegularExpression(name)}\s*=`,
+      'u'
+    ).test(code)
   ) {
     return undefined;
   }
-  const initializer = initializerFor(withoutComments(source), name, source.length);
+  const initializer = initializerFor(
+    withoutComments(source),
+    name,
+    source.length
+  );
   if (initializer === undefined) {
     return undefined;
   }
@@ -540,7 +706,7 @@ const canonicalApiExport = (
 const sameApiExport = (
   module: RuntimeTopologyModule | undefined,
   actual: string | undefined,
-  expected: string,
+  expected: string
 ): boolean => {
   if (actual === expected) {
     return true;
@@ -549,20 +715,24 @@ const sameApiExport = (
     return false;
   }
   const canonical = canonicalApiExport(module.source, actual);
-  return canonical !== undefined && canonical === canonicalApiExport(module.source, expected);
+  return (
+    canonical !== undefined &&
+    canonical === canonicalApiExport(module.source, expected)
+  );
 };
 
 const composedLayerOperand = (rawArgument: string): string | undefined => {
   const argument = withoutTerminalSatisfies(rawArgument);
   const layer = new RegExp(
     String.raw`^(?<name>${identifierPattern})(?<remainder>[\s\S]*)$`,
-    'u',
+    'u'
   ).exec(argument);
   const { name, remainder } = layer?.groups ?? {};
   if (name === undefined || remainder === undefined) {
     return undefined;
   }
-  return remainder.trim().length === 0 || safeLayerPipeArguments(remainder.trim()) !== undefined
+  return remainder.trim().length === 0 ||
+    safeLayerPipeArguments(remainder.trim()) !== undefined
     ? name
     : undefined;
 };
@@ -574,7 +744,7 @@ const groupUsesExpectedApi = (
   expectedApiExport: string,
   expectedApiModuleId: string | undefined,
   usageIndex: number,
-  resolveImport: RuntimeTopologyModuleResolver | undefined,
+  resolveImport: RuntimeTopologyModuleResolver | undefined
 ): boolean => {
   const [apiName] = groupArguments;
   if (apiName === undefined) {
@@ -600,8 +770,10 @@ const resolvedHandlerBinding = (
   code: string,
   name: string,
   usageIndex: number,
-  resolveImport: RuntimeTopologyModuleResolver | undefined,
-): { readonly importedName: string; readonly resolved: RuntimeTopologyModule } | undefined => {
+  resolveImport: RuntimeTopologyModuleResolver | undefined
+):
+  | { readonly importedName: string; readonly resolved: RuntimeTopologyModule }
+  | undefined => {
   if (shadowsBinding(code, name, usageIndex)) {
     return undefined;
   }
@@ -610,10 +782,14 @@ const resolvedHandlerBinding = (
     return undefined;
   }
   const resolved = resolveImport?.(binding.specifier);
-  return resolved === undefined ? undefined : { importedName: binding.imported, resolved };
+  return resolved === undefined
+    ? undefined
+    : { importedName: binding.imported, resolved };
 };
 
-const safeHandlerGroupArguments = (initializer: string): readonly string[] | undefined => {
+const safeHandlerGroupArguments = (
+  initializer: string
+): readonly string[] | undefined => {
   const args = leadingCallArguments(initializer, 'HttpApiBuilder.group');
   return hasSafeLayerConstructor(initializer, 'HttpApiBuilder.group') &&
     args !== undefined &&
@@ -622,7 +798,10 @@ const safeHandlerGroupArguments = (initializer: string): readonly string[] | und
     : undefined;
 };
 
-const safeMergeOperands = (source: string, initializer: string): readonly string[] | undefined => {
+const safeMergeOperands = (
+  source: string,
+  initializer: string
+): readonly string[] | undefined => {
   const args = leadingCallArguments(initializer, layerMergeAllCallee);
   return hasUnaliasedValueImport(source, 'Layer', effectEdgeSpecifier) &&
     hasSafeLayerConstructor(initializer, layerMergeAllCallee) &&
@@ -641,7 +820,7 @@ const handlerLayerDerivesFromHttpApiBuilder = (
   usageIndex: number,
   resolveImport: RuntimeTopologyModuleResolver | undefined,
   moduleId: string,
-  seen: ReadonlySet<string> = new Set(),
+  seen: ReadonlySet<string> = new Set()
 ): boolean => {
   const key = `${moduleId}#${name}`;
   if (!usesTrustedGovernedLayer(source, code, usageIndex) || seen.has(key)) {
@@ -659,7 +838,7 @@ const handlerLayerDerivesFromHttpApiBuilder = (
         expectedApiExport,
         expectedApiModuleId,
         usageIndex,
-        resolveImport,
+        resolveImport
       );
     }
     const mergeArguments = safeMergeOperands(source, initializer);
@@ -679,13 +858,19 @@ const handlerLayerDerivesFromHttpApiBuilder = (
           usageIndex,
           resolveImport,
           moduleId,
-          nextSeen,
+          nextSeen
         )
       );
     });
   }
 
-  const imported = resolvedHandlerBinding(source, code, name, usageIndex, resolveImport);
+  const imported = resolvedHandlerBinding(
+    source,
+    code,
+    name,
+    usageIndex,
+    resolveImport
+  );
   if (imported === undefined) {
     return false;
   }
@@ -700,7 +885,7 @@ const handlerLayerDerivesFromHttpApiBuilder = (
     resolvedCode.length,
     resolved.resolveImport,
     resolved.id,
-    nextSeen,
+    nextSeen
   );
 };
 
@@ -711,7 +896,7 @@ const composesHandlerLayers = (
   expectedApiExport: string,
   expectedApiModuleId: string | undefined,
   usageIndex: number,
-  resolveImport: RuntimeTopologyModuleResolver | undefined,
+  resolveImport: RuntimeTopologyModuleResolver | undefined
 ): boolean => {
   const argumentsList = leadingCallArguments(initializer, layerMergeAllCallee);
   return (
@@ -731,7 +916,7 @@ const composesHandlerLayers = (
         expectedApiModuleId,
         usageIndex,
         resolveImport,
-        'entry',
+        'entry'
       );
     })
   );
@@ -747,7 +932,7 @@ const declaresLayerValue = (
   expectedApiModuleId?: string,
   resolveImport?: RuntimeTopologyModuleResolver,
   usageIndex = code.length,
-  seen: ReadonlySet<string> = new Set(),
+  seen: ReadonlySet<string> = new Set()
 ): boolean => {
   if (!usesTrustedGovernedLayer(source, code, usageIndex) || seen.has(name)) {
     return false;
@@ -766,7 +951,7 @@ const declaresLayerValue = (
         expectedApiExport,
         expectedApiModuleId,
         usageIndex,
-        resolveImport,
+        resolveImport
       )
     );
   }
@@ -788,7 +973,7 @@ const declaresLayerValue = (
       expectedApiModuleId,
       resolveImport,
       usageIndex,
-      new Set([...seen, name]),
+      new Set([...seen, name])
     )
   );
 };
@@ -805,7 +990,10 @@ const curlyDepthAt = (code: string, targetIndex: number): number => {
   return depth;
 };
 
-const functionBodyStartsBefore = (code: string, endIndex: number): ReadonlySet<number> => {
+const functionBodyStartsBefore = (
+  code: string,
+  endIndex: number
+): ReadonlySet<number> => {
   const starts = new Set<number>();
   for (
     let openIndex = code.indexOf('(');
@@ -813,7 +1001,10 @@ const functionBodyStartsBefore = (code: string, endIndex: number): ReadonlySet<n
     openIndex = code.indexOf('(', openIndex + 1)
   ) {
     const closeIndex = matchingRoundClose(code, openIndex);
-    if (closeIndex === undefined || !isParameterList(code, openIndex, closeIndex)) {
+    if (
+      closeIndex === undefined ||
+      !isParameterList(code, openIndex, closeIndex)
+    ) {
       continue;
     }
     const bodyStart = code.indexOf('{', closeIndex + 1);
@@ -832,37 +1023,44 @@ const functionBodyStartsBefore = (code: string, endIndex: number): ReadonlySet<n
 const innermostFunctionBody = (
   ancestors: readonly number[],
   factoryBody: number,
-  functionBodies: ReadonlySet<number>,
+  functionBodies: ReadonlySet<number>
 ): number | undefined => {
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const ancestor = ancestors.at(index);
-    if (ancestor !== undefined && (ancestor === factoryBody || functionBodies.has(ancestor))) {
+    if (
+      ancestor !== undefined &&
+      (ancestor === factoryBody || functionBodies.has(ancestor))
+    ) {
       return ancestor;
     }
   }
   return undefined;
 };
 
-const hasEarlierFactoryExit = (code: string, bodyStart: number, endIndex: number): boolean => {
+const hasEarlierFactoryExit = (
+  code: string,
+  bodyStart: number,
+  endIndex: number
+): boolean => {
   const functionBodies = functionBodyStartsBefore(code, endIndex);
-  return [...code.slice(bodyStart + 1, endIndex).matchAll(/\b(?:return|throw)\b/gu)].some(
-    ({ index }) => {
-      const absoluteIndex = bodyStart + 1 + index;
-      const owningFunction = innermostFunctionBody(
-        curlyAncestorsAt(code, absoluteIndex),
-        bodyStart,
-        functionBodies,
-      );
-      return owningFunction === bodyStart;
-    },
-  );
+  return [
+    ...code.slice(bodyStart + 1, endIndex).matchAll(/\b(?:return|throw)\b/gu),
+  ].some(({ index }) => {
+    const absoluteIndex = bodyStart + 1 + index;
+    const owningFunction = innermostFunctionBody(
+      curlyAncestorsAt(code, absoluteIndex),
+      bodyStart,
+      functionBodies
+    );
+    return owningFunction === bodyStart;
+  });
 };
 
 const isDirectFactoryReturn = (
   code: string,
   bodyStart: number,
   callIndex: number,
-  callEnd: number,
+  callEnd: number
 ): boolean => {
   let depth = 1;
   let statementStart = bodyStart + 1;
@@ -883,14 +1081,18 @@ const isDirectFactoryReturn = (
   );
 };
 
-const exportedFactoryOwnsCall = (code: string, callIndex: number, callEnd: number): boolean => {
+const exportedFactoryOwnsCall = (
+  code: string,
+  callIndex: number,
+  callEnd: number
+): boolean => {
   const candidates = code
     .slice(0, callIndex)
     .matchAll(
       new RegExp(
         String.raw`\bexport\s+const\s+(?<factory>${identifierPattern})\s*=[\s\S]{0,2000}?=>\s*\{`,
-        'gu',
-      ),
+        'gu'
+      )
     );
   let candidate: RegExpExecArray | undefined;
   for (const current of candidates) {
@@ -910,8 +1112,8 @@ const exportedFactoryOwnsCall = (code: string, callIndex: number, callEnd: numbe
     ...code.matchAll(
       new RegExp(
         String.raw`\bconst\s+(?<runtime>${identifierPattern})\s*=\s*${escapesRegularExpression(factory)}\s*\(`,
-        'gu',
-      ),
+        'gu'
+      )
     ),
   ].find(({ index }) => curlyDepthAt(code, index) === 0)?.groups?.runtime;
   return (
@@ -919,12 +1121,16 @@ const exportedFactoryOwnsCall = (code: string, callIndex: number, callEnd: numbe
     initializerCalls(code, defaultRuntime, factory) &&
     new RegExp(
       String.raw`\bexport\s+default\s+${escapesRegularExpression(defaultRuntime)}\s*;`,
-      'u',
+      'u'
     ).test(code)
   );
 };
 
-const isRuntimeRootCall = (code: string, callIndex: number, callEnd: number): boolean => {
+const isRuntimeRootCall = (
+  code: string,
+  callIndex: number,
+  callEnd: number
+): boolean => {
   const prefix = code.slice(0, callIndex);
   if (/\bexport\s+default\s*$/u.test(prefix)) {
     return /^\s*(?:;|$)/u.test(code.slice(callEnd));
@@ -934,7 +1140,7 @@ const isRuntimeRootCall = (code: string, callIndex: number, callEnd: number): bo
   }
   const assignment = new RegExp(
     String.raw`\bconst\s+(?<name>${identifierPattern})\s*=\s*$`,
-    'u',
+    'u'
   ).exec(prefix);
   const runtimeName = assignment?.groups?.name;
   return (
@@ -944,7 +1150,7 @@ const isRuntimeRootCall = (code: string, callIndex: number, callEnd: number): bo
     curlyDepthAt(code, assignment.index) === 0 &&
     new RegExp(
       String.raw`\bexport\s+default\s+${escapesRegularExpression(runtimeName)}\s*;`,
-      'u',
+      'u'
     ).test(code.slice(callIndex))
   );
 };
@@ -954,10 +1160,11 @@ const usesUnshadowedHelperImports = (
   code: string,
   api: string,
   helper: string,
-  callIndex: number,
+  callIndex: number
 ): boolean =>
   importedValueBindingFromAnyModule(source, 'Layer')?.imported === 'Layer' &&
-  importedValueBindingFromAnyModule(source, 'Layer')?.specifier === effectEdgeSpecifier &&
+  importedValueBindingFromAnyModule(source, 'Layer')?.specifier ===
+    effectEdgeSpecifier &&
   !shadowsBinding(code, helper, callIndex) &&
   !shadowsBinding(code, 'Layer', callIndex) &&
   !shadowsBinding(code, api, callIndex);
@@ -966,17 +1173,19 @@ const usesImportedCorsTransport = (
   source: string,
   code: string,
   transport: string,
-  callIndex: number,
+  callIndex: number
 ): boolean =>
   !layerValueUsesCors(code, transport, callIndex) ||
-  (importedValueBindingFromAnyModule(source, 'HttpRouter')?.imported === 'HttpRouter' &&
-    importedValueBindingFromAnyModule(source, 'HttpRouter')?.specifier === effectEdgeSpecifier &&
+  (importedValueBindingFromAnyModule(source, 'HttpRouter')?.imported ===
+    'HttpRouter' &&
+    importedValueBindingFromAnyModule(source, 'HttpRouter')?.specifier ===
+      effectEdgeSpecifier &&
     !shadowsBinding(code, 'HttpRouter', callIndex));
 
 const hasRpcGroupContract = (
   source: string,
   group: string,
-  resolveImport: RuntimeTopologyModuleResolver | undefined,
+  resolveImport: RuntimeTopologyModuleResolver | undefined
 ): boolean => {
   if (!hasUnaliasedValueImport(source, group, '../shared/rpc.ts')) {
     return false;
@@ -997,7 +1206,7 @@ const hasRpcRuntimeLayers = (
   source: string,
   code: string,
   call: RegExpExecArray,
-  helper: string,
+  helper: string
 ): boolean => {
   const { api, group, layer = 'layer', rpcLayer } = call.groups ?? {};
   if (api === undefined || group === undefined || rpcLayer === undefined) {
@@ -1005,9 +1214,11 @@ const hasRpcRuntimeLayers = (
   }
   return (
     ['HttpApi', 'Layer'].every((name) =>
-      hasUnaliasedValueImport(source, name, effectEdgeSpecifier),
+      hasUnaliasedValueImport(source, name, effectEdgeSpecifier)
     ) &&
-    [helper, 'HttpApi', 'Layer', group].every((name) => !shadowsBinding(code, name, call.index)) &&
+    [helper, 'HttpApi', 'Layer', group].every(
+      (name) => !shadowsBinding(code, name, call.index)
+    ) &&
     initializerCalls(code, api, 'HttpApi.make', call.index) &&
     initializerFor(code, layer, call.index) === 'Layer.empty' &&
     initializerCalls(code, rpcLayer, `${group}.toLayer`, call.index)
@@ -1017,13 +1228,13 @@ const hasRpcRuntimeLayers = (
 /** Keeps genuinely different generated RPC assembly outside the REST-only helper contract. */
 export const usesStrictRpcRuntimeTopology = (
   source: string,
-  resolveImport?: RuntimeTopologyModuleResolver,
+  resolveImport?: RuntimeTopologyModuleResolver
 ): boolean => {
   const code = withoutCommentsOrLiterals(source);
   const helper = importedLocalNameMatchingSpecifier(
     source,
     'defineEffectBff',
-    escapesRegularExpression(effectEdgeSpecifier),
+    escapesRegularExpression(effectEdgeSpecifier)
   );
   if (
     helper === undefined ||
@@ -1033,7 +1244,7 @@ export const usesStrictRpcRuntimeTopology = (
   }
   const call = new RegExp(
     String.raw`\b${escapesRegularExpression(helper)}\s*\(\s*\{\s*api:\s*(?<api>${identifierPattern})\s*,\s*layer(?:\s*:\s*(?<layer>${identifierPattern}))?\s*,\s*rpc:\s*\{\s*group:\s*(?<group>${identifierPattern})\s*,\s*layer:\s*(?<rpcLayer>${identifierPattern})\s*,\s*path:\s*,\s*serialization:\s*,?\s*\}\s*,?\s*\}\s*,?\s*\)`,
-    'u',
+    'u'
   ).exec(code);
   if (call === null) {
     return false;
@@ -1060,7 +1271,7 @@ const assemblyTransportViolation = (
   apiExport: string,
   expectedApiModuleId: string | undefined,
   resolveImport: RuntimeTopologyModuleResolver | undefined,
-  index: number,
+  index: number
 ): string | undefined => {
   if (transport === undefined) {
     return undefined;
@@ -1075,7 +1286,7 @@ const assemblyTransportViolation = (
       apiExport,
       expectedApiModuleId,
       resolveImport,
-      index,
+      index
     )
   ) {
     return 'must pass an explicitly composed Layer as assembleEffectBffRuntime transport';
@@ -1091,7 +1302,7 @@ const assembledRuntimeViolation = (
   helper: string,
   call: RegExpExecArray,
   bindings: AssemblyBindings,
-  resolveImport: RuntimeTopologyModuleResolver | undefined,
+  resolveImport: RuntimeTopologyModuleResolver | undefined
 ): string | undefined => {
   const { api, handlers, transport } = bindings;
   if (!importsNamedValueFromSharedApi(source, api)) {
@@ -1119,7 +1330,7 @@ const assembledRuntimeViolation = (
       apiExport,
       expectedApiModuleId,
       resolveImport,
-      call.index,
+      call.index
     )
   ) {
     return 'must pass an explicitly composed Layer as assembleEffectBffRuntime handlers';
@@ -1131,7 +1342,7 @@ const assembledRuntimeViolation = (
     apiExport,
     expectedApiModuleId,
     resolveImport,
-    call.index,
+    call.index
   );
   if (transportViolation !== undefined) {
     return transportViolation;
@@ -1145,13 +1356,13 @@ const assembledRuntimeViolation = (
 /** Proves the shared helper's concrete API/Layer topology. */
 export const strictEffectRuntimeTopologyViolation = (
   source: string,
-  resolveImport?: RuntimeTopologyModuleResolver,
+  resolveImport?: RuntimeTopologyModuleResolver
 ): string | undefined => {
   const code = withoutCommentsOrLiterals(source);
   const helper = importedLocalNameMatchingSpecifier(
     source,
     'assembleEffectBffRuntime',
-    String.raw`@[a-z0-9-]+\/shared-contracts\/server\/effect-bff-runtime`,
+    String.raw`@[a-z0-9-]+\/shared-contracts\/server\/effect-bff-runtime`
   );
   if (helper === undefined) {
     return usesStrictRpcRuntimeTopology(source, resolveImport)
@@ -1160,7 +1371,7 @@ export const strictEffectRuntimeTopologyViolation = (
   }
   const call = new RegExp(
     String.raw`\b${escapesRegularExpression(helper)}\s*\(\s*\{\s*api:\s*(?<api>${identifierPattern})\s*,\s*handlers:\s*(?<handlers>${identifierPattern})(?:\s*,\s*transport:\s*(?<transport>${identifierPattern}))?\s*,?\s*\}\s*\)`,
-    'u',
+    'u'
   ).exec(code);
   const { api, handlers, transport } = call?.groups ?? {};
   if (call === null || api === undefined || handlers === undefined) {
@@ -1172,14 +1383,14 @@ export const strictEffectRuntimeTopologyViolation = (
     helper,
     call,
     { api, handlers, transport },
-    resolveImport,
+    resolveImport
   );
 };
 
 export const privateOwnerImportViolation = (
   root: string,
   file: string,
-  specifier: string,
+  specifier: string
 ): string | undefined => {
   if (!privateOwnerSpecifierPattern.test(specifier)) {
     return undefined;
@@ -1190,7 +1401,9 @@ export const privateOwnerImportViolation = (
     return 'Shell/Core and consumers may not import a deployment owner file';
   }
   const ownerRoot = path.resolve(root, 'verticals', owner);
-  const resolved = path.resolve(root, path.dirname(file), specifier).replace(/\.ts$/u, '');
+  const resolved = path
+    .resolve(root, path.dirname(file), specifier)
+    .replace(/\.ts$/u, '');
   const expectedManifest = path.join(ownerRoot, 'vertical.manifest');
   const expectedRegistration = path.join(ownerRoot, 'vertical.registration');
   return resolved === expectedManifest || resolved === expectedRegistration

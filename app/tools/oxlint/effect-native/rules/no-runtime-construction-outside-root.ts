@@ -1,4 +1,3 @@
-import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts';
 /**
  * Audit finding: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A1 records "four runtime roots, 15+ manually
@@ -67,24 +66,40 @@ import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts
  * satisfy it.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import {
+  unwrapNode,
+  keyName,
+  memberName as sharedMemberName,
+} from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
-import { unwrapNode, keyName, memberName as sharedMemberName } from '../shared/ast.ts';
+import {
+  collectEffectBindings,
+  type EffectBindings,
+} from '../shared/effect-imports.ts';
 import {
   collectNamespaceLocals as sharedNamespaceLocals,
   collectDirectMemberImports as sharedDirectMembers,
 } from '../shared/imports.ts';
+import {
+  optionRecord,
+  positiveInteger,
+  stringArray,
+} from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import { isNonReferencePosition as nonReferencePosition } from '../shared/reference-positions.ts';
 import { nodeKey } from '../shared/reporting.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SUBMODULE_PREFIX = `${EFFECT_ROOT_MODULE}/`;
 
-const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
+const DEFAULT_INCLUDE = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+  'scripts/**',
+];
 
 const DEFAULT_EXCLUDE: readonly string[] = [];
 
@@ -104,7 +119,11 @@ const DEFAULT_ROOT_FILES = [
  * Namespace.member pairs that construct a runtime. Layer.build* / launch describe Effects;
  * Effect.runtime captures the current runtime. Neither is runtime construction.
  */
-const DEFAULT_MEMBERS = ['ManagedRuntime.make', 'Layer.toRuntime', 'Layer.toRuntimeWithMemoMap'];
+const DEFAULT_MEMBERS = [
+  'ManagedRuntime.make',
+  'Layer.toRuntime',
+  'Layer.toRuntimeWithMemoMap',
+];
 
 /** Barrels that re-export Effect namespaces verbatim; `Layer` from them is Effect's `Layer`. */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
@@ -146,13 +165,18 @@ function readOptions(context: Context): RuleOptions {
     rootFiles: stringArray(record.rootFiles, DEFAULT_ROOT_FILES),
     members: stringArray(record.members, DEFAULT_MEMBERS),
     maxPerRoot: positiveInteger(record.maxPerRoot, 1, 0),
-    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
+    reexportModules: stringArray(
+      record.reexportModules,
+      DEFAULT_REEXPORT_MODULES
+    ),
     includeTests: record.includeTests === true,
   };
 }
 
 /** `["ManagedRuntime.make", "Layer.build"]` → `{ ManagedRuntime: {make}, Layer: {build} }`. */
-function parseMembers(members: readonly string[]): ReadonlyMap<string, ReadonlySet<string>> {
+function parseMembers(
+  members: readonly string[]
+): ReadonlyMap<string, ReadonlySet<string>> {
   const byNamespace = new Map<string, Set<string>>();
   for (const entry of members) {
     const dot = entry.indexOf('.');
@@ -169,7 +193,8 @@ function parseMembers(members: readonly string[]): ReadonlyMap<string, ReadonlyS
 /** `import { make as boot }` / `export { make as boot }` → the *exported* name (`make`). */
 function moduleExportName(node: ESTree.Node): string | null {
   if (node.type === 'Identifier') return node.name;
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'Literal' && typeof node.value === 'string')
+    return node.value;
   return null;
 }
 
@@ -189,7 +214,8 @@ function collectTypeOnlyLocals(program: ESTree.Program): ReadonlySet<string> {
     for (const specifier of statement.specifiers) {
       const specifierIsType =
         specifier.type === 'ImportSpecifier' && specifier.importKind === 'type';
-      if (declarationIsType || specifierIsType) locals.add(specifier.local.name);
+      if (declarationIsType || specifierIsType)
+        locals.add(specifier.local.name);
     }
   }
   return locals;
@@ -213,7 +239,7 @@ function collectNamespaceLocals(
   bindings: EffectBindings,
   tracked: ReadonlySet<string>,
   reexportModules: readonly string[],
-  typeOnly: ReadonlySet<string>,
+  typeOnly: ReadonlySet<string>
 ): NamespaceLocals {
   const { namespaced, barrel } = sharedNamespaceLocals(
     program,
@@ -223,7 +249,7 @@ function collectNamespaceLocals(
     {
       valueOnly: true,
       excludedLocals: typeOnly,
-    },
+    }
   );
   for (const local of typeOnly) namespaced.delete(local);
   return { namespaces: namespaced, barrels: barrel };
@@ -233,7 +259,7 @@ function collectNamespaceLocals(
 function collectDirectMemberImports(
   program: ESTree.Program,
   byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
-  typeOnly: ReadonlySet<string>,
+  typeOnly: ReadonlySet<string>
 ): ReadonlyMap<string, string> {
   return new Map(
     [
@@ -244,9 +270,9 @@ function collectDirectMemberImports(
           valueOnly: true,
           excludedLocals: typeOnly,
         },
-        effectSubmodule,
+        effectSubmodule
       ),
-    ].map(([local, { namespace, member }]) => [local, `${namespace}.${member}`]),
+    ].map(([local, { namespace, member }]) => [local, `${namespace}.${member}`])
   );
 }
 
@@ -265,7 +291,7 @@ function exportedMember(
   local: string,
   namespace: string | null,
   members: ReadonlySet<string> | undefined,
-  directMembers: ReadonlyMap<string, string>,
+  directMembers: ReadonlyMap<string, string>
 ): string | undefined {
   if (namespace !== null && members !== undefined)
     return members.has(local) ? `${namespace}.${local}` : undefined;
@@ -275,9 +301,10 @@ function exportedMember(
 function reexportFindings(
   statement: ESTree.ExportNamedDeclaration,
   byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
-  directMembers: ReadonlyMap<string, string>,
+  directMembers: ReadonlyMap<string, string>
 ): Finding[] {
-  const namespace = statement.source == null ? null : effectSubmodule(statement.source.value);
+  const namespace =
+    statement.source == null ? null : effectSubmodule(statement.source.value);
   const members = namespace === null ? undefined : byNamespace.get(namespace);
   if (statement.source != null && members === undefined) return [];
   const findings: Finding[] = [];
@@ -286,7 +313,8 @@ function reexportFindings(
     const local = moduleExportName(specifier.local as ESTree.Node);
     if (local === null) continue;
     const member = exportedMember(local, namespace, members, directMembers);
-    if (member !== undefined) findings.push({ node: specifier, member, start: specifier.start });
+    if (member !== undefined)
+      findings.push({ node: specifier, member, start: specifier.start });
   }
   return findings;
 }
@@ -294,12 +322,13 @@ function reexportFindings(
 function collectReexportedMembers(
   program: ESTree.Program,
   byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
-  directMembers: ReadonlyMap<string, string>,
+  directMembers: ReadonlyMap<string, string>
 ): readonly Finding[] {
   return program.body.flatMap((statement) =>
-    statement.type === 'ExportNamedDeclaration' && statement.exportKind !== 'type'
+    statement.type === 'ExportNamedDeclaration' &&
+    statement.exportKind !== 'type'
       ? reexportFindings(statement, byNamespace, directMembers)
-      : [],
+      : []
   );
 }
 
@@ -309,8 +338,13 @@ function memberName(node: ESTree.MemberExpression): string | null {
 }
 
 /** `{ make: boot }`, `{ "make": boot }`, `{ ["make"]: boot }`, `` { [`make`]: boot } ``. */
-function propertyKeyName(property: Extract<ESTree.Node, { type: 'Property' }>): string | null {
-  return keyName(property.key, property.computed, { templates: true, rawTemplates: true });
+function propertyKeyName(
+  property: Extract<ESTree.Node, { type: 'Property' }>
+): string | null {
+  return keyName(property.key, property.computed, {
+    templates: true,
+    rawTemplates: true,
+  });
 }
 
 /** Peel `as` / `satisfies` / `!` / `<T>` / parentheses / optional-chain wrappers off an expression. */
@@ -319,8 +353,12 @@ function unwrapExpression(node: ESTree.Node): ESTree.Node {
 }
 
 /** Identifier positions that are declarations, property keys or type references — never runtime uses. */
-function isNonReferencePosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
-  return nonReferencePosition(node, { nonReferenceParents: TYPE_POSITION_PARENTS });
+function isNonReferencePosition(
+  node: Extract<ESTree.Node, { type: 'Identifier' }>
+): boolean {
+  return nonReferencePosition(node, {
+    nonReferenceParents: TYPE_POSITION_PARENTS,
+  });
 }
 
 type ResolvedBinding =
@@ -420,10 +458,18 @@ export const rule = defineRule({
       bindings,
       tracked,
       options.reexportModules,
-      typeOnly,
+      typeOnly
     );
-    const directMembers = collectDirectMemberImports(program, byNamespace, typeOnly);
-    const reexports = collectReexportedMembers(program, byNamespace, directMembers);
+    const directMembers = collectDirectMemberImports(
+      program,
+      byNamespace,
+      typeOnly
+    );
+    const reexports = collectReexportedMembers(
+      program,
+      byNamespace,
+      directMembers
+    );
     if (
       namespaces.size === 0 &&
       barrels.size === 0 &&
@@ -439,7 +485,10 @@ export const rule = defineRule({
     const destructureCandidates: DestructureCandidate[] = [];
     const plainCandidates: PlainCandidate[] = [];
     /** `const MR = ManagedRuntime` — declarator span → the aliased source identifier. */
-    const aliasDeclarators = new Map<string, Extract<ESTree.Node, { type: 'Identifier' }>>();
+    const aliasDeclarators = new Map<
+      string,
+      Extract<ESTree.Node, { type: 'Identifier' }>
+    >();
     /** `const { ManagedRuntime } = EffectNs` — declarator span → source + key mapping. */
     const destructureDeclarators = new Map<string, DestructureBinding>();
 
@@ -456,25 +505,39 @@ export const rule = defineRule({
      */
     const resolveBinding = (
       identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-      depth: number,
+      depth: number
     ): ResolvedBinding => {
       if (depth > 6) return null;
       const variable = lookupVariable(context, identifier);
-      if (variable === null || variable.defs.length === 0) return fromImports(identifier.name);
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
+      if (variable === null || variable.defs.length === 0)
+        return fromImports(identifier.name);
+      if (
+        variable.references.some(
+          (reference) => reference.isWrite() && !reference.init
+        )
+      )
         return null;
       for (const definition of variable.defs) {
-        if (definition.type === 'ImportBinding') return fromImports(identifier.name);
+        if (definition.type === 'ImportBinding')
+          return fromImports(identifier.name);
         if (definition.type !== 'Variable') continue;
         const alias = aliasDeclarators.get(nodeKey(definition.node));
         if (alias !== undefined) return resolveBinding(alias, depth + 1);
-        const resolved = resolveDeclarator(definition.node, identifier.name, depth);
+        const resolved = resolveDeclarator(
+          definition.node,
+          identifier.name,
+          depth
+        );
         if (resolved !== null) return resolved;
       }
       return null;
     };
 
-    function resolveDeclarator(node: ESTree.Node, name: string, depth: number): ResolvedBinding {
+    function resolveDeclarator(
+      node: ESTree.Node,
+      name: string,
+      depth: number
+    ): ResolvedBinding {
       const key = nodeKey(node);
       const destructured = destructureDeclarators.get(key);
       if (destructured === undefined) return null;
@@ -498,7 +561,10 @@ export const rule = defineRule({
             : resolved.kind === 'barrel'
               ? candidate.viaBarrel
               : null;
-        if (namespace === null || byNamespace.get(namespace)?.has(candidate.member) !== true)
+        if (
+          namespace === null ||
+          byNamespace.get(namespace)?.has(candidate.member) !== true
+        )
           continue;
         found.push({
           node: candidate.node,
@@ -512,7 +578,8 @@ export const rule = defineRule({
       for (const candidate of destructureCandidates) {
         const resolved = resolveBinding(candidate.source, 0);
         if (resolved === null || resolved.kind !== 'namespace') continue;
-        if (byNamespace.get(resolved.namespace)?.has(candidate.key) !== true) continue;
+        if (byNamespace.get(resolved.namespace)?.has(candidate.key) !== true)
+          continue;
         found.push({
           node: candidate.node,
           member: `${resolved.namespace}.${candidate.key}`,
@@ -550,7 +617,12 @@ export const rule = defineRule({
         if (namespace === null || !tracked.has(namespace)) return;
         const barrel = unwrapExpression(object.object as ESTree.Node);
         if (barrel.type !== 'Identifier') return;
-        memberCandidates.push({ node, object: barrel, viaBarrel: namespace, member });
+        memberCandidates.push({
+          node,
+          object: barrel,
+          viaBarrel: namespace,
+          member,
+        });
       },
 
       // `const { make } = ManagedRuntime`, `const MR = ManagedRuntime`, `const { Layer } = EffectNs`.
@@ -571,7 +643,11 @@ export const rule = defineRule({
           if (name === null) continue;
           const value = property.value as ESTree.Node;
           if (value.type === 'Identifier') keys.set(value.name, name);
-          destructureCandidates.push({ node: property, source: init, key: name });
+          destructureCandidates.push({
+            node: property,
+            source: init,
+            key: name,
+          });
         }
         destructureDeclarators.set(nodeKey(node), { source: init, keys });
       },

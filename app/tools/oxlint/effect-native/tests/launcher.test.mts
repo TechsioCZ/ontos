@@ -13,7 +13,10 @@ test('Oxlint launches its JavaScript entry point through Node without a platform
   withTemporaryWorkspace((directory) => {
     const config = join(directory, 'lint config.json');
     const input = 'source with spaces.ts';
-    writeFileSync(config, JSON.stringify({ categories: { correctness: 'off' } }));
+    writeFileSync(
+      config,
+      JSON.stringify({ categories: { correctness: 'off' } })
+    );
     writeFileSync(join(directory, input), 'export const value = 1;');
     const spawn = mock.method(childProcess, 'spawnSync');
     syncBuiltinESMExports();
@@ -28,7 +31,9 @@ test('Oxlint launches its JavaScript entry point through Node without a platform
       assert.ok(Array.isArray(args[1]));
       assert.equal(
         args[1][0],
-        fileURLToPath(new URL('bin/oxlint', import.meta.resolve('oxlint/package.json'))),
+        fileURLToPath(
+          new URL('bin/oxlint', import.meta.resolve('oxlint/package.json'))
+        )
       );
       assert.ok(args[1].includes(input));
       assert.ok(args[1].includes(config));
@@ -40,18 +45,23 @@ test('Oxlint launches its JavaScript entry point through Node without a platform
 });
 
 test('lint and lint:fix cover the same directories without changing reporting-only commands', () => {
-  const { scripts } = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8')) as {
+  const { scripts } = JSON.parse(
+    readFileSync(join(appRoot, 'package.json'), 'utf8')
+  ) as {
     scripts: Record<string, string>;
   };
   const lint = scripts['lint']!.split(/\s+/u);
   const fix = scripts['lint:fix']!.split(/\s+/u);
   assert.deepEqual(
     fix.filter((argument) => argument !== '--fix'),
-    lint,
+    lint
   );
   assert.equal(fix.filter((argument) => argument === '--fix').length, 1);
   assert.ok(lint.includes('scripts'));
   for (const name of ['lint', 'lint:effect', 'test:lint-rules', 'check']) {
-    assert.ok(!scripts[name]!.includes('--fix'), `${name} must remain reporting-only`);
+    assert.ok(
+      !scripts[name]!.includes('--fix'),
+      `${name} must remain reporting-only`
+    );
   }
 });

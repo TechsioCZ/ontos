@@ -7,12 +7,13 @@ import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-co
 
 const CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
-const CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxTopic = outboxTopic;
+const CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxTopic =
+  outboxTopic;
 
-export const createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage = (
-  payload: OutboxPayload,
-): OutboxMessage => ({
-  payloadJson: payload,
-  producerModuleKey: CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxProducerModuleKey,
-  topic: CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxTopic,
-});
+export const createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage =
+  (payload: OutboxPayload): OutboxMessage => ({
+    payloadJson: payload,
+    producerModuleKey:
+      CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxProducerModuleKey,
+    topic: CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxTopic,
+  });

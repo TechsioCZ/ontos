@@ -1,4 +1,12 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Effect,
+  FileSystem,
+  Option,
+  Schema,
+} from 'effect';
+
+import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -7,7 +15,6 @@ import {
   withExactDependencies,
   createScaffoldErrorTools,
 } from '../shared.mts';
-import { createCodesmithGenerator } from '../generator-adapter.mts';
 import type {
   ActionBoundaryScaffoldConfig,
   ActionBoundaryScaffoldResult,
@@ -26,20 +33,20 @@ class ActionBoundaryScaffoldError extends Schema.TaggedError<ActionBoundaryScaff
   {
     cause: Schema.optionalKey(Schema.Unknown),
     message: Schema.String,
-  },
+  }
 ) {}
 
 const { scaffoldError, trySync } = createScaffoldErrorTools(
   ActionBoundaryScaffoldError,
   Schema.is(ActionBoundaryScaffoldError),
-  'action boundary update failed',
+  'action boundary update failed'
 );
 
 const createOrAcceptOwnedMutation = (
   filePath: string,
   content: string,
   requiredMarkers: readonly string[],
-  requiredContract?: { readonly marker: string; readonly migration: string },
+  requiredContract?: { readonly marker: string; readonly migration: string }
 ): Effect.Effect<
   Option.Option<Mutation>,
   ActionBoundaryScaffoldError | ScaffoldFailure,
@@ -49,29 +56,42 @@ const createOrAcceptOwnedMutation = (
     const fileSystem = yield* FileSystem.FileSystem;
     const exists = yield* fileSystem
       .exists(filePath)
-      .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${filePath}`, cause)));
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldError(`failed to inspect ${filePath}`, cause)
+        )
+      );
     if (!exists) {
       return Option.some(yield* createMutationEffect(filePath, content));
     }
     const current = yield* fileSystem
       .readFileString(filePath)
-      .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${filePath}`, cause)));
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldError(`failed to read ${filePath}`, cause)
+        )
+      );
     if (
       current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
       requiredMarkers.every((marker) => current.includes(marker))
     ) {
-      if (requiredContract !== undefined && !current.includes(requiredContract.marker)) {
+      if (
+        requiredContract !== undefined &&
+        !current.includes(requiredContract.marker)
+      ) {
         return yield* scaffoldError(
-          `incompatible generated Action boundary: ${filePath}. ${requiredContract.migration}`,
+          `incompatible generated Action boundary: ${filePath}. ${requiredContract.migration}`
         );
       }
       return Option.none();
     }
-    return yield* scaffoldError(`refusing to overwrite existing business file: ${filePath}`);
+    return yield* scaffoldError(
+      `refusing to overwrite existing business file: ${filePath}`
+    );
   });
 
 export const renderActionPrincipalServer = (
-  vertical: Pick<VerticalMetadata, 'appId'>,
+  vertical: Pick<VerticalMetadata, 'appId'>
 ): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
@@ -129,7 +149,7 @@ export const authenticateOperationPrincipal = makeMicroverticalHttpPrincipalAuth
 `;
 
 const renderGatewayAssertionRedemptionAdapter = (
-  vertical: Pick<VerticalMetadata, 'appId'>,
+  vertical: Pick<VerticalMetadata, 'appId'>
 ): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 import {
@@ -159,7 +179,7 @@ export const GatewayAssertionRedemptionLive = Layer.succeed(
 `;
 
 const renderActionHttpRunner = (
-  vertical: Pick<VerticalMetadata, 'appId'>,
+  vertical: Pick<VerticalMetadata, 'appId'>
 ): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
@@ -178,7 +198,9 @@ export const bindActionHttpRunner = <AuthenticationProblem, UnavailableProblem>(
   });
 `;
 
-const renderClient = (vertical: VerticalMetadata): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
+const renderClient = (
+  vertical: VerticalMetadata
+): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
 import {
@@ -205,14 +227,17 @@ export const operationGateway = makeOperationGateway();
 
 export const planActionBoundaryScaffold = (
   workspaceRoot: string,
-  config: ActionBoundaryScaffoldConfig,
+  config: ActionBoundaryScaffoldConfig
 ): Effect.Effect<
   ScaffoldPlan<ActionBoundaryScaffoldResult>,
   ActionBoundaryScaffoldError | ScaffoldFailure,
   FileSystem.FileSystem
 > =>
   Effect.gen(function* planActionBoundaryScaffoldEffect() {
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
+    const vertical = yield* discoverOntosModuleEffect(
+      workspaceRoot,
+      config.vertical
+    );
     const serverPath = yield* trySync(() =>
       resolveContainedPath(
         workspaceRoot,
@@ -220,8 +245,8 @@ export const planActionBoundaryScaffold = (
         vertical.slug,
         'api',
         'auth',
-        'action-principal.ts',
-      ),
+        'action-principal.ts'
+      )
     );
     const clientPath = yield* trySync(() =>
       resolveContainedPath(
@@ -230,8 +255,8 @@ export const planActionBoundaryScaffold = (
         vertical.slug,
         'src',
         'api',
-        'action-gateway.ts',
-      ),
+        'action-gateway.ts'
+      )
     );
     const redemptionPath = yield* trySync(() =>
       resolveContainedPath(
@@ -240,8 +265,8 @@ export const planActionBoundaryScaffold = (
         vertical.slug,
         'api',
         'auth',
-        'gateway-assertion-redemption.ts',
-      ),
+        'gateway-assertion-redemption.ts'
+      )
     );
     const runnerPath = yield* trySync(() =>
       resolveContainedPath(
@@ -249,8 +274,8 @@ export const planActionBoundaryScaffold = (
         'verticals',
         vertical.slug,
         'api',
-        'action-http-runner.ts',
-      ),
+        'action-http-runner.ts'
+      )
     );
     const serverMutation = yield* createOrAcceptOwnedMutation(
       serverPath,
@@ -263,21 +288,25 @@ export const planActionBoundaryScaffold = (
         marker: 'export const authenticateOperationPrincipal',
         migration:
           'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
-      },
+      }
     );
-    const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderClient(vertical), [
-      `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
-      'makeOperationGateway',
-    ]);
+    const clientMutation = yield* createOrAcceptOwnedMutation(
+      clientPath,
+      renderClient(vertical),
+      [`ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`, 'makeOperationGateway']
+    );
     const redemptionMutation = yield* createOrAcceptOwnedMutation(
       redemptionPath,
       renderGatewayAssertionRedemptionAdapter(vertical),
-      ['GatewayAssertionRedemption', `@ontos-action-boundary-owner ${vertical.appId}`],
+      [
+        'GatewayAssertionRedemption',
+        `@ontos-action-boundary-owner ${vertical.appId}`,
+      ]
     );
     const runnerMutation = yield* createOrAcceptOwnedMutation(
       runnerPath,
       renderActionHttpRunner(vertical),
-      ['bindActionHttpRunner', `@ontos-action-boundary-owner ${vertical.appId}`],
+      ['bindActionHttpRunner', `@ontos-action-boundary-owner ${vertical.appId}`]
     );
     const dependencyMutation = yield* trySync(() =>
       Option.fromNullishOr(
@@ -286,8 +315,8 @@ export const planActionBoundaryScaffold = (
           '@app/gateway-principal-verifier': WORKSPACE_DEPENDENCY_VERSION,
           '@app/shared-contracts': WORKSPACE_DEPENDENCY_VERSION,
           effect: '4.0.0-beta.107',
-        }),
-      ),
+        })
+      )
     );
     const mutations = EffectArray.getSomes([
       serverMutation,
@@ -299,7 +328,13 @@ export const planActionBoundaryScaffold = (
     yield* trySync(() => ensureUniqueMutationPaths(mutations));
     return {
       mutations,
-      result: { appId: vertical.appId, clientPath, redemptionPath, runnerPath, serverPath },
+      result: {
+        appId: vertical.appId,
+        clientPath,
+        redemptionPath,
+        runnerPath,
+        serverPath,
+      },
     };
   });
 

@@ -1,3 +1,6 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
@@ -5,10 +8,9 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Cause, Clock, Effect, Exit, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/unstable/reactivity';
-import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+
+import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { partyRelations } from '../../src/db/schema.ts';
 
@@ -19,11 +21,15 @@ const assertion = {
   jti: '60000000-0000-4000-8000-000000000001',
 };
 const expiryWithSkewMs =
-  (assertion.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) * 1000;
+  (assertion.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) *
+  1000;
 
 // Native Drizzle and SqlClient own transaction settlement; only the wire connection is replaced.
 const makeRedemptionFixture = (
-  execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
+  execute: (
+    sql: string,
+    params: readonly unknown[]
+  ) => Effect.Effect<readonly object[], SqlError>
 ) =>
   Effect.gen(function* makeRedemptionFixtureEffect() {
     const connection = testSqlConnection(execute);
@@ -34,9 +40,9 @@ const makeRedemptionFixture = (
       listenAcquirer: Effect.die('The fixture does not support notifications'),
       transactionAcquirer: Effect.succeed(connection),
     }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
-    const executor = yield* makeWithDefaults({ relations: partyRelations }).pipe(
-      Effect.provideService(PgClient.PgClient, client),
-    );
+    const executor = yield* makeWithDefaults({
+      relations: partyRelations,
+    }).pipe(Effect.provideService(PgClient.PgClient, client));
     const clock = yield* TestClock.make();
     yield* clock.setTime(expiryWithSkewMs - 1);
     return { clock, redemption: makeGatewayAssertionRedemption(executor) };
@@ -56,21 +62,29 @@ for (const settlement of ['COMMIT', 'ROLLBACK']) {
         const statements: string[] = [];
         const fixture = yield* makeRedemptionFixture((sql) => {
           statements.push(sql);
-          if (sql === settlement || (settlement === 'ROLLBACK' && sql.startsWith('insert'))) {
+          if (
+            sql === settlement ||
+            (settlement === 'ROLLBACK' && sql.startsWith('insert'))
+          ) {
             return Effect.fail(sqlFailure);
           }
-          return Effect.succeed(sql.startsWith('insert') ? [{ jti: assertion.jti }] : []);
+          return Effect.succeed(
+            sql.startsWith('insert') ? [{ jti: assertion.jti }] : []
+          );
         });
         const failure = yield* fixture.redemption
           .consume(assertion)
           .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.flip);
-        assert.equal(failure._tag, 'GatewayAssertionRedemptionUnavailableError');
-        const serializedFailure = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-          failure,
+        assert.equal(
+          failure._tag,
+          'GatewayAssertionRedemptionUnavailableError'
         );
+        const serializedFailure = yield* Schema.encodeEffect(
+          Schema.fromJsonString(Schema.Unknown)
+        )(failure);
         assert.doesNotMatch(serializedFailure, /private fixture/u);
         assert.ok(statements.includes(settlement));
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped)
     ));
 }
 
@@ -81,16 +95,20 @@ test('preserves unrelated transaction defects', () =>
       const fixture = yield* makeRedemptionFixture((sql) =>
         sql === 'COMMIT'
           ? Effect.die(defect)
-          : Effect.succeed(sql.startsWith('insert') ? [{ jti: assertion.jti }] : []),
+          : Effect.succeed(
+              sql.startsWith('insert') ? [{ jti: assertion.jti }] : []
+            )
       );
       const exit = yield* fixture.redemption
         .consume(assertion)
         .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.exit);
       assert.ok(Exit.isFailure(exit));
       assert.ok(
-        exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect),
+        exit.cause.reasons.some(
+          (reason) => Cause.isDieReason(reason) && reason.defect === defect
+        )
       );
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped)
   ));
 
 test('rejects assertions crossing expiry before redemption without deleting replay evidence', () =>
@@ -99,12 +117,17 @@ test('rejects assertions crossing expiry before redemption without deleting repl
       const statements: string[] = [];
       const fixture = yield* makeRedemptionFixture((sql) => {
         statements.push(sql);
-        return Effect.succeed(sql.startsWith('insert') ? [{ jti: assertion.jti }] : []);
+        return Effect.succeed(
+          sql.startsWith('insert') ? [{ jti: assertion.jti }] : []
+        );
       });
       yield* fixture.redemption
         .consume(assertion)
         .pipe(Effect.provideService(Clock.Clock, fixture.clock));
-      assert.ok(statements.includes('COMMIT'), 'the last millisecond of skew remains usable');
+      assert.ok(
+        statements.includes('COMMIT'),
+        'the last millisecond of skew remains usable'
+      );
       statements.length = 0;
       for (const now of [expiryWithSkewMs, expiryWithSkewMs + 1]) {
         yield* fixture.clock.setTime(now);
@@ -113,6 +136,10 @@ test('rejects assertions crossing expiry before redemption without deleting repl
           .pipe(Effect.provideService(Clock.Clock, fixture.clock), Effect.flip);
         assert.equal(failure._tag, 'GatewayAssertionReplayError');
       }
-      assert.deepEqual(statements, [], 'expired assertions cannot run replay-evidence cleanup');
-    }).pipe(Effect.scoped),
+      assert.deepEqual(
+        statements,
+        [],
+        'expired assertions cannot run replay-evidence cleanup'
+      );
+    }).pipe(Effect.scoped)
   ));

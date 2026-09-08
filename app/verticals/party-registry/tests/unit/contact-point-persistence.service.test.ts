@@ -1,10 +1,12 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle native Effect query surface exercised by Contact Point ending. expires: 2026-12-31. */
 import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
@@ -20,7 +22,8 @@ const partyId = '20000000-0000-4000-8000-000000000001';
 const contactPointId = '30000000-0000-4000-8000-000000000001';
 const actionInvocationId = '40000000-0000-4000-8000-000000000001';
 const principalId = '50000000-0000-4000-8000-000000000001';
-const instantAsDate = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
+const instantAsDate = (instant: string): Date =>
+  DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 const directAliases = makePartyAliasResolutionService({
   findAlias: () => Effect.succeed(Option.none()),
   partyExists: () => Effect.succeed(true),
@@ -29,19 +32,19 @@ const addContactPointRecord = (
   transaction: Parameters<typeof addRecord>[0],
   scope: Parameters<typeof addRecord>[1],
   command: Parameters<typeof addRecord>[2],
-  aliases = directAliases,
+  aliases = directAliases
 ) => addRecord(transaction, scope, command, aliases);
 const endContactPointRecord = (
   transaction: Parameters<typeof endRecord>[0],
   scope: Parameters<typeof endRecord>[1],
   command: Parameters<typeof endRecord>[2],
-  aliases = directAliases,
+  aliases = directAliases
 ) => endRecord(transaction, scope, command, aliases);
 const updateContactPointRecord = (
   transaction: Parameters<typeof updateRecord>[0],
   scope: Parameters<typeof updateRecord>[1],
   command: Parameters<typeof updateRecord>[2],
-  aliases = directAliases,
+  aliases = directAliases
 ) => updateRecord(transaction, scope, command, aliases);
 
 const contactRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
@@ -141,7 +144,7 @@ interface Harness {
 
 const transactionHarness = (
   selects: readonly (readonly Readonly<Record<string, unknown>>[])[],
-  returningRows: readonly (readonly Readonly<Record<string, unknown>>[])[] = [],
+  returningRows: readonly (readonly Readonly<Record<string, unknown>>[])[] = []
 ): Harness => {
   const selectQueue = [...selects];
   const returningQueue = [...returningRows];
@@ -161,7 +164,7 @@ const transactionHarness = (
           selectWheres.push(condition);
           return chain;
         },
-      },
+      }
     );
     return chain;
   };
@@ -174,7 +177,7 @@ const transactionHarness = (
           return chain;
         },
         where: () => chain,
-      },
+      }
     );
     return chain;
   };
@@ -187,7 +190,7 @@ const transactionHarness = (
           insertValues.push(values);
           return chain;
         },
-      },
+      }
     );
     return chain;
   };
@@ -205,7 +208,10 @@ const scope = {
   tenantId,
 };
 
-const wholeEndCommand = (effectiveEnd: string, reason = 'Party retired this mailbox') => ({
+const wholeEndCommand = (
+  effectiveEnd: string,
+  reason = 'Party retired this mailbox'
+) => ({
   acceptedByActionInvocationId: actionInvocationId,
   acceptedByPrincipalId: principalId,
   contactPointRef: {
@@ -251,17 +257,22 @@ test('stores future end provenance while keeping the contact current until the b
       const result = yield* endContactPointRecord(
         harness.transaction,
         scope,
-        wholeEndCommand(effectiveEnd),
+        wholeEndCommand(effectiveEnd)
       );
 
       assert.equal(harness.updateSets[0]?.['state'], 'ACTIVE');
       assert.equal(harness.updateSets[0]?.['isCurrent'], true);
-      assert.deepEqual(harness.updateSets[0]?.['endEvidenceRefs'], ['evidence:contact-end:1']);
-      assert.equal(harness.updateSets[0]?.['endReason'], 'Party retired this mailbox');
+      assert.deepEqual(harness.updateSets[0]?.['endEvidenceRefs'], [
+        'evidence:contact-end:1',
+      ]);
+      assert.equal(
+        harness.updateSets[0]?.['endReason'],
+        'Party retired this mailbox'
+      );
       assert.deepEqual(result.contactPoint.end?.provenance.evidenceReferences, [
         'evidence:contact-end:1',
       ]);
-    }),
+    })
   ));
 
 test('stores end provenance on both a last ADDRESS purpose and its owning address', () =>
@@ -315,21 +326,34 @@ test('stores end provenance on both a last ADDRESS purpose and its owning addres
       ]);
       const command = {
         ...wholeEndCommand(effectiveEnd),
-        target: { target: { purpose: 'DELIVERY' as const }, type: 'ADDRESS_PURPOSE' as const },
+        target: {
+          target: { purpose: 'DELIVERY' as const },
+          type: 'ADDRESS_PURPOSE' as const,
+        },
       };
 
-      const result = yield* endContactPointRecord(harness.transaction, scope, command);
+      const result = yield* endContactPointRecord(
+        harness.transaction,
+        scope,
+        command
+      );
 
       assert.equal(harness.updateSets.length, 2);
-      assert.equal(harness.updateSets[0]?.['endProvenanceSource'], 'USER_ASSERTION');
-      assert.equal(harness.updateSets[1]?.['endProvenanceMethod'], 'MANUAL_CONFIRMATION');
+      assert.equal(
+        harness.updateSets[0]?.['endProvenanceSource'],
+        'USER_ASSERTION'
+      );
+      assert.equal(
+        harness.updateSets[1]?.['endProvenanceMethod'],
+        'MANUAL_CONFIRMATION'
+      );
       assert.equal(result.contactPoint.value.type, 'ADDRESS');
       assert.equal(
         result.contactPoint.value.type === 'ADDRESS' &&
           result.contactPoint.value.purposes[0]?.end?.reason,
-        'Party retired this mailbox',
+        'Party retired this mailbox'
       );
-    }),
+    })
   ));
 
 test('reuses only an exact end request and rejects changed evidence at the same boundary', () =>
@@ -349,26 +373,35 @@ test('reuses only an exact end request and rejects changed evidence at the same 
         state: 'ENDED',
         validTo: instantAsDate(effectiveEnd),
       });
-      const exactHarness = transactionHarness([[ended], [{ partyId }], [ended], []]);
+      const exactHarness = transactionHarness([
+        [ended],
+        [{ partyId }],
+        [ended],
+        [],
+      ]);
       const exact = yield* endContactPointRecord(
         exactHarness.transaction,
         scope,
-        wholeEndCommand(effectiveEnd),
+        wholeEndCommand(effectiveEnd)
       );
       assert.equal(exact.changed, false);
       assert.equal(exactHarness.updateSets.length, 0);
 
-      const changedHarness = transactionHarness([[ended], [{ partyId }], [ended]]);
+      const changedHarness = transactionHarness([
+        [ended],
+        [{ partyId }],
+        [ended],
+      ]);
       const changed = yield* Effect.exit(
         endContactPointRecord(
           changedHarness.transaction,
           scope,
-          wholeEndCommand(effectiveEnd, 'A different reason'),
-        ),
+          wholeEndCommand(effectiveEnd, 'A different reason')
+        )
       );
       assert.equal(changed._tag, 'Failure');
       assert.equal(changedHarness.updateSets.length, 0);
-    }),
+    })
   ));
 
 test('stores correction end provenance on the preserved original Contact Point', () =>
@@ -389,31 +422,50 @@ test('stores correction end provenance on the preserved original Contact Point',
         state: 'RETRACTED',
         validTo: instantAsDate('2026-09-03T12:00:00.000Z'),
       });
-      const harness = transactionHarness([[original], [{ partyId }], [original], [corrected], []]);
+      const harness = transactionHarness([
+        [original],
+        [{ partyId }],
+        [original],
+        [corrected],
+        [],
+      ]);
 
-      const result = yield* updateContactPointRecord(harness.transaction, scope, {
-        acceptedByActionInvocationId: actionInvocationId,
-        acceptedByPrincipalId: principalId,
-        change: {
-          evidenceReferences: ['evidence:wrong-mailbox:1'],
-          reason: 'Mailbox was attached to the wrong Party',
-          type: 'CORRECT_CONTACT_POINT',
-        },
-        contactPointRef: wholeEndCommand('2099-01-01T00:00:00.000Z').contactPointRef,
-        expectedRevision: 1,
-        provenance: {
-          authoritative: false,
-          method: 'MANUAL_CONFIRMATION',
-          source: 'USER_ASSERTION',
-        },
-      });
+      const result = yield* updateContactPointRecord(
+        harness.transaction,
+        scope,
+        {
+          acceptedByActionInvocationId: actionInvocationId,
+          acceptedByPrincipalId: principalId,
+          change: {
+            evidenceReferences: ['evidence:wrong-mailbox:1'],
+            reason: 'Mailbox was attached to the wrong Party',
+            type: 'CORRECT_CONTACT_POINT',
+          },
+          contactPointRef: wholeEndCommand('2099-01-01T00:00:00.000Z')
+            .contactPointRef,
+          expectedRevision: 1,
+          provenance: {
+            authoritative: false,
+            method: 'MANUAL_CONFIRMATION',
+            source: 'USER_ASSERTION',
+          },
+        }
+      );
 
       assert.equal(harness.updateSets[0]?.['state'], 'RETRACTED');
-      assert.equal(harness.updateSets[0]?.['endReason'], 'Mailbox was attached to the wrong Party');
-      assert.deepEqual(harness.updateSets[0]?.['endEvidenceRefs'], ['evidence:wrong-mailbox:1']);
+      assert.equal(
+        harness.updateSets[0]?.['endReason'],
+        'Mailbox was attached to the wrong Party'
+      );
+      assert.deepEqual(harness.updateSets[0]?.['endEvidenceRefs'], [
+        'evidence:wrong-mailbox:1',
+      ]);
       assert.equal(harness.insertValues[0]?.['contactPointId'], contactPointId);
-      assert.equal(result.end?.reason, 'Mailbox was attached to the wrong Party');
-    }),
+      assert.equal(
+        result.end?.reason,
+        'Mailbox was attached to the wrong Party'
+      );
+    })
   ));
 
 const addressRow = (overrides: Readonly<Record<string, unknown>> = {}) =>
@@ -429,7 +481,9 @@ const addressRow = (overrides: Readonly<Record<string, unknown>> = {}) =>
     ...overrides,
   });
 
-const updateCommand = (change: Parameters<typeof updateContactPointRecord>[2]['change']) => ({
+const updateCommand = (
+  change: Parameters<typeof updateContactPointRecord>[2]['change']
+) => ({
   acceptedByActionInvocationId: actionInvocationId,
   acceptedByPrincipalId: principalId,
   change,
@@ -475,7 +529,7 @@ test('re-adds a scheduled-ended purpose as a new period without reopening its hi
         updateCommand({
           assignment: { preferred: true, purpose: 'DELIVERY' },
           type: 'SET_ADDRESS_PURPOSE',
-        }),
+        })
       );
       assert.equal(harness.updateSets[0]?.['state'], 'ENDED');
       assert.equal(harness.updateSets[0]?.['revision'], 2);
@@ -488,7 +542,7 @@ test('re-adds a scheduled-ended purpose as a new period without reopening its hi
         assert.equal(result.value.purposes[0]?.current, false);
         assert.equal(result.value.purposes[1]?.validTo, null);
       }
-    }),
+    })
   ));
 
 test('rejects a REGISTERED context collision as a typed domain conflict before mutation', () =>
@@ -501,7 +555,12 @@ test('rejects a REGISTERED context collision as a typed domain conflict before m
         purposeKey: 'REGISTERED',
         registryContext: 'ARES',
       });
-      const harness = transactionHarness([[address], [{ partyId }], [address], [conflicting]]);
+      const harness = transactionHarness([
+        [address],
+        [{ partyId }],
+        [address],
+        [conflicting],
+      ]);
       const error = yield* Effect.flip(
         updateContactPointRecord(
           harness.transaction,
@@ -513,8 +572,8 @@ test('rejects a REGISTERED context collision as a typed domain conflict before m
               registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
             },
             type: 'SET_ADDRESS_PURPOSE',
-          }),
-        ),
+          })
+        )
       );
       assert.equal(error._tag, 'PartyContactPointAlreadyExists');
       assert.equal(harness.updateSets.length, 0);
@@ -533,7 +592,11 @@ test('rejects a REGISTERED context collision as a typed domain conflict before m
           acceptedByActionInvocationId: actionInvocationId,
           acceptedByPrincipalId: principalId,
           contactPoint: {
-            address: { addressLine1: 'Another street 2', city: 'Praha', countryCode: 'CZ' },
+            address: {
+              addressLine1: 'Another street 2',
+              city: 'Praha',
+              countryCode: 'CZ',
+            },
             purposes: [
               {
                 preferred: true,
@@ -558,12 +621,12 @@ test('rejects a REGISTERED context collision as a typed domain conflict before m
           },
           validFrom: '2026-01-01T00:00:00.000Z',
           verification: { state: 'UNVERIFIED' },
-        }),
+        })
       );
       assert.equal(addError._tag, 'PartyContactPointAlreadyExists');
       assert.equal(addHarness.insertValues.length, 0);
       assert.equal(addHarness.updateSets.length, 0);
-    }),
+    })
   ));
 
 test('advances revisions on both the transferred purpose and its owning address', () =>
@@ -590,7 +653,7 @@ test('advances revisions on both the transferred purpose and its owning address'
         updateCommand({
           assignment: { preferred: true, purpose: 'DELIVERY' },
           type: 'SET_ADDRESS_PURPOSE',
-        }),
+        })
       );
       assert.equal(harness.updateSets[0]?.['revision'], 8);
       assert.equal(harness.updateSets[0]?.['preferred'], false);
@@ -599,7 +662,7 @@ test('advances revisions on both the transferred purpose and its owning address'
       assert.match(new PgDialect().sqlToQuery(revision).sql, /revision.*\+ 1/u);
       assert.equal(harness.updateSets[2]?.['revision'], 2);
       assert.equal(harness.updateSets[3]?.['revision'], 2);
-    }),
+    })
   ));
 
 test('preserves original provenance evidence and appends deduplicated enrichment', () =>
@@ -614,7 +677,13 @@ test('preserves original provenance evidence and appends deduplicated enrichment
         evidenceReference: 'evidence:first',
         revision: 2,
       });
-      const harness = transactionHarness([[row], [{ partyId }], [row], [updated], []]);
+      const harness = transactionHarness([
+        [row],
+        [{ partyId }],
+        [row],
+        [updated],
+        [],
+      ]);
       const result = yield* updateContactPointRecord(
         harness.transaction,
         scope,
@@ -626,7 +695,7 @@ test('preserves original provenance evidence and appends deduplicated enrichment
             source: 'USER_ASSERTION',
           },
           type: 'ADD_PROVENANCE',
-        }),
+        })
       );
       assert.equal(harness.updateSets[0]?.['evidenceReference'], undefined);
       assert.deepEqual(harness.updateSets[0]?.['additionalEvidenceRefs'], [
@@ -638,7 +707,7 @@ test('preserves original provenance evidence and appends deduplicated enrichment
         'evidence:second',
         'evidence:third',
       ]);
-    }),
+    })
   ));
 
 test('rejects invalid E.164 and oversized extensions through the service typed-error path', () =>
@@ -674,14 +743,14 @@ test('rejects invalid E.164 and oversized extensions through the service typed-e
               },
               validFrom: '2026-01-01T00:00:00.000Z',
               verification: { state: 'UNVERIFIED' },
-            }),
+            })
           );
           assert.equal(error._tag, 'PartyContactPointInvalid');
           assert.equal(harness.selectWheres.length, 0);
           assert.equal(harness.insertValues.length, 0);
-        }),
-      ),
-    ).pipe(Effect.asVoid),
+        })
+      )
+    ).pipe(Effect.asVoid)
   ));
 
 test('rejects an explicit alias Party add but keeps durable ContactPoint updates readable through the full chain', () =>
@@ -697,7 +766,7 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
                 aliasPartyId: partyId,
                 canonicalPartyId: intermediatePartyId,
                 tenantId: requestedTenantId,
-              }),
+              })
             );
           }
           if (requestedPartyId === intermediatePartyId) {
@@ -706,7 +775,7 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
                 aliasPartyId: intermediatePartyId,
                 canonicalPartyId,
                 tenantId: requestedTenantId,
-              }),
+              })
             );
           }
           return Effect.succeed(Option.none());
@@ -721,7 +790,11 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
           {
             acceptedByActionInvocationId: actionInvocationId,
             acceptedByPrincipalId: principalId,
-            contactPoint: { preferred: false, type: 'EMAIL', value: 'new@example.test' },
+            contactPoint: {
+              preferred: false,
+              type: 'EMAIL',
+              value: 'new@example.test',
+            },
             partyRef: {
               moduleId: 'party.registry',
               resourceId: partyId,
@@ -737,8 +810,8 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
             validFrom: '2026-01-01T00:00:00.000Z',
             verification: { state: 'UNVERIFIED' },
           },
-          aliases,
-        ),
+          aliases
+        )
       );
       assert.ok(Schema.is(PartyAliasWriteRejected)(rejected));
       assert.equal(rejected.canonicalPartyRef.resourceId, canonicalPartyId);
@@ -759,7 +832,7 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
           preferred: false,
           type: 'SET_CHANNEL_PREFERRED',
         }),
-        aliases,
+        aliases
       );
       assert.equal(updated.partyRef.resourceId, canonicalPartyId);
       assert.equal(updated.storedPartyRef?.resourceId, partyId);
@@ -770,10 +843,16 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
         readHarness.transaction,
         scope,
         contactPointId,
-        aliases,
+        aliases
       );
-      assert.equal(Option.getOrThrow(detail).partyRef.resourceId, canonicalPartyId);
-      assert.equal(Option.getOrThrow(detail).storedPartyRef.resourceId, partyId);
+      assert.equal(
+        Option.getOrThrow(detail).partyRef.resourceId,
+        canonicalPartyId
+      );
+      assert.equal(
+        Option.getOrThrow(detail).storedPartyRef.resourceId,
+        partyId
+      );
 
       const ended = contactRow({
         endEvidenceRefs: ['evidence:contact-end:1'],
@@ -797,11 +876,14 @@ test('rejects an explicit alias Party add but keeps durable ContactPoint updates
         endHarness.transaction,
         scope,
         wholeEndCommand('2099-01-01T00:00:00.000Z'),
-        aliases,
+        aliases
       );
-      assert.equal(endResult.contactPoint.partyRef.resourceId, canonicalPartyId);
+      assert.equal(
+        endResult.contactPoint.partyRef.resourceId,
+        canonicalPartyId
+      );
       assert.equal(endHarness.updateSets.length, 1);
-    }),
+    })
   ));
 
 test('advances the replaced channel preference revision as well as the selected contact', () =>
@@ -818,19 +900,21 @@ test('advances the replaced channel preference revision as well as the selected 
       yield* updateContactPointRecord(
         harness.transaction,
         scope,
-        updateCommand({ preferred: true, type: 'SET_CHANNEL_PREFERRED' }),
+        updateCommand({ preferred: true, type: 'SET_CHANNEL_PREFERRED' })
       );
       const revision = harness.updateSets[0]?.['revision'];
       assert.ok(revision instanceof SQL);
       assert.match(new PgDialect().sqlToQuery(revision).sql, /revision.*\+ 1/u);
       assert.equal(harness.updateSets[1]?.['revision'], 2);
-    }),
+    })
   ));
 
 test('persists bounded ARES provenance on the address and purpose without using observation time as effective time', () =>
   runEffectTestPromise(
     Effect.gen(function* contactPointScenario() {
-      const externalEvidence = yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)({
+      const externalEvidence = yield* Schema.decodeUnknownEffect(
+        AresAppliedEvidenceSchema
+      )({
         authorityPolicyKey: 'party_registry.ares_enrichment',
         authorityPolicyVersion: '1',
         cacheAgeSeconds: 120,
@@ -846,8 +930,9 @@ test('persists bounded ARES provenance on the address and purpose without using 
         reasonCode: 'selected_missing_fact_confirmed',
         servedAt: '2026-09-03T10:02:00.000Z',
       });
-      const encodedExternalEvidence =
-        yield* Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(externalEvidence);
+      const encodedExternalEvidence = yield* Schema.encodeUnknownEffect(
+        AresAppliedEvidenceSchema
+      )(externalEvidence);
       const address = addressRow({ externalEvidence: encodedExternalEvidence });
       const purpose = purposeRow({
         externalEvidence: encodedExternalEvidence,
@@ -855,12 +940,19 @@ test('persists bounded ARES provenance on the address and purpose without using 
         purposeKey: 'REGISTERED',
         registryContext: 'ARES',
       });
-      const harness = transactionHarness([[{ partyId }], [], [], [purpose]], [[address]]);
+      const harness = transactionHarness(
+        [[{ partyId }], [], [], [purpose]],
+        [[address]]
+      );
       const result = yield* addContactPointRecord(harness.transaction, scope, {
         acceptedByActionInvocationId: actionInvocationId,
         acceptedByPrincipalId: principalId,
         contactPoint: {
-          address: { addressLine1: 'Na Prikope 1', city: 'Praha', countryCode: 'CZ' },
+          address: {
+            addressLine1: 'Na Prikope 1',
+            city: 'Praha',
+            countryCode: 'CZ',
+          },
           purposes: [
             {
               preferred: true,
@@ -887,23 +979,32 @@ test('persists bounded ARES provenance on the address and purpose without using 
         validFrom: '2026-08-01T00:00:00.000Z',
         verification: { state: 'UNVERIFIED' },
       });
-      assert.deepEqual(harness.insertValues[0]?.['externalEvidence'], encodedExternalEvidence);
-      assert.deepEqual(harness.insertValues[1]?.['externalEvidence'], encodedExternalEvidence);
+      assert.deepEqual(
+        harness.insertValues[0]?.['externalEvidence'],
+        encodedExternalEvidence
+      );
+      assert.deepEqual(
+        harness.insertValues[1]?.['externalEvidence'],
+        encodedExternalEvidence
+      );
       assert.deepEqual(
         harness.insertValues[0]?.['validFrom'],
-        instantAsDate('2026-08-01T00:00:00.000Z'),
+        instantAsDate('2026-08-01T00:00:00.000Z')
       );
       assert.equal(
         result.provenance.externalEvidence === undefined
           ? undefined
           : DateTime.formatIso(result.provenance.externalEvidence.observedAt),
-        '2026-09-03T10:00:00.000Z',
+        '2026-09-03T10:00:00.000Z'
       );
       assert.equal(result.value.type, 'ADDRESS');
       if (result.value.type === 'ADDRESS') {
-        assert.deepEqual(result.value.purposes[0]?.provenance.externalEvidence, externalEvidence);
+        assert.deepEqual(
+          result.value.purposes[0]?.provenance.externalEvidence,
+          externalEvidence
+        );
       }
-    }),
+    })
   ));
 
 test('treats PHONE extensions as distinct endpoints while rejecting an exact duplicate extension', () =>
@@ -925,7 +1026,12 @@ test('treats PHONE extensions as distinct endpoints while rejecting an exact dup
       const command = (extension: string): Parameters<typeof addRecord>[2] => ({
         acceptedByActionInvocationId: actionInvocationId,
         acceptedByPrincipalId: principalId,
-        contactPoint: { extension, preferred: false, type: 'PHONE', value: '+420777123456' },
+        contactPoint: {
+          extension,
+          preferred: false,
+          type: 'PHONE',
+          value: '+420777123456',
+        },
         partyRef: {
           moduleId: 'party.registry',
           resourceId: partyId,
@@ -941,18 +1047,32 @@ test('treats PHONE extensions as distinct endpoints while rejecting an exact dup
         validFrom: '2026-01-01T00:00:00.000Z',
         verification: { state: 'UNVERIFIED' },
       });
-      const newHarness = transactionHarness([[{ partyId }], [existing], []], [[created]]);
-      const result = yield* addContactPointRecord(newHarness.transaction, scope, command('102'));
+      const newHarness = transactionHarness(
+        [[{ partyId }], [existing], []],
+        [[created]]
+      );
+      const result = yield* addContactPointRecord(
+        newHarness.transaction,
+        scope,
+        command('102')
+      );
       assert.equal(newHarness.insertValues.length, 1);
-      assert.equal(result.value.type === 'PHONE' && result.value.extension, '102');
+      assert.equal(
+        result.value.type === 'PHONE' && result.value.extension,
+        '102'
+      );
 
       const duplicateHarness = transactionHarness([[{ partyId }], [existing]]);
       const duplicate = yield* Effect.flip(
-        addContactPointRecord(duplicateHarness.transaction, scope, command('101')),
+        addContactPointRecord(
+          duplicateHarness.transaction,
+          scope,
+          command('101')
+        )
       );
       assert.equal(duplicate._tag, 'PartyContactPointAlreadyExists');
       assert.equal(duplicateHarness.insertValues.length, 0);
-    }),
+    })
   ));
 
 test('whole ADDRESS end preserves an earlier purpose end and its independent accepted evidence', () =>
@@ -998,12 +1118,12 @@ test('whole ADDRESS end preserves an earlier purpose end and its independent acc
       const result = yield* endContactPointRecord(
         harness.transaction,
         scope,
-        wholeEndCommand('2099-01-01T00:00:00.000Z'),
+        wholeEndCommand('2099-01-01T00:00:00.000Z')
       );
       assert.equal(
         harness.updateSets.length,
         2,
-        'only the address and still-open purpose are changed',
+        'only the address and still-open purpose are changed'
       );
       assert.equal(harness.updateSets[1]?.['revision'], 2);
       if (result.contactPoint.value.type === 'ADDRESS') {
@@ -1012,14 +1132,17 @@ test('whole ADDRESS end preserves an earlier purpose end and its independent acc
           preserved?.validTo === null || preserved?.validTo === undefined
             ? preserved?.validTo
             : DateTime.formatIso(preserved.validTo),
-          '2090-01-01T00:00:00.000Z',
+          '2090-01-01T00:00:00.000Z'
         );
-        assert.equal(preserved?.end?.reason, 'Independent delivery contract end');
+        assert.equal(
+          preserved?.end?.reason,
+          'Independent delivery contract end'
+        );
         assert.deepEqual(preserved?.end?.provenance.evidenceReferences, [
           'evidence:delivery-contract-ended',
         ]);
       } else {
         assert.fail('Expected ADDRESS result');
       }
-    }),
+    })
   ));

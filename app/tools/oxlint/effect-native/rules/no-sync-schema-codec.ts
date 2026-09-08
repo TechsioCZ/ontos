@@ -59,15 +59,17 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption, optionRecord, stringArray } from '../shared/options.ts';
 import { keyName } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
+import { booleanOption, optionRecord, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import {
+  isNonReferencePosition,
+  isInErasedTypePosition,
+} from '../shared/reference-positions.ts';
 import { schemaIdentity } from '../shared/schema-identity.ts';
-import { isNonReferencePosition, isInErasedTypePosition } from '../shared/reference-positions.ts';
 
 const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
 
@@ -111,13 +113,19 @@ function readOptions(context: Context): RuleOptions {
     allowPaths: stringArray(record.allowPaths, DEFAULT_ALLOW_PATHS),
     ignoreTestFiles: booleanOption(record.ignoreTestFiles, true),
     members: stringArray(record.members, DEFAULT_MEMBERS),
-    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
+    reexportModules: stringArray(
+      record.reexportModules,
+      DEFAULT_REEXPORT_MODULES
+    ),
   };
 }
 
 /** Runtime references exclude both name positions and erased TS ancestry. */
 function isDeclarationPosition(node: ESTree.Node): boolean {
-  return isNonReferencePosition(node, { variableBindings: true }) || isInErasedTypePosition(node);
+  return (
+    isNonReferencePosition(node, { variableBindings: true }) ||
+    isInErasedTypePosition(node)
+  );
 }
 
 export const rule = defineRule({
@@ -170,7 +178,9 @@ export const rule = defineRule({
     if (members.size === 0) return {};
 
     /** `decodeUnknownSync` → `decodeUnknownEffect` / `decodeUnknownResult`. */
-    const replacements = (member: string): { effectful: string; result: string } => {
+    const replacements = (
+      member: string
+    ): { effectful: string; result: string } => {
       const base = member.replace(/Sync$/u, '');
       return { effectful: `${base}Effect`, result: `${base}Result` };
     };
@@ -184,10 +194,16 @@ export const rule = defineRule({
     };
     return {
       MemberExpression(node) {
-        const member = schemaIdentity(context, node, options.reexportModules, 0, {
-          templates: true,
-          unwrap: {},
-        });
+        const member = schemaIdentity(
+          context,
+          node,
+          options.reexportModules,
+          0,
+          {
+            templates: true,
+            unwrap: {},
+          }
+        );
         if (member !== null && members.has(member)) report(node, member);
       },
       Identifier(node) {
@@ -195,10 +211,16 @@ export const rule = defineRule({
         // Destructured aliases report at capture, not at every subsequent use.
         const variable = lookupVariable(context, node);
         if (!variable?.defs.some((def) => def.type === 'ImportBinding')) return;
-        const member = schemaIdentity(context, node, options.reexportModules, 0, {
-          templates: true,
-          unwrap: {},
-        });
+        const member = schemaIdentity(
+          context,
+          node,
+          options.reexportModules,
+          0,
+          {
+            templates: true,
+            unwrap: {},
+          }
+        );
         if (member !== null && members.has(member)) report(node, member);
       },
       VariableDeclarator(node) {
@@ -224,9 +246,15 @@ export const rule = defineRule({
         )
           return;
         for (const specifier of node.specifiers) {
-          if (specifier.type !== 'ExportSpecifier' || specifier.exportKind === 'type') continue;
+          if (
+            specifier.type !== 'ExportSpecifier' ||
+            specifier.exportKind === 'type'
+          )
+            continue;
           const member =
-            specifier.local.type === 'Identifier' ? specifier.local.name : specifier.local.value;
+            specifier.local.type === 'Identifier'
+              ? specifier.local.name
+              : specifier.local.value;
           if (members.has(member)) report(specifier, member);
         }
       },

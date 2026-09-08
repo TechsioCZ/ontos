@@ -9,16 +9,21 @@ import type {
 } from './projection.ts';
 
 type UnparsedCoreSearchInput = typeof Schema.Unknown.Type;
-type CoreSearchProjectionUnavailableInstance = InstanceType<typeof CoreSearchProjectionUnavailable>;
+type CoreSearchProjectionUnavailableInstance = InstanceType<
+  typeof CoreSearchProjectionUnavailable
+>;
 
 export interface CoreSearchProjectionStoreService {
   /** Applies one idempotent versioned lifecycle observation. */
   readonly apply: (
-    input: UnparsedCoreSearchInput,
-  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
+    input: UnparsedCoreSearchInput
+  ) => Effect.Effect<
+    void,
+    CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance
+  >;
   /** Candidate access is Core-private: the query runtime strips searchable evidence before return. */
   readonly queryCandidates: (
-    input: CoreSearchQuery,
+    input: CoreSearchQuery
   ) => Effect.Effect<
     readonly CoreSearchProjectionDocument[],
     CoreSearchProjectionUnavailableInstance
@@ -28,8 +33,11 @@ export interface CoreSearchProjectionStoreService {
    * must leave the prior unit intact when validation or persistence fails.
    */
   readonly replace: (
-    input: UnparsedCoreSearchInput,
-  ) => Effect.Effect<void, CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance>;
+    input: UnparsedCoreSearchInput
+  ) => Effect.Effect<
+    void,
+    CoreSearchProjectionInvalid | CoreSearchProjectionUnavailableInstance
+  >;
 }
 
 /** Production persistence implements this Core-owned port; business modules never own an index. */
@@ -39,5 +47,5 @@ export class CoreSearchProjectionStore extends Context.Service<
 >()(
   // Preserve the public Context identity after splitting the service into its owning module.
   // @effect-diagnostics-next-line deterministicKeys:off
-  '@app/core-runtime/search/projection/CoreSearchProjectionStore',
+  '@app/core-runtime/search/projection/CoreSearchProjectionStore'
 ) {}

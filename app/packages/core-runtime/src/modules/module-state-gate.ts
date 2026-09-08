@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { Clock, Context, Effect, Layer, Schema } from 'effect';
+
 import { tenantModuleStates, tenants } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type {
@@ -32,7 +33,12 @@ export type ModuleStateDecision = typeof ModuleStateDecisionSchema.Type;
 const allowedAccessByState: Readonly<
   Record<TenantModuleState, ReadonlySet<ModuleEntrypointAccess>>
 > = Object.freeze({
-  active: new Set<ModuleEntrypointAccess>(['background', 'historical_read', 'read', 'write']),
+  active: new Set<ModuleEntrypointAccess>([
+    'background',
+    'historical_read',
+    'read',
+    'write',
+  ]),
   archived: new Set<ModuleEntrypointAccess>(['historical_read']),
   deprecated: new Set<ModuleEntrypointAccess>(['historical_read', 'read']),
   inactive: new Set<ModuleEntrypointAccess>(['historical_read']),
@@ -43,25 +49,27 @@ const allowedAccessByState: Readonly<
 
 export const decideModuleStateAccess = (
   state: TenantModuleState | null,
-  access: ModuleEntrypointAccess,
+  access: ModuleEntrypointAccess
 ): ModuleStateDecision =>
   state !== null && allowedAccessByState[state].has(access) ? 'allow' : 'deny';
 
 export const tenantStatesAllowingAccess = (
-  access: ModuleEntrypointAccess,
+  access: ModuleEntrypointAccess
 ): readonly TenantModuleState[] =>
   Object.freeze(
     TENANT_MODULE_STATES.flatMap((state) =>
-      allowedAccessByState[state].has(access) ? [state] : [],
-    ).toSorted(),
+      allowedAccessByState[state].has(access) ? [state] : []
+    ).toSorted()
   );
 
 const ModuleStateSnapshotInvariantError = Schema.TaggedError<Error>()(
   'ModuleStateSnapshotInvariantError',
-  { reason: Schema.String },
+  { reason: Schema.String }
 );
 
-const entrypointFingerprint = (entrypoint: ModuleEntrypointDescriptor): string =>
+const entrypointFingerprint = (
+  entrypoint: ModuleEntrypointDescriptor
+): string =>
   [
     entrypoint.scope,
     entrypoint.moduleKey,
@@ -91,15 +99,20 @@ export const makeModuleStateSnapshot = (
   ...[tenantId, entrypoints, records]: [
     tenantId: string,
     entrypoints: readonly ModuleEntrypointDescriptor[],
-    records: readonly { readonly moduleKey: string; readonly state: TenantModuleState }[],
+    records: readonly {
+      readonly moduleKey: string;
+      readonly state: TenantModuleState;
+    }[],
   ]
 ): ModuleStateSnapshot => {
   const entrypointKeys = Object.freeze(
-    [...new Set(entrypoints.map((entrypoint) => entrypoint.entrypointKey))].toSorted(),
+    [
+      ...new Set(entrypoints.map((entrypoint) => entrypoint.entrypointKey)),
+    ].toSorted()
   );
   const declaredEntrypoints = new Set(entrypoints.map(entrypointFingerprint));
   const moduleKeys = entrypoints.flatMap((entrypoint) =>
-    entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : [],
+    entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : []
   );
   const declaredKeys = Object.freeze([...new Set(moduleKeys)].toSorted());
   const declaredSet = new Set(declaredKeys);
@@ -107,7 +120,8 @@ export const makeModuleStateSnapshot = (
   for (const record of records) {
     if (!declaredSet.has(record.moduleKey) || states.has(record.moduleKey)) {
       throw new ModuleStateSnapshotInvariantError({
-        reason: 'Module state snapshot records do not match the declared module keys',
+        reason:
+          'Module state snapshot records do not match the declared module keys',
       });
     }
     states.set(record.moduleKey, record.state);
@@ -119,7 +133,9 @@ export const makeModuleStateSnapshot = (
   });
 };
 
-type ModuleStateSpanAttributes = Readonly<Record<string, boolean | number | string>>;
+type ModuleStateSpanAttributes = Readonly<
+  Record<string, boolean | number | string>
+>;
 
 const annotateCurrentSpan = (attributes: ModuleStateSpanAttributes) =>
   Effect.currentSpan.pipe(
@@ -128,76 +144,90 @@ const annotateCurrentSpan = (attributes: ModuleStateSpanAttributes) =>
         for (const [key, value] of Object.entries(attributes)) {
           span.attribute(key, value);
         }
-      }),
+      })
     ),
     Effect.asVoid,
-    Effect.ignore,
+    Effect.ignore
   );
 
-const recordAcquisitionTelemetry = Effect.fn('ModuleStateGate.recordAcquisitionTelemetry')(
-  function* recordAcquisitionTelemetryEffect(
-    startedAt: number,
-    batchSize: number,
-    outcome: 'available' | 'unavailable',
-  ) {
-    const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
-    yield* Effect.annotateLogs(Effect.logDebug('Module state snapshot acquisition completed'), {
+const recordAcquisitionTelemetry = Effect.fn(
+  'ModuleStateGate.recordAcquisitionTelemetry'
+)(function* recordAcquisitionTelemetryEffect(
+  startedAt: number,
+  batchSize: number,
+  outcome: 'available' | 'unavailable'
+) {
+  const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+  yield* Effect.annotateLogs(
+    Effect.logDebug('Module state snapshot acquisition completed'),
+    {
       batchSize,
       elapsedMs,
       outcome,
-    });
-    return { batchSize, elapsedMs, outcome } satisfies ModuleStateSpanAttributes;
-  },
-);
+    }
+  );
+  return { batchSize, elapsedMs, outcome } satisfies ModuleStateSpanAttributes;
+});
 
-export const prepareModuleStateSnapshot = Effect.fn('ModuleStateGate.prepareModuleStateSnapshot')(
-  function* prepareSnapshotEffect(
-    stateService: TenantModuleStateServiceContract,
-    tenantId: string,
-    entrypoints: readonly ModuleEntrypointDescriptor[],
-  ): Effect.fn.Return<ModuleStateSnapshot, ModuleStateCheckUnavailableError> {
-    const moduleKeys = entrypoints.flatMap((entrypoint) =>
-      entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : [],
+export const prepareModuleStateSnapshot = Effect.fn(
+  'ModuleStateGate.prepareModuleStateSnapshot'
+)(function* prepareSnapshotEffect(
+  stateService: TenantModuleStateServiceContract,
+  tenantId: string,
+  entrypoints: readonly ModuleEntrypointDescriptor[]
+): Effect.fn.Return<ModuleStateSnapshot, ModuleStateCheckUnavailableError> {
+  const moduleKeys = entrypoints.flatMap((entrypoint) =>
+    entrypoint.scope === 'tenant' ? [entrypoint.moduleKey] : []
+  );
+  const distinctKeys = [...new Set(moduleKeys)].toSorted();
+  const startedAt = yield* Clock.currentTimeMillis;
+  let acquisition: Effect.Effect<
+    ModuleStateSnapshot,
+    ModuleStateCheckUnavailableError
+  >;
+  if (distinctKeys.length === 0) {
+    acquisition = Effect.succeed(
+      makeModuleStateSnapshot(tenantId, entrypoints, [])
     );
-    const distinctKeys = [...new Set(moduleKeys)].toSorted();
-    const startedAt = yield* Clock.currentTimeMillis;
-    let acquisition: Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError>;
-    if (distinctKeys.length === 0) {
-      acquisition = Effect.succeed(makeModuleStateSnapshot(tenantId, entrypoints, []));
-    } else if (tenantId.length === 0) {
-      acquisition = Effect.fail(unavailable());
-    } else {
-      acquisition = stateService.getTenantModuleStates(tenantId, distinctKeys).pipe(
+  } else if (tenantId.length === 0) {
+    acquisition = Effect.fail(unavailable());
+  } else {
+    acquisition = stateService
+      .getTenantModuleStates(tenantId, distinctKeys)
+      .pipe(
         Effect.mapError(unavailable),
         Effect.flatMap((records) =>
           Effect.try({
             catch: unavailable,
             try: () => makeModuleStateSnapshot(tenantId, entrypoints, records),
-          }),
-        ),
+          })
+        )
       );
-    }
-    return yield* acquisition.pipe(
-      Effect.tap(() =>
-        recordAcquisitionTelemetry(startedAt, distinctKeys.length, 'available').pipe(
-          Effect.flatMap(annotateCurrentSpan),
-        ),
-      ),
-      Effect.tapError(() =>
-        recordAcquisitionTelemetry(startedAt, distinctKeys.length, 'unavailable').pipe(
-          Effect.flatMap(annotateCurrentSpan),
-        ),
-      ),
-      Effect.withSpan('ModuleStateGate.acquire', {
-        attributes: { batchSize: distinctKeys.length },
-      }),
-    );
-  },
-);
+  }
+  return yield* acquisition.pipe(
+    Effect.tap(() =>
+      recordAcquisitionTelemetry(
+        startedAt,
+        distinctKeys.length,
+        'available'
+      ).pipe(Effect.flatMap(annotateCurrentSpan))
+    ),
+    Effect.tapError(() =>
+      recordAcquisitionTelemetry(
+        startedAt,
+        distinctKeys.length,
+        'unavailable'
+      ).pipe(Effect.flatMap(annotateCurrentSpan))
+    ),
+    Effect.withSpan('ModuleStateGate.acquire', {
+      attributes: { batchSize: distinctKeys.length },
+    })
+  );
+});
 
 export const checkModuleEntrypoint = (
   snapshot: ModuleStateSnapshot,
-  entrypoint: ModuleEntrypointDescriptor,
+  entrypoint: ModuleEntrypointDescriptor
 ): Effect.Effect<void, ModuleStateGateError> => {
   const data = ModuleStateSnapshotValue.dataOf(snapshot);
   const fingerprint = entrypointFingerprint(entrypoint);
@@ -210,7 +240,7 @@ export const checkModuleEntrypoint = (
           scope: entrypoint.scope,
           snapshotReuse: false,
         },
-      }),
+      })
     );
   }
   const snapshotReuse = data.evaluatedEntrypoints.has(fingerprint);
@@ -224,10 +254,13 @@ export const checkModuleEntrypoint = (
           scope: 'system',
           snapshotReuse,
         },
-      }),
+      })
     );
   }
-  if (snapshot.tenantId.length === 0 || !snapshot.moduleKeys.includes(entrypoint.moduleKey)) {
+  if (
+    snapshot.tenantId.length === 0 ||
+    !snapshot.moduleKeys.includes(entrypoint.moduleKey)
+  ) {
     return Effect.fail(unavailable()).pipe(
       Effect.withSpan('ModuleStateGate.evaluate', {
         attributes: {
@@ -236,12 +269,12 @@ export const checkModuleEntrypoint = (
           scope: 'tenant',
           snapshotReuse,
         },
-      }),
+      })
     );
   }
   const outcome = decideModuleStateAccess(
     data.states.get(entrypoint.moduleKey) ?? null,
-    entrypoint.access,
+    entrypoint.access
   );
   return (outcome === 'allow' ? Effect.void : Effect.fail(denied())).pipe(
     Effect.withSpan('ModuleStateGate.evaluate', {
@@ -251,30 +284,33 @@ export const checkModuleEntrypoint = (
         scope: 'tenant',
         snapshotReuse,
       },
-    }),
+    })
   );
 };
 
 export interface ModuleStateGateService {
   readonly check: (
     snapshot: ModuleStateSnapshot,
-    entrypoint: ModuleEntrypointDescriptor,
+    entrypoint: ModuleEntrypointDescriptor
   ) => Effect.Effect<void, ModuleStateGateError>;
   readonly prepareSnapshot: (
     tenantId: string,
-    entrypoints: readonly ModuleEntrypointDescriptor[],
+    entrypoints: readonly ModuleEntrypointDescriptor[]
   ) => Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError>;
   readonly recheckWrite: (
     transaction: CoreTransaction,
     tenantId: string,
-    entrypoint: TenantModuleEntrypoint<ModuleEntrypointDescriptor['role'], 'write'>,
+    entrypoint: TenantModuleEntrypoint<
+      ModuleEntrypointDescriptor['role'],
+      'write'
+    >
   ) => Effect.Effect<void, ModuleStateGateError>;
 }
 
 const isModuleStateDenied = Schema.is(ModuleStateDeniedError);
 
 export const makeModuleStateGate = (
-  stateService: TenantModuleStateServiceContract,
+  stateService: TenantModuleStateServiceContract
 ): ModuleStateGateService => ({
   check: checkModuleEntrypoint,
   prepareSnapshot: (tenantId, entrypoints) =>
@@ -296,16 +332,16 @@ export const makeModuleStateGate = (
         .where(
           and(
             eq(tenantModuleStates.tenantId, tenantId),
-            eq(tenantModuleStates.moduleKey, entrypoint.moduleKey),
-          ),
+            eq(tenantModuleStates.moduleKey, entrypoint.moduleKey)
+          )
         )
         .pipe(Effect.mapError(unavailable));
       const state =
         rows[0] === undefined
           ? null
-          : yield* Schema.decodeUnknownEffect(TenantModuleStateSchema)(rows[0].state).pipe(
-              Effect.mapError(unavailable),
-            );
+          : yield* Schema.decodeUnknownEffect(TenantModuleStateSchema)(
+              rows[0].state
+            ).pipe(Effect.mapError(unavailable));
       if (decideModuleStateAccess(state, 'write') === 'deny') {
         return yield* denied();
       }
@@ -319,16 +355,17 @@ export const makeModuleStateGate = (
       Effect.tapError(annotateFailure),
       Effect.withSpan('ModuleStateGate.recheckWrite', {
         attributes: { access: 'write', scope: 'tenant' },
-      }),
+      })
     );
   },
 });
 
-export class ModuleStateGate extends Context.Service<ModuleStateGate, ModuleStateGateService>()(
-  '@app/core-runtime/modules/module-state-gate/ModuleStateGate',
-) {}
+export class ModuleStateGate extends Context.Service<
+  ModuleStateGate,
+  ModuleStateGateService
+>()('@app/core-runtime/modules/module-state-gate/ModuleStateGate') {}
 
 export const ModuleStateGateLive = Layer.effect(
   ModuleStateGate,
-  TenantModuleStateService.pipe(Effect.map(makeModuleStateGate)),
+  TenantModuleStateService.pipe(Effect.map(makeModuleStateGate))
 );

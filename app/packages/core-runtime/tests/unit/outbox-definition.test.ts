@@ -1,7 +1,10 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema, Predicate } from 'effect';
+
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   defineOutboxWorker,
   getOutboxWorkerHandler,
@@ -9,7 +12,6 @@ import {
   validateOutboxWorkerRegistrations,
   validateOutboxWorkerSubscriptions,
 } from '../../src/outbox/definition.ts';
-import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OutboxWorkerDescriptorError } from '../../src/outbox/errors.ts';
 
 const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
@@ -38,7 +40,10 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
       topic: 'producer.message-created',
       workerKey,
     },
-    (payload) => Effect.sync(() => assert.equal(Predicate.isString(payload.messageKey), true)),
+    (payload) =>
+      Effect.sync(() =>
+        assert.equal(Predicate.isString(payload.messageKey), true)
+      )
   );
 
 void test(
@@ -75,7 +80,9 @@ void test(
       assert.equal('handler' in worker, false);
       assert.deepEqual(Object.keys(worker), ['descriptor']);
 
-      const payload = yield* Schema.decodeEffect(payloadSchema)({ messageKey: 'message-1' });
+      const payload = yield* Schema.decodeEffect(payloadSchema)({
+        messageKey: 'message-1',
+      });
       yield* getOutboxWorkerHandler(worker)(payload, {
         attemptNumber: 1,
         claimId: 'claim-1',
@@ -88,8 +95,8 @@ void test(
         topic: 'producer.message-created',
         workerKey: 'consumer.message-logger',
       });
-    }),
-  ),
+    })
+  )
 );
 
 void test('preserves schema inference for a typed handler payload', () => {
@@ -118,7 +125,7 @@ void test('preserves schema inference for a typed handler payload', () => {
     (payload) => {
       const key: string = payload.messageKey;
       return Effect.sync(() => assert.equal(key, payload.messageKey));
-    },
+    }
   );
 });
 
@@ -149,7 +156,7 @@ void test('rejects invalid identities, retry policies, and lease policies', () =
   for (const descriptor of invalidDescriptors) {
     assert.throws(
       () => defineOutboxWorker(descriptor, () => Effect.void),
-      Schema.is(OutboxWorkerDescriptorError),
+      Schema.is(OutboxWorkerDescriptorError)
     );
   }
 });
@@ -179,8 +186,11 @@ void test('validates and freezes the schema-free installed subscription catalog'
   assert.deepEqual(validated, [subscription]);
   assert.equal(Object.isFrozen(validated), true);
   assert.equal(Object.isFrozen(validated[0]), true);
-  assert.throws(() => validateOutboxWorkerSubscriptions([subscription, subscription]), {
-    name: 'OutboxWorkerDescriptorError',
-    reason: /duplicate Outbox Worker key/u,
-  });
+  assert.throws(
+    () => validateOutboxWorkerSubscriptions([subscription, subscription]),
+    {
+      name: 'OutboxWorkerDescriptorError',
+      reason: /duplicate Outbox Worker key/u,
+    }
+  );
 });

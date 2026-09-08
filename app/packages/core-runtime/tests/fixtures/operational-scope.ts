@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
-import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
+
 import { preserveSystemPrincipalContextTrust } from '../../src/auth/system-principal-context-provenance.ts';
+import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -12,8 +13,9 @@ const withOptionalProperty = <
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+  trailing: Trailing
+) =>
+  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
 
 /** Explicit test seam for suites whose subject is downstream of persisted scope revalidation. */
 export const testOperationalScopeResolver: OperationalScopeResolverService = {
@@ -30,9 +32,9 @@ export const testOperationalScopeResolver: OperationalScopeResolverService = {
             traceId !== undefined,
             'traceId',
             traceId,
-            {},
-          ),
-        ),
-      ),
+            {}
+          )
+        )
+      )
     ),
 };

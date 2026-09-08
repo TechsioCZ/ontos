@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A8** — "Fix the generators before generating more code" — and **A3** — "Replace
  * ambient configuration with Config, ConfigProvider, and Redacted"
@@ -58,13 +57,22 @@ import { optionRecord } from '../shared/options.ts';
  * helper-returned source and dynamic interpolation values are not reconstructed. Report-only.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context } from '@oxlint/plugins';
 
-import { booleanOption, compilePatterns, stringArray } from '../shared/options.ts';
+import { optionRecord } from '../shared/options.ts';
+import {
+  booleanOption,
+  compilePatterns,
+  stringArray,
+} from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { snippet } from '../shared/reporting.ts';
-import { driverText, emittedText, maskText, reportNode } from '../shared/scaffold-text.ts';
+import {
+  driverText,
+  emittedText,
+  maskText,
+  reportNode,
+} from '../shared/scaffold-text.ts';
 import type { StringNode } from '../shared/scaffold-text.ts';
 
 /** Files whose template literals are emitted as source code for someone else's repository. */
@@ -144,23 +152,33 @@ function templateSource(text: string): TemplateSource {
   // Audit D preserves ordinary URL construction and recursive JSON normalization.
   const config =
     /\b(?:ONTOS_[A-Z_]+|process\s*\.\s*env|import\s*\.\s*meta\s*\.\s*env|\w*[Jj][Ww][Kk]\w*|\w*[Cc]onfig\w*|issuer|environment)\b/u.test(
-      syntax,
+      syntax
     );
   return { code: maskText(text), syntax, config };
 }
 
-function isConfigurationMatch(match: RegExpExecArray, source: TemplateSource): boolean {
+function isConfigurationMatch(
+  match: RegExpExecArray,
+  source: TemplateSource
+): boolean {
   const text = match[0];
   // Matches starting inside emitted strings are data, not executable syntax.
   if (source.syntax[match.index] === ' ') return false;
-  if (!source.config && /^(?:new\s+URL|Array\s*\.|typeof|as\s+Record)/u.test(text)) return false;
+  if (
+    !source.config &&
+    /^(?:new\s+URL|Array\s*\.|typeof|as\s+Record)/u.test(text)
+  )
+    return false;
   if (!/^new\s+URL/u.test(text)) return true;
   return /^(?:issuer|endpoint|process\s*\.|environment\s*[.[])/iu.test(
-    source.code.slice(match.index + text.length).trimStart(),
+    source.code.slice(match.index + text.length).trimStart()
   );
 }
 
-function collectMatches(patterns: readonly RegExp[], source: TemplateSource): Match[] {
+function collectMatches(
+  patterns: readonly RegExp[],
+  source: TemplateSource
+): Match[] {
   const found: Match[] = [];
   for (const pattern of patterns) {
     pattern.lastIndex = 0;
@@ -171,7 +189,11 @@ function collectMatches(patterns: readonly RegExp[], source: TemplateSource): Ma
         continue;
       }
       if (isConfigurationMatch(match, source))
-        found.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
+        found.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          text: match[0],
+        });
     }
   }
   return found.sort((a, b) => a.start - b.start || b.end - a.end);

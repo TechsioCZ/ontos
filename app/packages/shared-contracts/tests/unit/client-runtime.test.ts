@@ -14,14 +14,17 @@ import {
 import { Result } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
-const RepresentativeConflictSchema = Schema.TaggedStruct('RepresentativeConflict', {
-  detail: Schema.String,
-  status: Schema.Literal(409),
-  title: Schema.String,
-  type: Schema.String,
-}).pipe(
+const RepresentativeConflictSchema = Schema.TaggedStruct(
+  'RepresentativeConflict',
+  {
+    detail: Schema.String,
+    status: Schema.Literal(409),
+    title: Schema.String,
+    type: Schema.String,
+  }
+).pipe(
   HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
-  HttpApiSchema.status(409),
+  HttpApiSchema.status(409)
 );
 
 const RepresentativeApi = HttpApi.make('RepresentativeApi').add(
@@ -29,28 +32,32 @@ const RepresentativeApi = HttpApi.make('RepresentativeApi').add(
     HttpApiEndpoint.get('read', '/read', {
       error: RepresentativeConflictSchema,
       success: Schema.Struct({ value: Schema.String }),
-    }),
-  ),
+    })
+  )
 );
 
 const controlledTransportFailureFetch: typeof fetch = async () => {
   throw new TypeError('controlled transport failure');
 };
-const invalidResponseFetch: typeof fetch = async () => Response.json({ value: 358 });
+const invalidResponseFetch: typeof fetch = async () =>
+  Response.json({ value: 358 });
 
 const representativeClientEffect = makeEffectBffClient({
   api: RepresentativeApi,
   defaultApiPrefix: '/representative-api',
 });
 type RepresentativeClient = Effect.Success<typeof representativeClientEffect>;
-type RepresentativeReadEffect = ReturnType<RepresentativeClient['representative']['read']>;
+type RepresentativeReadEffect = ReturnType<
+  RepresentativeClient['representative']['read']
+>;
 type RepresentativeReadSuccess = Effect.Success<RepresentativeReadEffect>;
 type RepresentativeReadError = Effect.Error<RepresentativeReadEffect>;
 
-const preserveRepresentativeReadType = (client: RepresentativeClient): RepresentativeReadEffect =>
-  client.representative.read({});
+const preserveRepresentativeReadType = (
+  client: RepresentativeClient
+): RepresentativeReadEffect => client.representative.read({});
 const preserveRepresentativeSuccessType = (
-  success: RepresentativeReadSuccess,
+  success: RepresentativeReadSuccess
 ): Readonly<{ value: string }> => success;
 const preserveRepresentativeErrorType = (error: RepresentativeReadError) => {
   if (Schema.is(RepresentativeConflictSchema)(error)) {
@@ -96,14 +103,14 @@ test('uses the owner-supplied API prefix by default', async () => {
         defaultApiPrefix: '/representative-api',
       }).pipe(
         Effect.flatMap((client) => client.representative.read({})),
-        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-      ),
+        Effect.provideService(FetchHttpClient.Fetch, fakeFetch)
+      )
     );
 
     assert.deepEqual(result, { value: 'default-prefix' });
     assert.deepEqual(
       requests.map(({ url }) => url),
-      ['https://shell.example/representative-api/read'],
+      ['https://shell.example/representative-api/read']
     );
   } finally {
     if (location === undefined) {
@@ -128,14 +135,14 @@ test('uses an explicit caller base URL instead of the owner prefix', async () =>
       defaultApiPrefix: '/representative-api',
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
-      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch)
+    )
   );
 
   assert.deepEqual(result, { value: 'override' });
   assert.deepEqual(
     requests.map(({ url }) => url),
-    ['https://owner.example/custom-api/read'],
+    ['https://owner.example/custom-api/read']
   );
 });
 
@@ -169,20 +176,26 @@ test('propagates supported request context and resolved transport headers', asyn
       },
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
-      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch)
+    )
   );
 
   const [request] = requests;
   assert.ok(request);
   assert.equal(request.headers.get('accept-language'), 'cs');
   assert.equal(request.headers.get('traceparent'), traceparent);
-  assert.equal(request.headers.get('x-operation-id'), operationContext.operationId);
+  assert.equal(
+    request.headers.get('x-operation-id'),
+    operationContext.operationId
+  );
   assert.deepEqual(
     JSON.parse(request.headers.get('x-modernjs-bff-operation-context') ?? ''),
-    operationContext,
+    operationContext
   );
-  assert.equal(request.headers.get('authorization'), 'Bearer owner-resolved-assertion');
+  assert.equal(
+    request.headers.get('authorization'),
+    'Bearer owner-resolved-assertion'
+  );
   assert.equal(request.headers.get('x-correlation-id'), 'correlation-358');
 });
 
@@ -202,8 +215,8 @@ test('omits absent optional request context and transport header values', async 
       transportHeaders: [],
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
-      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch)
+    )
   );
 
   const [request] = requests;
@@ -239,8 +252,8 @@ test('keeps declared backend failures in the typed Effect error channel', async 
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
       Effect.result,
-      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch)
+    )
   );
 
   assert.ok(Result.isFailure(outcome));
@@ -259,8 +272,8 @@ for (const [failureKind, transport, expectedTag] of [
       }).pipe(
         Effect.flatMap((client) => client.representative.read({})),
         Effect.result,
-        Effect.provideService(FetchHttpClient.Fetch, transport),
-      ),
+        Effect.provideService(FetchHttpClient.Fetch, transport)
+      )
     );
 
     assert.ok(Result.isFailure(outcome));

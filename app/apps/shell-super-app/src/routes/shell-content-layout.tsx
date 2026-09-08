@@ -1,6 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import type { ComponentProps } from 'react';
+
 import { AuthenticatedDashboardLayout } from './shell-frame.tsx';
 import type { useShellControls } from './use-shell-controls.ts';
 

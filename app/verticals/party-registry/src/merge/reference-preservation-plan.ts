@@ -1,6 +1,7 @@
+import { Match, Option, Schema } from 'effect';
+
 import type { PartyAlias } from '../../shared/resources/party-alias.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
-import { Match, Option, Schema } from 'effect';
 import { resolveCanonicalPartyRef } from './party-alias-resolution.ts';
 
 const SupportedReferenceClassSchema = Schema.Literals([
@@ -49,7 +50,7 @@ type ReferenceBlocker = Readonly<{ code: string; ownerKey: string }>;
 
 const consumerContractBlocker = (
   ownerKey: string,
-  contract: ConsumerReconciliationContract | undefined,
+  contract: ConsumerReconciliationContract | undefined
 ): ReferenceBlocker | undefined => {
   if (ownerKey === 'party.registry') {
     return undefined;
@@ -70,18 +71,27 @@ const consumerContractBlocker = (
 
 const collectReferenceBlockers = (
   references: readonly PartyReferenceInventoryItem[],
-  consumerReconciliation: readonly ConsumerReconciliationContract[] | undefined,
+  consumerReconciliation: readonly ConsumerReconciliationContract[] | undefined
 ): ReferenceBlocker[] => {
   const blockers: ReferenceBlocker[] = [];
   const contracts = new Map(
-    (consumerReconciliation ?? []).map((contract) => [contract.consumerKey, contract]),
+    (consumerReconciliation ?? []).map((contract) => [
+      contract.consumerKey,
+      contract,
+    ])
   );
   for (const reference of references) {
     if (reference.class === 'UNSUPPORTED') {
-      blockers.push({ code: 'UNSUPPORTED_REFERENCE_CLASS', ownerKey: reference.ownerKey });
+      blockers.push({
+        code: 'UNSUPPORTED_REFERENCE_CLASS',
+        ownerKey: reference.ownerKey,
+      });
       continue;
     }
-    const blocker = consumerContractBlocker(reference.ownerKey, contracts.get(reference.ownerKey));
+    const blocker = consumerContractBlocker(
+      reference.ownerKey,
+      contracts.get(reference.ownerKey)
+    );
     if (blocker !== undefined) {
       blockers.push(blocker);
     }
@@ -94,15 +104,21 @@ export const planReferencePreservation = (
     aliases: readonly PartyAlias[];
     consumerReconciliation?: readonly ConsumerReconciliationContract[];
     references: readonly PartyReferenceInventoryItem[];
-  }>,
+  }>
 ) => {
-  const blockers = collectReferenceBlockers(input.references, input.consumerReconciliation);
+  const blockers = collectReferenceBlockers(
+    input.references,
+    input.consumerReconciliation
+  );
   if (blockers.length > 0) {
     return {
       _tag: 'ReferencePreservationBlocked',
       blockers: [
         ...new Map(
-          blockers.map((blocker) => [`${blocker.code}:${blocker.ownerKey}`, blocker]),
+          blockers.map((blocker) => [
+            `${blocker.code}:${blocker.ownerKey}`,
+            blocker,
+          ])
         ).values(),
       ],
     } as const;
@@ -114,7 +130,10 @@ export const planReferencePreservation = (
       continue;
     }
     const supportedReferenceClass: SupportedReferenceClass = reference.class;
-    const resolution = resolveCanonicalPartyRef(reference.partyRef, input.aliases);
+    const resolution = resolveCanonicalPartyRef(
+      reference.partyRef,
+      input.aliases
+    );
     const planned = Match.value(resolution).pipe(
       Match.tag('CanonicalPartyResolved', ({ canonicalPartyRef }) =>
         Option.some({
@@ -123,7 +142,7 @@ export const planReferencePreservation = (
           originalPartyRef: reference.partyRef,
           ownerKey: reference.ownerKey,
           physicalRewriteRequired: false as const,
-        }),
+        })
       ),
       Match.tag('PartyAliasCycleRejected', ({ _tag }) => {
         blockers.push({ code: _tag, ownerKey: reference.ownerKey });
@@ -137,13 +156,16 @@ export const planReferencePreservation = (
         blockers.push({ code: _tag, ownerKey: reference.ownerKey });
         return Option.none<PlannedPartyReference>();
       }),
-      Match.exhaustive,
+      Match.exhaustive
     );
     if (Option.isSome(planned)) {
       references.push(
         reference.historicalSnapshot === undefined
           ? planned.value
-          : { ...planned.value, historicalSnapshot: reference.historicalSnapshot },
+          : {
+              ...planned.value,
+              historicalSnapshot: reference.historicalSnapshot,
+            }
       );
     }
   }

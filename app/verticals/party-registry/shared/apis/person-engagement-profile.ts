@@ -4,51 +4,48 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { PersonEngagementProfileSchema } from '../domain/engagement-profile.ts';
 import { PersonEngagementProfileRefSchema } from '../resources/person-engagement-profile.ts';
 
 export const PersonEngagementProfileRequestSchema = Schema.Struct({
   profileRef: PersonEngagementProfileRefSchema,
 });
-export type PersonEngagementProfileRequest = typeof PersonEngagementProfileRequestSchema.Type;
-export const PersonEngagementProfileResponseSchema = PersonEngagementProfileSchema;
-export type PersonEngagementProfileResponse = typeof PersonEngagementProfileResponseSchema.Type;
+export type PersonEngagementProfileRequest =
+  typeof PersonEngagementProfileRequestSchema.Type;
+export const PersonEngagementProfileResponseSchema =
+  PersonEngagementProfileSchema;
+export type PersonEngagementProfileResponse =
+  typeof PersonEngagementProfileResponseSchema.Type;
 
-export const PersonEngagementProfileAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PersonEngagementProfileAuthenticationProblem',
-  401,
-);
-export const PersonEngagementProfileInvalidProblemSchema = makeProblemDetailsSchema(
-  'PersonEngagementProfileInvalidProblem',
-  400,
-);
-export const PersonEngagementProfileUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PersonEngagementProfileUnavailableProblem',
-  503,
-);
-export const PersonEngagementProfileForbiddenProblemSchema = makeProblemDetailsSchema(
-  'PersonEngagementProfileForbiddenProblem',
-  403,
-);
-export const PersonEngagementProfileNotFoundProblemSchema = makeProblemDetailsSchema(
-  'PersonEngagementProfileNotFoundProblem',
-  404,
-);
-export const PersonEngagementProfilePolicyProblemSchema = makeProblemDetailsSchema(
-  'PersonEngagementProfilePolicyProblem',
-  422,
-);
-export const PersonEngagementProfilePolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PersonEngagementProfilePolicyConflictProblem',
-  409,
-);
-export const PersonEngagementProfileInternalProblemSchema = makeProblemDetailsSchema(
-  'PersonEngagementProfileInternalProblem',
-  500,
-);
+export const PersonEngagementProfileAuthenticationProblemSchema =
+  makeProblemDetailsSchema('PersonEngagementProfileAuthenticationProblem', 401);
+export const PersonEngagementProfileInvalidProblemSchema =
+  makeProblemDetailsSchema('PersonEngagementProfileInvalidProblem', 400);
+export const PersonEngagementProfileUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'PersonEngagementProfileUnavailableProblem',
+    503
+  );
+export const PersonEngagementProfileForbiddenProblemSchema =
+  makeProblemDetailsSchema('PersonEngagementProfileForbiddenProblem', 403);
+export const PersonEngagementProfileNotFoundProblemSchema =
+  makeProblemDetailsSchema('PersonEngagementProfileNotFoundProblem', 404);
+export const PersonEngagementProfilePolicyProblemSchema =
+  makeProblemDetailsSchema('PersonEngagementProfilePolicyProblem', 422);
+export const PersonEngagementProfilePolicyConflictProblemSchema =
+  makeProblemDetailsSchema('PersonEngagementProfilePolicyConflictProblem', 409);
+export const PersonEngagementProfileInternalProblemSchema =
+  makeProblemDetailsSchema('PersonEngagementProfileInternalProblem', 500);
 
-export const PersonEngagementProfileApi = HttpApi.make('PersonEngagementProfileApi').add(
+export const PersonEngagementProfileApi = HttpApi.make(
+  'PersonEngagementProfileApi'
+).add(
   HttpApiGroup.make('personEngagementProfile').add(
     HttpApiEndpoint.post('execute', '/reads/person-engagement-profile', {
       error: [
@@ -66,6 +63,6 @@ export const PersonEngagementProfileApi = HttpApi.make('PersonEngagementProfileA
       payload: PersonEngagementProfileRequestSchema,
       query: {},
       success: PersonEngagementProfileResponseSchema,
-    }),
-  ),
+    })
+  )
 );

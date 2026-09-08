@@ -8,8 +8,8 @@ const browserRuntime = ManagedRuntime.make(
   Layer.mergeAll(
     Logger.layer([Logger.defaultLogger]),
     Layer.succeed(Tracer.Tracer, browserTracer),
-    Layer.succeed(References.MinimumLogLevel, 'Info'),
-  ),
+    Layer.succeed(References.MinimumLogLevel, 'Info')
+  )
 );
 
 export const runBrowserEffect = browserRuntime.runPromise;

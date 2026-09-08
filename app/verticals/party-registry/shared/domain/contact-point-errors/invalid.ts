@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { ContactPointErrorReasonSchema } from './shared.ts';
 
 export class PartyContactPointInvalid extends Schema.TaggedError<PartyContactPointInvalid>()(
@@ -6,5 +7,5 @@ export class PartyContactPointInvalid extends Schema.TaggedError<PartyContactPoi
   {
     code: Schema.Literal('party_contact_point_invalid'),
     reason: ContactPointErrorReasonSchema,
-  },
+  }
 ) {}

@@ -1,5 +1,29 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
+import {
+  Array as EffectArray,
+  Effect,
+  FileSystem,
+  Option,
+  Schema,
+} from 'effect';
+
+import {
+  governedApiBinding,
+  hasValidGovernedHttpCompositionRoot,
+} from '../../generated-governed-http-boundary.mts';
+import {
+  hasGeneratedOperationGatewayContract,
+  hasGeneratedGovernedClientContract,
+  hasGeneratedModuleApiReadContract,
+  hasGeneratedModuleApiContract,
+  hasNamedImportBinding,
+  hasGeneratedProviderApiContract,
+  hasGeneratedProviderReadContract,
+  hasGeneratedOperationPrincipalContract,
+  hasUniqueExactNamedImport,
+  tokenizeGovernedClient,
+} from '../../generated-module-api-boundary.mts';
+import { planActionBoundaryScaffold } from '../microvertical-action-boundary/scaffold.mts';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -57,23 +81,6 @@ import {
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
-import {
-  governedApiBinding,
-  hasValidGovernedHttpCompositionRoot,
-} from '../../generated-governed-http-boundary.mts';
-import { planActionBoundaryScaffold } from '../microvertical-action-boundary/scaffold.mts';
-import {
-  hasGeneratedOperationGatewayContract,
-  hasGeneratedGovernedClientContract,
-  hasGeneratedModuleApiReadContract,
-  hasGeneratedModuleApiContract,
-  hasNamedImportBinding,
-  hasGeneratedProviderApiContract,
-  hasGeneratedProviderReadContract,
-  hasGeneratedOperationPrincipalContract,
-  hasUniqueExactNamedImport,
-  tokenizeGovernedClient,
-} from '../../generated-module-api-boundary.mts';
 import type {
   GovernedContributionScaffoldConfig,
   Mutation,
@@ -92,9 +99,13 @@ const GovernedContributionKindSchema = Schema.Literals([
   REPORT_KIND,
   SEARCH_PROVIDER_KIND,
 ]);
-export type GovernedContributionKind = typeof GovernedContributionKindSchema.Type;
+export type GovernedContributionKind =
+  typeof GovernedContributionKindSchema.Type;
 
-const ProviderContributionKindSchema = Schema.Literals([REPORT_KIND, SEARCH_PROVIDER_KIND]);
+const ProviderContributionKindSchema = Schema.Literals([
+  REPORT_KIND,
+  SEARCH_PROVIDER_KIND,
+]);
 type ProviderContributionKind = typeof ProviderContributionKindSchema.Type;
 const isProviderContribution = Schema.is(ProviderContributionKindSchema);
 
@@ -102,7 +113,7 @@ type GovernedToken = ReturnType<typeof tokenizeGovernedClient>[number];
 
 const propertyValueKind = (
   tokens: readonly GovernedToken[],
-  property: string,
+  property: string
 ): SyntaxKind | undefined => {
   const [key, colon, value] = tokens;
   return key?.kind === SyntaxKind.Identifier &&
@@ -115,12 +126,15 @@ const propertyValueKind = (
 const directPropertyIndexes = (
   tokens: readonly GovernedToken[],
   property: string,
-  kind: SyntaxKind,
+  kind: SyntaxKind
 ): readonly number[] => {
   const indexes: number[] = [];
   let braceDepth = 0;
   for (const [index, token] of tokens.slice(0, -2).entries()) {
-    if (braceDepth === 1 && propertyValueKind(tokens.slice(index, index + 3), property) === kind) {
+    if (
+      braceDepth === 1 &&
+      propertyValueKind(tokens.slice(index, index + 3), property) === kind
+    ) {
       indexes.push(index);
     }
     if (token.kind === SyntaxKind.OpenBraceToken) {
@@ -134,14 +148,23 @@ const directPropertyIndexes = (
 
 const directTokenStringProperty = (
   tokens: readonly GovernedToken[],
-  property: string,
+  property: string
 ): string | undefined => {
-  const indexes = directPropertyIndexes(tokens, property, SyntaxKind.StringLiteral);
+  const indexes = directPropertyIndexes(
+    tokens,
+    property,
+    SyntaxKind.StringLiteral
+  );
   const [index] = indexes;
-  return indexes.length === 1 && index !== undefined ? tokens[index + 2]?.value : undefined;
+  return indexes.length === 1 && index !== undefined
+    ? tokens[index + 2]?.value
+    : undefined;
 };
 
-const identityTokenKinds = new Set([SyntaxKind.Identifier, SyntaxKind.StringLiteral]);
+const identityTokenKinds = new Set([
+  SyntaxKind.Identifier,
+  SyntaxKind.StringLiteral,
+]);
 
 const compositionIdentity = (source: string): string | undefined => {
   for (const pattern of [
@@ -185,12 +208,12 @@ const insertSortedSlotIdempotently = (
   start: string,
   end: string,
   entry: string,
-  validateEntry: (candidate: string) => boolean,
+  validateEntry: (candidate: string) => boolean
 ): string => {
   const entries = readGeneratedSlotEntries(content, start, end);
   if (entries.some((candidate) => !validateEntry(candidate))) {
     return raiseScaffoldFailure(
-      `generated owner slot contains unsupported developer content: ${start}`,
+      `generated owner slot contains unsupported developer content: ${start}`
     );
   }
   if (generatedSlotContainsExactEntry(content, start, end, entry)) {
@@ -199,9 +222,13 @@ const insertSortedSlotIdempotently = (
   const expectedIdentity = slotEntryIdentity(entry);
   if (
     expectedIdentity !== undefined &&
-    entries.some((candidate) => slotEntryIdentity(candidate) === expectedIdentity)
+    entries.some(
+      (candidate) => slotEntryIdentity(candidate) === expectedIdentity
+    )
   ) {
-    return raiseScaffoldFailure(`generated owner slot contains drift for ${expectedIdentity}`);
+    return raiseScaffoldFailure(
+      `generated owner slot contains drift for ${expectedIdentity}`
+    );
   }
   return insertSortedSlot(content, start, end, [entry], validateEntry);
 };
@@ -211,7 +238,10 @@ const generatedHeader = (kind: GovernedContributionKind) =>
     ? `// @generated by OntOS Codesmith Governed Contribution v1\n// @ontos-contribution-kind ${kind}`
     : `// @generated by OntOS Codesmith ${kind} v1`;
 
-const manifestImport = (kind: GovernedContributionKind, name: string): string | undefined => {
+const manifestImport = (
+  kind: GovernedContributionKind,
+  name: string
+): string | undefined => {
   const value = `${toPascalCase(name)}${kind === PUBLIC_COMPONENT_KIND ? '' : 'Api'}`;
   if (kind === PUBLIC_COMPONENT_KIND) {
     return `import { ${value} } from './src/components/${name}.tsx';`;
@@ -222,10 +252,15 @@ const manifestImport = (kind: GovernedContributionKind, name: string): string | 
   return undefined;
 };
 
-const manifestImportIdentity = (kind: GovernedContributionKind, name: string) => ({
+const manifestImportIdentity = (
+  kind: GovernedContributionKind,
+  name: string
+) => ({
   binding: `${toPascalCase(name)}${kind === PUBLIC_COMPONENT_KIND ? '' : 'Api'}`,
   specifier:
-    kind === PUBLIC_COMPONENT_KIND ? `./src/components/${name}.tsx` : `./shared/apis/${name}.ts`,
+    kind === PUBLIC_COMPONENT_KIND
+      ? `./src/components/${name}.tsx`
+      : `./shared/apis/${name}.ts`,
 });
 
 const renderPublicComponent = (name: string): string => {
@@ -291,7 +326,10 @@ export const ${value} = HttpApi.make('${value}').add(
 };
 
 const renderReadAuthorization = (
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: Pick<
+    GovernedContributionScaffoldConfig,
+    'authorization' | 'permission'
+  >
 ): string => {
   if (config.authorization === 'context_permission') {
     if (
@@ -299,19 +337,24 @@ const renderReadAuthorization = (
       !/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(config.permission)
     ) {
       return raiseScaffoldFailure(
-        'context_permission authorization requires a stable --permission value',
+        'context_permission authorization requires a stable --permission value'
       );
     }
     return `{ kind: 'context_permission', permission: '${config.permission}' }`;
   }
   if (config.permission !== undefined) {
-    return raiseScaffoldFailure('--permission is valid only for context_permission authorization');
+    return raiseScaffoldFailure(
+      '--permission is valid only for context_permission authorization'
+    );
   }
   return `{ kind: '${config.authorization}' }`;
 };
 
 const readAuthorizationExpectation = (
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: Pick<
+    GovernedContributionScaffoldConfig,
+    'authorization' | 'permission'
+  >
 ) =>
   config.permission === undefined
     ? { kind: config.authorization }
@@ -320,7 +363,10 @@ const readAuthorizationExpectation = (
 const renderModuleApiRead = (
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: Pick<
+    GovernedContributionScaffoldConfig,
+    'authorization' | 'permission'
+  >
 ): string => {
   const type = toPascalCase(name);
   return `${generatedHeader(MODULE_API_KIND)}
@@ -364,7 +410,7 @@ const renderGovernedClientConstruction = (
   vertical: OntosVerticalMetadata,
   apiValue: string,
   clientName: string,
-  optionsType: string,
+  optionsType: string
 ): string => `const ${clientName} = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
@@ -380,7 +426,10 @@ const renderGovernedClientConstruction = (
     options,
   );`;
 
-const renderApiClient = (vertical: OntosVerticalMetadata, name: string): string => {
+const renderApiClient = (
+  vertical: OntosVerticalMetadata,
+  name: string
+): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   const clientName = `${toCamelCase(name)}Client`;
@@ -435,7 +484,10 @@ const renderProvider = (
   kind: ProviderContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: Pick<
+    GovernedContributionScaffoldConfig,
+    'authorization' | 'permission'
+  >
 ): string => {
   const type = toPascalCase(name);
   const role = kind === REPORT_KIND ? REPORT_KIND : 'search';
@@ -445,7 +497,8 @@ const renderProvider = (
   const resultSchema = `${type}ProviderResponseSchema`;
   const resultType = `${type}ProviderResponse`;
   const emptyResult = kind === REPORT_KIND ? '{ rows: [] }' : '[]';
-  const resultCount = kind === REPORT_KIND ? 'result.rows.length' : 'result.length';
+  const resultCount =
+    kind === REPORT_KIND ? 'result.rows.length' : 'result.length';
   return `${generatedHeader(kind)}
 import { Effect } from 'effect';
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
@@ -496,7 +549,7 @@ ${kind === SEARCH_PROVIDER_KIND ? '  (result) => result.map(({ ref }) => ref),\n
 const renderProviderClient = (
   kind: ProviderContributionKind,
   vertical: OntosVerticalMetadata,
-  name: string,
+  name: string
 ): string => {
   const type = toPascalCase(name);
   const apiValue = `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
@@ -549,7 +602,7 @@ export const load${type}Client = (
 const renderProviderApiContract = (
   kind: ProviderContributionKind,
   vertical: OntosVerticalMetadata,
-  name: string,
+  name: string
 ): string => {
   const type = toPascalCase(name);
   const apiValue = `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
@@ -629,7 +682,7 @@ export const ${apiValue} = HttpApi.make('${apiValue}').add(
 const renderGovernedServer = (
   apiBinding: string,
   kind: Exclude<GovernedContributionKind, typeof PUBLIC_COMPONENT_KIND>,
-  name: string,
+  name: string
 ): string => {
   const type = toPascalCase(name);
   const names = {
@@ -701,89 +754,106 @@ export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
 `;
 };
 
-const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.patchHttpComposition')(
-  function* patchGovernedHttpComposition(
-    vertical: OntosVerticalMetadata,
-    kind: Exclude<GovernedContributionKind, typeof PUBLIC_COMPONENT_KIND>,
-    name: string,
-  ) {
-    const isModuleApi = kind === MODULE_API_KIND;
-    const type = toPascalCase(name);
-    const contractSuffix = kind === REPORT_KIND ? REPORT_KIND : 'search';
-    const contract = isModuleApi ? name : `${name}-${contractSuffix}`;
-    const apiValue = isModuleApi
-      ? `${type}Api`
-      : `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
-    const serverSuffix = isModuleApi ? 'read' : contractSuffix;
-    const layerValue = `${toCamelCase(name)}ReadApiLive`;
-    const sharedApiPath = yield* tryScaffold('failed to resolve governed HTTP API path', () =>
-      resolveContainedPath(vertical.directory, 'shared', 'api.ts'),
+const patchGovernedHttpComposition = Effect.fn(
+  'GovernedContributionScaffold.patchHttpComposition'
+)(function* patchGovernedHttpComposition(
+  vertical: OntosVerticalMetadata,
+  kind: Exclude<GovernedContributionKind, typeof PUBLIC_COMPONENT_KIND>,
+  name: string
+) {
+  const isModuleApi = kind === MODULE_API_KIND;
+  const type = toPascalCase(name);
+  const contractSuffix = kind === REPORT_KIND ? REPORT_KIND : 'search';
+  const contract = isModuleApi ? name : `${name}-${contractSuffix}`;
+  const apiValue = isModuleApi
+    ? `${type}Api`
+    : `${type}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`;
+  const serverSuffix = isModuleApi ? 'read' : contractSuffix;
+  const layerValue = `${toCamelCase(name)}ReadApiLive`;
+  const sharedApiPath = yield* tryScaffold(
+    'failed to resolve governed HTTP API path',
+    () => resolveContainedPath(vertical.directory, 'shared', 'api.ts')
+  );
+  const handlerRootPath = yield* tryScaffold(
+    'failed to resolve governed HTTP handler root path',
+    () => resolveContainedPath(vertical.directory, 'api', 'index.ts')
+  );
+  const fileSystem = yield* FileSystem.FileSystem;
+  const [sharedApi, handlerRoot] = yield* Effect.all([
+    fileSystem
+      .readFileString(sharedApiPath)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldFailure(
+            `failed to read governed HTTP API root ${sharedApiPath}`,
+            cause
+          )
+        )
+      ),
+    fileSystem
+      .readFileString(handlerRootPath)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldFailure(
+            `failed to read governed HTTP handler root ${handlerRootPath}`,
+            cause
+          )
+        )
+      ),
+  ]);
+  if (!hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot)) {
+    return raiseScaffoldFailure(
+      'governed HTTP composition slots are not bound to the exported runtime root'
     );
-    const handlerRootPath = yield* tryScaffold(
-      'failed to resolve governed HTTP handler root path',
-      () => resolveContainedPath(vertical.directory, 'api', 'index.ts'),
-    );
-    const fileSystem = yield* FileSystem.FileSystem;
-    const [sharedApi, handlerRoot] = yield* Effect.all([
-      fileSystem
-        .readFileString(sharedApiPath)
-        .pipe(
-          Effect.mapError((cause) =>
-            scaffoldFailure(`failed to read governed HTTP API root ${sharedApiPath}`, cause),
-          ),
-        ),
-      fileSystem
-        .readFileString(handlerRootPath)
-        .pipe(
-          Effect.mapError((cause) =>
-            scaffoldFailure(`failed to read governed HTTP handler root ${handlerRootPath}`, cause),
-          ),
-        ),
-    ]);
-    if (!hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot)) {
-      return raiseScaffoldFailure(
-        'governed HTTP composition slots are not bound to the exported runtime root',
-      );
-    }
-    const nextSharedApi = yield* tryScaffold('failed to patch governed HTTP API root', () =>
+  }
+  const nextSharedApi = yield* tryScaffold(
+    'failed to patch governed HTTP API root',
+    () =>
       insertSortedSlotIdempotently(
         insertSortedSlotIdempotently(
           sharedApi
             .replace(
               '// </generated-governed-http-api-additions>;',
-              '// </generated-governed-http-api-additions>\n;',
+              '// </generated-governed-http-api-additions>\n;'
             )
             .replace(
               /(?:\/\*\* Canonical composition-root binding consumed by generated governed HTTP adapters\. \*\/\n)?export const governedHttpApi = [A-Za-z][A-Za-z0-9]*;\n?/u,
-              '',
+              ''
             ),
           GOVERNED_HTTP_API_IMPORT_SLOT_START,
           GOVERNED_HTTP_API_IMPORT_SLOT_END,
           `import { ${apiValue} } from './apis/${contract}.ts';`,
-          (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
+          (candidate) =>
+            candidate.startsWith('import { ') && candidate.endsWith("';")
         ),
         GOVERNED_HTTP_API_ADDITION_SLOT_START,
         GOVERNED_HTTP_API_ADDITION_SLOT_END,
         `.addHttpApi(${apiValue})`,
-        (candidate) => candidate.startsWith('.addHttpApi(') && candidate.endsWith(')'),
-      ),
-    );
-    const nextHandlerRoot = yield* tryScaffold('failed to patch governed HTTP handler root', () => {
+        (candidate) =>
+          candidate.startsWith('.addHttpApi(') && candidate.endsWith(')')
+      )
+  );
+  const nextHandlerRoot = yield* tryScaffold(
+    'failed to patch governed HTTP handler root',
+    () => {
       let next = insertSortedSlotIdempotently(
         insertSortedSlotIdempotently(
           handlerRoot,
           GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
           GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END,
           `import { ${layerValue} } from './${name}-${serverSuffix}-server.ts';`,
-          (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
+          (candidate) =>
+            candidate.startsWith('import { ') && candidate.endsWith("';")
         ),
         GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
         GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
         `${layerValue}.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),`,
         (candidate) =>
           /^[A-Za-z][A-Za-z0-9]*ReadApiLive\.pipe\(/u.test(candidate) &&
-          candidate.includes('GovernedReadLayer.provide(governedReadRuntimeLive)') &&
-          candidate.endsWith('),'),
+          candidate.includes(
+            'GovernedReadLayer.provide(governedReadRuntimeLive)'
+          ) &&
+          candidate.endsWith('),')
       );
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
         for (const supportImport of [
@@ -795,7 +865,8 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
             GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
             supportImport,
-            (candidate) => candidate.startsWith('import { ') && candidate.endsWith("';"),
+            (candidate) =>
+              candidate.startsWith('import { ') && candidate.endsWith("';")
           );
         }
       }
@@ -806,28 +877,30 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
           'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
           (candidate) =>
-            candidate.startsWith('GovernedReadLayer.provide(') && candidate.endsWith('),'),
+            candidate.startsWith('GovernedReadLayer.provide(') &&
+            candidate.endsWith('),')
         );
       }
       return next;
-    });
-    const mutations: Mutation[] = [];
-    const sharedApiMutation = yield* tryScaffold('failed to update governed HTTP API root', () =>
-      updateMutation(sharedApiPath, sharedApi, nextSharedApi),
-    );
-    const handlerRootMutation = yield* tryScaffold(
-      'failed to update governed HTTP handler root',
-      () => updateMutation(handlerRootPath, handlerRoot, nextHandlerRoot),
-    );
-    if (sharedApiMutation !== undefined) {
-      mutations.push(sharedApiMutation);
     }
-    if (handlerRootMutation !== undefined) {
-      mutations.push(handlerRootMutation);
-    }
-    return mutations;
-  },
-);
+  );
+  const mutations: Mutation[] = [];
+  const sharedApiMutation = yield* tryScaffold(
+    'failed to update governed HTTP API root',
+    () => updateMutation(sharedApiPath, sharedApi, nextSharedApi)
+  );
+  const handlerRootMutation = yield* tryScaffold(
+    'failed to update governed HTTP handler root',
+    () => updateMutation(handlerRootPath, handlerRoot, nextHandlerRoot)
+  );
+  if (sharedApiMutation !== undefined) {
+    mutations.push(sharedApiMutation);
+  }
+  if (handlerRootMutation !== undefined) {
+    mutations.push(handlerRootMutation);
+  }
+  return mutations;
+});
 
 interface GovernedContributionSlots {
   readonly manifest: readonly [string, string, string][];
@@ -839,14 +912,26 @@ const manifestOwnerSlots = [
   [MODULE_MANIFEST_COMPONENT_SLOT_START, MODULE_MANIFEST_COMPONENT_SLOT_END],
   [MODULE_MANIFEST_REPORT_SLOT_START, MODULE_MANIFEST_REPORT_SLOT_END],
   [MODULE_MANIFEST_SEARCH_SLOT_START, MODULE_MANIFEST_SEARCH_SLOT_END],
-  [MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START, MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END],
-  [MODULE_MANIFEST_SHELL_REPORT_SLOT_START, MODULE_MANIFEST_SHELL_REPORT_SLOT_END],
-  [MODULE_MANIFEST_SHELL_SEARCH_SLOT_START, MODULE_MANIFEST_SHELL_SEARCH_SLOT_END],
+  [
+    MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START,
+    MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
+  ],
+  [
+    MODULE_MANIFEST_SHELL_REPORT_SLOT_START,
+    MODULE_MANIFEST_SHELL_REPORT_SLOT_END,
+  ],
+  [
+    MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
+    MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
+  ],
 ] as const;
 
 const registrationOwnerSlots = [
   [MODULE_REGISTRATION_API_SLOT_START, MODULE_REGISTRATION_API_SLOT_END],
-  [MODULE_REGISTRATION_COMPONENT_SLOT_START, MODULE_REGISTRATION_COMPONENT_SLOT_END],
+  [
+    MODULE_REGISTRATION_COMPONENT_SLOT_START,
+    MODULE_REGISTRATION_COMPONENT_SLOT_END,
+  ],
   [MODULE_REGISTRATION_REPORT_SLOT_START, MODULE_REGISTRATION_REPORT_SLOT_END],
   [MODULE_REGISTRATION_SEARCH_SLOT_START, MODULE_REGISTRATION_SEARCH_SLOT_END],
 ] as const;
@@ -856,7 +941,10 @@ const slotLine = (
   vertical: OntosVerticalMetadata,
   name: string,
   resource: string | undefined,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: Pick<
+    GovernedContributionScaffoldConfig,
+    'authorization' | 'permission'
+  >
 ): GovernedContributionSlots => {
   const key = `${vertical.moduleId}.${name}`;
   if (kind === PUBLIC_COMPONENT_KIND) {
@@ -954,7 +1042,7 @@ const slotLine = (
 
 const readStringArray = (
   tokens: ReturnType<typeof tokenizeGovernedClient>,
-  start: number,
+  start: number
 ): readonly string[] | undefined => {
   const values: string[] = [];
   for (let cursor = start; cursor < tokens.length; cursor += 1) {
@@ -971,15 +1059,22 @@ const readStringArray = (
   return undefined;
 };
 
-const directStringProperty = (source: string, property: string): string | undefined =>
+const directStringProperty = (
+  source: string,
+  property: string
+): string | undefined =>
   directTokenStringProperty(tokenizeGovernedClient(source), property);
 
 const directStringArrayProperty = (
   source: string,
-  property: string,
+  property: string
 ): readonly string[] | undefined => {
   const tokens = tokenizeGovernedClient(source);
-  const [index] = directPropertyIndexes(tokens, property, SyntaxKind.OpenBracketToken);
+  const [index] = directPropertyIndexes(
+    tokens,
+    property,
+    SyntaxKind.OpenBracketToken
+  );
   return index === undefined ? undefined : readStringArray(tokens, index + 3);
 };
 
@@ -988,27 +1083,39 @@ const directStringArrayProperty = (
 const acceptsAdaptedProviderDescriptor = (
   start: string,
   current: string,
-  expected: string,
+  expected: string
 ): boolean => {
-  if (start !== MODULE_MANIFEST_SEARCH_SLOT_START && start !== MODULE_MANIFEST_REPORT_SLOT_START) {
+  if (
+    start !== MODULE_MANIFEST_SEARCH_SLOT_START &&
+    start !== MODULE_MANIFEST_REPORT_SLOT_START
+  ) {
     return false;
   }
   const requiredStringProperties = ['key', 'owningModuleId', 'resourceType'];
   if (
     requiredStringProperties.some(
       (property) =>
-        directStringProperty(current, property) !== directStringProperty(expected, property),
+        directStringProperty(current, property) !==
+        directStringProperty(expected, property)
     )
   ) {
     return false;
   }
-  const expectedResourceTypes = directStringArrayProperty(expected, 'resourceTypes');
-  const currentResourceTypes = directStringArrayProperty(current, 'resourceTypes');
+  const expectedResourceTypes = directStringArrayProperty(
+    expected,
+    'resourceTypes'
+  );
+  const currentResourceTypes = directStringArrayProperty(
+    current,
+    'resourceTypes'
+  );
   if (
     expectedResourceTypes !== undefined &&
     (currentResourceTypes === undefined ||
       currentResourceTypes.length !== expectedResourceTypes.length ||
-      expectedResourceTypes.some((value, index) => currentResourceTypes[index] !== value))
+      expectedResourceTypes.some(
+        (value, index) => currentResourceTypes[index] !== value
+      ))
   ) {
     return false;
   }
@@ -1020,7 +1127,10 @@ const acceptsAdaptedProviderDescriptor = (
   );
 };
 
-const structurallyMatchesGeneratedEntry = (current: string, expected: string): boolean => {
+const structurallyMatchesGeneratedEntry = (
+  current: string,
+  expected: string
+): boolean => {
   const currentTokens = tokenizeGovernedClient(current);
   const expectedTokens = tokenizeGovernedClient(expected);
   if (currentTokens.length !== expectedTokens.length) {
@@ -1033,7 +1143,9 @@ const structurallyMatchesGeneratedEntry = (current: string, expected: string): b
     }
     const carriesIdentity = identityTokenKinds.has(expectedToken.kind);
     const isPropertyKey =
-      index === 0 && carriesIdentity && identityTokenKinds.has(currentToken.kind);
+      index === 0 &&
+      carriesIdentity &&
+      identityTokenKinds.has(currentToken.kind);
     return (
       (isPropertyKey || currentToken.kind === expectedToken.kind) &&
       (!carriesIdentity || currentToken.value === expectedToken.value)
@@ -1044,41 +1156,51 @@ const structurallyMatchesGeneratedEntry = (current: string, expected: string): b
 const patchSlots = (
   content: string,
   slots: readonly [string, string, string][],
-  ownerSlots: readonly (readonly [string, string])[],
+  ownerSlots: readonly (readonly [string, string])[]
 ): string =>
   slots.reduce((current, [start, end, line]) => {
     const entries = readGeneratedSlotEntries(current, start, end);
     if (entries.some((candidate) => !candidate.endsWith(','))) {
       return raiseScaffoldFailure(
-        `generated owner slot contains unsupported developer content: ${start}`,
+        `generated owner slot contains unsupported developer content: ${start}`
       );
     }
     const identity = slotEntryIdentity(line);
     const allOwnerEntries = ownerSlots
       .filter(
-        ([ownerStart, ownerEnd]) => current.includes(ownerStart) && current.includes(ownerEnd),
+        ([ownerStart, ownerEnd]) =>
+          current.includes(ownerStart) && current.includes(ownerEnd)
       )
       .flatMap(([ownerStart, ownerEnd]) =>
-        readGeneratedSlotEntries(current, ownerStart, ownerEnd).map((entry) => ({
-          entry,
-          start: ownerStart,
-        })),
+        readGeneratedSlotEntries(current, ownerStart, ownerEnd).map(
+          (entry) => ({
+            entry,
+            start: ownerStart,
+          })
+        )
       );
-    if (allOwnerEntries.some(({ entry }) => slotEntryIdentity(entry) === undefined)) {
+    if (
+      allOwnerEntries.some(
+        ({ entry }) => slotEntryIdentity(entry) === undefined
+      )
+    ) {
       return raiseScaffoldFailure(
-        `generated owner slot contains unsupported developer content: ${start}`,
+        `generated owner slot contains unsupported developer content: ${start}`
       );
     }
     const identityMatches = allOwnerEntries.filter(
-      ({ entry }) => identity !== undefined && slotEntryIdentity(entry) === identity,
+      ({ entry }) =>
+        identity !== undefined && slotEntryIdentity(entry) === identity
     );
     if (identityMatches.some((match) => match.start !== start)) {
       return raiseScaffoldFailure(
-        `generated owner slot contains mismatched identity in the wrong contribution category: ${identity}`,
+        `generated owner slot contains mismatched identity in the wrong contribution category: ${identity}`
       );
     }
     if (identityMatches.length > 1) {
-      return raiseScaffoldFailure(`generated owner slot contains duplicate identity: ${identity}`);
+      return raiseScaffoldFailure(
+        `generated owner slot contains duplicate identity: ${identity}`
+      );
     }
     if (generatedSlotContainsExactEntry(current, start, end, line)) {
       return current;
@@ -1092,40 +1214,54 @@ const patchSlots = (
       return current;
     }
     if (identityMatch !== undefined) {
-      return raiseScaffoldFailure(`generated owner slot contains mismatched identity: ${identity}`);
+      return raiseScaffoldFailure(
+        `generated owner slot contains mismatched identity: ${identity}`
+      );
     }
-    return insertSortedSlot(current, start, end, [line], (candidate) => candidate.endsWith(','));
+    return insertSortedSlot(current, start, end, [line], (candidate) =>
+      candidate.endsWith(',')
+    );
   }, content);
 /* eslint-enable unicorn/no-array-reduce */
 
-const patchFederationExposure = Effect.fn('GovernedContributionScaffold.patchFederationExposure')(
-  function* patchFederationExposure(vertical: OntosVerticalMetadata, name: string) {
-    const configPath = yield* tryScaffold('failed to resolve Module Federation config path', () =>
-      resolveContainedPath(vertical.directory, 'module-federation.config.ts'),
+const patchFederationExposure = Effect.fn(
+  'GovernedContributionScaffold.patchFederationExposure'
+)(function* patchFederationExposure(
+  vertical: OntosVerticalMetadata,
+  name: string
+) {
+  const configPath = yield* tryScaffold(
+    'failed to resolve Module Federation config path',
+    () =>
+      resolveContainedPath(vertical.directory, 'module-federation.config.ts')
+  );
+  const fileSystem = yield* FileSystem.FileSystem;
+  const content = yield* fileSystem
+    .readFileString(configPath)
+    .pipe(
+      Effect.mapError((cause) =>
+        scaffoldFailure(
+          `failed to read Module Federation config ${configPath}`,
+          cause
+        )
+      )
     );
-    const fileSystem = yield* FileSystem.FileSystem;
-    const content = yield* fileSystem
-      .readFileString(configPath)
-      .pipe(
-        Effect.mapError((cause) =>
-          scaffoldFailure(`failed to read Module Federation config ${configPath}`, cause),
-        ),
-      );
-    const next = yield* tryScaffold('failed to patch Module Federation exposure', () =>
+  const next = yield* tryScaffold(
+    'failed to patch Module Federation exposure',
+    () =>
       insertModuleFederationExposure(
         content,
         `./${toPascalCase(name)}`,
-        `./src/components/${name}.tsx`,
-      ),
-    );
-    return { content: next, kind: 'update' as const, path: configPath };
-  },
-);
+        `./src/components/${name}.tsx`
+      )
+  );
+  return { content: next, kind: 'update' as const, path: configPath };
+});
 
 const acceptsGeneratedClient = (
   kind: GovernedContributionKind,
   vertical: OntosVerticalMetadata,
-  name: string,
+  name: string
 ): ((current: string) => boolean) => {
   const type = toPascalCase(name);
   const isModuleApi = kind === MODULE_API_KIND;
@@ -1138,7 +1274,10 @@ const acceptsGeneratedClient = (
   const operationStem = isModuleApi ? `execute${type}` : `load${type}Client`;
   const expectedGroups = isModuleApi
     ? [toCamelCase(name)]
-    : [kind === REPORT_KIND ? 'reports' : 'search', `${toCamelCase(name)}${providerKind}`];
+    : [
+        kind === REPORT_KIND ? 'reports' : 'search',
+        `${toCamelCase(name)}${providerKind}`,
+      ];
   return (current) =>
     expectedGroups.some((endpointGroup) =>
       hasGeneratedGovernedClientContract(current, {
@@ -1152,7 +1291,7 @@ const acceptsGeneratedClient = (
           ? `../../shared/apis/${name}.ts`
           : `../../shared/apis/${name}-${kind === REPORT_KIND ? REPORT_KIND : 'search'}.ts`,
         publicOperation: operationStem,
-      }),
+      })
     );
 };
 
@@ -1162,7 +1301,7 @@ const operationBoundaryPaths = (vertical: OntosVerticalMetadata) => ({
 });
 
 const hasExistingOperationBoundary = (
-  vertical: OntosVerticalMetadata,
+  vertical: OntosVerticalMetadata
 ): Effect.Effect<boolean, ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* hasExistingOperationBoundaryEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1171,7 +1310,9 @@ const hasExistingOperationBoundary = (
       fileSystem.exists(principalPath),
       fileSystem.exists(gatewayPath),
     ]).pipe(
-      Effect.mapError((cause) => scaffoldFailure('failed to inspect operation boundary', cause)),
+      Effect.mapError((cause) =>
+        scaffoldFailure('failed to inspect operation boundary', cause)
+      )
     );
     if (!exists.every(Boolean)) {
       return false;
@@ -1180,7 +1321,9 @@ const hasExistingOperationBoundary = (
       fileSystem.readFileString(principalPath),
       fileSystem.readFileString(gatewayPath),
     ]).pipe(
-      Effect.mapError((cause) => scaffoldFailure('failed to read operation boundary', cause)),
+      Effect.mapError((cause) =>
+        scaffoldFailure('failed to read operation boundary', cause)
+      )
     );
     const header = `// @generated by OntOS Codesmith MicroVertical Action Boundary v1\n// @ontos-action-boundary-owner ${vertical.appId}\n`;
     return (
@@ -1190,50 +1333,63 @@ const hasExistingOperationBoundary = (
     );
   });
 
-const planOperationBoundary = Effect.fn('GovernedContributionScaffold.planOperationBoundary')(
-  function* planOperationBoundary(workspaceRoot: string, vertical: OntosVerticalMetadata) {
-    if (!(yield* hasExistingOperationBoundary(vertical))) {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const { gatewayPath, principalPath } = operationBoundaryPaths(vertical);
-      const existingBoundaryFiles = yield* Effect.all([
-        fileSystem.exists(principalPath),
-        fileSystem.exists(gatewayPath),
-      ]).pipe(
-        Effect.mapError((cause) =>
-          scaffoldFailure('failed to inspect operation boundary files', cause),
-        ),
-      );
-      if (existingBoundaryFiles.every(Boolean)) {
-        return yield* Effect.fail(
-          scaffoldFailure('refusing to overwrite existing business file: operation boundary'),
-        );
-      }
-      const boundary = yield* planActionBoundaryScaffold(workspaceRoot, {
-        vertical: vertical.slug,
-      });
-      return boundary.mutations;
-    }
-    const dependencyMutation = yield* tryScaffold(
-      'failed to ensure governed client dependency',
-      () =>
-        withExactDependencies(vertical, {
-          '@app/shared-contracts': 'workspace:*',
-        }),
+const planOperationBoundary = Effect.fn(
+  'GovernedContributionScaffold.planOperationBoundary'
+)(function* planOperationBoundary(
+  workspaceRoot: string,
+  vertical: OntosVerticalMetadata
+) {
+  if (!(yield* hasExistingOperationBoundary(vertical))) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const { gatewayPath, principalPath } = operationBoundaryPaths(vertical);
+    const existingBoundaryFiles = yield* Effect.all([
+      fileSystem.exists(principalPath),
+      fileSystem.exists(gatewayPath),
+    ]).pipe(
+      Effect.mapError((cause) =>
+        scaffoldFailure('failed to inspect operation boundary files', cause)
+      )
     );
-    return EffectArray.getSomes([Option.fromNullishOr(dependencyMutation)]);
-  },
-);
+    if (existingBoundaryFiles.every(Boolean)) {
+      return yield* Effect.fail(
+        scaffoldFailure(
+          'refusing to overwrite existing business file: operation boundary'
+        )
+      );
+    }
+    const boundary = yield* planActionBoundaryScaffold(workspaceRoot, {
+      vertical: vertical.slug,
+    });
+    return boundary.mutations;
+  }
+  const dependencyMutation = yield* tryScaffold(
+    'failed to ensure governed client dependency',
+    () =>
+      withExactDependencies(vertical, {
+        '@app/shared-contracts': 'workspace:*',
+      })
+  );
+  return EffectArray.getSomes([Option.fromNullishOr(dependencyMutation)]);
+});
 
 const acceptsGovernedArtifact = (
   kind: typeof MODULE_API_KIND | ProviderContributionKind,
   vertical: OntosVerticalMetadata,
   name: string,
-  config: Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'>,
+  config: Pick<
+    GovernedContributionScaffoldConfig,
+    'authorization' | 'permission'
+  >
 ): ((current: string) => boolean) => {
   if (kind === MODULE_API_KIND) {
     return (current) =>
       current.startsWith(`${generatedHeader(kind)}\n`) &&
-      hasGeneratedModuleApiContract(current, `${toPascalCase(name)}Api`, toCamelCase(name), name);
+      hasGeneratedModuleApiContract(
+        current,
+        `${toPascalCase(name)}Api`,
+        toCamelCase(name),
+        name
+      );
   }
   if (!isProviderContribution(kind)) {
     return () => false;
@@ -1245,48 +1401,59 @@ const acceptsGovernedArtifact = (
       vertical.moduleId,
       name,
       kind === REPORT_KIND ? 'report' : 'search',
-      readAuthorizationExpectation(config),
+      readAuthorizationExpectation(config)
     );
 };
 
-const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport')(
-  function* planGovernedTransport(
-    workspaceRoot: string,
-    kind: GovernedContributionKind,
-    vertical: OntosVerticalMetadata,
-    name: string,
-  ) {
-    const isApi = kind === MODULE_API_KIND;
-    const mutations: Mutation[] = [];
-    let clientPath: string | undefined;
-    let serverPath: string | undefined;
-    if (kind !== PUBLIC_COMPONENT_KIND) {
-      const suffix = {
-        [MODULE_API_KIND]: 'client',
-        [REPORT_KIND]: 'report-client',
-        [SEARCH_PROVIDER_KIND]: 'search-client',
-      }[kind];
-      clientPath = yield* tryScaffold('failed to resolve governed client path', () =>
-        resolveContainedPath(vertical.directory, 'src', 'api', `${name}-${suffix}.ts`),
+const planGovernedTransport = Effect.fn(
+  'GovernedContributionScaffold.transport'
+)(function* planGovernedTransport(
+  workspaceRoot: string,
+  kind: GovernedContributionKind,
+  vertical: OntosVerticalMetadata,
+  name: string
+) {
+  const isApi = kind === MODULE_API_KIND;
+  const mutations: Mutation[] = [];
+  let clientPath: string | undefined;
+  let serverPath: string | undefined;
+  if (kind !== PUBLIC_COMPONENT_KIND) {
+    const suffix = {
+      [MODULE_API_KIND]: 'client',
+      [REPORT_KIND]: 'report-client',
+      [SEARCH_PROVIDER_KIND]: 'search-client',
+    }[kind];
+    clientPath = yield* tryScaffold(
+      'failed to resolve governed client path',
+      () =>
+        resolveContainedPath(
+          vertical.directory,
+          'src',
+          'api',
+          `${name}-${suffix}.ts`
+        )
+    );
+    const clientMutation = yield* createOrAcceptGeneratedMutationEffect(
+      clientPath,
+      isApi
+        ? renderApiClient(vertical, name)
+        : renderProviderClient(kind, vertical, name),
+      acceptsGeneratedClient(kind, vertical, name)
+    );
+    mutations.push(...EffectArray.getSomes([clientMutation]));
+    if (isProviderContribution(kind)) {
+      const providerContractPath = yield* tryScaffold(
+        'failed to resolve provider contract path',
+        () =>
+          resolveContainedPath(
+            vertical.directory,
+            'shared',
+            'apis',
+            `${name}-${kind === REPORT_KIND ? REPORT_KIND : 'search'}.ts`
+          )
       );
-      const clientMutation = yield* createOrAcceptGeneratedMutationEffect(
-        clientPath,
-        isApi ? renderApiClient(vertical, name) : renderProviderClient(kind, vertical, name),
-        acceptsGeneratedClient(kind, vertical, name),
-      );
-      mutations.push(...EffectArray.getSomes([clientMutation]));
-      if (isProviderContribution(kind)) {
-        const providerContractPath = yield* tryScaffold(
-          'failed to resolve provider contract path',
-          () =>
-            resolveContainedPath(
-              vertical.directory,
-              'shared',
-              'apis',
-              `${name}-${kind === REPORT_KIND ? REPORT_KIND : 'search'}.ts`,
-            ),
-        );
-        const providerContractMutation = yield* createOrAcceptGeneratedMutationEffect(
+      const providerContractMutation =
+        yield* createOrAcceptGeneratedMutationEffect(
           providerContractPath,
           renderProviderApiContract(kind, vertical, name),
           (current) =>
@@ -1296,75 +1463,86 @@ const planGovernedTransport = Effect.fn('GovernedContributionScaffold.transport'
               `${toPascalCase(name)}${kind === REPORT_KIND ? 'Report' : 'Search'}Api`,
               vertical.moduleId,
               name,
-              kind === REPORT_KIND ? 'report' : 'search',
-            ),
+              kind === REPORT_KIND ? 'report' : 'search'
+            )
         );
-        mutations.push(...EffectArray.getSomes([providerContractMutation]));
-      }
-      serverPath = yield* tryScaffold('failed to resolve governed server path', () =>
+      mutations.push(...EffectArray.getSomes([providerContractMutation]));
+    }
+    serverPath = yield* tryScaffold(
+      'failed to resolve governed server path',
+      () =>
         resolveContainedPath(
           vertical.directory,
           'api',
-          `${name}-${{ [MODULE_API_KIND]: 'read', [REPORT_KIND]: REPORT_KIND, [SEARCH_PROVIDER_KIND]: 'search' }[kind]}-server.ts`,
-        ),
+          `${name}-${{ [MODULE_API_KIND]: 'read', [REPORT_KIND]: REPORT_KIND, [SEARCH_PROVIDER_KIND]: 'search' }[kind]}-server.ts`
+        )
+    );
+    const sharedApiPath = yield* tryScaffold(
+      'failed to resolve governed API binding',
+      () => resolveContainedPath(vertical.directory, 'shared', 'api.ts')
+    );
+    const fileSystem = yield* FileSystem.FileSystem;
+    const sharedApi = yield* fileSystem
+      .readFileString(sharedApiPath)
+      .pipe(
+        Effect.mapError((cause) =>
+          scaffoldFailure('failed to read governed API binding', cause)
+        )
       );
-      const sharedApiPath = yield* tryScaffold('failed to resolve governed API binding', () =>
-        resolveContainedPath(vertical.directory, 'shared', 'api.ts'),
-      );
-      const fileSystem = yield* FileSystem.FileSystem;
-      const sharedApi = yield* fileSystem
-        .readFileString(sharedApiPath)
-        .pipe(
-          Effect.mapError((cause) => scaffoldFailure('failed to read governed API binding', cause)),
-        );
-      const apiBinding = governedApiBinding(sharedApi);
-      if (apiBinding === undefined) {
-        return raiseScaffoldFailure(
-          'governed HTTP composition slots are not bound to the exported runtime root',
-        );
-      }
-      const serverMutation = yield* createOrAcceptGeneratedMutationEffect(
-        serverPath,
-        renderGovernedServer(apiBinding, kind, name),
-      );
-      mutations.push(
-        ...EffectArray.getSomes([serverMutation]),
-        ...(yield* patchGovernedHttpComposition(vertical, kind, name)),
-        ...(yield* planOperationBoundary(workspaceRoot, vertical)),
+    const apiBinding = governedApiBinding(sharedApi);
+    if (apiBinding === undefined) {
+      return raiseScaffoldFailure(
+        'governed HTTP composition slots are not bound to the exported runtime root'
       );
     }
-    return { clientPath, mutations, serverPath };
-  },
-);
+    const serverMutation = yield* createOrAcceptGeneratedMutationEffect(
+      serverPath,
+      renderGovernedServer(apiBinding, kind, name)
+    );
+    mutations.push(
+      ...EffectArray.getSomes([serverMutation]),
+      ...(yield* patchGovernedHttpComposition(vertical, kind, name)),
+      ...(yield* planOperationBoundary(workspaceRoot, vertical))
+    );
+  }
+  return { clientPath, mutations, serverPath };
+});
 
-export const planGovernedContributionScaffold = Effect.fn('GovernedContributionScaffold.plan')(
-  function* planGovernedContributionScaffold(
-    workspaceRoot: string,
-    kind: GovernedContributionKind,
-    config: GovernedContributionScaffoldConfig,
-  ) {
-    const name = yield* tryScaffold('governed contribution name is invalid', () =>
-      requireCanonicalSlug(config.name, kind),
-    );
-    const resource =
-      config.resource === undefined
-        ? undefined
-        : yield* tryScaffold('governed contribution resource is invalid', () =>
-            requireCanonicalSlug(config.resource ?? '', 'resource'),
-          );
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
-    const isComponent = kind === PUBLIC_COMPONENT_KIND;
-    const isApi = kind === MODULE_API_KIND;
-    const artifactSegments = {
-      [MODULE_API_KIND]: ['shared', 'apis', `${name}.ts`],
-      [PUBLIC_COMPONENT_KIND]: ['src', 'components', `${name}.tsx`],
-      [REPORT_KIND]: ['src', 'reports', `${name}.provider.ts`],
-      [SEARCH_PROVIDER_KIND]: ['src', 'search', `${name}.provider.ts`],
-    };
-    const artifactPath = yield* tryScaffold('failed to resolve governed contribution path', () =>
-      resolveContainedPath(vertical.directory, ...artifactSegments[kind]),
-    );
-    const artifact = yield* tryScaffold('failed to render governed contribution', () => {
+export const planGovernedContributionScaffold = Effect.fn(
+  'GovernedContributionScaffold.plan'
+)(function* planGovernedContributionScaffold(
+  workspaceRoot: string,
+  kind: GovernedContributionKind,
+  config: GovernedContributionScaffoldConfig
+) {
+  const name = yield* tryScaffold('governed contribution name is invalid', () =>
+    requireCanonicalSlug(config.name, kind)
+  );
+  const resource =
+    config.resource === undefined
+      ? undefined
+      : yield* tryScaffold('governed contribution resource is invalid', () =>
+          requireCanonicalSlug(config.resource ?? '', 'resource')
+        );
+  const vertical = yield* discoverOntosModuleEffect(
+    workspaceRoot,
+    config.vertical
+  );
+  const isComponent = kind === PUBLIC_COMPONENT_KIND;
+  const isApi = kind === MODULE_API_KIND;
+  const artifactSegments = {
+    [MODULE_API_KIND]: ['shared', 'apis', `${name}.ts`],
+    [PUBLIC_COMPONENT_KIND]: ['src', 'components', `${name}.tsx`],
+    [REPORT_KIND]: ['src', 'reports', `${name}.provider.ts`],
+    [SEARCH_PROVIDER_KIND]: ['src', 'search', `${name}.provider.ts`],
+  };
+  const artifactPath = yield* tryScaffold(
+    'failed to resolve governed contribution path',
+    () => resolveContainedPath(vertical.directory, ...artifactSegments[kind])
+  );
+  const artifact = yield* tryScaffold(
+    'failed to render governed contribution',
+    () => {
       if (isComponent) {
         return renderPublicComponent(name);
       }
@@ -1372,91 +1550,124 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
         return renderApiContract(name);
       }
       return renderProvider(kind, vertical, name, config);
-    });
-    const artifactMutation = isComponent
-      ? Option.some(yield* createMutationEffect(artifactPath, artifact))
-      : yield* createOrAcceptGeneratedMutationEffect(
-          artifactPath,
-          artifact,
-          acceptsGovernedArtifact(kind, vertical, name, config),
-        );
-    const mutations: Mutation[] = EffectArray.getSomes([artifactMutation]);
-    if (isApi) {
-      const readPath = yield* tryScaffold('failed to resolve governed read path', () =>
-        resolveContainedPath(vertical.directory, 'src', 'api', `${name}.read.ts`),
-      );
-      const readSource = yield* tryScaffold('failed to render governed read', () =>
-        renderModuleApiRead(vertical, name, config),
-      );
-      const readMutation = yield* createOrAcceptGeneratedMutationEffect(
-        readPath,
-        readSource,
-        (current) =>
-          current.startsWith(`${generatedHeader(MODULE_API_KIND)}\n`) &&
-          hasGeneratedModuleApiReadContract(
-            current,
-            vertical.moduleId,
-            name,
-            readAuthorizationExpectation(config),
-          ),
-      );
-      mutations.push(...EffectArray.getSomes([readMutation]));
     }
-    const transport = yield* planGovernedTransport(workspaceRoot, kind, vertical, name);
-    const { clientPath, serverPath } = transport;
-    mutations.push(...transport.mutations);
-    const ownerImport = manifestImport(kind, name);
-    const ownerImportIdentity = manifestImportIdentity(kind, name);
-    let manifest = vertical.manifestContent;
-    if (
-      ownerImport !== undefined &&
-      !hasUniqueExactNamedImport(
-        manifest,
-        ownerImportIdentity.binding,
-        ownerImportIdentity.specifier,
-      )
-    ) {
-      if (hasNamedImportBinding(manifest, ownerImportIdentity.binding)) {
-        return yield* scaffoldFailure(
-          `generated owner import binding conflicts with ${ownerImportIdentity.binding}`,
-        );
-      }
-      manifest = yield* tryScaffold('failed to patch module manifest imports', () =>
+  );
+  const artifactMutation = isComponent
+    ? Option.some(yield* createMutationEffect(artifactPath, artifact))
+    : yield* createOrAcceptGeneratedMutationEffect(
+        artifactPath,
+        artifact,
+        acceptsGovernedArtifact(kind, vertical, name, config)
+      );
+  const mutations: Mutation[] = EffectArray.getSomes([artifactMutation]);
+  if (isApi) {
+    const readPath = yield* tryScaffold(
+      'failed to resolve governed read path',
+      () =>
+        resolveContainedPath(
+          vertical.directory,
+          'src',
+          'api',
+          `${name}.read.ts`
+        )
+    );
+    const readSource = yield* tryScaffold(
+      'failed to render governed read',
+      () => renderModuleApiRead(vertical, name, config)
+    );
+    const readMutation = yield* createOrAcceptGeneratedMutationEffect(
+      readPath,
+      readSource,
+      (current) =>
+        current.startsWith(`${generatedHeader(MODULE_API_KIND)}\n`) &&
+        hasGeneratedModuleApiReadContract(
+          current,
+          vertical.moduleId,
+          name,
+          readAuthorizationExpectation(config)
+        )
+    );
+    mutations.push(...EffectArray.getSomes([readMutation]));
+  }
+  const transport = yield* planGovernedTransport(
+    workspaceRoot,
+    kind,
+    vertical,
+    name
+  );
+  const { clientPath, serverPath } = transport;
+  mutations.push(...transport.mutations);
+  const ownerImport = manifestImport(kind, name);
+  const ownerImportIdentity = manifestImportIdentity(kind, name);
+  let manifest = vertical.manifestContent;
+  if (
+    ownerImport !== undefined &&
+    !hasUniqueExactNamedImport(
+      manifest,
+      ownerImportIdentity.binding,
+      ownerImportIdentity.specifier
+    )
+  ) {
+    if (hasNamedImportBinding(manifest, ownerImportIdentity.binding)) {
+      return yield* scaffoldFailure(
+        `generated owner import binding conflicts with ${ownerImportIdentity.binding}`
+      );
+    }
+    manifest = yield* tryScaffold(
+      'failed to patch module manifest imports',
+      () =>
         insertSortedSlotIdempotently(
           manifest,
           MODULE_MANIFEST_IMPORT_SLOT_START,
           MODULE_MANIFEST_IMPORT_SLOT_END,
           ownerImport,
-          isModuleManifestImport,
-        ),
+          isModuleManifestImport
+        )
+    );
+  }
+  const slots = yield* tryScaffold(
+    'failed to plan governed contribution owner slots',
+    () => slotLine(kind, vertical, name, resource, config)
+  );
+  const registration = yield* tryScaffold(
+    'failed to patch governed contribution slots',
+    () => {
+      manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
+      return patchSlots(
+        vertical.registrationContent,
+        slots.registration,
+        registrationOwnerSlots
       );
     }
-    const slots = yield* tryScaffold('failed to plan governed contribution owner slots', () =>
-      slotLine(kind, vertical, name, resource, config),
-    );
-    const registration = yield* tryScaffold('failed to patch governed contribution slots', () => {
-      manifest = patchSlots(manifest, slots.manifest, manifestOwnerSlots);
-      return patchSlots(vertical.registrationContent, slots.registration, registrationOwnerSlots);
-    });
-    const manifestMutation = yield* tryScaffold('failed to update module manifest', () =>
-      updateMutation(vertical.manifestPath, vertical.manifestContent, manifest),
-    );
-    const registrationMutation = yield* tryScaffold('failed to update module registration', () =>
-      updateMutation(vertical.registrationPath, vertical.registrationContent, registration),
-    );
-    mutations.push(
-      ...[manifestMutation, registrationMutation].filter((mutation) => mutation !== undefined),
-    );
-    if (isComponent) {
-      mutations.push(yield* patchFederationExposure(vertical, name));
-    }
-    yield* tryScaffold('governed contribution mutation paths are invalid', () =>
-      ensureUniqueMutationPaths(mutations),
-    );
-    const result =
-      clientPath === undefined || serverPath === undefined
-        ? { artifactPath }
-        : { artifactPath, clientPath, serverPath };
-    return { mutations, result };
-  },
-);
+  );
+  const manifestMutation = yield* tryScaffold(
+    'failed to update module manifest',
+    () =>
+      updateMutation(vertical.manifestPath, vertical.manifestContent, manifest)
+  );
+  const registrationMutation = yield* tryScaffold(
+    'failed to update module registration',
+    () =>
+      updateMutation(
+        vertical.registrationPath,
+        vertical.registrationContent,
+        registration
+      )
+  );
+  mutations.push(
+    ...[manifestMutation, registrationMutation].filter(
+      (mutation) => mutation !== undefined
+    )
+  );
+  if (isComponent) {
+    mutations.push(yield* patchFederationExposure(vertical, name));
+  }
+  yield* tryScaffold('governed contribution mutation paths are invalid', () =>
+    ensureUniqueMutationPaths(mutations)
+  );
+  const result =
+    clientPath === undefined || serverPath === undefined
+      ? { artifactPath }
+      : { artifactPath, clientPath, serverPath };
+  return { mutations, result };
+});

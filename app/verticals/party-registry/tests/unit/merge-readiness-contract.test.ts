@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+
 import { Match, Schema } from 'effect';
+
+import { partyRegistryApi } from '../../shared/api.ts';
 import {
   PartyMergeReadinessRequestSchema,
   PartyMergeReadinessResponseSchema,
@@ -16,13 +19,12 @@ import {
   partyMergeResourceDescriptor,
 } from '../../shared/resources/party-merge.ts';
 import { partyMergeReadinessRead } from '../../src/api/party-merge-readiness.read.ts';
+import { selectCanonicalSurvivor } from '../../src/merge/canonical-survivor-selection.ts';
 import {
   analyzePreparedMergeReadiness,
   evaluateDisabledMergeReadiness,
   rejectProductionMergeExecution,
 } from '../../src/merge/merge-readiness.ts';
-import { selectCanonicalSurvivor } from '../../src/merge/canonical-survivor-selection.ts';
-import { partyRegistryApi } from '../../shared/api.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const party = (resourceId: string) => ({
@@ -44,16 +46,19 @@ test('publishes a tenant-governed read-only readiness contract that always repor
     Schema.decodeUnknownSync(PartyMergeReadinessRequestSchema)({
       partyRefs: [party('party-a'), party('party-a')],
       policyVersion: 'party-merge-readiness.v1',
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(PartyMergeReadinessRequestSchema)({
       partyRefs: [
         party('party-a'),
-        { ...party('party-b'), tenantId: '22222222-2222-4222-8222-222222222222' },
+        {
+          ...party('party-b'),
+          tenantId: '22222222-2222-4222-8222-222222222222',
+        },
       ],
       policyVersion: 'party-merge-readiness.v1',
-    }),
+    })
   );
   assert.deepEqual(partyMergeReadinessRead.descriptor, {
     accessKind: 'detail',
@@ -95,7 +100,7 @@ test('publishes a tenant-governed read-only readiness contract that always repor
       'WRONG_MERGE_RECOVERY_UNPROVEN',
       'DUPLICATE_SET_NOT_CONFIRMED',
       'PREPARED_STATE_UNAVAILABLE',
-    ],
+    ]
   );
 });
 
@@ -120,9 +125,11 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
   const selected = Match.value(selection).pipe(
     Match.tag('CanonicalSurvivorSelected', (value) => value),
     Match.tag('SurvivorSelectionBlocked', ({ blocker }) =>
-      assert.fail(`Expected canonical survivor selection, but it was blocked: ${blocker}`),
+      assert.fail(
+        `Expected canonical survivor selection, but it was blocked: ${blocker}`
+      )
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
   const merge = Schema.decodeUnknownSync(PartyMergeSchema)({
     absorbedPartyRefs: [party('party-b')],
@@ -151,7 +158,10 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
   assert.equal(merge.state, 'PREPARED');
   assert.equal(merge.selectionReason, 'AUTHORITATIVE_EVIDENCE');
   assert.equal(merge.selectionEvidenceChain.length, 3);
-  assert.equal(merge.selectionEvidenceChain[2]?.candidateSnapshots[0]?.criterionValue, 2);
+  assert.equal(
+    merge.selectionEvidenceChain[2]?.candidateSnapshots[0]?.criterionValue,
+    2
+  );
   assert.throws(() =>
     Schema.decodeUnknownSync(PartyMergeSchema)({
       ...merge,
@@ -159,20 +169,20 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
         ...step,
         candidateSnapshots: undefined,
       })),
-    }),
+    })
   );
   assert.deepEqual(alias.aliasPartyRef, party('party-b'));
   assert.throws(() =>
     Schema.decodeUnknownSync(PartyMergeSchema)({
       ...merge,
       absorbedPartyRefs: [party('party-a')],
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(PartyMergeSchema)({
       ...merge,
       selectionReason: 'STABLE_RESOURCE_IDENTITY',
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(PartyAliasSchema)({
@@ -181,7 +191,7 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
         ...party('party-a'),
         tenantId: '22222222-2222-4222-8222-222222222222',
       },
-    }),
+    })
   );
   assert.equal(partyMergeResourceDescriptor.capabilities.searchable, false);
   assert.equal(partyAliasResourceDescriptor.capabilities.searchable, false);
@@ -190,18 +200,31 @@ test('keeps prepared merge and permanent alias schemas explainable without enabl
 test('has no registered Party Merge Action, event, outbox consumer, or write endpoint', () =>
   Promise.all([
     readFile(new URL('../../vertical.manifest.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../vertical.registration.ts', import.meta.url), 'utf-8'),
+    readFile(
+      new URL('../../vertical.registration.ts', import.meta.url),
+      'utf-8'
+    ),
   ]).then(([manifestSource, registrationSource]) => {
-    assert.doesNotMatch(manifestSource, /merge[^\n]*Action|Action[^\n]*merge/iu);
-    assert.doesNotMatch(registrationSource, /merge[^\n]*Action|Action[^\n]*merge/iu);
+    assert.doesNotMatch(
+      manifestSource,
+      /merge[^\n]*Action|Action[^\n]*merge/iu
+    );
+    assert.doesNotMatch(
+      registrationSource,
+      /merge[^\n]*Action|Action[^\n]*merge/iu
+    );
     assert.match(registrationSource, /'party-merge-readiness'/u);
     const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
-      Object.values(group.endpoints),
+      Object.values(group.endpoints)
     );
-    assert.ok(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length > 0);
+    assert.ok(
+      Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length > 0
+    );
     assert.deepEqual(
-      endpoints.filter(({ path }) => /merge/iu.test(path)).map(({ path }) => path),
-      ['/reads/party-merge-readiness'],
+      endpoints
+        .filter(({ path }) => /merge/iu.test(path))
+        .map(({ path }) => path),
+      ['/reads/party-merge-readiness']
     );
   }));
 
@@ -210,23 +233,26 @@ test('serves the generated OntOS module contract before i18n redirects in develo
     (modernConfigSource) => {
       assert.match(
         modernConfigSource,
-        /new URL\('\.dev-public\/\.well-known\/ontos-module-manifest\.json', import\.meta\.url\)/u,
+        /new URL\('\.dev-public\/\.well-known\/ontos-module-manifest\.json', import\.meta\.url\)/u
       );
       assert.match(modernConfigSource, /setupMiddlewares:/u);
       assert.match(
         modernConfigSource,
-        /request\.url\?\.split\('\?', 1\)\[0\] !== '\/\.well-known\/ontos-module-manifest\.json'/u,
+        /request\.url\?\.split\('\?', 1\)\[0\] !== '\/\.well-known\/ontos-module-manifest\.json'/u
       );
       assert.match(
         modernConfigSource,
-        /response\.setHeader\('Content-Type', 'application\/json'\)/u,
+        /response\.setHeader\('Content-Type', 'application\/json'\)/u
       );
-      assert.match(modernConfigSource, /ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
       assert.match(
         modernConfigSource,
-        /publicDir: \['\.\/locales', '\.\/assets', '\.\/\.dev-public'\]/u,
+        /ignoreRedirectRoutes: \[\s*'\/\.well-known'/u
       );
-    },
+      assert.match(
+        modernConfigSource,
+        /publicDir: \['\.\/locales', '\.\/assets', '\.\/\.dev-public'\]/u
+      );
+    }
   ));
 
 test('readiness response schema cannot claim production merge is enabled', () => {
@@ -266,7 +292,7 @@ test('readiness response schema cannot claim production merge is enabled', () =>
       mergeExecutionEnabled: false,
       partyRefs: [party('party-a'), party('party-b')],
       status: 'DISABLED',
-    },
+    }
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(PartyMergeReadinessResponseSchema)({
@@ -280,7 +306,7 @@ test('readiness response schema cannot claim production merge is enabled', () =>
       mergeExecutionEnabled: true,
       partyRefs: [party('party-a'), party('party-b')],
       status: 'READY',
-    }),
+    })
   );
 });
 
@@ -292,8 +318,16 @@ test('readiness invokes survivor, collision, and reference analyzers while remai
       connectorCorrelations: [],
       consumerProfiles: [],
       counterparties: [
-        { counterpartyId: 'cp-a', legalEntityId: 'le-1', partyRef: party('party-a') },
-        { counterpartyId: 'cp-b', legalEntityId: 'le-1', partyRef: party('party-b') },
+        {
+          counterpartyId: 'cp-a',
+          legalEntityId: 'le-1',
+          partyRef: party('party-a'),
+        },
+        {
+          counterpartyId: 'cp-b',
+          legalEntityId: 'le-1',
+          partyRef: party('party-b'),
+        },
       ],
       counterpartyRoles: [],
       officialIdentifiers: [],
@@ -301,7 +335,13 @@ test('readiness invokes survivor, collision, and reference analyzers while remai
       survivorPartyRef: party('unrelated-a'),
     },
     consumerReconciliation: [],
-    references: [{ class: 'COMMERCE_PROFILE', ownerKey: 'commerce', partyRef: party('party-b') }],
+    references: [
+      {
+        class: 'COMMERCE_PROFILE',
+        ownerKey: 'commerce',
+        partyRef: party('party-b'),
+      },
+    ],
     selectionInput: {
       candidates: [
         {
@@ -340,6 +380,12 @@ test('readiness invokes survivor, collision, and reference analyzers while remai
     selectedSurvivorPartyRef: party('party-a'),
     selectionStatus: 'SELECTED',
   });
-  assert.ok(result.blockers.some(({ code }) => code === 'COUNTERPARTY_COLLISION'));
-  assert.ok(result.blockers.some(({ code }) => code === 'CONSUMER_RECONCILIATION_UNPROVEN'));
+  assert.ok(
+    result.blockers.some(({ code }) => code === 'COUNTERPARTY_COLLISION')
+  );
+  assert.ok(
+    result.blockers.some(
+      ({ code }) => code === 'CONSUMER_RECONCILIATION_UNPROVEN'
+    )
+  );
 });

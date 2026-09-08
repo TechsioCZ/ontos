@@ -9,10 +9,12 @@ import {
   OperationContextUnavailable,
 } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+
 import {
-  counterpartyRoleWritePermission,
-  failCounterpartyNotFound,
-} from './counterparty-role-action-support.ts';
+  CounterpartyRoleAddPayloadSchema,
+  CounterpartyRoleAddResultSchema,
+} from '../../shared/actions/counterparty-role-add.ts';
+import type { CounterpartyRoleAddPayload } from '../../shared/actions/counterparty-role-add.ts';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyEvidenceInsufficient,
@@ -27,13 +29,11 @@ import { roleEvidenceIsSufficient } from '../../shared/domain/counterparty-role-
 import { OutboxPayloadSchema as CounterpartyRoleAddedEventSchema } from '../../shared/outbox/party-registry-counterparty-role-added-v1.ts';
 import { addCounterpartyRoleRecord } from '../services/counterparty-persistence.service.ts';
 import type { AddCounterpartyRoleResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
-import { createCounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxMessage } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
-
 import {
-  CounterpartyRoleAddPayloadSchema,
-  CounterpartyRoleAddResultSchema,
-} from '../../shared/actions/counterparty-role-add.ts';
-import type { CounterpartyRoleAddPayload } from '../../shared/actions/counterparty-role-add.ts';
+  counterpartyRoleWritePermission,
+  failCounterpartyNotFound,
+} from './counterparty-role-action-support.ts';
+import { createCounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxMessage } from './counterparty-role-add.party-registry-counterparty-role-added-v1.outbox-message.ts';
 
 export {
   CounterpartyRoleAddPayloadSchema,
@@ -58,89 +58,99 @@ type CounterpartyRoleAddDomainEvents = Readonly<{
 export interface CounterpartyRoleAddServices {
   readonly add: (
     payload: CounterpartyRoleAddPayload,
-    context: ActionHandlerContext<CounterpartyRoleAddDomainEvents, CounterpartyRoleAddServices>,
+    context: ActionHandlerContext<
+      CounterpartyRoleAddDomainEvents,
+      CounterpartyRoleAddServices
+    >
   ) => Effect.Effect<PersistenceResult, CounterpartyPersistenceUnavailable>;
 }
 
-const handleCounterpartyRoleAdd = Effect.fn('CounterpartyRoleAddAction.handleCounterpartyRoleAdd')(
-  function* addCounterpartyRole(
-    payload: CounterpartyRoleAddPayload,
-    context: ActionHandlerContext<CounterpartyRoleAddDomainEvents, CounterpartyRoleAddServices>,
-  ) {
-    if (!roleEvidenceIsSufficient(payload.roleType, payload.provenance.method)) {
-      return yield* new CounterpartyEvidenceInsufficient({
-        code: 'counterparty_evidence_insufficient',
-        method: payload.provenance.method,
-        reason: `The evidence does not establish the ${payload.roleType} relationship`,
-      });
-    }
-    if (payload.counterpartyRef.tenantId !== context.scope.tenantId) {
-      return yield* new CounterpartyScopeMismatch({
-        code: 'counterparty_scope_mismatch',
-        reason: 'The Counterparty reference must belong to the trusted Tenant',
-      });
-    }
-    const persistenceResult = yield* context.services.add(payload, context);
-    const result = yield* Match.value(persistenceResult).pipe(
-      Match.tag('counterparty_not_found', failCounterpartyNotFound),
-      Match.tag('overlap', ({ roleType }) =>
-        Effect.fail(
-          new CounterpartyRoleOverlap({
-            code: 'counterparty_role_overlap',
-            reason: 'The same Counterparty Role Type already has an overlapping period',
-            roleType,
-          }),
-        ),
-      ),
-      Match.tag('party_archived', ({ partyId }) =>
-        Effect.fail(
-          new CounterpartyPartyArchived({
-            code: 'counterparty_party_archived',
-            partyId,
-            reason: 'An archived Party cannot receive a new Counterparty Role period',
-          }),
-        ),
-      ),
-      Match.tag('found', ({ value }) => Effect.succeed(value)),
-      Match.exhaustive,
-    );
-    yield* context.recordAuditEvidence({
-      evidenceReference: payload.provenance.evidenceReference ?? null,
-      provenanceMethod: payload.provenance.method,
-      provenanceReason: payload.provenance.reason ?? payload.provenance.method,
-      provenanceSource: payload.provenance.source,
+const handleCounterpartyRoleAdd = Effect.fn(
+  'CounterpartyRoleAddAction.handleCounterpartyRoleAdd'
+)(function* addCounterpartyRole(
+  payload: CounterpartyRoleAddPayload,
+  context: ActionHandlerContext<
+    CounterpartyRoleAddDomainEvents,
+    CounterpartyRoleAddServices
+  >
+) {
+  if (!roleEvidenceIsSufficient(payload.roleType, payload.provenance.method)) {
+    return yield* new CounterpartyEvidenceInsufficient({
+      code: 'counterparty_evidence_insufficient',
+      method: payload.provenance.method,
+      reason: `The evidence does not establish the ${payload.roleType} relationship`,
     });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `counterparty-role-overlap:${payload.counterpartyRef.resourceId}:${payload.roleType}`,
-      resultCount: 0,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: payload.counterpartyRef.resourceId,
-      targetResourceType: 'party.registry.counterparty',
+  }
+  if (payload.counterpartyRef.tenantId !== context.scope.tenantId) {
+    return yield* new CounterpartyScopeMismatch({
+      code: 'counterparty_scope_mismatch',
+      reason: 'The Counterparty reference must belong to the trusted Tenant',
     });
-    const actionResult = {
-      counterpartyRef: payload.counterpartyRef,
-      rolePeriodRef: result.rolePeriodRef,
-      roleType: result.roleType,
-      validFrom: result.validFrom,
-      validTo: result.validTo,
-    } as const;
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.counterparty-role-added.v1',
-      payloadJson: actionResult,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: payload.counterpartyRef.resourceId,
-      subjectResourceType: 'party.registry.counterparty',
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createCounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxMessage(actionResult),
-    );
-    return actionResult;
-  },
-);
+  }
+  const persistenceResult = yield* context.services.add(payload, context);
+  const result = yield* Match.value(persistenceResult).pipe(
+    Match.tag('counterparty_not_found', failCounterpartyNotFound),
+    Match.tag('overlap', ({ roleType }) =>
+      Effect.fail(
+        new CounterpartyRoleOverlap({
+          code: 'counterparty_role_overlap',
+          reason:
+            'The same Counterparty Role Type already has an overlapping period',
+          roleType,
+        })
+      )
+    ),
+    Match.tag('party_archived', ({ partyId }) =>
+      Effect.fail(
+        new CounterpartyPartyArchived({
+          code: 'counterparty_party_archived',
+          partyId,
+          reason:
+            'An archived Party cannot receive a new Counterparty Role period',
+        })
+      )
+    ),
+    Match.tag('found', ({ value }) => Effect.succeed(value)),
+    Match.exhaustive
+  );
+  yield* context.recordAuditEvidence({
+    evidenceReference: payload.provenance.evidenceReference ?? null,
+    provenanceMethod: payload.provenance.method,
+    provenanceReason: payload.provenance.reason ?? payload.provenance.method,
+    provenanceSource: payload.provenance.source,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `counterparty-role-overlap:${payload.counterpartyRef.resourceId}:${payload.roleType}`,
+    resultCount: 0,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: payload.counterpartyRef.resourceId,
+    targetResourceType: 'party.registry.counterparty',
+  });
+  const actionResult = {
+    counterpartyRef: payload.counterpartyRef,
+    rolePeriodRef: result.rolePeriodRef,
+    roleType: result.roleType,
+    validFrom: result.validFrom,
+    validTo: result.validTo,
+  } as const;
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.counterparty-role-added.v1',
+    payloadJson: actionResult,
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: payload.counterpartyRef.resourceId,
+    subjectResourceType: 'party.registry.counterparty',
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createCounterpartyRoleAddPartyRegistryCounterpartyRoleAddedV1OutboxMessage(
+      actionResult
+    )
+  );
+  return actionResult;
+});
 
 export const counterpartyRoleAddAction = defineAction(
   {
@@ -153,11 +163,15 @@ export const counterpartyRoleAddAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: CounterpartyRoleAddError,
     domainEvents: {
-      'party.registry.counterparty-role-added.v1': CounterpartyRoleAddedEventSchema,
+      'party.registry.counterparty-role-added.v1':
+        CounterpartyRoleAddedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.counterparty-role-add',
       moduleKey: 'party.registry',
       role: 'action',
@@ -167,9 +181,10 @@ export const counterpartyRoleAddAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyRoleAddPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CounterpartyRoleAddPayload>(
-      counterpartyRoleWritePermission,
-    ),
+    resourcePermission:
+      defineActionResourcePermission<CounterpartyRoleAddPayload>(
+        counterpartyRoleWritePermission
+      ),
     resultSchema: CounterpartyRoleAddResultSchema,
     schemaVersion: '1',
   },
@@ -180,14 +195,17 @@ export const counterpartyRoleAddAction = defineAction(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
           reason: 'Counterparty Role Add requires a trusted Legal Entity scope',
-        }),
+        })
       );
     }
     const { legalEntityId } = scope;
     return Effect.succeed({
       add: (
         payload: CounterpartyRoleAddPayload,
-        context: ActionHandlerContext<CounterpartyRoleAddDomainEvents, CounterpartyRoleAddServices>,
+        context: ActionHandlerContext<
+          CounterpartyRoleAddDomainEvents,
+          CounterpartyRoleAddServices
+        >
       ) =>
         addCounterpartyRoleRecord(transaction, {
           actionInvocationId: context.actionInvocationId,
@@ -202,5 +220,5 @@ export const counterpartyRoleAddAction = defineAction(
           validTo: payload.validTo ?? null,
         }),
     });
-  },
+  }
 );

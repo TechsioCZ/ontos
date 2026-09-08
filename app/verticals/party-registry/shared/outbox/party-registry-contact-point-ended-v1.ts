@@ -2,6 +2,7 @@
 // @ontos-outbox-producer party.registry
 // @ontos-outbox-topic party.registry.contact-point-ended.v1
 import { Schema } from 'effect';
+
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 

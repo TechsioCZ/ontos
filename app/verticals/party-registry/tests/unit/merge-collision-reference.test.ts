@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { DateTime, Match } from 'effect';
+
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { analyzeMergeCollisions } from '../../src/merge/merge-collision-analysis.ts';
 import { planReferencePreservation } from '../../src/merge/reference-preservation-plan.ts';
@@ -43,7 +45,7 @@ test('blocks authoritative non-strong identifier conflicts without unrelated rel
   });
   assert.deepEqual(
     collisions.map(({ code }) => code),
-    ['STRONG_IDENTIFIER_CONFLICT'],
+    ['STRONG_IDENTIFIER_CONFLICT']
   );
 });
 
@@ -51,8 +53,16 @@ test('requires reconciliation for Counterparty and consumer uniqueness collision
   const collisions = analyzeMergeCollisions({
     absorbedPartyRefs: [party('party-b')],
     connectorCorrelations: [
-      { connectorKey: 'erp', externalSubjectId: 'erp-a', partyRef: party('party-a') },
-      { connectorKey: 'erp', externalSubjectId: 'erp-b', partyRef: party('party-b') },
+      {
+        connectorKey: 'erp',
+        externalSubjectId: 'erp-a',
+        partyRef: party('party-a'),
+      },
+      {
+        connectorKey: 'erp',
+        externalSubjectId: 'erp-b',
+        partyRef: party('party-b'),
+      },
     ],
     consumerProfiles: [
       {
@@ -69,8 +79,16 @@ test('requires reconciliation for Counterparty and consumer uniqueness collision
       },
     ],
     counterparties: [
-      { counterpartyId: 'cp-a', legalEntityId: 'le-1', partyRef: party('party-a') },
-      { counterpartyId: 'cp-b', legalEntityId: 'le-1', partyRef: party('party-b') },
+      {
+        counterpartyId: 'cp-a',
+        legalEntityId: 'le-1',
+        partyRef: party('party-a'),
+      },
+      {
+        counterpartyId: 'cp-b',
+        legalEntityId: 'le-1',
+        partyRef: party('party-b'),
+      },
     ],
     counterpartyRoles: [],
     officialIdentifiers: [],
@@ -84,9 +102,13 @@ test('requires reconciliation for Counterparty and consumer uniqueness collision
       { code: 'COUNTERPARTY_COLLISION', ownerKey: 'party.registry' },
       { code: 'CONSUMER_PROFILE_COLLISION', ownerKey: 'engagement' },
       { code: 'CONNECTOR_CORRELATION_COLLISION', ownerKey: 'erp' },
-    ],
+    ]
   );
-  assert.ok(collisions.every(({ resolution }) => resolution === 'RECONCILIATION_REQUIRED'));
+  assert.ok(
+    collisions.every(
+      ({ resolution }) => resolution === 'RECONCILIATION_REQUIRED'
+    )
+  );
 });
 
 test('blocks strong identifier conflicts and flags forbidden relationship and role overlaps', () => {
@@ -153,14 +175,23 @@ test('blocks strong identifier conflicts and flags forbidden relationship and ro
     collisions.map(({ code, resolution }) => ({ code, resolution })),
     [
       { code: 'STRONG_IDENTIFIER_CONFLICT', resolution: 'CORRECTION_REQUIRED' },
-      { code: 'RELATIONSHIP_SELF_REFERENCE', resolution: 'RECONCILIATION_REQUIRED' },
-      { code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION', resolution: 'RECONCILIATION_REQUIRED' },
-    ],
+      {
+        code: 'RELATIONSHIP_SELF_REFERENCE',
+        resolution: 'RECONCILIATION_REQUIRED',
+      },
+      {
+        code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION',
+        resolution: 'RECONCILIATION_REQUIRED',
+      },
+    ]
   );
 });
 
 test('plans canonical resolution for supported refs without rewriting historical snapshots', () => {
-  const snapshot = Object.freeze({ address: 'Historical street 1', name: 'Historical Party B' });
+  const snapshot = Object.freeze({
+    address: 'Historical street 1',
+    name: 'Historical Party B',
+  });
   const result = planReferencePreservation({
     aliases: [
       {
@@ -190,11 +221,31 @@ test('plans canonical resolution for supported refs without rewriting historical
       partialRetrySupported: true,
     })),
     references: [
-      { class: 'DIRECT_RESOURCE_REF', ownerKey: 'core', partyRef: party('party-b') },
-      { class: 'EVENT_OR_OUTBOX_PAYLOAD', ownerKey: 'events', partyRef: party('party-b') },
-      { class: 'COUNTERPARTY', ownerKey: 'party.registry', partyRef: party('party-b') },
-      { class: 'ENGAGEMENT_PROFILE', ownerKey: 'engagement', partyRef: party('party-b') },
-      { class: 'COMMERCE_PROFILE', ownerKey: 'commerce', partyRef: party('party-b') },
+      {
+        class: 'DIRECT_RESOURCE_REF',
+        ownerKey: 'core',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'EVENT_OR_OUTBOX_PAYLOAD',
+        ownerKey: 'events',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'COUNTERPARTY',
+        ownerKey: 'party.registry',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'ENGAGEMENT_PROFILE',
+        ownerKey: 'engagement',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'COMMERCE_PROFILE',
+        ownerKey: 'commerce',
+        partyRef: party('party-b'),
+      },
       {
         class: 'CONNECTOR_CORRELATION',
         ownerKey: 'connector.registry',
@@ -212,12 +263,16 @@ test('plans canonical resolution for supported refs without rewriting historical
   const planned = Match.value(result).pipe(
     Match.tag('ReferencePreservationPlanned', (value) => value),
     Match.tag('ReferencePreservationBlocked', ({ blockers }) =>
-      assert.fail(`Expected a reference plan, but planning was blocked: ${String(blockers)}`),
+      assert.fail(
+        `Expected a reference plan, but planning was blocked: ${String(blockers)}`
+      )
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
   assert.ok(
-    planned.references.every(({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a'),
+    planned.references.every(
+      ({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a'
+    )
   );
   assert.deepEqual(planned.references.at(-1)?.historicalSnapshot, snapshot);
   assert.equal(planned.requiresPhysicalRewrite, false);
@@ -294,8 +349,16 @@ test('blocks readiness for unsupported references and incomplete retry contracts
       },
     ],
     references: [
-      { class: 'UNSUPPORTED', ownerKey: 'custom-module', partyRef: party('party-b') },
-      { class: 'ENGAGEMENT_PROFILE', ownerKey: 'engagement', partyRef: party('party-b') },
+      {
+        class: 'UNSUPPORTED',
+        ownerKey: 'custom-module',
+        partyRef: party('party-b'),
+      },
+      {
+        class: 'ENGAGEMENT_PROFILE',
+        ownerKey: 'engagement',
+        partyRef: party('party-b'),
+      },
     ],
   });
 
@@ -311,11 +374,19 @@ test('blocks readiness for unsupported references and incomplete retry contracts
 test('blocks every external reference owner without reconciliation evidence', () => {
   const result = planReferencePreservation({
     aliases: [],
-    references: [{ class: 'COMMERCE_PROFILE', ownerKey: 'commerce', partyRef: party('party-b') }],
+    references: [
+      {
+        class: 'COMMERCE_PROFILE',
+        ownerKey: 'commerce',
+        partyRef: party('party-b'),
+      },
+    ],
   });
 
   assert.deepEqual(result, {
     _tag: 'ReferencePreservationBlocked',
-    blockers: [{ code: 'CONSUMER_RECONCILIATION_UNPROVEN', ownerKey: 'commerce' }],
+    blockers: [
+      { code: 'CONSUMER_RECONCILIATION_UNPROVEN', ownerKey: 'commerce' },
+    ],
   });
 });

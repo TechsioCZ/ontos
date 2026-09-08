@@ -2,16 +2,22 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug resolve-duplicate-candidate-match
 import { createHash } from 'node:crypto';
+
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+
 import { AddPartyOfficialIdentifierResultSchema } from '../../shared/actions/add-party-official-identifier.ts';
-import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
+import {
+  ResolveDuplicateCandidateMatchPayloadSchema,
+  ResolveDuplicateCandidateMatchResultSchema,
+} from '../../shared/actions/resolve-duplicate-candidate-match.ts';
+import type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
+import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import {
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
 } from '../../shared/domain/matching-contracts.ts';
-import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import {
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
@@ -20,11 +26,7 @@ import {
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
 import { resolveDuplicateCandidateMatch } from '../services/party-matching-persistence.service.ts';
-import {
-  ResolveDuplicateCandidateMatchPayloadSchema,
-  ResolveDuplicateCandidateMatchResultSchema,
-} from '../../shared/actions/resolve-duplicate-candidate-match.ts';
-import type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
+import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
 
 export type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 const ErrorSchema = Schema.Union([
@@ -40,40 +42,41 @@ const ErrorSchema = Schema.Union([
 interface Services {
   readonly resolve: (
     payload: ResolveDuplicateCandidateMatchPayload,
-    invocationId: string,
+    invocationId: string
   ) => ReturnType<typeof resolveDuplicateCandidateMatch>;
 }
 const domainEvents = {
-  'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
+  'party.registry.official-identifier-added.v1':
+    AddPartyOfficialIdentifierResultSchema,
 } as const;
-const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function* resolveMatch(
-  payload: ResolveDuplicateCandidateMatchPayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
-) {
-  const { addedOfficialIdentifierRefs = [], ...result } = yield* context.services.resolve(
-    payload,
-    context.actionInvocationId,
-  );
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: createHash('sha256')
-      .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
-      .digest('hex'),
-    resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
-    targetResourceId: result.caseRef.resourceId,
-    targetResourceType: result.caseRef.resourceType,
-  });
-  if (result.partyRef !== null) {
-    yield* publishAttachedOfficialIdentifiers(
-      context,
-      result.partyRef,
-      addedOfficialIdentifierRefs,
-    );
+const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(
+  function* resolveMatch(
+    payload: ResolveDuplicateCandidateMatchPayload,
+    context: ActionHandlerContext<typeof domainEvents, Services>
+  ) {
+    const { addedOfficialIdentifierRefs = [], ...result } =
+      yield* context.services.resolve(payload, context.actionInvocationId);
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: createHash('sha256')
+        .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
+        .digest('hex'),
+      resultCount: 1,
+      servingModuleKey: 'party.registry',
+      targetModuleKey: 'party.registry',
+      targetResourceId: result.caseRef.resourceId,
+      targetResourceType: result.caseRef.resourceType,
+    });
+    if (result.partyRef !== null) {
+      yield* publishAttachedOfficialIdentifiers(
+        context,
+        result.partyRef,
+        addedOfficialIdentifierRefs
+      );
+    }
+    return result;
   }
-  return result;
-});
+);
 export const resolveDuplicateCandidateMatchAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -86,7 +89,10 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.resolve-duplicate-candidate-match',
       moduleKey: 'party.registry',
       role: 'action',
@@ -103,7 +109,10 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
   handle,
   (transaction, scope) =>
     Effect.succeed({
-      resolve: (payload: ResolveDuplicateCandidateMatchPayload, invocationId: string) =>
+      resolve: (
+        payload: ResolveDuplicateCandidateMatchPayload,
+        invocationId: string
+      ) =>
         resolveDuplicateCandidateMatch(transaction, {
           actionInvocationId: invocationId,
           candidateCaseId: payload.caseRef.resourceId,
@@ -114,7 +123,7 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
           selectedPartyTenantId: payload.selectedPartyRef.tenantId,
           tenantId: scope.tenantId,
         }),
-    }),
+    })
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

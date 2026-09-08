@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import {
   compareContactsCatalog,
   expectedContactsTableCatalog,
@@ -11,10 +12,16 @@ test('reports exact Contacts table catalog differences', () => {
     'contacts.organization_engagement_profiles',
     'contacts.person_engagement_profiles',
   ]);
-  assert.deepEqual(compareContactsCatalog(['contacts.organization_engagement_profiles']), {
-    missing: ['contacts.gateway_assertion_redemptions', 'contacts.person_engagement_profiles'],
-    unexpected: [],
-  });
+  assert.deepEqual(
+    compareContactsCatalog(['contacts.organization_engagement_profiles']),
+    {
+      missing: [
+        'contacts.gateway_assertion_redemptions',
+        'contacts.person_engagement_profiles',
+      ],
+      unexpected: [],
+    }
+  );
 });
 
 test('keeps Contacts inventory separate while rejecting duplicate unknown tables once', () => {
@@ -24,7 +31,7 @@ test('keeps Contacts inventory separate while rejecting duplicate unknown tables
       'party.counterparties',
       'party.counterparties',
     ]),
-    { missing: [], unexpected: ['party.counterparties'] },
+    { missing: [], unexpected: ['party.counterparties'] }
   );
   assert.deepEqual(compareContactsCatalog([]), {
     missing: expectedContactsTableCatalog.toSorted(),

@@ -1,16 +1,17 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import test, { after, before } from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit, Schema, flow } from 'effect';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import test, { after, before } from 'node:test';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -37,10 +38,17 @@ import {
 } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import {
+  makeFaultInjectableCoreDatabase,
+  TestQueryHook,
+} from '../support/database-faults.ts';
 
-class TestWriteError extends Schema.TaggedError<TestWriteError>()('TestWriteError', {
-  reason: Schema.String,
-}) {}
+class TestWriteError extends Schema.TaggedError<TestWriteError>()(
+  'TestWriteError',
+  {
+    reason: Schema.String,
+  }
+) {}
 
 const suiteId = randomUUID();
 const tenantId = randomUUID();
@@ -102,27 +110,31 @@ const transport = (idempotencyKey: string, targetResourceId: string) => ({
 type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
 
 const withDatabase = <Value, Error>(
-  operation: (database: ContextServiceContract) => Effect.Effect<Value, Error>,
+  operation: (database: ContextServiceContract) => Effect.Effect<Value, Error>
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
       const configuration = yield* loadDatabaseConfig();
       const database = yield* makeFaultInjectableCoreDatabase(configuration);
       return yield* operation(database);
-    }),
+    })
   );
 
 const effectCallback = <Value, Error>(effect: Effect.Effect<Value, Error>) =>
   flow(() => Effect.asVoid(effect), runEffectTestPromise);
 
-const effectTest = <Value, Error>(name: string, effect: Effect.Effect<Value, Error>): void => {
+const effectTest = <Value, Error>(
+  name: string,
+  effect: Effect.Effect<Value, Error>
+): void => {
   test(name, effectCallback(effect));
 };
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const promiseEffect = <Value>(promise: PromiseLike<Value>): Effect.Effect<Value> =>
-  Effect.promise(flow(() => promise));
+const promiseEffect = <Value>(
+  promise: PromiseLike<Value>
+): Effect.Effect<Value> => Effect.promise(flow(() => promise));
 
 const relationshipActionKeys = new Set<string>();
 
@@ -142,7 +154,7 @@ const defaultExecutorSubject: ExecutorSubject = {
 const relationship = (
   actionKey: string,
   relation: 'executor' | 'restriction',
-  executorSubject: ExecutorSubject = defaultExecutorSubject,
+  executorSubject: ExecutorSubject = defaultExecutorSubject
 ) => {
   relationshipActionKeys.add(actionKey);
   return v1.Relationship.create({
@@ -170,7 +182,10 @@ const relationship = (
   });
 };
 
-const tenantMembership = (membershipTenantId: string, membershipPrincipalId: string) =>
+const tenantMembership = (
+  membershipTenantId: string,
+  membershipPrincipalId: string
+) =>
   v1.Relationship.create({
     relation: 'member',
     resource: v1.ObjectReference.create({
@@ -190,14 +205,14 @@ const adminClient = v1.NewClient(
   spiceDbConfig.endpoint,
   spiceDbConfig.insecureLocal
     ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-    : v1.ClientSecurity.SECURE,
+    : v1.ClientSecurity.SECURE
 );
 
 Effect.gen(function* preparePermissionFixture() {
   yield* promiseEffect(
     adminClient.promises.writeSchema(
-      v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA }),
-    ),
+      v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })
+    )
   );
   yield* withDatabase((database) =>
     Effect.gen(function* seedPermissionFixture() {
@@ -275,7 +290,7 @@ Effect.gen(function* preparePermissionFixture() {
           tenantId: otherTenantId,
         },
       ]);
-    }),
+    })
   );
 
   yield* promiseEffect(
@@ -307,10 +322,10 @@ Effect.gen(function* preparePermissionFixture() {
           v1.RelationshipUpdate.create({
             operation: v1.RelationshipUpdate_Operation.TOUCH,
             relationship: item,
-          }),
+          })
         ),
-      }),
-    ),
+      })
+    )
   );
 }).pipe(effectCallback, before);
 
@@ -325,8 +340,8 @@ Effect.gen(function* cleanPermissionFixture() {
             optionalResourceId: toSpiceDbActionObjectId(actionKey),
             resourceType: 'action',
           }),
-        }),
-      ),
+        })
+      )
     );
   }
   const tenantCleanups: PromiseLike<v1.DeleteRelationshipsResponse>[] = [];
@@ -338,15 +353,17 @@ Effect.gen(function* cleanPermissionFixture() {
             optionalResourceId: membershipTenantId,
             resourceType: 'tenant',
           }),
-        }),
-      ),
+        })
+      )
     );
   }
   const relationshipCleanupExit = yield* Effect.exit(
     Effect.forEach(actionCleanups, promiseEffect, { discard: true }).pipe(
-      Effect.andThen(Effect.forEach(tenantCleanups, promiseEffect, { discard: true })),
-      Effect.ensuring(Effect.sync(() => adminClient.close())),
-    ),
+      Effect.andThen(
+        Effect.forEach(tenantCleanups, promiseEffect, { discard: true })
+      ),
+      Effect.ensuring(Effect.sync(() => adminClient.close()))
+    )
   );
 
   yield* withDatabase((database) =>
@@ -357,12 +374,17 @@ Effect.gen(function* cleanPermissionFixture() {
             .delete(outboxMessages)
             .where(eq(outboxMessages.tenantId, otherTenantId)),
         () =>
-          database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, otherTenantId)),
+          database.executor
+            .delete(domainEvents)
+            .where(eq(domainEvents.tenantId, otherTenantId)),
         () =>
           database.executor
             .delete(dataAccessEvents)
             .where(eq(dataAccessEvents.tenantId, otherTenantId)),
-        () => database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, otherTenantId)),
+        () =>
+          database.executor
+            .delete(auditEvents)
+            .where(eq(auditEvents.tenantId, otherTenantId)),
         () =>
           database.executor
             .delete(tenantModuleStates)
@@ -371,11 +393,22 @@ Effect.gen(function* cleanPermissionFixture() {
           database.executor
             .delete(actionInvocations)
             .where(eq(actionInvocations.tenantId, otherTenantId)),
-        () => database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-        () => database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
         () =>
-          database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-        () => database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+          database.executor
+            .delete(outboxMessages)
+            .where(eq(outboxMessages.tenantId, tenantId)),
+        () =>
+          database.executor
+            .delete(domainEvents)
+            .where(eq(domainEvents.tenantId, tenantId)),
+        () =>
+          database.executor
+            .delete(dataAccessEvents)
+            .where(eq(dataAccessEvents.tenantId, tenantId)),
+        () =>
+          database.executor
+            .delete(auditEvents)
+            .where(eq(auditEvents.tenantId, tenantId)),
         () =>
           database.executor
             .delete(tenantModuleStates)
@@ -392,15 +425,30 @@ Effect.gen(function* cleanPermissionFixture() {
           database.executor
             .delete(principalAuthBindings)
             .where(eq(principalAuthBindings.tenantId, tenantId)),
-        () => database.executor.delete(principals).where(eq(principals.tenantId, otherTenantId)),
-        () => database.executor.delete(principals).where(eq(principals.tenantId, tenantId)),
-        () => database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId)),
-        () => database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId)),
-        () => database.executor.delete(tenants).where(eq(tenants.tenantId, otherTenantId)),
+        () =>
+          database.executor
+            .delete(principals)
+            .where(eq(principals.tenantId, otherTenantId)),
+        () =>
+          database.executor
+            .delete(principals)
+            .where(eq(principals.tenantId, tenantId)),
+        () =>
+          database.executor
+            .delete(legalEntities)
+            .where(eq(legalEntities.tenantId, tenantId)),
+        () =>
+          database.executor
+            .delete(tenants)
+            .where(eq(tenants.tenantId, tenantId)),
+        () =>
+          database.executor
+            .delete(tenants)
+            .where(eq(tenants.tenantId, otherTenantId)),
       ],
       (query) => query(),
-      { concurrency: 1, discard: true },
-    ),
+      { concurrency: 1, discard: true }
+    )
   );
 
   if (Exit.isFailure(relationshipCleanupExit)) {
@@ -418,7 +466,11 @@ type PermissionActionContext = ActionHandlerContext<
   PermissionActionServices
 >;
 
-const registration = (actionKey: string, moduleStateKey: string, onExecute: () => void) =>
+const registration = (
+  actionKey: string,
+  moduleStateKey: string,
+  onExecute: () => void
+) =>
   defineAction(
     {
       accessEvidencePolicy: {
@@ -431,7 +483,10 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       domainEvents: NoDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization: {
+          kind: 'action_execution',
+          provisioning: 'tenant_membership_default',
+        },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',
@@ -455,10 +510,12 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
             tenantId: context.scope.tenantId,
           })
           .pipe(
-            Effect.mapError(() => new TestWriteError({ reason: 'test business write failed' })),
+            Effect.mapError(
+              () => new TestWriteError({ reason: 'test business write failed' })
+            )
           );
       }),
-    (transaction) => Effect.succeed({ transaction }),
+    (transaction) => Effect.succeed({ transaction })
   );
 
 interface ExecutionCounter {
@@ -471,11 +528,15 @@ const incrementExecution = (counter: ExecutionCounter): void => {
 
 const runWithLivePermission = <Value, Error>(
   database: ContextServiceContract,
-  operation: (runtime: ReturnType<typeof makeActionRuntime>) => Effect.Effect<Value, Error>,
-  configuration: SpiceDbConfigValue = spiceDbConfig,
+  operation: (
+    runtime: ReturnType<typeof makeActionRuntime>
+  ) => Effect.Effect<Value, Error>,
+  configuration: SpiceDbConfigValue = spiceDbConfig
 ): Effect.Effect<Value, Error> =>
   Effect.acquireUseRelease(
-    Effect.sync(() => createPermissionCheckClient(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
+    Effect.sync(() =>
+      createPermissionCheckClient(configuration, SPICEDB_CHECK_TIMEOUT_MS)
+    ),
     (client) =>
       operation(
         makeActionRuntime(
@@ -483,10 +544,10 @@ const runWithLivePermission = <Value, Error>(
           makeActionRepository(),
           makeActionPermissionService(client),
           testOperationalScopeResolver,
-          openActionRuntimeOptions,
-        ),
+          openActionRuntimeOptions
+        )
       ),
-    (client) => Effect.sync(() => client.close()),
+    (client) => Effect.sync(() => client.close())
   );
 
 effectTest(
@@ -508,10 +569,10 @@ effectTest(
               registration: registration(
                 actionKey,
                 moduleStateKey,
-                incrementExecution.bind(undefined, executions),
+                incrementExecution.bind(undefined, executions)
               ),
               transport: transport(kind, moduleStateKey),
-            }),
+            })
           );
           const rows = yield* database.executor
             .select()
@@ -521,9 +582,9 @@ effectTest(
           assert.equal(executions.value, 1, kind);
           assert.equal(rows.length, 1, kind);
         }),
-      { concurrency: 1, discard: true },
-    ),
-  ),
+      { concurrency: 1, discard: true }
+    )
+  )
 );
 
 const runFailedAction = (
@@ -531,7 +592,7 @@ const runFailedAction = (
   actionKey: string,
   key: string,
   moduleStateKey: string,
-  executions: ExecutionCounter,
+  executions: ExecutionCounter
 ) =>
   Effect.flip(
     runtime.runAction({
@@ -540,10 +601,10 @@ const runFailedAction = (
       registration: registration(
         actionKey,
         moduleStateKey,
-        incrementExecution.bind(undefined, executions),
+        incrementExecution.bind(undefined, executions)
       ),
       transport: transport(key, moduleStateKey),
-    }),
+    })
   );
 
 effectTest(
@@ -554,38 +615,57 @@ effectTest(
       const key = 'missing';
       const moduleStateKey = `${actionPrefix}.state.missing`;
       const failure = yield* runWithLivePermission(database, (runtime) =>
-        runFailedAction(runtime, actionKeys.missing, key, moduleStateKey, executions),
+        runFailedAction(
+          runtime,
+          actionKeys.missing,
+          key,
+          moduleStateKey,
+          executions
+        )
       );
       const [invocation] = yield* database.executor
         .select()
         .from(actionInvocations)
         .where(eq(actionInvocations.idempotencyKey, key));
       assert.ok(invocation);
-      const [audits, businessRows, accesses, events, messages] = yield* Effect.all([
-        database.executor
-          .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-        database.executor
-          .select()
-          .from(dataAccessEvents)
-          .where(eq(dataAccessEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(domainEvents)
-          .where(eq(domainEvents.actionInvocationId, invocation.actionInvocationId)),
-        database.executor
-          .select()
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
-      ]);
+      const [audits, businessRows, accesses, events, messages] =
+        yield* Effect.all([
+          database.executor
+            .select()
+            .from(auditEvents)
+            .where(
+              eq(auditEvents.actionInvocationId, invocation.actionInvocationId)
+            ),
+          database.executor
+            .select()
+            .from(tenantModuleStates)
+            .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+          database.executor
+            .select()
+            .from(dataAccessEvents)
+            .where(
+              eq(
+                dataAccessEvents.actionInvocationId,
+                invocation.actionInvocationId
+              )
+            ),
+          database.executor
+            .select()
+            .from(domainEvents)
+            .where(
+              eq(domainEvents.actionInvocationId, invocation.actionInvocationId)
+            ),
+          database.executor
+            .select()
+            .from(outboxMessages)
+            .where(eq(outboxMessages.tenantId, tenantId)),
+        ]);
 
       assert.equal(failure._tag, 'ActionPermissionDenied');
-      assert.equal(failure.reason, 'The principal is not permitted to execute this Action');
+      assert.equal(
+        failure.reason,
+        'The principal is not permitted to execute this Action'
+      );
       assert.equal(executions.value, 0);
       assert.equal(invocation.status, 'rejected');
       assert.ok(invocation.completedAt);
@@ -608,11 +688,14 @@ effectTest(
           outcome: 'denied',
           outcomeCode: 'spicedb_permission_denied',
           outcomeStage: 'authz',
-        },
+        }
       );
-      assert.equal(encodeJson(audits[0]).includes(spiceDbConfig.preSharedKey), false);
-    }),
-  ),
+      assert.equal(
+        encodeJson(audits[0]).includes(spiceDbConfig.preSharedKey),
+        false
+      );
+    })
+  )
 );
 
 effectTest(
@@ -636,19 +719,19 @@ effectTest(
                 registration: registration(
                   actionKey,
                   moduleStateKey,
-                  incrementExecution.bind(undefined, executions),
+                  incrementExecution.bind(undefined, executions)
                 ),
                 transport: transport(kind, moduleStateKey),
-              }),
-            ),
+              })
+            )
           );
 
           assert.equal(failure._tag, 'ActionPermissionDenied', kind);
           assert.equal(executions.value, 0, kind);
         }),
-      { concurrency: 1, discard: true },
-    ),
-  ),
+      { concurrency: 1, discard: true }
+    )
+  )
 );
 
 effectTest(
@@ -664,14 +747,17 @@ effectTest(
         registration: registration(
           actionKeys.concurrentDenied,
           moduleStateKey,
-          incrementExecution.bind(undefined, executions),
+          incrementExecution.bind(undefined, executions)
         ),
         transport: transport(key, moduleStateKey),
       };
       const results = yield* Effect.forEach(
         [1, 2],
-        () => runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input))),
-        { concurrency: 'unbounded' },
+        () =>
+          runWithLivePermission(database, (runtime) =>
+            Effect.flip(runtime.runAction(input))
+          ),
+        { concurrency: 'unbounded' }
       );
       const [invocation] = yield* database.executor
         .select()
@@ -681,27 +767,34 @@ effectTest(
       const audits = yield* database.executor
         .select()
         .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+        .where(
+          eq(auditEvents.actionInvocationId, invocation.actionInvocationId)
+        );
 
       assert.deepEqual(
         results.map((result) => result._tag),
-        ['ActionPermissionDenied', 'ActionPermissionDenied'],
+        ['ActionPermissionDenied', 'ActionPermissionDenied']
       );
       assert.equal(executions.value, 0);
       assert.equal(invocation.status, 'rejected');
       assert.equal(audits.length, 1);
-    }),
-  ),
+    })
+  )
 );
 
-const DenialFailureStageSchema = Schema.Literals(['audit', 'invocation-update']);
+const DenialFailureStageSchema = Schema.Literals([
+  'audit',
+  'invocation-update',
+]);
 type DenialFailureStage = typeof DenialFailureStageSchema.Type;
 
 const withDenialPersistenceFailure = (
   database: ContextServiceContract,
-  stage: DenialFailureStage,
+  stage: DenialFailureStage
 ): ContextServiceContract => {
-  const transaction: ContextServiceContract['executor']['transaction'] = (operation) =>
+  const transaction: ContextServiceContract['executor']['transaction'] = (
+    operation
+  ) =>
     database.executor.transaction((current) => {
       const prefix =
         stage === 'audit'
@@ -716,15 +809,15 @@ const withDenialPersistenceFailure = (
                     cause: new Error('Injected SQL failure'),
                     message: `Injected denial ${stage} failure`,
                   }),
-                }),
+                })
               )
-            : Effect.void,
-        ),
+            : Effect.void
+        )
       );
     });
   const executor: ContextServiceContract['executor'] = Object.assign(
     Object.create(database.executor),
-    { transaction },
+    { transaction }
   );
   return { executor };
 };
@@ -749,8 +842,8 @@ effectTest(
                     relationship: relationship(actionKey, 'restriction'),
                   }),
                 ],
-              }),
-            ),
+              })
+            )
           );
           const failure = yield* runWithLivePermission(
             withDenialPersistenceFailure(database, stage),
@@ -762,11 +855,11 @@ effectTest(
                   registration: registration(
                     actionKey,
                     moduleStateKey,
-                    incrementExecution.bind(undefined, executions),
+                    incrementExecution.bind(undefined, executions)
                   ),
                   transport: transport(key, moduleStateKey),
-                }),
-              ),
+                })
+              )
           );
           const [invocation] = yield* database.executor
             .select()
@@ -776,7 +869,9 @@ effectTest(
           const audits = yield* database.executor
             .select()
             .from(auditEvents)
-            .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+            .where(
+              eq(auditEvents.actionInvocationId, invocation.actionInvocationId)
+            );
 
           assert.equal(failure._tag, 'ActionTransactionError', stage);
           assert.equal(executions.value, 0, stage);
@@ -784,9 +879,9 @@ effectTest(
           assert.equal(invocation.completedAt, null, stage);
           assert.equal(audits.length, 0, stage);
         }),
-      { concurrency: 1, discard: true },
-    ),
-  ),
+      { concurrency: 1, discard: true }
+    )
+  )
 );
 
 effectTest(
@@ -799,8 +894,14 @@ effectTest(
       const failure = yield* runWithLivePermission(
         database,
         (runtime) =>
-          runFailedAction(runtime, actionKeys.unavailable, key, moduleStateKey, executions),
-        { ...spiceDbConfig, preSharedKey: 'invalid-integration-key' },
+          runFailedAction(
+            runtime,
+            actionKeys.unavailable,
+            key,
+            moduleStateKey,
+            executions
+          ),
+        { ...spiceDbConfig, preSharedKey: 'invalid-integration-key' }
       );
       const [invocation] = yield* database.executor
         .select()
@@ -813,8 +914,8 @@ effectTest(
         .where(
           and(
             eq(auditEvents.actionInvocationId, invocation.actionInvocationId),
-            eq(auditEvents.outcomeStage, 'authz'),
-          ),
+            eq(auditEvents.outcomeStage, 'authz')
+          )
         );
 
       assert.equal(failure._tag, 'ActionPermissionCheckError');
@@ -823,6 +924,6 @@ effectTest(
       assert.equal(invocation.status, 'received');
       assert.equal(invocation.completedAt, null);
       assert.equal(audits.length, 0);
-    }),
-  ),
+    })
+  )
 );

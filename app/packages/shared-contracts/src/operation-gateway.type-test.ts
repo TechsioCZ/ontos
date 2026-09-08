@@ -1,10 +1,13 @@
 import { Effect } from 'effect';
+
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure browser gateway value constructor, not a Context service.
 import { makeOperationGateway } from './operation-gateway.ts';
 import type { OperationGatewayIssuer } from './operation-gateway.ts';
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+  (<Value>() => Value extends Left ? 1 : 2) extends <
+    Value,
+  >() => Value extends Right ? 1 : 2
     ? true
     : false;
 type Expect<Value extends true> = Value;
@@ -16,19 +19,31 @@ type EffectChannels<Value> =
 const inventoryAudience = 'inventory-stock' as const;
 const acquisitionFailure = { _tag: 'AcquisitionFailure' } as const;
 const attemptFailure = { _tag: 'AttemptFailure' } as const;
-const inventoryGateway = makeOperationGateway(inventoryAudience, ({ audience }) => {
-  const exactAudience: typeof inventoryAudience = audience;
-  return Effect.fail(acquisitionFailure).pipe(Effect.annotateLogs({ exactAudience }));
-});
-const failedInvocation = inventoryGateway.invoke(() => Effect.fail(attemptFailure));
+const inventoryGateway = makeOperationGateway(
+  inventoryAudience,
+  ({ audience }) => {
+    const exactAudience: typeof inventoryAudience = audience;
+    return Effect.fail(acquisitionFailure).pipe(
+      Effect.annotateLogs({ exactAudience })
+    );
+  }
+);
+const failedInvocation = inventoryGateway.invoke(() =>
+  Effect.fail(attemptFailure)
+);
 const successfulInvocation = makeOperationGateway(inventoryAudience, () =>
-  Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' }),
+  Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' })
 ).invoke(() => Effect.succeed('completed' as const));
 
-type InventoryIssuer = OperationGatewayIssuer<typeof inventoryAudience, typeof acquisitionFailure>;
+type InventoryIssuer = OperationGatewayIssuer<
+  typeof inventoryAudience,
+  typeof acquisitionFailure
+>;
 type InventoryAudience = Parameters<InventoryIssuer>[0]['audience'];
 
-export type OperationGatewayAudienceTypeTest = Expect<Equal<InventoryAudience, 'inventory-stock'>>;
+export type OperationGatewayAudienceTypeTest = Expect<
+  Equal<InventoryAudience, 'inventory-stock'>
+>;
 export type OperationGatewayFailureChannelsTypeTest = Expect<
   Equal<
     EffectChannels<typeof failedInvocation>,
@@ -36,5 +51,8 @@ export type OperationGatewayFailureChannelsTypeTest = Expect<
   >
 >;
 export type OperationGatewaySuccessChannelsTypeTest = Expect<
-  Equal<EffectChannels<typeof successfulInvocation>, readonly ['completed', never, never]>
+  Equal<
+    EffectChannels<typeof successfulInvocation>,
+    readonly ['completed', never, never]
+  >
 >;

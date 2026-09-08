@@ -2,6 +2,7 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PartyOfficialIdentifierHistoryRequestSchema,
   PartyOfficialIdentifierHistoryResponseSchema,
@@ -17,16 +18,22 @@ const partyOfficialIdentifierHistoryEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 interface Services {
-  readonly list: (partyId: string) => ReturnType<typeof listOfficialIdentifierHistory>;
+  readonly list: (
+    partyId: string
+  ) => ReturnType<typeof listOfficialIdentifierHistory>;
 }
-const unavailable = readUnavailable('Official Identifier history is unavailable', true);
+const unavailable = readUnavailable(
+  'Official Identifier history is unavailable',
+  true
+);
 export const partyOfficialIdentifierHistoryRead = defineRead(
   {
     accessKind: 'list',
     entrypoint: partyOfficialIdentifierHistoryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
-      policyKey: 'party.registry.api.party-official-identifier-history.evidence.v1',
+      policyKey:
+        'party.registry.api.party-official-identifier-history.evidence.v1',
     },
     inputSchema: PartyOfficialIdentifierHistoryRequestSchema,
     legalEntityScope: 'optional',
@@ -40,12 +47,15 @@ export const partyOfficialIdentifierHistoryRead = defineRead(
   (input, context: ReadHandlerContext<Services>) =>
     context.services.list(input.partyRef.resourceId).pipe(
       Effect.mapError(unavailable),
-      Effect.map((items) => ({ evidence: { resultCount: items.length }, result: { items } })),
+      Effect.map((items) => ({
+        evidence: { resultCount: items.length },
+        result: { items },
+      }))
     ),
   (transaction, scope) =>
     Effect.succeed({
       list: (partyId: string) =>
         listOfficialIdentifierHistory(transaction, scope.tenantId, partyId),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+  () => ({ kind: 'tenant', permission: 'read_party_identity' })
 );

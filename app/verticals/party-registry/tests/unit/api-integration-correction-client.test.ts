@@ -1,9 +1,11 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
+
 import { CorrectPartyFactPayloadSchema } from '../../shared/command-api.ts';
 import {
   correctPartyFactWithAuthorization,
@@ -43,13 +45,18 @@ test('public clients discover the first assertion and submit a governed correcti
     const { pathname } = new URL(request.url);
     if (pathname.endsWith('/actions/create-party')) {
       return Response.json({
-        decisionRef: { ...partyRef, resourceType: 'party.registry.party-match-decision' },
+        decisionRef: {
+          ...partyRef,
+          resourceType: 'party.registry.party-match-decision',
+        },
         outcome: 'CREATED',
         partyRef,
       });
     }
     if (pathname.endsWith('/actions/correct-party-fact')) {
-      const payload = Schema.decodeUnknownSync(CorrectPartyFactPayloadSchema)(await request.json());
+      const payload = Schema.decodeUnknownSync(CorrectPartyFactPayloadSchema)(
+        await request.json()
+      );
       if (payload.factKind === 'RELATIONSHIP') {
         throw new Error('Expected identity correction');
       }
@@ -58,7 +65,10 @@ test('public clients discover the first assertion and submit a governed correcti
       assert.equal(payload.partyId, partyRef.resourceId);
       corrected = true;
       return Response.json({
-        correctionRef: { ...partyRef, resourceType: 'party.registry.party-correction' },
+        correctionRef: {
+          ...partyRef,
+          resourceType: 'party.registry.party-correction',
+        },
         factKind: 'DISPLAY_NAME',
         followUp: 'ENRICHMENT_REVIEW',
         partyRef,
@@ -80,7 +90,10 @@ test('public clients discover the first assertion and submit a governed correcti
     return Response.json({
       currentFactAssertions: [currentAssertion],
       factHistory: corrected
-        ? [{ ...originalAssertion, isCurrent: false, state: 'SUPERSEDED' }, currentAssertion]
+        ? [
+            { ...originalAssertion, isCurrent: false, state: 'SUPERSEDED' },
+            currentAssertion,
+          ]
         : [originalAssertion],
       party: {
         archivedAt: null,
@@ -117,24 +130,31 @@ test('public clients discover the first assertion and submit a governed correcti
         },
       },
       'Bearer test-assertion',
-      options,
+      options
     );
     assert.equal(created.outcome, 'CREATED');
     const before = yield* executePartyDetailWithAuthorization(
       { includeFactHistory: true, partyRef },
       'Bearer test-assertion',
       options.correlationId,
-      options,
+      options
     );
-    const target = before.currentFactAssertions.find(({ factKind }) => factKind === 'DISPLAY_NAME');
+    const target = before.currentFactAssertions.find(
+      ({ factKind }) => factKind === 'DISPLAY_NAME'
+    );
     assert.ok(target);
-    const correctionPayload = yield* Schema.decodeUnknownEffect(CorrectPartyFactPayloadSchema)({
+    const correctionPayload = yield* Schema.decodeUnknownEffect(
+      CorrectPartyFactPayloadSchema
+    )({
       evidenceRefs: ['document:reviewed-error'],
       evidenceSource: 'DOCUMENT',
       factKind: 'DISPLAY_NAME',
       partyId: partyRef.resourceId,
       policyVersion: 'party-correction.v1',
-      provenance: { method: 'MANUAL_REVIEW', source: 'document:reviewed-error' },
+      provenance: {
+        method: 'MANUAL_REVIEW',
+        source: 'document:reviewed-error',
+      },
       reasonCode: 'WRONG_IDENTITY_VALUE',
       replacementValue: 'Corrected name',
       targetAssertionId: target.assertionId,
@@ -142,26 +162,34 @@ test('public clients discover the first assertion and submit a governed correcti
     const correction = yield* correctPartyFactWithAuthorization(
       correctionPayload,
       'Bearer test-assertion',
-      { ...options, idempotencyKey: 'correct-first-assertion' },
+      { ...options, idempotencyKey: 'correct-first-assertion' }
     );
     assert.equal(correction.retractedAssertionId, target.assertionId);
     const after = yield* executePartyDetailWithAuthorization(
       { includeFactHistory: true, partyRef },
       'Bearer test-assertion',
       options.correlationId,
-      options,
+      options
     );
-    assert.equal(after.currentFactAssertions[0]?.assertionId, replacementAssertionId);
+    assert.equal(
+      after.currentFactAssertions[0]?.assertionId,
+      replacementAssertionId
+    );
     assert.equal(
       Option.getOrElse(after.factHistory, () => []).some(
-        ({ assertionId, state }) => assertionId === originalAssertionId && state === 'SUPERSEDED',
+        ({ assertionId, state }) =>
+          assertionId === originalAssertionId && state === 'SUPERSEDED'
       ),
-      true,
+      true
     );
   });
-  await runEffectTestPromise(program.pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)));
+  await runEffectTestPromise(
+    program.pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch))
+  );
   assert.equal(requests.length, 4);
-  const createRequest = requests.find(({ url }) => url.endsWith('/actions/create-party'));
+  const createRequest = requests.find(({ url }) =>
+    url.endsWith('/actions/create-party')
+  );
   assert.ok(createRequest);
   assert.deepEqual(await createRequest.json(), {
     candidate: {
@@ -174,7 +202,10 @@ test('public clients discover the first assertion and submit a governed correcti
     },
   });
   assert.equal(
-    requests.every((request) => request.headers.get('authorization') === 'Bearer test-assertion'),
-    true,
+    requests.every(
+      (request) =>
+        request.headers.get('authorization') === 'Bearer test-assertion'
+    ),
+    true
   );
 });

@@ -7,6 +7,7 @@ import {
   OperationContextUnavailable,
 } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   AttachPersonEngagementPayloadSchema,
   PersonEngagementProfileSchema,
@@ -20,8 +21,10 @@ import {
   partyRegistryReferenceOperations,
   validatePartyRegistryReferences,
 } from '../services/engagement-reference-validation.service.ts';
-
-import { AttachEngagementError, handleAttachEngagement } from './attach-engagement-handler.ts';
+import {
+  AttachEngagementError,
+  handleAttachEngagement,
+} from './attach-engagement-handler.ts';
 
 export const attachPersonEngagementAction = defineAction(
   {
@@ -35,7 +38,10 @@ export const attachPersonEngagementAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.attach-person-engagement',
       moduleKey: 'party.registry',
       role: 'action',
@@ -55,7 +61,7 @@ export const attachPersonEngagementAction = defineAction(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
           reason: 'Person engagement requires a trusted Legal Entity scope',
-        }),
+        })
       );
     }
     const { legalEntityId } = scope;
@@ -73,10 +79,10 @@ export const attachPersonEngagementAction = defineAction(
             transaction,
           }),
           payload,
-          { expectedPartyType: 'PERSON' },
+          { expectedPartyType: 'PERSON' }
         ),
     });
-  },
+  }
 );
 
 // <generated-outbox-message-exports>

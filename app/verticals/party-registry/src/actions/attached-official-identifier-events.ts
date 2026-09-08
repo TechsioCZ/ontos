@@ -1,5 +1,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import type {
   AddPartyOfficialIdentifierResult,
   AddPartyOfficialIdentifierResultSchema,
@@ -14,7 +15,7 @@ export const publishAttachedOfficialIdentifiers = (
     'addDomainEvent' | 'addOutboxMessage'
   >,
   partyRef: AddPartyOfficialIdentifierResult['partyRef'],
-  identifiers: readonly AddPartyOfficialIdentifierResult['officialIdentifierRef'][],
+  identifiers: readonly AddPartyOfficialIdentifierResult['officialIdentifierRef'][]
 ) =>
   Effect.forEach(
     identifiers,
@@ -31,9 +32,9 @@ export const publishAttachedOfficialIdentifiers = (
       yield* context.addOutboxMessage(
         event,
         createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
-          payload,
-        ),
+          payload
+        )
       );
     }),
-    { concurrency: 1, discard: true },
+    { concurrency: 1, discard: true }
   );

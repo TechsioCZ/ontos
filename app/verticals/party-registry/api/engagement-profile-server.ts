@@ -1,6 +1,14 @@
-import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
-import { Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type {
+  ActionRegistration,
+  DomainEventContractMap,
+} from '@app/core-runtime';
+import {
+  Effect,
+  HttpApiBuilder,
+  Layer,
+} from '@modern-js/plugin-bff/effect-edge';
 import { Redacted, Schema } from 'effect';
+
 import { partyRegistryApi } from '../shared/api.ts';
 import type {
   ContactsMutationHeadersSchema,
@@ -32,19 +40,24 @@ const runActionHttp = bindActionHttpRunner({
 
 const RequestHeadersSchema = Schema.Record(
   Schema.String,
-  Schema.Union([Schema.String, Schema.Undefined]),
+  Schema.Union([Schema.String, Schema.Undefined])
 );
 type RequestHeaders = Schema.Schema.Type<typeof RequestHeadersSchema>;
-type ContactsMutationHeaders = Schema.Schema.Type<typeof ContactsMutationHeadersSchema>;
+type ContactsMutationHeaders = Schema.Schema.Type<
+  typeof ContactsMutationHeadersSchema
+>;
 
-const attachActionProblem = (error: EngagementActionError): EngagementAttachProblem => {
+const attachActionProblem = (
+  error: EngagementActionError
+): EngagementAttachProblem => {
   const mapped = mapEngagementActionProblem(error);
   return mapEngagementAttachProblem(mapped);
 };
 
 const engagementActionHandler =
   <
-    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+    PayloadSchema extends Schema.ConstraintDecoder<unknown> &
+      Schema.ConstraintEncoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
     DomainErrorSchema extends Schema.ConstraintDecoder<EngagementActionError>,
     DomainEvents extends DomainEventContractMap,
@@ -62,7 +75,7 @@ const engagementActionHandler =
       Services,
       Requirements
     >,
-    mapError: (error: EngagementActionError) => PublicProblem,
+    mapError: (error: EngagementActionError) => PublicProblem
   ) =>
   ({
     payload,
@@ -88,7 +101,9 @@ const engagementActionHandler =
         authorization: Redacted.make(requestHeaders['authorization']),
         'x-correlation-id': requestHeaders['x-correlation-id'],
       },
-    }).pipe(Effect.catchIf(isEngagementAuthenticationProblem, failEngagementProblem));
+    }).pipe(
+      Effect.catchIf(isEngagementAuthenticationProblem, failEngagementProblem)
+    );
   };
 
 export const organizationEngagementMutationsLive = HttpApiBuilder.group(
@@ -98,16 +113,25 @@ export const organizationEngagementMutationsLive = HttpApiBuilder.group(
     handlers
       .handle(
         'attach',
-        engagementActionHandler(attachOrganizationEngagementAction, attachActionProblem),
+        engagementActionHandler(
+          attachOrganizationEngagementAction,
+          attachActionProblem
+        )
       )
       .handle(
         'archive',
-        engagementActionHandler(archiveOrganizationEngagementAction, mapEngagementActionProblem),
+        engagementActionHandler(
+          archiveOrganizationEngagementAction,
+          mapEngagementActionProblem
+        )
       )
       .handle(
         'unarchive',
-        engagementActionHandler(unarchiveOrganizationEngagementAction, mapEngagementActionProblem),
-      ),
+        engagementActionHandler(
+          unarchiveOrganizationEngagementAction,
+          mapEngagementActionProblem
+        )
+      )
 );
 
 const personEngagementMutationsLive = HttpApiBuilder.group(
@@ -115,18 +139,30 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
   'personEngagementMutations',
   (handlers) =>
     handlers
-      .handle('attach', engagementActionHandler(attachPersonEngagementAction, attachActionProblem))
+      .handle(
+        'attach',
+        engagementActionHandler(
+          attachPersonEngagementAction,
+          attachActionProblem
+        )
+      )
       .handle(
         'archive',
-        engagementActionHandler(archivePersonEngagementAction, mapEngagementActionProblem),
+        engagementActionHandler(
+          archivePersonEngagementAction,
+          mapEngagementActionProblem
+        )
       )
       .handle(
         'unarchive',
-        engagementActionHandler(unarchivePersonEngagementAction, mapEngagementActionProblem),
-      ),
+        engagementActionHandler(
+          unarchivePersonEngagementAction,
+          mapEngagementActionProblem
+        )
+      )
 );
 
 export const engagementProfileApiHandlersLive = Layer.mergeAll(
   organizationEngagementMutationsLive,
-  personEngagementMutationsLive,
+  personEngagementMutationsLive
 );

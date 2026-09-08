@@ -8,10 +8,7 @@ created: 2026-08-17
 
 ## Chore Description
 
-Complete and reconcile the Czech/English copy, fixtures, architecture assertions, migration checks,
-and end-to-end regression coverage after the ten Customer/ARES feature specs are implemented. This
-is a final verification task, not a place to defer behavior-specific tests already required by each
-feature.
+Complete and reconcile the Czech/English copy, fixtures, architecture assertions, migration checks, and end-to-end regression coverage after the ten Customer/ARES feature specs are implemented. This is a final verification task, not a place to defer behavior-specific tests already required by each feature.
 
 ## Relevant Files
 
@@ -58,10 +55,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ## Testing Strategy
 
-Behavior-specific unit, component, and integration tests remain beside their owning changes. This
-chore adds only cross-flow and architecture regression coverage, then runs the complete CRM and
-repository gates to catch mismatched fixtures, locales, generated contracts, schema output, or
-deployment builds.
+Behavior-specific unit, component, and integration tests remain beside their owning changes. This chore adds only cross-flow and architecture regression coverage, then runs the complete CRM and repository gates to catch mismatched fixtures, locales, generated contracts, schema output, or deployment builds.
 
 ## Acceptance Criteria
 
@@ -105,33 +99,21 @@ Execute every command to validate the chore with zero regressions.
 
 ### Summary
 
-- Reconciled all ten completed Customer/ARES specifications into one cross-cutting regression gate
-  for the canonical flat Customer fields, Czech/English copy, complete/null fixtures, browser/BFF
-  boundaries, ARES server ownership, and excluded address/metadata/activity scope.
-- Extended the existing governed integration scenario only for the missing ARES-prefill followed by
-  edit/detail/list flow; the already-owned manual-create, duplicate-IČO, archive/unarchive, tenant,
-  and null-clearing proofs remain in their feature tests.
-- Strengthened physical schema verification to reject any unexpected CRM Customer/Contact column,
-  and corrected the contact-detail route boundary exposed by a clean final typecheck.
+- Reconciled all ten completed Customer/ARES specifications into one cross-cutting regression gate for the canonical flat Customer fields, Czech/English copy, complete/null fixtures, browser/BFF boundaries, ARES server ownership, and excluded address/metadata/activity scope.
+- Extended the existing governed integration scenario only for the missing ARES-prefill followed by edit/detail/list flow; the already-owned manual-create, duplicate-IČO, archive/unarchive, tenant, and null-clearing proofs remain in their feature tests.
+- Strengthened physical schema verification to reject any unexpected CRM Customer/Contact column, and corrected the contact-detail route boundary exposed by a clean final typecheck.
 
 ### Changed Files
 
-- Seven files changed with 498 insertions and 24 deletions: five tracked implementation,
-  documentation, fixture, and integration-test files plus one new architecture regression test and
-  this completed specification.
+- Seven files changed with 498 insertions and 24 deletions: five tracked implementation, documentation, fixture, and integration-test files plus one new architecture regression test and this completed specification.
 
 ### Tests Written or Updated
 
-- `verticals/crm/tests/unit/customer-business-fields-regression.test.ts` — proves locale/fixture
-  parity, leading-zero/date-only fixtures, generated Effect-client browser access, server-only ARES,
-  generated Read ownership, presentation isolation, and absence of excluded business scope.
-- `verticals/crm/tests/integration/customer-contact-operations.test.ts` — extends the governed
-  runtime proof through leading-zero ARES lookup, reviewed create, edit, detail, and list parity.
-- `verticals/crm/tests/support/e2e-customers.ts` — makes complete and nullable business fields
-  explicit in both typed fixtures and database seed SQL.
+- `verticals/crm/tests/unit/customer-business-fields-regression.test.ts` — proves locale/fixture parity, leading-zero/date-only fixtures, generated Effect-client browser access, server-only ARES, generated Read ownership, presentation isolation, and absence of excluded business scope.
+- `verticals/crm/tests/integration/customer-contact-operations.test.ts` — extends the governed runtime proof through leading-zero ARES lookup, reviewed create, edit, detail, and list parity.
+- `verticals/crm/tests/support/e2e-customers.ts` — makes complete and nullable business fields explicit in both typed fixtures and database seed SQL.
 - `verticals/crm/scripts/verify-db-schema.mts` — validates the exact physical CRM column inventory.
-- Existing component tests cover the contact-detail route behavior; typecheck and the production
-  build prove its corrected router-component contract.
+- Existing component tests cover the contact-detail route behavior; typecheck and the production build prove its corrected router-component contract.
 
 ### Validation
 
@@ -150,23 +132,12 @@ Execute every command to validate the chore with zero regressions.
 
 ### Review
 
-- Re-read and reviewed the final diff against `../AGENTS.md`, `AGENTS.md`, the full specification,
-  `MICROVERTICALS.md`, `ACTIONS.md`, `ERRORS.md`, `DATABASE.md`, `DATA_ACCESS.md`,
-  `MODULE_ENTRYPOINTS.md`, `MODULE_MANIFESTS.md`, `ULTRAMODERN.md`, `FRONTEND.md`, and the ARES
-  integration guidance.
-- Fixed the review findings: lint-safe parallel architecture scans, exact schema-column validation,
-  an internally consistent exact-eight-digit ARES policy, and a prop-free default contact-detail
-  route export. The final diff has no remaining blocker, dead code, unrelated change, boundary
-  violation, accidental API expansion, or untested behavior.
-- No browser screenshot was retained because this chore changes regression infrastructure and a
-  router boundary without changing the rendered UI; deterministic component tests and the final
-  production build provide the relevant evidence.
+- Re-read and reviewed the final diff against `../AGENTS.md`, `AGENTS.md`, the full specification, `MICROVERTICALS.md`, `ACTIONS.md`, `ERRORS.md`, `DATABASE.md`, `DATA_ACCESS.md`, `MODULE_ENTRYPOINTS.md`, `MODULE_MANIFESTS.md`, `ULTRAMODERN.md`, `FRONTEND.md`, and the ARES integration guidance.
+- Fixed the review findings: lint-safe parallel architecture scans, exact schema-column validation, an internally consistent exact-eight-digit ARES policy, and a prop-free default contact-detail route export. The final diff has no remaining blocker, dead code, unrelated change, boundary violation, accidental API expansion, or untested behavior.
+- No browser screenshot was retained because this chore changes regression infrastructure and a router boundary without changing the rendered UI; deterministic component tests and the final production build provide the relevant evidence.
 
 ### Deviations and Follow-ups
 
-- A fresh worktree required dependency installation, database migration, and no-check declaration
-  materialization for referenced packages before the exact CRM package typecheck could run. The
-  final exact command passed without weakening its checks.
-- The literal dirty-worktree build compiled successfully but its release-envelope guard correctly
-  rejected `sourceRevision "workspace"`; the same final source passed with the immutable base revision.
+- A fresh worktree required dependency installation, database migration, and no-check declaration materialization for referenced packages before the exact CRM package typecheck could run. The final exact command passed without weakening its checks.
+- The literal dirty-worktree build compiled successfully but its release-envelope guard correctly rejected `sourceRevision "workspace"`; the same final source passed with the immutable base revision.
 - No product or architecture follow-up remains.

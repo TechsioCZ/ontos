@@ -1,5 +1,3 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import type {
   ContextAccessDecision,
@@ -7,7 +5,10 @@ import type {
   InstalledModuleCatalog,
   TenantModuleState,
 } from '@app/core-runtime';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { expect, test } from '@rstest/core';
 import { DateTime, Effect, Schema } from 'effect';
+
 import {
   attachShellMedia,
   makeShellResourceDetail,
@@ -40,7 +41,10 @@ const ref = Schema.decodeUnknownSync(ResourceRefSchema)({
   resourceId: 'unit-1',
   resourceType,
 });
-const entrypoint = (role: 'api' | 'search', access: 'read' | 'write' = 'read') => ({
+const entrypoint = (
+  role: 'api' | 'search',
+  access: 'read' | 'write' = 'read'
+) => ({
   access,
   authorization: {
     kind: 'context_permission' as const,
@@ -101,7 +105,12 @@ const catalog = (): InstalledModuleCatalog =>
                 schemaVersion: '1',
               },
             ],
-            api: [{ key: 'property.registry.resource-api', operationKeys: ['detail'] }],
+            api: [
+              {
+                key: 'property.registry.resource-api',
+                operationKeys: ['detail'],
+              },
+            ],
             components: [],
             events: [],
             reports: [],
@@ -178,7 +187,7 @@ const catalog = (): InstalledModuleCatalog =>
 const access = (
   moduleDecision: ContextAccessDecision = 'allowed',
   resourceDecision: ContextAccessDecision = 'allowed',
-  resourceWriteDecision: ContextAccessDecision = resourceDecision,
+  resourceWriteDecision: ContextAccessDecision = resourceDecision
 ): ContextAccessService => ({
   legalEntities: () => Effect.succeed([]),
   modules: ({ moduleIds }) =>
@@ -186,9 +195,10 @@ const access = (
   resources: ({ permission = 'read', resources }) =>
     Effect.succeed(
       resources.map(({ moduleId: owner, resourceId, resourceType: type }) => ({
-        decision: permission === 'write' ? resourceWriteDecision : resourceDecision,
+        decision:
+          permission === 'write' ? resourceWriteDecision : resourceDecision,
         key: `${owner}:${type}:${resourceId}`,
-      })),
+      }))
     ),
   tenants: ({ tenantIds }) =>
     Effect.succeed(tenantIds.map((key) => ({ decision: moduleDecision, key }))),
@@ -198,20 +208,26 @@ const dependencies = (
   state: TenantModuleState = 'active',
   moduleDecision: ContextAccessDecision = 'allowed',
   resourceDecision: ContextAccessDecision = 'allowed',
-  resourceWriteDecision: ContextAccessDecision = resourceDecision,
+  resourceWriteDecision: ContextAccessDecision = resourceDecision
 ) => {
   let assertion = 0;
   return {
     catalog: Effect.succeed(catalog()),
-    contextAccess: access(moduleDecision, resourceDecision, resourceWriteDecision),
+    contextAccess: access(
+      moduleDecision,
+      resourceDecision,
+      resourceWriteDecision
+    ),
     issueAssertion: () => {
       const authorization = `Bearer test-${assertion}`;
       assertion += 1;
       return Effect.succeed(authorization);
     },
     moduleStates: {
-      getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
-        Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
+      getTenantModuleStates: (
+        _tenantId: string,
+        moduleIds: readonly string[]
+      ) => Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
     },
   };
 };
@@ -224,7 +240,9 @@ test('search treats empty input as empty without touching providers', async () =
       return Effect.succeed([]);
     },
   });
-  await expect(runEffectTestPromise(search.search(context, '   '))).resolves.toEqual({
+  await expect(
+    runEffectTestPromise(search.search(context, '   '))
+  ).resolves.toEqual({
     partial: false,
     results: [],
   });
@@ -239,11 +257,14 @@ test('search keeps an eligible provider with zero candidates as a successful emp
         ...baseline,
         contextAccess: {
           ...baseline.contextAccess,
-          resources: () => Effect.die('empty results must not authorize an empty resource batch'),
+          resources: () =>
+            Effect.die(
+              'empty results must not authorize an empty resource batch'
+            ),
         },
       },
-      { search: () => Effect.succeed([]) },
-    ).search(context, 'unit'),
+      { search: () => Effect.succeed([]) }
+    ).search(context, 'unit')
   );
   expect(result).toEqual({ partial: false, results: [] });
 });
@@ -252,7 +273,7 @@ test('search filters resource denials and reports partial provider failure', asy
   const result = await runEffectTestPromise(
     makeShellSearch(dependencies('active', 'allowed', 'denied'), {
       search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
-    }).search(context, ' unit '),
+    }).search(context, ' unit ')
   );
   expect(result).toEqual({ partial: false, results: [] });
 
@@ -309,9 +330,11 @@ test('search filters resource denials and reports partial provider failure', asy
         searchKey === backupSearchKey
           ? Effect.fail(new ShellProviderUnavailableError())
           : Effect.succeed([{ ref, title: 'Unit 1' }]),
-    },
+    }
   );
-  await expect(runEffectTestPromise(partial.search(context, 'unit'))).resolves.toEqual({
+  await expect(
+    runEffectTestPromise(partial.search(context, 'unit'))
+  ).resolves.toEqual({
     partial: true,
     results: [{ kind: 'resource', ref, title: 'Unit 1' }],
   });
@@ -323,7 +346,8 @@ test('tenant-scoped Party search needs no Legal Entity, forwards declared filter
   if (contract === undefined) {
     throw new Error('The test catalog must include one installed contract');
   }
-  const [partyResourceDescriptor] = contract.manifest.publicSurface.resourceTypes;
+  const [partyResourceDescriptor] =
+    contract.manifest.publicSurface.resourceTypes;
   if (partyResourceDescriptor === undefined) {
     throw new Error('The test catalog must include one resource type');
   }
@@ -369,7 +393,10 @@ test('tenant-scoped Party search needs no Legal Entity, forwards declared filter
               contributionKey: 'party.registry.search.party',
               entrypoint: {
                 access: 'read' as const,
-                authorization: { kind: 'context_permission' as const, permission: 'module.access' },
+                authorization: {
+                  kind: 'context_permission' as const,
+                  permission: 'module.access',
+                },
                 entrypointKey: 'party.registry.search.party',
                 moduleKey: partyModuleId,
                 role: 'search' as const,
@@ -395,8 +422,10 @@ test('tenant-scoped Party search needs no Legal Entity, forwards declared filter
         catalog: Effect.succeed(partyCatalog),
         contextAccess: {
           ...baseline.contextAccess,
-          modules: () => Effect.die('tenant-scoped search must not require module access'),
-          resources: () => Effect.die('tenant-scoped search must not require resource access'),
+          modules: () =>
+            Effect.die('tenant-scoped search must not require module access'),
+          resources: () =>
+            Effect.die('tenant-scoped search must not require resource access'),
           tenants: ({ permission, tenantIds }) => {
             calls.push({ permission, tenantIds });
             return Effect.succeed([{ decision: 'allowed', key: tenantId }]);
@@ -420,11 +449,18 @@ test('tenant-scoped Party search needs no Legal Entity, forwards declared filter
             },
           ]);
         },
-      },
-    ).search(tenantContext, { includeArchived: true, query: ' party ', role: 'CUSTOMER' }),
+      }
+    ).search(tenantContext, {
+      includeArchived: true,
+      query: ' party ',
+      role: 'CUSTOMER',
+    })
   );
 
-  expect(calls[0]).toEqual({ permission: 'read_party_identity', tenantIds: [tenantId] });
+  expect(calls[0]).toEqual({
+    permission: 'read_party_identity',
+    tenantIds: [tenantId],
+  });
   expect(calls[1]).toMatchObject({ includeArchived: true, query: 'party' });
   expect(calls[1]).not.toHaveProperty('role');
   expect(result).toEqual({
@@ -450,7 +486,9 @@ test('search fails only when every eligible provider fails', async () => {
   const effect = makeShellSearch(dependencies(), {
     search: () => Effect.fail(new ShellProviderUnavailableError()),
   }).search(context, 'unit');
-  await expect(runEffectTestPromise(effect)).rejects.toBeInstanceOf(ShellProviderUnavailableError);
+  await expect(runEffectTestPromise(effect)).rejects.toBeInstanceOf(
+    ShellProviderUnavailableError
+  );
 });
 
 test('Counterparty search preserves both identities, selected scope, roles and collision metadata', async () => {
@@ -466,10 +504,12 @@ test('Counterparty search preserves both identities, selected scope, roles and c
           ...contract.manifest,
           publicSurface: {
             ...contract.manifest.publicSurface,
-            search: contract.manifest.publicSurface.search.map((descriptor) => ({
-              ...descriptor,
-              requestFilters: ['includeArchived', 'role'] as const,
-            })),
+            search: contract.manifest.publicSurface.search.map(
+              (descriptor) => ({
+                ...descriptor,
+                requestFilters: ['includeArchived', 'role'] as const,
+              })
+            ),
           },
         },
       },
@@ -484,7 +524,10 @@ test('Counterparty search preserves both identities, selected scope, roles and c
     tenantId,
   };
   const collision = {
-    counterpartyRefs: [counterpartyRef, { ...counterpartyRef, resourceId: 'unit-2' }],
+    counterpartyRefs: [
+      counterpartyRef,
+      { ...counterpartyRef, resourceId: 'unit-2' },
+    ],
     kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION',
   };
   const value = {
@@ -507,17 +550,23 @@ test('Counterparty search preserves both identities, selected scope, roles and c
         calls.push(input);
         return Effect.succeed([value]);
       },
-    },
+    }
   );
   const result = await runEffectTestPromise(
-    search.search(context, { includeArchived: true, query: 'canonical', role: 'CUSTOMER' }),
+    search.search(context, {
+      includeArchived: true,
+      query: 'canonical',
+      role: 'CUSTOMER',
+    })
   );
   expect(calls[0]).toMatchObject({ includeArchived: true, role: 'CUSTOMER' });
   expect(result).toEqual({
     partial: false,
     results: [{ ...value, kind: 'counterparty', title: 'Canonical Party' }],
   });
-  expect(await runEffectTestPromise(search.search(tenantContext, 'canonical'))).toEqual({
+  expect(
+    await runEffectTestPromise(search.search(tenantContext, 'canonical'))
+  ).toEqual({
     partial: false,
     results: [],
   });
@@ -534,14 +583,16 @@ test('Counterparty search preserves both identities, selected scope, roles and c
             Effect.succeed(
               resources.map((resource) => ({
                 decision:
-                  resource.resourceId === 'unit-2' ? ('denied' as const) : ('allowed' as const),
+                  resource.resourceId === 'unit-2'
+                    ? ('denied' as const)
+                    : ('allowed' as const),
                 key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-              })),
+              }))
             ),
         },
       },
-      { search: () => Effect.succeed([value]) },
-    ).search(context, 'canonical'),
+      { search: () => Effect.succeed([value]) }
+    ).search(context, 'canonical')
   );
   expect(JSON.stringify(redacted)).not.toContain('unit-2');
   expect(redacted.results[0]).not.toHaveProperty('collision');
@@ -560,8 +611,8 @@ test('treats a missing tenant module-state record as hidden rather than authoriz
           calls += 1;
           return Effect.succeed([{ ref, title: 'Unit 1' }]);
         },
-      }).search(context, 'unit'),
-    ),
+      }).search(context, 'unit')
+    )
   ).resolves.toEqual({ partial: false, results: [] });
   const gateway = {
     detail: () => {
@@ -572,10 +623,12 @@ test('treats a missing tenant module-state record as hidden rather than authoriz
   };
   await expect(
     runEffectTestPromise(
-      makeShellResourceDetail(hiddenDependencies, gateway).resolve(context, ref),
-    ),
+      makeShellResourceDetail(hiddenDependencies, gateway).resolve(context, ref)
+    )
   ).resolves.toEqual({ outcome: 'not_found' });
-  await expect(runEffectTestPromise(attachShellMedia(context, ref))).resolves.toEqual({
+  await expect(
+    runEffectTestPromise(attachShellMedia(context, ref))
+  ).resolves.toEqual({
     outcome: 'unavailable',
   });
   expect(calls).toBe(0);
@@ -586,15 +639,15 @@ test('search fails closed for module or resource authorization uncertainty', asy
     runEffectTestPromise(
       makeShellSearch(dependencies('active', 'unavailable'), {
         search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
-      }).search(context, 'unit'),
-    ),
+      }).search(context, 'unit')
+    )
   ).rejects.toBeInstanceOf(ShellProviderUnavailableError);
   await expect(
     runEffectTestPromise(
       makeShellSearch(dependencies('active', 'allowed', 'unavailable'), {
         search: () => Effect.succeed([{ ref, title: 'Unit 1' }]),
-      }).search(context, 'unit'),
-    ),
+      }).search(context, 'unit')
+    )
   ).rejects.toBeInstanceOf(ShellProviderUnavailableError);
 });
 
@@ -609,21 +662,27 @@ test('resource detail applies catalog, state, module and resource gates before p
   };
   expect(
     await runEffectTestPromise(
-      makeShellResourceDetail(dependencies('inactive'), provider).resolve(context, ref),
-    ),
+      makeShellResourceDetail(dependencies('inactive'), provider).resolve(
+        context,
+        ref
+      )
+    )
   ).toEqual({ outcome: 'not_found' });
   expect(
     await runEffectTestPromise(
-      makeShellResourceDetail(dependencies('active', 'denied'), provider).resolve(context, ref),
-    ),
+      makeShellResourceDetail(
+        dependencies('active', 'denied'),
+        provider
+      ).resolve(context, ref)
+    )
   ).toEqual({ outcome: 'forbidden' });
   expect(
     await runEffectTestPromise(
-      makeShellResourceDetail(dependencies('active', 'allowed', 'unavailable'), provider).resolve(
-        context,
-        ref,
-      ),
-    ),
+      makeShellResourceDetail(
+        dependencies('active', 'allowed', 'unavailable'),
+        provider
+      ).resolve(context, ref)
+    )
   ).toEqual({ outcome: 'unavailable' });
   expect(calls).toBe(0);
 });
@@ -635,12 +694,20 @@ test('resource detail sorts an authorized timeline and exposes projection lag', 
       timeline: () =>
         Effect.succeed({
           entries: [
-            { occurredAt: '2026-01-01T00:00:00Z', summary: 'Created', timelineEntryId: '1' },
-            { occurredAt: '2026-02-01T00:00:00Z', summary: 'Updated', timelineEntryId: '2' },
+            {
+              occurredAt: '2026-01-01T00:00:00Z',
+              summary: 'Created',
+              timelineEntryId: '1',
+            },
+            {
+              occurredAt: '2026-02-01T00:00:00Z',
+              summary: 'Updated',
+              timelineEntryId: '2',
+            },
           ],
           projectionLagging: true,
         }),
-    }).resolve(context, ref),
+    }).resolve(context, ref)
   );
   expect(result).toEqual({
     detail: { fields: [], title: 'Unit 1' },
@@ -665,11 +732,21 @@ test('resource detail sorts an authorized timeline and exposes projection lag', 
   }
   await expect(
     runEffectTestPromise(
-      Schema.encodeEffect(Schema.Array(ShellTimelineEntrySchema))(result.timeline),
-    ),
+      Schema.encodeEffect(Schema.Array(ShellTimelineEntrySchema))(
+        result.timeline
+      )
+    )
   ).resolves.toEqual([
-    { occurredAt: '2026-02-01T00:00:00.000Z', summary: 'Updated', timelineEntryId: '2' },
-    { occurredAt: '2026-01-01T00:00:00.000Z', summary: 'Created', timelineEntryId: '1' },
+    {
+      occurredAt: '2026-02-01T00:00:00.000Z',
+      summary: 'Updated',
+      timelineEntryId: '2',
+    },
+    {
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      summary: 'Created',
+      timelineEntryId: '1',
+    },
   ]);
 });
 
@@ -680,24 +757,35 @@ test('media affordance remains unavailable until a generated Action exists', asy
   };
   await expect(
     runEffectTestPromise(
-      makeShellResourceDetail(dependencies('read_only'), provider).resolve(context, ref),
-    ),
+      makeShellResourceDetail(dependencies('read_only'), provider).resolve(
+        context,
+        ref
+      )
+    )
   ).resolves.toMatchObject({ media: { enabled: false, reason: 'read_only' } });
   await expect(
     runEffectTestPromise(
       makeShellResourceDetail(
         dependencies('active', 'allowed', 'allowed', 'denied'),
-        provider,
-      ).resolve(context, ref),
-    ),
-  ).resolves.toMatchObject({ media: { enabled: false, reason: 'unavailable' } });
+        provider
+      ).resolve(context, ref)
+    )
+  ).resolves.toMatchObject({
+    media: { enabled: false, reason: 'unavailable' },
+  });
   await expect(
-    runEffectTestPromise(makeShellResourceDetail(dependencies(), provider).resolve(context, ref)),
-  ).resolves.toMatchObject({ media: { enabled: false, reason: 'unavailable' } });
+    runEffectTestPromise(
+      makeShellResourceDetail(dependencies(), provider).resolve(context, ref)
+    )
+  ).resolves.toMatchObject({
+    media: { enabled: false, reason: 'unavailable' },
+  });
 });
 
 test('media endpoint cannot invoke a provider mutation', async () => {
-  await expect(runEffectTestPromise(attachShellMedia(context, ref))).resolves.toEqual({
+  await expect(
+    runEffectTestPromise(attachShellMedia(context, ref))
+  ).resolves.toEqual({
     outcome: 'unavailable',
   });
 });
@@ -714,7 +802,7 @@ test('acquires a fresh audience-scoped assertion for each provider attempt', asy
         authorizations.push(authorization);
         return Effect.succeed({ entries: [], projectionLagging: false });
       },
-    }).resolve(context, ref),
+    }).resolve(context, ref)
   );
   expect(result.outcome).toBe('resolved');
   expect(authorizations).toEqual(['Bearer test-0', 'Bearer test-1']);

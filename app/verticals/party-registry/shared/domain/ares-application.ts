@@ -1,10 +1,14 @@
 import { DateTime, Option, Result, Schema } from 'effect';
+
 import {
   AresIsoTimestampSchema,
   AresRegisteredAddressSchema,
   AresSubjectEvidenceSchema,
 } from './ares-evidence.ts';
-import type { AresRegisteredAddress, AresSubjectEvidence } from './ares-evidence.ts';
+import type {
+  AresRegisteredAddress,
+  AresSubjectEvidence,
+} from './ares-evidence.ts';
 import type { StructuredAddress } from './contact-point.ts';
 import type { PartyCandidate } from './identity-contracts.ts';
 
@@ -37,13 +41,16 @@ const decisionEvidence = {
   authorityPolicyKey: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(200),
-    Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u),
+    Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u)
   ),
-  authorityPolicyVersion: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+  authorityPolicyVersion: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(100)
+  ),
   reasonCode: Schema.String.check(
     Schema.isMinLength(1),
     Schema.isMaxLength(100),
-    Schema.isPattern(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u),
+    Schema.isPattern(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u)
   ),
 } as const;
 
@@ -92,17 +99,20 @@ export const AresEvidenceApplicationSchema = Schema.Struct({
     if (application.outcome === 'APPLY_ENRICHMENT') {
       return application.userConfirmed &&
         application.factDecisions.some(
-          (decision) => decision.outcome === 'APPLY_ENRICHMENT' && decision.route !== null,
+          (decision) =>
+            decision.outcome === 'APPLY_ENRICHMENT' && decision.route !== null
         )
         ? undefined
         : 'V1 enrichment requires explicit user confirmation and a standard Party Action route';
     }
     return application.factDecisions.length > 0 &&
       application.factDecisions.every((decision) => decision.route === null) &&
-      application.factDecisions.some((decision) => decision.outcome === application.outcome)
+      application.factDecisions.some(
+        (decision) => decision.outcome === application.outcome
+      )
       ? undefined
       : 'non-applying ARES outcomes require fact-specific evidence decisions without mutation routes';
-  }),
+  })
 );
 export type AresEvidenceApplication = typeof AresEvidenceApplicationSchema.Type;
 
@@ -115,7 +125,10 @@ export const AresAppliedEvidenceSchema = Schema.Struct({
   authorityPolicyVersion: Schema.Literal('1'),
   cacheAgeSeconds: AresSubjectEvidenceSchema.fields.cacheAgeSeconds,
   decidedAt: AresIsoTimestampSchema,
-  evidenceRef: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  evidenceRef: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(200)
+  ),
   fact: AresSelectedFactSchema,
   observedAt: AresIsoTimestampSchema,
   outcome: AresApplyOutcomeSchema,
@@ -138,7 +151,10 @@ export interface AresCanonicalFactEvidence {
   readonly fact: 'BUSINESS_NAME' | 'ICO';
   readonly value: string;
   readonly validFrom: string;
-  readonly externalEvidence: AresAppliedEvidence | typeof AresAppliedEvidenceSchema.Encoded | null;
+  readonly externalEvidence:
+    | AresAppliedEvidence
+    | typeof AresAppliedEvidenceSchema.Encoded
+    | null;
 }
 export interface AresCorrectionReviewHandoff {
   readonly fact: 'BUSINESS_NAME' | 'ICO';
@@ -164,18 +180,22 @@ const normalizeText = (value: string | null | undefined): string =>
 
 export const aresRegisteredAddressMatches = (
   observed: AresRegisteredAddress | typeof AresRegisteredAddressSchema.Encoded,
-  current: StructuredAddress,
+  current: StructuredAddress
 ): boolean => {
   const address = Schema.is(AresRegisteredAddressSchema)(observed)
     ? observed
-    : Result.getOrThrow(Schema.decodeUnknownResult(AresRegisteredAddressSchema)(observed));
+    : Result.getOrThrow(
+        Schema.decodeUnknownResult(AresRegisteredAddressSchema)(observed)
+      );
   const houseNumber = [
     Option.getOrNull(address.buildingNumber),
     Option.getOrNull(address.orientationNumber),
   ]
     .filter(Boolean)
     .join('/');
-  const line = [Option.getOrNull(address.street), houseNumber].filter(Boolean).join(' ');
+  const line = [Option.getOrNull(address.street), houseNumber]
+    .filter(Boolean)
+    .join(' ');
   const countryCode = Option.getOrNull(address.countryCode);
   // A formatted presentation string is not a structural address. Missing structure never proves equality.
   return (
@@ -184,7 +204,8 @@ export const aresRegisteredAddressMatches = (
     normalizeText(current.addressLine1) === normalizeText(line) &&
     normalizeText(current.addressLine2) ===
       normalizeText(Option.getOrNull(address.municipalityPart)) &&
-    normalizeText(current.city) === normalizeText(Option.getOrNull(address.municipality)) &&
+    normalizeText(current.city) ===
+      normalizeText(Option.getOrNull(address.municipality)) &&
     normalizeText(current.countryCode) === normalizeText(countryCode) &&
     normalizeText(current.postalCode).replaceAll(' ', '') ===
       normalizeText(Option.getOrNull(address.postalCode)).replaceAll(' ', '') &&
@@ -205,11 +226,13 @@ const SupportedAddressSchema = AresRegisteredAddressSchema.check(
     Option.contains(address.countryCode, 'CZ') &&
     (Option.isSome(address.street) || Option.isSome(address.buildingNumber))
       ? undefined
-      : 'address must be a structured Czech address',
-  ),
+      : 'address must be a structured Czech address'
+  )
 );
 const isSupportedAddress = Schema.is(SupportedAddressSchema);
-const SupportedBusinessNameSchema = Schema.String.check(Schema.isMaxLength(300));
+const SupportedBusinessNameSchema = Schema.String.check(
+  Schema.isMaxLength(300)
+);
 const isSupportedBusinessName = Schema.is(SupportedBusinessNameSchema);
 const epochMillisFromString = (value: string): number =>
   Option.match(DateTime.make(value), {
@@ -219,16 +242,27 @@ const epochMillisFromString = (value: string): number =>
 
 /** A bounded proposal only. An explicit evidence-backed Matching/Create flow owns acceptance. */
 export const prefillPartyCandidateFromAres = (
-  input: typeof AresSubjectEvidenceSchema.Encoded,
+  input: typeof AresSubjectEvidenceSchema.Encoded
 ): PartyCandidate => {
-  const evidence = Result.getOrThrow(Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(input));
+  const evidence = Result.getOrThrow(
+    Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(input)
+  );
   const candidate: PartyCandidate = {
-    evidenceRefs: [`ares:${evidence.queryIco}:${DateTime.formatIso(evidence.observedAt)}`],
+    evidenceRefs: [
+      `ares:${evidence.queryIco}:${DateTime.formatIso(evidence.observedAt)}`,
+    ],
     officialIdentifiers: [
-      { identifierType: 'ICO', value: evidence.subject.ico, verification: 'UNVERIFIED' },
+      {
+        identifierType: 'ICO',
+        value: evidence.subject.ico,
+        verification: 'UNVERIFIED',
+      },
     ],
     partyType: 'UNRESOLVED',
-    provenance: { method: 'PROVIDER_OBSERVATION', source: 'ARES_CANDIDATE_PREFILL' },
+    provenance: {
+      method: 'PROVIDER_OBSERVATION',
+      source: 'ARES_CANDIDATE_PREFILL',
+    },
     subjectEvidence: [],
     validFrom: evidence.observedAt,
   };
@@ -242,32 +276,40 @@ export const prefillPartyCandidateFromAres = (
 const acceptedObservationMatches = (
   accepted: AresAppliedEvidence,
   evidence: AresSubjectEvidence,
-  validFrom: string,
+  validFrom: string
 ): boolean =>
   (Option.isNone(accepted.providerRecordRef) ||
     Option.isNone(evidence.providerRecordRef) ||
     Option.getOrNull(accepted.providerRecordRef) ===
       Option.getOrNull(evidence.providerRecordRef)) &&
-  DateTime.toEpochMillis(accepted.observedAt) <= epochMillisFromString(validFrom) &&
-  epochMillisFromString(validFrom) <= DateTime.toEpochMillis(evidence.observedAt);
+  DateTime.toEpochMillis(accepted.observedAt) <=
+    epochMillisFromString(validFrom) &&
+  epochMillisFromString(validFrom) <=
+    DateTime.toEpochMillis(evidence.observedAt);
 
 const acceptedEvidenceConflicts = (
   assertion: AresCanonicalFactEvidence,
   evidence: AresSubjectEvidence,
-  fact: 'BUSINESS_NAME' | 'ICO',
+  fact: 'BUSINESS_NAME' | 'ICO'
 ): boolean => {
   const acceptedInput = assertion.externalEvidence;
   const accepted =
-    acceptedInput === null || Schema.is(AresAppliedEvidenceSchema)(acceptedInput)
+    acceptedInput === null ||
+    Schema.is(AresAppliedEvidenceSchema)(acceptedInput)
       ? acceptedInput
-      : Result.getOrUndefined(Schema.decodeUnknownResult(AresAppliedEvidenceSchema)(acceptedInput));
+      : Result.getOrUndefined(
+          Schema.decodeUnknownResult(AresAppliedEvidenceSchema)(acceptedInput)
+        );
   return (
     accepted !== null &&
     accepted !== undefined &&
     accepted.fact === fact &&
     accepted.outcome === 'APPLY_ENRICHMENT' &&
     accepted.queryIco === evidence.queryIco &&
-    Option.contains(accepted.providerChangedOn, Option.getOrThrow(evidence.providerChangedOn)) &&
+    Option.contains(
+      accepted.providerChangedOn,
+      Option.getOrThrow(evidence.providerChangedOn)
+    ) &&
     acceptedObservationMatches(accepted, evidence, assertion.validFrom)
   );
 };
@@ -275,10 +317,12 @@ const acceptedEvidenceConflicts = (
 const historicalConflict = (
   canonical: AresCanonicalSnapshot,
   evidence: AresSubjectEvidence,
-  fact: 'BUSINESS_NAME' | 'ICO',
+  fact: 'BUSINESS_NAME' | 'ICO'
 ): AresCanonicalFactEvidence | undefined => {
   const observedValue =
-    fact === 'ICO' ? evidence.subject.ico : Option.getOrNull(evidence.subject.businessName);
+    fact === 'ICO'
+      ? evidence.subject.ico
+      : Option.getOrNull(evidence.subject.businessName);
   if (
     observedValue === null ||
     Option.isNone(evidence.providerChangedOn) ||
@@ -290,10 +334,11 @@ const historicalConflict = (
     (assertion) =>
       assertion.fact === fact &&
       (fact === 'BUSINESS_NAME'
-        ? normalizeText(assertion.value) === normalizeText(canonical.displayName)
+        ? normalizeText(assertion.value) ===
+          normalizeText(canonical.displayName)
         : canonical.icoValues.includes(assertion.value)) &&
       normalizeText(assertion.value) !== normalizeText(observedValue) &&
-      acceptedEvidenceConflicts(assertion, evidence, fact),
+      acceptedEvidenceConflicts(assertion, evidence, fact)
   );
   // Multiple current assertions are an unresolved conflict, never an arbitrary review target.
   return assertions.length === 1 ? assertions[0] : undefined;
@@ -302,12 +347,18 @@ const historicalConflict = (
 const blocked = (
   fact: AresSelectedFact,
   outcome: Exclude<AresApplyOutcome, 'APPLY_ENRICHMENT'>,
-  reasonCode: string,
-): AresFactDecision => ({ ...ownerPolicy, fact, outcome, reasonCode, route: null });
+  reasonCode: string
+): AresFactDecision => ({
+  ...ownerPolicy,
+  fact,
+  outcome,
+  reasonCode,
+  route: null,
+});
 
 const businessNameDecision = (
   canonical: AresCanonicalSnapshot,
-  evidence: AresSubjectEvidence,
+  evidence: AresSubjectEvidence
 ): AresFactDecision | undefined => {
   const fact = 'BUSINESS_NAME';
   const businessName = Option.getOrNull(evidence.subject.businessName);
@@ -325,7 +376,7 @@ const businessNameDecision = (
 
 const addressDecision = (
   canonical: AresCanonicalSnapshot,
-  evidence: AresSubjectEvidence,
+  evidence: AresSubjectEvidence
 ): AresFactDecision | undefined => {
   const fact = 'REGISTERED_ADDRESS';
   const address = Option.getOrUndefined(evidence.subject.registeredAddress);
@@ -333,7 +384,9 @@ const addressDecision = (
     return blocked(fact, 'NO_CHANGE', 'provider_fact_absent_or_unsupported');
   }
   if (
-    canonical.registeredAddresses.some((current) => aresRegisteredAddressMatches(address, current))
+    canonical.registeredAddresses.some((current) =>
+      aresRegisteredAddressMatches(address, current)
+    )
   ) {
     return blocked(fact, 'NO_CHANGE', 'canonical_fact_equal');
   }
@@ -346,16 +399,20 @@ const addressDecision = (
 const identityDecision = (
   fact: AresSelectedFact,
   canonical: AresCanonicalSnapshot,
-  evidence: AresSubjectEvidence,
+  evidence: AresSubjectEvidence
 ): AresFactDecision | undefined => {
-  const conflictingIco = canonical.icoValues.some((value) => value !== evidence.subject.ico);
+  const conflictingIco = canonical.icoValues.some(
+    (value) => value !== evidence.subject.ico
+  );
   const historical =
     fact === 'BUSINESS_NAME' || fact === 'ICO'
       ? historicalConflict(canonical, evidence, fact)
       : undefined;
   if (
     conflictingIco &&
-    (fact !== 'ICO' || historical === undefined || canonical.icoValues.length !== 1)
+    (fact !== 'ICO' ||
+      historical === undefined ||
+      canonical.icoValues.length !== 1)
   ) {
     return blocked(fact, 'IDENTITY_AMBIGUITY', 'canonical_identity_conflict');
   }
@@ -363,7 +420,7 @@ const identityDecision = (
     return blocked(
       fact,
       'CORRECTION_CANDIDATE',
-      'unchanged_provider_revision_conflicts_with_accepted_assertion',
+      'unchanged_provider_revision_conflicts_with_accepted_assertion'
     );
   }
   return undefined;
@@ -372,11 +429,15 @@ const identityDecision = (
 const applyFactDecision = (
   fact: Exclude<AresSelectedFact, 'PARTY_CANDIDATE'>,
   canonical: AresCanonicalSnapshot,
-  userConfirmed: boolean,
+  userConfirmed: boolean
 ): AresFactDecision => {
   // Only ORGANIZATION ICO assertions qualify for the current authoritative claim rule.
   if (fact === 'ICO' && canonical.partyType !== 'ORGANIZATION') {
-    return blocked(fact, 'NEEDS_CONFIRMATION', 'party_type_not_supported_for_authoritative_ico');
+    return blocked(
+      fact,
+      'NEEDS_CONFIRMATION',
+      'party_type_not_supported_for_authoritative_ico'
+    );
   }
   if (!userConfirmed) {
     return blocked(fact, 'NEEDS_CONFIRMATION', 'user_confirmation_required');
@@ -399,7 +460,7 @@ const selectedFactDecision = (
   fact: Exclude<AresSelectedFact, 'PARTY_CANDIDATE'>,
   canonical: AresCanonicalSnapshot,
   evidence: AresSubjectEvidence,
-  userConfirmed: boolean,
+  userConfirmed: boolean
 ): AresFactDecision => {
   const conflict = identityDecision(fact, canonical, evidence);
   if (conflict !== undefined) {
@@ -425,13 +486,13 @@ const selectedFactDecision = (
 
 /** Policy is closed owner code, never a caller-supplied outcome, route or authority assertion. */
 export const deriveAresEvidenceApplication = (
-  input: AresDecisionInput,
+  input: AresDecisionInput
 ): AresEvidenceApplication => {
   const evidence = Result.getOrThrow(
-    Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(input.evidence),
+    Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(input.evidence)
   );
   const decidedAt = Result.getOrThrow(
-    Schema.decodeUnknownResult(AresIsoTimestampSchema)(input.decidedAt),
+    Schema.decodeUnknownResult(AresIsoTimestampSchema)(input.decidedAt)
   );
   const selectedFacts = Result.getOrThrow(
     Schema.decodeUnknownResult(
@@ -439,14 +500,17 @@ export const deriveAresEvidenceApplication = (
         Schema.isMinLength(1),
         Schema.isMaxLength(4),
         Schema.makeFilter((facts) =>
-          new Set(facts).size === facts.length ? undefined : 'ARES selected facts must be unique',
-        ),
-      ),
-    )(input.selectedFacts),
+          new Set(facts).size === facts.length
+            ? undefined
+            : 'ARES selected facts must be unique'
+        )
+      )
+    )(input.selectedFacts)
   );
   const { canonical } = input;
   const decidedAtEpochMillis = DateTime.toEpochMillis(decidedAt);
-  const age = decidedAtEpochMillis - DateTime.toEpochMillis(evidence.observedAt);
+  const age =
+    decidedAtEpochMillis - DateTime.toEpochMillis(evidence.observedAt);
   const fresh =
     Number.isFinite(age) &&
     age >= 0 &&
@@ -454,13 +518,21 @@ export const deriveAresEvidenceApplication = (
     decidedAtEpochMillis >= DateTime.toEpochMillis(evidence.servedAt);
   const decisions = selectedFacts.map((fact): AresFactDecision => {
     if (evidence.subject.ico !== evidence.queryIco) {
-      return blocked(fact, 'IDENTITY_AMBIGUITY', 'provider_subject_does_not_match_query');
+      return blocked(
+        fact,
+        'IDENTITY_AMBIGUITY',
+        'provider_subject_does_not_match_query'
+      );
     }
     if (canonical === null) {
       return blocked(fact, 'PREFILL_ONLY', 'candidate_prefill_only');
     }
     if (fact === 'PARTY_CANDIDATE') {
-      return blocked(fact, 'NEEDS_CONFIRMATION', 'candidate_has_existing_target');
+      return blocked(
+        fact,
+        'NEEDS_CONFIRMATION',
+        'candidate_has_existing_target'
+      );
     }
     if (canonical.identityAmbiguous) {
       return blocked(fact, 'IDENTITY_AMBIGUITY', 'canonical_identity_conflict');
@@ -482,8 +554,9 @@ export const deriveAresEvidenceApplication = (
     'NO_CHANGE',
   ];
   const outcome =
-    priority.find((candidate) => decisions.some((decision) => decision.outcome === candidate)) ??
-    'NO_CHANGE';
+    priority.find((candidate) =>
+      decisions.some((decision) => decision.outcome === candidate)
+    ) ?? 'NO_CHANGE';
   return Result.getOrThrow(
     Schema.decodeUnknownResult(Schema.toType(AresEvidenceApplicationSchema))({
       decidedAt,
@@ -491,13 +564,13 @@ export const deriveAresEvidenceApplication = (
       factDecisions: decisions,
       outcome,
       userConfirmed: input.userConfirmed,
-    }),
+    })
   );
 };
 
 export const makeAresAppliedEvidence = (
   application: AresEvidenceApplication,
-  decision: AresFactDecision,
+  decision: AresFactDecision
 ): AresAppliedEvidence => {
   const { evidence } = application;
   return Result.getOrThrow(
@@ -512,14 +585,14 @@ export const makeAresAppliedEvidence = (
       providerRecordRef: evidence.providerRecordRef,
       queryIco: evidence.queryIco,
       servedAt: evidence.servedAt,
-    }),
+    })
   );
 };
 
 /** Nominates one exact accepted assertion; the reviewer still supplies the Correction command. */
 export const deriveAresCorrectionReviewHandoffs = (
   application: AresEvidenceApplication,
-  canonical: AresCanonicalSnapshot,
+  canonical: AresCanonicalSnapshot
 ): readonly AresCorrectionReviewHandoff[] =>
   application.factDecisions.flatMap((decision) => {
     if (
@@ -528,7 +601,11 @@ export const deriveAresCorrectionReviewHandoffs = (
     ) {
       return [];
     }
-    const assertion = historicalConflict(canonical, application.evidence, decision.fact);
+    const assertion = historicalConflict(
+      canonical,
+      application.evidence,
+      decision.fact
+    );
     const observedValue =
       decision.fact === 'ICO'
         ? application.evidence.subject.ico
@@ -540,7 +617,8 @@ export const deriveAresCorrectionReviewHandoffs = (
             evidence: makeAresAppliedEvidence(application, decision),
             fact: decision.fact,
             observedValue,
-            reasonCode: 'unchanged_provider_revision_conflicts_with_accepted_assertion' as const,
+            reasonCode:
+              'unchanged_provider_revision_conflicts_with_accepted_assertion' as const,
             targetAssertionId: assertion.assertionId,
           },
         ];

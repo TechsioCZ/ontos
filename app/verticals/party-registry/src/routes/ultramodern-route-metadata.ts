@@ -36,5 +36,6 @@ const ultramodernRouteMetadata = [
 ] as const;
 
 export const ultramodernLocalisedUrls = {
-  [ultramodernRouteMetadata[0].canonicalPath]: ultramodernRouteMetadata[0].localisedPaths,
+  [ultramodernRouteMetadata[0].canonicalPath]:
+    ultramodernRouteMetadata[0].localisedPaths,
 } as const;

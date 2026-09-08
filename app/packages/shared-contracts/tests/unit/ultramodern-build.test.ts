@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
 import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
 
 test('injected build identity updates all surfaces without mutating generated metadata', () => {
@@ -18,7 +19,11 @@ test('injected build identity updates all surfaces without mutating generated me
       ui: { ...deliveryUnit, surface: 'ui' },
     },
   } as const;
-  const result = withUltramodernBuildIdentity(artifact, 'injected-build', 'source-revision');
+  const result = withUltramodernBuildIdentity(
+    artifact,
+    'injected-build',
+    'source-revision'
+  );
   const expectedIdentity = {
     ...deliveryUnit,
     build: 'injected-build',

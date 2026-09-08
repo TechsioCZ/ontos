@@ -1,7 +1,9 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { readFile } from 'node:fs/promises';
+
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
+
 import {
   STAGE_DEMO_ACCOUNTS,
   classifyExactStageDemoRecord,
@@ -21,7 +23,9 @@ const validEnvironment = {
 } as const;
 
 test('accepts the complete stage-only demo bootstrap configuration', () => {
-  expect(runEffectTestSync(parseStageDemoBootstrapConfig(validEnvironment))).toEqual({
+  expect(
+    runEffectTestSync(parseStageDemoBootstrapConfig(validEnvironment))
+  ).toEqual({
     accounts: [
       {
         email: 'demo@test.com',
@@ -62,9 +66,9 @@ test('refuses to provision outside stage or without an operator-supplied passwor
         parseStageDemoBootstrapConfig({
           ...validEnvironment,
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
-        }),
-      ),
-    ),
+        })
+      )
+    )
   ).toMatchObject({ reason: expect.stringMatching(/stage environment/u) });
   expect(
     runEffectTestSync(
@@ -72,9 +76,9 @@ test('refuses to provision outside stage or without an operator-supplied passwor
         parseStageDemoBootstrapConfig({
           ...validEnvironment,
           STAGE_DEMO_PASSWORD: undefined,
-        }),
-      ),
-    ),
+        })
+      )
+    )
   ).toMatchObject({ reason: expect.stringMatching(/STAGE_DEMO_PASSWORD/u) });
   expect(
     runEffectTestSync(
@@ -82,54 +86,80 @@ test('refuses to provision outside stage or without an operator-supplied passwor
         parseStageDemoBootstrapConfig({
           ...validEnvironment,
           STAGE_SIAMPARK_PASSWORD: undefined,
-        }),
-      ),
-    ),
-  ).toMatchObject({ reason: expect.stringMatching(/STAGE_SIAMPARK_PASSWORD/u) });
+        })
+      )
+    )
+  ).toMatchObject({
+    reason: expect.stringMatching(/STAGE_SIAMPARK_PASSWORD/u),
+  });
 });
 
 test('treats an exact record as idempotent and rejects conflicting state', () => {
-  const expected = { name: 'Techsio', slug: 'techsio', status: 'active' } as const;
-  expect(runEffectTestSync(classifyExactStageDemoRecord('tenant', undefined, expected))).toBe(
-    'create',
-  );
-  expect(runEffectTestSync(classifyExactStageDemoRecord('tenant', expected, expected))).toBe(
-    'existing',
-  );
+  const expected = {
+    name: 'Techsio',
+    slug: 'techsio',
+    status: 'active',
+  } as const;
+  expect(
+    runEffectTestSync(
+      classifyExactStageDemoRecord('tenant', undefined, expected)
+    )
+  ).toBe('create');
+  expect(
+    runEffectTestSync(
+      classifyExactStageDemoRecord('tenant', expected, expected)
+    )
+  ).toBe('existing');
   expect(
     runEffectTestSync(
       Effect.flip(
-        classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected),
-      ),
-    ),
+        classifyExactStageDemoRecord(
+          'tenant',
+          { ...expected, name: 'Other tenant' },
+          expected
+        )
+      )
+    )
   ).toMatchObject({ reason: expect.stringMatching(/conflicts/u) });
 });
 
 test('keeps the demo bootstrap operator-invoked and excludes its password from source', async () => {
-  const rootPackage = await readFile(new URL('../../../../package.json', import.meta.url), 'utf-8');
-  const shellPackage = await readFile(new URL('../../package.json', import.meta.url), 'utf-8');
+  const rootPackage = await readFile(
+    new URL('../../../../package.json', import.meta.url),
+    'utf-8'
+  );
+  const shellPackage = await readFile(
+    new URL('../../package.json', import.meta.url),
+    'utf-8'
+  );
   const bootstrapCommand = await readFile(
     new URL('../../scripts/bootstrap-stage-demo.sh', import.meta.url),
-    'utf-8',
+    'utf-8'
   );
-  const zerops = await readFile(new URL('../../../../zerops.yaml', import.meta.url), 'utf-8');
+  const zerops = await readFile(
+    new URL('../../../../zerops.yaml', import.meta.url),
+    'utf-8'
+  );
   const coreBootstrap = await readFile(
     new URL(
       '../../../../packages/core-runtime/src/install/stage-context-bootstrap.ts',
-      import.meta.url,
+      import.meta.url
     ),
-    'utf-8',
+    'utf-8'
   );
   const shellBootstrap = await readFile(
-    new URL('../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts', import.meta.url),
-    'utf-8',
+    new URL(
+      '../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts',
+      import.meta.url
+    ),
+    'utf-8'
   );
 
   expect(JSON.parse(rootPackage).scripts['stage:bootstrap-demo']).toBe(
-    'pnpm --filter @app/shell-super-app stage:bootstrap-demo',
+    'pnpm --filter @app/shell-super-app stage:bootstrap-demo'
   );
   expect(JSON.parse(shellPackage).scripts['stage:bootstrap-demo']).toBe(
-    'sh scripts/bootstrap-stage-demo.sh',
+    'sh scripts/bootstrap-stage-demo.sh'
   );
   expect(bootstrapCommand).toMatch(/stty -echo/u);
   expect(bootstrapCommand).toMatch(/STAGE_DEMO_PASSWORD/u);

@@ -6,87 +6,35 @@ created: 2026-09-02
 
 # Feature: Fail-closed Action authorization with explicit environment grants
 
-> Historical implementation record. The follow-up
-> [protected-entrypoint specification](./feature-complete-protected-entrypoint-authorization.md)
-> narrows the provisioning rule below: every Action declares `action_execution` with either
-> `tenant_membership_default` or `explicit` provisioning. Only the former receives a fixed
-> tenant-member grant; the latter must already have its intended policy and never receives a
-> blanket membership grant. This is implemented in `provisionActionAuthorization` and covered by
-> the restricted-Action regressions in
-> `scripts/tests/provision-current-action-authorization.test.mts`. Default Actions verify every
-> fixed context and a representative non-member. Explicit Actions instead require a unique recorded
-> per-Action assertion set with at least one allowed and one denied Principal; incomplete or unknown
-> assertion sets fail before any schema or relationship write.
+> Historical implementation record. The follow-up [protected-entrypoint specification](./feature-complete-protected-entrypoint-authorization.md) narrows the provisioning rule below: every Action declares `action_execution` with either `tenant_membership_default` or `explicit` provisioning. Only the former receives a fixed tenant-member grant; the latter must already have its intended policy and never receives a blanket membership grant. This is implemented in `provisionActionAuthorization` and covered by the restricted-Action regressions in `scripts/tests/provision-current-action-authorization.test.mts`. Default Actions verify every fixed context and a representative non-member. Explicit Actions instead require a unique recorded per-Action assertion set with at least one allowed and one denied Principal; incomplete or unknown assertion sets fail before any schema or relationship write.
 
 ## Feature Description
 
-Make every OntOS Action require an explicit SpiceDB executor relationship. An Action with no
-executor relationship must be rejected before its handler runs, and a user-triggered Contacts Action
-denial must appear as a localized `@techsio/ui-kit` error Toast.
+Make every OntOS Action require an explicit SpiceDB executor relationship. An Action with no executor relationship must be rejected before its handler runs, and a user-triggered Contacts Action denial must appear as a localized `@techsio/ui-kit` error Toast.
 
-Preserve development convenience through explicit environment data rather than a code bypass. One
-operator-invoked, idempotent provisioning command must expand the compatible SpiceDB schema and
-grant every current Action to the membership set of the fixed development Tenant. The same command
-must support the fixed stage Tenants later, without accepting arbitrary Tenant or Action input and
-without running during application startup, sandbox preparation, database migration, or deployment.
+Preserve development convenience through explicit environment data rather than a code bypass. One operator-invoked, idempotent provisioning command must expand the compatible SpiceDB schema and grant every current Action to the membership set of the fixed development Tenant. The same command must support the fixed stage Tenants later, without accepting arbitrary Tenant or Action input and without running during application startup, sandbox preparation, database migration, or deployment.
 
-The rollout has two mandatory checkpoints in one Locki sandbox: first prove that an Action without
-a relationship is denied and displays the Toast; then run the provisioning command and prove that
-the same authenticated Tenant member can execute the Action. Stage provisioning is a later
-operator-controlled promotion gate and must happen before the fail-closed runtime is deployed to
-stage.
+The rollout has two mandatory checkpoints in one Locki sandbox: first prove that an Action without a relationship is denied and displays the Toast; then run the provisioning command and prove that the same authenticated Tenant member can execute the Action. Stage provisioning is a later operator-controlled promotion gate and must happen before the fail-closed runtime is deployed to stage.
 
 ## User Story
 
-As an authenticated OntOS user
-I want every Action to have an explicit authorization rule and receive clear feedback when it does not
-So that missing authorization configuration cannot silently permit a state change
+As an authenticated OntOS user I want every Action to have an explicit authorization rule and receive clear feedback when it does not So that missing authorization configuration cannot silently permit a state change
 
 ## Problem Statement
 
-`packages/core-runtime/src/permissions/service.ts` currently performs an `action#is_restricted`
-self-check before checking `action#execute`. When the restriction marker is absent it returns the
-`unconfigured` decision, and `packages/core-runtime/src/actions/runtime.ts` rejects only `denied`.
-Therefore, an Action with no SpiceDB relationships is allowed to reach its Policy and handler
-boundaries. The current live integration test explicitly protects this compatibility behavior.
+`packages/core-runtime/src/permissions/service.ts` currently performs an `action#is_restricted` self-check before checking `action#execute`. When the restriction marker is absent it returns the `unconfigured` decision, and `packages/core-runtime/src/actions/runtime.ts` rejects only `denied`. Therefore, an Action with no SpiceDB relationships is allowed to reach its Policy and handler boundaries. The current live integration test explicitly protects this compatibility behavior.
 
-Existing Contacts BFFs already map `ActionPermissionDenied` to the declared `ContactsForbiddenProblem` 403,
-and Contacts features already classify that public error as `forbidden`, but mutation feedback is inline
-and no Contacts Toast renderer is mounted for both standalone and federated rendering. Existing local
-and stage context bootstraps establish Tenant membership but do not grant the current Action set to
-those membership sets. The SpiceDB schema also limits `action#executor` to a direct `principal`, so
-it cannot yet express “every authenticated active member of this specific Tenant.”
+Existing Contacts BFFs already map `ActionPermissionDenied` to the declared `ContactsForbiddenProblem` 403, and Contacts features already classify that public error as `forbidden`, but mutation feedback is inline and no Contacts Toast renderer is mounted for both standalone and federated rendering. Existing local and stage context bootstraps establish Tenant membership but do not grant the current Action set to those membership sets. The SpiceDB schema also limits `action#executor` to a direct `principal`, so it cannot yet express “every authenticated active member of this specific Tenant.”
 
 ## Solution Statement
 
-Change the canonical permission decision to a single fully consistent `action#execute` check:
-`HAS_PERMISSION` is allowed, `NO_PERMISSION` is a definite denial, and conditional, malformed, or
-unavailable results remain the existing retryable `ActionPermissionCheckError`. Remove
-`unconfigured` from the decision vocabulary and let the existing Action runtime denial finalizer
-produce `ActionPermissionDenied`, one terminal `action.rejected` audit record, and no handler or
-business writes.
+Change the canonical permission decision to a single fully consistent `action#execute` check: `HAS_PERMISSION` is allowed, `NO_PERMISSION` is a definite denial, and conditional, malformed, or unavailable results remain the existing retryable `ActionPermissionCheckError`. Remove `unconfigured` from the decision vocabulary and let the existing Action runtime denial finalizer produce `ActionPermissionDenied`, one terminal `action.rejected` audit record, and no handler or business writes.
 
-Compatibly expand `action#executor` to accept `principal | tenant#member`. Keep the legacy
-`restriction` relation during this rollout so old application versions and existing direct
-Principal tuples remain schema-compatible, but stop consulting it in the new runtime. Add a
-generated Core Action catalog and combine it with action descriptors from each topology-owned
-public module deployment contract so the provisioning command covers all eight current Core Actions
-and all eight current Contacts Actions without importing a MicroVertical's private runtime into another
-deployment.
+Compatibly expand `action#executor` to accept `principal | tenant#member`. Keep the legacy `restriction` relation during this rollout so old application versions and existing direct Principal tuples remain schema-compatible, but stop consulting it in the new runtime. Add a generated Core Action catalog and combine it with action descriptors from each topology-owned public module deployment contract so the provisioning command covers all eight current Core Actions and all eight current Contacts Actions without importing a MicroVertical's private runtime into another deployment.
 
-Create one parameterless `authorization:provision-current-actions` command. It must derive the
-current Action set, select only the source-controlled development or stage Tenant set from the
-validated deployment environment, apply the compatible SpiceDB schema, `TOUCH` each
-`action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relationship, and verify representative
-allowed and denied checks. It must reject production, arbitrary identifiers, incompatible
-endpoints, missing Tenant membership, and incomplete Action discovery. It is authorization
-environment provisioning—not a PostgreSQL migration—and must be safe to rerun.
+Create one parameterless `authorization:provision-current-actions` command. It must derive the current Action set, select only the source-controlled development or stage Tenant set from the validated deployment environment, apply the compatible SpiceDB schema, `TOUCH` each `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relationship, and verify representative allowed and denied checks. It must reject production, arbitrary identifiers, incompatible endpoints, missing Tenant membership, and incomplete Action discovery. It is authorization environment provisioning—not a PostgreSQL migration—and must be safe to rerun.
 
-For Contacts, mount `Toaster` once in the standalone layout and once per loaded federated page root, then
-use `useToast()` in the six existing mutation feature surfaces. On the closed `forbidden` Action
-state, create an error Toast using the existing localized action-specific forbidden copy. Keep
-validation, conflict, authentication, unavailable/retry, loading, empty, responsive, and
-accessibility behavior unchanged; do not turn indeterminate 503 failures into permission denials.
+For Contacts, mount `Toaster` once in the standalone layout and once per loaded federated page root, then use `useToast()` in the six existing mutation feature surfaces. On the closed `forbidden` Action state, create an error Toast using the existing localized action-specific forbidden copy. Keep validation, conflict, authentication, unavailable/retry, loading, empty, responsive, and accessibility behavior unchanged; do not turn indeterminate 503 failures into permission denials.
 
 ## Relevant Files
 
@@ -146,24 +94,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Accept the proposed authorization decision, create one authoritative Core Action catalog maintained
-by Codesmith, derive MicroVertical Actions from public deployment contracts, and define a canonical
-compatible SpiceDB schema whose executor relation accepts a direct Principal or one fixed Tenant's
-member set. Protect the current 16-Action baseline and prevent automatic provisioning.
+Accept the proposed authorization decision, create one authoritative Core Action catalog maintained by Codesmith, derive MicroVertical Actions from public deployment contracts, and define a canonical compatible SpiceDB schema whose executor relation accepts a direct Principal or one fixed Tenant's member set. Protect the current 16-Action baseline and prevent automatic provisioning.
 
 ### Phase 2: Core Implementation
 
-Remove the `unconfigured` allow path, reuse the existing durable Action denial finalizer, and add the
-explicit environment-gated provisioning command. Prove fail-closed, direct-grant compatibility,
-Tenant membership grants, cross-Tenant denial, indeterminate failures, idempotence, and complete
-current Action coverage with unit and live integration tests.
+Remove the `unconfigured` allow path, reuse the existing durable Action denial finalizer, and add the explicit environment-gated provisioning command. Prove fail-closed, direct-grant compatibility, Tenant membership grants, cross-Tenant denial, indeterminate failures, idempotence, and complete current Action coverage with unit and live integration tests.
 
 ### Phase 3: Integration
 
-Render the UI-kit Toast portal in standalone and federated Contacts surfaces, map only definite Action
-forbidden states to localized error Toasts, execute the two human sandbox checkpoints in order, and
-document the later stage expand/provision/verify/deploy sequence. The sandbox must never mutate
-stage.
+Render the UI-kit Toast portal in standalone and federated Contacts surfaces, map only definite Action forbidden states to localized error Toasts, execute the two human sandbox checkpoints in order, and document the later stage expand/provision/verify/deploy sequence. The sandbox must never mutate stage.
 
 ## Step by Step Tasks
 
@@ -237,19 +176,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Test the single-check permission classifier, the reduced decision union, sanitized indeterminate
-failures, Action runtime stage ordering, durable denial branch, canonical schema alignment, fixed
-environment guards, complete Action discovery, relationship construction, idempotence, and
-Codesmith catalog maintenance. Component tests cover all six current Contacts mutation surfaces and both
-standalone/federated Toast portals without weakening their existing exhaustive UI-state tests.
+Test the single-check permission classifier, the reduced decision union, sanitized indeterminate failures, Action runtime stage ordering, durable denial branch, canonical schema alignment, fixed environment guards, complete Action discovery, relationship construction, idempotence, and Codesmith catalog maintenance. Component tests cover all six current Contacts mutation surfaces and both standalone/federated Toast portals without weakening their existing exhaustive UI-state tests.
 
 ### Integration Tests
 
-Use the existing live Core Action permission suite against PostgreSQL and SpiceDB to cover missing,
-direct Principal, Tenant membership-set, cross-Tenant, concurrent, and unavailable outcomes through
-the real Action repository. Retain the Contacts BFF integration proof for typed internal denial to 403
-Problem Details to generated-client error. Perform the two ordered manual Locki checks in one
-sandbox, followed later by the operator-controlled stage pre-deploy grant and smoke gate.
+Use the existing live Core Action permission suite against PostgreSQL and SpiceDB to cover missing, direct Principal, Tenant membership-set, cross-Tenant, concurrent, and unavailable outcomes through the real Action repository. Retain the Contacts BFF integration proof for typed internal denial to 403 Problem Details to generated-client error. Perform the two ordered manual Locki checks in one sandbox, followed later by the operator-controlled stage pre-deploy grant and smoke gate.
 
 ### Edge Cases
 

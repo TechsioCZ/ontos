@@ -23,7 +23,10 @@ const hasSharedUltramodernDispatch = (source: string): boolean =>
   source.includes('resolveUltramodernInvocation(options).pipe(') &&
   source.includes('Effect.flatMap(launchUltramodern)');
 
-export const hasUltramodernSkillsDispatch = (source: string, implementation: string): boolean => {
+export const hasUltramodernSkillsDispatch = (
+  source: string,
+  implementation: string
+): boolean => {
   const wrapper = withoutComments(source);
   const runner = withoutComments(implementation);
   return (
@@ -31,7 +34,9 @@ export const hasUltramodernSkillsDispatch = (source: string, implementation: str
     wrapper.includes("['skills', 'check',") &&
     wrapper.includes("['skills', 'install',") &&
     wrapper.includes("['ultramodern', ...skillArgs]") &&
-    wrapper.includes('ultramodernLaunch(createBin, ultramodernArgs, workspaceRoot, path.sep)') &&
+    wrapper.includes(
+      'ultramodernLaunch(createBin, ultramodernArgs, workspaceRoot, path.sep)'
+    ) &&
     wrapper.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
     runner.includes("executable: 'ultramodern-create'") &&
     runner.includes('ChildProcess.make(launch.executable, launch.args,')
@@ -42,7 +47,7 @@ export const hasUltramodernSkillsDispatch = (source: string, implementation: str
 export const hasUltramodernDispatch = (
   source: string | undefined,
   command: string,
-  implementation: string | undefined,
+  implementation: string | undefined
 ): boolean => {
   if (source === undefined || !/^[a-z-]+$/u.test(command)) {
     return false;
@@ -57,11 +62,13 @@ export const hasUltramodernDispatch = (
   const runner = withoutComments(implementation);
   const importsRunner =
     /import\s*\{[^}]*\b(?:runUltramodernScript|resolveUltramodernInvocation)\b[^}]*\}\s*from\s*['"]\.\/shared\/ultramodern-command\.mts['"]/u.test(
-      wrapper,
+      wrapper
     );
   const invokesCommand = new RegExp(
     `(?:runUltramodernScript|resolveUltramodernInvocation)\\(\\{\\s*command:\\s*['"]${command}['"]`,
-    'u',
+    'u'
   ).test(wrapper);
-  return importsRunner && invokesCommand && hasSharedUltramodernDispatch(runner);
+  return (
+    importsRunner && invokesCommand && hasSharedUltramodernDispatch(runner)
+  );
 };

@@ -11,7 +11,6 @@
  * Report-only: no fixers or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { skipWrappers, syntax } from '../shared/ast.ts';
@@ -56,21 +55,27 @@ function readOptions(raw: unknown): RuleOptions {
     methods: methods.length > 0 ? methods : DEFAULTS.methods,
     includeStdio: booleanOption(given.includeStdio, DEFAULTS.includeStdio),
     allowAtEntry: booleanOption(given.allowAtEntry, DEFAULTS.allowAtEntry),
-    reportReferences: booleanOption(given.reportReferences, DEFAULTS.reportReferences),
+    reportReferences: booleanOption(
+      given.reportReferences,
+      DEFAULTS.reportReferences
+    ),
   };
 }
 
 /** Assignment targets and non-emitting unary observations do not use the sink. */
 function observesSink(parent: AnyNode, outer: AnyNode): boolean {
   if (parent.type === 'AssignmentExpression') return parent.left === outer;
-  return parent.type === 'UnaryExpression' && ['void', 'typeof'].includes(parent.operator);
+  return (
+    parent.type === 'UnaryExpression' &&
+    ['void', 'typeof'].includes(parent.operator)
+  );
 }
 
 function restoresSink(
   context: Context,
   parent: AnyNode,
   outer: AnyNode,
-  identity: string,
+  identity: string
 ): boolean {
   return (
     parent.type === 'AssignmentExpression' &&
@@ -148,19 +153,32 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context.options[0]);
     const path = scriptScope(context.filename);
-    if (!inScriptScope(path) || options.allowPaths.some((glob) => globToRegExp(glob).test(path)))
+    if (
+      !inScriptScope(path) ||
+      options.allowPaths.some((glob) => globToRegExp(glob).test(path))
+    )
       return {};
     const methods = new Set(options.methods);
-    const report = (node: AnyNode, id: string, data: Record<string, string>) => {
+    const report = (
+      node: AnyNode,
+      id: string,
+      data: Record<string, string>
+    ) => {
       if (options.allowAtEntry && isEntryPosition(context, node)) return;
       context.report({ node, messageId: id, data });
     };
-    const inspectConsole = (node: AnyNode, outer: AnyNode, parent: AnyNode, identity: string) => {
+    const inspectConsole = (
+      node: AnyNode,
+      outer: AnyNode,
+      parent: AnyNode,
+      identity: string
+    ) => {
       const method = identity.slice(8);
       if (!methods.has(method)) return;
       if (isRestoredCapture(context, node)) return;
       if (restoresSink(context, parent, outer, identity)) return;
-      const called = parent.type === 'CallExpression' && parent.callee === outer;
+      const called =
+        parent.type === 'CallExpression' && parent.callee === outer;
       if (called || options.reportReferences)
         report(node, called ? 'consoleCall' : 'consoleReference', { method });
     };
@@ -172,7 +190,8 @@ export const rule = defineRule({
         report(node, 'stdioWrite', { stream: 'stderr' });
         return;
       }
-      if (identity?.startsWith('console.')) inspectConsole(node, outer, parent, identity);
+      if (identity?.startsWith('console.'))
+        inspectConsole(node, outer, parent, identity);
       // Bare sinks and dynamic methods do not prove diagnostic output.
     };
     return {
@@ -183,12 +202,18 @@ export const rule = defineRule({
         if (valueReference(context, node)) inspect(node as AnyNode);
       },
       ExportNamedDeclaration(node) {
-        if (!node.source || !CONSOLE_MODULES.has(node.source.value) || node.exportKind === 'type')
+        if (
+          !node.source ||
+          !CONSOLE_MODULES.has(node.source.value) ||
+          node.exportKind === 'type'
+        )
           return;
         for (const s of node.specifiers) {
           if (s.exportKind === 'type') continue;
-          const name = s.local.type === 'Identifier' ? s.local.name : s.local.value;
-          if (methods.has(name)) report(s, 'consoleReference', { method: name });
+          const name =
+            s.local.type === 'Identifier' ? s.local.name : s.local.value;
+          if (methods.has(name))
+            report(s, 'consoleReference', { method: name });
         }
       },
     };
@@ -200,7 +225,12 @@ export const rule = defineRule({
 function isRestoredCapture(context: Context, node: AnyNode): boolean {
   const n = syntax(node),
     p = n?.parent;
-  if (!n || p?.type !== 'VariableDeclarator' || p.init !== n || p.id.type !== 'Identifier')
+  if (
+    !n ||
+    p?.type !== 'VariableDeclarator' ||
+    p.init !== n ||
+    p.id.type !== 'Identifier'
+  )
     return false;
   const variable = lexicalVariable(context, p.id);
   if (!variable) return false;
@@ -219,7 +249,8 @@ function isRestoredCapture(context: Context, node: AnyNode): boolean {
       let child = assignment,
         parent = child.parent;
       while (parent && !FUNCTION_LIKE.has(parent.type)) {
-        if (parent.type === 'TryStatement' && parent.finalizer === child) return true;
+        if (parent.type === 'TryStatement' && parent.finalizer === child)
+          return true;
         child = parent;
         parent = child.parent;
       }

@@ -1,9 +1,11 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the correction service's Drizzle boundary. expires: 2026-12-31. */
 import { Effect, Match, Option, Schema } from 'effect';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+
 import {
   PartyCorrectionCommandSchema,
   PartyCorrectionDetailSchema,
@@ -51,12 +53,16 @@ const relationshipCommandEncoded = {
   replacementValidFrom: null,
   replacementValidTo: '2026-02-01T00:00:00.000Z',
 } as const;
-const relationshipCommand = decode(SupersedeRelationshipCorrectionCommandSchema)(
-  relationshipCommandEncoded,
-);
+const relationshipCommand = decode(
+  SupersedeRelationshipCorrectionCommandSchema
+)(relationshipCommandEncoded);
 
 test('correction is closed to Party type, display name, and official identifier assertions', () => {
-  for (const factKind of ['PARTY_TYPE', 'DISPLAY_NAME', 'OFFICIAL_IDENTIFIER']) {
+  for (const factKind of [
+    'PARTY_TYPE',
+    'DISPLAY_NAME',
+    'OFFICIAL_IDENTIFIER',
+  ]) {
     assert.doesNotThrow(() =>
       decode(PartyCorrectionCommandSchema)({
         ...evidence,
@@ -65,7 +71,7 @@ test('correction is closed to Party type, display name, and official identifier 
         policyVersion: 'party-correction.v1',
         replacementValue: factKind === 'PARTY_TYPE' ? 'PERSON' : 'replacement',
         targetAssertionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-      }),
+      })
     );
   }
   assert.throws(() =>
@@ -76,25 +82,28 @@ test('correction is closed to Party type, display name, and official identifier 
       policyVersion: 'party-correction.v1',
       replacementValue: 'x',
       targetAssertionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    }),
+    })
   );
 });
 
 test('correction follow-up is typed and duplicate confirmation remains readiness-only', () => {
   assert.equal(classifyCorrectionRoute('PARTY_TYPE'), 'LIFECYCLE_REVIEW');
   assert.equal(classifyCorrectionRoute('DISPLAY_NAME'), 'ENRICHMENT_REVIEW');
-  assert.equal(classifyCorrectionRoute('OFFICIAL_IDENTIFIER'), 'CLAIM_REASSIGNMENT_REVIEW');
+  assert.equal(
+    classifyCorrectionRoute('OFFICIAL_IDENTIFIER'),
+    'CLAIM_REASSIGNMENT_REVIEW'
+  );
   assert.equal(classifyCorrectionRoute('RELATIONSHIP'), 'RELATIONSHIP_REVIEW');
   assert.equal(
     confirmDuplicatePartiesAction.descriptor.actionKey,
-    'party.registry.confirm-duplicate-parties',
+    'party.registry.confirm-duplicate-parties'
   );
   assert.equal(
     Object.hasOwn(
       confirmDuplicatePartiesAction.descriptor.domainEvents,
-      'party.registry.party-merged.v1',
+      'party.registry.party-merged.v1'
     ),
-    false,
+    false
   );
   const partyTypeCommand = decode(PartyCorrectionCommandSchema)({
     ...evidence,
@@ -115,12 +124,12 @@ test('correction follow-up is typed and duplicate confirmation remains readiness
   });
   assert.equal(
     correctPartyFactAction.descriptor.tenantPermission?.(partyTypeCommand),
-    'manage_party_identity',
+    'manage_party_identity'
   );
   assert.equal(correctPartyFactAction.descriptor.auditProfile, 'sensitive');
   assert.equal(
     correctPartyFactAction.descriptor.tenantPermission?.(relationshipCommand),
-    'manage_party_relationships',
+    'manage_party_relationships'
   );
 });
 
@@ -131,15 +140,19 @@ test('relationship correction is closed, revisioned, interval checked, and has n
   const decoded = strictDecode(relationshipCommandEncoded);
   assert.deepEqual(
     Schema.encodeSync(PartyCorrectionCommandSchema)(decoded),
-    relationshipCommandEncoded,
+    relationshipCommandEncoded
   );
-  assert.throws(() => strictDecode({ ...relationshipCommandEncoded, reasonCode: 'OTHER' }));
-  assert.throws(() => strictDecode({ ...relationshipCommandEncoded, expectedRevision: 0 }));
+  assert.throws(() =>
+    strictDecode({ ...relationshipCommandEncoded, reasonCode: 'OTHER' })
+  );
+  assert.throws(() =>
+    strictDecode({ ...relationshipCommandEncoded, expectedRevision: 0 })
+  );
   assert.throws(() =>
     strictDecode({
       ...relationshipCommandEncoded,
       replacementValidFrom: '2026-03-01T00:00:00.000Z',
-    }),
+    })
   );
   for (const field of [
     'fromPartyRef',
@@ -150,12 +163,17 @@ test('relationship correction is closed, revisioned, interval checked, and has n
     'approvingPrincipalId',
   ]) {
     assert.throws(() =>
-      strictDecode({ ...relationshipCommandEncoded, [field]: 'caller-controlled' }),
+      strictDecode({
+        ...relationshipCommandEncoded,
+        [field]: 'caller-controlled',
+      })
     );
   }
 });
 
-const relationshipRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
+const relationshipRow = (
+  overrides: Readonly<Record<string, unknown>> = {}
+) => ({
   assertionState: 'ACTIVE',
   endProvenanceMethod: null,
   endProvenanceSource: null,
@@ -179,7 +197,9 @@ const transactionHarness = (
   selects: readonly (readonly Readonly<Record<string, unknown>>[])[],
   inserts: readonly (readonly Readonly<Record<string, unknown>>[])[] = [],
   updates: readonly (readonly Readonly<Record<string, unknown>>[])[] = [],
-  insertFailure?: { readonly cause: { readonly code: string; readonly constraint: string } },
+  insertFailure?: {
+    readonly cause: { readonly code: string; readonly constraint: string };
+  }
 ) => {
   const selectQueue = [...selects];
   const insertQueue = [...inserts];
@@ -203,7 +223,7 @@ const transactionHarness = (
           return value;
         },
         where: () => value,
-      },
+      }
     );
     return value;
   };
@@ -233,15 +253,18 @@ test('relationship supersession preserves endpoint/type identity and stores trus
   const h = transactionHarness(
     [[], [original], [], [{ partyId }], [], [{ partyId: organizationId }]],
     [[replacement], [{ correctionId }]],
-    [[original]],
+    [[original]]
   );
   const result = await runEffectTestPromise(
     correctPartyFactRecord(h.transaction, tenantId, relationshipCommand, {
       actionInvocationId,
       principalId,
-    }),
+    })
   );
-  assert.deepEqual(h.updateSets[0], { assertionState: 'SUPERSEDED', revision: 2 });
+  assert.deepEqual(h.updateSets[0], {
+    assertionState: 'SUPERSEDED',
+    revision: 2,
+  });
   assert.equal(h.insertValues[0]?.['fromPartyId'], partyId);
   assert.equal(h.insertValues[0]?.['toPartyId'], organizationId);
   assert.equal(h.insertValues[0]?.['relationshipType'], 'CONTACT_PERSON_OF');
@@ -250,9 +273,18 @@ test('relationship supersession preserves endpoint/type identity and stores trus
   assert.equal(h.insertValues[1]?.['actingPrincipalId'], principalId);
   assert.equal(h.insertValues[1]?.['relationshipId'], assertionId);
   assert.equal(h.insertValues[1]?.['replacementRelationshipId'], replacementId);
-  assert.equal(Object.hasOwn(h.insertValues[1] ?? {}, 'approvingPrincipalId'), false);
-  assert.equal(Option.getOrThrow(result.relationshipRef).resourceId, assertionId);
-  assert.equal(Option.getOrThrow(result.replacementRelationshipRef).resourceId, replacementId);
+  assert.equal(
+    Object.hasOwn(h.insertValues[1] ?? {}, 'approvingPrincipalId'),
+    false
+  );
+  assert.equal(
+    Option.getOrThrow(result.relationshipRef).resourceId,
+    assertionId
+  );
+  assert.equal(
+    Option.getOrThrow(result.replacementRelationshipRef).resourceId,
+    replacementId
+  );
 });
 
 test('relationship retraction retains original effective validity and creates no replacement', async () => {
@@ -263,16 +295,24 @@ test('relationship retraction retains original effective validity and creates no
     factKind: 'RELATIONSHIP',
     relationshipRef,
   });
-  const original = relationshipRow({ validFrom: new Date('2025-01-01T00:00:00.000Z') });
+  const original = relationshipRow({
+    validFrom: new Date('2025-01-01T00:00:00.000Z'),
+  });
   const h = transactionHarness(
     [[], [original], [], [{ partyId }], [], [{ partyId: organizationId }]],
     [[{ correctionId }]],
-    [[original]],
+    [[original]]
   );
   const result = await runEffectTestPromise(
-    correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
+    correctPartyFactRecord(h.transaction, tenantId, command, {
+      actionInvocationId,
+      principalId,
+    })
   );
-  assert.deepEqual(h.updateSets[0], { assertionState: 'RETRACTED', revision: 2 });
+  assert.deepEqual(h.updateSets[0], {
+    assertionState: 'RETRACTED',
+    revision: 2,
+  });
   assert.equal(h.insertValues.length, 1);
   assert.ok(Option.isNone(result.replacementAssertionId));
 });
@@ -295,13 +335,13 @@ test('stale revision and foreign-tenant relationship correction fail before busi
           correctPartyFactRecord(h.transaction, tenantId, command, {
             actionInvocationId,
             principalId,
-          }),
-        ),
+          })
+        )
       );
       assert.equal(error._tag, 'PartyCorrectionConflict');
       assert.equal(h.updateSets.length, 0);
       assert.equal(h.insertValues.length, 0);
-    }),
+    })
   );
 });
 
@@ -344,16 +384,22 @@ test('detail exposes immutable original/result semantics, governance, and source
     ],
   ]);
   const found = await runEffectTestPromise(
-    findPartyCorrection(h.transaction, tenantId, correctionId),
+    findPartyCorrection(h.transaction, tenantId, correctionId)
   );
   const detail = Match.value(found).pipe(
-    Match.tag('found', ({ value }) => Schema.encodeSync(PartyCorrectionDetailSchema)(value)),
-    Match.tag('not_found', () => assert.fail('Expected the correction detail to be found')),
-    Match.exhaustive,
+    Match.tag('found', ({ value }) =>
+      Schema.encodeSync(PartyCorrectionDetailSchema)(value)
+    ),
+    Match.tag('not_found', () =>
+      assert.fail('Expected the correction detail to be found')
+    ),
+    Match.exhaustive
   );
   assert.deepEqual(
-    Schema.encodeSync(PartyCorrectionDetailSchema)(decode(PartyCorrectionDetailSchema)(detail)),
-    detail,
+    Schema.encodeSync(PartyCorrectionDetailSchema)(
+      decode(PartyCorrectionDetailSchema)(detail)
+    ),
+    detail
   );
   assert.equal(detail.actingPrincipalId, principalId);
   assert.equal(detail.approvingPrincipalId, null);
@@ -364,11 +410,20 @@ test('detail exposes immutable original/result semantics, governance, and source
   assert.equal(detail.originalAssertion.factKind, 'RELATIONSHIP');
   if (detail.originalAssertion.factKind === 'RELATIONSHIP') {
     assert.equal(detail.originalAssertion.endEvidence?.reason, null);
-    assert.equal(detail.originalAssertion.endEvidence?.provenance.source, 'ORIGINAL_END_RECORD');
-    assert.equal(detail.originalAssertion.endEvidence?.recordedAt, '2026-01-16T00:00:00.000Z');
+    assert.equal(
+      detail.originalAssertion.endEvidence?.provenance.source,
+      'ORIGINAL_END_RECORD'
+    );
+    assert.equal(
+      detail.originalAssertion.endEvidence?.recordedAt,
+      '2026-01-16T00:00:00.000Z'
+    );
   }
   assert.equal(detail.resultingAssertion?.assertionId, replacementId);
-  assert.equal(detail.resultingAssertion?.validTo, relationshipCommandEncoded.replacementValidTo);
+  assert.equal(
+    detail.resultingAssertion?.validTo,
+    relationshipCommandEncoded.replacementValidTo
+  );
   assert.equal(detail.governance.legalHolds, 'HONOR_GOVERNED_LEGAL_HOLDS');
   assert.equal(detail.governance.policyVersion, detail.policyVersion);
 });
@@ -379,15 +434,20 @@ test('relationship overlap is a typed conflict and no correction journal is writ
     [[], [original], [], [{ partyId }], [], [{ partyId: organizationId }]],
     [],
     [[original]],
-    { cause: { code: '23P01', constraint: 'party_relationships_no_overlap_excl' } },
+    {
+      cause: {
+        code: '23P01',
+        constraint: 'party_relationships_no_overlap_excl',
+      },
+    }
   );
   const error = await runEffectTestPromise(
     Effect.flip(
       correctPartyFactRecord(h.transaction, tenantId, relationshipCommand, {
         actionInvocationId,
         principalId,
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'PartyCorrectionConflict');
   assert.match(error.reason, /overlaps/u);
@@ -410,13 +470,13 @@ test('correction of a durable relationship preserves stored alias endpoints', as
       [{ partyId: organizationId }],
     ],
     [[relationshipRow({ relationshipId: replacementId })], [{ correctionId }]],
-    [[original]],
+    [[original]]
   );
   await runEffectTestPromise(
     correctPartyFactRecord(h.transaction, tenantId, relationshipCommand, {
       actionInvocationId,
       principalId,
-    }),
+    })
   );
   assert.equal(h.insertValues[0]?.['fromPartyId'], partyId);
   assert.notEqual(h.insertValues[0]?.['fromPartyId'], canonicalId);
@@ -424,8 +484,14 @@ test('correction of a durable relationship preserves stored alias endpoints', as
 
 test('correction history requires reviewer authority; ordinary identity read permission is insufficient', () => {
   const target = partyCorrectionPermissionTarget();
-  assert.deepEqual(target, { kind: 'tenant', permission: 'review_party_identity' });
-  assert.notDeepEqual(target, { kind: 'tenant', permission: 'read_party_identity' });
+  assert.deepEqual(target, {
+    kind: 'tenant',
+    permission: 'review_party_identity',
+  });
+  assert.notDeepEqual(target, {
+    kind: 'tenant',
+    permission: 'read_party_identity',
+  });
 });
 
 for (const scenario of [
@@ -497,8 +563,8 @@ for (const scenario of [
         correctPartyFactRecord(h.transaction, tenantId, command, {
           actionInvocationId,
           principalId,
-        }),
-      ),
+        })
+      )
     );
     assert.equal(error._tag, 'PartyCorrectionConflict');
     assert.match(error.reason, scenario.reason);
@@ -533,8 +599,11 @@ test('type Correction cannot treat a reviewer decision or source label as subjec
   });
   const error = await runEffectTestPromise(
     Effect.flip(
-      correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
-    ),
+      correctPartyFactRecord(h.transaction, tenantId, command, {
+        actionInvocationId,
+        principalId,
+      })
+    )
   );
   assert.equal(error._tag, 'PartyCorrectionConflict');
   assert.equal(error.reason, 'subject_evidence_required');

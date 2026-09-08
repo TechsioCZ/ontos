@@ -2,12 +2,17 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PartyCorrectionRequestSchema,
   PartyCorrectionResponseSchema,
 } from '../../shared/apis/party-correction.ts';
 import { findPartyCorrection } from '../services/party-correction.service.ts';
-import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
+import {
+  readUnavailable,
+  requireReadValue,
+  readDetailResult,
+} from './read-outcome.ts';
 
 const partyCorrectionEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -17,11 +22,15 @@ const partyCorrectionEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 interface Services {
-  readonly find: (correctionId: string) => ReturnType<typeof findPartyCorrection>;
+  readonly find: (
+    correctionId: string
+  ) => ReturnType<typeof findPartyCorrection>;
 }
 export const partyCorrectionPermissionTarget = () =>
   ({ kind: 'tenant', permission: 'review_party_identity' }) as const;
-const unavailable = readUnavailable('Party Correction persistence is unavailable');
+const unavailable = readUnavailable(
+  'Party Correction persistence is unavailable'
+);
 export const partyCorrectionRead = defineRead(
   {
     accessKind: 'detail',
@@ -45,12 +54,12 @@ export const partyCorrectionRead = defineRead(
       .pipe(
         Effect.mapError(unavailable),
         Effect.flatMap(requireReadValue('The Party Correction does not exist')),
-        Effect.map(readDetailResult),
+        Effect.map(readDetailResult)
       ),
   (transaction, scope) =>
     Effect.succeed({
       find: (correctionId: string) =>
         findPartyCorrection(transaction, scope.tenantId, correctionId),
     }),
-  partyCorrectionPermissionTarget,
+  partyCorrectionPermissionTarget
 );

@@ -30,7 +30,7 @@ export function collectEffectBindings(program: ESTree.Program): EffectBindings {
 function addEffectSpecifiers(
   namespaces: Map<string, string>,
   specifiers: ESTree.ImportDeclaration['specifiers'],
-  submodule: string | undefined,
+  submodule: string | undefined
 ): void {
   for (const specifier of specifiers) {
     if (specifier.type === 'ImportSpecifier') {
@@ -52,10 +52,11 @@ function addEffectSpecifiers(
 /** `Effect.runPromise` → `{ namespace: "Effect", member: "runPromise" }` when `Effect` is an effect import. */
 export function effectMember(
   node: ESTree.Node,
-  bindings: EffectBindings,
+  bindings: EffectBindings
 ): { namespace: string; member: string } | null {
   if (node.type !== 'MemberExpression' || node.computed) return null;
-  if (node.object.type !== 'Identifier' || node.property.type !== 'Identifier') return null;
+  if (node.object.type !== 'Identifier' || node.property.type !== 'Identifier')
+    return null;
   const namespace = bindings.namespaces.get(node.object.name);
   if (namespace === undefined) return null;
   return { namespace, member: node.property.name };

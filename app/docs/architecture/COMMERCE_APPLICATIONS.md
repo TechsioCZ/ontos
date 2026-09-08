@@ -6,13 +6,13 @@ The accepted product decision is [ADR-0017](../../../docs/adr/0017-commerce-appl
 
 ## Application inventory
 
-| Application/edge               | Deployment and ownership                                                                                                                                                                                    |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Storefront Application**     | External to the standard OntOS Shell deployment. Owns framework, routes, rendering, layout, interaction, branding, assets, and SEO. A customer may have separate B2C/B2B storefronts.                       |
-| **Storefront-local BFF/proxy** | Deployed with one storefront. Holds its Storefront Client credential server-side, provides a same-origin browser edge, and performs presentation-oriented request shaping/aggregation.                      |
-| **Commerce Storefront API**    | Thin OntOS channel edge over public Commerce module contracts. Authenticates, resolves trusted Commerce Purchasing Context, authorizes, translates, aggregates bounded reads, and invokes governed Actions. |
-| **Commerce Operations**        | Purpose-built staff application over published MicroVertical clients and governed entrypoints. Uses staff authentication; owns no canonical commerce facts.                                                 |
-| **Agentic Shopping Adapter**   | Future peer channel adapter over native Commerce contracts, for example MCP or UCP. It is not implemented by this decision.                                                                                 |
+| Application/edge | Deployment and ownership |
+| --- | --- |
+| **Storefront Application** | External to the standard OntOS Shell deployment. Owns framework, routes, rendering, layout, interaction, branding, assets, and SEO. A customer may have separate B2C/B2B storefronts. |
+| **Storefront-local BFF/proxy** | Deployed with one storefront. Holds its Storefront Client credential server-side, provides a same-origin browser edge, and performs presentation-oriented request shaping/aggregation. |
+| **Commerce Storefront API** | Thin OntOS channel edge over public Commerce module contracts. Authenticates, resolves trusted Commerce Purchasing Context, authorizes, translates, aggregates bounded reads, and invokes governed Actions. |
+| **Commerce Operations** | Purpose-built staff application over published MicroVertical clients and governed entrypoints. Uses staff authentication; owns no canonical commerce facts. |
+| **Agentic Shopping Adapter** | Future peer channel adapter over native Commerce contracts, for example MCP or UCP. It is not implemented by this decision. |
 
 Shell/Core remains business-neutral. Do not add commerce orchestration, Commerce Portal Account lifecycle, Storefront rendering, provider mapping, or Commerce Operations workflows to Shell/Core merely because several modules or channels need them.
 
@@ -77,20 +77,13 @@ It must preserve owner-local validation, Permission, Business Policy, Action, au
 
 ## Customer Configuration and implementations
 
-This section defines accepted target selection semantics. Current V0 supports one implicit
-`standard` implementation per `moduleId`; it does not yet serialize or select `implementationId`.
+This section defines accepted target selection semantics. Current V0 supports one implicit `standard` implementation per `moduleId`; it does not yet serialize or select `implementationId`.
 
 - `moduleId` is the Module Contract Identity and owns public capability semantics.
 - `implementationId` identifies one catalogued executable implementation, for example `standard` or `akros`.
 - `appId` remains the independently deployable topology identity and exact gateway audience.
 
-Once that target contract exists, two implementations may share `moduleId` only while public
-semantics and compatibility remain the same. Different semantics require a different `moduleId`.
-Each implementation records immutable build revision/digest, public-contract hash/version, migration
-set, owner, health, and readiness; the catalog rejects missing, duplicate, ambiguous, incompatible,
-or invisible implementation identities. Implement the target only by extending Codesmith, Effect
-Schemas, serialized contracts, topology/allowlist validation, Customer Configuration resolution,
-and tests together. Do not hand-author fields or customer branches as a substitute.
+Once that target contract exists, two implementations may share `moduleId` only while public semantics and compatibility remain the same. Different semantics require a different `moduleId`. Each implementation records immutable build revision/digest, public-contract hash/version, migration set, owner, health, and readiness; the catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation identities. Implement the target only by extending Codesmith, Effect Schemas, serialized contracts, topology/allowlist validation, Customer Configuration resolution, and tests together. Do not hand-author fields or customer branches as a substitute.
 
 Prefer shared behavior plus Business Policy. Add an implementation alternative only when an ordinary reusable capability cannot express the required behavior without distorting its contract. Never patch an implementation per customer under the same identity, and never move the exception into Shell/Core.
 
@@ -114,8 +107,7 @@ Before production activation, prove:
 - approved Purchase Proposal Revisions cannot bypass Approval Revalidation or Order Commitment Gate;
 - the Medusa facade matches its declared subset and native clients do not depend on it accidentally;
 - dependency failures produce typed partial degradation without unrelated outage;
-- once explicit alternatives exist, Customer Configuration resolves one permitted, healthy
-  implementation for every selected contract;
+- once explicit alternatives exist, Customer Configuration resolves one permitted, healthy implementation for every selected contract;
 - contract/build skew is rejected and canary/rollback identifies exact artifacts;
 - Party/Counterparty linking and lifecycle events contain no credentials or cross-Tenant leakage; and
 - every Integration Route demonstrates idempotency, retry, reconciliation, observability, and recovery.

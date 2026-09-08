@@ -19,23 +19,33 @@ for (const rule of listRuleNames()) {
   test(`effect-native/${rule} production settings report a positive fixture`, () => {
     withTemporaryWorkspace((directory) => {
       for (const kind of ['invalid', 'valid'])
-        cpSync(join(fixturesDirectory, rule, kind), join(directory, kind), { recursive: true });
-      const paths = listFilesRecursively(directory).map((file) => relative(directory, file));
+        cpSync(join(fixturesDirectory, rule, kind), join(directory, kind), {
+          recursive: true,
+        });
+      const paths = listFilesRecursively(directory).map((file) =>
+        relative(directory, file)
+      );
       const run = runOxlint(
         join(testsDirectory, 'production-fixture.config.ts'),
         paths,
         directory,
-        rule,
+        rule
       );
       assert.equal(
         run.numberOfFiles,
         paths.length,
-        `${rule}: production run skipped fixture files`,
+        `${rule}: production run skipped fixture files`
       );
-      assert.equal(run.exitCode, 1, `${rule}: production defaults must have a positive fixture`);
+      assert.equal(
+        run.exitCode,
+        1,
+        `${rule}: production defaults must have a positive fixture`
+      );
       assert.ok(
-        run.diagnostics.some((diagnostic) => diagnostic.filename.startsWith('invalid/')),
-        `${rule}: no positive production fixture`,
+        run.diagnostics.some((diagnostic) =>
+          diagnostic.filename.startsWith('invalid/')
+        ),
+        `${rule}: no positive production fixture`
       );
       for (const diagnostic of run.diagnostics)
         assert.equal(diagnostic.code, `effect-native(${rule})`);
@@ -43,10 +53,10 @@ for (const rule of listRuleNames()) {
         run.diagnostics.filter(
           (diagnostic) =>
             diagnostic.filename.startsWith('valid/') &&
-            diagnostic.filename.endsWith('/production-default.ts'),
+            diagnostic.filename.endsWith('/production-default.ts')
         ),
         [],
-        `${rule}: explicit default negative reported`,
+        `${rule}: explicit default negative reported`
       );
       const fixture: {
         rules: Record<string, unknown>;
@@ -58,15 +68,17 @@ for (const rule of listRuleNames()) {
         const usesOverride = (file: string): boolean =>
           fixture.overrides?.some(
             (override) =>
-              key in override.rules && override.files.some((glob) => globToRegExp(glob).test(file)),
+              key in override.rules &&
+              override.files.some((glob) => globToRegExp(glob).test(file))
           ) ?? false;
         assert.deepEqual(
           run.diagnostics.filter(
             (diagnostic) =>
-              diagnostic.filename.startsWith('valid/') && !usesOverride(diagnostic.filename),
+              diagnostic.filename.startsWith('valid/') &&
+              !usesOverride(diagnostic.filename)
           ),
           [],
-          `${rule}: production false positive`,
+          `${rule}: production false positive`
         );
       }
     });

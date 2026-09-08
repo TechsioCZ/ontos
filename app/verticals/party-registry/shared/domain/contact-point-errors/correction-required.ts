@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { ContactPointErrorReasonSchema } from './shared.ts';
 
 export class PartyContactPointCorrectionRequired extends Schema.TaggedError<PartyContactPointCorrectionRequired>()(
@@ -6,5 +7,5 @@ export class PartyContactPointCorrectionRequired extends Schema.TaggedError<Part
   {
     code: Schema.Literal('party_contact_point_correction_required'),
     reason: ContactPointErrorReasonSchema,
-  },
+  }
 ) {}

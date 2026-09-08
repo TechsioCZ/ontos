@@ -1,12 +1,20 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Fiber, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { OutboxPersistenceError, OutboxPollerConfigError } from '../../src/outbox/errors.ts';
-import { parseOutboxPollingConfig, runOutboxPollingLoop } from '../../src/outbox/poller.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import {
+  OutboxPersistenceError,
+  OutboxPollerConfigError,
+} from '../../src/outbox/errors.ts';
+import {
+  parseOutboxPollingConfig,
+  runOutboxPollingLoop,
+} from '../../src/outbox/poller.ts';
 import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
 
 const registration = defineOutboxWorker(
@@ -33,7 +41,7 @@ const registration = defineOutboxWorker(
     topic: 'producer.message-created',
     workerKey: 'consumer.logger',
   },
-  () => Effect.void,
+  () => Effect.void
 );
 
 const emptyResult = {
@@ -59,7 +67,7 @@ void test(
           claimOwner: 'consumer:default',
           maxDeliveries: 100,
           pollIntervalMs: 1000,
-        },
+        }
       );
 
       assert.deepEqual(
@@ -75,10 +83,10 @@ void test(
           claimOwner: 'consumer:configured',
           maxDeliveries: 25,
           pollIntervalMs: 250,
-        },
+        }
       );
-    }),
-  ),
+    })
+  )
 );
 
 void test(
@@ -89,11 +97,11 @@ void test(
         parseOutboxPollingConfig({
           defaultClaimOwner: 'consumer:default',
           environment: { OUTBOX_WORKER_POLL_INTERVAL_MS: '0' },
-        }),
+        })
       );
       assert.equal(Schema.is(OutboxPollerConfigError)(error), true);
-    }),
-  ),
+    })
+  )
 );
 
 void test(
@@ -112,21 +120,27 @@ void test(
                   new OutboxPersistenceError({
                     code: 'outbox_persistence_failed',
                     reason: 'controlled test failure',
-                  }),
+                  })
                 )
               : Effect.succeed(emptyResult);
           });
         const running = yield* runOutboxPollingLoop(
           {
-            config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+            config: {
+              claimOwner: 'consumer:test',
+              maxDeliveries: 10,
+              pollIntervalMs: 10,
+            },
             health: {
               cycleFailed: Effect.sync(() => healthTransitions.push('failed')),
-              cycleSucceeded: Effect.sync(() => healthTransitions.push('ready')),
+              cycleSucceeded: Effect.sync(() =>
+                healthTransitions.push('ready')
+              ),
             },
             registrations: [registration],
             subscriptions: [registration.descriptor],
           },
-          runCycle,
+          runCycle
         ).pipe(Effect.forkChild);
 
         yield* TestClock.adjust('20 millis');
@@ -134,6 +148,6 @@ void test(
         assert.equal(calls, 3, 'polling loop did not continue');
         assert.deepEqual(healthTransitions, ['failed', 'ready', 'ready']);
       }).pipe(Effect.provide(testClockServices));
-    }).pipe(Effect.scoped),
-  ),
+    }).pipe(Effect.scoped)
+  )
 );

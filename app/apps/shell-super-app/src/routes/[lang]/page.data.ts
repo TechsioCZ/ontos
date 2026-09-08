@@ -1,3 +1,13 @@
+import { Effect, Match } from 'effect';
+
+import type {
+  AvailableTenant,
+  LegalEntityChoice,
+  SafeAuthenticatedIdentity,
+  SafeTenantIdentity,
+  ShellNavigationItem,
+  ShellUnavailableDeployment,
+} from '../../../shared/api.ts';
 import {
   availableLegalEntities,
   availableTenants,
@@ -8,15 +18,6 @@ import type {
   AvailableTenantsClientError,
   ShellCompositionClientError,
 } from '../../api/auth-client.ts';
-import { Effect, Match } from 'effect';
-import type {
-  AvailableTenant,
-  LegalEntityChoice,
-  SafeAuthenticatedIdentity,
-  SafeTenantIdentity,
-  ShellNavigationItem,
-  ShellUnavailableDeployment,
-} from '../../../shared/api.ts';
 import { runBrowserEffect } from '../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
@@ -33,10 +34,16 @@ export interface UnavailableHomePageModel {
 }
 
 export interface AuthenticatedHomePageModel {
-  readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
+  readonly contextState:
+    | 'access_blocked'
+    | 'authenticated'
+    | 'selection_required';
   readonly identity: SafeTenantIdentity;
   readonly legalEntities:
-    | { readonly items: readonly LegalEntityChoice[]; readonly state: 'available' }
+    | {
+        readonly items: readonly LegalEntityChoice[];
+        readonly state: 'available';
+      }
     | { readonly items: readonly []; readonly state: 'unavailable' };
   readonly navigation:
     | {
@@ -52,8 +59,14 @@ export interface AuthenticatedHomePageModel {
   readonly selectedLegalEntityId?: SafeAuthenticatedIdentity['legalEntityId'];
   readonly state: 'authenticated';
   readonly tenants:
-    | { readonly items: readonly AvailableTenant[]; readonly state: 'available' }
-    | { readonly items: readonly [AvailableTenant]; readonly state: 'unavailable' };
+    | {
+        readonly items: readonly AvailableTenant[];
+        readonly state: 'available';
+      }
+    | {
+        readonly items: readonly [AvailableTenant];
+        readonly state: 'unavailable';
+      };
 }
 
 export type HomePageModel =
@@ -75,17 +88,22 @@ const unavailableTenants = (tenantId: SafeTenantIdentity['tenantId']) => ({
   state: 'unavailable' as const,
 });
 
-const tenantRead = (error: AvailableTenantsClientError, tenantId: SafeTenantIdentity['tenantId']) =>
+const tenantRead = (
+  error: AvailableTenantsClientError,
+  tenantId: SafeTenantIdentity['tenantId']
+) =>
   Match.value(error).pipe(
-    Match.tag('TenantAuthenticationRequiredProblem', () => ({ state: 'stale' as const })),
+    Match.tag('TenantAuthenticationRequiredProblem', () => ({
+      state: 'stale' as const,
+    })),
     Match.tag(
       'HttpClientError',
       'SchemaError',
       'TenantCapabilityUnavailableProblem',
       'TenantInternalProblem',
-      () => unavailableTenants(tenantId),
+      () => unavailableTenants(tenantId)
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
 
 export const loadHomePageModel = (request: Request) =>
@@ -107,7 +125,7 @@ export const loadHomePageModel = (request: Request) =>
                     Effect.orElseSucceed(() => ({
                       items: [] as const,
                       state: 'unavailable' as const,
-                    })),
+                    }))
                   )
                 : Effect.succeed({
                     items:
@@ -121,7 +139,9 @@ export const loadHomePageModel = (request: Request) =>
                 ? shellComposition(options).pipe(
                     Effect.map((composition) => ({
                       items:
-                        composition.state === 'available' ? composition.navigation : ([] as const),
+                        composition.state === 'available'
+                          ? composition.navigation
+                          : ([] as const),
                       state: 'available' as const,
                       unavailableDeployments:
                         composition.state === 'available'
@@ -129,9 +149,10 @@ export const loadHomePageModel = (request: Request) =>
                           : ([] as const),
                     })),
                     Effect.matchEffect({
-                      onFailure: (error) => Effect.succeed(unavailableNavigation(error)),
+                      onFailure: (error) =>
+                        Effect.succeed(unavailableNavigation(error)),
                       onSuccess: Effect.succeed,
-                    }),
+                    })
                   )
                 : Effect.succeed({
                     items: [] as const,
@@ -143,18 +164,27 @@ export const loadHomePageModel = (request: Request) =>
                 legalEntities,
                 navigation,
                 tenants: availableTenants(options).pipe(
-                  Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+                  Effect.map(({ tenants }) => ({
+                    items: tenants,
+                    state: 'available' as const,
+                  })),
                   Effect.matchEffect({
                     onFailure: (error) =>
-                      Effect.succeed(tenantRead(error, session.identity.tenantId)),
+                      Effect.succeed(
+                        tenantRead(error, session.identity.tenantId)
+                      ),
                     onSuccess: Effect.succeed,
-                  }),
+                  })
                 ),
               },
-              { concurrency: 3 },
+              { concurrency: 3 }
             ).pipe(
               Effect.map(
-                ({ legalEntities: choices, navigation: items, tenants }): HomePageModel => {
+                ({
+                  legalEntities: choices,
+                  navigation: items,
+                  tenants,
+                }): HomePageModel => {
                   if (tenants.state === 'stale') {
                     return anonymousModel;
                   }
@@ -167,13 +197,16 @@ export const loadHomePageModel = (request: Request) =>
                     tenants,
                   };
                   return session.state === 'authenticated'
-                    ? { ...model, selectedLegalEntityId: session.identity.legalEntityId }
+                    ? {
+                        ...model,
+                        selectedLegalEntityId: session.identity.legalEntityId,
+                      }
                     : model;
-                },
-              ),
+                }
+              )
             );
-          }),
-        ),
+          })
+        )
       ),
       Effect.matchEffect({
         onFailure: (error) =>
@@ -187,15 +220,16 @@ export const loadHomePageModel = (request: Request) =>
                 'HttpClientError',
                 'OntosIdentityForbiddenProblem',
                 'SchemaError',
-                () => unavailableModel,
+                () => unavailableModel
               ),
-              Match.exhaustive,
-            ),
+              Match.exhaustive
+            )
           ),
         onSuccess: Effect.succeed,
-      }),
-    ),
+      })
+    )
   );
 
-export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> =>
-  loadHomePageModel(request);
+export const loader = ({
+  request,
+}: HomeLoaderArguments): Promise<HomePageModel> => loadHomePageModel(request);

@@ -5,8 +5,16 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
-import { PartySearchQuerySchema, PartySearchResultSchema } from '../domain/search-result.ts';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
+import {
+  PartySearchQuerySchema,
+  PartySearchResultSchema,
+} from '../domain/search-result.ts';
 
 export const PartiesProviderRequestSchema = Schema.Struct({
   includeArchived: Schema.optionalKey(Schema.Boolean),
@@ -14,41 +22,37 @@ export const PartiesProviderRequestSchema = Schema.Struct({
 });
 export type PartiesProviderRequest = typeof PartiesProviderRequestSchema.Type;
 
-export const PartiesProviderResponseSchema = Schema.Array(PartySearchResultSchema);
+export const PartiesProviderResponseSchema = Schema.Array(
+  PartySearchResultSchema
+);
 export type PartiesProviderResponse = typeof PartiesProviderResponseSchema.Type;
 
-export const PartiesProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartiesProviderUnavailableProblem',
-  503,
-);
+export const PartiesProviderUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema('PartiesProviderUnavailableProblem', 503);
 
-export const PartiesProviderAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartiesProviderAuthenticationProblem',
-  401,
-);
+export const PartiesProviderAuthenticationProblemSchema =
+  makeProblemDetailsSchema('PartiesProviderAuthenticationProblem', 401);
 export const PartiesProviderInvalidProblemSchema = makeProblemDetailsSchema(
   'PartiesProviderInvalidProblem',
-  400,
+  400
 );
 export const PartiesProviderForbiddenProblemSchema = makeProblemDetailsSchema(
   'PartiesProviderForbiddenProblem',
-  403,
+  403
 );
 export const PartiesProviderNotFoundProblemSchema = makeProblemDetailsSchema(
   'PartiesProviderNotFoundProblem',
-  404,
+  404
 );
 export const PartiesProviderPolicyProblemSchema = makeProblemDetailsSchema(
   'PartiesProviderPolicyProblem',
-  422,
+  422
 );
-export const PartiesProviderPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartiesProviderPolicyConflictProblem',
-  409,
-);
+export const PartiesProviderPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('PartiesProviderPolicyConflictProblem', 409);
 export const PartiesProviderInternalProblemSchema = makeProblemDetailsSchema(
   'PartiesProviderInternalProblem',
-  500,
+  500
 );
 
 export const PartiesSearchApi = HttpApi.make('PartiesSearchApi').add(
@@ -66,6 +70,6 @@ export const PartiesSearchApi = HttpApi.make('PartiesSearchApi').add(
       ],
       payload: PartiesProviderRequestSchema,
       success: PartiesProviderResponseSchema,
-    }),
-  ),
+    })
+  )
 );

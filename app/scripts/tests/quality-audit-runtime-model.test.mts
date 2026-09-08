@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -33,17 +40,21 @@ const write = (root: string, file: string, source: string) => {
   writeFileSync(path.join(root, file), source);
 };
 const stringify = async (value: Schema.Json) =>
-  await runEffectTestPromise(Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value));
+  await runEffectTestPromise(
+    Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value)
+  );
 const facts = async (root: string) =>
   await runEffectTestPromise(
-    buildKnipRuntimeEvidence(root).pipe(Effect.provide(NodeServices.layer)),
+    buildKnipRuntimeEvidence(root).pipe(Effect.provide(NodeServices.layer))
   );
 const fixture = async () => {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'ontos-knip-runtime-')));
+  const root = realpathSync(
+    mkdtempSync(path.join(tmpdir(), 'ontos-knip-runtime-'))
+  );
   write(
     root,
     'package.json',
-    '{"name":"runtime-controls","private":true,"type":"module","devDependencies":{"@effect/tsgo":"0.19.0"}}',
+    '{"name":"runtime-controls","private":true,"type":"module","devDependencies":{"@effect/tsgo":"0.19.0"}}'
   );
   write(root, tsgoPackage, '{"name":"@effect/tsgo","version":"0.19.0"}');
   write(
@@ -58,59 +69,71 @@ const fixture = async () => {
       name: '@fixture/shell',
       scripts: { bootstrap: 'sh scripts/launch.sh' },
       type: 'module',
-    }),
+    })
   );
   write(
     root,
     layoutFile,
-    "import './index.css'; export default function Layout() { return null; }",
+    "import './index.css'; export default function Layout() { return null; }"
   );
   write(
     root,
     `${shellRoot}/src/routes/index.css`,
-    '@import "@fixture/css-used/tokens.css";\n/* @import "@fixture/css-comment"; */',
+    '@import "@fixture/css-used/tokens.css";\n/* @import "@fixture/css-comment"; */'
   );
-  write(root, `${shellRoot}/src/routes/dead.css`, '@import "@fixture/css-dead";');
+  write(
+    root,
+    `${shellRoot}/src/routes/dead.css`,
+    '@import "@fixture/css-dead";'
+  );
   write(
     root,
     `${shellRoot}/scripts/launch.sh`,
-    `#!/bin/sh\nscript_directory="$(dirname -- "$0")"\ncd "\${script_directory}/.."\nnode scripts/launched.mts\n# node scripts/dead.mts\n`,
+    `#!/bin/sh\nscript_directory="$(dirname -- "$0")"\ncd "\${script_directory}/.."\nnode scripts/launched.mts\n# node scripts/dead.mts\n`
   );
-  write(root, `${shellRoot}/scripts/launched.mts`, 'export const unusedLauncherExport = 1;');
+  write(
+    root,
+    `${shellRoot}/scripts/launched.mts`,
+    'export const unusedLauncherExport = 1;'
+  );
   write(root, `${shellRoot}/scripts/dead.mts`, 'export const unusedFile = 1;');
   write(root, resetFile, 'export const unusedResetExport = 1;');
   write(
     root,
     'zerops.yaml',
-    'zerops:\n  buildCommands:\n    - cd app && PATH="local/bin:$PATH" node scripts/reset.mjs\n',
+    'zerops:\n  buildCommands:\n    - cd app && PATH="local/bin:$PATH" node scripts/reset.mjs\n'
   );
   write(
     root,
     'scripts/ultramodern-typecheck.mts',
-    "const forwardedArgs = []; const args = ['ultramodern', 'typecheck', ...forwardedArgs]; void args;",
+    "const forwardedArgs = []; const args = ['ultramodern', 'typecheck', ...forwardedArgs]; void args;"
   );
   write(
     root,
     `${vendorRoot}/ultramodern-typecheck.mjs`,
-    "resolveEffectTsgoCompiler({ from: pathToFileURL(join(workspaceRoot, 'package.json')) });",
+    "resolveEffectTsgoCompiler({ from: pathToFileURL(join(workspaceRoot, 'package.json')) });"
   );
   write(root, tsgoReadme, compilerDocumentation);
   write(
     root,
     compilerConfig,
-    await stringify({ compilerOptions: { plugins: [{ name: pluginName }] } }),
+    await stringify({ compilerOptions: { plugins: [{ name: pluginName }] } })
   );
   write(
     root,
     'scripts/ultramodern-performance-readiness.mts',
-    "const forwardedArgs=[]; const args=['ultramodern', 'performance-readiness', ...forwardedArgs]; void args;",
+    "const forwardedArgs=[]; const args=['ultramodern', 'performance-readiness', ...forwardedArgs]; void args;"
   );
   write(
     root,
     `${vendorRoot}/ultramodern-performance-readiness.mjs`,
-    `const configPath = '${readinessConfig}'; const moduleUrl = pathToFileURL(path.join(root, configPath)).href; const module = await import(moduleUrl); normalizeConfig(module.default ?? {});`,
+    `const configPath = '${readinessConfig}'; const moduleUrl = pathToFileURL(path.join(root, configPath)).href; const module = await import(moduleUrl); normalizeConfig(module.default ?? {});`
   );
-  write(root, readinessConfig, 'export default {}; export const unusedConfigExport = 1;');
+  write(
+    root,
+    readinessConfig,
+    'export default {}; export const unusedConfigExport = 1;'
+  );
   return root;
 };
 
@@ -128,17 +151,25 @@ await test('runtime consumers require the exact CSS, shell, deployment and compi
     ]) {
       assert.ok(
         initial.some((fact) => fact.target === target),
-        target,
+        target
       );
     }
-    for (const target of ['@fixture/css-dead', '@fixture/css-comment', 'scripts/dead.mts']) {
+    for (const target of [
+      '@fixture/css-dead',
+      '@fixture/css-comment',
+      'scripts/dead.mts',
+    ]) {
       assert.ok(!initial.some((fact) => fact.target === target), target);
     }
-    assert.equal(initial.find((fact) => fact.target === pluginName)?.kind, compilerOptionKind);
+    assert.equal(
+      initial.find((fact) => fact.target === pluginName)?.kind,
+      compilerOptionKind
+    );
     assert.ok(
       initial.some(
-        (fact) => fact.target === `${readinessConfig}#default` && fact.kind === 'export',
-      ),
+        (fact) =>
+          fact.target === `${readinessConfig}#default` && fact.kind === 'export'
+      )
     );
     write(root, layoutFile, emptyLayout);
     write(root, `${shellRoot}/package.json`, '{"name":"@fixture/shell"}');
@@ -151,15 +182,21 @@ await test('runtime consumers require the exact CSS, shell, deployment and compi
           plugins: [{ name: pluginName }],
           types: [pluginName],
         },
-      }),
+      })
     );
     write(
       root,
       `${vendorRoot}/ultramodern-performance-readiness.mjs`,
-      `const configPath = '${readinessConfig}'; void configPath;`,
+      `const configPath = '${readinessConfig}'; void configPath;`
     );
     const changed = await facts(root);
-    for (const target of [cssUsed, launchedFile, resetFile, pluginName, readinessConfig]) {
+    for (const target of [
+      cssUsed,
+      launchedFile,
+      resetFile,
+      pluginName,
+      readinessConfig,
+    ]) {
       assert.ok(!changed.some((fact) => fact.target === target), target);
     }
   } finally {
@@ -186,7 +223,7 @@ await test('compiler-option proof requires the installed pinned compiler and bui
           plugins: [{ name: pluginName }],
           types: [`${pluginName}/types`],
         },
-      }),
+      })
     );
     const typeImport = await facts(root);
     assert.ok(!typeImport.some((fact) => fact.kind === compilerOptionKind));
@@ -204,7 +241,7 @@ await test('compiler configuration accepts JSONC but rejects malformed and schem
       `{
       // TypeScript permits comments and trailing commas.
       "compilerOptions": { "plugins": [{ "name": "${pluginName}", }], },
-    }`,
+    }`
     );
     const modeled = await facts(root);
     assert.ok(modeled.some((fact) => fact.kind === compilerOptionKind));
@@ -224,10 +261,18 @@ await test('DTS compiler resolution belongs to the invoking workspace and exclud
     const source =
       "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';\nconst compiler = resolveEffectTsgoCompiler({ from: import.meta.url });\nvoid compiler;";
     write(root, configFile, source);
-    write(root, `${shellRoot}/${tsgoReadme}`, 'tries `typescript`, then `@typescript/native`');
+    write(
+      root,
+      `${shellRoot}/${tsgoReadme}`,
+      'tries `typescript`, then `@typescript/native`'
+    );
     const initial = await facts(root);
     for (const target of [tsgoName, '@typescript/native']) {
-      assert.ok(initial.some((fact) => fact.target === target && fact.workspace === shellRoot));
+      assert.ok(
+        initial.some(
+          (fact) => fact.target === target && fact.workspace === shellRoot
+        )
+      );
     }
     write(root, configFile, `/* ${source} */\nexport default {};`);
     const commented = await facts(root);
@@ -240,7 +285,8 @@ await test('DTS compiler resolution belongs to the invoking workspace and exclud
 await test('Lefthook configuration proves only intended tool usage and ignores commented hook text', async () => {
   const root = await fixture();
   try {
-    const source = 'pre-commit:\n  commands:\n    format:\n      run: pnpm format\n';
+    const source =
+      'pre-commit:\n  commands:\n    format:\n      run: pnpm format\n';
     write(root, 'lefthook.yml', source);
     const configured = await facts(root);
     const tool = configured.find((fact) => fact.target === 'lefthook');
@@ -252,7 +298,7 @@ await test('Lefthook configuration proves only intended tool usage and ignores c
       source
         .split('\n')
         .map((line) => `# ${line}`)
-        .join('\n'),
+        .join('\n')
     );
     const commented = await facts(root);
     assert.ok(!commented.some((fact) => fact.target === 'lefthook'));
@@ -278,8 +324,8 @@ await test('real Knip keeps unused neighboring files, dependency names and expor
             },
           },
         },
-        consumerPath,
-      ).pipe(Effect.provide(NodeServices.layer)),
+        consumerPath
+      ).pipe(Effect.provide(NodeServices.layer))
     );
     const run = await runPinnedKnip(root, consumerPath, model);
     assert.equal(run.error, undefined);
@@ -290,40 +336,53 @@ await test('real Knip keeps unused neighboring files, dependency names and expor
           Schema.Struct({
             issues: Schema.Array(
               Schema.Struct({
-                dependencies: Schema.Array(Schema.Struct({ name: Schema.String })),
+                dependencies: Schema.Array(
+                  Schema.Struct({ name: Schema.String })
+                ),
                 exports: Schema.Array(Schema.Struct({ name: Schema.String })),
                 file: Schema.String,
                 files: Schema.Array(Schema.Struct({ name: Schema.String })),
-              }),
+              })
             ),
-          }),
-        ),
-      )(run.stdout),
+          })
+        )
+      )(run.stdout)
     );
-    const unusedFiles = report.issues.flatMap((issue) => issue.files.map((item) => item.name));
+    const unusedFiles = report.issues.flatMap((issue) =>
+      issue.files.map((item) => item.name)
+    );
     assert.ok(unusedFiles.some((file) => file.endsWith('/scripts/dead.mts')));
     assert.ok(
       !unusedFiles.some(
         (file) =>
-          file.endsWith('/scripts/launched.mts') || file === resetFile || file === readinessConfig,
-      ),
+          file.endsWith('/scripts/launched.mts') ||
+          file === resetFile ||
+          file === readinessConfig
+      )
     );
     const dependencies = new Set(
-      report.issues.flatMap((issue) => issue.dependencies.map((item) => item.name)),
+      report.issues.flatMap((issue) =>
+        issue.dependencies.map((item) => item.name)
+      )
     );
     assert.ok(dependencies.has('@fixture/css-dead'));
     assert.ok(dependencies.has('@fixture/css-comment'));
     assert.ok(!dependencies.has(cssUsed));
     const exports = new Set(
-      report.issues.flatMap((issue) => issue.exports.map((item) => item.name)),
+      report.issues.flatMap((issue) => issue.exports.map((item) => item.name))
     );
     assert.ok(
       !report.issues.some(
         (issue) =>
-          issue.file === readinessConfig && issue.exports.some((item) => item.name === 'default'),
-      ),
+          issue.file === readinessConfig &&
+          issue.exports.some((item) => item.name === 'default')
+      )
     );
-    for (const name of ['unusedLauncherExport', 'unusedResetExport', 'unusedConfigExport']) {
+    for (const name of [
+      'unusedLauncherExport',
+      'unusedResetExport',
+      'unusedConfigExport',
+    ]) {
       assert.ok(exports.has(name), name);
     }
   } finally {
@@ -337,21 +396,29 @@ await test('shared framework runner retains compiler/readiness evidence without 
   try {
     const runner = readFileSync(
       new URL('../shared/ultramodern-command.mts', import.meta.url),
-      'utf-8',
+      'utf-8'
     );
     write(root, runnerFile, runner);
     for (const command of ['typecheck', 'performance-readiness']) {
       write(
         root,
         `scripts/ultramodern-${command}.mts`,
-        readFileSync(new URL(`../ultramodern-${command}.mts`, import.meta.url), 'utf-8'),
+        readFileSync(
+          new URL(`../ultramodern-${command}.mts`, import.meta.url),
+          'utf-8'
+        )
       );
     }
     const modeled = await facts(root);
-    for (const target of [tsgoName, pluginName, readinessConfig, `${readinessConfig}#default`]) {
+    for (const target of [
+      tsgoName,
+      pluginName,
+      readinessConfig,
+      `${readinessConfig}#default`,
+    ]) {
       assert.ok(
         modeled.some((fact) => fact.target === target),
-        target,
+        target
       );
     }
     write(
@@ -359,8 +426,8 @@ await test('shared framework runner retains compiler/readiness evidence without 
       runnerFile,
       runner.replace(
         'ChildProcess.make(launch.executable, launch.args,',
-        'ChildProcess.make("unrelated", [],',
-      ),
+        'ChildProcess.make("unrelated", [],'
+      )
     );
     const disconnected = await facts(root);
     assert.ok(!disconnected.some((fact) => fact.target === tsgoName));
@@ -369,12 +436,12 @@ await test('shared framework runner retains compiler/readiness evidence without 
     write(
       root,
       'scripts/ultramodern-typecheck.mts',
-      "import { runUltramodernScript } from './shared/unrelated.mts'; runUltramodernScript({ command: 'typecheck' });",
+      "import { runUltramodernScript } from './shared/unrelated.mts'; runUltramodernScript({ command: 'typecheck' });"
     );
     write(
       root,
       'scripts/ultramodern-performance-readiness.mts',
-      "import { runUltramodernScript } from './shared/ultramodern-command.mts'; runUltramodernScript({ command: 'unrelated' });",
+      "import { runUltramodernScript } from './shared/ultramodern-command.mts'; runUltramodernScript({ command: 'unrelated' });"
     );
     const neighbors = await facts(root);
     assert.ok(!neighbors.some((fact) => fact.target === tsgoName));

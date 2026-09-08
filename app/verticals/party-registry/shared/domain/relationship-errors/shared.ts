@@ -14,5 +14,5 @@ export const RelationshipErrorPartyTypeSchema = Schema.Literals([
 
 export const PositiveRelationshipRevisionSchema = Schema.Finite.check(
   Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isGreaterThanOrEqualTo(1)
 );

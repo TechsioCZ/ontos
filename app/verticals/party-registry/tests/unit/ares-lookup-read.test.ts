@@ -1,9 +1,11 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema, SchemaAST } from 'effect';
+
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   AresLookupApi,
@@ -51,11 +53,15 @@ const evidenceWire = {
 
 const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
   assert.ok(SchemaAST.isObjects(schema.ast));
-  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
+  const tag = schema.ast.propertySignatures.find(
+    ({ name }) => name === '_tag'
+  )?.type;
   assert.ok(tag !== undefined && SchemaAST.isLiteral(tag));
   return tag.literal;
 };
-const evidence = Schema.decodeUnknownSync(AresLookupResponseSchema)(evidenceWire);
+const evidence = Schema.decodeUnknownSync(AresLookupResponseSchema)(
+  evidenceWire
+);
 
 const scope = Object.freeze({
   authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -66,15 +72,23 @@ const scope = Object.freeze({
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
 });
-const request = Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: '48039101' });
+const request = Schema.decodeUnknownSync(AresLookupRequestSchema)({
+  ico: '48039101',
+});
 
 test('declares a tenant-authorized Party evidence Read with optional Legal Entity context', () => {
   assert.equal(aresLookupRead.descriptor.accessKind, 'detail');
   assert.equal(aresLookupRead.descriptor.legalEntityScope, 'optional');
   assert.equal(aresLookupRead.descriptor.permissionTarget, 'tenant');
   assert.equal(aresLookupRead.descriptor.owningModuleKey, 'party.registry');
-  assert.equal(aresLookupRead.descriptor.readKey, 'party.registry.api.ares-lookup');
-  assert.equal(aresLookupRead.descriptor.evidencePolicy.captureMode, 'metadata_only');
+  assert.equal(
+    aresLookupRead.descriptor.readKey,
+    'party.registry.api.ares-lookup'
+  );
+  assert.equal(
+    aresLookupRead.descriptor.evidencePolicy.captureMode,
+    'metadata_only'
+  );
 });
 
 test('passes trusted correlation to the private adapter and returns exactly one evidence result', async () => {
@@ -91,35 +105,53 @@ test('passes trusted correlation to the private adapter and returns exactly one 
       },
     }).pipe(
       Effect.provideService(AresSubjectService, {
-        subject: () => Effect.die('The handler test supplies services directly'),
-      }),
-    ),
+        subject: () =>
+          Effect.die('The handler test supplies services directly'),
+      })
+    )
   );
 
-  assert.deepEqual(calls, [{ correlationId: scope.correlationId, ico: '48039101' }]);
+  assert.deepEqual(calls, [
+    { correlationId: scope.correlationId, ico: '48039101' },
+  ]);
   assert.deepEqual(result, { evidence: { resultCount: 1 }, result: evidence });
 });
 
 test('maps provider failures to the closed governed Read error vocabulary without leaking details', async () => {
   const failures = [
     [
-      new AresSubjectNotFound({ code: 'ares_subject_not_found', reason: 'private 404 body' }),
+      new AresSubjectNotFound({
+        code: 'ares_subject_not_found',
+        reason: 'private 404 body',
+      }),
       'ReadHandlerNotFound',
     ],
     [
-      new AresSubjectDenied({ code: 'ares_subject_denied', reason: 'private denial' }),
+      new AresSubjectDenied({
+        code: 'ares_subject_denied',
+        reason: 'private denial',
+      }),
       'ReadHandlerUnavailable',
     ],
     [
-      new AresSubjectThrottled({ code: 'ares_subject_throttled', reason: 'private throttle' }),
+      new AresSubjectThrottled({
+        code: 'ares_subject_throttled',
+        reason: 'private throttle',
+      }),
       'ReadHandlerUnavailable',
     ],
     [
-      new AresSubjectTimeout({ code: 'ares_subject_timeout', reason: 'private timeout' }),
+      new AresSubjectTimeout({
+        code: 'ares_subject_timeout',
+        reason: 'private timeout',
+      }),
       'ReadHandlerUnavailable',
     ],
     [
-      new AresSubjectUnavailable({ code: 'ares_subject_unavailable', reason: 'private transport' }),
+      new AresSubjectUnavailable({
+        code: 'ares_subject_unavailable',
+        reason: 'private transport',
+      }),
       'ReadHandlerUnavailable',
     ],
     [
@@ -139,15 +171,16 @@ test('maps provider failures to the closed governed Read error vocabulary withou
             readKey: aresLookupRead.descriptor.readKey,
             scope,
             services: { lookup: () => Effect.fail(failure) },
-          }),
+          })
         ).pipe(
           Effect.provideService(AresSubjectService, {
-            subject: () => Effect.die('The handler test supplies services directly'),
+            subject: () =>
+              Effect.die('The handler test supplies services directly'),
           }),
-          Effect.map((error) => ({ error, expectedTag })),
-        ),
-      ),
-    ),
+          Effect.map((error) => ({ error, expectedTag }))
+        )
+      )
+    )
   );
   for (const { error, expectedTag } of errors) {
     assert.equal(error._tag, expectedTag);
@@ -166,10 +199,18 @@ test('publishes safe status-matched Problem Details and no provider payload sche
   }
   const schemas = [
     [AresLookupInvalidProblemSchema, 'AresLookupInvalidProblem', 400],
-    [AresLookupAuthenticationProblemSchema, 'AresLookupAuthenticationProblem', 401],
+    [
+      AresLookupAuthenticationProblemSchema,
+      'AresLookupAuthenticationProblem',
+      401,
+    ],
     [AresLookupForbiddenProblemSchema, 'AresLookupForbiddenProblem', 403],
     [AresLookupNotFoundProblemSchema, 'AresLookupNotFoundProblem', 404],
-    [AresLookupPolicyConflictProblemSchema, 'AresLookupPolicyConflictProblem', 409],
+    [
+      AresLookupPolicyConflictProblemSchema,
+      'AresLookupPolicyConflictProblem',
+      409,
+    ],
     [AresLookupPolicyProblemSchema, 'AresLookupPolicyProblem', 422],
     [AresLookupUnavailableProblemSchema, 'AresLookupUnavailableProblem', 503],
     [AresLookupInternalProblemSchema, 'AresLookupInternalProblem', 500],
@@ -198,35 +239,56 @@ test('publishes safe status-matched Problem Details and no provider payload sche
       contentType: 'application/problem+json',
     });
   }
-  assert.deepEqual([...AresLookupApi.groups.aresLookup.endpoints.execute.error].map(problemTag), [
-    'AresLookupInvalidProblem',
-    'AresLookupAuthenticationProblem',
-    'AresLookupForbiddenProblem',
-    'AresLookupNotFoundProblem',
-    'AresLookupPolicyConflictProblem',
-    'AresLookupPolicyProblem',
-    'AresLookupUnavailableProblem',
-    'AresLookupInternalProblem',
-  ]);
-  assert.deepEqual(Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: '48039101' }), {
-    ico: '48039101',
-  });
-  assert.deepEqual(Schema.decodeUnknownSync(AresLookupResponseSchema)(evidenceWire), evidence);
+  assert.deepEqual(
+    [...AresLookupApi.groups.aresLookup.endpoints.execute.error].map(
+      problemTag
+    ),
+    [
+      'AresLookupInvalidProblem',
+      'AresLookupAuthenticationProblem',
+      'AresLookupForbiddenProblem',
+      'AresLookupNotFoundProblem',
+      'AresLookupPolicyConflictProblem',
+      'AresLookupPolicyProblem',
+      'AresLookupUnavailableProblem',
+      'AresLookupInternalProblem',
+    ]
+  );
+  assert.deepEqual(
+    Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: '48039101' }),
+    {
+      ico: '48039101',
+    }
+  );
+  assert.deepEqual(
+    Schema.decodeUnknownSync(AresLookupResponseSchema)(evidenceWire),
+    evidence
+  );
   assert.equal(AresLookupApi.identifier, 'AresLookupApi');
 });
 
 test('keeps the ARES integration read-only and exposes no ARES Action', async () => {
   const sourceFiles = [
-    new URL('../../src/integrations/ares/ares-subject.service.ts', import.meta.url),
+    new URL(
+      '../../src/integrations/ares/ares-subject.service.ts',
+      import.meta.url
+    ),
     new URL('../../src/api/ares-lookup.read.ts', import.meta.url),
   ];
-  const sources = await Promise.all(sourceFiles.map((sourceFile) => readFile(sourceFile, 'utf-8')));
+  const sources = await Promise.all(
+    sourceFiles.map((sourceFile) => readFile(sourceFile, 'utf-8'))
+  );
   for (const source of sources) {
-    assert.doesNotMatch(source, /from ['"].*(?:\/db\/|\/actions\/|\/services\/party-)/u);
+    assert.doesNotMatch(
+      source,
+      /from ['"].*(?:\/db\/|\/actions\/|\/services\/party-)/u
+    );
   }
-  const actionFiles = await readdir(new URL('../../src/actions/', import.meta.url));
+  const actionFiles = await readdir(
+    new URL('../../src/actions/', import.meta.url)
+  );
   assert.equal(
     actionFiles.some((name) => name.includes('ares')),
-    false,
+    false
   );
 });

@@ -15,7 +15,6 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 export const CORE_SCHEMA_NAME = 'core';
@@ -53,7 +52,8 @@ export const ACTION_INVOCATION_STATUSES = [
   'replayed',
 ] as const;
 
-export type ActionInvocationStatus = (typeof ACTION_INVOCATION_STATUSES)[number];
+export type ActionInvocationStatus =
+  (typeof ACTION_INVOCATION_STATUSES)[number];
 
 export const ACTION_AUTH_METHODS = [
   'session',
@@ -64,7 +64,13 @@ export const ACTION_AUTH_METHODS = [
 
 export type ActionAuthMethod = (typeof ACTION_AUTH_METHODS)[number];
 
-export const PRINCIPAL_KINDS = ['human', 'service', 'integration', 'agent', 'system'] as const;
+export const PRINCIPAL_KINDS = [
+  'human',
+  'service',
+  'integration',
+  'agent',
+  'system',
+] as const;
 export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
 
 export const PRINCIPAL_STATUSES = ['active', 'disabled', 'archived'] as const;
@@ -77,13 +83,19 @@ export const BINDING_STATUSES = ['active', 'disabled', 'revoked'] as const;
 export type BindingStatus = (typeof BINDING_STATUSES)[number];
 
 export const coreSchema = pgSchema(CORE_SCHEMA_NAME);
-export const domainEventTenantSequence = coreSchema.sequence('domain_event_tenant_sequence_no_seq');
+export const domainEventTenantSequence = coreSchema.sequence(
+  'domain_event_tenant_sequence_no_seq'
+);
 
-const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
-const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
-const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
-const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
-  table.enableRLS();
+const createdAt = () =>
+  timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
+const updatedAt = () =>
+  timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
+const occurredAt = () =>
+  timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
+const enableCoreGovernedRls = <Table>(table: {
+  readonly enableRLS: () => Table;
+}): Table => table.enableRLS();
 
 export const tenants = coreSchema.table(
   'tenants',
@@ -98,8 +110,11 @@ export const tenants = coreSchema.table(
   },
   (table) => [
     uniqueIndex('core_tenants_slug_uk').on(table.slug),
-    check('core_tenants_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
-  ],
+    check(
+      'core_tenants_status_ck',
+      sql`${table.status} in ('active', 'suspended', 'archived')`
+    ),
+  ]
 );
 
 const tenantId = () =>
@@ -121,18 +136,21 @@ export const legalEntities = coreSchema.table(
     updatedAt: updatedAt(),
   },
   (table) => [
-    uniqueIndex('core_legal_entities_tenant_id_uk').on(table.tenantId, table.legalEntityId),
+    uniqueIndex('core_legal_entities_tenant_id_uk').on(
+      table.tenantId,
+      table.legalEntityId
+    ),
     uniqueIndex('core_legal_entities_registration_uk').on(
       table.tenantId,
       table.registrationCountry,
-      table.registrationNumber,
+      table.registrationNumber
     ),
     index('core_legal_entities_tenant_idx').on(table.tenantId),
     check(
       'core_legal_entities_status_ck',
-      sql`${table.status} in ('active', 'suspended', 'archived')`,
+      sql`${table.status} in ('active', 'suspended', 'archived')`
     ),
-  ],
+  ]
 );
 
 export const principals = coreSchema.table(
@@ -147,14 +165,20 @@ export const principals = coreSchema.table(
     disabledAt: timestamp('disabled_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
+    uniqueIndex('core_principals_tenant_id_uk').on(
+      table.tenantId,
+      table.principalId
+    ),
     index('core_principals_tenant_kind_idx').on(table.tenantId, table.kind),
     check(
       'core_principals_kind_ck',
-      sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`,
+      sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`
     ),
-    check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
-  ],
+    check(
+      'core_principals_status_ck',
+      sql`${table.status} in ('active', 'disabled', 'archived')`
+    ),
+  ]
 );
 
 const principalId = (columnName = 'principal_id') => uuid(columnName).notNull();
@@ -164,7 +188,9 @@ const optionalPrincipalId = (columnName = 'principal_id') => uuid(columnName);
 export const principalAuthBindings = coreSchema.table(
   'principal_auth_bindings',
   {
-    principalAuthBindingId: uuid('principal_auth_binding_id').defaultRandom().primaryKey(),
+    principalAuthBindingId: uuid('principal_auth_binding_id')
+      .defaultRandom()
+      .primaryKey(),
     tenantId: tenantId(),
     principalId: principalId(),
     provider: text('provider').notNull(),
@@ -176,12 +202,15 @@ export const principalAuthBindings = coreSchema.table(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('core_auth_bindings_tenant_id_uk').on(table.tenantId, table.principalAuthBindingId),
+    uniqueIndex('core_auth_bindings_tenant_id_uk').on(
+      table.tenantId,
+      table.principalAuthBindingId
+    ),
     uniqueIndex('core_auth_bindings_subject_uk').on(
       table.tenantId,
       table.provider,
       table.subjectType,
-      table.providerSubjectId,
+      table.providerSubjectId
     ),
     uniqueIndex('core_auth_bindings_api_key_subject_global_uk')
       .on(table.provider, table.subjectType, table.providerSubjectId)
@@ -192,17 +221,23 @@ export const principalAuthBindings = coreSchema.table(
       foreignColumns: [principals.tenantId, principals.principalId],
       name: 'core_auth_bindings_tenant_principal_fk',
     }).onDelete('restrict'),
-    check('core_auth_bindings_provider_ck', sql`${table.provider} in ('better_auth')`),
-    check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key')`),
+    check(
+      'core_auth_bindings_provider_ck',
+      sql`${table.provider} in ('better_auth')`
+    ),
+    check(
+      'core_auth_bindings_subject_type_ck',
+      sql`${table.subjectType} in ('user', 'api_key')`
+    ),
     check(
       'core_auth_bindings_status_ck',
-      sql`${table.status} in ('active', 'revoked', 'disabled')`,
+      sql`${table.status} in ('active', 'revoked', 'disabled')`
     ),
     check(
       'core_auth_bindings_lifecycle_ck',
-      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('active', 'disabled') and ${table.revokedAt} is null)`,
+      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('active', 'disabled') and ${table.revokedAt} is null)`
     ),
-  ],
+  ]
 );
 
 const legalEntityId = () => uuid('legal_entity_id');
@@ -212,13 +247,17 @@ const authBindingId = () => uuid('auth_binding_id');
 const authContextRefColumns = () => ({
   authBindingId: authBindingId(),
   authContextRef: text('auth_context_ref'),
-  impersonatedByPrincipalId: optionalPrincipalId('impersonated_by_principal_id'),
+  impersonatedByPrincipalId: optionalPrincipalId(
+    'impersonated_by_principal_id'
+  ),
 });
 
 export const tenantModuleStates = coreSchema.table(
   'tenant_module_states',
   {
-    tenantModuleStateId: uuid('tenant_module_state_id').defaultRandom().primaryKey(),
+    tenantModuleStateId: uuid('tenant_module_state_id')
+      .defaultRandom()
+      .primaryKey(),
     tenantId: tenantId(),
     moduleKey: text('module_key').notNull(),
     state: text('state').notNull(),
@@ -227,12 +266,15 @@ export const tenantModuleStates = coreSchema.table(
     updatedAt: updatedAt(),
   },
   (table) => [
-    uniqueIndex('core_module_states_tenant_module_uk').on(table.tenantId, table.moduleKey),
+    uniqueIndex('core_module_states_tenant_module_uk').on(
+      table.tenantId,
+      table.moduleKey
+    ),
     check(
       'core_module_states_state_ck',
-      sql`${table.state} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`,
+      sql`${table.state} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`
     ),
-  ],
+  ]
 );
 
 const authContextForeignKeys = (
@@ -242,7 +284,7 @@ const authContextForeignKeys = (
     readonly impersonatedByPrincipalId: AnyPgColumn;
     readonly principalId: AnyPgColumn;
     readonly tenantId: AnyPgColumn;
-  },
+  }
 ) => [
   foreignKey({
     columns: [table.tenantId, table.principalId],
@@ -251,7 +293,10 @@ const authContextForeignKeys = (
   }).onDelete('restrict'),
   foreignKey({
     columns: [table.tenantId, table.authBindingId],
-    foreignColumns: [principalAuthBindings.tenantId, principalAuthBindings.principalAuthBindingId],
+    foreignColumns: [
+      principalAuthBindings.tenantId,
+      principalAuthBindings.principalAuthBindingId,
+    ],
     name: `${prefix}_tenant_auth_binding_fk`,
   }).onDelete('restrict'),
   foreignKey({
@@ -264,7 +309,9 @@ const authContextForeignKeys = (
 export const actionInvocations = coreSchema.table(
   'action_invocations',
   {
-    actionInvocationId: uuid('action_invocation_id').defaultRandom().primaryKey(),
+    actionInvocationId: uuid('action_invocation_id')
+      .defaultRandom()
+      .primaryKey(),
     tenantId: tenantId(),
     legalEntityId: legalEntityId(),
     principalId: optionalPrincipalId(),
@@ -280,23 +327,33 @@ export const actionInvocations = coreSchema.table(
     targetResourceId: text('target_resource_id'),
     status: text('status').$type<ActionInvocationStatus>().notNull(),
     requestHash: text('request_hash').notNull(),
-    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (table) => [
     uniqueIndex('core_action_invocations_tenant_id_uk').on(
       table.tenantId,
-      table.actionInvocationId,
+      table.actionInvocationId
     ),
     uniqueIndex('core_action_invocations_idempotency_uk')
-      .on(table.tenantId, table.actionKey, table.principalId, table.idempotencyKey)
+      .on(
+        table.tenantId,
+        table.actionKey,
+        table.principalId,
+        table.idempotencyKey
+      )
       .where(sql`${table.idempotencyKey} is not null`),
-    index('core_action_invocations_tenant_started_idx').on(table.tenantId, table.startedAt),
+    index('core_action_invocations_tenant_started_idx').on(
+      table.tenantId,
+      table.startedAt
+    ),
     index('core_action_invocations_target_idx').on(
       table.tenantId,
       table.targetModuleKey,
       table.targetResourceType,
-      table.targetResourceId,
+      table.targetResourceId
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId],
@@ -306,13 +363,13 @@ export const actionInvocations = coreSchema.table(
     ...authContextForeignKeys('core_action_invocations', table),
     check(
       'core_action_invocations_auth_method_ck',
-      sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation')`,
+      sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation')`
     ),
     check(
       'core_action_invocations_status_ck',
-      sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
+      sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`
     ),
-  ],
+  ]
 );
 
 const actionInvocationId = () => uuid('action_invocation_id');
@@ -320,7 +377,9 @@ const actionInvocationId = () => uuid('action_invocation_id');
 export const tenantModuleStateChanges = coreSchema.table(
   'tenant_module_state_changes',
   {
-    moduleStateChangeId: uuid('module_state_change_id').defaultRandom().primaryKey(),
+    moduleStateChangeId: uuid('module_state_change_id')
+      .defaultRandom()
+      .primaryKey(),
     tenantId: tenantId(),
     moduleKey: text('module_key').notNull(),
     previousState: text('previous_state'),
@@ -335,7 +394,7 @@ export const tenantModuleStateChanges = coreSchema.table(
     index('core_module_state_changes_tenant_module_idx').on(
       table.tenantId,
       table.moduleKey,
-      table.occurredAt,
+      table.occurredAt
     ),
     foreignKey({
       columns: [table.tenantId, table.changedByPrincipalId],
@@ -344,18 +403,21 @@ export const tenantModuleStateChanges = coreSchema.table(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      foreignColumns: [
+        actionInvocations.tenantId,
+        actionInvocations.actionInvocationId,
+      ],
       name: 'core_module_state_changes_tenant_invocation_fk',
     }).onDelete('restrict'),
     check(
       'core_module_state_changes_source_ck',
-      sql`${table.changeSource} in ('user', 'support', 'system')`,
+      sql`${table.changeSource} in ('user', 'support', 'system')`
     ),
     check(
       'core_module_state_changes_new_state_ck',
-      sql`${table.newState} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`,
+      sql`${table.newState} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`
     ),
-  ],
+  ]
 );
 
 export const auditEvents = coreSchema.table(
@@ -382,8 +444,14 @@ export const auditEvents = coreSchema.table(
     occurredAt: occurredAt(),
   },
   (table) => [
-    uniqueIndex('core_audit_events_tenant_id_uk').on(table.tenantId, table.auditEventId),
-    index('core_audit_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
+    uniqueIndex('core_audit_events_tenant_id_uk').on(
+      table.tenantId,
+      table.auditEventId
+    ),
+    index('core_audit_events_tenant_occurred_idx').on(
+      table.tenantId,
+      table.occurredAt
+    ),
     index('core_audit_events_action_idx').on(table.actionInvocationId),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId],
@@ -392,23 +460,26 @@ export const auditEvents = coreSchema.table(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      foreignColumns: [
+        actionInvocations.tenantId,
+        actionInvocations.actionInvocationId,
+      ],
       name: 'core_audit_events_tenant_invocation_fk',
     }).onDelete('restrict'),
     ...authContextForeignKeys('core_audit_events', table),
     check(
       'core_audit_events_outcome_ck',
-      sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`,
+      sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`
     ),
     check(
       'core_audit_events_stage_ck',
-      sql`${table.outcomeStage} in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')`,
+      sql`${table.outcomeStage} in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')`
     ),
     check(
       'core_audit_events_profile_ck',
-      sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`,
+      sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`
     ),
-  ],
+  ]
 );
 
 const auditEventId = () => uuid('audit_event_id');
@@ -416,7 +487,9 @@ const auditEventId = () => uuid('audit_event_id');
 export const dataAccessEvents = coreSchema.table(
   'data_access_events',
   {
-    dataAccessEventId: uuid('data_access_event_id').defaultRandom().primaryKey(),
+    dataAccessEventId: uuid('data_access_event_id')
+      .defaultRandom()
+      .primaryKey(),
     tenantId: tenantId(),
     legalEntityId: legalEntityId(),
     actionInvocationId: actionInvocationId(),
@@ -442,8 +515,14 @@ export const dataAccessEvents = coreSchema.table(
     occurredAt: occurredAt(),
   },
   (table) => [
-    uniqueIndex('core_data_access_events_tenant_id_uk').on(table.tenantId, table.dataAccessEventId),
-    index('core_data_access_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
+    uniqueIndex('core_data_access_events_tenant_id_uk').on(
+      table.tenantId,
+      table.dataAccessEventId
+    ),
+    index('core_data_access_events_tenant_occurred_idx').on(
+      table.tenantId,
+      table.occurredAt
+    ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId],
       foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
@@ -451,31 +530,34 @@ export const dataAccessEvents = coreSchema.table(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      foreignColumns: [
+        actionInvocations.tenantId,
+        actionInvocations.actionInvocationId,
+      ],
       name: 'core_data_access_events_tenant_invocation_fk',
     }).onDelete('restrict'),
     ...authContextForeignKeys('core_data_access_events', table),
     check(
       'core_data_access_events_outcome_ck',
-      sql`${table.outcome} in ('allowed', 'denied', 'failed')`,
+      sql`${table.outcome} in ('allowed', 'denied', 'failed')`
     ),
     check(
       'core_data_access_events_stage_ck',
-      sql`${table.outcomeStage} in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')`,
+      sql`${table.outcomeStage} in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')`
     ),
     check(
       'core_data_access_events_access_kind_ck',
-      sql`${table.accessKind} in ('read', 'list', 'search', 'export', 'download')`,
+      sql`${table.accessKind} in ('read', 'list', 'search', 'export', 'download')`
     ),
     check(
       'core_data_access_events_capture_mode_ck',
-      sql`${table.evidenceCaptureMode} in ('metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact')`,
+      sql`${table.evidenceCaptureMode} in ('metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact')`
     ),
     check(
       'core_data_access_events_redaction_ck',
-      sql`(${table.evidenceCaptureMode} = 'redacted_payload' and ${table.redactionProfile} is not null and ${table.evidencePayloadJson} is not null) or (${table.evidenceCaptureMode} <> 'redacted_payload' and ${table.redactionProfile} is null)`,
+      sql`(${table.evidenceCaptureMode} = 'redacted_payload' and ${table.redactionProfile} is not null and ${table.evidencePayloadJson} is not null) or (${table.evidenceCaptureMode} <> 'redacted_payload' and ${table.redactionProfile} is null)`
     ),
-  ],
+  ]
 );
 
 const dataAccessEventId = () => uuid('data_access_event_id');
@@ -499,18 +581,26 @@ export const domainEvents = coreSchema.table(
     // every tenant stream, permits gaps, and is safe across concurrent
     // transactions without application-side max + 1 allocation.
     tenantSequenceNo: bigint('tenant_sequence_no', { mode: 'bigint' })
-      .default(sql`nextval('core.domain_event_tenant_sequence_no_seq'::regclass)`)
+      .default(
+        sql`nextval('core.domain_event_tenant_sequence_no_seq'::regclass)`
+      )
       .notNull(),
     occurredAt: occurredAt(),
   },
   (table) => [
-    uniqueIndex('core_domain_events_tenant_id_uk').on(table.tenantId, table.domainEventId),
-    uniqueIndex('core_domain_events_tenant_sequence_uk').on(table.tenantId, table.tenantSequenceNo),
+    uniqueIndex('core_domain_events_tenant_id_uk').on(
+      table.tenantId,
+      table.domainEventId
+    ),
+    uniqueIndex('core_domain_events_tenant_sequence_uk').on(
+      table.tenantId,
+      table.tenantSequenceNo
+    ),
     index('core_domain_events_subject_idx').on(
       table.tenantId,
       table.subjectModuleKey,
       table.subjectResourceType,
-      table.subjectResourceId,
+      table.subjectResourceId
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId],
@@ -519,10 +609,13 @@ export const domainEvents = coreSchema.table(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      foreignColumns: [
+        actionInvocations.tenantId,
+        actionInvocations.actionInvocationId,
+      ],
       name: 'core_domain_events_tenant_invocation_fk',
     }).onDelete('restrict'),
-  ],
+  ]
 );
 
 const domainEventId = () => uuid('domain_event_id');
@@ -550,7 +643,7 @@ export const outboxMessages = coreSchema.table(
       foreignColumns: [domainEvents.tenantId, domainEvents.domainEventId],
       name: 'core_outbox_messages_tenant_domain_event_fk',
     }).onDelete('restrict'),
-  ],
+  ]
 );
 
 export const outboxDeliveries = coreSchema.table(
@@ -559,12 +652,16 @@ export const outboxDeliveries = coreSchema.table(
     outboxDeliveryId: uuid('outbox_delivery_id').defaultRandom().primaryKey(),
     outboxMessageId: uuid('outbox_message_id')
       .notNull()
-      .references(() => outboxMessages.outboxMessageId, { onDelete: 'cascade' }),
+      .references(() => outboxMessages.outboxMessageId, {
+        onDelete: 'cascade',
+      }),
     workerKey: text('worker_key').notNull(),
     consumerModuleKey: text('consumer_module_key').notNull(),
     status: text('status').default('pending').notNull(),
     attemptsCount: integer('attempts_count').default(0).notNull(),
-    availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+    availableAt: timestamp('available_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     claimedBy: text('claimed_by'),
     claimedAt: timestamp('claimed_at', { withTimezone: true }),
     claimExpiresAt: timestamp('claim_expires_at', { withTimezone: true }),
@@ -574,19 +671,25 @@ export const outboxDeliveries = coreSchema.table(
   (table) => [
     uniqueIndex('core_outbox_deliveries_message_worker_uk').on(
       table.outboxMessageId,
-      table.workerKey,
+      table.workerKey
     ),
     index('core_outbox_deliveries_pending_idx')
       .on(table.availableAt)
       .where(sql`${table.status} = 'pending'`),
     index('core_outbox_deliveries_message_idx').on(table.outboxMessageId),
-    index('core_outbox_deliveries_worker_status_idx').on(table.workerKey, table.status),
+    index('core_outbox_deliveries_worker_status_idx').on(
+      table.workerKey,
+      table.status
+    ),
     check(
       'core_outbox_deliveries_status_ck',
-      sql`${table.status} in ('pending', 'processing', 'done', 'dead')`,
+      sql`${table.status} in ('pending', 'processing', 'done', 'dead')`
     ),
-    check('core_outbox_deliveries_attempts_count_ck', sql`${table.attemptsCount} >= 0`),
-  ],
+    check(
+      'core_outbox_deliveries_attempts_count_ck',
+      sql`${table.attemptsCount} >= 0`
+    ),
+  ]
 );
 
 export const outboxAttempts = coreSchema.table(
@@ -595,14 +698,21 @@ export const outboxAttempts = coreSchema.table(
     outboxAttemptId: uuid('outbox_attempt_id').defaultRandom().primaryKey(),
     outboxDeliveryId: uuid('outbox_delivery_id')
       .notNull()
-      .references(() => outboxDeliveries.outboxDeliveryId, { onDelete: 'cascade' }),
-    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+      .references(() => outboxDeliveries.outboxDeliveryId, {
+        onDelete: 'cascade',
+      }),
+    startedAt: timestamp('started_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     errorMessage: text('error_message'),
   },
   (table) => [
-    index('core_outbox_attempts_delivery_started_idx').on(table.outboxDeliveryId, table.startedAt),
-  ],
+    index('core_outbox_attempts_delivery_started_idx').on(
+      table.outboxDeliveryId,
+      table.startedAt
+    ),
+  ]
 );
 
 export const mediaAssets = coreSchema.table(
@@ -628,11 +738,14 @@ export const mediaAssets = coreSchema.table(
     updatedAt: updatedAt(),
   },
   (table) => [
-    uniqueIndex('core_media_assets_tenant_id_uk').on(table.tenantId, table.mediaAssetId),
+    uniqueIndex('core_media_assets_tenant_id_uk').on(
+      table.tenantId,
+      table.mediaAssetId
+    ),
     uniqueIndex('core_media_assets_storage_uk').on(
       table.storageProvider,
       table.storageKey,
-      table.storageObjectVersionRef,
+      table.storageObjectVersionRef
     ),
     index('core_media_assets_tenant_idx').on(table.tenantId),
     foreignKey({
@@ -647,13 +760,13 @@ export const mediaAssets = coreSchema.table(
     }).onDelete('restrict'),
     check(
       'core_media_assets_ingestion_source_ck',
-      sql`${table.ingestionSource} in ('user', 'integration', 'import', 'system')`,
+      sql`${table.ingestionSource} in ('user', 'integration', 'import', 'system')`
     ),
     check(
       'core_media_assets_processing_status_ck',
-      sql`${table.processingStatus} in ('uploaded', 'scanning', 'ready', 'failed')`,
+      sql`${table.processingStatus} in ('uploaded', 'scanning', 'ready', 'failed')`
     ),
-  ],
+  ]
 );
 
 const mediaAssetId = () => uuid('media_asset_id').notNull();
@@ -679,7 +792,7 @@ export const mediaLinks = coreSchema.table(
       table.tenantId,
       table.targetModuleKey,
       table.targetResourceType,
-      table.targetResourceId,
+      table.targetResourceId
     ),
     foreignKey({
       columns: [table.tenantId, table.mediaAssetId],
@@ -693,20 +806,25 @@ export const mediaLinks = coreSchema.table(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      foreignColumns: [
+        actionInvocations.tenantId,
+        actionInvocations.actionInvocationId,
+      ],
       name: 'core_media_links_tenant_invocation_fk',
     }).onDelete('restrict'),
     check(
       'core_media_links_source_ck',
-      sql`${table.linkSource} in ('user', 'integration', 'import', 'system')`,
+      sql`${table.linkSource} in ('user', 'integration', 'import', 'system')`
     ),
-  ],
+  ]
 );
 
 export const evidenceReferences = coreSchema.table(
   'evidence_references',
   {
-    evidenceReferenceId: uuid('evidence_reference_id').defaultRandom().primaryKey(),
+    evidenceReferenceId: uuid('evidence_reference_id')
+      .defaultRandom()
+      .primaryKey(),
     tenantId: tenantId(),
     legalEntityId: legalEntityId(),
     mediaAssetId: mediaAssetId(),
@@ -725,9 +843,13 @@ export const evidenceReferences = coreSchema.table(
     storageLockScope: text('storage_lock_scope').notNull(),
     storageLockMode: text('storage_lock_mode').notNull(),
     storageLegalHold: boolean('storage_legal_hold').default(false).notNull(),
-    storageRetainUntil: timestamp('storage_retain_until', { withTimezone: true }),
+    storageRetainUntil: timestamp('storage_retain_until', {
+      withTimezone: true,
+    }),
     storageLockStatus: text('storage_lock_status').notNull(),
-    storageLockVerifiedAt: timestamp('storage_lock_verified_at', { withTimezone: true }),
+    storageLockVerifiedAt: timestamp('storage_lock_verified_at', {
+      withTimezone: true,
+    }),
     storageLockEvidenceJson: jsonb('storage_lock_evidence_json')
       .notNull()
       .default(sql`'{}'::jsonb`),
@@ -745,7 +867,7 @@ export const evidenceReferences = coreSchema.table(
       table.tenantId,
       table.subjectModuleKey,
       table.subjectResourceType,
-      table.subjectResourceId,
+      table.subjectResourceId
     ),
     foreignKey({
       columns: [table.tenantId, table.legalEntityId],
@@ -759,7 +881,10 @@ export const evidenceReferences = coreSchema.table(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      foreignColumns: [
+        actionInvocations.tenantId,
+        actionInvocations.actionInvocationId,
+      ],
       name: 'core_evidence_tenant_invocation_fk',
     }).onDelete('restrict'),
     foreignKey({
@@ -769,7 +894,10 @@ export const evidenceReferences = coreSchema.table(
     }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.dataAccessEventId],
-      foreignColumns: [dataAccessEvents.tenantId, dataAccessEvents.dataAccessEventId],
+      foreignColumns: [
+        dataAccessEvents.tenantId,
+        dataAccessEvents.dataAccessEventId,
+      ],
       name: 'core_evidence_tenant_data_access_fk',
     }).onDelete('restrict'),
     foreignKey({
@@ -779,32 +907,34 @@ export const evidenceReferences = coreSchema.table(
     }).onDelete('restrict'),
     check(
       'core_evidence_references_source_kind_ck',
-      sql`${table.sourceKind} in ('action', 'audit', 'data_access', 'domain_event')`,
+      sql`${table.sourceKind} in ('action', 'audit', 'data_access', 'domain_event')`
     ),
     check(
       'core_evidence_references_source_one_ck',
-      sql`num_nonnulls(${table.actionInvocationId}, ${table.auditEventId}, ${table.dataAccessEventId}, ${table.domainEventId}) = 1`,
+      sql`num_nonnulls(${table.actionInvocationId}, ${table.auditEventId}, ${table.dataAccessEventId}, ${table.domainEventId}) = 1`
     ),
     check(
       'core_evidence_references_subject_all_ck',
-      sql`num_nonnulls(${table.subjectModuleKey}, ${table.subjectResourceType}, ${table.subjectResourceId}) in (0, 3)`,
+      sql`num_nonnulls(${table.subjectModuleKey}, ${table.subjectResourceType}, ${table.subjectResourceId}) in (0, 3)`
     ),
     check(
       'core_evidence_references_disposition_ck',
-      sql`${table.dispositionStatus} in ('active', 'expired', 'deleted', 'legal_hold')`,
+      sql`${table.dispositionStatus} in ('active', 'expired', 'deleted', 'legal_hold')`
     ),
     check(
       'core_evidence_references_classification_ck',
-      sql`${table.dataClassification} in ('internal', 'confidential', 'restricted')`,
+      sql`${table.dataClassification} in ('internal', 'confidential', 'restricted')`
     ),
-  ],
+  ]
 );
 
 export const searchIndexEntries = enableCoreGovernedRls(
   coreSchema.table(
     'search_index_entries',
     {
-      searchIndexEntryId: uuid('search_index_entry_id').defaultRandom().primaryKey(),
+      searchIndexEntryId: uuid('search_index_entry_id')
+        .defaultRandom()
+        .primaryKey(),
       tenantId: tenantId(),
       legalEntityId: legalEntityId(),
       sourceModuleKey: text('source_module_key').notNull(),
@@ -827,14 +957,14 @@ export const searchIndexEntries = enableCoreGovernedRls(
         table.tenantId,
         table.sourceModuleKey,
         table.sourceResourceType,
-        table.sourceResourceId,
+        table.sourceResourceId
       ),
       index('core_search_index_entries_query_idx').on(
         table.tenantId,
         table.sourceModuleKey,
         table.sourceResourceType,
         table.legalEntityId,
-        table.deleted,
+        table.deleted
       ),
       foreignKey({
         columns: [table.tenantId, table.legalEntityId],
@@ -843,9 +973,12 @@ export const searchIndexEntries = enableCoreGovernedRls(
       }).onDelete('restrict'),
       check(
         'core_search_index_entries_document_ck',
-        sql`${table.deleted} or (length(btrim(${table.title})) > 0 and length(${table.title}) <= 300 and length(${table.bodyText}) <= 40000)`,
+        sql`${table.deleted} or (length(btrim(${table.title})) > 0 and length(${table.title}) <= 300 and length(${table.bodyText}) <= 40000)`
       ),
-      check('core_search_index_entries_version_ck', sql`${table.projectionVersion} > 0`),
+      check(
+        'core_search_index_entries_version_ck',
+        sql`${table.projectionVersion} > 0`
+      ),
       pgPolicy('core_search_index_entries_tenant_select', {
         for: 'select',
         to: 'ontos_runtime',
@@ -867,8 +1000,8 @@ export const searchIndexEntries = enableCoreGovernedRls(
         to: 'ontos_runtime',
         using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
       }),
-    ],
-  ),
+    ]
+  )
 );
 
 /** Core-only snapshot ordering; event sequence allocation is not commit ordering. */
@@ -887,7 +1020,10 @@ export const searchProjectionGenerations = enableCoreGovernedRls(
         name: 'core_search_projection_generations_pk',
         columns: [table.tenantId, table.sourceModuleKey],
       }),
-      check('core_search_projection_generations_positive_ck', sql`${table.generation} > 0`),
+      check(
+        'core_search_projection_generations_positive_ck',
+        sql`${table.generation} > 0`
+      ),
       pgPolicy('core_search_projection_generations_tenant_select', {
         for: 'select',
         to: 'ontos_runtime',
@@ -904,8 +1040,8 @@ export const searchProjectionGenerations = enableCoreGovernedRls(
         using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
         withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
       }),
-    ],
-  ),
+    ]
+  )
 );
 
 /** Atomic projection-unit floor protects even resources never seen before a rebuild. */
@@ -923,12 +1059,19 @@ export const searchProjectionRebuilds = enableCoreGovernedRls(
     (table) => [
       primaryKey({
         name: 'core_search_projection_rebuilds_pk',
-        columns: [table.tenantId, table.sourceModuleKey, table.sourceResourceType],
+        columns: [
+          table.tenantId,
+          table.sourceModuleKey,
+          table.sourceResourceType,
+        ],
       }),
-      check('core_search_projection_rebuilds_version_ck', sql`${table.rebuildVersion} > 0`),
+      check(
+        'core_search_projection_rebuilds_version_ck',
+        sql`${table.rebuildVersion} > 0`
+      ),
       check(
         'core_search_projection_rebuilds_fingerprint_ck',
-        sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`,
+        sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`
       ),
       pgPolicy('core_search_projection_rebuilds_tenant_select', {
         for: 'select',
@@ -946,8 +1089,8 @@ export const searchProjectionRebuilds = enableCoreGovernedRls(
         using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
         withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
       }),
-    ],
-  ),
+    ]
+  )
 );
 
 export const workerCheckpoints = coreSchema.table(
@@ -966,7 +1109,7 @@ export const workerCheckpoints = coreSchema.table(
       name: 'core_worker_checkpoints_pk',
       columns: [table.tenantId, table.consumerName, table.streamKey],
     }),
-  ],
+  ]
 );
 
 export const coreDatabaseSchema = {

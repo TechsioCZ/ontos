@@ -6,8 +6,11 @@ export const actionErrorSchema = <
   const Fields extends Schema.Struct.Fields,
 >(
   tag: Tag,
-  fields: Fields,
+  fields: Fields
 ) => {
   type Contract = Schema.TaggedStruct<Tag, Fields>;
-  return Schema.TaggedError<Contract['Type'] & Cause.YieldableError>()(tag, fields);
+  return Schema.TaggedError<Contract['Type'] & Cause.YieldableError>()(
+    tag,
+    fields
+  );
 };

@@ -1,11 +1,17 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { DateTime, Effect, Fiber, Layer, Logger, Option } from 'effect';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientResponse,
+} from 'effect/unstable/http';
 import type { HttpClientRequest } from 'effect/unstable/http';
+
 import {
   AresSubjectService,
   AresSubjectServiceLive,
@@ -35,32 +41,43 @@ const rawSubject = (ico = '48039101') => ({
 const jsonResponse = <Body>(
   request: HttpClientRequest.HttpClientRequest,
   status: number,
-  body: Body,
+  body: Body
 ): HttpClientResponse.HttpClientResponse =>
   HttpClientResponse.fromWeb(
     request,
-    Response.json(body, { headers: { 'content-type': 'application/json' }, status }),
+    Response.json(body, {
+      headers: { 'content-type': 'application/json' },
+      status,
+    })
   );
 
 const rawResponse = (
   request: HttpClientRequest.HttpClientRequest,
   status: number,
-  body: string,
+  body: string
 ): HttpClientResponse.HttpClientResponse =>
   HttpClientResponse.fromWeb(
     request,
-    new Response(body, { headers: { 'content-type': 'application/json' }, status }),
+    new Response(body, {
+      headers: { 'content-type': 'application/json' },
+      status,
+    })
   );
 
-const clientFrom = (runner: HttpRunner): HttpClient.HttpClient => HttpClient.make(runner);
+const clientFrom = (runner: HttpRunner): HttpClient.HttpClient =>
+  HttpClient.make(runner);
 
-const lookup = (client: HttpClient.HttpClient, ico = '48039101', correlationId = 'correlation-1') =>
+const lookup = (
+  client: HttpClient.HttpClient,
+  ico = '48039101',
+  correlationId = 'correlation-1'
+) =>
   Effect.gen(function* lookupAresSubject() {
     const service = yield* AresSubjectService;
     return yield* service.subject({ correlationId, ico });
   }).pipe(
     Effect.provide(AresSubjectServiceLive),
-    Effect.provideService(HttpClient.HttpClient, client),
+    Effect.provideService(HttpClient.HttpClient, client)
   );
 
 const capturedLoggerLayer = (entries: string[]) =>
@@ -71,8 +88,10 @@ const capturedLoggerLayer = (entries: string[]) =>
   ]);
 
 test('maps a bounded ARES observation and sends an exact credential-free JSON request', async () => {
-  const requests: { readonly request: HttpClientRequest.HttpClientRequest; readonly url: URL }[] =
-    [];
+  const requests: {
+    readonly request: HttpClientRequest.HttpClientRequest;
+    readonly url: URL;
+  }[] = [];
   const client = clientFrom((request, url) => {
     requests.push({ request, url });
     return Effect.succeed(
@@ -80,7 +99,7 @@ test('maps a bounded ARES observation and sends an exact credential-free JSON re
         ...rawSubject('01234567'),
         czNace: ['must not escape'],
         seznamRegistraci: { mustNotEscape: true },
-      }),
+      })
     );
   });
   const result = await runEffectTestPromise(lookup(client, ' 01234567 '));
@@ -89,21 +108,32 @@ test('maps a bounded ARES observation and sends an exact credential-free JSON re
   assert.equal(result.provider, 'ares');
   assert.equal(result.queryIco, '01234567');
   assert.equal(result.subject.ico, '01234567');
-  assert.equal(Option.getOrUndefined(result.subject.businessName), 'J.E.S., spol. s r.o.');
-  const registeredAddress = Option.getOrUndefined(result.subject.registeredAddress);
+  assert.equal(
+    Option.getOrUndefined(result.subject.businessName),
+    'J.E.S., spol. s r.o.'
+  );
+  const registeredAddress = Option.getOrUndefined(
+    result.subject.registeredAddress
+  );
   assert.ok(registeredAddress);
   assert.equal(Option.getOrUndefined(registeredAddress.municipality), 'Praha');
   assert.equal(
-    result.providerChangedOn.pipe(Option.map(DateTime.formatIsoDateUtc), Option.getOrUndefined),
-    '2026-09-01',
+    result.providerChangedOn.pipe(
+      Option.map(DateTime.formatIsoDateUtc),
+      Option.getOrUndefined
+    ),
+    '2026-09-01'
   );
-  assert.equal(Option.getOrUndefined(result.providerRecordRef), 'provider-record-123');
+  assert.equal(
+    Option.getOrUndefined(result.providerRecordRef),
+    'provider-record-123'
+  );
   assert.equal(Object.hasOwn(result, 'czNace'), false);
   assert.equal(Object.hasOwn(result, 'seznamRegistraci'), false);
   assert.equal(requests.length, 1);
   assert.equal(
     requests[0]?.url.href,
-    'https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/01234567',
+    'https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/01234567'
   );
   assert.equal(requests[0]?.request.method, 'GET');
   assert.equal(requests[0]?.request.headers['accept'], 'application/json');
@@ -119,10 +149,14 @@ test('rejects malformed IČOs before provider I/O', async () => {
   });
 
   await Promise.all(
-    ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'].map(async (ico) => {
-      const error = await runEffectTestPromise(Effect.flip(lookup(client, ico)));
-      assert.equal(error._tag, 'AresSubjectInvalidIco');
-    }),
+    ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'].map(
+      async (ico) => {
+        const error = await runEffectTestPromise(
+          Effect.flip(lookup(client, ico))
+        );
+        assert.equal(error._tag, 'AresSubjectInvalidIco');
+      }
+    )
   );
   assert.equal(requests, 0);
 });
@@ -134,8 +168,8 @@ test('represents absent optional provider facts explicitly without inventing Par
         ico: '48039101',
         obchodniJmeno: null,
         sidlo: {},
-      }),
-    ),
+      })
+    )
   );
   const result = await runEffectTestPromise(client.pipe(lookup));
 
@@ -172,7 +206,7 @@ test('keeps not-found, denial, throttling, timeout, and unavailable failures dis
           jsonResponse(request, status, {
             kod: 'PRIVATE_PROVIDER_CODE',
             popis: 'private provider detail',
-          }),
+          })
         );
       });
       const program = Effect.flip(lookup(client));
@@ -182,12 +216,20 @@ test('keeps not-found, denial, throttling, timeout, and unavailable failures dis
         yield* TestClock.adjust('10 seconds');
         return yield* Fiber.join(fiber);
       }).pipe(Effect.provide(TestClock.layer()));
-      const error = await runEffectTestPromise(expectedAttempts === 3 ? fiberProgram : program);
+      const error = await runEffectTestPromise(
+        expectedAttempts === 3 ? fiberProgram : program
+      );
       assert.equal(error._tag, tag);
       assert.equal(attempts, expectedAttempts);
-      assert.equal(JSON.stringify(error).includes('PRIVATE_PROVIDER_CODE'), false);
-      assert.equal(JSON.stringify(error).includes('private provider detail'), false);
-    }),
+      assert.equal(
+        JSON.stringify(error).includes('PRIVATE_PROVIDER_CODE'),
+        false
+      );
+      assert.equal(
+        JSON.stringify(error).includes('private provider detail'),
+        false
+      );
+    })
   );
 });
 
@@ -203,22 +245,27 @@ test('retries transport faults with bounded backoff without exposing diagnostics
           description: 'transport unavailable',
           request,
         }),
-      }),
+      })
     );
   });
   const program = Effect.gen(function* runTransportRetries() {
-    const fiber = yield* Effect.flip(lookup(client, '48039101', 'corr\nprivate')).pipe(
-      Effect.forkChild,
-    );
+    const fiber = yield* Effect.flip(
+      lookup(client, '48039101', 'corr\nprivate')
+    ).pipe(Effect.forkChild);
     yield* Effect.yieldNow;
     yield* TestClock.adjust('10 seconds');
     return yield* Fiber.join(fiber);
-  }).pipe(Effect.provide(Layer.mergeAll(TestClock.layer(), capturedLoggerLayer(logs))));
+  }).pipe(
+    Effect.provide(Layer.mergeAll(TestClock.layer(), capturedLoggerLayer(logs)))
+  );
   const error = await runEffectTestPromise(program);
 
   assert.equal(error._tag, 'AresSubjectUnavailable');
   assert.equal(attempts, 3);
-  assert.equal(JSON.stringify(error).includes('private socket diagnostic'), false);
+  assert.equal(
+    JSON.stringify(error).includes('private socket diagnostic'),
+    false
+  );
   assert.match(logs.join('\n'), /private socket diagnostic/u);
   assert.match(logs.join('\n'), /corr private/u);
 });
@@ -241,7 +288,7 @@ test('times out and aborts each of the three bounded attempts', async () => {
   assert.equal(signals.length, 3);
   assert.equal(
     signals.every((signal) => signal.aborted),
-    true,
+    true
   );
 });
 
@@ -255,14 +302,14 @@ test('bounds stalled response bodies with the same three-attempt timeout policy'
         new Response(new ReadableStream(), {
           headers: { 'content-type': 'application/json' },
           status: 200,
-        }),
-      ),
+        })
+      )
     );
   });
   const program = Effect.gen(function* runBodyTimeouts() {
-    const fiber = yield* Effect.flip(lookup(client).pipe(Effect.timeout('20 seconds'))).pipe(
-      Effect.forkChild,
-    );
+    const fiber = yield* Effect.flip(
+      lookup(client).pipe(Effect.timeout('20 seconds'))
+    ).pipe(Effect.forkChild);
     yield* Effect.yieldNow;
     yield* TestClock.adjust('30 seconds');
     return yield* Fiber.join(fiber);
@@ -274,12 +321,16 @@ test('bounds stalled response bodies with the same three-attempt timeout policy'
 
 test('rejects malformed JSON, schema drift, mismatched IČO, and oversized text without partial evidence', async () => {
   const responses: readonly ((
-    request: HttpClientRequest.HttpClientRequest,
+    request: HttpClientRequest.HttpClientRequest
   ) => HttpClientResponse.HttpClientResponse)[] = [
     (request) => rawResponse(request, 200, '{'),
     (request) => jsonResponse(request, 200, { obchodniJmeno: 'missing IČO' }),
     (request) => jsonResponse(request, 200, rawSubject('12345678')),
-    (request) => jsonResponse(request, 200, { ...rawSubject(), obchodniJmeno: 'x'.repeat(501) }),
+    (request) =>
+      jsonResponse(request, 200, {
+        ...rawSubject(),
+        obchodniJmeno: 'x'.repeat(501),
+      }),
   ];
 
   await Promise.all(
@@ -292,7 +343,7 @@ test('rejects malformed JSON, schema drift, mismatched IČO, and oversized text 
       const error = await runEffectTestPromise(Effect.flip(lookup(client)));
       assert.equal(error._tag, 'AresSubjectResponseInvalid');
       assert.equal(requests, 1);
-    }),
+    })
   );
 });
 
@@ -301,7 +352,7 @@ test('coalesces identical requests and exposes cache age without changing observ
   const client = clientFrom((request) => {
     requests += 1;
     return Effect.sleep('1 second').pipe(
-      Effect.andThen(Effect.succeed(jsonResponse(request, 200, rawSubject()))),
+      Effect.andThen(Effect.succeed(jsonResponse(request, 200, rawSubject())))
     );
   });
   const program = Effect.gen(function* exerciseCache() {
@@ -311,19 +362,22 @@ test('coalesces identical requests and exposes cache age without changing observ
         service.subject({ correlationId: 'first', ico: '48039101' }),
         service.subject({ correlationId: 'second', ico: '48039101' }),
       ],
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     ).pipe(Effect.forkChild);
     yield* Effect.yieldNow;
     assert.equal(requests, 1);
     yield* TestClock.adjust('1 second');
     const initial = yield* Fiber.join(concurrent);
     yield* TestClock.adjust('2 minutes');
-    const cached = yield* service.subject({ correlationId: 'cached', ico: '48039101' });
+    const cached = yield* service.subject({
+      correlationId: 'cached',
+      ico: '48039101',
+    });
     return { cached, initial };
   }).pipe(
     Effect.provide(AresSubjectServiceLive),
     Effect.provideService(HttpClient.HttpClient, client),
-    Effect.provide(TestClock.layer()),
+    Effect.provide(TestClock.layer())
   );
   const result = await runEffectTestPromise(program);
 
@@ -350,9 +404,9 @@ test('bounds distinct upstream lookups to four concurrent requests', async () =>
       Effect.ensuring(
         Effect.sync(() => {
           active -= 1;
-        }),
-      ),
-    ),
+        })
+      )
+    )
   );
   const program = Effect.gen(function* exerciseConcurrencyLimit() {
     const service = yield* AresSubjectService;
@@ -361,9 +415,9 @@ test('bounds distinct upstream lookups to four concurrent requests', async () =>
         service.subject({
           correlationId: `concurrency-${index}`,
           ico: String(index + 1).padStart(8, '0'),
-        }),
+        })
       ),
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     ).pipe(Effect.forkChild);
     yield* Effect.yieldNow;
     assert.equal(active, 4);
@@ -372,7 +426,7 @@ test('bounds distinct upstream lookups to four concurrent requests', async () =>
   }).pipe(
     Effect.provide(AresSubjectServiceLive),
     Effect.provideService(HttpClient.HttpClient, client),
-    Effect.provide(TestClock.layer()),
+    Effect.provide(TestClock.layer())
   );
   const results = await runEffectTestPromise(program);
 

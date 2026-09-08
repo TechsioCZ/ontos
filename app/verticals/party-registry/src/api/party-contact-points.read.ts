@@ -6,6 +6,7 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PartyContactPointsRequestSchema,
   PartyContactPointsResponseSchema,
@@ -27,8 +28,11 @@ const partyContactPointsEntrypoint = defineTenantModuleEntrypoint({
 
 interface Services {
   readonly list: (
-    input: PartyContactPointsRequest,
-  ) => Effect.Effect<PartyContactPointsResponse['items'], PartyContactPointPersistenceUnavailable>;
+    input: PartyContactPointsRequest
+  ) => Effect.Effect<
+    PartyContactPointsResponse['items'],
+    PartyContactPointPersistenceUnavailable
+  >;
 }
 
 const contactPointsUnavailable = (cause: unknown) =>
@@ -38,7 +42,7 @@ const contactPointsUnavailable = (cause: unknown) =>
       reason: 'Party Contact Point persistence is temporarily unavailable',
     }),
     'cause',
-    { value: cause },
+    { value: cause }
   );
 
 export const partyContactPointsRead = defineRead(
@@ -64,7 +68,7 @@ export const partyContactPointsRead = defineRead(
       Effect.map((items) => ({
         evidence: { resultCount: items.length },
         result: { items },
-      })),
+      }))
     ),
   (transaction, scope) =>
     Effect.succeed({
@@ -81,8 +85,8 @@ export const partyContactPointsRead = defineRead(
                 includeHistorical: input.includeHistorical ?? false,
                 partyId: input.partyRef.resourceId,
                 type: input.type,
-              },
+              }
         ),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+  () => ({ kind: 'tenant', permission: 'read_party_identity' })
 );

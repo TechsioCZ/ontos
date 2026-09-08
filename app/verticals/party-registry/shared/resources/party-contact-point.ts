@@ -3,6 +3,7 @@
 // @ontos-resource-slug party-contact-point
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import {
   PartyRegistryResourceIdJsonSchema,
   PartyRegistryTenantIdJsonSchema,

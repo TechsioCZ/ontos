@@ -5,13 +5,19 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
+
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { runBrowserEffect } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
-import type { ResourcePageModel } from './page.data.ts';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
+import type { ResourcePageModel } from './page.data.ts';
 
-const MediaStateSchema = Schema.Literals(['failed', 'idle', 'pending', 'success']);
+const MediaStateSchema = Schema.Literals([
+  'failed',
+  'idle',
+  'pending',
+  'success',
+]);
 type MediaState = typeof MediaStateSchema.Type;
 
 const ResourceDetails = ({
@@ -26,7 +32,10 @@ const ResourceDetails = ({
   const { t } = useModernI18n();
   return (
     <div className="shell:grid shell:w-full shell:max-w-5xl shell:gap-8">
-      <section aria-labelledby="resource-title" className="shell:grid shell:gap-4">
+      <section
+        aria-labelledby="resource-title"
+        className="shell:grid shell:gap-4"
+      >
         <h2 className="shell:text-title-lg" id="resource-title">
           {model.resource.detail.title}
         </h2>
@@ -39,7 +48,10 @@ const ResourceDetails = ({
           ))}
         </dl>
       </section>
-      <section aria-labelledby="resource-media" className="shell:grid shell:gap-3">
+      <section
+        aria-labelledby="resource-media"
+        className="shell:grid shell:gap-3"
+      >
         <h2 className="shell:text-title-md" id="resource-media">
           {t('shell.resource.media.title')}
         </h2>
@@ -69,7 +81,10 @@ const ResourceDetails = ({
           </StatusText>
         ) : null}
       </section>
-      <section aria-labelledby="resource-timeline" className="shell:grid shell:gap-3">
+      <section
+        aria-labelledby="resource-timeline"
+        className="shell:grid shell:gap-3"
+      >
         <h2 className="shell:text-title-md" id="resource-timeline">
           {t('shell.resource.timeline.title')}
         </h2>
@@ -79,14 +94,17 @@ const ResourceDetails = ({
           </StatusText>
         ) : null}
         {model.resource.timeline.length === 0 ? (
-          <StatusText status="default">{t('shell.resource.timeline.empty')}</StatusText>
+          <StatusText status="default">
+            {t('shell.resource.timeline.empty')}
+          </StatusText>
         ) : (
           <ol className="shell:grid shell:gap-3">
             {model.resource.timeline.map((entry) => {
               const occurredAt = DateTime.formatIso(entry.occurredAt);
               return (
                 <li key={entry.timelineEntryId}>
-                  <time dateTime={occurredAt}>{occurredAt}</time> — {entry.summary}
+                  <time dateTime={occurredAt}>{occurredAt}</time> —{' '}
+                  {entry.summary}
                 </li>
               );
             })}
@@ -104,7 +122,7 @@ const ResourcePage = () => {
   });
   const [mediaState, setMediaState] = useState<MediaState>('idle');
   const controls = useShellControls(
-    model.shell.state === 'authenticated' ? model.shell : undefined,
+    model.shell.state === 'authenticated' ? model.shell : undefined
   );
   const handleMediaAttachment = (): Promise<void> => {
     if (model.state !== 'ready') {
@@ -120,8 +138,8 @@ const ResourcePage = () => {
               setMediaState('failed');
             }),
           onSuccess: () => Effect.sync(() => setMediaState('success')),
-        }),
-      ),
+        })
+      )
     );
   };
   if (model.shell.state !== 'authenticated') {
@@ -131,7 +149,7 @@ const ResourcePage = () => {
           {t(
             model.shell.state === 'unavailable'
               ? 'shell.dashboard.unavailable'
-              : 'shell.resource.selection_required',
+              : 'shell.resource.selection_required'
           )}
         </StatusText>
       </main>
@@ -143,14 +161,24 @@ const ResourcePage = () => {
         {t(`shell.resource.${model.state}`)}
       </StatusText>
     ) : (
-      <ResourceDetails mediaState={mediaState} model={model} onAttach={handleMediaAttachment} />
+      <ResourceDetails
+        mediaState={mediaState}
+        model={model}
+        onAttach={handleMediaAttachment}
+      />
     );
   return (
     <ShellContentLayout
       controls={controls}
       shell={model.shell}
-      {...(model.state === 'ready' ? { currentModuleId: model.resource.ref.moduleId } : {})}
-      title={model.state === 'ready' ? model.resource.detail.title : t('shell.resource.title')}
+      {...(model.state === 'ready'
+        ? { currentModuleId: model.resource.ref.moduleId }
+        : {})}
+      title={
+        model.state === 'ready'
+          ? model.resource.detail.title
+          : t('shell.resource.title')
+      }
     >
       {content}
     </ShellContentLayout>

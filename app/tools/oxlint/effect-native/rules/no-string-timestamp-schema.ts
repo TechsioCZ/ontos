@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A2** — "Make Schema the sole authority for contracts and domain models" — and
  * **B5** — "Adopt Effect's ADTs and temporal model consistently"
@@ -79,11 +78,7 @@ import { optionRecord } from '../shared/options.ts';
  * Unknown pipe steps are not assumed transparent, and generic/cross-file type aliases are not inferred. Report-only; this rule never fixes or suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
-
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 import {
   memberName as staticMemberName,
@@ -92,13 +87,29 @@ import {
   keyName,
 } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import {
+  collectEffectBindings,
+  type EffectBindings,
+} from '../shared/effect-imports.ts';
 import { importedName } from '../shared/imports.ts';
-import { isSchemaConstructorArgument as isConstructorArgument } from '../shared/schema-constructor.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray, stringOption, safeRegExp } from '../shared/options.ts';
+import {
+  globToRegExp,
+  isTestFile,
+  scopePath,
+  matchesGlobs,
+} from '../shared/paths.ts';
+import { isSchemaConstructorArgument as isConstructorArgument } from '../shared/schema-constructor.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 
-const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
+const DEFAULT_INCLUDE = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+  'scripts/**',
+];
 const DEFAULT_IGNORE: string[] = [];
 // Generic On/Time/After suffixes also name sort keys, labels and pagination cursors. The audit
 // does not authorize changing those into instants; require a calendar/event vocabulary instead.
@@ -111,7 +122,8 @@ const DEFAULT_IGNORE_KEY_PATTERN = '';
  * column label such as "Created" cannot be modelled as a `DateTime.Utc`. Narrow allowlist, matched
  * against the interface / type-alias name only.
  */
-const DEFAULT_IGNORE_TYPE_PATTERN = '(?:Copy|Labels?|Messages|Strings|Translations?|I18n)$';
+const DEFAULT_IGNORE_TYPE_PATTERN =
+  '(?:Copy|Labels?|Messages|Strings|Translations?|I18n)$';
 /**
  * A member named `<key>Iso` / `<key>Utc` / `<key>Raw` / `<key>Timestamp` beside `<key>` means the type
  * carries the machine value separately and `<key>` is its rendered projection (`<time
@@ -123,7 +135,11 @@ const PROJECTION_SUFFIXES = ['Iso', 'IsoString', 'Raw', 'Timestamp', 'Utc'];
  * `@modern-js/plugin-bff/effect-client` (and `…/effect-edge`), which is the same `effect` Schema
  * behind a framework barrel; without these the shell/contacts API contracts would be invisible.
  */
-const DEFAULT_SCHEMA_MODULES = ['effect', 'effect/**', '@modern-js/plugin-bff/effect-*'];
+const DEFAULT_SCHEMA_MODULES = [
+  'effect',
+  'effect/**',
+  '@modern-js/plugin-bff/effect-*',
+];
 /** Of those, the ones whose namespace import is a *barrel* (`import * as X` → `X.Schema.Struct`). */
 const SCHEMA_SUBMODULE = /(?:^|\/)Schema$/u;
 
@@ -133,7 +149,10 @@ const SCHEMA_SUBMODULE = /(?:^|\/)Schema$/u;
  * normalised before it is probed instead of matching one spelling literally.
  */
 const DIGIT_ATOM_SOURCE = String.raw`(?:\\d|\[0-9\]|\[\\d\]|\[0123456789\])`;
-const QUANTIFIED_DIGIT = new RegExp(`${DIGIT_ATOM_SOURCE}\\{(\\d{1,2})(?:,\\d{0,2})?\\}`, 'gu');
+const QUANTIFIED_DIGIT = new RegExp(
+  `${DIGIT_ATOM_SOURCE}\\{(\\d{1,2})(?:,\\d{0,2})?\\}`,
+  'gu'
+);
 const BARE_DIGIT = new RegExp(DIGIT_ATOM_SOURCE, 'gu');
 /** `(?:D){4}` / `(DD){3}` — a repeated group of already-normalised digits. */
 const GROUPED_DIGIT_RUN = /\((?:\?:)?(D+)\)\{(\d{1,2})(?:,\d{0,2})?\}/gu;
@@ -150,11 +169,14 @@ const ISO_TIME_SOURCE = /T[^\p{L}\p{N}]{0,3}DD:/u;
  * all normalise to the same `DDDD-DD-DD`.
  */
 function normaliseRegexSource(source: string): string {
-  const repeat = (run: string, count: string): string => run.repeat(Math.min(Number(count), 12));
-  let text = source.replace(QUANTIFIED_DIGIT, (_match, count: string) => repeat('D', count));
+  const repeat = (run: string, count: string): string =>
+    run.repeat(Math.min(Number(count), 12));
+  let text = source.replace(QUANTIFIED_DIGIT, (_match, count: string) =>
+    repeat('D', count)
+  );
   text = text.replace(BARE_DIGIT, 'D');
   text = text.replace(GROUPED_DIGIT_RUN, (_match, run: string, count: string) =>
-    repeat(run, count),
+    repeat(run, count)
   );
   return text.replace(REDUNDANT_ESCAPE, '$1');
 }
@@ -204,7 +226,13 @@ const TRANSPARENT_WRAPPERS = new Set([
  * Instance methods that refine/annotate without turning a string into a `DateTime.Utc`. `brand` is
  * included on purpose: a branded ISO string is still a string.
  */
-const TRANSPARENT_METHODS = new Set(['annotate', 'annotateKey', 'brand', 'check', 'pipe']);
+const TRANSPARENT_METHODS = new Set([
+  'annotate',
+  'annotateKey',
+  'brand',
+  'check',
+  'pipe',
+]);
 
 /** `Schema.isPattern` / `Schema.pattern` — the regex-validated hand-rolled codec entry points. */
 const PATTERN_MEMBERS = new Set(['isPattern', 'pattern']);
@@ -240,16 +268,22 @@ function readOptions(context: Context): RuleOptions {
   const record = optionRecord(context.options?.[0]);
   return {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
-    ignoreKeyPattern: stringOption(record.ignoreKeyPattern, DEFAULT_IGNORE_KEY_PATTERN),
+    ignoreKeyPattern: stringOption(
+      record.ignoreKeyPattern,
+      DEFAULT_IGNORE_KEY_PATTERN
+    ),
     ignoreTests: record.ignoreTests === true,
-    ignoreTypePattern: stringOption(record.ignoreTypePattern, DEFAULT_IGNORE_TYPE_PATTERN),
+    ignoreTypePattern: stringOption(
+      record.ignoreTypePattern,
+      DEFAULT_IGNORE_TYPE_PATTERN
+    ),
     include: stringArray(record.include, DEFAULT_INCLUDE),
     includeTypeMembers: record.includeTypeMembers !== false,
     schemaModules: stringArray(record.schemaModules, DEFAULT_SCHEMA_MODULES),
     temporalKeyPattern: stringOption(
       record.temporalKeyPattern,
       DEFAULT_TEMPORAL_KEY_PATTERN,
-      false,
+      false
     ),
   };
 }
@@ -280,7 +314,7 @@ interface SchemaLocals {
 function collectSchemaLocals(
   program: ESTree.Program,
   bindings: EffectBindings,
-  schemaModules: readonly string[],
+  schemaModules: readonly string[]
 ): SchemaLocals {
   const schema = new Set<string>();
   const barrel = new Set<string>();
@@ -293,13 +327,14 @@ function collectSchemaLocals(
   }
   const collectSpecifier = (
     specifier: ESTree.ImportDeclaration['specifiers'][number],
-    isSchemaSubmodule: boolean,
+    isSchemaSubmodule: boolean
   ): void => {
     if (specifier.type === 'ImportNamespaceSpecifier') {
       (isSchemaSubmodule ? schema : barrel).add(specifier.local.name);
       return;
     }
-    if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return;
+    if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type')
+      return;
     const imported = importedName(specifier);
     if (imported === SCHEMA_NAMESPACE) schema.add(specifier.local.name);
     else if (imported === 'pipe') pipe.add(specifier.local.name);
@@ -307,15 +342,27 @@ function collectSchemaLocals(
   };
   const modulePatterns = schemaModules.map((glob) => globToRegExp(glob));
   for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
-    if (!modulePatterns.some((pattern) => pattern.test(statement.source.value))) continue;
+    if (
+      statement.type !== 'ImportDeclaration' ||
+      statement.importKind === 'type'
+    )
+      continue;
+    if (!modulePatterns.some((pattern) => pattern.test(statement.source.value)))
+      continue;
     for (const specifier of statement.specifiers)
-      collectSpecifier(specifier, SCHEMA_SUBMODULE.test(statement.source.value));
+      collectSpecifier(
+        specifier,
+        SCHEMA_SUBMODULE.test(statement.source.value)
+      );
   }
   return { barrel, members, pipe, schema };
 }
 
-function lookupVariable(context: Context, identifier: ESTree.Node, name: string): Variable | null {
+function lookupVariable(
+  context: Context,
+  identifier: ESTree.Node,
+  name: string
+): Variable | null {
   return resolveVariable(context, name, identifier);
 }
 
@@ -387,18 +434,28 @@ export const rule = defineRule({
     if (!matchesGlobs(path, options.include)) return {};
     if (options.ignoreTests && isTestFile(path)) return {};
 
-    const keyPattern = safeRegExp(options.temporalKeyPattern, DEFAULT_TEMPORAL_KEY_PATTERN);
+    const keyPattern = safeRegExp(
+      options.temporalKeyPattern,
+      DEFAULT_TEMPORAL_KEY_PATTERN
+    );
     const ignoreKey =
-      options.ignoreKeyPattern.length > 0 ? safeRegExp(options.ignoreKeyPattern, '$^') : null;
+      options.ignoreKeyPattern.length > 0
+        ? safeRegExp(options.ignoreKeyPattern, '$^')
+        : null;
     const ignoreType =
-      options.ignoreTypePattern.length > 0 ? safeRegExp(options.ignoreTypePattern, '$^') : null;
+      options.ignoreTypePattern.length > 0
+        ? safeRegExp(options.ignoreTypePattern, '$^')
+        : null;
 
     const isTemporalKey = (key: string): boolean => {
       if (!keyPattern.test(key)) return false;
       return ignoreKey === null || !ignoreKey.test(key);
     };
 
-    let bindings: EffectBindings = { importsEffect: false, namespaces: new Map() };
+    let bindings: EffectBindings = {
+      importsEffect: false,
+      namespaces: new Map(),
+    };
     let locals: SchemaLocals = {
       barrel: new Set(),
       members: new Map(),
@@ -429,7 +486,8 @@ export const rule = defineRule({
           definition.type === 'ImportBinding' &&
           definition.parent?.type === 'ImportDeclaration' &&
           definition.parent.importKind !== 'type' &&
-          (definition.node.type !== 'ImportSpecifier' || definition.node.importKind !== 'type'),
+          (definition.node.type !== 'ImportSpecifier' ||
+            definition.node.importKind !== 'type')
       );
     };
 
@@ -446,7 +504,10 @@ export const rule = defineRule({
       return barrelSchemaMember(object, member);
     };
 
-    const barrelSchemaMember = (object: ESTree.Node, member: string): string | null => {
+    const barrelSchemaMember = (
+      object: ESTree.Node,
+      member: string
+    ): string | null => {
       if (object.type !== 'MemberExpression') return null;
       if (memberName(object) !== SCHEMA_NAMESPACE) return null;
       const root = unwrap(object.object);
@@ -471,13 +532,21 @@ export const rule = defineRule({
     };
 
     /** The in-file `const` declarator an identifier resolves to, or `null` for imports/params/globals. */
-    const localDeclarator = (node: ESTree.Node, name: string): ESTree.VariableDeclarator | null => {
+    const localDeclarator = (
+      node: ESTree.Node,
+      name: string
+    ): ESTree.VariableDeclarator | null => {
       const variable = lookupVariable(context, node, name);
       if (variable === null || variable.defs.length !== 1) return null;
-      if (variable.references.some((reference) => reference.isWrite() && !reference.init))
+      if (
+        variable.references.some(
+          (reference) => reference.isWrite() && !reference.init
+        )
+      )
         return null;
       const definition = variable.defs[0];
-      if (definition === undefined || definition.type !== 'Variable') return null;
+      if (definition === undefined || definition.type !== 'Variable')
+        return null;
       const declarator = definition.node;
       return declarator.type === 'VariableDeclarator' ? declarator : null;
     };
@@ -490,7 +559,7 @@ export const rule = defineRule({
       node: ESTree.Node | null,
       seen: Set<number>,
       depth: number,
-      trace: StringRootTrace,
+      trace: StringRootTrace
     ): boolean => {
       if (node === null || depth > 24) return false;
       const expression = unwrap(node);
@@ -500,7 +569,8 @@ export const rule = defineRule({
         return member !== null && STRING_ROOTS.has(member);
       }
 
-      if (expression.type === 'Identifier') return stringIdentifier(expression, seen, depth, trace);
+      if (expression.type === 'Identifier')
+        return stringIdentifier(expression, seen, depth, trace);
       return stringCall(expression, seen, depth, trace);
     };
 
@@ -508,17 +578,21 @@ export const rule = defineRule({
       expression: Extract<ESTree.Node, { type: 'Identifier' }>,
       seen: Set<number>,
       depth: number,
-      trace: StringRootTrace,
+      trace: StringRootTrace
     ): boolean => {
       // `import { String as SchemaString } from "effect/Schema"` — the same leaf, no namespace.
       const imported = locals.members.get(expression.name);
-      if (imported !== undefined && resolvesToImport(expression, expression.name)) {
+      if (
+        imported !== undefined &&
+        resolvesToImport(expression, expression.name)
+      ) {
         return STRING_ROOTS.has(imported);
       }
       const declarator = localDeclarator(expression, expression.name);
       if (declarator === null || seen.has(declarator.start)) return false;
       seen.add(declarator.start);
-      if (reportedCodecDeclarators.has(declarator.start)) trace.viaReportedCodec = true;
+      if (reportedCodecDeclarators.has(declarator.start))
+        trace.viaReportedCodec = true;
       return isStringRooted(declarator.init, seen, depth + 1, trace);
     };
 
@@ -526,7 +600,7 @@ export const rule = defineRule({
       expression: ESTree.Node,
       seen: Set<number>,
       depth: number,
-      trace: StringRootTrace,
+      trace: StringRootTrace
     ): boolean => {
       if (expression.type !== 'CallExpression') return false;
       const callee = unwrap(expression.callee);
@@ -543,14 +617,20 @@ export const rule = defineRule({
       if (callee.type === 'MemberExpression')
         return stringMethod(callee, expression.arguments, seen, depth, trace);
 
-      return importedStringPipeline(callee, expression.arguments, seen, depth, trace);
+      return importedStringPipeline(
+        callee,
+        expression.arguments,
+        seen,
+        depth,
+        trace
+      );
     };
     const importedStringPipeline = (
       callee: ESTree.Node,
       args: readonly ESTree.Node[],
       seen: Set<number>,
       depth: number,
-      trace: StringRootTrace,
+      trace: StringRootTrace
     ): boolean => {
       // `pipe(Schema.String, Schema.brand('X'))`.
       if (
@@ -571,11 +651,12 @@ export const rule = defineRule({
       args: readonly ESTree.Node[],
       seen: Set<number>,
       depth: number,
-      trace: StringRootTrace,
+      trace: StringRootTrace
     ): boolean => {
       const method = memberName(callee);
       if (method === null || !TRANSPARENT_METHODS.has(method)) return false;
-      if (method === 'pipe') return stringPipeline(callee.object, args, seen, depth, trace);
+      if (method === 'pipe')
+        return stringPipeline(callee.object, args, seen, depth, trace);
       return isStringRooted(callee.object, seen, depth + 1, trace);
     };
 
@@ -585,19 +666,25 @@ export const rule = defineRule({
       steps: readonly ESTree.Node[],
       seen: Set<number>,
       depth: number,
-      trace: StringRootTrace,
+      trace: StringRootTrace
     ): boolean => {
       let string = isStringRooted(source, seen, depth + 1, trace);
       for (const raw of steps) {
         const step = unwrap(raw);
-        const member = schemaRef(step.type === 'CallExpression' ? step.callee : step);
+        const member = schemaRef(
+          step.type === 'CallExpression' ? step.callee : step
+        );
         if (member === 'decodeTo' && step.type === 'CallExpression') {
           const target = step.arguments[0];
-          string = target !== undefined && isStringRooted(target, new Set(seen), depth + 1, trace);
+          string =
+            target !== undefined &&
+            isStringRooted(target, new Set(seen), depth + 1, trace);
         } else if (
           member === null ||
           (!TRANSPARENT_WRAPPERS.has(member) &&
-            !['annotate', 'annotateKey', 'brand', 'check', 'encodeTo'].includes(member))
+            !['annotate', 'annotateKey', 'brand', 'check', 'encodeTo'].includes(
+              member
+            ))
         ) {
           return false;
         }
@@ -610,11 +697,17 @@ export const rule = defineRule({
       isConstructorArgument(node, schemaRef, FIELD_BAG_CONSTRUCTORS, unwrap);
 
     /** The object literal an identifier resolves to: `const auditColumns = { ... }`. */
-    const declaredObject = (node: ESTree.Node): ESTree.ObjectExpression | null => {
+    const declaredObject = (
+      node: ESTree.Node
+    ): ESTree.ObjectExpression | null => {
       const expression = unwrap(node);
       if (expression.type !== 'Identifier') return null;
       const declarator = localDeclarator(expression, expression.name);
-      if (declarator === null || declarator.init === null || declarator.init === undefined)
+      if (
+        declarator === null ||
+        declarator.init === null ||
+        declarator.init === undefined
+      )
         return null;
       const init = unwrap(declarator.init);
       return init.type === 'ObjectExpression' ? init : null;
@@ -638,10 +731,15 @@ export const rule = defineRule({
         const current = skipWrappers(object, UNWRAPPABLE).node;
         if (isSchemaConstructorArgument(current)) enqueue(object);
       }
-      for (const identifier of bagIdentifiers) enqueue(declaredObject(identifier));
+      for (const identifier of bagIdentifiers)
+        enqueue(declaredObject(identifier));
       // Each pop happens at most once per object literal (`enqueue` de-duplicates), so the bound is
       // the number of objects in the file; the guard only makes non-termination impossible.
-      for (let guard = 0; guard <= objects.length && queue.length > 0; guard += 1) {
+      for (
+        let guard = 0;
+        guard <= objects.length && queue.length > 0;
+        guard += 1
+      ) {
         const container = queue.pop();
         if (container === undefined) break;
         for (const spread of spreads) {
@@ -655,14 +753,17 @@ export const rule = defineRule({
     const propertyKey = (property: ESTree.ObjectProperty): string | null =>
       keyName(property.key, property.computed, { templates: false });
 
-    const signatureKey = (signature: ESTree.TSPropertySignature): string | null =>
+    const signatureKey = (
+      signature: ESTree.TSPropertySignature
+    ): string | null =>
       keyName(signature.key, signature.computed, { templates: false });
 
     const unwrapType = (node: ESTree.Node): ESTree.Node => {
       let current = node;
       for (let guard = 0; guard < 8; guard += 1) {
         if (current.type !== 'TSParenthesizedType') return current;
-        const inner = (current as { typeAnnotation?: ESTree.Node }).typeAnnotation;
+        const inner = (current as { typeAnnotation?: ESTree.Node })
+          .typeAnnotation;
         if (inner === undefined) return current;
         current = inner;
       }
@@ -674,28 +775,39 @@ export const rule = defineRule({
      * (`type IsoTimestamp = string`), or `string & { readonly _brand: … }` — a branded ISO string is
      * still a string, exactly as `Schema.String.pipe(Schema.brand(…))` is in lane 1.
      */
-    const isPlainStringType = (node: ESTree.Node, seen: Set<string>, depth: number): boolean => {
+    const isPlainStringType = (
+      node: ESTree.Node,
+      seen: Set<string>,
+      depth: number
+    ): boolean => {
       if (depth > 12) return false;
       const type = unwrapType(node);
       if (type.type === 'TSStringKeyword') return true;
 
-      if (type.type === 'TSTypeReference') return stringTypeAlias(type, seen, depth);
+      if (type.type === 'TSTypeReference')
+        return stringTypeAlias(type, seen, depth);
       if (type.type === 'TSUnionType')
         return stringTypeMembers(type.types, seen, depth, NULLISH_KEYWORDS);
       if (type.type === 'TSIntersectionType')
-        return stringTypeMembers(type.types, seen, depth, new Set(['TSTypeLiteral']));
+        return stringTypeMembers(
+          type.types,
+          seen,
+          depth,
+          new Set(['TSTypeLiteral'])
+        );
       return false;
     };
 
     const stringTypeAlias = (
       type: ESTree.TSTypeReference,
       seen: Set<string>,
-      depth: number,
+      depth: number
     ): boolean => {
       const name = type.typeName;
       if (name.type !== 'Identifier' || seen.has(name.name)) return false;
       const variable = lookupVariable(context, name, name.name);
-      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      const definition =
+        variable?.defs.length === 1 ? variable.defs[0] : undefined;
       if (
         definition?.node.type !== 'TSTypeAliasDeclaration' ||
         definition.node.typeParameters != null
@@ -709,7 +821,7 @@ export const rule = defineRule({
       members: readonly ESTree.Node[],
       seen: Set<string>,
       depth: number,
-      allowed: ReadonlySet<string>,
+      allowed: ReadonlySet<string>
     ): boolean => {
       let sawString = false;
       for (const member of members) {
@@ -749,14 +861,21 @@ export const rule = defineRule({
     const isParameterTypeLiteral = (owner: ESTree.Node): boolean => {
       if (owner.type !== 'TSTypeLiteral') return false;
       const annotation = owner.parent;
-      if (annotation === null || annotation === undefined || annotation.type !== 'TSTypeAnnotation')
+      if (
+        annotation === null ||
+        annotation === undefined ||
+        annotation.type !== 'TSTypeAnnotation'
+      )
         return false;
       const target = annotation.parent;
       if (target === null || target === undefined) return false;
       const owner2 = target.parent;
       if (owner2 === null || owner2 === undefined) return false;
       const parameters = (owner2 as { params?: readonly ESTree.Node[] }).params;
-      return Array.isArray(parameters) && parameters.some((parameter) => parameter === target);
+      return (
+        Array.isArray(parameters) &&
+        parameters.some((parameter) => parameter === target)
+      );
     };
 
     /** The declared member names of the interface body / type literal that owns a signature. */
@@ -775,7 +894,10 @@ export const rule = defineRule({
     };
 
     /** `createdAt` beside `createdAtIso` is the rendered projection of the machine value. */
-    const hasProjectionSibling = (key: string, siblings: ReadonlySet<string>): boolean =>
+    const hasProjectionSibling = (
+      key: string,
+      siblings: ReadonlySet<string>
+    ): boolean =>
       PROJECTION_SUFFIXES.some((suffix) => siblings.has(`${key}${suffix}`));
 
     /** The regex source behind `Schema.isPattern(<arg>)`, following in-file `const` regex literals. */
@@ -789,13 +911,17 @@ export const rule = defineRule({
         return regexSource(first, depth + 1);
       }
       // `` `^${YEAR}-\\d{2}$` `` and `'^\\d{4}' + '-\\d{2}'` are the same regex, spelled out.
-      if (expression.type === 'TemplateLiteral') return templateRegexSource(expression, depth);
+      if (expression.type === 'TemplateLiteral')
+        return templateRegexSource(expression, depth);
       if (expression.type === 'BinaryExpression' && expression.operator === '+')
         return concatenatedRegexSource(expression, depth);
       return identifierRegexSource(expression, depth);
     };
 
-    const identifierRegexSource = (expression: ESTree.Node, depth: number): string | null => {
+    const identifierRegexSource = (
+      expression: ESTree.Node,
+      depth: number
+    ): string | null => {
       if (expression.type === 'Identifier') {
         const declarator = localDeclarator(expression, expression.name);
         if (declarator === null || declarator.init === null) return null;
@@ -805,30 +931,36 @@ export const rule = defineRule({
     };
 
     const literalRegexSource = (
-      expression: Extract<ESTree.Node, { type: 'Literal' }>,
+      expression: Extract<ESTree.Node, { type: 'Literal' }>
     ): string | null => {
       const regex = (expression as { regex?: { pattern: string } }).regex;
       if (regex !== undefined) return regex.pattern;
       return typeof expression.value === 'string' ? expression.value : null;
     };
 
-    const templateRegexSource = (expression: ESTree.TemplateLiteral, depth: number): string => {
+    const templateRegexSource = (
+      expression: ESTree.TemplateLiteral,
+      depth: number
+    ): string => {
       let text = '';
       for (const [index, quasi] of expression.quasis.entries()) {
         text += quasi.value.cooked ?? quasi.value.raw;
         const placeholder = expression.expressions[index];
-        if (placeholder !== undefined) text += regexSource(placeholder, depth + 1) ?? '';
+        if (placeholder !== undefined)
+          text += regexSource(placeholder, depth + 1) ?? '';
       }
       return text;
     };
 
     const concatenatedRegexSource = (
       expression: ESTree.BinaryExpression,
-      depth: number,
+      depth: number
     ): string | null => {
       const left = regexSource(expression.left, depth + 1);
       const right = regexSource(expression.right, depth + 1);
-      return left === null && right === null ? null : `${left ?? ''}${right ?? ''}`;
+      return left === null && right === null
+        ? null
+        : `${left ?? ''}${right ?? ''}`;
     };
 
     /** `Schema.isPattern` / `Schema.pattern` / a directly-imported `isPattern`. */
@@ -838,12 +970,15 @@ export const rule = defineRule({
     };
 
     /** The `const X = <codec>` declarator that owns a reported codec, if any. */
-    const enclosingDeclarator = (node: ESTree.Node): ESTree.VariableDeclarator | null => {
+    const enclosingDeclarator = (
+      node: ESTree.Node
+    ): ESTree.VariableDeclarator | null => {
       let current: ESTree.Node = node;
       for (let guard = 0; guard < 12; guard += 1) {
         const parent: ESTree.Node | null | undefined = current.parent;
         if (parent === null || parent === undefined) return null;
-        if (parent.type === 'VariableDeclarator') return parent.init === current ? parent : null;
+        if (parent.type === 'VariableDeclarator')
+          return parent.init === current ? parent : null;
         current = parent;
       }
       return null;
@@ -852,7 +987,8 @@ export const rule = defineRule({
     const isTransparentCall = (call: ESTree.CallExpression): boolean => {
       const callee = unwrap(call.callee);
       return (
-        callee.type === 'MemberExpression' && TRANSPARENT_METHODS.has(memberName(callee) ?? '')
+        callee.type === 'MemberExpression' &&
+        TRANSPARENT_METHODS.has(memberName(callee) ?? '')
       );
     };
 
@@ -865,7 +1001,8 @@ export const rule = defineRule({
         if (parent.type === 'CallExpression') {
           return isTransparentCall(parent) ? parent : node;
         }
-        if (!UNWRAPPABLE.has(parent.type) && parent.type !== 'SpreadElement') return node;
+        if (!UNWRAPPABLE.has(parent.type) && parent.type !== 'SpreadElement')
+          return node;
         current = parent;
       }
       return node;
@@ -905,7 +1042,7 @@ export const rule = defineRule({
     };
     const enclosingPipe = (
       result: ESTree.Node,
-      parent: ESTree.Node | null | undefined,
+      parent: ESTree.Node | null | undefined
     ): ESTree.Node | null => {
       if (
         parent?.type === 'CallExpression' &&
@@ -927,7 +1064,10 @@ export const rule = defineRule({
       if (!isCalendarDate && !isIsoTime) return;
       const target = enclosingCheck(call);
       const result = outerCodecResult(target);
-      if (result !== target && !isStringRooted(result, new Set(), 0, { viaReportedCodec: false }))
+      if (
+        result !== target &&
+        !isStringRooted(result, new Set(), 0, { viaReportedCodec: false })
+      )
         return;
       codecSpans.push({ end: target.end, start: target.start });
       const owner = enclosingDeclarator(target);
@@ -940,8 +1080,12 @@ export const rule = defineRule({
       });
     };
     const containsReportedCodec = (node: ESTree.Node): boolean =>
-      codecSpans.some((span) => span.start >= node.start && span.end <= node.end);
-    const reportField = (property: ESTree.ObjectExpression['properties'][number]): void => {
+      codecSpans.some(
+        (span) => span.start >= node.start && span.end <= node.end
+      );
+    const reportField = (
+      property: ESTree.ObjectExpression['properties'][number]
+    ): void => {
       if (property.type !== 'Property') return;
       if (property.kind !== 'init' || property.method) return;
       const key = propertyKey(property);
@@ -961,13 +1105,18 @@ export const rule = defineRule({
     };
     const isDisplayMember = (owner: ESTree.Node, key: string): boolean => {
       const typeName = enclosingTypeName(owner);
-      if (ignoreType !== null && typeName !== null && ignoreType.test(typeName)) return true;
-      return hasProjectionSibling(key, siblingKeys(owner)) || isParameterTypeLiteral(owner);
+      if (ignoreType !== null && typeName !== null && ignoreType.test(typeName))
+        return true;
+      return (
+        hasProjectionSibling(key, siblingKeys(owner)) ||
+        isParameterTypeLiteral(owner)
+      );
     };
     const reportTypeMember = (signature: ESTree.TSPropertySignature): void => {
       const owner = signature.parent;
       if (owner == null) return;
-      if (owner.type !== 'TSInterfaceBody' && owner.type !== 'TSTypeLiteral') return;
+      if (owner.type !== 'TSInterfaceBody' && owner.type !== 'TSTypeLiteral')
+        return;
       const key = signatureKey(signature);
       if (key === null || !isTemporalKey(key)) return;
       // An i18n label bag (`CustomerDetailCopy`) keyed by field name holds translated
@@ -1008,10 +1157,15 @@ export const rule = defineRule({
       },
       SpreadElement(node) {
         const container = node.parent;
-        if (container === null || container === undefined || container.type !== 'ObjectExpression')
+        if (
+          container === null ||
+          container === undefined ||
+          container.type !== 'ObjectExpression'
+        )
           return;
         const argument = unwrap(node.argument);
-        if (argument.type === 'Identifier') spreads.push({ container, id: argument });
+        if (argument.type === 'Identifier')
+          spreads.push({ container, id: argument });
       },
       TSPropertySignature(node) {
         typeMembers.push(node);
@@ -1020,7 +1174,9 @@ export const rule = defineRule({
         reports.length = 0;
         codecSpans.length = 0;
         const hasSchema =
-          locals.schema.size > 0 || locals.barrel.size > 0 || locals.members.size > 0;
+          locals.schema.size > 0 ||
+          locals.barrel.size > 0 ||
+          locals.members.size > 0;
         if (hasSchema) {
           patternCalls.forEach(reportCodec);
           reportFields();
@@ -1028,7 +1184,11 @@ export const rule = defineRule({
         if (options.includeTypeMembers) typeMembers.forEach(reportTypeMember);
         reports.sort((left, right) => left.start - right.start);
         for (const report of reports) {
-          context.report({ data: report.data, messageId: report.messageId, node: report.node });
+          context.report({
+            data: report.data,
+            messageId: report.messageId,
+            node: report.node,
+          });
         }
       },
     };

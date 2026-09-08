@@ -4,7 +4,12 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import {
   CounterpartyPartyProjectionSchema,
   CounterpartyIsoTimestampSchema,
@@ -24,39 +29,34 @@ export const CounterpartyReadResponseSchema = Schema.Struct({
   legalEntityRef: LegalEntityRefSchema,
   party: CounterpartyPartyProjectionSchema,
 });
-export type CounterpartyReadResponse = typeof CounterpartyReadResponseSchema.Type;
+export type CounterpartyReadResponse =
+  typeof CounterpartyReadResponseSchema.Type;
 
-export const CounterpartyReadAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyReadAuthenticationProblem',
-  401,
-);
+export const CounterpartyReadAuthenticationProblemSchema =
+  makeProblemDetailsSchema('CounterpartyReadAuthenticationProblem', 401);
 export const CounterpartyReadInvalidProblemSchema = makeProblemDetailsSchema(
   'CounterpartyReadInvalidProblem',
-  400,
+  400
 );
-export const CounterpartyReadUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'CounterpartyReadUnavailableProblem',
-  503,
-);
+export const CounterpartyReadUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema('CounterpartyReadUnavailableProblem', 503);
 export const CounterpartyReadForbiddenProblemSchema = makeProblemDetailsSchema(
   'CounterpartyReadForbiddenProblem',
-  403,
+  403
 );
 export const CounterpartyReadNotFoundProblemSchema = makeProblemDetailsSchema(
   'CounterpartyReadNotFoundProblem',
-  404,
+  404
 );
 export const CounterpartyReadPolicyProblemSchema = makeProblemDetailsSchema(
   'CounterpartyReadPolicyProblem',
-  422,
+  422
 );
-export const CounterpartyReadPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyReadPolicyConflictProblem',
-  409,
-);
+export const CounterpartyReadPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('CounterpartyReadPolicyConflictProblem', 409);
 export const CounterpartyReadInternalProblemSchema = makeProblemDetailsSchema(
   'CounterpartyReadInternalProblem',
-  500,
+  500
 );
 
 export const CounterpartyReadApi = HttpApi.make('CounterpartyReadApi').add(
@@ -77,6 +77,6 @@ export const CounterpartyReadApi = HttpApi.make('CounterpartyReadApi').add(
       payload: CounterpartyReadRequestSchema,
       query: {},
       success: CounterpartyReadResponseSchema,
-    }),
-  ),
+    })
+  )
 );

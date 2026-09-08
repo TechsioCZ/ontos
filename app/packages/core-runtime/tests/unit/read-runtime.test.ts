@@ -1,10 +1,21 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Predicate,
+  Schema,
+} from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
@@ -15,7 +26,10 @@ import {
   ReadPermissionDenied,
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
-import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
+import {
+  makeReadRuntime,
+  READ_RUNTIME_STAGES,
+} from '../../src/reads/runtime.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
@@ -54,10 +68,13 @@ const makeHarness = (
     readonly permissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resolvedScope?: typeof scope & { readonly legalEntityId?: string };
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
-    readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly resultTenantPermissionDecision?:
+      | 'allowed'
+      | 'denied'
+      | 'unavailable';
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
-  } = {},
+  } = {}
 ) => {
   let evidence = 0;
   let tenantPermissionChecks = 0;
@@ -67,7 +84,9 @@ const makeHarness = (
       if (text.includes('data_access_events')) {
         if (options.failEvidence === true) {
           return yield* new SqlError({
-            reason: new ConnectionError({ cause: new Error('private persistence detail') }),
+            reason: new ConnectionError({
+              cause: new Error('private persistence detail'),
+            }),
           });
         }
         const queryHash = values
@@ -92,10 +111,12 @@ const makeHarness = (
       Effect.ensuring(
         Effect.sync(() => {
           options.transactionEvents?.push('transaction_settled');
-        }),
-      ),
+        })
+      )
     );
-  Object.defineProperty(database.executor, 'transaction', { value: transaction });
+  Object.defineProperty(database.executor, 'transaction', {
+    value: transaction,
+  });
   const stages: string[] = [];
   const runtime = makeReadRuntime(
     database,
@@ -108,7 +129,7 @@ const makeHarness = (
           legalEntityIds.map((key) => ({
             decision: options.permissionDecision ?? ('unavailable' as const),
             key,
-          })),
+          }))
         );
       },
       modules: ({ moduleIds }) =>
@@ -116,7 +137,7 @@ const makeHarness = (
           moduleIds.map((key) => ({
             decision: options.permissionDecision ?? ('unavailable' as const),
             key,
-          })),
+          }))
         ),
       resources: ({ resources }) => {
         const [target] = resources;
@@ -130,7 +151,7 @@ const makeHarness = (
               options.permissionDecision ??
               ('unavailable' as const),
             key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-          })),
+          }))
         );
       },
       tenants: ({ permission, tenantIds }) => {
@@ -148,13 +169,18 @@ const makeHarness = (
                   options.permissionDecision ??
                   ('unavailable' as const)),
             key,
-          })),
+          }))
         );
       },
     },
-    { onStage: (stage) => stages.push(stage) },
+    { onStage: (stage) => stages.push(stage) }
   );
-  return { evidence: () => evidence, evidenceRows: () => evidenceRows, runtime, stages };
+  return {
+    evidence: () => evidence,
+    evidenceRows: () => evidenceRows,
+    runtime,
+    stages,
+  };
 };
 
 const registration = (items: readonly string[] = []) =>
@@ -163,12 +189,18 @@ const registration = (items: readonly string[] = []) =>
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.shell.items',
         moduleKey: 'core.shell',
         role: 'api',
       }),
-      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.shell.items.v1' },
+      evidencePolicy: {
+        captureMode: 'metadata_only',
+        policyKey: 'core.shell.items.v1',
+      },
       inputSchema: Schema.Struct({}),
       legalEntityScope: 'forbidden',
       owningModuleKey: 'core.shell',
@@ -184,7 +216,7 @@ const registration = (items: readonly string[] = []) =>
         result: context.services.items,
       }),
     () => Effect.succeed({ items }),
-    () => ({ kind: 'module', moduleId: 'core.shell' }),
+    () => ({ kind: 'module', moduleId: 'core.shell' })
   );
 
 void test('runs every gate before the handler and persists evidence before releasing zero results', async () => {
@@ -195,7 +227,7 @@ void test('runs every gate before the handler and persists evidence before relea
       principal: scope,
       registration: registration(),
       transport: { correlationId: scope.correlationId },
-    }),
+    })
   );
   assert.deepEqual(result, []);
   assert.equal(harness.evidence(), 1);
@@ -204,12 +236,18 @@ void test('runs every gate before the handler and persists evidence before relea
 
 void test('validates decoded transformed results and preserves their nullable JSON encoding', async () => {
   const harness = makeHarness();
-  const ResultSchema = Schema.Struct({ value: Schema.OptionFromNullOr(Schema.String) });
+  const ResultSchema = Schema.Struct({
+    value: Schema.OptionFromNullOr(Schema.String),
+  });
   const transformedRegistration = defineRead(
     { ...registration().descriptor, resultSchema: ResultSchema },
-    () => Effect.succeed({ evidence: { resultCount: 1 }, result: { value: Option.none() } }),
+    () =>
+      Effect.succeed({
+        evidence: { resultCount: 1 },
+        result: { value: Option.none() },
+      }),
     () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: 'core.shell' }),
+    () => ({ kind: 'module', moduleId: 'core.shell' })
   );
   const result = await runEffectTestPromise(
     harness.runtime.runRead({
@@ -217,10 +255,10 @@ void test('validates decoded transformed results and preserves their nullable JS
       principal: scope,
       registration: transformedRegistration,
       transport: { correlationId: scope.correlationId },
-    }),
+    })
   );
   const encoded = await runEffectTestPromise(
-    Schema.encodeUnknownEffect(Schema.toCodecJson(ResultSchema))(result),
+    Schema.encodeUnknownEffect(Schema.toCodecJson(ResultSchema))(result)
   );
 
   assert.ok(Option.isNone(result.value));
@@ -232,7 +270,10 @@ void test('uses each denying Policy reference own declared HTTP status', async (
     ([409, 422] as const).map(async (denialStatus) => {
       const harness = makeHarness();
       const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
-        evaluate: () => Effect.fail(denyPolicy(`policy-${denialStatus}`, 'Denied by test Policy')),
+        evaluate: () =>
+          Effect.fail(
+            denyPolicy(`policy-${denialStatus}`, 'Denied by test Policy')
+          ),
         policyKey: `global.read-policy-${denialStatus}.v1`,
       });
       const governed = defineRead(
@@ -244,7 +285,7 @@ void test('uses each denying Policy reference own declared HTTP status', async (
         () => Effect.succeed({}),
         () => ({ kind: 'module', moduleId: 'core.shell' }),
         undefined,
-        [policy],
+        [policy]
       );
       const error = await runEffectTestPromise(
         Effect.flip(
@@ -253,12 +294,15 @@ void test('uses each denying Policy reference own declared HTTP status', async (
             principal: scope,
             registration: governed,
             transport: { correlationId: scope.correlationId },
-          }),
-        ),
+          })
+        )
       );
       assert.equal(error._tag, 'ReadPolicyDenied');
-      assert.equal(Schema.decodeSync(ReadPolicyDenied)(error).httpStatus, denialStatus);
-    }),
+      assert.equal(
+        Schema.decodeSync(ReadPolicyDenied)(error).httpStatus,
+        denialStatus
+      );
+    })
   );
 });
 
@@ -284,7 +328,7 @@ void test('executes every governed access kind and computes hash-only query evid
           () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
           () => Effect.succeed({}),
           () => ({ kind: 'module', moduleId: 'core.shell' }),
-          accessKind === 'search' ? () => [] : undefined,
+          accessKind === 'search' ? () => [] : undefined
         );
         assert.deepEqual(
           await runEffectTestPromise(
@@ -300,13 +344,16 @@ void test('executes every governed access kind and computes hash-only query evid
               },
               registration: governed,
               transport: { correlationId: scope.correlationId },
-            }),
+            })
           ),
-          [],
+          []
         );
-        assert.match(String(harness.evidenceRows()[0]?.queryHash), /^[\da-f]{64}$/u);
-      },
-    ),
+        assert.match(
+          String(harness.evidenceRows()[0]?.queryHash),
+          /^[\da-f]{64}$/u
+        );
+      }
+    )
   );
 });
 
@@ -319,8 +366,8 @@ void test('rejects invalid input before opening a transaction or executing a han
         principal: {},
         registration: registration(),
         transport: {},
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'ReadInputValidationError');
   assert.equal(harness.evidence(), 0);
@@ -337,7 +384,7 @@ void test('preserves typed result-validation failure across transaction rollback
       return Effect.succeed(handlerResult);
     },
     () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: 'core.shell' }),
+    () => ({ kind: 'module', moduleId: 'core.shell' })
   );
   const error = await runEffectTestPromise(
     Effect.flip(
@@ -352,8 +399,8 @@ void test('preserves typed result-validation failure across transaction rollback
         },
         registration: invalidRegistration,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'ReadResultValidationError');
   assert.equal(harness.evidence(), 0);
@@ -368,8 +415,8 @@ void test('never releases an allowed result when required evidence persistence f
         principal: scope,
         registration: registration(),
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'ReadEvidencePersistenceError');
   assert.equal(harness.evidence(), 0);
@@ -389,9 +436,9 @@ void test('preserves scoped service-factory unavailability and never invokes the
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
           reason: 'The owner repository scope is temporarily unavailable',
-        }),
+        })
       ),
-    () => ({ kind: 'module', moduleId: 'core.shell' }),
+    () => ({ kind: 'module', moduleId: 'core.shell' })
   );
   const error = await runEffectTestPromise(
     Effect.flip(
@@ -400,8 +447,8 @@ void test('preserves scoped service-factory unavailability and never invokes the
         principal: scope,
         registration: unavailableRegistration,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'OperationContextUnavailable');
   assert.equal(handlerCalls, 0);
@@ -410,16 +457,20 @@ void test('preserves scoped service-factory unavailability and never invokes the
 
 const counterpartyReadRegistration = (
   legalEntityScope: 'required' | 'optional',
-  onHandler: () => void,
+  onHandler: () => void
 ) =>
   defineRead(
-    { ...registration().descriptor, legalEntityScope, permissionTarget: 'legal_entity' },
+    {
+      ...registration().descriptor,
+      legalEntityScope,
+      permissionTarget: 'legal_entity',
+    },
     () => {
       onHandler();
       return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
     },
     () => Effect.succeed({}),
-    () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
+    () => ({ kind: 'legal_entity', permission: 'read_counterparty' })
   );
 
 const counterpartyReadPrincipal = (legalEntityId: string) => ({
@@ -435,7 +486,8 @@ void test('persists sanitized permission denial and never invokes the private ha
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   const legalEntityPermissions: (string | undefined)[] = [];
   const harness = makeHarness({
-    onLegalEntityPermission: (permission) => legalEntityPermissions.push(permission),
+    onLegalEntityPermission: (permission) =>
+      legalEntityPermissions.push(permission),
     permissionDecision: 'denied',
     resolvedScope: { ...scope, legalEntityId },
   });
@@ -450,8 +502,8 @@ void test('persists sanitized permission denial and never invokes the private ha
         principal: counterpartyReadPrincipal(legalEntityId),
         registration: deniedRegistration,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'ReadPermissionDenied');
   assert.deepEqual(legalEntityPermissions, ['read_counterparty']);
@@ -476,8 +528,8 @@ test('fails closed when explicit Counterparty read authority is unavailable', as
         principal: counterpartyReadPrincipal(legalEntityId),
         registration: counterpartyRead,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'ReadPermissionUnavailable');
   assert.equal(handlerCalls, 0);
@@ -486,7 +538,9 @@ test('fails closed when explicit Counterparty read authority is unavailable', as
 
 test('derives the authorized resource from decoded input and ignores conflicting transport hints', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
-  let authorizedTarget: { moduleId: string; resourceId: string; resourceType: string } | undefined;
+  let authorizedTarget:
+    | { moduleId: string; resourceId: string; resourceType: string }
+    | undefined;
   const harness = makeHarness({
     onResourceTarget: (target) => {
       authorizedTarget = target;
@@ -509,7 +563,7 @@ test('derives the authorized resource from decoded input and ignores conflicting
     },
     () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'visible' }),
     () => Effect.succeed({}),
-    (input) => ({ kind: 'resource', resource: input }),
+    (input) => ({ kind: 'resource', resource: input })
   );
   const result = await runEffectTestPromise(
     harness.runtime.runRead({
@@ -528,7 +582,7 @@ test('derives the authorized resource from decoded input and ignores conflicting
         targetResourceId: 'forged-resource',
         targetResourceType: 'forged.type',
       },
-    }),
+    })
   );
   assert.equal(result, 'visible');
   assert.deepEqual(authorizedTarget, target);
@@ -561,7 +615,10 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
     },
     () => {
       handlerCalls += 1;
-      return Effect.succeed({ evidence: { resultCount: 1 }, result: 'visible' });
+      return Effect.succeed({
+        evidence: { resultCount: 1 },
+        result: 'visible',
+      });
     },
     () => Effect.succeed({}),
     (input) => ({
@@ -572,7 +629,7 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
       ],
     }),
     undefined,
-    [policy],
+    [policy]
   );
   const principal = {
     ...scope,
@@ -598,9 +655,9 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
           targetResourceId: 'forged-resource',
           targetResourceType: 'forged.type',
         },
-      }),
+      })
     ),
-    'visible',
+    'visible'
   );
   assert.deepEqual(policyTargets, [
     {
@@ -622,9 +679,9 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
         principal,
         registration: counterpartyRead,
         transport: { correlationId: scope.correlationId },
-      }),
+      })
     ),
-    'visible',
+    'visible'
   );
 
   const indeterminate = makeHarness({
@@ -639,8 +696,8 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
         principal,
         registration: counterpartyRead,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(unavailable._tag, 'ReadPermissionUnavailable');
   assert.equal(indeterminate.evidence(), 0);
@@ -657,8 +714,8 @@ test('authorizes a canonical Resource through explicit tenant Party administrati
         principal,
         registration: counterpartyRead,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(denial._tag, 'ReadPermissionDenied');
   assert.equal(denied.evidence(), 1);
@@ -694,11 +751,13 @@ test('rejects generic tenant access as an alternative permission target', async 
           },
           { kind: 'tenant', permission: 'access' },
         ],
-      }) as never,
+      }) as never
   );
   const failure = await runEffectTestPromise(
     Effect.flip(
-      makeHarness({ resolvedScope: { ...scope, legalEntityId } }).runtime.runRead({
+      makeHarness({
+        resolvedScope: { ...scope, legalEntityId },
+      }).runtime.runRead({
         input: {},
         principal: {
           ...scope,
@@ -709,8 +768,8 @@ test('rejects generic tenant access as an alternative permission target', async 
         },
         registration: invalid,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(failure._tag, 'ReadHandlerExecutionError');
   assert.equal(handlerCalls, 0);
@@ -748,7 +807,7 @@ for (const scenario of [
           { kind: 'module', moduleId: 'party.registry' },
         ],
       }),
-      scenario.resultTargets ?? undefined,
+      scenario.resultTargets ?? undefined
     );
     const failure = await runEffectTestPromise(
       Effect.flip(
@@ -759,8 +818,8 @@ for (const scenario of [
           principal: scope,
           registration: alternativeRead,
           transport: { correlationId: scope.correlationId },
-        }),
-      ),
+        })
+      )
     );
     assert.equal(failure._tag, scenario.expectedFailure);
     assert.equal(handlerCalls, 0);
@@ -785,7 +844,7 @@ for (const scenario of [
       new ReadPermissionDenied({
         code: 'read_permission_denied',
         reason: 'A late provider target check denied this read',
-      }),
+      })
     ),
   },
 ]) {
@@ -795,7 +854,7 @@ for (const scenario of [
       registration().descriptor,
       () => scenario.outcome,
       () => Effect.succeed({}),
-      () => ({ kind: 'module', moduleId: 'core.shell' }),
+      () => ({ kind: 'module', moduleId: 'core.shell' })
     );
     const error = await runEffectTestPromise(
       Effect.flip(
@@ -804,8 +863,8 @@ for (const scenario of [
           principal: scope,
           registration: failingRead,
           transport: { correlationId: scope.correlationId },
-        }),
-      ),
+        })
+      )
     );
     assert.equal(error._tag, scenario.expectedFailure);
     assert.equal(harness.evidence(), scenario.expectedEvidence);
@@ -833,7 +892,7 @@ void test('does not release generated search candidates denied by result-level a
     () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
     () => Effect.succeed({}),
     () => ({ kind: 'module', moduleId: 'core.shell' }),
-    (result) => result,
+    (result) => result
   );
   const error = await runEffectTestPromise(
     Effect.flip(
@@ -848,8 +907,8 @@ void test('does not release generated search candidates denied by result-level a
         },
         registration: searchRegistration,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(error._tag, 'ReadPermissionDenied');
   assert.equal(harness.evidence(), 1);
@@ -881,7 +940,7 @@ test('authorizes tenant-scoped Party search results without fabricating a Legal 
     () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
     () => Effect.succeed({}),
     () => ({ kind: 'tenant', permission: 'read_party_identity' }),
-    (result) => result,
+    (result) => result
   );
 
   assert.deepEqual(
@@ -891,11 +950,14 @@ test('authorizes tenant-scoped Party search results without fabricating a Legal 
         principal: scope,
         registration: searchRegistration,
         transport: { correlationId: scope.correlationId },
-      }),
+      })
     ),
-    [candidate],
+    [candidate]
   );
-  assert.deepEqual(tenantPermissions, ['read_party_identity', 'read_party_identity']);
+  assert.deepEqual(tenantPermissions, [
+    'read_party_identity',
+    'read_party_identity',
+  ]);
   assert.equal(resourceChecks, 0);
 });
 
@@ -920,7 +982,7 @@ test('fails closed when tenant-scoped Party result authorization becomes unavail
     () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
     () => Effect.succeed({}),
     () => ({ kind: 'tenant', permission: 'read_party_identity' }),
-    (result) => result,
+    (result) => result
   );
   const failure = await runEffectTestPromise(
     Effect.flip(
@@ -929,8 +991,8 @@ test('fails closed when tenant-scoped Party result authorization becomes unavail
         principal: scope,
         registration: searchRegistration,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.equal(failure._tag, 'ReadPermissionUnavailable');
 });
@@ -959,7 +1021,7 @@ test('preserves declared owner read availability and not-found failures but sani
         registration().descriptor,
         () => Effect.fail(failure),
         () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' }),
+        () => ({ kind: 'module', moduleId: 'core.shell' })
       );
       const error = await runEffectTestPromise(
         Effect.flip(
@@ -968,13 +1030,13 @@ test('preserves declared owner read availability and not-found failures but sani
             principal: scope,
             registration: failingRegistration,
             transport: { correlationId: scope.correlationId },
-          }),
-        ),
+          })
+        )
       );
       assert.equal(error._tag, expectedTags[index]);
       assert.doesNotMatch(error.reason, /secret/u);
       assert.equal(harness.evidence(), 0);
-    }),
+    })
   );
 });
 
@@ -994,7 +1056,7 @@ void test('keeps read interruption and waits for transaction settlement', async 
             return { evidence: { resultCount: 0 }, result: [] };
           }),
         () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' }),
+        () => ({ kind: 'module', moduleId: 'core.shell' })
       );
       const fiber = yield* harness.runtime
         .runRead({
@@ -1008,7 +1070,7 @@ void test('keeps read interruption and waits for transaction settlement', async 
       yield* Fiber.interrupt(fiber);
       events.push('read_completed');
       return yield* Fiber.await(fiber);
-    }),
+    })
   );
   assert.ok(Exit.isFailure(exit));
   assert.ok(Cause.hasInterruptsOnly(exit.cause));
@@ -1026,7 +1088,7 @@ void test('prioritizes failed denial evidence while retaining permission denial 
     registration().descriptor,
     () => Effect.fail(denied),
     () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: 'core.shell' }),
+    () => ({ kind: 'module', moduleId: 'core.shell' })
   );
   const exit = await runEffectTestPromise(
     Effect.exit(
@@ -1035,11 +1097,13 @@ void test('prioritizes failed denial evidence while retaining permission denial 
         principal: scope,
         registration: governed,
         transport: { correlationId: scope.correlationId },
-      }),
-    ),
+      })
+    )
   );
   assert.ok(Exit.isFailure(exit));
-  const failures = exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+  const failures = exit.cause.reasons
+    .filter(Cause.isFailReason)
+    .map((reason) => reason.error);
   assert.equal(failures.length, 2);
   assert.equal(failures[0]?._tag, 'ReadEvidencePersistenceError');
   assert.equal(failures[1], denied);

@@ -4,28 +4,31 @@
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.party-updated.v1
 import { defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { definePartySearchWorker } from './party-search-worker.ts';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-party-updated-v1';
 
-export const { worker: projectPartyUpdatedToSearchWorker } = definePartySearchWorker(
-  {
-    entrypoint: defineTenantModuleEntrypoint({
-      access: 'background',
-      authorization: { kind: 'owner_local_background' },
-      entrypointKey: 'party.registry.project-party-updated-to-search',
-      moduleKey: 'party.registry',
-      role: 'worker',
-    }),
-    payloadSchema: OutboxPayloadSchema,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  },
-  {
-    spanName: 'ProjectPartyUpdatedToSearchWorker.handleProjectPartyUpdatedToSearch',
-    target: (payload) => ({ partyId: payload.partyRef.resourceId }),
-  },
-);
+import { definePartySearchWorker } from './party-search-worker.ts';
+
+export const { worker: projectPartyUpdatedToSearchWorker } =
+  definePartySearchWorker(
+    {
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        authorization: { kind: 'owner_local_background' },
+        entrypointKey: 'party.registry.project-party-updated-to-search',
+        moduleKey: 'party.registry',
+        role: 'worker',
+      }),
+      payloadSchema: OutboxPayloadSchema,
+      producerModuleKey: outboxProducerModuleKey,
+      topic: outboxTopic,
+    },
+    {
+      spanName:
+        'ProjectPartyUpdatedToSearchWorker.handleProjectPartyUpdatedToSearch',
+      target: (payload) => ({ partyId: payload.partyRef.resourceId }),
+    }
+  );

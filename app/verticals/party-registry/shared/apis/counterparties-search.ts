@@ -5,7 +5,12 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import {
   CounterpartySearchResultSchema,
   CurrentCounterpartyRoleSchema,
@@ -17,46 +22,39 @@ export const CounterpartiesProviderRequestSchema = Schema.Struct({
   query: PartySearchQuerySchema,
   role: Schema.optionalKey(CurrentCounterpartyRoleSchema),
 });
-export type CounterpartiesProviderRequest = typeof CounterpartiesProviderRequestSchema.Type;
+export type CounterpartiesProviderRequest =
+  typeof CounterpartiesProviderRequestSchema.Type;
 
-export const CounterpartiesProviderResponseSchema = Schema.Array(CounterpartySearchResultSchema);
-export type CounterpartiesProviderResponse = typeof CounterpartiesProviderResponseSchema.Type;
+export const CounterpartiesProviderResponseSchema = Schema.Array(
+  CounterpartySearchResultSchema
+);
+export type CounterpartiesProviderResponse =
+  typeof CounterpartiesProviderResponseSchema.Type;
 
-export const CounterpartiesProviderUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'CounterpartiesProviderUnavailableProblem',
-  503,
-);
+export const CounterpartiesProviderUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'CounterpartiesProviderUnavailableProblem',
+    503
+  );
 
-export const CounterpartiesProviderAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'CounterpartiesProviderAuthenticationProblem',
-  401,
-);
-export const CounterpartiesProviderInvalidProblemSchema = makeProblemDetailsSchema(
-  'CounterpartiesProviderInvalidProblem',
-  400,
-);
-export const CounterpartiesProviderForbiddenProblemSchema = makeProblemDetailsSchema(
-  'CounterpartiesProviderForbiddenProblem',
-  403,
-);
-export const CounterpartiesProviderNotFoundProblemSchema = makeProblemDetailsSchema(
-  'CounterpartiesProviderNotFoundProblem',
-  404,
-);
-export const CounterpartiesProviderPolicyProblemSchema = makeProblemDetailsSchema(
-  'CounterpartiesProviderPolicyProblem',
-  422,
-);
-export const CounterpartiesProviderPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'CounterpartiesProviderPolicyConflictProblem',
-  409,
-);
-export const CounterpartiesProviderInternalProblemSchema = makeProblemDetailsSchema(
-  'CounterpartiesProviderInternalProblem',
-  500,
-);
+export const CounterpartiesProviderAuthenticationProblemSchema =
+  makeProblemDetailsSchema('CounterpartiesProviderAuthenticationProblem', 401);
+export const CounterpartiesProviderInvalidProblemSchema =
+  makeProblemDetailsSchema('CounterpartiesProviderInvalidProblem', 400);
+export const CounterpartiesProviderForbiddenProblemSchema =
+  makeProblemDetailsSchema('CounterpartiesProviderForbiddenProblem', 403);
+export const CounterpartiesProviderNotFoundProblemSchema =
+  makeProblemDetailsSchema('CounterpartiesProviderNotFoundProblem', 404);
+export const CounterpartiesProviderPolicyProblemSchema =
+  makeProblemDetailsSchema('CounterpartiesProviderPolicyProblem', 422);
+export const CounterpartiesProviderPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('CounterpartiesProviderPolicyConflictProblem', 409);
+export const CounterpartiesProviderInternalProblemSchema =
+  makeProblemDetailsSchema('CounterpartiesProviderInternalProblem', 500);
 
-export const CounterpartiesSearchApi = HttpApi.make('CounterpartiesSearchApi').add(
+export const CounterpartiesSearchApi = HttpApi.make(
+  'CounterpartiesSearchApi'
+).add(
   HttpApiGroup.make('counterpartiesSearch').add(
     HttpApiEndpoint.post('execute', '/party.registry/search/counterparties', {
       error: [
@@ -71,6 +69,6 @@ export const CounterpartiesSearchApi = HttpApi.make('CounterpartiesSearchApi').a
       ],
       payload: CounterpartiesProviderRequestSchema,
       success: CounterpartiesProviderResponseSchema,
-    }),
-  ),
+    })
+  )
 );

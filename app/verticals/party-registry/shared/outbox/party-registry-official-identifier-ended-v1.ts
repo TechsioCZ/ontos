@@ -2,6 +2,7 @@
 // @ontos-outbox-producer party.registry
 // @ontos-outbox-topic party.registry.official-identifier-ended.v1
 import { Schema } from 'effect';
+
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
@@ -11,5 +12,6 @@ export const OutboxPayloadSchema = Schema.Struct({
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
-export const outboxTopic = 'party.registry.official-identifier-ended.v1' as const;
+export const outboxTopic =
+  'party.registry.official-identifier-ended.v1' as const;
 export const outboxProducerModuleKey = 'party.registry' as const;

@@ -1,4 +1,5 @@
 import { Effect, Match } from 'effect';
+
 import {
   EngagementProfileConflict,
   EngagementProfileNotFound,
@@ -8,8 +9,11 @@ import type { LifecycleResult } from '../services/engagement-profile-persistence
 export const resolveEngagementLifecycle = <Value>(
   result: LifecycleResult<Value>,
   profileId: string,
-  requestedState: 'active' | 'archived',
-): Effect.Effect<Value, EngagementProfileConflict | EngagementProfileNotFound> =>
+  requestedState: 'active' | 'archived'
+): Effect.Effect<
+  Value,
+  EngagementProfileConflict | EngagementProfileNotFound
+> =>
   Match.value(result).pipe(
     Match.tag('found', ({ value }) => Effect.succeed(value)),
     Match.tag('conflict', () =>
@@ -17,8 +21,8 @@ export const resolveEngagementLifecycle = <Value>(
         new EngagementProfileConflict({
           code: 'contacts_engagement_profile_lifecycle_conflict',
           reason: `The engagement profile is already ${requestedState}`,
-        }),
-      ),
+        })
+      )
     ),
     Match.tag('not_found', () =>
       Effect.fail(
@@ -26,8 +30,8 @@ export const resolveEngagementLifecycle = <Value>(
           code: 'contacts_engagement_profile_not_found',
           profileId,
           reason: 'The requested engagement profile does not exist',
-        }),
-      ),
+        })
+      )
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );

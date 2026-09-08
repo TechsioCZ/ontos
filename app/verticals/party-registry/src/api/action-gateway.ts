@@ -11,6 +11,20 @@ import type {
   OperationGatewayIssuer as SharedOperationGatewayIssuer,
 } from '@app/shared-contracts';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
+
+import type {
+  AddContactPointPayload,
+  AddContactPointResult,
+} from '../../shared/actions/add-contact-point.ts';
+import type {
+  AddPartyOfficialIdentifierPayload,
+  AddPartyOfficialIdentifierResult,
+} from '../../shared/actions/add-party-official-identifier.ts';
+import type { CorrectPartyFactPayload } from '../../shared/actions/correct-party-fact.ts';
+import type {
+  UpdatePartyPayload,
+  UpdatePartyResult,
+} from '../../shared/actions/update-party.ts';
 import * as AresApplication from '../../shared/domain/ares-application.ts';
 import type {
   AresAppliedEvidence,
@@ -23,24 +37,14 @@ import type { AresSubjectEvidence } from '../../shared/domain/ares-evidence.ts';
 import type { StructuredAddress } from '../../shared/domain/contact-point.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import type { executeAresLookupWithAuthorization } from './ares-lookup-client.ts';
-import type { executePartyContactPointsWithAuthorization } from './party-contact-points-client.ts';
-import type { executePartyDetailWithAuthorization } from './party-detail-client.ts';
-import type { executePartyOfficialIdentifierHistoryWithAuthorization } from './party-official-identifier-history-client.ts';
 import type {
   addContactPointWithAuthorization,
   addPartyOfficialIdentifierWithAuthorization,
   updatePartyWithAuthorization,
 } from './party-command-client.ts';
-import type {
-  AddContactPointPayload,
-  AddContactPointResult,
-} from '../../shared/actions/add-contact-point.ts';
-import type {
-  AddPartyOfficialIdentifierPayload,
-  AddPartyOfficialIdentifierResult,
-} from '../../shared/actions/add-party-official-identifier.ts';
-import type { CorrectPartyFactPayload } from '../../shared/actions/correct-party-fact.ts';
-import type { UpdatePartyPayload, UpdatePartyResult } from '../../shared/actions/update-party.ts';
+import type { executePartyContactPointsWithAuthorization } from './party-contact-points-client.ts';
+import type { executePartyDetailWithAuthorization } from './party-detail-client.ts';
+import type { executePartyOfficialIdentifierHistoryWithAuthorization } from './party-official-identifier-history-client.ts';
 
 export type {
   AresCanonicalFactEvidence,
@@ -54,17 +58,23 @@ export type OperationGatewayIssuer = SharedOperationGatewayIssuer<
   GatewayContextClientError
 >;
 
-export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGatewayContext) =>
-  makeSharedOperationGateway(ACTION_GATEWAY_AUDIENCE, acquire);
+export const makeOperationGateway = (
+  acquire: OperationGatewayIssuer = issueGatewayContext
+) => makeSharedOperationGateway(ACTION_GATEWAY_AUDIENCE, acquire);
 
 export const operationGateway = makeOperationGateway();
 
-export const { deriveAresCorrectionReviewHandoffs, prefillPartyCandidateFromAres } =
-  AresApplication;
+export const {
+  deriveAresCorrectionReviewHandoffs,
+  prefillPartyCandidateFromAres,
+} = AresApplication;
 
 export class AresApplySelectionInvalid extends Schema.TaggedError<AresApplySelectionInvalid>()(
   'AresApplySelectionInvalid',
-  { code: Schema.Literal('ares_apply_selection_invalid'), reason: Schema.String },
+  {
+    code: Schema.Literal('ares_apply_selection_invalid'),
+    reason: Schema.String,
+  }
 ) {}
 
 export type AresApplySelection = { readonly idempotencyKey: string } & (
@@ -85,12 +95,18 @@ export type AresApplySelection = { readonly idempotencyKey: string } & (
     }
   | {
       readonly fact: 'BUSINESS_NAME' | 'ICO';
-      readonly payload: Extract<CorrectPartyFactPayload, { readonly partyId: string }>;
+      readonly payload: Extract<
+        CorrectPartyFactPayload,
+        { readonly partyId: string }
+      >;
       readonly route: 'PARTY_CORRECTION';
     }
 );
 
-type ExecutableSelection = Exclude<AresApplySelection, { readonly route: 'PARTY_CORRECTION' }>;
+type ExecutableSelection = Exclude<
+  AresApplySelection,
+  { readonly route: 'PARTY_CORRECTION' }
+>;
 
 export interface AresApplyRequest {
   readonly correlationId: string;
@@ -104,17 +120,17 @@ export interface PartyRegistryStandardActionInvoker<Failure> {
   readonly addContactPoint: (
     payload: AddContactPointPayload,
     authorizationHeader: string,
-    options: AresActionInvocationOptions,
+    options: AresActionInvocationOptions
   ) => Effect.Effect<AddContactPointResult, Failure>;
   readonly addPartyOfficialIdentifier: (
     payload: AddPartyOfficialIdentifierPayload,
     authorizationHeader: string,
-    options: AresActionInvocationOptions,
+    options: AresActionInvocationOptions
   ) => Effect.Effect<AddPartyOfficialIdentifierResult, Failure>;
   readonly updateParty: (
     payload: UpdatePartyPayload,
     authorizationHeader: string,
-    options: AresActionInvocationOptions,
+    options: AresActionInvocationOptions
   ) => Effect.Effect<UpdatePartyResult, Failure>;
 }
 
@@ -134,7 +150,13 @@ export interface AresApplyReads {
   readonly party: typeof executePartyDetailWithAuthorization;
 }
 type FailureOf<Value> =
-  Value extends Effect.Effect<infer _Success, infer Failure, infer _Requirements> ? Failure : never;
+  Value extends Effect.Effect<
+    infer _Success,
+    infer Failure,
+    infer _Requirements
+  >
+    ? Failure
+    : never;
 export type AresApplyReadError =
   | FailureOf<ReturnType<AresApplyReads['contactPoints']>>
   | FailureOf<ReturnType<AresApplyReads['identifiers']>>
@@ -169,10 +191,16 @@ export interface AresSkippedAction {
   readonly route: ExecutableSelection['route'];
 }
 
-const AresApplyNotRequestedSchema = Schema.TaggedStruct('AresApplyNotRequested', {});
+const AresApplyNotRequestedSchema = Schema.TaggedStruct(
+  'AresApplyNotRequested',
+  {}
+);
 const AresApplyDeferredSchema = Schema.TaggedStruct('AresApplyDeferred', {});
 const AresApplyCompletedSchema = Schema.TaggedStruct('AresApplyCompleted', {});
-const AresApplyPartiallyCompletedSchema = Schema.TaggedStruct('AresApplyPartiallyCompleted', {});
+const AresApplyPartiallyCompletedSchema = Schema.TaggedStruct(
+  'AresApplyPartiallyCompleted',
+  {}
+);
 
 export type AresApplyOutcome<Failure> =
   | (Schema.Schema.Type<typeof AresApplyNotRequestedSchema> & {
@@ -215,18 +243,25 @@ const loadDefaultReads = () =>
   Effect.all(
     {
       ares: Effect.promise(() => import('./ares-lookup-client.ts')),
-      contactPoints: Effect.promise(() => import('./party-contact-points-client.ts')),
-      identifiers: Effect.promise(() => import('./party-official-identifier-history-client.ts')),
+      contactPoints: Effect.promise(
+        () => import('./party-contact-points-client.ts')
+      ),
+      identifiers: Effect.promise(
+        () => import('./party-official-identifier-history-client.ts')
+      ),
       party: Effect.promise(() => import('./party-detail-client.ts')),
     },
-    { concurrency: 4 },
+    { concurrency: 4 }
   ).pipe(
     Effect.map((modules): AresApplyReads => ({
-      contactPoints: modules.contactPoints.executePartyContactPointsWithAuthorization,
-      identifiers: modules.identifiers.executePartyOfficialIdentifierHistoryWithAuthorization,
+      contactPoints:
+        modules.contactPoints.executePartyContactPointsWithAuthorization,
+      identifiers:
+        modules.identifiers
+          .executePartyOfficialIdentifierHistoryWithAuthorization,
       observation: modules.ares.executeAresLookupWithAuthorization,
       party: modules.party.executePartyDetailWithAuthorization,
-    })),
+    }))
   );
 const invalidSelection = (reason: string, cause?: unknown) => {
   const failure = new AresApplySelectionInvalid({
@@ -234,13 +269,21 @@ const invalidSelection = (reason: string, cause?: unknown) => {
     reason,
   });
   if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+    Object.defineProperty(failure, 'cause', {
+      configurable: true,
+      value: cause,
+    });
   }
   return failure;
 };
 const invalidObservation = (cause: unknown) =>
-  invalidSelection('ARES observation is not a bounded valid observation', cause);
-type AresReadObservation = AresSubjectEvidence | typeof AresSubjectEvidenceSchema.Encoded;
+  invalidSelection(
+    'ARES observation is not a bounded valid observation',
+    cause
+  );
+type AresReadObservation =
+  | AresSubjectEvidence
+  | typeof AresSubjectEvidenceSchema.Encoded;
 const decodeReadObservation = (input: AresReadObservation) =>
   Effect.firstSuccessOf([
     Schema.decodeUnknownEffect(Schema.toType(AresSubjectEvidenceSchema))(input),
@@ -255,36 +298,55 @@ const sameParty = (left: PartyRef, right: PartyRef): boolean =>
 const hasSupportedCanonicalRoute = (selection: AresApplySelection): boolean =>
   !(
     !Schema.is(AresApplication.AresCanonicalRouteSchema)(selection.route) ||
-    (selection.route === 'PARTY_UPDATE' && selection.fact !== 'BUSINESS_NAME') ||
+    (selection.route === 'PARTY_UPDATE' &&
+      selection.fact !== 'BUSINESS_NAME') ||
     (selection.route === 'IDENTIFIER_ADD' && selection.fact !== 'ICO') ||
-    (selection.route === 'CONTACT_POINT_ADD' && selection.fact !== 'REGISTERED_ADDRESS')
+    (selection.route === 'CONTACT_POINT_ADD' &&
+      selection.fact !== 'REGISTERED_ADDRESS')
   );
 
-const validateSelection = (selection: AresApplySelection, partyRef: PartyRef | null) => {
+const validateSelection = (
+  selection: AresApplySelection,
+  partyRef: PartyRef | null
+) => {
   if (!hasSupportedCanonicalRoute(selection)) {
-    return Effect.fail(invalidSelection('The selected fact requires a supported canonical route'));
+    return Effect.fail(
+      invalidSelection('The selected fact requires a supported canonical route')
+    );
   }
   if (selection.idempotencyKey.trim().length === 0) {
     return Effect.fail(
-      invalidSelection('Every selected Action requires its own stable idempotency key'),
+      invalidSelection(
+        'Every selected Action requires its own stable idempotency key'
+      )
     );
   }
   if (partyRef === null) {
-    return Effect.fail(invalidSelection('Enrichment requires one explicit existing Party'));
+    return Effect.fail(
+      invalidSelection('Enrichment requires one explicit existing Party')
+    );
   } else if (selection.route === 'PARTY_CORRECTION') {
     const expectedFactKind =
-      selection.fact === 'BUSINESS_NAME' ? 'DISPLAY_NAME' : 'OFFICIAL_IDENTIFIER';
+      selection.fact === 'BUSINESS_NAME'
+        ? 'DISPLAY_NAME'
+        : 'OFFICIAL_IDENTIFIER';
     if (selection.payload.factKind !== expectedFactKind) {
       return Effect.fail(
-        invalidSelection('Correction review must nominate the selected supported fact'),
+        invalidSelection(
+          'Correction review must nominate the selected supported fact'
+        )
       );
     }
     if (selection.payload.partyId !== partyRef.resourceId) {
-      return Effect.fail(invalidSelection('Correction target does not match the selected Party'));
+      return Effect.fail(
+        invalidSelection('Correction target does not match the selected Party')
+      );
     }
   } else if (!sameParty(selection.payload.partyRef, partyRef)) {
     return Effect.fail(
-      invalidSelection('All selected facts must target the same tenant-qualified Party'),
+      invalidSelection(
+        'All selected facts must target the same tenant-qualified Party'
+      )
     );
   }
 
@@ -294,29 +356,33 @@ const validateSelection = (selection: AresApplySelection, partyRef: PartyRef | n
 const validateRequest = (request: AresApplyRequest) => {
   if (!request.userConfirmed || request.correlationId.trim().length === 0) {
     return Effect.fail(
-      invalidSelection('Explicit user confirmation and a correlation ID are required'),
+      invalidSelection(
+        'Explicit user confirmation and a correlation ID are required'
+      )
     );
   }
   const facts = request.selections.map(({ fact }) => fact);
   if (facts.length > 4 || new Set(facts).size !== facts.length) {
-    return Effect.fail(invalidSelection('Select each bounded ARES fact at most once'));
+    return Effect.fail(
+      invalidSelection('Select each bounded ARES fact at most once')
+    );
   }
   return Effect.forEach(
     request.selections,
     (selection) => validateSelection(selection, request.partyRef),
-    { concurrency: 1, discard: true },
+    { concurrency: 1, discard: true }
   ).pipe(
     Effect.andThen(() =>
-      Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(request.observation).pipe(
-        Effect.mapError(invalidObservation),
-      ),
-    ),
+      Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(
+        request.observation
+      ).pipe(Effect.mapError(invalidObservation))
+    )
   );
 };
 
 const matchesObservation = (
   selection: ExecutableSelection,
-  observation: AresSubjectEvidence,
+  observation: AresSubjectEvidence
 ): boolean => {
   const { subject } = observation;
   const businessName = Option.getOrNull(subject.businessName);
@@ -327,13 +393,13 @@ const matchesObservation = (
       (selected) =>
         businessName !== null &&
         selected.payload.displayName === businessName &&
-        selected.payload.partyType === undefined,
+        selected.payload.partyType === undefined
     ),
     Match.when(
       { route: 'IDENTIFIER_ADD' },
       (selected) =>
         selected.payload.identifier.identifierType === 'ICO' &&
-        selected.payload.identifier.value === subject.ico,
+        selected.payload.identifier.value === subject.ico
     ),
     Match.when(
       { route: 'CONTACT_POINT_ADD' },
@@ -342,28 +408,38 @@ const matchesObservation = (
         registeredAddress !== null &&
         selected.payload.contactPoint.purposes.length === 1 &&
         selected.payload.contactPoint.purposes[0]?.purpose === 'REGISTERED' &&
-        selected.payload.contactPoint.purposes[0]?.registryContext?.jurisdiction === 'CZ' &&
-        selected.payload.contactPoint.purposes[0]?.registryContext?.registryKey === 'ARES' &&
+        selected.payload.contactPoint.purposes[0]?.registryContext
+          ?.jurisdiction === 'CZ' &&
+        selected.payload.contactPoint.purposes[0]?.registryContext
+          ?.registryKey === 'ARES' &&
         AresApplication.aresRegisteredAddressMatches(
           registeredAddress,
-          selected.payload.contactPoint.address,
-        ),
+          selected.payload.contactPoint.address
+        )
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
 };
 
-const validateSelectedValues = (request: AresApplyRequest, observation: AresSubjectEvidence) =>
+const validateSelectedValues = (
+  request: AresApplyRequest,
+  observation: AresSubjectEvidence
+) =>
   request.selections.some(
     (selection) =>
-      selection.route !== 'PARTY_CORRECTION' && !matchesObservation(selection, observation),
+      selection.route !== 'PARTY_CORRECTION' &&
+      !matchesObservation(selection, observation)
   )
-    ? Effect.fail(invalidSelection('Selected values do not match the confirmed observation'))
+    ? Effect.fail(
+        invalidSelection(
+          'Selected values do not match the confirmed observation'
+        )
+      )
     : Effect.void;
 
 const needsConfirmation = (
   application: AresEvidenceApplication,
-  reasonCode: string,
+  reasonCode: string
 ): AresEvidenceApplication => ({
   ...application,
   factDecisions: application.factDecisions.map((decision) => ({
@@ -408,7 +484,7 @@ const invokeSelection = <Failure>(
   invoker: PartyRegistryStandardActionInvoker<Failure>,
   gateway: ReturnType<typeof makeOperationGateway>,
   options: GatewayContextClientOptions,
-  commandOptions: AresActionInvocationOptions,
+  commandOptions: AresActionInvocationOptions
 ): Effect.Effect<AresAppliedAction, Failure | GatewayContextClientError> =>
   Match.value(selection).pipe(
     Match.when({ route: 'PARTY_UPDATE' }, (selected) =>
@@ -418,9 +494,9 @@ const invokeSelection = <Failure>(
             invoker.updateParty(
               { ...selected.payload, externalEvidence: evidence },
               authorization,
-              commandOptions,
+              commandOptions
             ),
-          options,
+          options
         )
         .pipe(
           Effect.map((result) => ({
@@ -428,8 +504,8 @@ const invokeSelection = <Failure>(
             fact: selected.fact,
             result,
             route: selected.route,
-          })),
-        ),
+          }))
+        )
     ),
     Match.when({ route: 'IDENTIFIER_ADD' }, (selected) =>
       gateway
@@ -438,9 +514,9 @@ const invokeSelection = <Failure>(
             invoker.addPartyOfficialIdentifier(
               { ...selected.payload, externalEvidence: evidence },
               authorization,
-              commandOptions,
+              commandOptions
             ),
-          options,
+          options
         )
         .pipe(
           Effect.map((result) => ({
@@ -448,18 +524,22 @@ const invokeSelection = <Failure>(
             fact: selected.fact,
             result,
             route: selected.route,
-          })),
-        ),
+          }))
+        )
     ),
     Match.when({ route: 'CONTACT_POINT_ADD' }, (selected) => {
       const payload = {
         ...selected.payload,
-        provenance: { ...selected.payload.provenance, externalEvidence: evidence },
+        provenance: {
+          ...selected.payload.provenance,
+          externalEvidence: evidence,
+        },
       };
       return gateway
         .invoke(
-          (authorization) => invoker.addContactPoint(payload, authorization, commandOptions),
-          options,
+          (authorization) =>
+            invoker.addContactPoint(payload, authorization, commandOptions),
+          options
         )
         .pipe(
           Effect.map((result) => ({
@@ -467,27 +547,30 @@ const invokeSelection = <Failure>(
             fact: selected.fact,
             result,
             route: selected.route,
-          })),
+          }))
         );
     }),
-    Match.exhaustive,
+    Match.exhaustive
   );
 
 const observationIsStale = (
   supplied: AresSubjectEvidence,
   observation: AresSubjectEvidence,
-  decisionTime: DateTime.Utc,
+  decisionTime: DateTime.Utc
 ): boolean => {
   const ageMillis =
-    DateTime.toEpochMillis(decisionTime) - DateTime.toEpochMillis(observation.observedAt);
+    DateTime.toEpochMillis(decisionTime) -
+    DateTime.toEpochMillis(observation.observedAt);
   const suppliedAgeMillis =
-    DateTime.toEpochMillis(decisionTime) - DateTime.toEpochMillis(supplied.observedAt);
+    DateTime.toEpochMillis(decisionTime) -
+    DateTime.toEpochMillis(supplied.observedAt);
   return (
     ageMillis < 0 ||
     ageMillis > 300_000 ||
     suppliedAgeMillis < 0 ||
     suppliedAgeMillis > 300_000 ||
-    DateTime.toEpochMillis(supplied.servedAt) > DateTime.toEpochMillis(decisionTime)
+    DateTime.toEpochMillis(supplied.servedAt) >
+      DateTime.toEpochMillis(decisionTime)
   );
 };
 
@@ -495,7 +578,7 @@ const refreshedObservationChanged = (
   request: AresApplyRequest,
   suppliedInput: typeof AresSubjectEvidenceSchema.Encoded,
   observationInput: typeof AresSubjectEvidenceSchema.Encoded,
-  observation: AresSubjectEvidence,
+  observation: AresSubjectEvidence
 ): boolean =>
   suppliedInput.providerChangedOn !== observationInput.providerChangedOn ||
   suppliedInput.queryIco !== observationInput.queryIco ||
@@ -504,49 +587,58 @@ const refreshedObservationChanged = (
       return !matchesObservation(selection, observation);
     }
     return selection.fact === 'BUSINESS_NAME'
-      ? suppliedInput.subject.businessName !== observationInput.subject.businessName
+      ? suppliedInput.subject.businessName !==
+          observationInput.subject.businessName
       : suppliedInput.subject.ico !== observationInput.subject.ico;
   });
 
 const correctionTargetChanged = (
   selection: AresApplySelection,
-  candidates: readonly AresCorrectionReviewHandoff[],
+  candidates: readonly AresCorrectionReviewHandoff[]
 ): boolean =>
   selection.route === 'PARTY_CORRECTION' &&
   candidates.some(
     (candidate) =>
       candidate.fact === selection.fact &&
-      candidate.targetAssertionId !== selection.payload.targetAssertionId,
+      candidate.targetAssertionId !== selection.payload.targetAssertionId
   );
 
 const selectionRevisionChanged = (
   selection: ExecutableSelection,
-  revision: number | null,
-): boolean => selection.route === 'PARTY_UPDATE' && selection.payload.expectedRevision !== revision;
+  revision: number | null
+): boolean =>
+  selection.route === 'PARTY_UPDATE' &&
+  selection.payload.expectedRevision !== revision;
 
 const permitsSelectedAction = (
   decision: AresEvidenceApplication['factDecisions'][number],
-  selection: ExecutableSelection,
-): boolean => decision.outcome === 'APPLY_ENRICHMENT' && decision.route === selection.route;
+  selection: ExecutableSelection
+): boolean =>
+  decision.outcome === 'APPLY_ENRICHMENT' && decision.route === selection.route;
 
 const planSelectedActions = (
   request: AresApplyRequest,
   application: AresEvidenceApplication,
   observation: AresSubjectEvidence,
   correctionCandidates: readonly AresCorrectionReviewHandoff[],
-  revision: number | null,
+  revision: number | null
 ) => {
   const executable: ExecutableSelection[] = [];
   const skipped: AresSkippedAction[] = [];
   for (const selection of request.selections) {
-    const decision = application.factDecisions.find(({ fact }) => fact === selection.fact);
+    const decision = application.factDecisions.find(
+      ({ fact }) => fact === selection.fact
+    );
     if (correctionTargetChanged(selection, correctionCandidates)) {
       return {
         executable,
         skipped,
         deferred: {
           _tag: 'AresApplyDeferred' as const,
-          application: needsConfirmation(application, 'canonical_assertion_changed'),
+          application: needsConfirmation(
+            application,
+            'canonical_assertion_changed'
+          ),
           completed: [] as const,
           correctionCandidates: [],
           skipped,
@@ -566,8 +658,15 @@ const planSelectedActions = (
         },
       };
     }
-    if (decision.outcome === 'NO_CHANGE' && matchesObservation(selection, observation)) {
-      skipped.push({ fact: selection.fact, reason: 'ALREADY_SATISFIED', route: selection.route });
+    if (
+      decision.outcome === 'NO_CHANGE' &&
+      matchesObservation(selection, observation)
+    ) {
+      skipped.push({
+        fact: selection.fact,
+        reason: 'ALREADY_SATISFIED',
+        route: selection.route,
+      });
       continue;
     }
     const permitted = permitsSelectedAction(decision, selection);
@@ -590,7 +689,10 @@ const planSelectedActions = (
         skipped,
         deferred: {
           _tag: 'AresApplyDeferred' as const,
-          application: needsConfirmation(application, 'refreshed_observation_changed'),
+          application: needsConfirmation(
+            application,
+            'refreshed_observation_changed'
+          ),
           completed: [] as const,
           correctionCandidates,
           skipped,
@@ -603,7 +705,10 @@ const planSelectedActions = (
         skipped,
         deferred: {
           _tag: 'AresApplyDeferred' as const,
-          application: needsConfirmation(application, 'canonical_revision_changed'),
+          application: needsConfirmation(
+            application,
+            'canonical_revision_changed'
+          ),
           completed: [] as const,
           correctionCandidates,
           skipped,
@@ -624,35 +729,45 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
     options: AresApplyOptions,
     decidedAt: string,
     decisionEpochMillis: number,
-    clientOptions: { readonly baseUrl?: string | URL },
+    clientOptions: { readonly baseUrl?: string | URL }
   ) {
     if (request.partyRef !== null) {
       const { partyRef } = request;
       const detail = yield* gateway.invoke(
         (authorization) =>
           reads.party(
-            request.selections.some((selection) => selection.route === 'PARTY_CORRECTION')
+            request.selections.some(
+              (selection) => selection.route === 'PARTY_CORRECTION'
+            )
               ? { includeFactHistory: true, partyRef }
               : { partyRef },
             authorization,
             request.correlationId,
-            clientOptions,
+            clientOptions
           ),
-        options.gatewayContext,
+        options.gatewayContext
       );
       const { party } = detail;
       const { revision: loadedRevision } = party;
-      if (!sameParty(party.partyRef, partyRef) || detail.resolution.kind === 'ALIAS') {
+      if (
+        !sameParty(party.partyRef, partyRef) ||
+        detail.resolution.kind === 'ALIAS'
+      ) {
         return yield* invalidSelection(
-          'Choose the canonical Party explicitly before applying ARES evidence',
+          'Choose the canonical Party explicitly before applying ARES evidence'
         );
       }
       const [identifiers, contactPoints] = yield* Effect.all(
         [
           gateway.invoke(
             (authorization) =>
-              reads.identifiers({ partyRef }, authorization, request.correlationId, clientOptions),
-            options.gatewayContext,
+              reads.identifiers(
+                { partyRef },
+                authorization,
+                request.correlationId,
+                clientOptions
+              ),
+            options.gatewayContext
           ),
           gateway.invoke(
             (authorization) =>
@@ -660,25 +775,27 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
                 { includeHistorical: false, partyRef, type: 'ADDRESS' },
                 authorization,
                 request.correlationId,
-                clientOptions,
+                clientOptions
               ),
-            options.gatewayContext,
+            options.gatewayContext
           ),
         ],
-        { concurrency: 2 },
+        { concurrency: 2 }
       );
       const activeIdentifiers = identifiers.items.filter(
         (identifier) =>
           identifier.state === 'ACTIVE' &&
           identifier.validFrom <= decidedAt &&
-          (identifier.validTo === null || identifier.validTo > decidedAt),
+          (identifier.validTo === null || identifier.validTo > decidedAt)
       );
       const registeredAddresses = contactPoints.items.flatMap((point) =>
         point.current &&
         point.value.type === 'ADDRESS' &&
-        point.value.purposes.some((purpose) => purpose.current && purpose.purpose === 'REGISTERED')
+        point.value.purposes.some(
+          (purpose) => purpose.current && purpose.purpose === 'REGISTERED'
+        )
           ? [structuredAddress(point.value.address)]
-          : [],
+          : []
       );
       const canonical: AresCanonicalSnapshot = {
         archived: Option.isSome(party.archivedAt),
@@ -689,22 +806,27 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
             assertion.state === 'ACTIVE' &&
             assertion.factKind === 'DISPLAY_NAME' &&
             sameParty(assertion.partyRef, partyRef) &&
-            DateTime.toEpochMillis(assertion.validFrom) <= decisionEpochMillis &&
+            DateTime.toEpochMillis(assertion.validFrom) <=
+              decisionEpochMillis &&
             (Option.isNone(assertion.validTo) ||
-              DateTime.toEpochMillis(assertion.validTo.value) > decisionEpochMillis)
+              DateTime.toEpochMillis(assertion.validTo.value) >
+                decisionEpochMillis)
               ? [
                   {
                     assertionId: assertion.assertionId,
-                    externalEvidence: Option.getOrNull(assertion.externalEvidence),
+                    externalEvidence: Option.getOrNull(
+                      assertion.externalEvidence
+                    ),
                     fact: 'BUSINESS_NAME' as const,
                     validFrom: DateTime.formatIso(assertion.validFrom),
                     value: assertion.value,
                   },
                 ]
-              : [],
+              : []
           ),
           ...activeIdentifiers.flatMap((assertion) =>
-            assertion.identifierType === 'ICO' && sameParty(assertion.partyRef, partyRef)
+            assertion.identifierType === 'ICO' &&
+            sameParty(assertion.partyRef, partyRef)
               ? [
                   {
                     assertionId: assertion.officialIdentifierRef.resourceId,
@@ -714,7 +836,7 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
                     value: assertion.normalizedValue,
                   },
                 ]
-              : [],
+              : []
           ),
         ],
         icoValues: activeIdentifiers
@@ -729,7 +851,7 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
               observedDic !== null &&
               normalizedValue !== observedDic
             );
-          },
+          }
         ),
         partyType: party.partyType,
         registeredAddresses,
@@ -737,7 +859,7 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
       return { canonical, revision: loadedRevision };
     }
     return { canonical: null, revision: null };
-  },
+  }
 );
 
 /**
@@ -747,11 +869,11 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(
  * Each Action persists its bounded external evidence and owns its independent idempotent commit.
  */
 export const applyAresObservationWithActions = Effect.fn(
-  'ActionGateway.applyAresObservationWithActions',
+  'ActionGateway.applyAresObservationWithActions'
 )(function* applyAresObservationWithActionsEffect<Failure>(
   request: AresApplyRequest,
   invoker: PartyRegistryStandardActionInvoker<Failure>,
-  options: AresApplyOptions = {},
+  options: AresApplyOptions = {}
 ) {
   if (request.selections.length === 0) {
     return {
@@ -764,30 +886,34 @@ export const applyAresObservationWithActions = Effect.fn(
   yield* validateSelectedValues(request, supplied);
   const gateway = options.gateway ?? operationGateway;
   const reads = options.reads ?? (yield* loadDefaultReads());
-  const clientOptions = options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl };
+  const clientOptions =
+    options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl };
   const loadedObservation = yield* gateway.invoke(
     (authorization) =>
       reads.observation(
         { ico: supplied.queryIco },
         authorization,
         request.correlationId,
-        clientOptions,
+        clientOptions
       ),
-    options.gatewayContext,
+    options.gatewayContext
   );
   const observation = yield* decodeReadObservation(loadedObservation).pipe(
-    Effect.mapError(invalidObservation),
+    Effect.mapError(invalidObservation)
   );
   const [suppliedInput, observationInput] = yield* Effect.all(
     [
       Schema.encodeEffect(AresSubjectEvidenceSchema)(supplied),
       Schema.encodeEffect(AresSubjectEvidenceSchema)(observation),
     ],
-    { concurrency: 2 },
+    { concurrency: 2 }
   ).pipe(
     Effect.mapError((error) =>
-      invalidSelection('ARES observation cannot be encoded for policy evaluation', error),
-    ),
+      invalidSelection(
+        'ARES observation cannot be encoded for policy evaluation',
+        error
+      )
+    )
   );
   const decisionTime = yield* DateTime.now;
   const decisionEpochMillis = DateTime.toEpochMillis(decisionTime);
@@ -800,13 +926,13 @@ export const applyAresObservationWithActions = Effect.fn(
     options,
     decidedAt,
     decisionEpochMillis,
-    clientOptions,
+    clientOptions
   );
   const application = yield* Effect.try({
     catch: (error) =>
       invalidSelection(
         'The trusted ARES evidence cannot be evaluated under the owner policy',
-        error,
+        error
       ),
     try: () =>
       AresApplication.deriveAresEvidenceApplication({
@@ -820,7 +946,10 @@ export const applyAresObservationWithActions = Effect.fn(
   const correctionCandidates =
     canonical === null
       ? []
-      : AresApplication.deriveAresCorrectionReviewHandoffs(application, canonical);
+      : AresApplication.deriveAresCorrectionReviewHandoffs(
+          application,
+          canonical
+        );
   if (observationIsStale(supplied, observation, decisionTime)) {
     return {
       _tag: 'AresApplyDeferred' as const,
@@ -830,10 +959,20 @@ export const applyAresObservationWithActions = Effect.fn(
       skipped: [] as const,
     };
   }
-  if (refreshedObservationChanged(request, suppliedInput, observationInput, observation)) {
+  if (
+    refreshedObservationChanged(
+      request,
+      suppliedInput,
+      observationInput,
+      observation
+    )
+  ) {
     return {
       _tag: 'AresApplyDeferred' as const,
-      application: needsConfirmation(application, 'refreshed_observation_changed'),
+      application: needsConfirmation(
+        application,
+        'refreshed_observation_changed'
+      ),
       completed: [] as const,
       correctionCandidates: [],
       skipped: [],
@@ -844,7 +983,7 @@ export const applyAresObservationWithActions = Effect.fn(
     application,
     observation,
     correctionCandidates,
-    revision,
+    revision
   );
   if (deferred !== null) {
     return deferred;
@@ -865,21 +1004,32 @@ export const applyAresObservationWithActions = Effect.fn(
       if (state.partial !== null) {
         return Effect.succeed(state);
       }
-      const decision = application.factDecisions.find(({ fact }) => fact === selection.fact);
+      const decision = application.factDecisions.find(
+        ({ fact }) => fact === selection.fact
+      );
       if (decision === undefined) {
-        return Effect.fail(invalidSelection('Selected fact has no owner decision'));
+        return Effect.fail(
+          invalidSelection('Selected fact has no owner decision')
+        );
       }
       // Logical as-of time of the confirmed observation, stable across delivery retries.
       // The standard Action records its trusted actual acceptance time independently.
       const evidence = AresApplication.makeAresAppliedEvidence(
         { ...application, decidedAt: supplied.servedAt, evidence: supplied },
-        decision,
+        decision
       );
-      return invokeSelection(selection, evidence, invoker, gateway, options.gatewayContext ?? {}, {
-        ...clientOptions,
-        correlationId: request.correlationId,
-        idempotencyKey: selection.idempotencyKey,
-      }).pipe(
+      return invokeSelection(
+        selection,
+        evidence,
+        invoker,
+        gateway,
+        options.gatewayContext ?? {},
+        {
+          ...clientOptions,
+          correlationId: request.correlationId,
+          idempotencyKey: selection.idempotencyKey,
+        }
+      ).pipe(
         Effect.result,
         Effect.map((attempt): ExecutionState => {
           if ('failure' in attempt) {
@@ -900,10 +1050,13 @@ export const applyAresObservationWithActions = Effect.fn(
               },
             };
           }
-          return { completed: [...state.completed, attempt.success], partial: null };
-        }),
+          return {
+            completed: [...state.completed, attempt.success],
+            partial: null,
+          };
+        })
       );
-    },
+    }
   );
   return (
     execution.partial ?? {
@@ -918,7 +1071,7 @@ export const applyAresObservationWithActions = Effect.fn(
 /** Production coordinator: mutations use only the explicit, authenticated standard command API. */
 export const applyAresObservation = (
   request: AresApplyRequest,
-  options: AresApplyOptions = {},
+  options: AresApplyOptions = {}
 ): Effect.Effect<
   AresApplyOutcome<AresApplyCommandError>,
   AresApplySelectionInvalid | AresApplyReadError | GatewayContextClientError
@@ -929,10 +1082,11 @@ export const applyAresObservation = (
         request,
         {
           addContactPoint: commands.addContactPointWithAuthorization,
-          addPartyOfficialIdentifier: commands.addPartyOfficialIdentifierWithAuthorization,
+          addPartyOfficialIdentifier:
+            commands.addPartyOfficialIdentifierWithAuthorization,
           updateParty: commands.updatePartyWithAuthorization,
         },
-        options,
-      ),
-    ),
+        options
+      )
+    )
   );

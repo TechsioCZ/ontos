@@ -14,9 +14,7 @@ This plan complements PR #315. PR #315 supplies the Action permission relation, 
 
 ## User Story
 
-As an OntOS security and deployment operator
-I want every protected entrypoint to declare and prove its authorization policy before production enforcement
-So that missing configuration cannot silently grant access and the fail-closed migration can be measured, reviewed, and promoted without breaking legitimate traffic
+As an OntOS security and deployment operator I want every protected entrypoint to declare and prove its authorization policy before production enforcement So that missing configuration cannot silently grant access and the fail-closed migration can be measured, reviewed, and promoted without breaking legitimate traffic
 
 ## Problem Statement
 

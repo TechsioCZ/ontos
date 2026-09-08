@@ -8,29 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Extend the CRM-owned Customer record with the Czech business identity fields needed for manual entry
-and ARES-assisted creation. Store the fields directly on `crm.customers`; do not introduce an ARES
-subobject, synchronization metadata, address columns, an address table, CZ-NACE codes, or registered
-activity records.
+Extend the CRM-owned Customer record with the Czech business identity fields needed for manual entry and ARES-assisted creation. Store the fields directly on `crm.customers`; do not introduce an ARES subobject, synchronization metadata, address columns, an address table, CZ-NACE codes, or registered activity records.
 
 ## User Story
 
-As a CRM user
-I want a Customer to retain its Czech business identity
-So that the same canonical record can be created manually or prefilled from ARES
+As a CRM user I want a Customer to retain its Czech business identity So that the same canonical record can be created manually or prefilled from ARES
 
 ## Problem Statement
 
-The physical Customer record currently persists only `name`. Later contracts, Actions, and pages
-cannot safely adopt IČO, DIČ, legal form, and lifecycle dates until the owning schema has typed
-columns, tenant invariants, a generated migration, and verified DTO support.
+The physical Customer record currently persists only `name`. Later contracts, Actions, and pages cannot safely adopt IČO, DIČ, legal form, and lifecycle dates until the owning schema has typed columns, tenant invariants, a generated migration, and verified DTO support.
 
 ## Solution Statement
 
-Add nullable `ico`, `dic`, `legalFormCode`, `establishedOn`, and `dissolvedOn` columns to the existing
-Customer table. Keep `name` as the canonical business name populated from ARES `obchodniJmeno`.
-Constrain normalized formats in Drizzle, make non-null IČO unique per tenant across active and
-archived Customers, generate the CRM-owned migration, and update persistence mapping/tests.
+Add nullable `ico`, `dic`, `legalFormCode`, `establishedOn`, and `dissolvedOn` columns to the existing Customer table. Keep `name` as the canonical business name populated from ARES `obchodniJmeno`. Constrain normalized formats in Drizzle, make non-null IČO unique per tenant across active and archived Customers, generate the CRM-owned migration, and update persistence mapping/tests.
 
 ## Relevant Files
 
@@ -57,19 +47,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Define canonical result/field schemas plus normalized columns and constraints directly on
-`crm.customers`, preserving all existing IDs, timestamps, lifecycle behavior, RLS, and table
-inventory.
+Define canonical result/field schemas plus normalized columns and constraints directly on `crm.customers`, preserving all existing IDs, timestamps, lifecycle behavior, RLS, and table inventory.
 
 ### Phase 2: Core Implementation
 
-Generate the CRM migration and expand Customer result/DTO mapping. Mutation payloads, write-service
-mapping, and duplicate-IČO domain errors remain in the later Action task.
+Generate the CRM migration and expand Customer result/DTO mapping. Mutation payloads, write-service mapping, and duplicate-IČO domain errors remain in the later Action task.
 
 ### Phase 3: Integration
 
-Verify migration output, exact schema inventory, tenant isolation, archived-record uniqueness, and
-compatibility with existing rows whose new fields are null.
+Verify migration output, exact schema inventory, tenant isolation, archived-record uniqueness, and compatibility with existing rows whose new fields are null.
 
 ## Step by Step Tasks
 
@@ -109,13 +95,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Assert the typed Drizzle schema, exact inventory, normalized checks, index identity, inferred record
-types, and DTO date/null conversion.
+Assert the typed Drizzle schema, exact inventory, normalized checks, index identity, inferred record types, and DTO date/null conversion.
 
 ### Integration Tests
 
-Apply the CRM migration to the test database and prove tenant isolation, uniqueness, compatibility
-with existing rows, and complete persistence round trips.
+Apply the CRM migration to the test database and prove tenant isolation, uniqueness, compatibility with existing rows, and complete persistence round trips.
 
 ### Edge Cases
 
@@ -160,12 +144,9 @@ Execute every command to validate the feature with zero regressions.
 
 ### Summary
 
-- Added flat reusable Customer business-field schemas, nullable CRM-owned columns, normalized checks,
-  lifecycle-date ordering, and a tenant/IČO unique index that includes archived Customers.
-- Generated the in-place CRM migration and metadata, expanded flat Customer DTO mapping, and made
-  physical verification select every typed CRM column.
-- Added unit and live PostgreSQL coverage for complete and legacy-null records, normalized formats,
-  multiple null IČOs, tenant uniqueness, archived uniqueness, and lifecycle dates.
+- Added flat reusable Customer business-field schemas, nullable CRM-owned columns, normalized checks, lifecycle-date ordering, and a tenant/IČO unique index that includes archived Customers.
+- Generated the in-place CRM migration and metadata, expanded flat Customer DTO mapping, and made physical verification select every typed CRM column.
+- Added unit and live PostgreSQL coverage for complete and legacy-null records, normalized formats, multiple null IČOs, tenant uniqueness, archived uniqueness, and lifecycle dates.
 
 ### Changed Files
 
@@ -175,17 +156,11 @@ Execute every command to validate the feature with zero regressions.
 
 ### Tests Written or Updated
 
-- `verticals/crm/tests/unit/customer-contact-persistence.service.test.ts` — proves complete and
-  legacy-null rows map to flat date-only/null Customer DTOs.
-- `verticals/crm/tests/unit/customer-contact-action-contract.test.ts` — proves reusable IČO, DIČ,
-  legal-form, and real calendar-date schemas plus strict flat Customer results.
-- `verticals/crm/tests/unit/schema-contract.test.ts` — proves inferred record shapes, exact columns,
-  checks, index identity, migration scope, and unchanged table inventory.
-- `verticals/crm/tests/integration/database-boundary.test.ts` — proves nullable migration
-  compatibility, complete round trips, invalid-value rejection, multiple null IČOs, same-tenant
-  active/archived uniqueness, cross-tenant allowance, and equal/reversed lifecycle dates.
-- `verticals/crm/tests/integration/customer-contact-bff.test.ts` — keeps the real BFF fixture aligned
-  with the expanded canonical Customer result.
+- `verticals/crm/tests/unit/customer-contact-persistence.service.test.ts` — proves complete and legacy-null rows map to flat date-only/null Customer DTOs.
+- `verticals/crm/tests/unit/customer-contact-action-contract.test.ts` — proves reusable IČO, DIČ, legal-form, and real calendar-date schemas plus strict flat Customer results.
+- `verticals/crm/tests/unit/schema-contract.test.ts` — proves inferred record shapes, exact columns, checks, index identity, migration scope, and unchanged table inventory.
+- `verticals/crm/tests/integration/database-boundary.test.ts` — proves nullable migration compatibility, complete round trips, invalid-value rejection, multiple null IČOs, same-tenant active/archived uniqueness, cross-tenant allowance, and equal/reversed lifecycle dates.
+- `verticals/crm/tests/integration/customer-contact-bff.test.ts` — keeps the real BFF fixture aligned with the expanded canonical Customer result.
 
 ### Validation
 
@@ -197,20 +172,13 @@ Execute every command to validate the feature with zero regressions.
 - `mise exec -- pnpm --filter @app/crm test:integration` — passed (3 tests) against a disposable migrated PostgreSQL database.
 - `mise exec -- pnpm --filter @app/crm typecheck` — passed after bootstrapping fresh-worktree dependency declarations.
 - `mise exec -- pnpm database-access:check` — passed.
-- `mise exec -- pnpm check` — passed, including format, lint, Action tests, workspace typecheck, API,
-  database, module-entrypoint, contract, and performance gates.
+- `mise exec -- pnpm check` — passed, including format, lint, Action tests, workspace typecheck, API, database, module-entrypoint, contract, and performance gates.
 
 ### Review
 
-- Re-read `../AGENTS.md`, `AGENTS.md`, `docs/architecture/MICROVERTICALS.md`,
-  `docs/architecture/ACTIONS.md`, `docs/architecture/ERRORS.md`,
-  `docs/architecture/ULTRAMODERN.md`, `docs/architecture/DATABASE.md`, and
-  `docs/architecture/DATA_ACCESS.md`; no generator, Action, Effect error, data-access, or deployment
-  seam was bypassed.
-- Fixed review findings by making `db:verify` touch every typed CRM column and explicitly proving
-  multiple null IČOs in one tenant. Also fixed the formatter and lint findings surfaced by the gate.
-- DIČ uses one trimmed non-empty 20-character bound consistently in the contract and database; the
-  related ARES schema publishes no maximum, and no DIČ/IČO coupling was introduced.
+- Re-read `../AGENTS.md`, `AGENTS.md`, `docs/architecture/MICROVERTICALS.md`, `docs/architecture/ACTIONS.md`, `docs/architecture/ERRORS.md`, `docs/architecture/ULTRAMODERN.md`, `docs/architecture/DATABASE.md`, and `docs/architecture/DATA_ACCESS.md`; no generator, Action, Effect error, data-access, or deployment seam was bypassed.
+- Fixed review findings by making `db:verify` touch every typed CRM column and explicitly proving multiple null IČOs in one tenant. Also fixed the formatter and lint findings surfaced by the gate.
+- DIČ uses one trimmed non-empty 20-character bound consistently in the contract and database; the related ARES schema publishes no maximum, and no DIČ/IČO coupling was introduced.
 - No browser review or screenshots were applicable because this change has no user-facing UI.
 
 ### Deviations and Follow-ups

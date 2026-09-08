@@ -2,8 +2,11 @@
 // @ontos-action-owner core.modules
 // @ontos-action-slug change-tenant-module-state
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { InstalledModuleCatalogService } from '../catalog.ts';
+import { OntosModuleIdSchema } from '../manifest.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import {
   TenantModuleStateConcurrentChangeError,
@@ -15,6 +18,7 @@ import {
   TenantModuleStateUnsupportedStateError,
   TenantModuleStateValidationUnavailableError,
 } from '../tenant-module-state-errors.ts';
+import type { TenantModuleStateTransitionError } from '../tenant-module-state-errors.ts';
 import {
   TenantModuleStateSchema,
   persistTenantModuleStateChange,
@@ -24,9 +28,6 @@ import type {
   PersistTenantModuleStateChangeInput,
   PersistTenantModuleStateChangeResult,
 } from '../tenant-module-state-service.ts';
-import type { TenantModuleStateTransitionError } from '../tenant-module-state-errors.ts';
-import { InstalledModuleCatalogService } from '../catalog.ts';
-import { OntosModuleIdSchema } from '../manifest.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -38,11 +39,15 @@ const withOptionalProperty = <
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+  trailing: Trailing
+) =>
+  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
 
 const moduleKeySchema = OntosModuleIdSchema.check(Schema.isMaxLength(128));
-const reasonSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const reasonSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(500)
+);
 
 const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
   expectedState: Schema.optionalKey(TenantModuleStateSchema),
@@ -77,22 +82,29 @@ type ChangeTenantModuleStateDomainEvents = Readonly<
 
 interface ChangeTenantModuleStateServices {
   readonly persist: (
-    input: PersistTenantModuleStateChangeInput,
-  ) => Effect.Effect<PersistTenantModuleStateChangeResult, TenantModuleStateTransitionError>;
+    input: PersistTenantModuleStateChangeInput
+  ) => Effect.Effect<
+    PersistTenantModuleStateChangeResult,
+    TenantModuleStateTransitionError
+  >;
 }
 
 const handleChangeTenantModuleState = Effect.fn(
-  'ChangeTenantModuleStateAction.handleChangeTenantModuleState',
+  'ChangeTenantModuleStateAction.handleChangeTenantModuleState'
 )(function* changeTenantModuleStateHandler(
   payload: ChangeTenantModuleStatePayload,
   context: ActionHandlerContext<
     ChangeTenantModuleStateDomainEvents,
     ChangeTenantModuleStateServices
-  >,
+  >
 ) {
   const installedCatalog = yield* InstalledModuleCatalogService;
   const catalog = yield* installedCatalog.load;
-  yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
+  yield* validateTenantModuleStateTransition(
+    catalog,
+    payload.moduleKey,
+    payload.newState
+  );
   const result = yield* context.services.persist(
     withOptionalProperty(
       withOptionalProperty(
@@ -107,15 +119,15 @@ const handleChangeTenantModuleState = Effect.fn(
           moduleKey: payload.moduleKey,
           newState: payload.newState,
           principalId: context.scope.principalId,
-        },
+        }
       ),
       payload.reason !== undefined,
       'reason',
       payload.reason,
       {
         tenantId: context.scope.tenantId,
-      },
-    ),
+      }
+    )
   );
 
   yield* context.recordDataAccess({
@@ -143,7 +155,10 @@ export const changeTenantModuleStateAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.modules.change-tenant-module-state',
       moduleKey: 'core.modules',
       role: 'action',
@@ -160,5 +175,5 @@ export const changeTenantModuleStateAction = defineAction(
   (transaction) =>
     Effect.succeed({
       persist: (input) => persistTenantModuleStateChange(transaction, input),
-    }),
+    })
 );

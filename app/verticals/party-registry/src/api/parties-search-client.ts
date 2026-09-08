@@ -2,6 +2,7 @@
 // @ontos-contribution-kind search-provider
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
+
 import { PartiesSearchApi } from '../../shared/apis/parties-search.ts';
 import type { PartiesProviderRequest } from '../../shared/apis/parties-search.ts';
 import { operationGateway } from './action-gateway.ts';
@@ -24,7 +25,7 @@ type PartiesSearchOperationInvocation = readonly [
 const partiesClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartiesSearchClientOptions,
+  options: PartiesSearchClientOptions
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,15 +34,19 @@ const partiesClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options,
+    options
   );
 
 export const loadPartiesClientWithAuthorization = (
   payload: PartiesProviderRequest,
-  ...[credential, requestCorrelation, options = {}]: PartiesSearchAuthorizedInvocation
+  ...[
+    credential,
+    requestCorrelation,
+    options = {},
+  ]: PartiesSearchAuthorizedInvocation
 ) =>
   partiesClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.partiesSearch.execute({ payload })),
+    Effect.flatMap((client) => client.partiesSearch.execute({ payload }))
   );
 
 export const loadPartiesClient = (
@@ -49,5 +54,10 @@ export const loadPartiesClient = (
   ...[requestCorrelation, options = {}]: PartiesSearchOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    loadPartiesClientWithAuthorization(payload, credential, requestCorrelation, options),
+    loadPartiesClientWithAuthorization(
+      payload,
+      credential,
+      requestCorrelation,
+      options
+    )
   );

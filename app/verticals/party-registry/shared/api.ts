@@ -1,3 +1,9 @@
+import {
+  MicroVerticalBuildMarkerSchema,
+  MicroVerticalReadinessSchema,
+  createMicroVerticalOperationContext,
+} from '@app/shared-contracts';
+import type { MicroVerticalOperationContext } from '@app/shared-contracts';
 /* eslint-disable oxc/no-barrel-file -- The published Effect API entrypoint composes and exports all governed owner contracts. expires: 2026-12-31. */
 import {
   HttpApi,
@@ -5,12 +11,6 @@ import {
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-import {
-  MicroVerticalBuildMarkerSchema,
-  MicroVerticalReadinessSchema,
-  createMicroVerticalOperationContext,
-} from '@app/shared-contracts';
-import type { MicroVerticalOperationContext } from '@app/shared-contracts';
 import { Brand, identity } from 'effect';
 
 // <generated-governed-http-api-imports>
@@ -25,15 +25,18 @@ import { PartyContactPointDetailApi } from './apis/party-contact-point-detail.ts
 import { PartyContactPointsApi } from './apis/party-contact-points.ts';
 import { PartyCorrectionApi } from './apis/party-correction.ts';
 import { PartyDetailApi } from './apis/party-detail.ts';
-import { PartyMatchApi } from './apis/party-match.ts';
 import { PartyMatchDecisionApi } from './apis/party-match-decision.ts';
+import { PartyMatchApi } from './apis/party-match.ts';
 import { PartyMergeReadinessApi } from './apis/party-merge-readiness.ts';
 import { PartyOfficialIdentifierDetailApi } from './apis/party-official-identifier-detail.ts';
 import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 // </generated-governed-http-api-imports>
-import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
+import {
+  partyRegistryCommandRecoveryApi,
+  partyRegistryCommandsApi,
+} from './command-api.ts';
 import {
   organizationEngagementMutationApi,
   personEngagementMutationApi,
@@ -86,12 +89,14 @@ export type PartyRegistryReadiness = typeof partyRegistryReadinessSchema.Type;
 
 export type OperationContext = MicroVerticalOperationContext;
 
-export const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationApi').add(
+export const partyRegistryFoundationApi = HttpApi.make(
+  'PartyRegistryFoundationApi'
+).add(
   HttpApiGroup.make('foundation').add(
     HttpApiEndpoint.get('readiness', '/party-registry/readiness', {
       success: partyRegistryReadinessSchema,
-    }),
-  ),
+    })
+  )
 );
 
 // PartyMatch remains a read-only UX preview; durable matching is the explicit matchParty command.

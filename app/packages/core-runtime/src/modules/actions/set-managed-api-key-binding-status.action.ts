@@ -2,18 +2,22 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug set-managed-api-key-binding-status
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
-import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const status = Schema.Literals(['active', 'disabled', 'revoked']);
-const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const reason = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(500)
+);
 const SetManagedApiKeyBindingStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     authBindingId: AuthBindingIdSchema,
@@ -42,8 +46,10 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
     payload: SetManagedApiKeyBindingStatusPayload,
     context: ActionHandlerContext<
       Readonly<Record<never, never>>,
-      { readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'] }
-    >,
+      {
+        readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
+      }
+    >
   ) {
     const result = yield* context.services.setStatus({
       ...payload,
@@ -60,7 +66,7 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
       targetResourceType: 'principal-auth-binding',
     });
     return result;
-  },
+  }
 );
 export const setManagedApiKeyBindingStatusAction = defineAction(
   {
@@ -74,7 +80,10 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.set-managed-api-key-binding-status',
       moduleKey: 'core.identity',
       role: 'action',
@@ -90,7 +99,8 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
   },
   handle,
   (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+    const repository =
+      principalManagementRepositoryFromTransaction(transaction);
     return Effect.succeed({ setStatus: repository.setApiKeyBindingStatus });
-  },
+  }
 );

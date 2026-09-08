@@ -1,5 +1,6 @@
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
+
 import type { LookupResult } from '../services/engagement-profile-persistence.service.ts';
 
 export const readUnavailable =
@@ -8,7 +9,7 @@ export const readUnavailable =
     Object.defineProperty(
       new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }),
       'cause',
-      { configurable, value: cause },
+      { configurable, value: cause }
     );
 
 export const requireReadValue =
@@ -17,9 +18,11 @@ export const requireReadValue =
     Match.value(found).pipe(
       Match.tag('found', ({ value }) => Effect.succeed(value)),
       Match.tag('not_found', () =>
-        Effect.fail(new ReadHandlerNotFound({ code: 'read_handler_not_found', reason })),
+        Effect.fail(
+          new ReadHandlerNotFound({ code: 'read_handler_not_found', reason })
+        )
       ),
-      Match.exhaustive,
+      Match.exhaustive
     );
 
 export const readDetailResult = <Value>(result: Value) => ({

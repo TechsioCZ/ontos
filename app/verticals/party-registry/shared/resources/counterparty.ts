@@ -3,6 +3,7 @@
 // @ontos-resource-slug counterparty
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import {
   PartyRegistryResourceIdJsonSchema,
   PartyRegistryTenantIdJsonSchema,
@@ -24,7 +25,8 @@ export const counterpartyResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description: 'Durable tenant-qualified Party and managed Legal Entity commercial context.',
+  description:
+    'Durable tenant-qualified Party and managed Legal Entity commercial context.',
   key: 'party.registry.counterparty',
   label: 'Counterparty',
   owningModuleId: 'party.registry',

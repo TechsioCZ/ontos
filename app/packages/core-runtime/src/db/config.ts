@@ -1,4 +1,13 @@
-import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
+import {
+  Config,
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Redacted,
+  Schema,
+} from 'effect';
+
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
@@ -7,8 +16,11 @@ export { DatabaseConfigError } from './config-error.ts';
 
 export const ROOT_ENV_PATH = APP_ENV_PATH;
 
-const requiredDatabaseUrlSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
-const INVALID_DATABASE_URL_REASON = 'DATABASE_URL must be a valid PostgreSQL connection URL';
+const requiredDatabaseUrlSchema = Schema.Trim.pipe(
+  Schema.check(Schema.isMinLength(1))
+);
+const INVALID_DATABASE_URL_REASON =
+  'DATABASE_URL must be a valid PostgreSQL connection URL';
 
 interface DatabaseConfigFields {
   readonly connectionString: Redacted.Redacted;
@@ -36,9 +48,10 @@ export interface DatabaseConnectionPair {
   readonly runtime: DatabaseConfigValue;
 }
 
-export class DatabaseConfig extends Context.Service<DatabaseConfig, DatabaseConfigValue>()(
-  '@app/core-runtime/db/config/DatabaseConfig',
-) {}
+export class DatabaseConfig extends Context.Service<
+  DatabaseConfig,
+  DatabaseConfigValue
+>()('@app/core-runtime/db/config/DatabaseConfig') {}
 
 export interface DatabaseEnvironment {
   readonly DATABASE_ADMIN_URL?: string;
@@ -50,9 +63,14 @@ export interface LoadDatabaseConfigOptions {
   readonly envPath?: string;
 }
 
-const configFailure = (reason: string, cause?: unknown): DatabaseConfigError => {
+const configFailure = (
+  reason: string,
+  cause?: unknown
+): DatabaseConfigError => {
   const failure = new DatabaseConfigError({ reason });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+  return cause === undefined
+    ? failure
+    : Object.defineProperty(failure, 'cause', { value: cause });
 };
 
 interface ReadDatabaseUrlOptions {
@@ -74,48 +92,59 @@ const hasValidDatabaseFields = ({
   port <= 65_535 &&
   user.length > 0;
 
-const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(function* readDatabaseUrlEffect(
-  options: ReadDatabaseUrlOptions,
-) {
-  const connectionString = yield* Config.schema(
-    Schema.Redacted(requiredDatabaseUrlSchema),
-    options.configKey,
-  )
-    .parse(options.provider)
-    .pipe(Effect.mapError((error) => configFailure(options.requiredReason, error)));
-  const parsed = yield* Schema.decodeEffect(Schema.URLFromString)(
-    Redacted.value(connectionString),
-  ).pipe(Effect.mapError((error) => configFailure(INVALID_DATABASE_URL_REASON, error)));
+const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(
+  function* readDatabaseUrlEffect(options: ReadDatabaseUrlOptions) {
+    const connectionString = yield* Config.schema(
+      Schema.Redacted(requiredDatabaseUrlSchema),
+      options.configKey
+    )
+      .parse(options.provider)
+      .pipe(
+        Effect.mapError((error) => configFailure(options.requiredReason, error))
+      );
+    const parsed = yield* Schema.decodeEffect(Schema.URLFromString)(
+      Redacted.value(connectionString)
+    ).pipe(
+      Effect.mapError((error) =>
+        configFailure(INVALID_DATABASE_URL_REASON, error)
+      )
+    );
 
-  if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
-    return yield* configFailure(INVALID_DATABASE_URL_REASON);
+    if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+      return yield* configFailure(INVALID_DATABASE_URL_REASON);
+    }
+
+    const decoded = yield* Effect.try({
+      catch: (error) => configFailure(INVALID_DATABASE_URL_REASON, error),
+      try: () => ({
+        authorityUser: decodeURIComponent(parsed.username),
+        database: decodeURIComponent(parsed.pathname.replace(/^\/+/u, '')),
+      }),
+    });
+    const host = parsed.hostname;
+    const port =
+      parsed.port.length > 0 ? Math.trunc(Number(parsed.port)) : 5432;
+    const queryUser = parsed.searchParams.getAll('user').at(-1);
+    const user =
+      queryUser === undefined || queryUser.length === 0
+        ? decoded.authorityUser
+        : queryUser;
+
+    if (
+      !hasValidDatabaseFields({ database: decoded.database, host, port, user })
+    ) {
+      return yield* configFailure(INVALID_DATABASE_URL_REASON);
+    }
+
+    return makeDatabaseConfigValue({
+      connectionString,
+      database: decoded.database,
+      host,
+      port,
+      user,
+    });
   }
-
-  const decoded = yield* Effect.try({
-    catch: (error) => configFailure(INVALID_DATABASE_URL_REASON, error),
-    try: () => ({
-      authorityUser: decodeURIComponent(parsed.username),
-      database: decodeURIComponent(parsed.pathname.replace(/^\/+/u, '')),
-    }),
-  });
-  const host = parsed.hostname;
-  const port = parsed.port.length > 0 ? Math.trunc(Number(parsed.port)) : 5432;
-  const queryUser = parsed.searchParams.getAll('user').at(-1);
-  const user =
-    queryUser === undefined || queryUser.length === 0 ? decoded.authorityUser : queryUser;
-
-  if (!hasValidDatabaseFields({ database: decoded.database, host, port, user })) {
-    return yield* configFailure(INVALID_DATABASE_URL_REASON);
-  }
-
-  return makeDatabaseConfigValue({
-    connectionString,
-    database: decoded.database,
-    host,
-    port,
-    user,
-  });
-});
+);
 
 const parseDatabaseConfigWith = (provider: ConfigProvider.ConfigProvider) =>
   readDatabaseUrl({
@@ -124,49 +153,55 @@ const parseDatabaseConfigWith = (provider: ConfigProvider.ConfigProvider) =>
     requiredReason: 'DATABASE_URL is required',
   });
 
-const parseDatabaseConnectionPairWith = Effect.fn('Config.readDatabaseConnectionPair')(
-  function* readDatabaseConnectionPairEffect(provider: ConfigProvider.ConfigProvider) {
-    const [runtime, admin] = yield* Effect.all(
-      [
-        parseDatabaseConfigWith(provider),
-        readDatabaseUrl({
-          configKey: 'DATABASE_ADMIN_URL',
-          provider,
-          requiredReason: 'DATABASE_ADMIN_URL is required',
-        }),
-      ],
-      { concurrency: 1 },
+const parseDatabaseConnectionPairWith = Effect.fn(
+  'Config.readDatabaseConnectionPair'
+)(function* readDatabaseConnectionPairEffect(
+  provider: ConfigProvider.ConfigProvider
+) {
+  const [runtime, admin] = yield* Effect.all(
+    [
+      parseDatabaseConfigWith(provider),
+      readDatabaseUrl({
+        configKey: 'DATABASE_ADMIN_URL',
+        provider,
+        requiredReason: 'DATABASE_ADMIN_URL is required',
+      }),
+    ],
+    { concurrency: 1 }
+  );
+
+  if (
+    admin.connectionString === runtime.connectionString ||
+    admin.user === runtime.user ||
+    runtime.user === 'postgres'
+  ) {
+    return yield* configFailure(
+      'Administrative and runtime PostgreSQL identities must be distinct'
     );
+  }
 
-    if (
-      admin.connectionString === runtime.connectionString ||
-      admin.user === runtime.user ||
-      runtime.user === 'postgres'
-    ) {
-      return yield* configFailure(
-        'Administrative and runtime PostgreSQL identities must be distinct',
-      );
-    }
-
-    return Object.freeze({ admin, runtime });
-  },
-);
+  return Object.freeze({ admin, runtime });
+});
 
 export const parseDatabaseConfig = (
-  environment: DatabaseEnvironment,
+  environment: DatabaseEnvironment
 ): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
-  parseDatabaseConfigWith(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
+  parseDatabaseConfigWith(
+    ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true })
+  );
 
 export const parseDatabaseConnectionPair = (
-  environment: DatabaseEnvironment,
+  environment: DatabaseEnvironment
 ): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> =>
   parseDatabaseConnectionPairWith(
-    ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
+    ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true })
   );
 
 const loadWithProvider = <Value>(
-  parse: (provider: ConfigProvider.ConfigProvider) => Effect.Effect<Value, DatabaseConfigError>,
-  options: LoadDatabaseConfigOptions,
+  parse: (
+    provider: ConfigProvider.ConfigProvider
+  ) => Effect.Effect<Value, DatabaseConfigError>,
+  options: LoadDatabaseConfigOptions
 ): Effect.Effect<Value, DatabaseConfigError> => {
   const environmentProvider =
     options.environment === undefined
@@ -179,19 +214,22 @@ const loadWithProvider = <Value>(
   return loadDotEnvProvider(envPath, configFailure).pipe(
     Effect.withSpan('Config.loadDotEnvProvider'),
     Effect.flatMap((fileProvider) =>
-      parse(ConfigProvider.orElse(environmentProvider, fileProvider)),
-    ),
+      parse(ConfigProvider.orElse(environmentProvider, fileProvider))
+    )
   );
 };
 
 export const loadDatabaseConfig = (
-  options: LoadDatabaseConfigOptions = {},
+  options: LoadDatabaseConfigOptions = {}
 ): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
   loadWithProvider(parseDatabaseConfigWith, options);
 
 export const loadDatabaseConnectionPair = (
-  options: LoadDatabaseConfigOptions = {},
+  options: LoadDatabaseConfigOptions = {}
 ): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> =>
   loadWithProvider(parseDatabaseConnectionPairWith, options);
 
-export const DatabaseConfigLive = Layer.effect(DatabaseConfig, loadDatabaseConfig());
+export const DatabaseConfigLive = Layer.effect(
+  DatabaseConfig,
+  loadDatabaseConfig()
+);

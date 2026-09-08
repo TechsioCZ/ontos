@@ -1,10 +1,14 @@
 import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
+
 import type { CounterpartyRef } from '../resources/counterparty.ts';
 import type { PartyRef } from '../resources/party.ts';
 import type { CounterpartyIsoTimestampSchema } from './counterparty-contract.ts';
-import type { CurrentCounterpartyRole, SearchLegalEntityContext } from './search-result.ts';
 import type { PartySearchProjectionUnavailable } from './search-projection-error.ts';
+import type {
+  CurrentCounterpartyRole,
+  SearchLegalEntityContext,
+} from './search-result.ts';
 
 export interface PartySearchProjectionQuery {
   readonly includeArchived: boolean;
@@ -13,7 +17,9 @@ export interface PartySearchProjectionQuery {
 }
 
 export interface CounterpartySearchProjectionQuery extends PartySearchProjectionQuery {
-  readonly effectiveAt: Schema.Schema.Type<typeof CounterpartyIsoTimestampSchema>;
+  readonly effectiveAt: Schema.Schema.Type<
+    typeof CounterpartyIsoTimestampSchema
+  >;
   readonly legalEntityId: string;
   readonly role?: CurrentCounterpartyRole;
 }
@@ -43,11 +49,17 @@ export interface CounterpartySearchProjectionHit {
 
 export interface PartySearchProjectionGatewayService {
   readonly searchCounterparties: (
-    input: CounterpartySearchProjectionQuery,
-  ) => Effect.Effect<readonly CounterpartySearchProjectionHit[], PartySearchProjectionUnavailable>;
+    input: CounterpartySearchProjectionQuery
+  ) => Effect.Effect<
+    readonly CounterpartySearchProjectionHit[],
+    PartySearchProjectionUnavailable
+  >;
   readonly searchParties: (
-    input: PartySearchProjectionQuery,
-  ) => Effect.Effect<readonly PartySearchProjectionHit[], PartySearchProjectionUnavailable>;
+    input: PartySearchProjectionQuery
+  ) => Effect.Effect<
+    readonly PartySearchProjectionHit[],
+    PartySearchProjectionUnavailable
+  >;
 }
 
 /**
@@ -57,4 +69,6 @@ export interface PartySearchProjectionGatewayService {
 export class PartySearchProjectionGateway extends Context.Service<
   PartySearchProjectionGateway,
   PartySearchProjectionGatewayService
->()('@app/party-registry/shared/domain/search-projection-gateway/PartySearchProjectionGateway') {}
+>()(
+  '@app/party-registry/shared/domain/search-projection-gateway/PartySearchProjectionGateway'
+) {}

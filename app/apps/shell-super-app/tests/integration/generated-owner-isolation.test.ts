@@ -1,36 +1,9 @@
-import { makeContextAccessDouble } from '../support/context-access-double.ts';
-import {
-  makeFaultInjectableCoreDatabase,
-  TestQueryHook,
-} from '../../../../packages/core-runtime/tests/support/database-faults.ts';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
-
-import {
-  Scope as NativeScope,
-  Exit as NativeExit,
-  Clock,
-  Config,
-  ConfigProvider,
-  Effect,
-  Layer,
-  Logger,
-  ManagedRuntime,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
-import {
-  runEffectTestPromise,
-  runEffectTestSync as runNativeSync,
-  makeEffectTestCallback as nativeTestCallback,
-} from '@app/core-runtime/testing/effect-runtime';
-
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
 import test, { after as afterNativeDatabase } from 'node:test';
-import { v1 } from '@authzed/authzed-node';
+import { pathToFileURL } from 'node:url';
+
 import {
   ContextAccess,
   GatewayAssertionRedemptionService,
@@ -51,18 +24,40 @@ import type {
   TrustedPrincipalContext,
   VerticalRuntimeRegistration,
 } from '@app/core-runtime';
-import { defineEffectBff, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
+import {
+  runEffectTestPromise,
+  runEffectTestSync as runNativeSync,
+  makeEffectTestCallback as nativeTestCallback,
+} from '@app/core-runtime/testing/effect-runtime';
+import { v1 } from '@authzed/authzed-node';
+import {
+  defineEffectBff,
+  HttpApiBuilder,
+} from '@modern-js/plugin-bff/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
-
-import { HttpApi } from 'effect/unstable/httpapi';
+import {
+  Scope as NativeScope,
+  Exit as NativeExit,
+  Clock,
+  Config,
+  ConfigProvider,
+  Effect,
+  Layer,
+  Logger,
+  ManagedRuntime,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { TestClock } from 'effect/testing';
+import { HttpApi } from 'effect/unstable/httpapi';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
-import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-principal-verifier/src/server.ts';
+
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
-
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
@@ -85,18 +80,23 @@ import {
   toSpiceDbActionObjectId,
 } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import {
+  makeFaultInjectableCoreDatabase,
+  TestQueryHook,
+} from '../../../../packages/core-runtime/tests/support/database-faults.ts';
+import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-principal-verifier/src/server.ts';
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
+import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import {
   issueGatewayContextAssertion,
   makeGatewayIssuerLayer,
 } from '../../api/auth/gateway-issuer.ts';
-import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
+import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
+import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
 import {
   ShellGovernedReads,
   createShellGovernedReadsLayer,
 } from '../../api/modules/shell-governed-reads.ts';
-import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
-import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
 import {
   ResourceRefSchema,
   ShellProviderUnavailableError,
@@ -104,7 +104,11 @@ import {
   makeShellSearch,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
-import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
+import { makeContextAccessDouble } from '../support/context-access-double.ts';
+import {
+  GENERATED_OWNER,
+  createGeneratedOwnerFixture,
+} from './generated-owner-fixture.ts';
 
 const nativeDatabaseScope = runNativeSync(NativeScope.make());
 
@@ -118,21 +122,26 @@ const withOptionalProperty = <
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+  trailing: Trailing
+) =>
+  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
 
 const TestSpiceDbConfig = Config.all({
-  endpoint: Config.string('SPICEDB_ENDPOINT').pipe(Config.withDefault('localhost:50051')),
-  insecureLocal: Config.boolean('SPICEDB_INSECURE').pipe(Config.withDefault(true)),
+  endpoint: Config.string('SPICEDB_ENDPOINT').pipe(
+    Config.withDefault('localhost:50051')
+  ),
+  insecureLocal: Config.boolean('SPICEDB_INSECURE').pipe(
+    Config.withDefault(true)
+  ),
   preSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY').pipe(
-    Config.withDefault(Redacted.make('ontos-local-development-key')),
+    Config.withDefault(Redacted.make('ontos-local-development-key'))
   ),
 }).pipe(
   Effect.map(({ endpoint, insecureLocal, preSharedKey }) => ({
     endpoint,
     insecureLocal,
     preSharedKey: Redacted.value(preSharedKey),
-  })),
+  }))
 );
 
 const testGatewayAssertionRedemption: GatewayAssertionRedemption = {
@@ -145,7 +154,9 @@ interface OwnerHttpHandler {
 }
 
 const OwnerDetailSchema = Schema.Struct({
-  fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Schema.String })),
+  fields: Schema.Array(
+    Schema.Struct({ label: Schema.String, value: Schema.String })
+  ),
   title: Schema.String,
 });
 const OwnerTimelineSchema = Schema.Struct({
@@ -154,19 +165,24 @@ const OwnerTimelineSchema = Schema.Struct({
       occurredAt: Schema.DateTimeUtcFromString,
       summary: Schema.String,
       timelineEntryId: Schema.String.pipe(Schema.brand('TimelineEntryId')),
-    }),
+    })
   ),
   projectionLagging: Schema.Boolean,
 });
 const OwnerSearchSchema = Schema.Array(
-  Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }),
+  Schema.Struct({ ref: ResourceRefSchema, title: Schema.String })
 );
 
 interface GeneratedOwnerModules {
   // Generated source is imported from a temporary path, so TypeScript cannot retain the private
   // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
   readonly action: ReturnType<typeof getVerticalRuntimeActions>[number];
-  readonly counts: { action: number; detail: number; list: number; search: number };
+  readonly counts: {
+    action: number;
+    detail: number;
+    list: number;
+    search: number;
+  };
   readonly detail: OwnerHttpHandler;
   readonly list: OwnerHttpHandler;
   readonly search: OwnerHttpHandler;
@@ -175,7 +191,7 @@ interface GeneratedOwnerModules {
     options: {
       readonly environment: Readonly<Record<string, string>>;
       readonly redemption: GatewayAssertionRedemption;
-    },
+    }
   ) => Effect.Effect<TrustedPrincipalContext, unknown>;
   readonly wiring: {
     readonly action: boolean;
@@ -191,24 +207,31 @@ const DynamicModuleSchema = Schema.Record(Schema.String, Schema.Unknown);
 type DynamicModule = typeof DynamicModuleSchema.Type;
 const OwnerApiSchema = Schema.declare<OwnerApi>(HttpApi.isHttpApi);
 const OwnerGroupLayerSchema = Schema.declare<OwnerGroupLayer>(Layer.isLayer);
-const VerticalRuntimeRegistrationSchema = Schema.declare<VerticalRuntimeRegistration>(
-  (value): value is VerticalRuntimeRegistration => Predicate.isObjectKeyword(value),
-);
+const VerticalRuntimeRegistrationSchema =
+  Schema.declare<VerticalRuntimeRegistration>(
+    (value): value is VerticalRuntimeRegistration =>
+      Predicate.isObjectKeyword(value)
+  );
 const OwnerCountsSchema = Schema.Struct({
   action: Schema.Number,
   detail: Schema.Number,
   list: Schema.Number,
   search: Schema.Number,
 });
-const OwnerVerifierSchema = Schema.declare<GeneratedOwnerModules['verifyActionPrincipal']>(
-  (value): value is GeneratedOwnerModules['verifyActionPrincipal'] => Predicate.isFunction(value),
+const OwnerVerifierSchema = Schema.declare<
+  GeneratedOwnerModules['verifyActionPrincipal']
+>((value): value is GeneratedOwnerModules['verifyActionPrincipal'] =>
+  Predicate.isFunction(value)
 );
 const EffectRuntimeLayerSchema = Schema.declare<EffectRuntimeLayer>(
-  (value): value is EffectRuntimeLayer => Predicate.isObjectKeyword(value),
+  (value): value is EffectRuntimeLayer => Predicate.isObjectKeyword(value)
 );
 const isEffectRuntimeLayer = Schema.is(EffectRuntimeLayerSchema);
 
-const requiredValue = <Value>(value: Value | null | undefined, label: string): Value => {
+const requiredValue = <Value>(
+  value: Value | null | undefined,
+  label: string
+): Value => {
   if (value === undefined || value === null) {
     throw new TypeError(`${label} is required by the generated-owner fixture`);
   }
@@ -216,13 +239,13 @@ const requiredValue = <Value>(value: Value | null | undefined, label: string): V
 };
 
 const isOperationContextDenied = Schema.is(
-  Schema.Struct({ _tag: Schema.Literal('OperationContextDenied') }),
+  Schema.Struct({ _tag: Schema.Literal('OperationContextDenied') })
 );
 const isCreateRecordRejected = Schema.is(
-  Schema.Struct({ _tag: Schema.Literal('CreateRecordRejected') }),
+  Schema.Struct({ _tag: Schema.Literal('CreateRecordRejected') })
 );
 const isActionHandlerExecutionError = Schema.is(
-  Schema.Struct({ _tag: Schema.Literal('ActionHandlerExecutionError') }),
+  Schema.Struct({ _tag: Schema.Literal('ActionHandlerExecutionError') })
 );
 
 const relationship = (
@@ -230,36 +253,52 @@ const relationship = (
   resourceId: string,
   relation: string,
   subjectType: string,
-  subjectId: string,
+  subjectId: string
 ) =>
   v1.Relationship.create({
     relation,
-    resource: v1.ObjectReference.create({ objectId: resourceId, objectType: resourceType }),
+    resource: v1.ObjectReference.create({
+      objectId: resourceId,
+      objectType: resourceType,
+    }),
     subject: v1.SubjectReference.create({
-      object: v1.ObjectReference.create({ objectId: subjectId, objectType: subjectType }),
+      object: v1.ObjectReference.create({
+        objectId: subjectId,
+        objectType: subjectType,
+      }),
     }),
   });
 
-const makeCatalog = (contract: OntosModuleDeploymentContract): InstalledModuleCatalog =>
-  buildInstalledModuleCatalog([{ contract, expectedAppId: GENERATED_OWNER.appId }]);
+const makeCatalog = (
+  contract: OntosModuleDeploymentContract
+): InstalledModuleCatalog =>
+  buildInstalledModuleCatalog([
+    { contract, expectedAppId: GENERATED_OWNER.appId },
+  ]);
 
 const makeOwnerHandler = (
   api: OwnerApi,
   group: OwnerGroupLayer,
   runtime: ReadRuntimeService,
   loggerLayer: Layer.Layer<never>,
-  configLayer: Layer.Layer<TestClock.TestClock>,
+  configLayer: Layer.Layer<TestClock.TestClock>
 ) => {
   const loggedRuntime: ReadRuntimeService = {
-    runRead: (input) => runtime.runRead(input).pipe(Effect.provide(loggerLayer)),
+    runRead: (input) =>
+      runtime.runRead(input).pipe(Effect.provide(loggerLayer)),
   };
   const ownerLayerCandidate = HttpApiBuilder.layer(api).pipe(
     Layer.provide(group),
     Layer.provide(GatewayPrincipalVerifierLive),
-    Layer.provide(Layer.succeed(GatewayAssertionRedemptionService, testGatewayAssertionRedemption)),
+    Layer.provide(
+      Layer.succeed(
+        GatewayAssertionRedemptionService,
+        testGatewayAssertionRedemption
+      )
+    ),
     Layer.provide(Layer.succeed(ReadRuntime, loggedRuntime)),
     Layer.provide(loggerLayer),
-    Layer.provide(configLayer),
+    Layer.provide(configLayer)
   );
   if (!isEffectRuntimeLayer(ownerLayerCandidate)) {
     throw new TypeError('Generated owner BFF Layer is invalid');
@@ -270,7 +309,9 @@ const makeOwnerHandler = (
   return handler;
 };
 
-const loadClientWiring = async (entrypoints: ReturnType<typeof getVerticalRuntimeEntrypoints>) => {
+const loadClientWiring = async (
+  entrypoints: ReturnType<typeof getVerticalRuntimeEntrypoints>
+) => {
   const [detailClient, listClient, searchClient] = await Promise.all([
     entrypoints.api['resource-detail']?.(),
     entrypoints.api['resource-list']?.(),
@@ -281,18 +322,26 @@ const loadClientWiring = async (entrypoints: ReturnType<typeof getVerticalRuntim
     detailClient:
       detailClient !== undefined &&
       Predicate.isFunction(
-        Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')
-          ?.value,
+        Object.getOwnPropertyDescriptor(
+          detailClient,
+          'executeResourceDetailWithAuthorization'
+        )?.value
       ),
     listClient:
       listClient !== undefined &&
       Predicate.isFunction(
-        Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')?.value,
+        Object.getOwnPropertyDescriptor(
+          listClient,
+          'executeResourceListWithAuthorization'
+        )?.value
       ),
     searchClient:
       searchClient !== undefined &&
       Predicate.isFunction(
-        Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')?.value,
+        Object.getOwnPropertyDescriptor(
+          searchClient,
+          'loadRecordsClientWithAuthorization'
+        )?.value
       ),
   };
 };
@@ -301,7 +350,7 @@ const loadGeneratedOwner = async (
   verticalRoot: string,
   runtime: ReadRuntimeService,
   loggerLayer: Layer.Layer<never>,
-  configLayer: Layer.Layer<TestClock.TestClock>,
+  configLayer: Layer.Layer<TestClock.TestClock>
 ): Promise<GeneratedOwnerModules> => {
   const load = async (relativePath: string): Promise<DynamicModule> => {
     const importedModule: unknown = await import(
@@ -330,44 +379,54 @@ const loadGeneratedOwner = async (
     load('src/isolation/instrumentation.ts'),
     load('vertical.registration.ts'),
   ]);
-  const registration = Schema.decodeUnknownSync(VerticalRuntimeRegistrationSchema)(
-    registrationOwner['isolationOwnerRegistration'],
-  );
+  const registration = Schema.decodeUnknownSync(
+    VerticalRuntimeRegistrationSchema
+  )(registrationOwner['isolationOwnerRegistration']);
   const actions = getVerticalRuntimeActions(registration);
   const entrypoints = getVerticalRuntimeEntrypoints(registration);
   const wiring = await loadClientWiring(entrypoints);
   const generatedAction = actions.find(
-    ({ descriptor }) => descriptor.actionKey === GENERATED_OWNER.actionKey,
+    ({ descriptor }) => descriptor.actionKey === GENERATED_OWNER.actionKey
   );
   if (generatedAction === undefined) {
-    throw new TypeError('Generated Action is missing from the owner runtime registration');
+    throw new TypeError(
+      'Generated Action is missing from the owner runtime registration'
+    );
   }
   return {
     action: generatedAction,
-    counts: Schema.decodeUnknownSync(OwnerCountsSchema)(state['generatedOwnerHandlerCounts']),
+    counts: Schema.decodeUnknownSync(OwnerCountsSchema)(
+      state['generatedOwnerHandlerCounts']
+    ),
     detail: makeOwnerHandler(
       Schema.decodeUnknownSync(OwnerApiSchema)(detailApi['ResourceDetailApi']),
-      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(detailServer['resourceDetailReadApiLive']),
+      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(
+        detailServer['resourceDetailReadApiLive']
+      ),
       runtime,
       loggerLayer,
-      configLayer,
+      configLayer
     ),
     list: makeOwnerHandler(
       Schema.decodeUnknownSync(OwnerApiSchema)(listApi['ResourceListApi']),
-      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(listServer['resourceListReadApiLive']),
+      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(
+        listServer['resourceListReadApiLive']
+      ),
       runtime,
       loggerLayer,
-      configLayer,
+      configLayer
     ),
     search: makeOwnerHandler(
       Schema.decodeUnknownSync(OwnerApiSchema)(searchApi['RecordsSearchApi']),
-      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(searchServer['recordsReadApiLive']),
+      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(
+        searchServer['recordsReadApiLive']
+      ),
       runtime,
       loggerLayer,
-      configLayer,
+      configLayer
     ),
     verifyActionPrincipal: Schema.decodeUnknownSync(OwnerVerifierSchema)(
-      verifier['verifyActionPrincipal'],
+      verifier['verifyActionPrincipal']
     ),
     wiring,
   };
@@ -378,7 +437,7 @@ const requestOwner = async <Payload>(
   path: string,
   payload: Payload,
   authorization: string,
-  correlationId: string,
+  correlationId: string
 ): Promise<Response> =>
   await handler.handler(
     new Request(`https://isolation-owner.example.test${path}`, {
@@ -389,15 +448,21 @@ const requestOwner = async <Payload>(
         'x-correlation-id': correlationId,
       },
       method: 'POST',
-    }),
+    })
   );
 
-const decodeResponse = async <ResponseSchema extends Schema.ConstraintDecoder<unknown>>(
+const decodeResponse = async <
+  ResponseSchema extends Schema.ConstraintDecoder<unknown>,
+>(
   response: Response,
-  schema: ResponseSchema,
-): Promise<ResponseSchema['Type']> => Schema.decodeUnknownSync(schema)(await response.json());
+  schema: ResponseSchema
+): Promise<ResponseSchema['Type']> =>
+  Schema.decodeUnknownSync(schema)(await response.json());
 
-const createOwnerSchema = async (admin: Pool, schemaName: string): Promise<void> => {
+const createOwnerSchema = async (
+  admin: Pool,
+  schemaName: string
+): Promise<void> => {
   const tenantPredicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
   const entityPredicate = `${tenantPredicate} and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   // Dynamic identifiers are generated locally from UUID hex and never accept external input.
@@ -419,20 +484,27 @@ const createOwnerSchema = async (admin: Pool, schemaName: string): Promise<void>
       primary key (tenant_id, legal_entity_id, resource_id)
     )
   `);
-  const configureTable = async (table: string, predicate: string): Promise<void> => {
-    await admin.query(`alter table ${schemaName}.${table} enable row level security`);
-    await admin.query(`alter table ${schemaName}.${table} force row level security`);
+  const configureTable = async (
+    table: string,
+    predicate: string
+  ): Promise<void> => {
     await admin.query(
-      `create policy ${table}_select on ${schemaName}.${table} for select to ontos_runtime using (${predicate})`,
+      `alter table ${schemaName}.${table} enable row level security`
     );
     await admin.query(
-      `create policy ${table}_insert on ${schemaName}.${table} for insert to ontos_runtime with check (${predicate})`,
+      `alter table ${schemaName}.${table} force row level security`
     );
     await admin.query(
-      `create policy ${table}_update on ${schemaName}.${table} for update to ontos_runtime using (${predicate}) with check (${predicate})`,
+      `create policy ${table}_select on ${schemaName}.${table} for select to ontos_runtime using (${predicate})`
     );
     await admin.query(
-      `create policy ${table}_delete on ${schemaName}.${table} for delete to ontos_runtime using (${predicate})`,
+      `create policy ${table}_insert on ${schemaName}.${table} for insert to ontos_runtime with check (${predicate})`
+    );
+    await admin.query(
+      `create policy ${table}_update on ${schemaName}.${table} for update to ontos_runtime using (${predicate}) with check (${predicate})`
+    );
+    await admin.query(
+      `create policy ${table}_delete on ${schemaName}.${table} for delete to ontos_runtime using (${predicate})`
     );
   };
   await Promise.all([
@@ -441,7 +513,7 @@ const createOwnerSchema = async (admin: Pool, schemaName: string): Promise<void>
   ]);
   await admin.query(`grant usage on schema ${schemaName} to ontos_runtime`);
   await admin.query(
-    `grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`,
+    `grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`
   );
 };
 
@@ -455,12 +527,16 @@ type RuntimeActionRegistration = ActionRegistration<
   unknown
 >;
 
-const RuntimeActionRegistrationSchema = Schema.declare<RuntimeActionRegistration>(
-  (value): value is RuntimeActionRegistration => Predicate.isObjectKeyword(value),
-);
+const RuntimeActionRegistrationSchema =
+  Schema.declare<RuntimeActionRegistration>(
+    (value): value is RuntimeActionRegistration =>
+      Predicate.isObjectKeyword(value)
+  );
 const isRuntimeActionRegistration = Schema.is(RuntimeActionRegistrationSchema);
 
-const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseService => {
+const failingEvidenceDatabase = (
+  database: CoreDatabaseService
+): CoreDatabaseService => {
   const transactionOverride = {
     transaction: (runInTransaction, configuration) =>
       database.executor.transaction(
@@ -474,17 +550,17 @@ const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseSer
                         cause: new Error('Injected SQL failure'),
                         message: 'Injected evidence persistence failure',
                       }),
-                    }),
+                    })
                   )
-                : Effect.void,
-            ),
+                : Effect.void
+            )
           ),
-        configuration,
+        configuration
       ),
   } satisfies Pick<CoreDatabaseService['executor'], 'transaction'>;
   const executor: CoreDatabaseService['executor'] = Object.assign(
     Object.create(database.executor),
-    transactionOverride,
+    transactionOverride
   );
   return { executor };
 };
@@ -496,14 +572,16 @@ const capturedLoggerLayer = (entries: string[]) =>
     }),
   ]);
 
-const ignorePromiseFailure = <Value>(operation: () => Promise<Value>): Effect.Effect<void> =>
+const ignorePromiseFailure = <Value>(
+  operation: () => Promise<Value>
+): Effect.Effect<void> =>
   Effect.tryPromise({ catch: () => null, try: operation }).pipe(Effect.ignore);
 
 const principal = (
   tenantId: string,
   legalEntityId: string,
   principalId: string,
-  authBindingId: string,
+  authBindingId: string
 ): TrustedPrincipalContext => ({
   authBindingId,
   authContextRef: `better-auth-session:${authBindingId}`,
@@ -515,26 +593,40 @@ const principal = (
 
 test('Codesmith composes the disposable owner Action and receiving read BFFs', async () => {
   const fixture = await createGeneratedOwnerFixture(
-    `generated_owner_${randomUUID().replaceAll('-', '')}`,
+    `generated_owner_${randomUUID().replaceAll('-', '')}`
   );
   const contract = await deriveOntosModuleDeploymentContract({
     vertical: GENERATED_OWNER.slug,
     workspaceRoot: fixture.root,
   });
   const compileRuntime: ReadRuntimeService = {
-    runRead: () => Effect.die(new Error('The compile fixture must not execute a governed read')),
+    runRead: () =>
+      Effect.die(
+        new Error('The compile fixture must not execute a governed read')
+      ),
   };
   const generated = await loadGeneratedOwner(
     fixture.verticalRoot,
     compileRuntime,
     capturedLoggerLayer([]),
-    TestClock.layer(),
+    TestClock.layer()
   );
   try {
-    assert.deepEqual(makeCatalog(contract).getByModuleId(GENERATED_OWNER.moduleId), contract);
-    assert.equal(generated.action.descriptor.actionKey, GENERATED_OWNER.actionKey);
+    assert.deepEqual(
+      makeCatalog(contract).getByModuleId(GENERATED_OWNER.moduleId),
+      contract
+    );
+    assert.equal(
+      generated.action.descriptor.actionKey,
+      GENERATED_OWNER.actionKey
+    );
     assert.equal(generated.action.descriptor.legalEntityScope, 'required');
-    assert.deepEqual(generated.counts, { action: 0, detail: 0, list: 0, search: 0 });
+    assert.deepEqual(generated.counts, {
+      action: 0,
+      detail: 0,
+      list: 0,
+      search: 0,
+    });
     assert.deepEqual(generated.wiring, {
       action: true,
       detailClient: true,
@@ -567,16 +659,23 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   const deniedResourceId = randomUUID();
   const testClockLayer = TestClock.layer();
   const effectRuntime = ManagedRuntime.make(testClockLayer);
-  const connections = await effectRuntime.runPromise(loadDatabaseConnectionPair());
+  const connections = await effectRuntime.runPromise(
+    loadDatabaseConnectionPair()
+  );
   assert.equal(connections.runtime.user, 'ontos_runtime');
-  const admin = new Pool({ connectionString: connections.admin.connectionString });
+  const admin = new Pool({
+    connectionString: connections.admin.connectionString,
+  });
   // Shell and the independently deployed owner hold separate nested read transactions in this
   // in-process fixture, so the shared test pool needs more than one physical connection.
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 4 });
+  const runtimePool = new Pool({
+    connectionString: connections.runtime.connectionString,
+    max: 4,
+  });
   const runtimeDatabase = await runEffectTestPromise(
     makeFaultInjectableCoreDatabase(connections.runtime).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
+      NativeScope.provide(nativeDatabaseScope)
+    )
   );
   const fixture = await createGeneratedOwnerFixture(schemaName);
   const contract = await deriveOntosModuleDeploymentContract({
@@ -591,19 +690,30 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     testSpiceDb.endpoint,
     testSpiceDb.insecureLocal
       ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-      : v1.ClientSecurity.SECURE,
+      : v1.ClientSecurity.SECURE
   );
-  const permissionClient = createSpiceDbPermissionClient(testSpiceDb, SPICEDB_CHECK_TIMEOUT_MS);
+  const permissionClient = createSpiceDbPermissionClient(
+    testSpiceDb,
+    SPICEDB_CHECK_TIMEOUT_MS
+  );
   const contextAccess = makeContextAccess(permissionClient);
   const moduleStates = makeTenantModuleStateService(runtimeDatabase);
   const moduleStateGate = makeModuleStateGate(moduleStates);
   const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
   const scopeResolver = makeOperationalScopeResolver(
     makeOperationalScopeRepository(runtimeDatabase),
-    contextAccess,
+    contextAccess
   );
-  const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess);
-  const keyPair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+  const readRuntime = makeReadRuntime(
+    runtimeDatabase,
+    moduleGateway,
+    scopeResolver,
+    contextAccess
+  );
+  const keyPair = await generateKeyPair('EdDSA', {
+    crv: 'Ed25519',
+    extractable: true,
+  });
   const privateJwk = await exportJWK(keyPair.privateKey);
   const publicJwk = await exportJWK(keyPair.publicKey);
   const issuerConfiguration: GatewayIssuerConfigValue = {
@@ -633,17 +743,23 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   };
   const verifierConfigLayer = Layer.merge(
     testClockLayer,
-    ConfigProvider.layer(ConfigProvider.fromUnknown(verifierEnvironment)),
+    ConfigProvider.layer(ConfigProvider.fromUnknown(verifierEnvironment))
   );
   const generated = await loadGeneratedOwner(
     fixture.verticalRoot,
     readRuntime,
     loggerLayer,
-    verifierConfigLayer,
+    verifierConfigLayer
   );
-  const handlers: OwnerHttpHandler[] = [generated.detail, generated.list, generated.search];
+  const handlers: OwnerHttpHandler[] = [
+    generated.detail,
+    generated.list,
+    generated.search,
+  ];
   let assertionCount = 0;
-  const issueAuthorization = async (principalContext: TrustedPrincipalContext) =>
+  const issueAuthorization = async (
+    principalContext: TrustedPrincipalContext
+  ) =>
     await effectRuntime.runPromise(
       issueGatewayContextAssertion({
         audience: GENERATED_OWNER.appId,
@@ -652,7 +768,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         Effect.provide(
           makeGatewayIssuerLayer({
             currentTimeSeconds: Clock.currentTimeMillis.pipe(
-              Effect.map((milliseconds) => Math.floor(milliseconds / 1000)),
+              Effect.map((milliseconds) => Math.floor(milliseconds / 1000))
             ),
             generateJti: Effect.sync(() => {
               assertionCount += 1;
@@ -660,10 +776,10 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
             }),
             loadAudiences: Effect.succeed(new Set([GENERATED_OWNER.appId])),
             loadConfig: Effect.succeed(issuerConfiguration),
-          }),
+          })
         ),
-        Effect.map(({ token }) => `Bearer ${token}`),
-      ),
+        Effect.map(({ token }) => `Bearer ${token}`)
+      )
     );
   const principalA1 = principal(tenantA, entityA1, principalA, bindingA);
   const principalB1 = principal(tenantB, entityB1, principalB, bindingB);
@@ -681,23 +797,23 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               context.authBindingId !== undefined,
               'authBindingId',
               context.authBindingId,
-              {},
+              {}
             ),
             context.authContextRef !== undefined,
             'authContextRef',
             context.authContextRef,
-            {},
+            {}
           ),
           context.impersonatedByPrincipalId !== undefined,
           'impersonatedByPrincipalId',
           context.impersonatedByPrincipalId,
-          {},
+          {}
         ),
         context.legalEntityId !== undefined,
         'legalEntityId',
         context.legalEntityId,
-        {},
-      ),
+        {}
+      )
     );
   const resourceRef = Schema.decodeUnknownSync(ResourceRefSchema)({
     moduleId: GENERATED_OWNER.moduleId,
@@ -709,33 +825,45 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     ['tenant', tenantB],
     [
       'legal_entity',
-      requiredValue(toLegalEntityAccessObjectId(tenantA, entityA1), 'Tenant A legal entity'),
+      requiredValue(
+        toLegalEntityAccessObjectId(tenantA, entityA1),
+        'Tenant A legal entity'
+      ),
     ],
     [
       'legal_entity',
-      requiredValue(toLegalEntityAccessObjectId(tenantB, entityB1), 'Tenant B legal entity'),
+      requiredValue(
+        toLegalEntityAccessObjectId(tenantB, entityB1),
+        'Tenant B legal entity'
+      ),
     ],
     [
       'module_access',
       requiredValue(
         toModuleAccessObjectId(tenantA, entityA1, GENERATED_OWNER.moduleId),
-        'Tenant A module access',
+        'Tenant A module access'
       ),
     ],
     [
       'module_access',
       requiredValue(
         toModuleAccessObjectId(tenantB, entityB1, GENERATED_OWNER.moduleId),
-        'Tenant B module access',
+        'Tenant B module access'
       ),
     ],
     [
       'resource',
-      requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource'),
+      requiredValue(
+        toResourceAccessObjectId(tenantA, entityA1, resourceRef),
+        'Tenant A resource'
+      ),
     ],
     [
       'resource',
-      requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource'),
+      requiredValue(
+        toResourceAccessObjectId(tenantB, entityB1, resourceRef),
+        'Tenant B resource'
+      ),
     ],
     ['action', toSpiceDbActionObjectId(GENERATED_OWNER.actionKey)],
   ];
@@ -744,7 +872,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     await createOwnerSchema(admin, schemaName);
     await admin.query(
       `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $3, 'Generated tenant A', 'active', 'en'), ($2, $4, 'Generated tenant B', 'active', 'en')`,
-      [tenantA, tenantB, `generated-a-${tenantA}`, `generated-b-${tenantB}`],
+      [tenantA, tenantB, `generated-a-${tenantA}`, `generated-b-${tenantB}`]
     );
     await admin.query(
       `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $5, 'A1', 'CZ', $7, 'active'), ($2, $5, 'A2', 'CZ', $8, 'active'), ($3, $6, 'B1', 'CZ', $9, 'active'), ($4, $6, 'B2', 'CZ', $10, 'active')`,
@@ -759,11 +887,11 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         `A2-${entityA2}`,
         `B1-${entityB1}`,
         `B2-${entityB2}`,
-      ],
+      ]
     );
     await admin.query(
       `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Generated principal A', 'active'), ($2, $4, 'human', 'Generated principal B', 'active')`,
-      [principalA, principalB, tenantA, tenantB],
+      [principalA, principalB, tenantA, tenantB]
     );
     await admin.query(
       `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
@@ -776,44 +904,52 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         principalB,
         `user-${principalA}`,
         `user-${principalB}`,
-      ],
+      ]
     );
     await admin.query(
       `insert into core.tenant_module_states (tenant_id, module_key, state) values ($1, $3, 'active'), ($2, $3, 'active')`,
-      [tenantA, tenantB, GENERATED_OWNER.moduleId],
+      [tenantA, tenantB, GENERATED_OWNER.moduleId]
     );
     await admin.query(
       `insert into ${schemaName}.tenant_records (tenant_id, resource_id, title) values ($1, $3, 'Tenant A list'), ($2, $3, 'Tenant B list')`,
-      [tenantA, tenantB, collidingResourceId],
+      [tenantA, tenantB, collidingResourceId]
     );
     await admin.query(
       `insert into ${schemaName}.entity_records (tenant_id, legal_entity_id, resource_id, title) values ($1, $2, $7, 'A1 searchable'), ($1, $3, $7, 'A2 searchable'), ($4, $5, $7, 'B1 searchable'), ($4, $6, $7, 'B2 searchable')`,
-      [tenantA, entityA1, entityA2, tenantB, entityB1, entityB2, collidingResourceId],
+      [
+        tenantA,
+        entityA1,
+        entityA2,
+        tenantB,
+        entityB1,
+        entityB2,
+        collidingResourceId,
+      ]
     );
 
     const legalA = requiredValue(
       toLegalEntityAccessObjectId(tenantA, entityA1),
-      'Tenant A legal entity',
+      'Tenant A legal entity'
     );
     const legalB = requiredValue(
       toLegalEntityAccessObjectId(tenantB, entityB1),
-      'Tenant B legal entity',
+      'Tenant B legal entity'
     );
     const moduleA = requiredValue(
       toModuleAccessObjectId(tenantA, entityA1, GENERATED_OWNER.moduleId),
-      'Tenant A module access',
+      'Tenant A module access'
     );
     const moduleB = requiredValue(
       toModuleAccessObjectId(tenantB, entityB1, GENERATED_OWNER.moduleId),
-      'Tenant B module access',
+      'Tenant B module access'
     );
     const resourceA = requiredValue(
       toResourceAccessObjectId(tenantA, entityA1, resourceRef),
-      'Tenant A resource',
+      'Tenant A resource'
     );
     const resourceB = requiredValue(
       toResourceAccessObjectId(tenantB, entityB1, resourceRef),
-      'Tenant B resource',
+      'Tenant B resource'
     );
     const actionId = toSpiceDbActionObjectId(GENERATED_OWNER.actionKey);
     const relationships = [
@@ -823,10 +959,34 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       relationship('legal_entity', legalA, 'member', 'principal', principalA),
       relationship('legal_entity', legalB, 'tenant', 'tenant', tenantB),
       relationship('legal_entity', legalB, 'member', 'principal', principalB),
-      relationship('module_access', moduleA, 'legal_entity', 'legal_entity', legalA),
-      relationship('module_access', moduleA, 'accessor', 'principal', principalA),
-      relationship('module_access', moduleB, 'legal_entity', 'legal_entity', legalB),
-      relationship('module_access', moduleB, 'accessor', 'principal', principalB),
+      relationship(
+        'module_access',
+        moduleA,
+        'legal_entity',
+        'legal_entity',
+        legalA
+      ),
+      relationship(
+        'module_access',
+        moduleA,
+        'accessor',
+        'principal',
+        principalA
+      ),
+      relationship(
+        'module_access',
+        moduleB,
+        'legal_entity',
+        'legal_entity',
+        legalB
+      ),
+      relationship(
+        'module_access',
+        moduleB,
+        'accessor',
+        'principal',
+        principalB
+      ),
       relationship('resource', resourceA, 'module', 'module_access', moduleA),
       relationship('resource', resourceA, 'reader', 'principal', principalA),
       relationship('resource', resourceB, 'module', 'module_access', moduleB),
@@ -840,9 +1000,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           v1.RelationshipUpdate.create({
             operation: v1.RelationshipUpdate_Operation.TOUCH,
             relationship: item,
-          }),
+          })
         ),
-      }),
+      })
     );
 
     const ownerSearchProbe = await requestOwner(
@@ -850,13 +1010,20 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       `/${GENERATED_OWNER.moduleId}/search/records`,
       { query: 'searchable' },
       await issueAuthorization(principalA1),
-      randomUUID(),
+      randomUUID()
     );
-    const ownerSearchProbeBody = await decodeResponse(ownerSearchProbe, OwnerSearchSchema);
-    assert.equal(ownerSearchProbe.status, 200, JSON.stringify(ownerSearchProbeBody));
+    const ownerSearchProbeBody = await decodeResponse(
+      ownerSearchProbe,
+      OwnerSearchSchema
+    );
+    assert.equal(
+      ownerSearchProbe.status,
+      200,
+      JSON.stringify(ownerSearchProbeBody)
+    );
     assert.deepEqual(
       ownerSearchProbeBody.map(({ title }) => title),
-      ['A1 searchable'],
+      ['A1 searchable']
     );
 
     const catalog = makeCatalog(contract);
@@ -875,7 +1042,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 '/reads/resource-detail',
                 { resourceId: ref.resourceId },
                 authorization,
-                correlationId,
+                correlationId
               );
               if (!response.ok) {
                 throw new Error('Owner detail request failed');
@@ -896,12 +1063,15 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 '/reads/resource-list',
                 { resourceId: ref.resourceId },
                 authorization,
-                correlationId,
+                correlationId
               );
               if (!response.ok) {
                 throw new Error('Owner list request failed');
               }
-              const timeline = await decodeResponse(response, OwnerTimelineSchema);
+              const timeline = await decodeResponse(
+                response,
+                OwnerTimelineSchema
+              );
               return Schema.encodeSync(OwnerTimelineSchema)(timeline);
             },
           }),
@@ -920,7 +1090,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 `/${GENERATED_OWNER.moduleId}/search/records`,
                 { query },
                 authorization,
-                correlationId,
+                correlationId
               );
               if (!response.ok) {
                 throw new Error('Owner search request failed');
@@ -932,9 +1102,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     } satisfies ShellResourceGateways;
     assert.deepEqual(
       await effectRuntime.runPromise(
-        moduleStates.getTenantModuleStates(tenantA, [GENERATED_OWNER.moduleId]),
+        moduleStates.getTenantModuleStates(tenantA, [GENERATED_OWNER.moduleId])
       ),
-      [{ moduleKey: GENERATED_OWNER.moduleId, state: 'active' }],
+      [{ moduleKey: GENERATED_OWNER.moduleId, state: 'active' }]
     );
     assert.deepEqual(
       await effectRuntime.runPromise(
@@ -943,9 +1113,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           moduleIds: [GENERATED_OWNER.moduleId],
           principalId: principalA,
           tenantId: tenantA,
-        }),
+        })
       ),
-      [{ decision: 'allowed', key: GENERATED_OWNER.moduleId }],
+      [{ decision: 'allowed', key: GENERATED_OWNER.moduleId }]
     );
     assert.deepEqual(
       await effectRuntime.runPromise(
@@ -954,14 +1124,14 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           principalId: principalA,
           resources: [resourceRef],
           tenantId: tenantA,
-        }),
+        })
       ),
       [
         {
           decision: 'allowed',
           key: `${GENERATED_OWNER.moduleId}:${GENERATED_OWNER.resourceType}:${collidingResourceId}`,
         },
-      ],
+      ]
     );
     assert.deepEqual(
       await effectRuntime.runPromise(
@@ -971,14 +1141,14 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           correlationId: randomUUID(),
           query: 'searchable',
           searchKey: `${GENERATED_OWNER.moduleId}.records`,
-        }),
+        })
       ),
       [
         {
           ref: resourceRef,
           title: 'A1 searchable',
         },
-      ],
+      ]
     );
     const directShellSearch = makeShellSearch(
       {
@@ -991,19 +1161,25 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           }),
         moduleStates,
       },
-      gateway.search,
+      gateway.search
     );
     assert.deepEqual(
       await effectRuntime.runPromise(
         directShellSearch.search(
-          { ...principalA1, correlationId: randomUUID(), legalEntityId: entityA1 },
-          'searchable',
-        ),
+          {
+            ...principalA1,
+            correlationId: randomUUID(),
+            legalEntityId: entityA1,
+          },
+          'searchable'
+        )
       ),
       {
         partial: false,
-        results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
-      },
+        results: [
+          { kind: 'resource', ref: resourceRef, title: 'A1 searchable' },
+        ],
+      }
     );
     const shellLayer = createShellGovernedReadsLayer(
       gateway,
@@ -1014,21 +1190,23 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
             try: async () => await issueProviderAuthorization(context),
           }),
       },
-      (transaction) => makeTenantModuleStateService({ executor: transaction }),
+      (transaction) => makeTenantModuleStateService({ executor: transaction })
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(ReadRuntime, readRuntime),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(TenantModuleStateService, moduleStates),
-          Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
+          Layer.succeed(ShellInstalledModuleCatalog, {
+            load: Effect.succeed(catalog),
+          }),
           ShellCompositionFactoryLive,
-          ShellResourceServicesFactoryLive,
-        ),
-      ),
+          ShellResourceServicesFactoryLive
+        )
+      )
     );
     const shellReads = await effectRuntime.runPromise(
-      ShellGovernedReads.pipe(Effect.provide(shellLayer)),
+      ShellGovernedReads.pipe(Effect.provide(shellLayer))
     );
 
     const searchA = await effectRuntime.runPromise(
@@ -1036,48 +1214,52 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         correlationId: randomUUID(),
         principal: principalA1,
         query: 'searchable',
-      }),
+      })
     );
     const detailA = await effectRuntime.runPromise(
       shellReads.resourceDetail({
         correlationId: randomUUID(),
         principal: principalA1,
         ref: resourceRef,
-      }),
+      })
     );
     const searchB = await effectRuntime.runPromise(
       shellReads.search({
         correlationId: randomUUID(),
         principal: principalB1,
         query: 'searchable',
-      }),
+      })
     );
     const detailB = await effectRuntime.runPromise(
       shellReads.resourceDetail({
         correlationId: randomUUID(),
         principal: principalB1,
         ref: resourceRef,
-      }),
+      })
     );
     assert.deepEqual(
       searchA.results.map(({ title }) => title),
-      ['A1 searchable'],
+      ['A1 searchable']
     );
     assert.equal(detailA.detail.title, 'A1 searchable');
     assert.deepEqual(
       detailA.timeline.map(({ summary }) => summary),
-      ['Tenant A list'],
+      ['Tenant A list']
     );
     assert.deepEqual(
       searchB.results.map(({ title }) => title),
-      ['B1 searchable'],
+      ['B1 searchable']
     );
     assert.equal(detailB.detail.title, 'B1 searchable');
     assert.deepEqual(
       detailB.timeline.map(({ summary }) => summary),
-      ['Tenant B list'],
+      ['Tenant B list']
     );
-    assert.equal(assertionCount, 9, 'every provider attempt must receive a fresh assertion');
+    assert.equal(
+      assertionCount,
+      9,
+      'every provider attempt must receive a fresh assertion'
+    );
 
     capturedLogs.length = 0;
     const beforeForgedShell = { ...generated.counts };
@@ -1087,9 +1269,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           correlationId: randomUUID(),
           principal: principal(tenantA, entityA2, principalA, bindingA),
           ref: resourceRef,
-        }),
+        })
       ),
-      isOperationContextDenied,
+      isOperationContextDenied
     );
     await assert.rejects(
       effectRuntime.runPromise(
@@ -1097,9 +1279,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           correlationId: randomUUID(),
           principal: principal(tenantB, entityB1, principalA, bindingA),
           ref: resourceRef,
-        }),
+        })
       ),
-      isOperationContextDenied,
+      isOperationContextDenied
     );
     assert.deepEqual(generated.counts, beforeForgedShell);
     assert.equal(assertionCount, 9);
@@ -1115,16 +1297,19 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           '/reads/resource-detail',
           { resourceId: collidingResourceId },
           authorization,
-          randomUUID(),
+          randomUUID()
         );
         assert.equal(response.status, 403);
         const problem = JSON.stringify(await response.json());
         assert.doesNotMatch(
           problem,
-          new RegExp([tenantA, tenantB, entityA2, entityB1].join('|'), 'u'),
+          new RegExp([tenantA, tenantB, entityA2, entityB1].join('|'), 'u')
         );
-        assert.doesNotMatch(problem, /postgres|spicedb|permission check|row-level/iu);
-      }),
+        assert.doesNotMatch(
+          problem,
+          /postgres|spicedb|permission check|row-level/iu
+        );
+      })
     );
     assert.deepEqual(generated.counts, beforeForgedShell);
 
@@ -1135,7 +1320,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       '/reads/resource-detail',
       { resourceId: deniedResourceId },
       deniedAuthorization,
-      randomUUID(),
+      randomUUID()
     );
     assert.equal(deniedResponse.status, 403);
     assert.equal(generated.counts.detail, deniedBefore);
@@ -1146,7 +1331,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       result_count: number;
     }>(
       `select outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and target_resource_id = $2`,
-      [tenantA, deniedResourceId],
+      [tenantA, deniedResourceId]
     );
     assert.deepEqual(deniedEvidence.rows, [
       {
@@ -1158,74 +1343,84 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     ]);
 
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
-    const unavailableResolver: OperationalScopeResolverService = makeOperationalScopeResolver(
-      makeOperationalScopeRepository(runtimeDatabase),
-      unavailableContextAccess,
-    );
+    const unavailableResolver: OperationalScopeResolverService =
+      makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtimeDatabase),
+        unavailableContextAccess
+      );
     const unavailableRuntime = makeReadRuntime(
       runtimeDatabase,
       moduleGateway,
       unavailableResolver,
-      unavailableContextAccess,
+      unavailableContextAccess
     );
     const unavailableOwner = await loadGeneratedOwner(
       fixture.verticalRoot,
       unavailableRuntime,
       loggerLayer,
-      verifierConfigLayer,
+      verifierConfigLayer
     );
-    handlers.push(unavailableOwner.detail, unavailableOwner.list, unavailableOwner.search);
+    handlers.push(
+      unavailableOwner.detail,
+      unavailableOwner.list,
+      unavailableOwner.search
+    );
     const unavailableBefore = generated.counts.detail;
     const unavailableResponse = await requestOwner(
       unavailableOwner.detail,
       '/reads/resource-detail',
       { resourceId: collidingResourceId },
       await issueAuthorization(principalA1),
-      randomUUID(),
+      randomUUID()
     );
     assert.equal(unavailableResponse.status, 503);
     assert.equal(generated.counts.detail, unavailableBefore);
     assert.doesNotMatch(
       JSON.stringify(await unavailableResponse.json()),
-      /postgres|spicedb|permission check|row-level/iu,
+      /postgres|spicedb|permission check|row-level/iu
     );
 
     const evidenceFailureRuntime = makeReadRuntime(
       failingEvidenceDatabase(runtimeDatabase),
       moduleGateway,
       scopeResolver,
-      contextAccess,
+      contextAccess
     );
     const evidenceFailureOwner = await loadGeneratedOwner(
       fixture.verticalRoot,
       evidenceFailureRuntime,
       loggerLayer,
-      verifierConfigLayer,
+      verifierConfigLayer
     );
     handlers.push(
       evidenceFailureOwner.detail,
       evidenceFailureOwner.list,
-      evidenceFailureOwner.search,
+      evidenceFailureOwner.search
     );
     const evidenceFailureResponse = await requestOwner(
       evidenceFailureOwner.detail,
       '/reads/resource-detail',
       { resourceId: collidingResourceId },
       await issueAuthorization(principalA1),
-      randomUUID(),
+      randomUUID()
     );
     assert.equal(evidenceFailureResponse.status, 503);
-    assert.doesNotMatch(JSON.stringify(await evidenceFailureResponse.json()), /A1 searchable/u);
+    assert.doesNotMatch(
+      JSON.stringify(await evidenceFailureResponse.json()),
+      /A1 searchable/u
+    );
 
     const actionRuntime = makeActionRuntime(
       runtimeDatabase,
       makeActionRepository(),
       makeActionPermissionService(permissionClient),
       scopeResolver,
-      { moduleEntrypointGateway: moduleGateway, moduleStateGate },
+      { moduleEntrypointGateway: moduleGateway, moduleStateGate }
     );
     if (!isRuntimeActionRegistration(generated.action)) {
-      throw new TypeError('Generated Action registration is missing its runtime handler');
+      throw new TypeError(
+        'Generated Action registration is missing its runtime handler'
+      );
     }
     const actionRegistration = generated.action;
     const invokeAction = async (
@@ -1236,14 +1431,14 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         readonly tenantId: string;
         readonly title: string;
       },
-      idempotencyKey: string,
+      idempotencyKey: string
     ) => {
       const authorization = await issueAuthorization(trustedPrincipal);
       const verified = await effectRuntime.runPromise(
         generated.verifyActionPrincipal(authorization, {
           environment: verifierEnvironment,
           redemption: testGatewayAssertionRedemption,
-        }),
+        })
       );
       return await effectRuntime.runPromise(
         actionRuntime
@@ -1259,7 +1454,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               targetResourceType: GENERATED_OWNER.resourceType,
             },
           })
-          .pipe(Effect.provide(loggerLayer)),
+          .pipe(Effect.provide(loggerLayer))
       );
     };
     const validWriteId = randomUUID();
@@ -1272,9 +1467,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           tenantId: tenantA,
           title: 'A1 action write',
         },
-        randomUUID(),
+        randomUUID()
       ),
-      { created: true },
+      { created: true }
     );
     await Promise.all(
       [
@@ -1294,9 +1489,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         async (payload) =>
           await assert.rejects(
             invokeAction(principalA1, payload, randomUUID()),
-            isCreateRecordRejected,
-          ),
-      ),
+            isCreateRecordRejected
+          )
+      )
     );
     const beforeForgedAction = generated.counts.action;
     await assert.rejects(
@@ -1308,9 +1503,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           tenantId: tenantA,
           title: 'forged action scope',
         },
-        randomUUID(),
+        randomUUID()
       ),
-      isOperationContextDenied,
+      isOperationContextDenied
     );
     assert.equal(generated.counts.action, beforeForgedAction);
 
@@ -1323,23 +1518,25 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           tenantId: tenantA,
           title: 'trigger safe logging defect',
         },
-        randomUUID(),
+        randomUUID()
       ),
-      isActionHandlerExecutionError,
+      isActionHandlerExecutionError
     );
 
     const ownerRows = await admin.query<{
       legal_entity_id: string;
       tenant_id: string;
       title: string;
-    }>(`select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`);
+    }>(
+      `select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`
+    );
     assert.equal(
       ownerRows.rows.some(({ title }) => title === 'A1 action write'),
-      true,
+      true
     );
     assert.equal(
       ownerRows.rows.some(({ title }) => title.startsWith('forbidden')),
-      false,
+      false
     );
 
     const allowedEvidence = await admin.query<{
@@ -1348,62 +1545,81 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       query_hash: null;
     }>(
       `select evidence_policy_key, outcome, query_hash from core.data_access_events where tenant_id in ($1, $2) and outcome = 'allowed' order by evidence_policy_key`,
-      [tenantA, tenantB],
+      [tenantA, tenantB]
     );
     assert.ok(allowedEvidence.rows.length >= 10);
     assert.equal(
       allowedEvidence.rows.every(({ outcome }) => outcome === 'allowed'),
-      true,
+      true
     );
     assert.equal(
       allowedEvidence.rows.every(({ query_hash }) => query_hash === null),
-      true,
+      true
     );
 
     const unscopedEntityRows = await runtimePool.query(
-      `select * from ${schemaName}.entity_records`,
+      `select * from ${schemaName}.entity_records`
     );
     assert.equal(
       unscopedEntityRows.rowCount,
       0,
-      'a reused pooled connection must not retain transaction-local scope',
+      'a reused pooled connection must not retain transaction-local scope'
     );
     const unscopedTenantRows = await runtimePool.query(
-      `select * from ${schemaName}.tenant_records`,
+      `select * from ${schemaName}.tenant_records`
     );
     assert.equal(unscopedTenantRows.rowCount, 0);
 
-    assert.ok(capturedLogs.length > 0, 'the generated-owner path must capture runtime logs');
+    assert.ok(
+      capturedLogs.length > 0,
+      'the generated-owner path must capture runtime logs'
+    );
     const capturedLogText = capturedLogs.join('\n');
     assert.match(capturedLogText, /Unexpected Action execution defect/u);
     assert.doesNotMatch(
       capturedLogText,
       new RegExp(
-        [tenantB, entityA2, entityB1, entityB2, principalB, bindingB, deniedResourceId].join('|'),
-        'u',
-      ),
+        [
+          tenantB,
+          entityA2,
+          entityB1,
+          entityB2,
+          principalB,
+          bindingB,
+          deniedResourceId,
+        ].join('|'),
+        'u'
+      )
     );
     assert.doesNotMatch(
       capturedLogText,
-      /postgres|spicedb|row-level|database operation scope|permission check/iu,
+      /postgres|spicedb|row-level|database operation scope|permission check/iu
     );
 
     const generatedActionSource = await readFile(
       `${fixture.verticalRoot}/src/actions/create-record.action.ts`,
-      'utf-8',
+      'utf-8'
     );
     const generatedServerSource = await readFile(
       `${fixture.verticalRoot}/api/resource-detail-read-server.ts`,
-      'utf-8',
+      'utf-8'
     );
-    assert.match(generatedActionSource, /@generated by OntOS Codesmith Action/u);
+    assert.match(
+      generatedActionSource,
+      /@generated by OntOS Codesmith Action/u
+    );
     assert.match(generatedActionSource, /legalEntityScope: 'required'/u);
     assert.match(generatedServerSource, /authenticateOperationPrincipal/u);
     assert.match(generatedServerSource, /makeGovernedReadHttpHandler\(\{/u);
     assert.match(generatedServerSource, /registration: resourceDetailRead/u);
-    assert.doesNotMatch(generatedServerSource, /yield\* ReadRuntime|\.runRead\(/u);
+    assert.doesNotMatch(
+      generatedServerSource,
+      /yield\* ReadRuntime|\.runRead\(/u
+    );
   } finally {
-    await Promise.allSettled(handlers.map(async ({ dispose }) => await dispose()));
+    await Promise.allSettled(
+      handlers.map(async ({ dispose }) => await dispose())
+    );
     await effectRuntime.runPromise(
       Effect.forEach(
         touchedObjects.toReversed(),
@@ -1416,69 +1632,73 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                     optionalResourceId: resourceId,
                     resourceType,
                   }),
-                }),
-              ),
+                })
+              )
           ),
-        { concurrency: 1, discard: true },
-      ),
+        { concurrency: 1, discard: true }
+      )
     );
     permissionClient.close();
     spiceAdmin.close();
     const cleanupQueries = [
       async () =>
-        await admin.query('delete from core.outbox_messages where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.outbox_messages where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.domain_events where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.domain_events where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.data_access_events where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.data_access_events where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.audit_events where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.audit_events where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.action_invocations where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.action_invocations where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.tenant_module_states where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.tenant_module_states where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.principal_auth_bindings where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.principal_auth_bindings where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.principals where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.principals where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.legal_entities where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
+        await admin.query(
+          'delete from core.legal_entities where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
       async () =>
-        await admin.query('delete from core.tenants where tenant_id in ($1, $2)', [
-          tenantA,
-          tenantB,
-        ]),
-      async () => await admin.query(`drop schema if exists ${schemaName} cascade`),
+        await admin.query(
+          'delete from core.tenants where tenant_id in ($1, $2)',
+          [tenantA, tenantB]
+        ),
+      async () =>
+        await admin.query(`drop schema if exists ${schemaName} cascade`),
     ];
     await effectRuntime.runPromise(
-      Effect.forEach(cleanupQueries, ignorePromiseFailure, { concurrency: 1, discard: true }),
+      Effect.forEach(cleanupQueries, ignorePromiseFailure, {
+        concurrency: 1,
+        discard: true,
+      })
     );
     await runtimePool.end();
     await admin.end();
@@ -1487,5 +1707,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   }
 });
 afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(
+    nativeTestCallback
+  )
 );

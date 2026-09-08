@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A6 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) targets repeated request
  * identity inputs and asks for ambient services/references plus one instrumentation seam.
@@ -24,22 +26,32 @@
  * Report-only, with no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
-import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
+import {
+  keyName as staticKeyName,
+  parentOf,
+  unwrapBinding,
+} from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { compile, stringList } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
-const DEFAULT_AMBIENT_KEYS: readonly string[] = ['correlationId', 'traceId', 'traceparent'];
+const DEFAULT_AMBIENT_KEYS: readonly string[] = [
+  'correlationId',
+  'traceId',
+  'traceparent',
+];
 // Source-verified boundary/value declarations, not an exemption for their nested operations.
 const DEFAULT_WIRE_TYPE_NAMES =
   '(Problem|Headers|Payload|Response|Request|Schema)$|^(OutboxClaim|requireCorrelationId|safeCorrelationId)$';
-const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+];
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Type members are only inspected inside a real object-type body. */
@@ -66,16 +78,23 @@ function readOptions(raw: unknown): RuleOptions {
   const ambientKeys = stringList(given.ambientKeys, DEFAULT_AMBIENT_KEYS);
   const includePaths = stringList(given.includePaths, DEFAULT_INCLUDE_PATHS);
   return {
-    ambientKeys: new Set(ambientKeys.length > 0 ? ambientKeys : DEFAULT_AMBIENT_KEYS),
+    ambientKeys: new Set(
+      ambientKeys.length > 0 ? ambientKeys : DEFAULT_AMBIENT_KEYS
+    ),
     ignore: stringList(given.ignore, DEFAULT_IGNORE),
-    includePaths: includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
-    includeTests: typeof given.includeTests === 'boolean' ? given.includeTests : false,
+    includePaths:
+      includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
+    includeTests:
+      typeof given.includeTests === 'boolean' ? given.includeTests : false,
     wireTypeNames: compile(given.wireTypeNames, DEFAULT_WIRE_TYPE_NAMES),
   };
 }
 
 function scopePath(filename: string): string {
-  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
+  return rootedScopePath(
+    filename,
+    fileURLToPath(new URL('../../../../', import.meta.url))
+  );
 }
 
 /** Private fields are accepted here in addition to the shared static-key policy. */
@@ -115,9 +134,18 @@ function declarationName(node: AnyNode): string | null {
 
 function stopsOwnerSearch(node: AnyNode): boolean {
   if (node.type === 'BlockStatement') return true;
-  if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') return false;
+  if (
+    node.type !== 'ArrowFunctionExpression' &&
+    node.type !== 'FunctionExpression'
+  )
+    return false;
   const parent = parentOf(node);
-  return !parent || !['VariableDeclarator', 'Property', 'MethodDefinition'].includes(parent.type);
+  return (
+    !parent ||
+    !['VariableDeclarator', 'Property', 'MethodDefinition'].includes(
+      parent.type
+    )
+  );
 }
 
 /**
@@ -136,7 +164,10 @@ function enclosingNames(node: AnyNode): readonly string[] {
 }
 
 /** Keys declared by an inline object type on a destructured parameter, so they report only once. */
-function inlineMemberKeys(annotation: AnyNode | null | undefined, depth = 0): ReadonlySet<string> {
+function inlineMemberKeys(
+  annotation: AnyNode | null | undefined,
+  depth = 0
+): ReadonlySet<string> {
   const keys = new Set<string>();
   if (annotation === null || annotation === undefined || depth > 4) return keys;
   const node =
@@ -160,24 +191,30 @@ function addInlinePropertyNames(node: AnyNode, keys: Set<string>): void {
   }
 }
 
-function inlineTypeChildren(node: AnyNode): readonly (AnyNode | null | undefined)[] {
+function inlineTypeChildren(
+  node: AnyNode
+): readonly (AnyNode | null | undefined)[] {
   if (TYPE_WRAPPERS.has(node.type)) {
     const wrapper = node as { typeAnnotation?: AnyNode; elementType?: AnyNode };
     return [wrapper.typeAnnotation ?? wrapper.elementType];
   }
-  if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') return node.types;
+  if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType')
+    return node.types;
   if (node.type !== 'TSTypeLiteral') return [];
   return node.members.flatMap((member) =>
-    member.type === 'TSPropertySignature' ? [member.typeAnnotation] : [],
+    member.type === 'TSPropertySignature' ? [member.typeAnnotation] : []
   );
 }
 
-function importedContextBinding(definition: Variable['defs'][number]): string | null {
+function importedContextBinding(
+  definition: Variable['defs'][number]
+): string | null {
   const declaration = definition.parent;
   if (declaration?.type !== 'ImportDeclaration') return null;
   const specifier = definition.node;
   if (declaration.importKind === 'type') return null;
-  if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
+  if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type')
+    return null;
   return contextImportName(declaration.source.value, specifier);
 }
 
@@ -186,31 +223,44 @@ function contextImportName(source: string, specifier: AnyNode): string | null {
     return specifier.type === 'ImportSpecifier'
       ? `Context.${keyName(specifier.imported, false)}`
       : 'Context';
-  if (source !== 'effect' && source !== '@modern-js/plugin-bff/effect-edge') return null;
+  if (source !== 'effect' && source !== '@modern-js/plugin-bff/effect-edge')
+    return null;
   if (specifier.type === 'ImportNamespaceSpecifier') return '$root';
-  return specifier.type === 'ImportSpecifier' ? keyName(specifier.imported, false) : null;
+  return specifier.type === 'ImportSpecifier'
+    ? keyName(specifier.imported, false)
+    : null;
 }
 
 function variableContextBinding(
   context: Context,
   node: AnyNode,
-  seen: Set<Variable>,
+  seen: Set<Variable>
 ): string | null {
   const variable = lookupVariable(context, node);
   if (!variable || seen.has(variable)) return null;
   seen.add(variable);
   const definition = variable.defs[0];
-  if (definition?.type === 'ImportBinding') return importedContextBinding(definition);
-  if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return null;
+  if (definition?.type === 'ImportBinding')
+    return importedContextBinding(definition);
+  if (
+    definition?.type !== 'Variable' ||
+    definition.node.type !== 'VariableDeclarator'
+  )
+    return null;
   if (!definition.node.init) return null;
-  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  if (
+    variable.references.some(
+      (reference) => reference.isWrite() && !reference.init
+    )
+  )
+    return null;
   return contextBinding(context, definition.node.init, seen);
 }
 
 function contextBinding(
   context: Context,
   node: AnyNode,
-  seen = new Set<Variable>(),
+  seen = new Set<Variable>()
 ): string | null {
   if (
     [
@@ -222,12 +272,21 @@ function contextBinding(
       'ChainExpression',
     ].includes(node.type)
   )
-    return contextBinding(context, (node as unknown as { expression: AnyNode }).expression, seen);
-  if (node.type === 'CallExpression') return contextBinding(context, node.callee, seen);
+    return contextBinding(
+      context,
+      (node as unknown as { expression: AnyNode }).expression,
+      seen
+    );
+  if (node.type === 'CallExpression')
+    return contextBinding(context, node.callee, seen);
   if (node.type === 'MemberExpression') {
     const base = contextBinding(context, node.object, seen);
     const key = keyName(node.property, node.computed);
-    return base === null || key === null ? null : base === '$root' ? key : `${base}.${key}`;
+    return base === null || key === null
+      ? null
+      : base === '$root'
+        ? key
+        : `${base}.${key}`;
   }
   return variableContextBinding(context, node, seen);
 }
@@ -237,14 +296,19 @@ function isAmbientOrReadType(context: Context, from: AnyNode): boolean {
   let node = parentOf(from);
   while (node) {
     if (
-      ['TSAsExpression', 'TSTypeAssertion', 'TSTypePredicate', 'TSSatisfiesExpression'].includes(
-        node.type,
-      )
+      [
+        'TSAsExpression',
+        'TSTypeAssertion',
+        'TSTypePredicate',
+        'TSSatisfiesExpression',
+      ].includes(node.type)
     )
       return true;
     if (
       node.type === 'CallExpression' &&
-      /^Context\.(?:Tag|Reference|GenericTag|Service)$/u.test(contextBinding(context, node) ?? '')
+      /^Context\.(?:Tag|Reference|GenericTag|Service)$/u.test(
+        contextBinding(context, node) ?? ''
+      )
     )
       return true;
     if (
@@ -263,8 +327,14 @@ function isAmbientOrReadType(context: Context, from: AnyNode): boolean {
   return false;
 }
 
-function isConciseWireProjection(owner: AnyNode, wireTypeNames: RegExp): boolean {
-  if (owner.type !== 'ArrowFunctionExpression' || owner.body.type !== 'ObjectExpression')
+function isConciseWireProjection(
+  owner: AnyNode,
+  wireTypeNames: RegExp
+): boolean {
+  if (
+    owner.type !== 'ArrowFunctionExpression' ||
+    owner.body.type !== 'ObjectExpression'
+  )
     return false;
   const output = owner.returnType?.typeAnnotation;
   return (
@@ -287,7 +357,11 @@ function isWireProjection(from: AnyNode, wireTypeNames: RegExp): boolean {
     ].includes(owner.type)
   ) {
     if (
-      ['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression'].includes(owner.type)
+      [
+        'ArrowFunctionExpression',
+        'FunctionDeclaration',
+        'FunctionExpression',
+      ].includes(owner.type)
     )
       return isConciseWireProjection(owner, wireTypeNames);
     owner = parentOf(owner);
@@ -329,7 +403,8 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
+            description:
+              'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
           },
           includeTests: {
             type: 'boolean',
@@ -379,7 +454,7 @@ export const rule = defineRule({
       node: AnyNode,
       from: AnyNode,
       messageId: 'threadedField' | 'threadedParameter',
-      key: string,
+      key: string
     ): void => {
       const names = enclosingNames(from);
       if (isWireEdge(names)) return;
@@ -387,20 +462,34 @@ export const rule = defineRule({
         if (isAmbientOrReadType(context, from)) return;
         if (isWireProjection(from, options.wireTypeNames)) return;
       }
-      context.report({ data: { key, owner: names[0] ?? '<anonymous>' }, messageId, node });
+      context.report({
+        data: { key, owner: names[0] ?? '<anonymous>' },
+        messageId,
+        node,
+      });
     };
 
     /** Report every ambient key destructured by a parameter pattern (top level + one nesting). */
-    const inspectPattern = (pattern: AnyNode, skip: ReadonlySet<string>, depth: number): void => {
+    const inspectPattern = (
+      pattern: AnyNode,
+      skip: ReadonlySet<string>,
+      depth: number
+    ): void => {
       if (pattern.type !== 'ObjectPattern') return;
-      for (const property of (pattern as { properties: readonly AnyNode[] }).properties) {
+      for (const property of (pattern as { properties: readonly AnyNode[] })
+        .properties) {
         if (property.type !== 'Property') continue;
-        const entry = property as unknown as { key: AnyNode; computed: boolean; value: AnyNode };
+        const entry = property as unknown as {
+          key: AnyNode;
+          computed: boolean;
+          value: AnyNode;
+        };
         const name = keyName(entry.key, entry.computed);
         if (name !== null && options.ambientKeys.has(name) && !skip.has(name)) {
           report(entry.key, property, 'threadedParameter', name);
         }
-        if (depth < 1) inspectPattern(unwrapBinding(entry.value), skip, depth + 1);
+        if (depth < 1)
+          inspectPattern(unwrapBinding(entry.value), skip, depth + 1);
       }
     };
 
@@ -410,13 +499,14 @@ export const rule = defineRule({
         const binding = unwrapBinding(param);
         if (binding.type === 'Identifier') {
           const name = (binding as { name: string }).name;
-          if (options.ambientKeys.has(name)) report(binding, binding, 'threadedParameter', name);
+          if (options.ambientKeys.has(name))
+            report(binding, binding, 'threadedParameter', name);
           continue;
         }
         // An inline object type on the pattern declares the same keys; let the member visitor
         // report those so `({ correlationId }: { readonly correlationId: string })` counts once.
         const skip = inlineMemberKeys(
-          (binding as { typeAnnotation?: AnyNode | null }).typeAnnotation,
+          (binding as { typeAnnotation?: AnyNode | null }).typeAnnotation
         );
         inspectPattern(binding, skip, 0);
       }
@@ -446,12 +536,20 @@ export const rule = defineRule({
       TSAbstractPropertyDefinition: inspectClassField,
       TSAbstractAccessorProperty: inspectClassField,
       TSPropertySignature(node) {
-        const signature = node as unknown as { key: AnyNode; computed: boolean };
+        const signature = node as unknown as {
+          key: AnyNode;
+          computed: boolean;
+        };
         const parent = parentOf(node as unknown as AnyNode);
         if (parent === null || !MEMBER_CONTAINERS.has(parent.type)) return;
         const name = keyName(signature.key, signature.computed);
         if (name === null || !options.ambientKeys.has(name)) return;
-        report(signature.key, node as unknown as AnyNode, 'threadedField', name);
+        report(
+          signature.key,
+          node as unknown as AnyNode,
+          'threadedField',
+          name
+        );
       },
     };
   },

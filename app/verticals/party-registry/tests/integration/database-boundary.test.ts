@@ -1,18 +1,22 @@
+import assert from 'node:assert/strict';
+import test, { after as afterNativeDatabase } from 'node:test';
+// @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
+
 import {
   makeEffectTestCallback as nativeTestCallback,
   runEffectTestPromise,
   runEffectTestSync as runNativeSync,
 } from '@app/core-runtime/testing/effect-runtime';
-
-import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
-// @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
-
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import assert from 'node:assert/strict';
-import test, { after as afterNativeDatabase } from 'node:test';
+import {
+  DateTime,
+  Effect,
+  Exit as NativeExit,
+  Scope as NativeScope,
+} from 'effect';
 import type { Pool } from 'pg';
+
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
@@ -36,16 +40,24 @@ import {
   partyRelationships,
 } from '../../src/db/schema.ts';
 import type { PartyTransaction } from '../../src/db/types.ts';
+import {
+  hasPostgreSqlCode,
+  openBoundaryDatabases,
+} from '../support/database-boundary.ts';
 
 const nativeDatabaseScope = runNativeSync(NativeScope.make());
 afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(
+    nativeTestCallback
+  )
 );
 
 /** Both boundary roles read the same owned schema through the scope closed after these tests. */
 const openPartyDatabase = async (pool: Pool) =>
   await runEffectTestPromise(
-    makeTestDatabaseFromPool(pool, partyRelations).pipe(NativeScope.provide(nativeDatabaseScope)),
+    makeTestDatabaseFromPool(pool, partyRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope)
+    )
   );
 
 const tenantA = 'a1000000-0000-4000-8000-000000000001';
@@ -72,7 +84,8 @@ const principalA = 'ab000000-0000-4000-8000-000000000001';
 const fixtureTenants = [tenantA, tenantB] as const;
 
 test('enforces Party owner invariants, tenant isolation, and independent fact lifecycles', async () => {
-  const { admin, adminPool, runtime, runtimePool } = await openBoundaryDatabases(openPartyDatabase);
+  const { admin, adminPool, runtime, runtimePool } =
+    await openBoundaryDatabases(openPartyDatabase);
 
   // Ordered child-before-parent so every delete respects the owned foreign keys.
   const cleanup = async (): Promise<void> => {
@@ -96,33 +109,35 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           partyOfficialIdentifiers,
           partyFactAssertions,
           parties,
-        ].map((table) => admin.delete(table).where(inArray(table.tenantId, fixtureTenants))),
-      ),
+        ].map((table) =>
+          admin.delete(table).where(inArray(table.tenantId, fixtureTenants))
+        )
+      )
     );
   };
 
   const withTenant = <Value, Failure>(
     tenantId: string,
-    operation: (transaction: PartyTransaction) => Effect.Effect<Value, Failure>,
+    operation: (transaction: PartyTransaction) => Effect.Effect<Value, Failure>
   ): Promise<Value> =>
     runEffectTestPromise(
       runtime.transaction((transaction) =>
         Effect.gen(function* transactionTestBody() {
           yield* transaction.execute(
             sql`select set_config('ontos.tenant_id', ${tenantId}, true)`,
-            'objects',
+            'objects'
           );
           return yield* operation(transaction);
-        }),
-      ),
+        })
+      )
     );
 
   try {
     const runtimeRole = await runEffectTestPromise(
       runtime.execute<{ rolbypassrls: boolean; rolsuper: boolean }>(
         sql`select rolbypassrls, rolsuper from pg_roles where rolname = current_user`,
-        'objects',
-      ),
+        'objects'
+      )
     );
     assert.deepEqual(runtimeRole, [{ rolbypassrls: false, rolsuper: false }]);
     await cleanup();
@@ -151,30 +166,40 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           partyId: partyOrganizationB,
           tenantId: tenantB,
         },
-      ]),
+      ])
     );
 
     const [unnamedParty] = await runEffectTestPromise(
       admin
         .select({ displayName: parties.currentDisplayName })
         .from(parties)
-        .where(eq(parties.partyId, partyOrganizationB)),
+        .where(eq(parties.partyId, partyOrganizationB))
     );
     assert.equal(unnamedParty?.displayName, null);
 
-    assert.deepEqual(await runEffectTestPromise(runtime.select().from(parties)), []);
+    assert.deepEqual(
+      await runEffectTestPromise(runtime.select().from(parties)),
+      []
+    );
     assert.deepEqual(
       await withTenant(tenantA, (transaction) =>
-        transaction.select({ partyId: parties.partyId }).from(parties).orderBy(parties.partyId),
+        transaction
+          .select({ partyId: parties.partyId })
+          .from(parties)
+          .orderBy(parties.partyId)
       ),
       [
         { partyId: partyOrganizationA },
         { partyId: partyOrganizationA2 },
         { partyId: partyPersonA },
-      ],
+      ]
     );
 
-    const identifierValues = (tenantId: string, partyId: string, identifierId: string) => ({
+    const identifierValues = (
+      tenantId: string,
+      partyId: string,
+      identifierId: string
+    ) => ({
       acceptedByActionInvocationId: actionA,
       acceptedByPrincipalId: principalA,
       identifierTypeKey: 'ICO',
@@ -186,9 +211,13 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       provenanceMethod: 'AUTHORITATIVE_LOOKUP',
       provenanceSource: 'ARES',
       tenantId,
-      validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+      validFrom: DateTime.toDateUtc(
+        DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+      ),
       verificationState: 'VERIFIED',
-      verifiedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+      verifiedAt: DateTime.toDateUtc(
+        DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+      ),
     });
     const externalEvidence = {
       authorityPolicyKey: 'party_registry.ares_enrichment' as const,
@@ -214,7 +243,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         },
         identifierValues(tenantA, partyOrganizationA2, identifierA2),
         identifierValues(tenantB, partyOrganizationB, identifierB),
-      ]),
+      ])
     );
     const [persistedExternalEvidence] = await runEffectTestPromise(
       admin
@@ -223,12 +252,15 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           validFrom: partyOfficialIdentifiers.validFrom,
         })
         .from(partyOfficialIdentifiers)
-        .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+        .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA))
     );
-    assert.deepEqual(persistedExternalEvidence?.externalEvidence, externalEvidence);
+    assert.deepEqual(
+      persistedExternalEvidence?.externalEvidence,
+      externalEvidence
+    );
     assert.notEqual(
       persistedExternalEvidence?.validFrom.toISOString(),
-      externalEvidence.observedAt,
+      externalEvidence.observedAt
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -237,9 +269,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           .set({
             externalEvidence: sql`${JSON.stringify({ ...externalEvidence, rawPayload: { forbidden: true } })}::jsonb`,
           })
-          .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+          .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA))
       ),
-      hasPostgreSqlCode('23514'),
+      hasPostgreSqlCode('23514')
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -248,9 +280,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           .set({
             externalEvidence: sql`${JSON.stringify({ ...externalEvidence, provider: null })}::jsonb`,
           })
-          .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA)),
+          .where(eq(partyOfficialIdentifiers.officialIdentifierId, identifierA))
       ),
-      hasPostgreSqlCode('23514'),
+      hasPostgreSqlCode('23514')
     );
     await runEffectTestPromise(
       admin.insert(partyIdentifierClaims).values([
@@ -272,7 +304,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           partyId: partyOrganizationB,
           tenantId: tenantB,
         },
-      ]),
+      ])
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -283,9 +315,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           officialIdentifierId: identifierA2,
           partyId: partyOrganizationA2,
           tenantId: tenantA,
-        }),
+        })
       ),
-      hasPostgreSqlCode('23505'),
+      hasPostgreSqlCode('23505')
     );
 
     const contactEvidence = {
@@ -296,7 +328,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       privacyClassification: 'PERSONAL',
       provenanceMethod: 'DECLARED',
       provenanceSource: 'USER',
-      validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+      validFrom: DateTime.toDateUtc(
+        DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+      ),
     } as const;
     await runEffectTestPromise(
       admin.insert(partyContactPoints).values([
@@ -342,7 +376,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           postalCode: '12000',
           tenantId: tenantA,
         },
-      ]),
+      ])
     );
     const purposeEvidence = {
       acceptedByActionInvocationId: actionA,
@@ -353,13 +387,19 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
       provenanceMethod: 'DECLARED',
       provenanceSource: 'USER',
       tenantId: tenantA,
-      validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+      validFrom: DateTime.toDateUtc(
+        DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+      ),
     } as const;
     await runEffectTestPromise(
       admin.insert(partyContactPointPurposes).values([
         { ...purposeEvidence, contactPointId: addressA, purposeKey: 'BILLING' },
-        { ...purposeEvidence, contactPointId: addressA, purposeKey: 'DELIVERY' },
-      ]),
+        {
+          ...purposeEvidence,
+          contactPointId: addressA,
+          purposeKey: 'DELIVERY',
+        },
+      ])
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -367,9 +407,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           ...purposeEvidence,
           contactPointId: addressA2,
           purposeKey: 'BILLING',
-        }),
+        })
       ),
-      hasPostgreSqlCode('23505'),
+      hasPostgreSqlCode('23505')
     );
     const contactEndRecordedAt = await runEffectTestPromise(DateTime.nowAsDate);
     const futureContactEnd = new Date('2099-01-01T00:00:00.000Z');
@@ -387,7 +427,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           endedRecordedAt: contactEndRecordedAt,
           validTo: futureContactEnd,
         })
-        .where(eq(partyContactPoints.contactPointId, emailA2)),
+        .where(eq(partyContactPoints.contactPointId, emailA2))
     );
     await runEffectTestPromise(
       admin
@@ -402,34 +442,47 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           endedRecordedAt: contactEndRecordedAt,
           validTo: futureContactEnd,
         })
-        .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY')),
+        .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY'))
     );
     const [scheduledContactEnd] = await runEffectTestPromise(
-      admin.select().from(partyContactPoints).where(eq(partyContactPoints.contactPointId, emailA2)),
+      admin
+        .select()
+        .from(partyContactPoints)
+        .where(eq(partyContactPoints.contactPointId, emailA2))
     );
     assert.ok(scheduledContactEnd);
     assert.equal(scheduledContactEnd.isCurrent, true);
-    assert.equal(scheduledContactEnd.endReason, 'Future email retirement scheduled');
-    assert.equal(scheduledContactEnd.evidenceReference, 'evidence:original-contact:1');
-    assert.deepEqual(scheduledContactEnd.additionalEvidenceRefs, ['evidence:additional-contact:1']);
+    assert.equal(
+      scheduledContactEnd.endReason,
+      'Future email retirement scheduled'
+    );
+    assert.equal(
+      scheduledContactEnd.evidenceReference,
+      'evidence:original-contact:1'
+    );
+    assert.deepEqual(scheduledContactEnd.additionalEvidenceRefs, [
+      'evidence:additional-contact:1',
+    ]);
     assert.deepEqual(scheduledContactEnd.endEvidenceRefs, []);
     const [scheduledPurposeEnd] = await runEffectTestPromise(
       admin
         .select()
         .from(partyContactPointPurposes)
-        .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY')),
+        .where(eq(partyContactPointPurposes.purposeKey, 'DELIVERY'))
     );
     assert.equal(scheduledPurposeEnd?.isCurrent, true);
     assert.equal(scheduledPurposeEnd?.endProvenanceSource, 'EXTERNAL_EVIDENCE');
-    assert.deepEqual(scheduledPurposeEnd?.endEvidenceRefs, ['evidence:delivery-purpose-end:1']);
+    assert.deepEqual(scheduledPurposeEnd?.endEvidenceRefs, [
+      'evidence:delivery-purpose-end:1',
+    ]);
     await assert.rejects(
       runEffectTestPromise(
         admin
           .update(partyContactPointPurposes)
           .set({ validTo: futureContactEnd })
-          .where(eq(partyContactPointPurposes.purposeKey, 'BILLING')),
+          .where(eq(partyContactPointPurposes.purposeKey, 'BILLING'))
       ),
-      hasPostgreSqlCode('23514'),
+      hasPostgreSqlCode('23514')
     );
 
     await runEffectTestPromise(
@@ -444,9 +497,11 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         relationshipType: 'CONTACT_PERSON_OF',
         tenantId: tenantA,
         toPartyId: partyOrganizationA,
-        validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+        validFrom: DateTime.toDateUtc(
+          DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+        ),
         validTo: new Date('2026-12-31T00:00:00.000Z'),
-      }),
+      })
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -461,9 +516,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           tenantId: tenantA,
           toPartyId: partyOrganizationA,
           validFrom: new Date('2026-06-01T00:00:00.000Z'),
-        }),
+        })
       ),
-      hasPostgreSqlCode('23P01'),
+      hasPostgreSqlCode('23P01')
     );
     await runEffectTestPromise(
       admin.insert(partyRelationships).values({
@@ -477,7 +532,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         tenantId: tenantA,
         toPartyId: partyOrganizationA,
         validFrom: new Date('2026-12-31T00:00:00.000Z'),
-      }),
+      })
     );
     const effectiveRelationshipCount = async (effectiveAt: Date) => {
       const relationships = await runEffectTestPromise(
@@ -490,14 +545,23 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
               eq(partyRelationships.toPartyId, partyOrganizationA),
               eq(partyRelationships.assertionState, 'ACTIVE'),
               lte(partyRelationships.validFrom, effectiveAt),
-              or(isNull(partyRelationships.validTo), gt(partyRelationships.validTo, effectiveAt)),
-            ),
-          ),
+              or(
+                isNull(partyRelationships.validTo),
+                gt(partyRelationships.validTo, effectiveAt)
+              )
+            )
+          )
       );
       return relationships.length;
     };
-    assert.equal(await effectiveRelationshipCount(new Date('2026-06-01T00:00:00.000Z')), 1);
-    assert.equal(await effectiveRelationshipCount(new Date('2027-01-01T00:00:00.000Z')), 1);
+    assert.equal(
+      await effectiveRelationshipCount(new Date('2026-06-01T00:00:00.000Z')),
+      1
+    );
+    assert.equal(
+      await effectiveRelationshipCount(new Date('2027-01-01T00:00:00.000Z')),
+      1
+    );
     const [unknownStart] = await runEffectTestPromise(
       admin
         .insert(partyRelationships)
@@ -513,14 +577,16 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           toPartyId: partyOrganizationA2,
           validTo: new Date('2030-01-01T00:00:00.000Z'),
         })
-        .returning(),
+        .returning()
     );
     assert.ok(unknownStart);
     await runEffectTestPromise(
       admin
         .update(partyRelationships)
         .set({ validFrom: new Date('2028-01-01T00:00:00.000Z') })
-        .where(eq(partyRelationships.relationshipId, unknownStart.relationshipId)),
+        .where(
+          eq(partyRelationships.relationshipId, unknownStart.relationshipId)
+        )
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -536,9 +602,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           toPartyId: partyOrganizationA,
           validFrom: new Date('2030-01-01T00:00:00.000Z'),
           validTo: new Date('2030-01-01T00:00:00.000Z'),
-        }),
+        })
       ),
-      hasPostgreSqlCode('23514'),
+      hasPostgreSqlCode('23514')
     );
 
     await runEffectTestPromise(
@@ -555,7 +621,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         provenanceSource: 'COMMERCE',
         sourceRecordRefs: ['commerce:agreement:1'],
         tenantId: tenantA,
-      }),
+      })
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -571,9 +637,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           provenanceSource: 'COMMERCE',
           sourceRecordRefs: ['commerce:agreement:1'],
           tenantId: tenantA,
-        }),
+        })
       ),
-      hasPostgreSqlCode('23505'),
+      hasPostgreSqlCode('23505')
     );
     await runEffectTestPromise(
       admin.insert(counterpartyRolePeriods).values([
@@ -589,7 +655,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           provenanceSource: 'COMMERCE',
           roleType: 'CUSTOMER',
           tenantId: tenantA,
-          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+          validFrom: DateTime.toDateUtc(
+            DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+          ),
         },
         {
           acceptedByActionInvocationId: actionA,
@@ -603,9 +671,11 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           provenanceSource: 'COMMERCE',
           roleType: 'SUPPLIER',
           tenantId: tenantA,
-          validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+          validFrom: DateTime.toDateUtc(
+            DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+          ),
         },
-      ]),
+      ])
     );
     await runEffectTestPromise(
       admin
@@ -622,7 +692,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           state: 'ENDED',
           validTo: new Date('2026-06-30T00:00:00.000Z'),
         })
-        .where(eq(counterpartyRolePeriods.roleType, 'CUSTOMER')),
+        .where(eq(counterpartyRolePeriods.roleType, 'CUSTOMER'))
     );
     const futureRoleEvidence = {
       acceptedByActionInvocationId: actionA,
@@ -658,7 +728,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           addEvidenceRefs: ['evidence:future-customer-role:2'],
           validFrom: new Date('2099-02-01T00:00:00.000Z'),
         },
-      ]),
+      ])
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -666,11 +736,13 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           ...futureRoleEvidence,
           addEvidenceRefs: ['evidence:overlapping-future-customer-role:1'],
           validFrom: new Date('2099-01-15T00:00:00.000Z'),
-        }),
+        })
       ),
-      hasPostgreSqlCode('23P01'),
+      hasPostgreSqlCode('23P01')
     );
-    const effectiveAt = DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-01T00:00:00.000Z'));
+    const effectiveAt = DateTime.toDateUtc(
+      DateTime.makeUnsafe('2026-09-01T00:00:00.000Z')
+    );
     const effectiveRoles = await runEffectTestPromise(
       admin
         .select()
@@ -682,19 +754,25 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
             lte(counterpartyRolePeriods.validFrom, effectiveAt),
             or(
               isNull(counterpartyRolePeriods.validTo),
-              gt(counterpartyRolePeriods.validTo, effectiveAt),
-            ),
-          ),
-        ),
+              gt(counterpartyRolePeriods.validTo, effectiveAt)
+            )
+          )
+        )
     );
     assert.equal(effectiveRoles.length, 1);
     const persistedCounterparties = await runEffectTestPromise(
-      admin.select().from(counterparties).where(eq(counterparties.counterpartyId, counterpartyA)),
+      admin
+        .select()
+        .from(counterparties)
+        .where(eq(counterparties.counterpartyId, counterpartyA))
     );
     assert.equal(persistedCounterparties.length, 1);
 
     const [counterpartySource] = await runEffectTestPromise(
-      admin.select().from(counterparties).where(eq(counterparties.counterpartyId, counterpartyA)),
+      admin
+        .select()
+        .from(counterparties)
+        .where(eq(counterparties.counterpartyId, counterpartyA))
     );
     assert.ok(counterpartySource);
     await runEffectTestPromise(
@@ -705,13 +783,13 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         legalEntityId: counterpartySource.legalEntityId,
         storedPartyId: counterpartySource.partyId,
         tenantId: counterpartySource.tenantId,
-      }),
+      })
     );
     const roleSources = await runEffectTestPromise(
       admin
         .select()
         .from(counterpartyRolePeriods)
-        .where(eq(counterpartyRolePeriods.counterpartyId, counterpartyA)),
+        .where(eq(counterpartyRolePeriods.counterpartyId, counterpartyA))
     );
     await runEffectTestPromise(
       admin.insert(counterpartyRoleAdminReadModels).values(
@@ -732,52 +810,56 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           tenantId: role.tenantId,
           validFrom: role.validFrom,
           validTo: role.validTo,
-        })),
-      ),
+        }))
+      )
     );
 
     assert.deepEqual(
-      await withTenant(tenantA, (transaction) => transaction.select().from(counterparties)),
-      [],
+      await withTenant(tenantA, (transaction) =>
+        transaction.select().from(counterparties)
+      ),
+      []
     );
     assert.deepEqual(
-      await runEffectTestPromise(runtime.select().from(counterpartyAdminReadModels)),
-      [],
+      await runEffectTestPromise(
+        runtime.select().from(counterpartyAdminReadModels)
+      ),
+      []
     );
     const tenantCounterpartyModels = await withTenant(tenantA, (transaction) =>
-      transaction.select().from(counterpartyAdminReadModels),
+      transaction.select().from(counterpartyAdminReadModels)
     );
     assert.equal(tenantCounterpartyModels.length, 1);
     const tenantRoleModels = await withTenant(tenantA, (transaction) =>
-      transaction.select().from(counterpartyRoleAdminReadModels),
+      transaction.select().from(counterpartyRoleAdminReadModels)
     );
     assert.equal(tenantRoleModels.length, roleSources.length);
     assert.deepEqual(
       await withTenant(tenantB, (transaction) =>
-        transaction.select().from(counterpartyAdminReadModels),
+        transaction.select().from(counterpartyAdminReadModels)
       ),
-      [],
+      []
     );
     assert.deepEqual(
       await withTenant(tenantA, (transaction) =>
-        transaction.select().from(counterpartyRolePeriods),
+        transaction.select().from(counterpartyRolePeriods)
       ),
-      [],
+      []
     );
     const scopedCounterparties = await runEffectTestPromise(
       runtime.transaction((transaction) =>
         Effect.gen(function* transactionTestBody() {
           yield* transaction.execute(
             sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
-            'objects',
+            'objects'
           );
           yield* transaction.execute(
             sql`select set_config('ontos.legal_entity_id', ${legalEntityA}, true)`,
-            'objects',
+            'objects'
           );
           return yield* transaction.select().from(counterparties);
-        }),
-      ),
+        })
+      )
     );
     assert.equal(scopedCounterparties.length, 1);
 
@@ -799,7 +881,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         evaluationFingerprint: 'c'.repeat(64),
         matchRuleVersion: 'party-match.v1',
         tenantId: tenantA,
-      }),
+      })
     );
     await runEffectTestPromise(
       admin.insert(duplicateCandidateCaseParties).values({
@@ -811,7 +893,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         partyId: partyOrganizationA,
         rank: 1,
         tenantId: tenantA,
-      }),
+      })
     );
     await runEffectTestPromise(
       admin.insert(partyMatchDecisions).values({
@@ -827,7 +909,7 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         matchRuleVersion: 'party-match.v1',
         outcome: 'AMBIGUOUS',
         tenantId: tenantA,
-      }),
+      })
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -838,9 +920,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           matchRuleVersion: 'party-match.v1',
           outcome: 'NO_MATCH',
           tenantId: tenantA,
-        }),
+        })
       ),
-      hasPostgreSqlCode('23505'),
+      hasPostgreSqlCode('23505')
     );
 
     await assert.rejects(
@@ -858,7 +940,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
               provenanceMethod: 'DECLARED',
               provenanceSource: 'USER',
               tenantId: tenantA,
-              validFrom: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+              validFrom: DateTime.toDateUtc(
+                DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+              ),
             })
             .returning({ assertionId: partyFactAssertions.assertionId });
           assert.ok(fact);
@@ -880,17 +964,19 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
             .update(partyCorrections)
             .set({ reason: 'Mutation must fail' })
             .where(eq(partyCorrections.correctionId, correction.correctionId));
-        }),
+        })
       ),
-      hasPostgreSqlCode('55000'),
+      hasPostgreSqlCode('55000')
     );
 
-    const mergePartyRefs = [partyOrganizationA, partyOrganizationA2].map((resourceId) => ({
-      moduleId: 'party.registry' as const,
-      resourceId,
-      resourceType: 'party.registry.party' as const,
-      tenantId: tenantA,
-    }));
+    const mergePartyRefs = [partyOrganizationA, partyOrganizationA2].map(
+      (resourceId) => ({
+        moduleId: 'party.registry' as const,
+        resourceId,
+        resourceType: 'party.registry.party' as const,
+        tenantId: tenantA,
+      })
+    );
     const [survivorPartyRef, absorbedPartyRef] = mergePartyRefs;
     assert.ok(survivorPartyRef);
     assert.ok(absorbedPartyRef);
@@ -918,14 +1004,21 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           consumerStatuses: [{ consumerKey: 'contacts', status: 'BLOCKED' }],
           decisionActorPrincipalId: principalA,
           selectionEvidenceChain: (
-            ['CONFIRMED_DUPLICATE_SET', 'IDENTITY_SAFETY', 'STABLE_RESOURCE_IDENTITY'] as const
+            [
+              'CONFIRMED_DUPLICATE_SET',
+              'IDENTITY_SAFETY',
+              'STABLE_RESOURCE_IDENTITY',
+            ] as const
           ).map((criterion) => ({
             candidatePartyRefs: mergePartyRefs,
             candidateSnapshots,
             criterion,
             evidenceRefs: ['evidence:fixture'],
             explanation: 'Prepared-only fixture for database alias constraints',
-            winnerPartyRef: criterion === 'STABLE_RESOURCE_IDENTITY' ? survivorPartyRef : null,
+            winnerPartyRef:
+              criterion === 'STABLE_RESOURCE_IDENTITY'
+                ? survivorPartyRef
+                : null,
           })),
           selectionPolicyVersion: 'party-merge-survivor-selection.v1',
           selectionReason: 'STABLE_RESOURCE_IDENTITY',
@@ -934,10 +1027,10 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
         status: 'BLOCKED',
         survivorPartyId: partyOrganizationA,
         tenantId: tenantA,
-      }),
+      })
     );
     const [merge] = await runEffectTestPromise(
-      admin.select({ mergeId: partyMerges.mergeId }).from(partyMerges).limit(1),
+      admin.select({ mergeId: partyMerges.mergeId }).from(partyMerges).limit(1)
     );
     assert.ok(merge);
     await assert.rejects(
@@ -947,9 +1040,9 @@ test('enforces Party owner invariants, tenant isolation, and independent fact li
           canonicalPartyId: partyOrganizationA,
           mergeId: merge.mergeId,
           tenantId: tenantA,
-        }),
+        })
       ),
-      hasPostgreSqlCode('23514'),
+      hasPostgreSqlCode('23514')
     );
   } finally {
     await cleanup();

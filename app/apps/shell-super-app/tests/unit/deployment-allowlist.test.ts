@@ -1,5 +1,6 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
+
 import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import { createModuleDeploymentAllowlistBuildInput } from '../../module-deployment-allowlist.config.ts';
 
@@ -12,7 +13,7 @@ const topology = {
 
 const overlay = (
   ontosModuleManifests: Readonly<Record<string, string>>,
-  environment = 'development',
+  environment = 'development'
 ) => ({
   environment,
   ontosModuleManifests,
@@ -20,8 +21,10 @@ const overlay = (
 });
 
 const validUrls = {
-  'documents-center': 'http://localhost:4102/.well-known/ontos-module-manifest.json',
-  'property-registry': 'http://127.0.0.1:4101/.well-known/ontos-module-manifest.json',
+  'documents-center':
+    'http://localhost:4102/.well-known/ontos-module-manifest.json',
+  'property-registry':
+    'http://127.0.0.1:4101/.well-known/ontos-module-manifest.json',
 };
 
 test('derives an immutable, topology-authorized and deterministically ordered allowlist', async () => {
@@ -30,7 +33,7 @@ test('derives an immutable, topology-authorized and deterministically ordered al
       environment: 'development',
       overlay: overlay(validUrls),
       topology,
-    }),
+    })
   );
   expect(allowlist.entries.map(({ appId }) => appId)).toEqual([
     'documents-center',
@@ -41,8 +44,14 @@ test('derives an immutable, topology-authorized and deterministically ordered al
 });
 
 test.each([
-  ['missing topology entry', { 'property-registry': validUrls['property-registry'] }],
-  ['unknown shell entry', { ...validUrls, 'shell-super-app': validUrls['property-registry'] }],
+  [
+    'missing topology entry',
+    { 'property-registry': validUrls['property-registry'] },
+  ],
+  [
+    'unknown shell entry',
+    { ...validUrls, 'shell-super-app': validUrls['property-registry'] },
+  ],
   [
     'duplicate normalized URL',
     { ...validUrls, 'documents-center': validUrls['property-registry'] },
@@ -55,24 +64,38 @@ test.each([
         'http://user:secret@localhost:4101/.well-known/ontos-module-manifest.json',
     },
   ],
-  ['fragment', { ...validUrls, 'property-registry': `${validUrls['property-registry']}#private` }],
-  ['arbitrary path', { ...validUrls, 'property-registry': 'http://localhost:4101/private.json' }],
-])('rejects %s configuration without authorizing a fetch', async (_label, manifests) => {
-  await expect(
-    runEffectTestPromise(
-      deriveDeploymentAllowlist({
-        environment: 'development',
-        overlay: overlay(manifests),
-        topology,
-      }),
-    ),
-  ).rejects.toMatchObject({ code: 'deployment_allowlist_invalid' });
-});
+  [
+    'fragment',
+    {
+      ...validUrls,
+      'property-registry': `${validUrls['property-registry']}#private`,
+    },
+  ],
+  [
+    'arbitrary path',
+    { ...validUrls, 'property-registry': 'http://localhost:4101/private.json' },
+  ],
+])(
+  'rejects %s configuration without authorizing a fetch',
+  async (_label, manifests) => {
+    await expect(
+      runEffectTestPromise(
+        deriveDeploymentAllowlist({
+          environment: 'development',
+          overlay: overlay(manifests),
+          topology,
+        })
+      )
+    ).rejects.toMatchObject({ code: 'deployment_allowlist_invalid' });
+  }
+);
 
 test('requires HTTPS outside loopback development', async () => {
   const productionUrls = {
-    'documents-center': 'https://documents.example.test/.well-known/ontos-module-manifest.json',
-    'property-registry': 'https://property.example.test/.well-known/ontos-module-manifest.json',
+    'documents-center':
+      'https://documents.example.test/.well-known/ontos-module-manifest.json',
+    'property-registry':
+      'https://property.example.test/.well-known/ontos-module-manifest.json',
   };
   await expect(
     runEffectTestPromise(
@@ -83,11 +106,11 @@ test('requires HTTPS outside loopback development', async () => {
             ...productionUrls,
             'property-registry': validUrls['property-registry'],
           },
-          'production',
+          'production'
         ),
         topology,
-      }),
-    ),
+      })
+    )
   ).rejects.toMatchObject({ code: 'deployment_allowlist_invalid' });
   await expect(
     runEffectTestPromise(
@@ -95,8 +118,8 @@ test('requires HTTPS outside loopback development', async () => {
         environment: 'production',
         overlay: overlay(productionUrls, 'production'),
         topology,
-      }),
-    ),
+      })
+    )
   ).resolves.toMatchObject({ entries: expect.any(Array) });
 });
 
@@ -104,7 +127,9 @@ test('builds production discovery from deployment URL configuration, never the d
   const productionTopology = {
     verticals: [
       {
-        cloudflare: { publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY' },
+        cloudflare: {
+          publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY',
+        },
         id: 'property-registry',
         kind: 'vertical',
       },
@@ -113,7 +138,8 @@ test('builds production discovery from deployment URL configuration, never the d
   const configured = createModuleDeploymentAllowlistBuildInput({
     cloudflareDeployEnabled: true,
     developmentOverlay: overlay({
-      'property-registry': 'http://localhost:4101/.well-known/ontos-module-manifest.json',
+      'property-registry':
+        'http://localhost:4101/.well-known/ontos-module-manifest.json',
     }),
     readEnvironment: (name) =>
       name === 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY'
@@ -126,7 +152,8 @@ test('builds production discovery from deployment URL configuration, never the d
   expect(configured.overlay).toEqual({
     environment: 'production',
     ontosModuleManifests: {
-      'property-registry': 'https://property.example.test/.well-known/ontos-module-manifest.json',
+      'property-registry':
+        'https://property.example.test/.well-known/ontos-module-manifest.json',
     },
     schemaVersion: 1,
   });
@@ -136,6 +163,6 @@ test('builds production discovery from deployment URL configuration, never the d
       developmentOverlay: overlay({}),
       readEnvironment: () => 'http://localhost:4101',
       topology: productionTopology,
-    }),
+    })
   ).toThrow(/credential-free HTTPS origin/u);
 });

@@ -1,36 +1,41 @@
+import assert from 'node:assert/strict';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import test, { after as afterNativeDatabase } from 'node:test';
+
 import {
   makeEffectTestCallback as nativeTestCallback,
   runEffectTestPromise,
   runEffectTestSync as runNativeSync,
 } from '@app/core-runtime/testing/effect-runtime';
-
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-
 import { eq, inArray, sql } from 'drizzle-orm';
 import { Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
-import assert from 'node:assert/strict';
-import test, { after as afterNativeDatabase } from 'node:test';
 import type { Pool } from 'pg';
+
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import {
   contactsRelations,
   organizationEngagementProfiles,
   personEngagementProfiles,
 } from '../../src/db/engagement-schema.ts';
+import {
+  hasPostgreSqlCode,
+  openBoundaryDatabases,
+} from '../support/database-boundary.ts';
 
 const nativeDatabaseScope = runNativeSync(NativeScope.make());
 afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(
+    nativeTestCallback
+  )
 );
 
 /** Both boundary roles read the same owned schema through the scope closed after these tests. */
 const openContactsDatabase = async (pool: Pool) =>
   await runEffectTestPromise(
     makeTestDatabaseFromPool(pool, contactsRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
+      NativeScope.provide(nativeDatabaseScope)
+    )
   );
 
 const tenantA = 'c1000000-0000-4000-8000-000000000001';
@@ -44,18 +49,21 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
   const cleanup = async (): Promise<void> => {
     await runEffectTestPromise(
       purgeFixtureRows(
-        [personEngagementProfiles, organizationEngagementProfiles].map((table) =>
-          admin.delete(table).where(inArray(table.tenantId, fixtureTenants)),
-        ),
-      ),
+        [personEngagementProfiles, organizationEngagementProfiles].map(
+          (table) =>
+            admin.delete(table).where(inArray(table.tenantId, fixtureTenants))
+        )
+      )
     );
   };
 
   try {
     await cleanup();
     assert.deepEqual(
-      await runEffectTestPromise(runtime.select().from(organizationEngagementProfiles)),
-      [],
+      await runEffectTestPromise(
+        runtime.select().from(organizationEngagementProfiles)
+      ),
+      []
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -63,9 +71,9 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
           counterpartyResourceId: 'counterparty-a',
           partyResourceId: 'party-a',
           tenantId: tenantA,
-        }),
+        })
       ),
-      hasPostgreSqlCode('42501'),
+      hasPostgreSqlCode('42501')
     );
 
     await runEffectTestPromise(
@@ -73,7 +81,7 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
         Effect.gen(function* transactionTestBody() {
           yield* transaction.execute(
             sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
-            'objects',
+            'objects'
           );
           yield* transaction.insert(organizationEngagementProfiles).values({
             counterpartyResourceId: 'counterparty-a',
@@ -101,8 +109,8 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
             })
             .returning();
           assert.equal(unresolvedPerson?.counterpartyResourceId, null);
-        }),
-      ),
+        })
+      )
     );
 
     await assert.rejects(
@@ -111,16 +119,16 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
           Effect.gen(function* transactionTestBody() {
             yield* transaction.execute(
               sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
-              'objects',
+              'objects'
             );
             yield* transaction.insert(personEngagementProfiles).values({
               partyResourceId: 'unresolved-person-a',
               tenantId: tenantA,
             });
-          }),
-        ),
+          })
+        )
       ),
-      hasPostgreSqlCode('23505'),
+      hasPostgreSqlCode('23505')
     );
 
     await assert.rejects(
@@ -129,17 +137,17 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
           Effect.gen(function* transactionTestBody() {
             yield* transaction.execute(
               sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
-              'objects',
+              'objects'
             );
             yield* transaction.insert(organizationEngagementProfiles).values({
               counterpartyResourceId: 'counterparty-a',
               partyResourceId: 'party-b',
               tenantId: tenantA,
             });
-          }),
-        ),
+          })
+        )
       ),
-      hasPostgreSqlCode('23505'),
+      hasPostgreSqlCode('23505')
     );
 
     await runEffectTestPromise(
@@ -147,7 +155,7 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
         Effect.gen(function* transactionTestBody() {
           yield* transaction.execute(
             sql`select set_config('ontos.tenant_id', ${tenantB}, true)`,
-            'objects',
+            'objects'
           );
           yield* transaction.insert(organizationEngagementProfiles).values({
             counterpartyResourceId: 'counterparty-a',
@@ -159,10 +167,10 @@ test('enforces tenant isolation and canonical-reference uniqueness without cross
               .select()
               .from(organizationEngagementProfiles)
               .where(eq(organizationEngagementProfiles.tenantId, tenantA)),
-            [],
+            []
           );
-        }),
-      ),
+        })
+      )
     );
   } finally {
     await cleanup();

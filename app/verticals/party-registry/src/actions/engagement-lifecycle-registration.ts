@@ -1,4 +1,8 @@
-import { defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import {
+  defineActionResourcePermission,
+  defineTenantModuleEntrypoint,
+} from '@app/core-runtime';
+
 import type {
   OrganizationEngagementLifecyclePayload,
   PersonEngagementLifecyclePayload,
@@ -12,8 +16,10 @@ type EngagementLifecycleActionKey =
   `party.registry.${'archive' | 'unarchive'}-${'person' | 'organization'}-engagement`;
 
 /** The shared governed-write contract; schemas and transaction services stay owner-specific. */
-export const engagementLifecycleRegistration = <Payload extends EngagementLifecyclePayload>(
-  actionKey: EngagementLifecycleActionKey,
+export const engagementLifecycleRegistration = <
+  Payload extends EngagementLifecyclePayload,
+>(
+  actionKey: EngagementLifecycleActionKey
 ) =>
   ({
     accessEvidencePolicy: {
@@ -26,7 +32,10 @@ export const engagementLifecycleRegistration = <Payload extends EngagementLifecy
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: actionKey,
       moduleKey: 'party.registry',
       role: 'action',

@@ -1,5 +1,10 @@
 import { expect, test } from '@rstest/core';
 import { getColumns } from 'drizzle-orm';
+
+import {
+  compareAuthCatalog,
+  expectedAuthTableCatalog,
+} from '../../api/auth/db/catalog.ts';
 import {
   AUTH_SCHEMA_NAME,
   AUTH_TABLE_INVENTORY,
@@ -8,7 +13,6 @@ import {
   supportImpersonationRecovery,
   user,
 } from '../../api/auth/db/schema.ts';
-import { compareAuthCatalog, expectedAuthTableCatalog } from '../../api/auth/db/catalog.ts';
 
 test('owns the exact Better Auth model inside the auth schema', () => {
   expect(AUTH_SCHEMA_NAME).toBe('auth');
@@ -68,7 +72,7 @@ test('matches the generated API Key and Admin plugin persistence fields', () => 
     'metadata',
   ]);
   expect(Object.keys(getColumns(user))).toEqual(
-    expect.arrayContaining(['role', 'banned', 'banReason', 'banExpires']),
+    expect.arrayContaining(['role', 'banned', 'banReason', 'banExpires'])
   );
   expect(Object.keys(getColumns(session))).toEqual(
     expect.arrayContaining([
@@ -79,13 +83,21 @@ test('matches the generated API Key and Admin plugin persistence fields', () => 
       'impersonationOriginalPrincipalId',
       'impersonationOriginalSessionId',
       'impersonationTargetPrincipalId',
-    ]),
+    ])
   );
   expect(getColumns(session).impersonationActionId.columnType).toBe('PgText');
-  expect(getColumns(session).impersonationTargetPrincipalId.columnType).toBe('PgUUID');
-  expect(getColumns(session).impersonationOriginalAuthBindingId.columnType).toBe('PgUUID');
-  expect(getColumns(session).impersonationOriginalPrincipalId.columnType).toBe('PgUUID');
-  expect(getColumns(session).impersonationOriginalSessionId.columnType).toBe('PgText');
+  expect(getColumns(session).impersonationTargetPrincipalId.columnType).toBe(
+    'PgUUID'
+  );
+  expect(
+    getColumns(session).impersonationOriginalAuthBindingId.columnType
+  ).toBe('PgUUID');
+  expect(getColumns(session).impersonationOriginalPrincipalId.columnType).toBe(
+    'PgUUID'
+  );
+  expect(getColumns(session).impersonationOriginalSessionId.columnType).toBe(
+    'PgText'
+  );
   expect(Object.keys(getColumns(supportImpersonationRecovery))).toEqual([
     'impersonationSessionId',
     'originalAuthBindingId',
@@ -107,15 +119,21 @@ test('reports missing and unexpected authentication tables', () => {
       'auth.account',
       'auth.unexpected',
       'auth.unexpected',
-    ]),
+    ])
   ).toEqual({
-    missing: ['auth.apikey', 'auth.support_impersonation_recovery', 'auth.verification'],
+    missing: [
+      'auth.apikey',
+      'auth.support_impersonation_recovery',
+      'auth.verification',
+    ],
     unexpected: ['auth.unexpected'],
   });
 });
 
 test('accepts unordered duplicate auth table rows without mutating the inventory', () => {
-  expect(compareAuthCatalog([...expectedAuthTableCatalog.toReversed(), 'auth.user'])).toEqual({
+  expect(
+    compareAuthCatalog([...expectedAuthTableCatalog.toReversed(), 'auth.user'])
+  ).toEqual({
     missing: [],
     unexpected: [],
   });

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { validateShellContributions } from '../../src/modules/shell-contribution.ts';
 
 const moduleId = 'property.registry';
@@ -10,9 +11,14 @@ const first = <Value>(values: readonly Value[]): Value => {
   }
   return value;
 };
-const entrypoint = (role: 'api' | 'page' | 'public_component' | 'report' | 'search') => ({
+const entrypoint = (
+  role: 'api' | 'page' | 'public_component' | 'report' | 'search'
+) => ({
   access: 'read' as const,
-  authorization: { kind: 'context_permission' as const, permission: 'module.access' },
+  authorization: {
+    kind: 'context_permission' as const,
+    permission: 'module.access',
+  },
   entrypointKey: `${moduleId}.${role.replace('_', '-')}.primary`,
   moduleKey: moduleId,
   role,
@@ -108,7 +114,10 @@ test('accepts exact empty and full Shell contribution contracts with determinist
   assert.deepEqual(validateShellContributions(empty, references), empty);
   const decoded = validateShellContributions(full(), references);
   assert.deepEqual(structuredClone(decoded), decoded);
-  assert.doesNotMatch(JSON.stringify(decoded), /handler|sourcePath|remote|import/iu);
+  assert.doesNotMatch(
+    JSON.stringify(decoded),
+    /handler|sourcePath|remote|import/iu
+  );
 });
 
 test('accepts safe dynamic page templates as plain serialized data', () => {
@@ -120,25 +129,42 @@ test('accepts safe dynamic page templates as plain serialized data', () => {
   const decoded = validateShellContributions(dynamic, references);
   assert.equal(decoded.pages[0]?.routePath, '/contacts/customers/:id/edit');
   assert.deepEqual(structuredClone(decoded), decoded);
-  assert.doesNotMatch(JSON.stringify(decoded), /handler|loader|sourcePath|remote|import/iu);
+  assert.doesNotMatch(
+    JSON.stringify(decoded),
+    /handler|loader|sourcePath|remote|import/iu
+  );
 });
 
 test('rejects extra keys, duplicates, cross-owner entrypoints, and missing references', () => {
-  assert.throws(() => validateShellContributions({ ...full(), route: '/private' }, references));
+  assert.throws(() =>
+    validateShellContributions({ ...full(), route: '/private' }, references)
+  );
   const duplicate = full();
   duplicate.publicComponents[0] = {
     ...first(duplicate.publicComponents),
     contributionKey: first(duplicate.pages).contributionKey,
   };
-  assert.throws(() => validateShellContributions(duplicate, references), /duplicate/u);
+  assert.throws(
+    () => validateShellContributions(duplicate, references),
+    /duplicate/u
+  );
   const crossOwner = full();
   crossOwner.pages[0] = {
     ...first(crossOwner.pages),
-    entrypoint: { ...first(crossOwner.pages).entrypoint, moduleKey: 'billing.core' },
+    entrypoint: {
+      ...first(crossOwner.pages).entrypoint,
+      moduleKey: 'billing.core',
+    },
   };
-  assert.throws(() => validateShellContributions(crossOwner, references), /owner/u);
+  assert.throws(
+    () => validateShellContributions(crossOwner, references),
+    /owner/u
+  );
   assert.throws(() =>
-    validateShellContributions(full(), { ...references, componentKeys: new Set() }),
+    validateShellContributions(full(), {
+      ...references,
+      componentKeys: new Set(),
+    })
   );
 });
 
@@ -150,8 +176,8 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
         ...baseline,
         search: [{ ...first(baseline.search), entrypoint: entrypoint('page') }],
       },
-      references,
-    ),
+      references
+    )
   );
   assert.throws(() =>
     validateShellContributions(
@@ -160,12 +186,15 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
         pages: [
           {
             ...first(baseline.pages),
-            entrypoint: { ...first(baseline.pages).entrypoint, access: 'write' },
+            entrypoint: {
+              ...first(baseline.pages).entrypoint,
+              access: 'write',
+            },
           },
         ],
       },
-      references,
-    ),
+      references
+    )
   );
   assert.throws(() =>
     validateShellContributions(
@@ -181,8 +210,8 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
           },
         ],
       },
-      references,
-    ),
+      references
+    )
   );
   assert.throws(() =>
     validateShellContributions(
@@ -190,8 +219,8 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
         ...baseline,
         pages: [{ ...first(baseline.pages), remote: 'private/remote' }],
       },
-      references,
-    ),
+      references
+    )
   );
   const withUnsafeRoute = full();
   withUnsafeRoute.pages[0] = {

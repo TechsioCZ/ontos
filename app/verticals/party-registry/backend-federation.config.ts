@@ -12,34 +12,35 @@ const packageVersion = (specifier: string): string =>
 const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
 const effectVersion = packageVersion('effect/package.json');
 
-const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
-  createModuleFederationConfig({
-    dts: false,
-    exposes: {
-      './effect-api': './api/effect-api.ts',
+const moduleFederationConfig: Parameters<
+  typeof createModuleFederationConfig
+>[0] = createModuleFederationConfig({
+  dts: false,
+  exposes: {
+    './effect-api': './api/effect-api.ts',
+  },
+  filename: 'backendRemoteEntry.cjs',
+  library: {
+    type: 'commonjs-module',
+  },
+  name: 'verticalPartyRegistryBackend',
+  shared: {
+    '@modern-js/plugin-bff': {
+      requiredVersion: bffVersion,
+      singleton: true,
+      treeShaking: false,
     },
-    filename: 'backendRemoteEntry.cjs',
-    library: {
-      type: 'commonjs-module',
+    '@module-federation/runtime': {
+      requiredVersion: dependencies['@module-federation/runtime'],
+      singleton: true,
+      treeShaking: false,
     },
-    name: 'verticalPartyRegistryBackend',
-    shared: {
-      '@modern-js/plugin-bff': {
-        requiredVersion: bffVersion,
-        singleton: true,
-        treeShaking: false,
-      },
-      '@module-federation/runtime': {
-        requiredVersion: dependencies['@module-federation/runtime'],
-        singleton: true,
-        treeShaking: false,
-      },
-      effect: {
-        requiredVersion: effectVersion,
-        singleton: true,
-        treeShaking: false,
-      },
+    effect: {
+      requiredVersion: effectVersion,
+      singleton: true,
+      treeShaking: false,
     },
-  });
+  },
+});
 
 export default moduleFederationConfig;

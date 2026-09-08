@@ -2,21 +2,27 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug record-support-impersonation
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
-import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import {
   IdentityTargetInvalidError,
   PrincipalManagementErrorSchema,
 } from '../../auth/principal-management-errors.ts';
+import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
+import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
-const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('PrincipalId')
+);
+const reason = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(500)
+);
 const safeSessionRef = Schema.String.check(
   Schema.isPattern(/^better-auth-session:[^\s:][^\s]{0,278}$/u),
-  Schema.isMaxLength(300),
+  Schema.isMaxLength(300)
 );
 const checkpointFields = {
   originalPrincipalId: PrincipalIdSchema,
@@ -24,7 +30,10 @@ const checkpointFields = {
   targetPrincipalId: PrincipalIdSchema,
 };
 const RecordSupportImpersonationPayloadSchema = Schema.Union([
-  Schema.Struct({ ...checkpointFields, checkpoint: Schema.Literal('requested') }),
+  Schema.Struct({
+    ...checkpointFields,
+    checkpoint: Schema.Literal('requested'),
+  }),
   Schema.Struct({
     ...checkpointFields,
     checkpoint: Schema.Literals(['started', 'stopped']),
@@ -47,10 +56,10 @@ const handle = Effect.fn('RecordSupportImpersonationAction.handle')(
       Readonly<Record<never, never>>,
       {
         readonly validate: (
-          input: Parameters<ValidateSupportImpersonation>[0],
+          input: Parameters<ValidateSupportImpersonation>[0]
         ) => ReturnType<ValidateSupportImpersonation>;
       }
-    >,
+    >
   ) {
     if (
       payload.originalPrincipalId !== context.scope.principalId ||
@@ -103,7 +112,7 @@ const handle = Effect.fn('RecordSupportImpersonationAction.handle')(
           targetPrincipalId: payload.targetPrincipalId,
         });
     return { checkpoint: payload.checkpoint, recorded: true as const };
-  },
+  }
 );
 export const recordSupportImpersonationAction = defineAction(
   {
@@ -118,7 +127,10 @@ export const recordSupportImpersonationAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.record-support-impersonation',
       moduleKey: 'core.identity',
       role: 'action',
@@ -130,11 +142,15 @@ export const recordSupportImpersonationAction = defineAction(
     policies: [],
     resultSchema: RecordSupportImpersonationResultSchema,
     schemaVersion: '1',
-    tenantPermission: (payload) => (payload.checkpoint === 'stopped' ? undefined : 'impersonate'),
+    tenantPermission: (payload) =>
+      payload.checkpoint === 'stopped' ? undefined : 'impersonate',
   },
   handle,
   (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
-    return Effect.succeed({ validate: repository.validateSupportImpersonation });
-  },
+    const repository =
+      principalManagementRepositoryFromTransaction(transaction);
+    return Effect.succeed({
+      validate: repository.validateSupportImpersonation,
+    });
+  }
 );

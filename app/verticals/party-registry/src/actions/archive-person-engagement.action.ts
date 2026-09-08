@@ -3,6 +3,7 @@
 // @ontos-action-slug archive-person-engagement
 import { defineAction, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PersonEngagementLifecyclePayloadSchema,
   PersonEngagementProfileSchema,
@@ -18,26 +19,35 @@ import { engagementLifecycleRegistration } from './engagement-lifecycle-registra
 export const archivePersonEngagementAction = defineAction(
   {
     ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>(
-      'party.registry.archive-person-engagement',
+      'party.registry.archive-person-engagement'
     ),
     payloadSchema: PersonEngagementLifecyclePayloadSchema,
     resultSchema: PersonEngagementProfileSchema,
   },
-  handleEngagementLifecycle<PersonEngagementLifecyclePayload, PersonEngagementProfile>('archived'),
+  handleEngagementLifecycle<
+    PersonEngagementLifecyclePayload,
+    PersonEngagementProfile
+  >('archived'),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
-          reason: 'Person engagement archive requires a trusted Legal Entity scope',
-        }),
+          reason:
+            'Person engagement archive requires a trusted Legal Entity scope',
+        })
       );
     }
     return Effect.succeed({
       transition: (profileId) =>
-        transitionPersonEngagementProfile(transaction, scope.tenantId, profileId, 'archived'),
+        transitionPersonEngagementProfile(
+          transaction,
+          scope.tenantId,
+          profileId,
+          'archived'
+        ),
     });
-  },
+  }
 );
 
 // <generated-outbox-message-exports>

@@ -1,7 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Option, flow } from 'effect';
+
 import type {
   PrincipalManagementPersistence,
   PrincipalManagementRepositoryService,
@@ -18,10 +20,13 @@ import {
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
 const authBindingId = '30000000-0000-4000-8000-000000000001';
-const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
+const effectTest = <Value, Failure>(
+  name: string,
+  effect: Effect.Effect<Value, Failure>
+): void => {
   test(
     name,
-    flow(() => Effect.asVoid(effect), runEffectTestPromise),
+    flow(() => Effect.asVoid(effect), runEffectTestPromise)
   );
 };
 
@@ -37,24 +42,34 @@ const repositoryDefaults: PrincipalManagementPersistence = {
   updatePrincipalStatus: () => unconfigured('updatePrincipalStatus'),
 };
 const repository = (
-  overrides: Partial<PrincipalManagementPersistence>,
+  overrides: Partial<PrincipalManagementPersistence>
 ): PrincipalManagementRepositoryService =>
-  principalManagementRepositoryFromPersistence({ ...repositoryDefaults, ...overrides });
+  principalManagementRepositoryFromPersistence({
+    ...repositoryDefaults,
+    ...overrides,
+  });
 
-type OptionValue<Outcome> = Outcome extends Option.Option<infer Value> ? Value : never;
+type OptionValue<Outcome> =
+  Outcome extends Option.Option<infer Value> ? Value : never;
 type PrincipalRecord = OptionValue<
   Effect.Success<ReturnType<PrincipalManagementPersistence['loadPrincipal']>>
 >;
 type ApiKeyBindingRecord = OptionValue<
-  Effect.Success<ReturnType<PrincipalManagementPersistence['loadApiKeyBinding']>>
+  Effect.Success<
+    ReturnType<PrincipalManagementPersistence['loadApiKeyBinding']>
+  >
 >;
 
 const selectingPrincipal = (record: PrincipalRecord | undefined) =>
-  repository({ loadPrincipal: () => Effect.succeed(Option.fromNullishOr(record)) });
+  repository({
+    loadPrincipal: () => Effect.succeed(Option.fromNullishOr(record)),
+  });
 const selectingBinding = (record: ApiKeyBindingRecord | undefined) =>
-  repository({ loadApiKeyBinding: () => Effect.succeed(Option.fromNullishOr(record)) });
+  repository({
+    loadApiKeyBinding: () => Effect.succeed(Option.fromNullishOr(record)),
+  });
 const repositoryForSupportParticipants = (
-  results: readonly (readonly { readonly authBindingId: string }[])[],
+  results: readonly (readonly { readonly authBindingId: string }[])[]
 ) => {
   let call = 0;
   return repository({
@@ -81,7 +96,7 @@ effectTest(
         principalId,
         reason: 'Offboarding',
         tenantId,
-      }).pipe(provideRepository(transaction)),
+      }).pipe(provideRepository(transaction))
     );
     const bindingError = yield* Effect.flip(
       bindApiKey({
@@ -89,12 +104,12 @@ effectTest(
         principalId,
         providerSubjectId: 'provider-key-id',
         tenantId,
-      }).pipe(provideRepository(transaction)),
+      }).pipe(provideRepository(transaction))
     );
 
     assert.equal(principalError._tag, 'IdentityTargetInvalidError');
     assert.equal(bindingError._tag, 'IdentityTargetInvalidError');
-  }),
+  })
 );
 
 effectTest(
@@ -115,9 +130,9 @@ effectTest(
             bindingStatus: 'disabled',
             principalKind: 'service',
             principalStatus: 'active',
-          }),
-        ),
-      ),
+          })
+        )
+      )
     );
     const terminalError = yield* Effect.flip(
       setApiKeyBindingStatus({
@@ -133,9 +148,9 @@ effectTest(
             bindingStatus: 'revoked',
             principalKind: 'service',
             principalStatus: 'active',
-          }),
-        ),
-      ),
+          })
+        )
+      )
     );
     const reasonError = yield* Effect.flip(
       setApiKeyBindingStatus({
@@ -152,23 +167,31 @@ effectTest(
             bindingStatus: 'active',
             principalKind: 'service',
             principalStatus: 'active',
-          }),
-        ),
-      ),
+          })
+        )
+      )
     );
 
     assert.equal(conflictError._tag, 'IdentityLifecycleConflictError');
     assert.equal(terminalError._tag, 'IdentityLifecycleConflictError');
     assert.equal(reasonError._tag, 'IdentityTargetInvalidError');
-  }),
+  })
 );
 
 effectTest(
   'rejects managed binding transitions for human or inactive targets',
   Effect.gen(function* rejectsIneligibleBindingTargets() {
     const records = [
-      { bindingStatus: 'active', principalKind: 'human', principalStatus: 'active' },
-      { bindingStatus: 'active', principalKind: 'service', principalStatus: 'disabled' },
+      {
+        bindingStatus: 'active',
+        principalKind: 'human',
+        principalStatus: 'active',
+      },
+      {
+        bindingStatus: 'active',
+        principalKind: 'service',
+        principalStatus: 'disabled',
+      },
     ] satisfies readonly ApiKeyBindingRecord[];
     yield* Effect.forEach(
       records,
@@ -182,26 +205,29 @@ effectTest(
               newStatus: 'disabled',
               principalId,
               tenantId,
-            }).pipe(provideRepository(selectingBinding(record))),
+            }).pipe(provideRepository(selectingBinding(record)))
           );
           assert.equal(error._tag, 'IdentityTargetInvalidError');
         }),
-      { concurrency: 1 },
+      { concurrency: 1 }
     );
-  }),
+  })
 );
 
 effectTest(
   'binds only eligible active self and managed principal kinds without secret material',
   Effect.gen(function* bindsEligiblePrincipal() {
-    let inserted: Parameters<PrincipalManagementPersistence['insertApiKeyBinding']>[0] | undefined;
+    let inserted:
+      | Parameters<PrincipalManagementPersistence['insertApiKeyBinding']>[0]
+      | undefined;
     const transaction = repository({
       insertApiKeyBinding: (value) =>
         Effect.sync(() => {
           inserted = value;
           return Option.some({ authBindingId });
         }),
-      loadPrincipal: () => Effect.succeedSome({ kind: 'service', status: 'active' }),
+      loadPrincipal: () =>
+        Effect.succeedSome({ kind: 'service', status: 'active' }),
     });
     const result = yield* bindApiKey({
       managed: true,
@@ -215,7 +241,7 @@ effectTest(
     assert.equal('key' in (inserted ?? {}), false);
     assert.equal('secret' in (inserted ?? {}), false);
     assert.equal('hash' in (inserted ?? {}), false);
-  }),
+  })
 );
 
 effectTest(
@@ -223,7 +249,8 @@ effectTest(
   Effect.gen(function* mapsExistingBindingToConflict() {
     const transaction = repository({
       insertApiKeyBinding: () => Effect.succeedNone,
-      loadPrincipal: () => Effect.succeedSome({ kind: 'service', status: 'active' }),
+      loadPrincipal: () =>
+        Effect.succeedSome({ kind: 'service', status: 'active' }),
     });
 
     const error = yield* Effect.flip(
@@ -232,11 +259,11 @@ effectTest(
         principalId,
         providerSubjectId: 'duplicate-provider-key-id',
         tenantId,
-      }).pipe(provideRepository(transaction)),
+      }).pipe(provideRepository(transaction))
     );
 
     assert.equal(error._tag, 'IdentityLifecycleConflictError');
-  }),
+  })
 );
 
 effectTest(
@@ -253,12 +280,12 @@ effectTest(
     };
 
     yield* validateSupportImpersonation(input).pipe(
-      provideRepository(repositoryForSupportParticipants([original, target])),
+      provideRepository(repositoryForSupportParticipants([original, target]))
     );
     const error = yield* Effect.flip(
       validateSupportImpersonation(input).pipe(
-        provideRepository(repositoryForSupportParticipants([original, []])),
-      ),
+        provideRepository(repositoryForSupportParticipants([original, []]))
+      )
     );
 
     assert.equal(error._tag, 'IdentityTargetInvalidError');
@@ -266,6 +293,8 @@ effectTest(
     yield* validateSupportImpersonation({
       ...input,
       checkpoint: 'stopped',
-    }).pipe(provideRepository(repositoryForSupportParticipants([original, target])));
-  }),
+    }).pipe(
+      provideRepository(repositoryForSupportParticipants([original, target]))
+    );
+  })
 );

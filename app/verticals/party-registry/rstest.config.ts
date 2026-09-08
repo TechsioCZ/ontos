@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+
 import { withModernConfig } from '@modern-js/adapter-rstest';
 import { defineConfig } from '@rstest/core';
 

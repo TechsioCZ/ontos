@@ -62,7 +62,6 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import {
@@ -72,17 +71,26 @@ import {
   skipWrappers as sharedSkipWrappers,
   walk as walkAst,
 } from '../shared/ast.ts';
-import { resolveVariable, isTrackedReference as trackedReference } from '../shared/bindings.ts';
+import {
+  resolveVariable,
+  isTrackedReference as trackedReference,
+} from '../shared/bindings.ts';
+import {
+  collectEffectBindings,
+  effectMember,
+} from '../shared/effect-imports.ts';
+import type { EffectBindings } from '../shared/effect-imports.ts';
 import { importedName } from '../shared/imports.ts';
+import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
 import {
   isNonReferencePosition,
   isInTypePosition as inTypePosition,
 } from '../shared/reference-positions.ts';
-import { nearestFunction, isTopLevel, programLevelFunctionName } from '../shared/script-entry.ts';
-
-import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
-import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
+import {
+  nearestFunction,
+  isTopLevel,
+  programLevelFunctionName,
+} from '../shared/script-entry.ts';
 
 /** `runPromise`, `runPromiseExit`, `runSync`, `runSyncExit`, `runFork`, `runCallback`, `run*With`. */
 const RUN_MEMBER = /^run[A-Z]/u;
@@ -174,8 +182,13 @@ type AnyNode = ESTree.Node;
 
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
-  const strings = (value: unknown, fallback: readonly string[]): readonly string[] =>
-    Array.isArray(value) && value.every((entry) => typeof entry === 'string') && value.length > 0
+  const strings = (
+    value: unknown,
+    fallback: readonly string[]
+  ): readonly string[] =>
+    Array.isArray(value) &&
+    value.every((entry) => typeof entry === 'string') &&
+    value.length > 0
       ? (value as readonly string[])
       : fallback;
   return {
@@ -206,7 +219,11 @@ function unwrapExpression(node: AnyNode): AnyNode {
 function isInTypePosition(node: AnyNode): boolean {
   return inTypePosition(node, TS_EXPRESSION_NODES);
 }
-const DECLARATION_PARENTS = new Set(['LabeledStatement', 'BreakStatement', 'ContinueStatement']);
+const DECLARATION_PARENTS = new Set([
+  'LabeledStatement',
+  'BreakStatement',
+  'ContinueStatement',
+]);
 const DECLARATION_KEYS = new Set([
   'Property',
   'PropertyDefinition',
@@ -222,7 +239,11 @@ function isDeclarationPosition(node: AnyNode): boolean {
   });
 }
 function staticName(key: AnyNode, computed: boolean): string | null {
-  return keyName(key, computed, { templates: computed, rawTemplates: true, singleQuasi: true });
+  return keyName(key, computed, {
+    templates: computed,
+    rawTemplates: true,
+    singleQuasi: true,
+  });
 }
 
 function sameSpan(left: AnyNode, right: AnyNode): boolean {
@@ -232,7 +253,11 @@ function sameSpan(left: AnyNode, right: AnyNode): boolean {
   );
 }
 
-function isTrackedReference(context: Context, identifier: AnyNode, declaration: AnyNode): boolean {
+function isTrackedReference(
+  context: Context,
+  identifier: AnyNode,
+  declaration: AnyNode
+): boolean {
   return trackedReference(context, identifier, declaration, sameSpan);
 }
 
@@ -272,14 +297,17 @@ interface BindingState {
 function collectNamedRunner(
   state: BindingState,
   specifier: ESTree.ImportSpecifier,
-  source: string,
+  source: string
 ): void {
   if (specifier.importKind === 'type') return;
   const imported = importedName(specifier);
   const local = specifier.local;
   const submodule = source.split('/').at(-1) ?? '';
   if (state.effectModules.includes(imported)) {
-    state.namespaces.set(local.name, { declaration: local, namespace: imported });
+    state.namespaces.set(local.name, {
+      declaration: local,
+      namespace: imported,
+    });
   } else if (
     RUN_MEMBER.test(imported) &&
     (source === 'effect' || state.effectModules.includes(submodule))
@@ -287,18 +315,28 @@ function collectNamedRunner(
     state.runLocals.set(local.name, {
       declaration: local,
       member: imported,
-      namespace: source === 'effect' ? (state.effectModules[0] ?? 'Effect') : submodule,
+      namespace:
+        source === 'effect' ? (state.effectModules[0] ?? 'Effect') : submodule,
     });
   }
 }
-function collectRunnerImport(state: BindingState, statement: ESTree.ImportDeclaration): void {
-  if (statement.importKind === 'type' || !EFFECT_MODULE.test(statement.source.value)) return;
+function collectRunnerImport(
+  state: BindingState,
+  statement: ESTree.ImportDeclaration
+): void {
+  if (
+    statement.importKind === 'type' ||
+    !EFFECT_MODULE.test(statement.source.value)
+  )
+    return;
   const source = statement.source.value;
   const submodule = source.split('/').at(-1) ?? '';
   for (const specifier of statement.specifiers) {
-    if (specifier.type === 'ImportSpecifier') collectNamedRunner(state, specifier, source);
+    if (specifier.type === 'ImportSpecifier')
+      collectNamedRunner(state, specifier, source);
     else if (specifier.type === 'ImportNamespaceSpecifier') {
-      if (source === 'effect') state.packages.set(specifier.local.name, specifier.local);
+      if (source === 'effect')
+        state.packages.set(specifier.local.name, specifier.local);
       else if (state.effectModules.includes(submodule))
         state.namespaces.set(specifier.local.name, {
           declaration: specifier.local,
@@ -310,7 +348,7 @@ function collectRunnerImport(state: BindingState, statement: ESTree.ImportDeclar
 function collectRunBindings(
   context: Context,
   program: ESTree.Program,
-  effectModules: readonly string[],
+  effectModules: readonly string[]
 ): RunBindings {
   const state: BindingState = {
     context,
@@ -320,27 +358,33 @@ function collectRunBindings(
     runLocals: new Map(),
   };
   for (const statement of program.body) {
-    if (statement.type === 'ImportDeclaration') collectRunnerImport(state, statement);
+    if (statement.type === 'ImportDeclaration')
+      collectRunnerImport(state, statement);
   }
-  if (state.namespaces.size > 0 || state.packages.size > 0) propagateAliases(state, program);
+  if (state.namespaces.size > 0 || state.packages.size > 0)
+    propagateAliases(state, program);
   return {
     namespaces: state.namespaces,
     packages: state.packages,
     runLocals: state.runLocals,
-    tracked: state.namespaces.size > 0 || state.packages.size > 0 || state.runLocals.size > 0,
+    tracked:
+      state.namespaces.size > 0 ||
+      state.packages.size > 0 ||
+      state.runLocals.size > 0,
   };
 }
 type AliasKind = NamespaceBinding | 'package';
 function packageNamespace(
   state: BindingState,
-  member: ESTree.MemberExpression,
+  member: ESTree.MemberExpression
 ): NamespaceBinding | null {
   const name = staticName(member.property, member.computed);
   if (name === null || !state.effectModules.includes(name)) return null;
   const object = unwrapExpression(member.object);
   if (object.type !== 'Identifier') return null;
   const declaration = state.packages.get(object.name);
-  return declaration !== undefined && isTrackedReference(state.context, object, declaration)
+  return declaration !== undefined &&
+    isTrackedReference(state.context, object, declaration)
     ? { declaration: object, namespace: name }
     : null;
 }
@@ -348,10 +392,14 @@ function aliasKind(state: BindingState, init: AnyNode): AliasKind | null {
   if (init.type === 'MemberExpression') return packageNamespace(state, init);
   if (init.type !== 'Identifier') return null;
   const known = state.namespaces.get(init.name);
-  if (known !== undefined && isTrackedReference(state.context, init, known.declaration))
+  if (
+    known !== undefined &&
+    isTrackedReference(state.context, init, known.declaration)
+  )
     return known;
   const declaration = state.packages.get(init.name);
-  return declaration !== undefined && isTrackedReference(state.context, init, declaration)
+  return declaration !== undefined &&
+    isTrackedReference(state.context, init, declaration)
     ? 'package'
     : null;
 }
@@ -363,25 +411,37 @@ function addBinding<T>(map: Map<string, T>, name: string, value: T): boolean {
 function bindAlias(
   state: BindingState,
   target: ESTree.BindingIdentifier,
-  kind: AliasKind,
+  kind: AliasKind
 ): boolean {
   return kind === 'package'
     ? addBinding(state.packages, target.name, target)
-    : addBinding(state.namespaces, target.name, { declaration: target, namespace: kind.namespace });
+    : addBinding(state.namespaces, target.name, {
+        declaration: target,
+        namespace: kind.namespace,
+      });
 }
 function bindProperty(
   state: BindingState,
-  property: Extract<ESTree.ObjectPattern['properties'][number], { type: 'Property' }>,
-  kind: AliasKind,
+  property: Extract<
+    ESTree.ObjectPattern['properties'][number],
+    { type: 'Property' }
+  >,
+  kind: AliasKind
 ): boolean {
   const key = staticName(property.key, property.computed);
   if (key === null) return false;
-  const value = property.value.type === 'AssignmentPattern' ? property.value.left : property.value;
+  const value =
+    property.value.type === 'AssignmentPattern'
+      ? property.value.left
+      : property.value;
   if (value.type !== 'Identifier') return false;
   if (kind === 'package') {
     return (
       state.effectModules.includes(key) &&
-      addBinding(state.namespaces, value.name, { declaration: value, namespace: key })
+      addBinding(state.namespaces, value.name, {
+        declaration: value,
+        namespace: key,
+      })
     );
   }
   return (
@@ -395,7 +455,7 @@ function bindProperty(
 }
 function runnerAlias(
   state: BindingState,
-  init: AnyNode,
+  init: AnyNode
 ): { member: string; namespace: string } | null {
   if (init.type !== 'MemberExpression') return null;
   const namespace = namespaceOfObject(
@@ -403,14 +463,17 @@ function runnerAlias(
     init,
     state.namespaces,
     state.packages,
-    state.effectModules,
+    state.effectModules
   );
   const member = staticName(init.property, init.computed);
   return namespace !== null && member !== null && RUN_MEMBER.test(member)
     ? { member, namespace }
     : null;
 }
-function propagateDeclarator(state: BindingState, declarator: ESTree.VariableDeclarator): boolean {
+function propagateDeclarator(
+  state: BindingState,
+  declarator: ESTree.VariableDeclarator
+): boolean {
   if (declarator.init == null) return false;
   const init = unwrapExpression(declarator.init);
   const target = declarator.id;
@@ -418,7 +481,10 @@ function propagateDeclarator(state: BindingState, declarator: ESTree.VariableDec
   if (runner !== null) {
     return (
       target.type === 'Identifier' &&
-      addBinding(state.runLocals, target.name, { declaration: target, ...runner })
+      addBinding(state.runLocals, target.name, {
+        declaration: target,
+        ...runner,
+      })
     );
   }
   const kind = aliasKind(state, init);
@@ -427,7 +493,8 @@ function propagateDeclarator(state: BindingState, declarator: ESTree.VariableDec
   if (target.type !== 'ObjectPattern') return false;
   let changed = false;
   for (const property of target.properties) {
-    if (property.type === 'Property' && bindProperty(state, property, kind)) changed = true;
+    if (property.type === 'Property' && bindProperty(state, property, kind))
+      changed = true;
   }
   return changed;
 }
@@ -438,9 +505,10 @@ function propagateAliases(state: BindingState, program: ESTree.Program): void {
     program,
     {},
     (node) => {
-      if (node.type === 'VariableDeclarator' && node.init != null) declarators.push(node);
+      if (node.type === 'VariableDeclarator' && node.init != null)
+        declarators.push(node);
     },
-    false,
+    false
   );
   for (let pass = 0; pass < 5; pass += 1) {
     let changed = false;
@@ -457,12 +525,13 @@ function namespaceOfObject(
   node: ESTree.MemberExpression,
   namespaces: ReadonlyMap<string, NamespaceBinding>,
   packages: ReadonlyMap<string, AnyNode>,
-  effectModules: readonly string[],
+  effectModules: readonly string[]
 ): string | null {
   const object = unwrapExpression(node.object as unknown as AnyNode);
   if (object.type === 'Identifier') {
     const binding = namespaces.get((object as ESTree.IdentifierReference).name);
-    return binding !== undefined && isTrackedReference(context, object, binding.declaration)
+    return binding !== undefined &&
+      isTrackedReference(context, object, binding.declaration)
       ? binding.namespace
       : null;
   }
@@ -473,7 +542,10 @@ function namespaceOfObject(
   const root = unwrapExpression(inner.object as unknown as AnyNode);
   if (root.type !== 'Identifier') return null;
   const declaration = packages.get((root as ESTree.IdentifierReference).name);
-  return declaration !== undefined && isTrackedReference(context, root, declaration) ? name : null;
+  return declaration !== undefined &&
+    isTrackedReference(context, root, declaration)
+    ? name
+    : null;
 }
 
 /**
@@ -485,17 +557,20 @@ function runMember(
   node: ESTree.MemberExpression,
   bindings: RunBindings,
   shared: EffectBindings,
-  effectModules: readonly string[],
+  effectModules: readonly string[]
 ): { readonly namespace: string; readonly member: string } | null {
   const member = staticName(node.property as unknown as AnyNode, node.computed);
   if (member === null || !RUN_MEMBER.test(member)) return null;
   const object = unwrapExpression(node.object as unknown as AnyNode);
   if (object.type === 'Identifier') {
-    const tracked = bindings.namespaces.get((object as ESTree.IdentifierReference).name);
+    const tracked = bindings.namespaces.get(
+      (object as ESTree.IdentifierReference).name
+    );
     if (tracked === undefined) return null;
     // Cross-check with the shared import tracker for the plain `Effect.runPromise` shape.
     const namespace =
-      effectMember(node as unknown as ESTree.Node, shared)?.namespace ?? tracked.namespace;
+      effectMember(node as unknown as ESTree.Node, shared)?.namespace ??
+      tracked.namespace;
     if (!effectModules.includes(namespace)) return null;
     if (!isTrackedReference(context, object, tracked.declaration)) return null;
     return { member, namespace };
@@ -507,16 +582,21 @@ function packageRunMember(
   object: AnyNode,
   bindings: RunBindings,
   effectModules: readonly string[],
-  member: string,
+  member: string
 ): { namespace: string; member: string } | null {
   if (object.type !== 'MemberExpression') return null;
   // `import * as Fx from "effect"` -> `Fx.Effect.runSync(...)`.
   const inner = object as ESTree.MemberExpression;
-  const namespace = staticName(inner.property as unknown as AnyNode, inner.computed);
+  const namespace = staticName(
+    inner.property as unknown as AnyNode,
+    inner.computed
+  );
   if (namespace === null || !effectModules.includes(namespace)) return null;
   const root = unwrapExpression(inner.object as unknown as AnyNode);
   if (root.type !== 'Identifier') return null;
-  const declaration = bindings.packages.get((root as ESTree.IdentifierReference).name);
+  const declaration = bindings.packages.get(
+    (root as ESTree.IdentifierReference).name
+  );
   if (declaration === undefined) return null;
   if (!isTrackedReference(context, root, declaration)) return null;
   return { member, namespace };
@@ -525,7 +605,8 @@ function packageRunMember(
 /** Return a call only when the wrapped expression is its callee. */
 function invocation(node: AnyNode): ESTree.CallExpression | null {
   const wrapped = skipWrappers(node);
-  return wrapped.parent?.type === 'CallExpression' && wrapped.parent.callee === wrapped.node
+  return wrapped.parent?.type === 'CallExpression' &&
+    wrapped.parent.callee === wrapped.node
     ? wrapped.parent
     : null;
 }
@@ -546,20 +627,30 @@ function isExportReference(identifier: AnyNode): boolean {
  * `export { main }` / `export default main` specifier is a module-record name, not a call, and the
  * repo's scaffold entrypoints are written that way.
  */
-function isOnlyCalledFromTopLevel(context: Context, fn: AnyNode, name: string): boolean {
+function isOnlyCalledFromTopLevel(
+  context: Context,
+  fn: AnyNode,
+  name: string
+): boolean {
   const variable = resolveVariable(context, name, fn);
   if (variable === null) return false;
   const bindingOffsets = new Set(
-    variable.identifiers.map((identifier) => (identifier as unknown as ESTree.Span).start),
+    variable.identifiers.map(
+      (identifier) => (identifier as unknown as ESTree.Span).start
+    )
   );
   const uses = variable.references.filter(
     (reference) =>
       reference.init !== true &&
-      !bindingOffsets.has((reference.identifier as unknown as ESTree.Span).start) &&
-      !isExportReference(reference.identifier as unknown as AnyNode),
+      !bindingOffsets.has(
+        (reference.identifier as unknown as ESTree.Span).start
+      ) &&
+      !isExportReference(reference.identifier as unknown as AnyNode)
   );
   if (uses.length === 0) return false;
-  return uses.every((reference) => isTopLevelImmediatelyInvoked(reference.identifier as AnyNode));
+  return uses.every((reference) =>
+    isTopLevelImmediatelyInvoked(reference.identifier as AnyNode)
+  );
 }
 
 /**
@@ -597,7 +688,8 @@ function switchHasNoFallthrough(node: ESTree.SwitchStatement): boolean {
       statement.type === 'ThrowStatement'
     )
       return true;
-    if (statement.type === 'BlockStatement') return terminates(statement.body.at(-1));
+    if (statement.type === 'BlockStatement')
+      return terminates(statement.body.at(-1));
     if (statement.type === 'IfStatement')
       return (
         terminates(statement.consequent) &&
@@ -608,7 +700,10 @@ function switchHasNoFallthrough(node: ESTree.SwitchStatement): boolean {
   };
   return node.cases
     .slice(0, -1)
-    .every((branch) => branch.consequent.length === 0 || terminates(branch.consequent.at(-1)));
+    .every(
+      (branch) =>
+        branch.consequent.length === 0 || terminates(branch.consequent.at(-1))
+    );
 }
 
 interface Decision {
@@ -626,8 +721,14 @@ function decisionPath(site: AnyNode): readonly Decision[] {
   let child = site;
   let current = parentOf(child);
   while (current !== null) {
-    if (current.type === 'IfStatement' || current.type === 'ConditionalExpression') {
-      const branching = current as unknown as { consequent?: unknown; alternate?: unknown };
+    if (
+      current.type === 'IfStatement' ||
+      current.type === 'ConditionalExpression'
+    ) {
+      const branching = current as unknown as {
+        consequent?: unknown;
+        alternate?: unknown;
+      };
       if (branching.consequent === child)
         path.push({ branch: 'then', id: (current as ESTree.Span).start });
       else if (branching.alternate === child)
@@ -652,7 +753,10 @@ function decisionPath(site: AnyNode): readonly Decision[] {
 }
 
 /** `true` when two run sites live in different branches of the same `if` chain / `switch`. */
-function mutuallyExclusive(left: readonly Decision[], right: readonly Decision[]): boolean {
+function mutuallyExclusive(
+  left: readonly Decision[],
+  right: readonly Decision[]
+): boolean {
   const shared = Math.min(left.length, right.length);
   for (let index = 0; index < shared; index += 1) {
     const a = left[index];
@@ -673,9 +777,12 @@ function promiseChainMethod(site: AnyNode): string | null {
   if ((member as ESTree.MemberExpression).object !== chained.node) return null;
   const method = staticName(
     (member as ESTree.MemberExpression).property as unknown as AnyNode,
-    (member as ESTree.MemberExpression).computed,
+    (member as ESTree.MemberExpression).computed
   );
-  if (method === null || (!PROMISE_CHAIN_METHODS.has(method) && method !== CLEANUP_CHAIN_METHOD))
+  if (
+    method === null ||
+    (!PROMISE_CHAIN_METHODS.has(method) && method !== CLEANUP_CHAIN_METHOD)
+  )
     return null;
   return invocation(member) !== null ? method : null;
 }
@@ -689,9 +796,12 @@ function isAliasInitializer(node: AnyNode): boolean {
     parent.id.type === 'Identifier'
   );
 }
-function chargeSlot(charged: Array<Array<readonly Decision[]>>, path: readonly Decision[]): number {
+function chargeSlot(
+  charged: Array<Array<readonly Decision[]>>,
+  path: readonly Decision[]
+): number {
   const slot = charged.findIndex((alternatives) =>
-    alternatives.every((other) => mutuallyExclusive(other, path)),
+    alternatives.every((other) => mutuallyExclusive(other, path))
   );
   if (slot !== -1) {
     charged[slot]?.push(path);
@@ -738,7 +848,8 @@ export const rule = defineRule({
           allowPaths: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Globs of script files exempted from this rule (default: none).',
+            description:
+              'Globs of script files exempted from this rule (default: none).',
           },
           maxRunSites: {
             type: 'integer',
@@ -748,7 +859,8 @@ export const rule = defineRule({
           },
           reportPromiseChain: {
             type: 'boolean',
-            description: 'Report .then/.catch/.finally chained onto a run call (default: true).',
+            description:
+              'Report .then/.catch/.finally chained onto a run call (default: true).',
           },
           effectModules: {
             type: 'array',
@@ -788,7 +900,8 @@ export const rule = defineRule({
     // `scriptPaths` is an explicit opt-in that overrides both built-in scope checks.
     const forced = matchesAny(filename, options.scriptPaths);
     if (!forced) {
-      const inScope = isScriptFile(filename) || matchesAny(filename, options.scriptGlobs);
+      const inScope =
+        isScriptFile(filename) || matchesAny(filename, options.scriptGlobs);
       if (!inScope || isTestFile(filename)) return {};
     }
     if (matchesAny(filename, options.allowPaths)) return {};
@@ -798,7 +911,11 @@ export const rule = defineRule({
     const sites: RunSite[] = [];
     const seen = new Set<string>();
 
-    const addSite = (node: AnyNode, namespace: string, member: string): void => {
+    const addSite = (
+      node: AnyNode,
+      namespace: string,
+      member: string
+    ): void => {
       const start = (node as ESTree.Span).start;
       const end = (node as ESTree.Span).end;
       const key = `${start}:${end}`;
@@ -814,7 +931,13 @@ export const rule = defineRule({
       },
       MemberExpression(node) {
         if (bindings === null || shared === null || !bindings.tracked) return;
-        const matched = runMember(context, node, bindings, shared, options.effectModules);
+        const matched = runMember(
+          context,
+          node,
+          bindings,
+          shared,
+          options.effectModules
+        );
         if (matched === null) return;
         const self = node as unknown as AnyNode;
         if (isInTypePosition(self)) return;
@@ -830,17 +953,25 @@ export const rule = defineRule({
       Identifier(node) {
         if (bindings === null || bindings.runLocals.size === 0) return;
         const identifier = node as unknown as AnyNode;
-        const tracked = bindings.runLocals.get((node as ESTree.IdentifierReference).name);
+        const tracked = bindings.runLocals.get(
+          (node as ESTree.IdentifierReference).name
+        );
         if (tracked === undefined) return;
         if (sameSpan(identifier, tracked.declaration)) return;
-        if (isDeclarationPosition(identifier) || isInTypePosition(identifier)) return;
-        if (!isTrackedReference(context, identifier, tracked.declaration)) return;
-        addSite(invocation(identifier) ?? identifier, tracked.namespace, tracked.member);
+        if (isDeclarationPosition(identifier) || isInTypePosition(identifier))
+          return;
+        if (!isTrackedReference(context, identifier, tracked.declaration))
+          return;
+        addSite(
+          invocation(identifier) ?? identifier,
+          tracked.namespace,
+          tracked.member
+        );
       },
       'Program:exit'() {
         if (sites.length === 0) return;
         const ordered = [...sites].sort(
-          (left, right) => left.start - right.start || right.end - left.end,
+          (left, right) => left.start - right.start || right.end - left.end
         );
         // Skip run sites nested inside another run site's expression; the outer one is the report.
         const outer = ordered.filter(
@@ -850,8 +981,8 @@ export const rule = defineRule({
                 other !== site &&
                 other.start <= site.start &&
                 site.end <= other.end &&
-                !(other.start === site.start && other.end === site.end),
-            ),
+                !(other.start === site.start && other.end === site.end)
+            )
         );
         const charged: Array<Array<readonly Decision[]>> = [];
         for (const site of outer) {
@@ -872,9 +1003,15 @@ export const rule = defineRule({
             context.report({ node: site.node, messageId: 'extraRun', data });
             continue;
           }
-          const method = options.reportPromiseChain ? promiseChainMethod(site.node) : null;
+          const method = options.reportPromiseChain
+            ? promiseChainMethod(site.node)
+            : null;
           if (method === CLEANUP_CHAIN_METHOD) {
-            context.report({ node: site.node, messageId: 'promiseFinallyOnRun', data });
+            context.report({
+              node: site.node,
+              messageId: 'promiseFinallyOnRun',
+              data,
+            });
           } else if (method !== null) {
             context.report({
               node: site.node,

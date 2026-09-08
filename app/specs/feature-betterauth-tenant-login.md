@@ -6,91 +6,55 @@ created: 2026-07-30
 
 # Feature: Better Auth Shell/Core tenant login
 
-> [!IMPORTANT]
-> **Historical scope:** [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [the Tenant switcher specification](./feature-tenant-switcher.md) supersede this feature's one-active-binding/no-selector constraint. The feature remains a record of the original login delivery, not the current account-tenancy model.
+> [!IMPORTANT] **Historical scope:** [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [the Tenant switcher specification](./feature-tenant-switcher.md) supersede this feature's one-active-binding/no-selector constraint. The feature remains a record of the original login delivery, not the current account-tenancy model.
 
 ## Feature Description
 
-Add email-and-password authentication to OntOS with Better Auth as a Shell/Core
-capability. Authentication must not be implemented as a MicroVertical, deployment
-vertical, or package under `verticals/`.
+Add email-and-password authentication to OntOS with Better Auth as a Shell/Core capability. Authentication must not be implemented as a MicroVertical, deployment vertical, or package under `verticals/`.
 
-The Shell owns the login and home routes, Better Auth credential/session runtime,
-session cookies, the strict Effect authentication BFF, and the private Drizzle schema
-and migration history for Better Auth tables. Core continues to own tenants,
-principals, `principal_auth_bindings`, and the resolver that maps an authenticated
-Better Auth subject to exactly one active OntOS principal in one active tenant.
+The Shell owns the login and home routes, Better Auth credential/session runtime, session cookies, the strict Effect authentication BFF, and the private Drizzle schema and migration history for Better Auth tables. Core continues to own tenants, principals, `principal_auth_bindings`, and the resolver that maps an authenticated Better Auth subject to exactly one active OntOS principal in one active tenant.
 
 The localized home route has exactly two visible states:
 
 - an anonymous visitor sees only a link to the login page;
-- an authenticated user sees only safe information about the logged-in identity and a
-  logout button.
+- an authenticated user sees only safe information about the logged-in identity and a logout button.
 
-Clicking logout must invalidate the Better Auth session, clear the browser session
-cookie, and return the home route to its anonymous state.
+Clicking logout must invalidate the Better Auth session, clear the browser session cookie, and return the home route to its anonymous state.
 
 ## User Story
 
-As an OntOS user
-I want to sign in, see which identity is active, and log out
-So that I can securely enter and leave the tenant context represented by my principal
+As an OntOS user I want to sign in, see which identity is active, and log out So that I can securely enter and leave the tenant context represented by my principal
 
 ## Problem Statement
 
-The Shell currently has a UI-only login form and a promotional home page. It has no
-authentication runtime, persisted session, strict Effect authentication BFF, Core
-principal resolution, authenticated home state, or logout behavior.
+The Shell currently has a UI-only login form and a promotional home page. It has no authentication runtime, persisted session, strict Effect authentication BFF, Core principal resolution, authenticated home state, or logout behavior.
 
-Authentication is a cross-cutting Shell/Core responsibility, not a business domain.
-Implementing it as an Auth MicroVertical would create a false vertical boundary,
-incorrectly expose authentication as a separately owned business capability, and
-contradict the accepted product statement that Shell and Core determine whether a
-Better Auth session represents a logged-in OntOS user.
+Authentication is a cross-cutting Shell/Core responsibility, not a business domain. Implementing it as an Auth MicroVertical would create a false vertical boundary, incorrectly expose authentication as a separately owned business capability, and contradict the accepted product statement that Shell and Core determine whether a Better Auth session represents a logged-in OntOS user.
 
 ## Current Reverted Baseline
 
-Re-opened against the reverted workspace on 2026-07-30. The current implementation
-baseline is:
+Re-opened against the reverted workspace on 2026-07-30. The current implementation baseline is:
 
-- the Shell login page performs only local required-field validation and makes no
-  authentication request;
-- the Shell home page still renders its hero, showcase, calls to action, and build
-  markers;
-- the Shell has no `api/index.ts`, `shared/api.ts`, generated authentication client,
-  Better Auth dependency, Auth Drizzle model, Auth migration, or authentication test
-  suite;
-- Core already owns tenants, principals, and `principal_auth_bindings`, but it has no
-  Better Auth subject resolver;
+- the Shell login page performs only local required-field validation and makes no authentication request;
+- the Shell home page still renders its hero, showcase, calls to action, and build markers;
+- the Shell has no `api/index.ts`, `shared/api.ts`, generated authentication client, Better Auth dependency, Auth Drizzle model, Auth migration, or authentication test suite;
+- Core already owns tenants, principals, and `principal_auth_bindings`, but it has no Better Auth subject resolver;
 - root database commands currently delegate only to `@app/core-runtime`;
-- no Auth MicroVertical source is tracked, but ignored residual directories, build
-  output, dependency links, and caches remain under `verticals/auth/` from the reverted
-  implementation attempt.
+- no Auth MicroVertical source is tracked, but ignored residual directories, build output, dependency links, and caches remain under `verticals/auth/` from the reverted implementation attempt.
 
-All implementation tasks, acceptance criteria, and review checks below are therefore
-intentionally open. No prior implementation or validation evidence may be reused.
+All implementation tasks, acceptance criteria, and review checks below are therefore intentionally open. No prior implementation or validation evidence may be reused.
 
 ## Solution Statement
 
 Add authentication directly to the Shell/Core boundary:
 
-- Shell owns Better Auth credential and session mechanics, the `auth` PostgreSQL
-  schema, the strict Effect authentication BFF, cookie propagation, login/logout UI,
-  and current-session presentation.
-- Core owns only the non-secret Better Auth subject binding, active
-  principal-and-tenant resolution, and the safe identity DTO needed by the Shell.
-- No Auth MicroVertical, Auth remote, Auth delivery unit, `@app/auth` package, or
-  `verticals/auth/**` files may be introduced.
+- Shell owns Better Auth credential and session mechanics, the `auth` PostgreSQL schema, the strict Effect authentication BFF, cookie propagation, login/logout UI, and current-session presentation.
+- Core owns only the non-secret Better Auth subject binding, active principal-and-tenant resolution, and the safe identity DTO needed by the Shell.
+- No Auth MicroVertical, Auth remote, Auth delivery unit, `@app/auth` package, or `verticals/auth/**` files may be introduced.
 
-The Shell BFF exposes only declared `signIn`, `currentSession`, and `signOut`
-operations through Effect Schema and a generated Shell client. `signIn` validates
-credentials and creates a session only when Core resolves exactly one active binding.
-`currentSession` revalidates the Core identity on every read. `signOut` delegates to
-Better Auth and forwards every cookie-clearing `Set-Cookie` header.
+The Shell BFF exposes only declared `signIn`, `currentSession`, and `signOut` operations through Effect Schema and a generated Shell client. `signIn` validates credentials and creates a session only when Core resolves exactly one active binding. `currentSession` revalidates the Core identity on every read. `signOut` delegates to Better Auth and forwards every cookie-clearing `Set-Cookie` header.
 
-The home route consumes the Shell authentication client and renders exactly one of the
-two required visible states. It must not retain the current hero, showcase,
-promotional calls to action, build markers, or other visible content.
+The home route consumes the Shell authentication client and renders exactly one of the two required visible states. It must not retain the current hero, showcase, promotional calls to action, build markers, or other visible content.
 
 ## Relevant Files
 
@@ -150,25 +114,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Resolve the Shell BFF scaffold blocker before creating any initial API files. Configure
-the Shell as the authentication BFF and Better Auth database owner without adding a
-vertical, remote, package, or delivery unit. Pin compatible Better Auth/Drizzle
-dependencies, generate the Better Auth model, and establish independent Core and
-Shell-owned schema inventories and migration histories.
+Resolve the Shell BFF scaffold blocker before creating any initial API files. Configure the Shell as the authentication BFF and Better Auth database owner without adding a vertical, remote, package, or delivery unit. Pin compatible Better Auth/Drizzle dependencies, generate the Better Auth model, and establish independent Core and Shell-owned schema inventories and migration histories.
 
 ### Phase 2: Core Implementation
 
-Implement and test the narrow Core subject resolver. Configure Better Auth inside the
-Shell, enforce Core resolution before session creation and on every session read, and
-implement declared `signIn`, `currentSession`, and `signOut` Shell BFF operations with
-typed errors, redacted logging, and correct cookie propagation.
+Implement and test the narrow Core subject resolver. Configure Better Auth inside the Shell, enforce Core resolution before session creation and on every session read, and implement declared `signIn`, `currentSession`, and `signOut` Shell BFF operations with typed errors, redacted logging, and correct cookie propagation.
 
 ### Phase 3: Integration
 
-Connect the localized Shell login and home routes through the generated Shell
-authentication client. Reduce the home route to its exact anonymous/authenticated
-states, implement logout and retry behavior, and prove the complete localized flow
-with unit, database integration, contract, and browser tests.
+Connect the localized Shell login and home routes through the generated Shell authentication client. Reduce the home route to its exact anonymous/authenticated states, implement logout and retry behavior, and prove the complete localized flow with unit, database integration, contract, and browser tests.
 
 ## Step by Step Tasks
 
@@ -240,18 +194,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Test Core resolver decisions; Better Auth table placement; Shell Effect request,
-response, and error schemas; generic credential errors; sign-out cookie invalidation;
-redaction; exact home-page contents; logout pending/retry behavior; and the absence of
-Auth vertical ownership.
+Test Core resolver decisions; Better Auth table placement; Shell Effect request, response, and error schemas; generic credential errors; sign-out cookie invalidation; redaction; exact home-page contents; logout pending/retry behavior; and the absence of Auth vertical ownership.
 
 ### Integration Tests
 
-Run PostgreSQL-backed tests for independent Core and Shell migration histories, exact
-catalog verification, Better Auth credential/session behavior, Core resolution,
-revocation, and cookie propagation/clearing through the Shell strict Effect BFF. Run
-Playwright against the assembled Shell for the complete English and Czech login,
-current-session, and logout flow.
+Run PostgreSQL-backed tests for independent Core and Shell migration histories, exact catalog verification, Better Auth credential/session behavior, Core resolution, revocation, and cookie propagation/clearing through the Shell strict Effect BFF. Run Playwright against the assembled Shell for the complete English and Czech login, current-session, and logout flow.
 
 ### Edge Cases
 
@@ -314,48 +261,33 @@ Execute every command to validate the feature with zero regressions.
 
 ### Summary
 
-- Implemented Better Auth email/password login as a Shell/Core capability with a
-  strict Effect BFF, safe principal/tenant resolution, localized exact home states,
-  session persistence, and sign-out behavior.
-- Consolidated migration bookkeeping into the single PostgreSQL schema `drizzle`,
-  with independent `__drizzle_migrations_core` and `__drizzle_migrations_auth`
-  journal tables.
-- Provisioned `ji.prochazka@gmail.com` with an active Better Auth account, Core
-  principal, tenant, and binding in the Docker PostgreSQL database.
+- Implemented Better Auth email/password login as a Shell/Core capability with a strict Effect BFF, safe principal/tenant resolution, localized exact home states, session persistence, and sign-out behavior.
+- Consolidated migration bookkeeping into the single PostgreSQL schema `drizzle`, with independent `__drizzle_migrations_core` and `__drizzle_migrations_auth` journal tables.
+- Provisioned `ji.prochazka@gmail.com` with an active Better Auth account, Core principal, tenant, and binding in the Docker PostgreSQL database.
 
 ### Changed Files
 
-- 58 files changed, 4,320 insertions, 236 deletions before integration with the
-  latest `develop`.
+- 58 files changed, 4,320 insertions, 236 deletions before integration with the latest `develop`.
 
 ### Tests Written or Updated
 
-- `apps/shell-super-app/tests/unit/routes/home/page.test.tsx` — anonymous and
-  authenticated UI, successful sign-out, and failed sign-out retry behavior.
-- `apps/shell-super-app/tests/unit/routes/login/page.test.tsx` — validation,
-  submission, typed authentication failures, and duplicate submission prevention.
-- `apps/shell-super-app/tests/unit/auth-*.test.ts` — BFF contract, configuration,
-  schema, and ownership boundaries.
-- `apps/shell-super-app/tests/integration/auth-runtime.test.ts` — credential,
-  principal resolution, session persistence, revocation, and sign-out behavior.
-- `apps/shell-super-app/tests/e2e/login.spec.ts` — localized browser login, persisted
-  session, logout, retry, keyboard, and narrow-viewport behavior.
-- `packages/core-runtime/tests/unit/principal-resolver.test.ts` and
-  `packages/core-runtime/tests/integration/principal-resolver.test.ts` — safe identity
-  resolution and fail-closed binding, principal, and tenant states.
+- `apps/shell-super-app/tests/unit/routes/home/page.test.tsx` — anonymous and authenticated UI, successful sign-out, and failed sign-out retry behavior.
+- `apps/shell-super-app/tests/unit/routes/login/page.test.tsx` — validation, submission, typed authentication failures, and duplicate submission prevention.
+- `apps/shell-super-app/tests/unit/auth-*.test.ts` — BFF contract, configuration, schema, and ownership boundaries.
+- `apps/shell-super-app/tests/integration/auth-runtime.test.ts` — credential, principal resolution, session persistence, revocation, and sign-out behavior.
+- `apps/shell-super-app/tests/e2e/login.spec.ts` — localized browser login, persisted session, logout, retry, keyboard, and narrow-viewport behavior.
+- `packages/core-runtime/tests/unit/principal-resolver.test.ts` and `packages/core-runtime/tests/integration/principal-resolver.test.ts` — safe identity resolution and fail-closed binding, principal, and tenant states.
 
 ### Validation
 
 - `docker compose config` — passed.
 - `mise exec -- pnpm install --frozen-lockfile` — passed.
 - `mise exec -- pnpm db:migrate` — passed.
-- `DATABASE_URL=<fresh-db> mise exec -- pnpm db:migrate` twice — passed against a
-  newly created empty database; the temporary database was dropped afterward.
+- `DATABASE_URL=<fresh-db> mise exec -- pnpm db:migrate` twice — passed against a newly created empty database; the temporary database was dropped afterward.
 - `mise exec -- pnpm db:verify` — passed; verified 18 Core and 4 Auth tables.
 - `mise exec -- pnpm db:test` — passed; 13 Core tests and 1 Auth integration test.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` — passed; 25 tests.
-- `mise exec -- pnpm --filter @app/shell-super-app test:e2e` — passed; 5 Chromium
-  scenarios.
+- `mise exec -- pnpm --filter @app/shell-super-app test:e2e` — passed; 5 Chromium scenarios.
 - `mise exec -- pnpm api:check` — passed.
 - `mise exec -- pnpm i18n:boundaries` — passed.
 - `mise exec -- pnpm contract:check` — passed.
@@ -366,21 +298,12 @@ Execute every command to validate the feature with zero regressions.
 
 ### Review
 
-- Reviewed `../AGENTS.md`, `AGENTS.md`, `docs/architecture/MICROVERTICALS.md`,
-  `docs/architecture/ACTIONS.md`, `docs/architecture/ERRORS.md`,
-  `docs/architecture/DATABASE.md`, `docs/architecture/ULTRAMODERN.md`,
-  `docs/frontend/FRONTEND.md`, `../docs/09_AUTHN_AUTHZ_MODEL.md`, and
-  `../docs/adr/0014-authenticated-principal-session.md`.
-- Confirmed there is no Auth MicroVertical, package, remote, or deployment unit;
-  the browser uses only the generated Shell authentication client; migration SQL
-  creates only `auth` objects; and the live application schemas are exactly `auth`,
-  `core`, `drizzle`, and `public`.
+- Reviewed `../AGENTS.md`, `AGENTS.md`, `docs/architecture/MICROVERTICALS.md`, `docs/architecture/ACTIONS.md`, `docs/architecture/ERRORS.md`, `docs/architecture/DATABASE.md`, `docs/architecture/ULTRAMODERN.md`, `docs/frontend/FRONTEND.md`, `../docs/09_AUTHN_AUTHZ_MODEL.md`, and `../docs/adr/0014-authenticated-principal-session.md`.
+- Confirmed there is no Auth MicroVertical, package, remote, or deployment unit; the browser uses only the generated Shell authentication client; migration SQL creates only `auth` objects; and the live application schemas are exactly `auth`, `core`, `drizzle`, and `public`.
 
 ### Deviations and Follow-ups
 
-- Approved generator deviation: after the implementation skill stopped on the
-  missing Shell BFF generator, the user explicitly approved creating the new files
-  without a generator and stated that no generators were needed for this task.
+- Approved generator deviation: after the implementation skill stopped on the missing Shell BFF generator, the user explicitly approved creating the new files without a generator and stated that no generators were needed for this task.
 - No follow-up work is required for this specification.
 
 ## Notes

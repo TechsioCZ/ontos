@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import {
   computeActionRequestHash,
   computeCanonicalValueHash,
@@ -51,7 +52,7 @@ void test('computes deterministic hashes independent of object key ordering', ()
     computeCanonicalValueHash({
       nested: { alpha: 1, beta: 3 },
       values: ['first', 'second'],
-    }),
+    })
   );
 });
 
@@ -67,15 +68,18 @@ void test('rejects cyclic values instead of producing an unstable request hash',
       principal,
       schemaVersion: '1',
       target: {},
-    }),
+    })
   );
 });
 
 void test('canonical hashing distinguishes literal objects from internal value types', () => {
-  assert.notEqual(computeCanonicalValueHash(), computeCanonicalValueHash({ $undefined: true }));
+  assert.notEqual(
+    computeCanonicalValueHash(),
+    computeCanonicalValueHash({ $undefined: true })
+  );
   assert.notEqual(
     computeCanonicalValueHash(Number.NaN),
-    computeCanonicalValueHash({ $number: 'NaN' }),
+    computeCanonicalValueHash({ $number: 'NaN' })
   );
   assert.notEqual(computeCanonicalValueHash(-0), computeCanonicalValueHash(0));
 });

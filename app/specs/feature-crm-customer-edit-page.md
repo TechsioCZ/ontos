@@ -8,54 +8,25 @@ created: 2026-08-14
 
 ## Feature Description
 
-Add the generated CRM `CustomerEdit` page at localized URL
-`/cs/crm/customers/:id/edit` (canonical generator URL `/crm/customers/:id/edit`). The authenticated
-Shell continues to own dashboard/sidebar composition and exact page gating. The remote CRM page
-uses the route Customer ID to load the current Customer through the contract-derived CRM Effect BFF
-client, renders a reusable Customer form, and submits the changed name through the generated
-`editCustomer` client method so the final state change executes `EditCustomerAction` through the
-CRM BFF.
+Add the generated CRM `CustomerEdit` page at localized URL `/cs/crm/customers/:id/edit` (canonical generator URL `/crm/customers/:id/edit`). The authenticated Shell continues to own dashboard/sidebar composition and exact page gating. The remote CRM page uses the route Customer ID to load the current Customer through the contract-derived CRM Effect BFF client, renders a reusable Customer form, and submits the changed name through the generated `editCustomer` client method so the final state change executes `EditCustomerAction` through the CRM BFF.
 
-Use Figma page `Pre-Alpha Repo`, screen `Resource Detail - Běžný`, only as a wireframe: preserve the
-back-link, heading, and primary content arrangement, and replace the read-only detail rows with form
-controls. Do not copy Figma styling or add inert resource-detail tabs. Use the installed
-`@techsio/ui-kit` `FormInput`, `Button`, `Link`, and `StatusText` components with existing tokens and
-Tailwind only for responsive layout composition.
+Use Figma page `Pre-Alpha Repo`, screen `Resource Detail - Běžný`, only as a wireframe: preserve the back-link, heading, and primary content arrangement, and replace the read-only detail rows with form controls. Do not copy Figma styling or add inert resource-detail tabs. Use the installed `@techsio/ui-kit` `FormInput`, `Button`, `Link`, and `StatusText` components with existing tokens and Tailwind only for responsive layout composition.
 
-The form itself must be a separate owner-private `CustomerForm` presentation component so a future
-Customer-create page can reuse the same field, validation, pending, form-status, cancel, and submit
-contract. It receives plain values/states and semantic callbacks; it does not read route params,
-navigate, call the BFF, run Effects, access permissions, or depend on BFF/domain error types.
+The form itself must be a separate owner-private `CustomerForm` presentation component so a future Customer-create page can reuse the same field, validation, pending, form-status, cancel, and submit contract. It receives plain values/states and semantic callbacks; it does not read route params, navigate, call the BFF, run Effects, access permissions, or depend on BFF/domain error types.
 
 ## User Story
 
-As an authenticated CRM user with write access
-I want to edit a Customer's name on a dedicated localized page
-So that I can correct the canonical Customer record through the governed CRM Action boundary
+As an authenticated CRM user with write access I want to edit a Customer's name on a dedicated localized page So that I can correct the canonical Customer record through the governed CRM Action boundary
 
 ## Problem Statement
 
-CRM has persistence and a planned typed Customer read/edit BFF, but no user-facing edit route. The
-mandatory page generator cannot currently express the requested dynamic URL, and frontend code must
-not bypass the generated page entrypoint or call a backend handler/ad hoc fetch. The form also needs
-an explicit reusable presentation boundary or a future create flow would duplicate validation and
-UI behavior.
+CRM has persistence and a planned typed Customer read/edit BFF, but no user-facing edit route. The mandatory page generator cannot currently express the requested dynamic URL, and frontend code must not bypass the generated page entrypoint or call a backend handler/ad hoc fetch. The form also needs an explicit reusable presentation boundary or a future create flow would duplicate validation and UI behavior.
 
 ## Solution Statement
 
-After dynamic page support and the existing Customer operations plan are implemented, run the
-mandatory page generator with stable identity `customer-edit` and canonical URL
-`/crm/customers/:id/edit`. Adapt only the generated owner page and wiring. Pass the declared `id`
-route parameter to CRM feature integration, use the generated `getCustomerDetail` Effect client to
-obtain initial values, and use a scoped TanStack Query integration (added to the CRM package) for
-explicit loading, retry, not-found, forbidden, unavailable, and success states without ordinary
-fetching in a React effect.
+After dynamic page support and the existing Customer operations plan are implemented, run the mandatory page generator with stable identity `customer-edit` and canonical URL `/crm/customers/:id/edit`. Adapt only the generated owner page and wiring. Pass the declared `id` route parameter to CRM feature integration, use the generated `getCustomerDetail` Effect client to obtain initial values, and use a scoped TanStack Query integration (added to the CRM package) for explicit loading, retry, not-found, forbidden, unavailable, and success states without ordinary fetching in a React effect.
 
-Render the owner-private `CustomerForm` with the one authoritative Customer business field,
-`name`. Validate a trimmed non-empty name, preserve accessible field/form errors, and submit through
-`editCustomer` with one idempotency key per logical submission. Exhaustively map the typed client
-error union before rendering. On success, update/invalidate the cached Customer detail and navigate
-to the localized generated Customers list without changing `CustomerForm`.
+Render the owner-private `CustomerForm` with the one authoritative Customer business field, `name`. Validate a trimmed non-empty name, preserve accessible field/form errors, and submit through `editCustomer` with one idempotency key per logical submission. Exhaustively map the typed client error union before rendering. On success, update/invalidate the cached Customer detail and navigate to the localized generated Customers list without changing `CustomerForm`.
 
 ## Relevant Files
 
@@ -99,27 +70,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Confirm `specs/chore-support-dynamic-microvertical-pages.md`,
-`specs/feature-crm-customer-contact-actions.md`, and
-`specs/feature-crm-customers-list-page.md` are implemented. Then generate `customer-edit` at the
-canonical parameterized URL before adapting any page/wiring file. Reuse the list page's CRM-owned
-UI/query/test infrastructure. Create `customer-form.tsx` as the explicitly approved owner-private
-ordinary React presentation component; do not publish it as a module entrypoint.
+Confirm `specs/chore-support-dynamic-microvertical-pages.md`, `specs/feature-crm-customer-contact-actions.md`, and `specs/feature-crm-customers-list-page.md` are implemented. Then generate `customer-edit` at the canonical parameterized URL before adapting any page/wiring file. Reuse the list page's CRM-owned UI/query/test infrastructure. Create `customer-form.tsx` as the explicitly approved owner-private ordinary React presentation component; do not publish it as a module entrypoint.
 
 ### Phase 2: Core Implementation
 
-Implement `CustomerForm` as a controlled presentation contract using `FormInput`, primary/secondary
-`Button`s, and `StatusText`, with no routing, BFF, Effect, or permission dependency. Adapt the
-generated CustomerEdit page to load current values through `getCustomerDetail`, preserve the typed
-client error union at the query edge, gate editing on `target.writable`, and submit through
-`editCustomer` with correct idempotency and retry behavior.
+Implement `CustomerForm` as a controlled presentation contract using `FormInput`, primary/secondary `Button`s, and `StatusText`, with no routing, BFF, Effect, or permission dependency. Adapt the generated CustomerEdit page to load current values through `getCustomerDetail`, preserve the typed client error union at the query edge, gate editing on `target.writable`, and submit through `editCustomer` with correct idempotency and retry behavior.
 
 ### Phase 3: Integration
 
-Complete English/Czech copy, generated manifest/registration/federation/Shell wiring, responsive and
-accessible state rendering, post-save navigation, focused component/feature tests, exact contract
-checks, and the independent CRM build. Keep the real Action/BFF proof in the prerequisite CRM
-integration suite until repository browser orchestration can start both deployments.
+Complete English/Czech copy, generated manifest/registration/federation/Shell wiring, responsive and accessible state rendering, post-save navigation, focused component/feature tests, exact contract checks, and the independent CRM build. Keep the real Action/BFF proof in the prerequisite CRM integration suite until repository browser orchestration can start both deployments.
 
 ## Step by Step Tasks
 
@@ -175,21 +134,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use focused Rstest/Testing Library coverage for the reusable `CustomerForm` contract and
-CustomerEdit integration. Exercise accessible validation/focus/keyboard behavior, initial query
-states, `target.writable`, exhaustive typed query/mutation error mapping, exact BFF payload and
-idempotency behavior, cache/navigation results, and the form's lack of routing/BFF dependencies.
-Retain the existing CRM Node unit suite for schemas/contracts and extend generated page/manifest
-assertions only where necessary.
+Use focused Rstest/Testing Library coverage for the reusable `CustomerForm` contract and CustomerEdit integration. Exercise accessible validation/focus/keyboard behavior, initial query states, `target.writable`, exhaustive typed query/mutation error mapping, exact BFF payload and idempotency behavior, cache/navigation results, and the form's lack of routing/BFF dependencies. Retain the existing CRM Node unit suite for schemas/contracts and extend generated page/manifest assertions only where necessary.
 
 ### Integration Tests
 
-Rely on `specs/feature-crm-customer-contact-actions.md` for real Action/Read runtime and strict BFF
-integration. A new Playwright integration test is not required in this increment because the
-researched browser configuration starts only the Shell command and does not orchestrate the
-independently deployable CRM remote/BFF. Focused UI tests cover page interaction while the
-prerequisite real-BFF suite proves durable reads/writes; add a cross-deployment browser proof later
-when repository-owned orchestration exists rather than mocking or weakening the seam.
+Rely on `specs/feature-crm-customer-contact-actions.md` for real Action/Read runtime and strict BFF integration. A new Playwright integration test is not required in this increment because the researched browser configuration starts only the Shell command and does not orchestrate the independently deployable CRM remote/BFF. Focused UI tests cover page interaction while the prerequisite real-BFF suite proves durable reads/writes; add a cross-deployment browser proof later when repository-owned orchestration exists rather than mocking or weakening the seam.
 
 ### Edge Cases
 
@@ -245,47 +194,21 @@ Execute every command to validate the feature with zero regressions.
 
 ## Notes
 
-- Implementation order is: dynamic page generator chore; existing Customer Action/Read/BFF feature;
-  generated Customers list page; then this page feature.
-- Stable generator identity is lower-kebab `customer-edit`, producing `CustomerEditPage`; the locale
-  is router-owned, so the generator receives `/crm/customers/:id/edit`, not `/cs/...`.
+- Implementation order is: dynamic page generator chore; existing Customer Action/Read/BFF feature; generated Customers list page; then this page feature.
+- Stable generator identity is lower-kebab `customer-edit`, producing `CustomerEditPage`; the locale is router-owned, so the generator receives `/crm/customers/:id/edit`, not `/cs/...`.
 - Customer has exactly one editable business field, `name`, under the completed persistence contract.
-- The concurrently planned generated Customers list page owns `/crm/customers`; this feature depends
-  on it for a concrete, localized Back/Cancel/success destination and reuses its CRM UI/query/test
-  setup.
-- TanStack Query is selected because the remote page is lazy-loaded inside the authenticated Shell,
-  the current gateway does not execute an owner route loader, and frontend guidance forbids ordinary
-  route fetching in a React effect. The query adapter remains the thin Promise edge around typed
-  CRM client Effects.
-- Resolved developer decision (2026-08-15): create `CustomerForm` directly as an ordinary
-  owner-private React presentation component. It remains private to CRM and must not use the
-  public-component generator, module registration/manifest/federation, or a Shell entrypoint.
-- Follow-up: the current Playwright server starts only the Shell command. Add a cross-deployment
-  browser proof after repository-owned orchestration supplies the independently deployable CRM
-  BFF/remote; do not weaken the deployment seam or silently replace that proof with a mocked browser
-  request.
+- The concurrently planned generated Customers list page owns `/crm/customers`; this feature depends on it for a concrete, localized Back/Cancel/success destination and reuses its CRM UI/query/test setup.
+- TanStack Query is selected because the remote page is lazy-loaded inside the authenticated Shell, the current gateway does not execute an owner route loader, and frontend guidance forbids ordinary route fetching in a React effect. The query adapter remains the thin Promise edge around typed CRM client Effects.
+- Resolved developer decision (2026-08-15): create `CustomerForm` directly as an ordinary owner-private React presentation component. It remains private to CRM and must not use the public-component generator, module registration/manifest/federation, or a Shell entrypoint.
+- Follow-up: the current Playwright server starts only the Shell command. Add a cross-deployment browser proof after repository-owned orchestration supplies the independently deployable CRM BFF/remote; do not weaken the deployment seam or silently replace that proof with a mocked browser request.
 
 ## Implementation Evidence
 
-- Mandatory Codesmith generation completed from `app/` with
-  `mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit`.
-- Focused tests passed: generator 35/35, CRM unit 20/20, CRM component 46/46, CRM real-BFF
-  integration 3/3, and Shell unit 152/152.
-- The exact CRM typecheck passed after building its declared project-reference prerequisites. The
-  i18n, API, database-access, module-entrypoint, module-contract, full `pnpm check`, exact CRM build,
-  and aggregate workspace build commands all passed.
-- The exact CRM build emitted `dist/@mf-types.zip`. The federation DTS boundary now includes the
-  generated shared API contract so declaration generation covers its real dependency graph while
-  retaining the validated narrow boundary.
-- Browser review used the built CRM deployment for malformed and valid UUID routes, retry behavior,
-  localized states, and a 390×844 mobile viewport with no horizontal overflow. The repository's
-  cross-deployment browser proof remains the explicit follow-up described above; focused component
-  tests and the real-BFF integration suite are the authoritative automated proof for this increment.
-- Integration validation used a disposable PostgreSQL container because environment files were not
-  read. The container was removed after the suite; no project data was changed.
-- Builds used an explicit immutable validation revision because the release-envelope guard rejects
-  the intentional dirty worktree's default `workspace` revision.
-- Final review against `../AGENTS.md`, `AGENTS.md`, the referenced architecture/frontend documents,
-  and this specification found no unresolved findings after fixing fail-closed standalone write
-  capability, rejected-submit guard release, live-status placement, generator nested-property
-  parsing, and federation declaration coverage.
+- Mandatory Codesmith generation completed from `app/` with `mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit`.
+- Focused tests passed: generator 35/35, CRM unit 20/20, CRM component 46/46, CRM real-BFF integration 3/3, and Shell unit 152/152.
+- The exact CRM typecheck passed after building its declared project-reference prerequisites. The i18n, API, database-access, module-entrypoint, module-contract, full `pnpm check`, exact CRM build, and aggregate workspace build commands all passed.
+- The exact CRM build emitted `dist/@mf-types.zip`. The federation DTS boundary now includes the generated shared API contract so declaration generation covers its real dependency graph while retaining the validated narrow boundary.
+- Browser review used the built CRM deployment for malformed and valid UUID routes, retry behavior, localized states, and a 390×844 mobile viewport with no horizontal overflow. The repository's cross-deployment browser proof remains the explicit follow-up described above; focused component tests and the real-BFF integration suite are the authoritative automated proof for this increment.
+- Integration validation used a disposable PostgreSQL container because environment files were not read. The container was removed after the suite; no project data was changed.
+- Builds used an explicit immutable validation revision because the release-envelope guard rejects the intentional dirty worktree's default `workspace` revision.
+- Final review against `../AGENTS.md`, `AGENTS.md`, the referenced architecture/frontend documents, and this specification found no unresolved findings after fixing fail-closed standalone write capability, rejected-submit guard release, live-status placement, generator nested-property parsing, and federation declaration coverage.

@@ -51,13 +51,15 @@ const ultramodernGeneratedBuildArtifact = {
 const ultramodernBuildMarker = Predicate.isString(ULTRAMODERN_BUILD_MARKER)
   ? ULTRAMODERN_BUILD_MARKER
   : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
-const ultramodernSourceRevision = Predicate.isString(ULTRAMODERN_SOURCE_REVISION)
+const ultramodernSourceRevision = Predicate.isString(
+  ULTRAMODERN_SOURCE_REVISION
+)
   ? ULTRAMODERN_SOURCE_REVISION
   : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
 const ultramodernBuildArtifact = withUltramodernBuildIdentity(
   ultramodernGeneratedBuildArtifact,
   ultramodernBuildMarker,
-  ultramodernSourceRevision,
+  ultramodernSourceRevision
 );
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;

@@ -1,12 +1,20 @@
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { runEffectTestPromise, runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
-import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import test, { after, before } from 'node:test';
+
+import {
+  runEffectTestPromise,
+  runEffectTestSync,
+} from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { and, eq } from 'drizzle-orm';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
-import test, { after, before } from 'node:test';
+import {
+  ConnectionError,
+  SqlError,
+  UnknownError,
+} from 'effect/unstable/sql/SqlError';
+
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
@@ -19,7 +27,6 @@ import {
 } from '../../src/actions/policy.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -49,36 +56,52 @@ import {
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import {
+  makeFaultInjectableCoreDatabase,
+  TestQueryHook,
+} from '../support/database-faults.ts';
 
-const TestPersistenceErrorContract = Schema.TaggedStruct('TestPersistenceError', {
-  reason: Schema.String,
-});
+const TestPersistenceErrorContract = Schema.TaggedStruct(
+  'TestPersistenceError',
+  {
+    reason: Schema.String,
+  }
+);
 type TestPersistenceErrorSelf = typeof TestPersistenceErrorContract.Type;
 const TestPersistenceError = Schema.TaggedError<TestPersistenceErrorSelf>()(
   'TestPersistenceError',
   {
     reason: Schema.String,
-  },
+  }
 );
 
 const TestDomainRejectedContract = Schema.TaggedStruct('TestDomainRejected', {
   reason: Schema.String,
 });
 type TestDomainRejectedSelf = typeof TestDomainRejectedContract.Type;
-const TestDomainRejected = Schema.TaggedError<TestDomainRejectedSelf>()('TestDomainRejected', {
-  reason: Schema.String,
-});
+const TestDomainRejected = Schema.TaggedError<TestDomainRejectedSelf>()(
+  'TestDomainRejected',
+  {
+    reason: Schema.String,
+  }
+);
 
 const TestStateIdSchema = Schema.String.pipe(Schema.brand('TestStateId'));
 const FailureTagSchema = Schema.Struct({ _tag: Schema.String });
 const decodeFailureTag = Schema.decodeUnknownOption(FailureTagSchema);
-const ActionPolicyDeniedFailureSchema = Schema.TaggedStruct('ActionPolicyDenied', {
-  policyReasonCode: Schema.String,
-  reason: Schema.String,
-});
-const decodeActionPolicyDeniedFailure = Schema.decodeUnknownOption(ActionPolicyDeniedFailureSchema);
+const ActionPolicyDeniedFailureSchema = Schema.TaggedStruct(
+  'ActionPolicyDenied',
+  {
+    policyReasonCode: Schema.String,
+    reason: Schema.String,
+  }
+);
+const decodeActionPolicyDeniedFailure = Schema.decodeUnknownOption(
+  ActionPolicyDeniedFailureSchema
+);
 
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
@@ -102,28 +125,33 @@ const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   targetResourceType: 'test-state',
 });
 
-const inventoryStockContract: OntosModuleDeploymentContract = makeModuleContractFixture({
-  appId: 'inventory-stock',
-  buildMarker: 'integration-test',
-  description: 'Inventory integration fixture',
-  displayName: 'Inventory',
-  moduleId: 'inventory.stock',
-  supportedStates: [
-    'inactive',
-    'active',
-    'read_only',
-    'suspended',
-    'quarantined',
-    'deprecated',
-    'archived',
-  ],
-});
+const inventoryStockContract: OntosModuleDeploymentContract =
+  makeModuleContractFixture({
+    appId: 'inventory-stock',
+    buildMarker: 'integration-test',
+    description: 'Inventory integration fixture',
+    displayName: 'Inventory',
+    moduleId: 'inventory.stock',
+    supportedStates: [
+      'inactive',
+      'active',
+      'read_only',
+      'suspended',
+      'quarantined',
+      'deprecated',
+      'archived',
+    ],
+  });
 
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: Object.freeze([inventoryStockContract]),
   deploymentAppIds: Object.freeze(['inventory-stock']),
   deploymentStatuses: Object.freeze([
-    { appId: 'inventory-stock', moduleId: 'inventory.stock', status: 'available' as const },
+    {
+      appId: 'inventory-stock',
+      moduleId: 'inventory.stock',
+      status: 'available' as const,
+    },
   ]),
   getByDeploymentAppId: (appId: string) =>
     appId === 'inventory-stock' ? inventoryStockContract : undefined,
@@ -138,21 +166,21 @@ const allowedPermission = {
 };
 
 const withDatabase = <Value, Error>(
-  execute: (database: ContextServiceContract) => Effect.Effect<Value, Error>,
+  execute: (database: ContextServiceContract) => Effect.Effect<Value, Error>
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
       const configuration = yield* loadDatabaseConfig();
       const database = yield* makeFaultInjectableCoreDatabase(configuration);
       return yield* execute(database);
-    }),
+    })
   );
 
 type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
 
 const withTransactionOverride = (
   database: ContextServiceContract,
-  override: Pick<ContextServiceContract['executor'], 'transaction'>,
+  override: Pick<ContextServiceContract['executor'], 'transaction'>
 ): ContextServiceContract => ({
   executor: Object.assign(Object.create(database.executor), override),
 });
@@ -182,7 +210,7 @@ type EvidencePersistenceStage = typeof EvidencePersistenceStageSchema.Type;
 
 const withEvidencePersistenceFailure = (
   database: ContextServiceContract,
-  stage: EvidencePersistenceStage,
+  stage: EvidencePersistenceStage
 ): ContextServiceContract => {
   const transactionOverride = {
     transaction: (transactionBody) =>
@@ -194,7 +222,8 @@ const withEvidencePersistenceFailure = (
           'invocation-success': 'action_invocations',
           outbox: 'outbox_messages',
         }[stage];
-        const operation = stage === 'invocation-success' ? 'update' : 'insert into';
+        const operation =
+          stage === 'invocation-success' ? 'update' : 'insert into';
         return transactionBody(transaction).pipe(
           Effect.provideService(TestQueryHook, (statement) =>
             statement.startsWith(`${operation} "core"."${table}"`)
@@ -204,10 +233,10 @@ const withEvidencePersistenceFailure = (
                       cause: new Error('Injected SQL failure'),
                       message: `Injected ${stage} persistence failure`,
                     }),
-                  }),
+                  })
                 )
-              : Effect.void,
-          ),
+              : Effect.void
+          )
         );
       }),
   } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
@@ -215,12 +244,16 @@ const withEvidencePersistenceFailure = (
 };
 
 const databasePromise = async <Value>(
-  execute: (database: ContextServiceContract) => PromiseLike<Value>,
+  execute: (database: ContextServiceContract) => PromiseLike<Value>
 ): Promise<Value> =>
-  await runEffectTestPromise(withDatabase((database) => Effect.promise(() => execute(database))));
+  await runEffectTestPromise(
+    withDatabase((database) => Effect.promise(() => execute(database)))
+  );
 
 const liveModuleStateOptions = (database: ContextServiceContract) => {
-  const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
+  const moduleStateGate = makeModuleStateGate(
+    makeTenantModuleStateService(database)
+  );
   return {
     ...openActionRuntimeOptions,
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
@@ -237,7 +270,7 @@ before(async () => {
         slug: `action-runtime-${tenantId}`,
         status: 'active',
         tenantId,
-      }),
+      })
     );
     await runEffectTestPromise(
       database.executor.insert(legalEntities).values({
@@ -247,7 +280,7 @@ before(async () => {
         registrationNumber: tenantId,
         status: 'active',
         tenantId,
-      }),
+      })
     );
     await runEffectTestPromise(
       database.executor.insert(principals).values({
@@ -256,7 +289,7 @@ before(async () => {
         principalId,
         status: 'active',
         tenantId,
-      }),
+      })
     );
     await runEffectTestPromise(
       database.executor.insert(principalAuthBindings).values({
@@ -267,14 +300,14 @@ before(async () => {
         status: 'active',
         subjectType: 'user',
         tenantId,
-      }),
+      })
     );
     await runEffectTestPromise(
       database.executor.insert(tenantModuleStates).values({
         moduleKey: 'inventory.stock',
         state: 'active',
         tenantId,
-      }),
+      })
     );
   });
 });
@@ -296,9 +329,10 @@ after(async () => {
           legalEntities,
           tenants,
         ],
-        (table) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
-        { discard: true },
-      ),
+        (table) =>
+          database.executor.delete(table).where(eq(table.tenantId, tenantId)),
+        { discard: true }
+      )
     );
   });
 });
@@ -310,7 +344,10 @@ const TestDomainEvents = {
 interface TestActionServices {
   readonly transaction: ScopedTransactionExecutor;
 }
-type TestActionContext = ActionHandlerContext<typeof TestDomainEvents, TestActionServices>;
+type TestActionContext = ActionHandlerContext<
+  typeof TestDomainEvents,
+  TestActionServices
+>;
 
 interface RegistrationOptions {
   readonly actionKey: string;
@@ -318,7 +355,10 @@ interface RegistrationOptions {
   readonly mode?: 'orphan-outbox' | 'reject' | 'success';
   readonly moduleStateKey: string;
   readonly onExecute?: () => void;
-  readonly policies?: readonly ActionPolicy<{ readonly value: string }, 'core.shell'>[];
+  readonly policies?: readonly ActionPolicy<
+    { readonly value: string },
+    'core.shell'
+  >[];
 }
 
 const makeRegistration = ({
@@ -337,11 +377,17 @@ const makeRegistration = ({
       },
       actionKey,
       auditProfile: 'standard',
-      domainErrorSchema: Schema.Union([TestDomainRejected, TestPersistenceError]),
+      domainErrorSchema: Schema.Union([
+        TestDomainRejected,
+        TestPersistenceError,
+      ]),
       domainEvents: TestDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization: {
+          kind: 'action_execution',
+          provisioning: 'tenant_membership_default',
+        },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',
@@ -351,7 +397,10 @@ const makeRegistration = ({
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ value: Schema.String }),
       policies,
-      resultSchema: Schema.Struct({ stateId: TestStateIdSchema, value: Schema.String }),
+      resultSchema: Schema.Struct({
+        stateId: TestStateIdSchema,
+        value: Schema.String,
+      }),
       schemaVersion: '1',
     },
     (payload, context: TestActionContext) =>
@@ -369,8 +418,11 @@ const makeRegistration = ({
           })
           .pipe(
             Effect.mapError(
-              () => new TestPersistenceError({ reason: 'test business write failed' }),
-            ),
+              () =>
+                new TestPersistenceError({
+                  reason: 'test business write failed',
+                })
+            )
           );
 
         yield* context.recordDataAccess({
@@ -409,30 +461,36 @@ const makeRegistration = ({
           yield* Deferred.await(completionGate);
         }
         if (mode === 'reject') {
-          return yield* new TestDomainRejected({ reason: 'test domain rejection' });
+          return yield* new TestDomainRejected({
+            reason: 'test domain rejection',
+          });
         }
 
         const [row] = inserted;
         if (row === undefined) {
-          return yield* new TestPersistenceError({ reason: 'test write returned no row' });
+          return yield* new TestPersistenceError({
+            reason: 'test write returned no row',
+          });
         }
         return {
           stateId: TestStateIdSchema.make(row.tenantModuleStateId),
           value: payload.value,
         };
       }),
-    (transaction) => Effect.succeed({ transaction }),
+    (transaction) => Effect.succeed({ transaction })
   );
 
-const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined => {
+const failureTag = <Error>(
+  exit: Exit.Exit<unknown, Error>
+): string | undefined => {
   if (Exit.isSuccess(exit)) {
     return undefined;
   }
   return Option.getOrUndefined(
     Option.map(
       Option.flatMap(Cause.findErrorOption(exit.cause), decodeFailureTag),
-      (failure) => failure._tag,
-    ),
+      (failure) => failure._tag
+    )
   );
 };
 
@@ -442,7 +500,7 @@ void test('rechecks business module state under the tenant lock and retries afte
       database.executor
         .update(tenantModuleStates)
         .set({ state: 'active' })
-        .where(eq(tenantModuleStates.moduleKey, 'inventory.stock')),
+        .where(eq(tenantModuleStates.moduleKey, 'inventory.stock'))
     );
 
     const policyReached = await runEffectTestPromise(Deferred.make<null>());
@@ -460,7 +518,10 @@ void test('rechecks business module state under the tenant lock and retries afte
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'inventory.stock.concurrent-gate',
           moduleKey: 'inventory.stock',
           role: 'action',
@@ -485,14 +546,14 @@ void test('rechecks business module state under the tenant lock and retries afte
       () =>
         Effect.sync(() => {
           handlerExecutions += 1;
-        }),
+        })
     );
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
       allowedPermission,
       testOperationalScopeResolver,
-      liveModuleStateOptions(database),
+      liveModuleStateOptions(database)
     );
     const firstAttempt = runEffectTestPromise(
       Effect.exit(
@@ -501,8 +562,8 @@ void test('rechecks business module state under the tenant lock and retries afte
           principal,
           registration: action,
           transport: transport('business-module-concurrent-gate'),
-        }),
-      ),
+        })
+      )
     );
     await runEffectTestPromise(Deferred.await(policyReached));
     await runEffectTestPromise(
@@ -522,8 +583,11 @@ void test('rechecks business module state under the tenant lock and retries afte
           Effect.provideService(InstalledModuleCatalogService, {
             load: Effect.succeed(inventoryInstalledCatalog),
           }),
-          Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
-        ),
+          Effect.provideService(
+            TenantModuleStateService,
+            makeTenantModuleStateService(database)
+          )
+        )
     );
     await runEffectTestPromise(Deferred.succeed(continuePolicy, null));
     const denied = await firstAttempt;
@@ -534,7 +598,12 @@ void test('rechecks business module state under the tenant lock and retries afte
       database.executor
         .select()
         .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, 'business-module-concurrent-gate')),
+        .where(
+          eq(
+            actionInvocations.idempotencyKey,
+            'business-module-concurrent-gate'
+          )
+        )
     );
     assert.ok(openInvocation);
     assert.equal(openInvocation.completedAt, null);
@@ -542,7 +611,9 @@ void test('rechecks business module state under the tenant lock and retries afte
       database.executor
         .select()
         .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, openInvocation.actionInvocationId)),
+        .where(
+          eq(auditEvents.actionInvocationId, openInvocation.actionInvocationId)
+        )
     );
     assert.equal(deniedEvidence.length, 0);
 
@@ -563,8 +634,11 @@ void test('rechecks business module state under the tenant lock and retries afte
           Effect.provideService(InstalledModuleCatalogService, {
             load: Effect.succeed(inventoryInstalledCatalog),
           }),
-          Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
-        ),
+          Effect.provideService(
+            TenantModuleStateService,
+            makeTenantModuleStateService(database)
+          )
+        )
     );
     await runEffectTestPromise(
       runtime.runAction({
@@ -572,7 +646,7 @@ void test('rechecks business module state under the tenant lock and retries afte
         principal,
         registration: action,
         transport: transport('business-module-concurrent-gate'),
-      }),
+      })
     );
     assert.equal(handlerExecutions, 1);
   });
@@ -588,7 +662,7 @@ void test('atomically commits business state, all success evidence, and the succ
       makeActionRepository(),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const result = await runEffectTestPromise(
       runtime.runAction({
@@ -599,52 +673,60 @@ void test('atomically commits business state, all success evidence, and the succ
           moduleStateKey,
         }),
         transport: transport(key, moduleStateKey),
-      }),
+      })
     );
 
-    const [states, invocations, audits, accesses, events, messages] = await runEffectTestPromise(
-      Effect.all([
-        database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-        database.executor
-          .select()
-          .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, key)),
-        database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-        database.executor
-          .select()
-          .from(dataAccessEvents)
-          .where(eq(dataAccessEvents.tenantId, tenantId)),
-        database.executor
-          .select()
-          .from(domainEvents)
-          .where(eq(domainEvents.subjectResourceId, moduleStateKey)),
-        database.executor
-          .select()
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
-      ]),
-    );
+    const [states, invocations, audits, accesses, events, messages] =
+      await runEffectTestPromise(
+        Effect.all([
+          database.executor
+            .select()
+            .from(tenantModuleStates)
+            .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+          database.executor
+            .select()
+            .from(actionInvocations)
+            .where(eq(actionInvocations.idempotencyKey, key)),
+          database.executor
+            .select()
+            .from(auditEvents)
+            .where(eq(auditEvents.tenantId, tenantId)),
+          database.executor
+            .select()
+            .from(dataAccessEvents)
+            .where(eq(dataAccessEvents.tenantId, tenantId)),
+          database.executor
+            .select()
+            .from(domainEvents)
+            .where(eq(domainEvents.subjectResourceId, moduleStateKey)),
+          database.executor
+            .select()
+            .from(outboxMessages)
+            .where(eq(outboxMessages.tenantId, tenantId)),
+        ])
+      );
 
     assert.equal(result.value, 'committed');
     assert.equal(states.length, 1);
     assert.equal(invocations[0]?.status, 'succeeded');
     assert.ok(invocations[0]?.completedAt);
     assert.equal(
-      audits.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId).length,
-      1,
+      audits.filter(
+        (row) => row.actionInvocationId === invocations[0]?.actionInvocationId
+      ).length,
+      1
     );
     assert.equal(
-      accesses.filter((row) => row.actionInvocationId === invocations[0]?.actionInvocationId)
-        .length,
-      1,
+      accesses.filter(
+        (row) => row.actionInvocationId === invocations[0]?.actionInvocationId
+      ).length,
+      1
     );
     assert.equal(events.length, 1);
     assert.equal(
-      messages.filter((row) => row.domainEventId === events[0]?.domainEventId).length,
-      1,
+      messages.filter((row) => row.domainEventId === events[0]?.domainEventId)
+        .length,
+      1
     );
     assert.equal((events[0]?.tenantSequenceNo ?? 0) > 0, true);
   });
@@ -668,7 +750,7 @@ void test('commits allowed Policy checkpoints atomically before handler success 
       makeActionRepository(),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     await runEffectTestPromise(
       runtime.runAction({
@@ -681,22 +763,34 @@ void test('commits allowed Policy checkpoints atomically before handler success 
           policies: [policy],
         }),
         transport: transport(key, moduleStateKey),
-      }),
+      })
     );
 
-    const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
+    const { audits, invocation } = await runEffectTestPromise(
+      invocationEvidence(database, key)
+    );
 
     assert.deepEqual(observed, ['policy', 'handler']);
     assert.equal(invocation.status, 'succeeded');
     assert.equal(audits.length, 2);
-    const policyAudit = audits.find((row) => row.eventType === 'action.policy_checked');
-    const executionAudit = audits.find((row) => row.eventType === 'action.executed');
+    const policyAudit = audits.find(
+      (row) => row.eventType === 'action.policy_checked'
+    );
+    const executionAudit = audits.find(
+      (row) => row.eventType === 'action.executed'
+    );
     assert.equal(policyAudit?.outcome, 'allowed');
     assert.equal(policyAudit?.outcomeStage, 'policy');
     assert.equal(executionAudit?.outcome, 'succeeded');
     assert.equal(executionAudit?.outcomeStage, 'execution');
-    assert.equal(JSON.stringify(policyAudit?.evidenceJson).includes('committed'), false);
-    assert.equal(JSON.stringify(policyAudit?.evidenceJson).includes(policy.policyKey), true);
+    assert.equal(
+      JSON.stringify(policyAudit?.evidenceJson).includes('committed'),
+      false
+    );
+    assert.equal(
+      JSON.stringify(policyAudit?.evidenceJson).includes(policy.policyKey),
+      true
+    );
   });
 });
 
@@ -709,7 +803,10 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
         const policy = defineGlobalPolicy<{ readonly value: string }>({
           evaluate: () =>
             Effect.fail(
-              denyPolicy('tenant_suspended', 'This tenant is suspended — contact support'),
+              denyPolicy(
+                'tenant_suspended',
+                'This tenant is suspended — contact support'
+              )
             ),
           policyKey: 'global.tenant-active.v1',
         });
@@ -727,9 +824,14 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
       actionKey: 'inventory.stock.policy-denied-local',
       key: 'policy-denied-local',
       makeRegistration(handler: () => void) {
-        const policy = defineMicroverticalPolicy<{ readonly value: string }, 'inventory.stock'>({
+        const policy = defineMicroverticalPolicy<
+          { readonly value: string },
+          'inventory.stock'
+        >({
           evaluate: () =>
-            Effect.fail(denyPolicy('stock_locked', 'Stock is locked for reconciliation')),
+            Effect.fail(
+              denyPolicy('stock_locked', 'Stock is locked for reconciliation')
+            ),
           owningModuleKey: 'inventory.stock',
           policyKey: 'inventory.stock.unlocked.v1',
         });
@@ -741,7 +843,10 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
             },
             actionKey: this.actionKey,
             auditProfile: 'standard',
-            domainErrorSchema: Schema.Union([TestDomainRejected, TestPersistenceError]),
+            domainErrorSchema: Schema.Union([
+              TestDomainRejected,
+              TestPersistenceError,
+            ]),
             domainEvents: {
               'test-state.changed': Schema.Struct({ value: Schema.String }),
             },
@@ -760,7 +865,10 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
             owningModuleKey: 'inventory.stock',
             payloadSchema: Schema.Struct({ value: Schema.String }),
             policies: [policy],
-            resultSchema: Schema.Struct({ stateId: TestStateIdSchema, value: Schema.String }),
+            resultSchema: Schema.Struct({
+              stateId: TestStateIdSchema,
+              value: Schema.String,
+            }),
             schemaVersion: '1',
           },
           (payload, _context: TestActionContext) => {
@@ -770,7 +878,7 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
               value: payload.value,
             });
           },
-          (transaction) => Effect.succeed({ transaction }),
+          (transaction) => Effect.succeed({ transaction })
         );
       },
       reason: 'Stock is locked for reconciliation',
@@ -784,7 +892,7 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
       makeActionRepository(),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const verifyScenarioAt = async (index: number): Promise<void> => {
       const scenario = scenarios[index];
@@ -796,7 +904,7 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
         database.executor
           .select()
           .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
+          .where(eq(outboxMessages.tenantId, tenantId))
       );
       const actionEffect = runtime.runAction({
         payload: { value: 'must-not-persist' },
@@ -808,7 +916,10 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
       });
       const exit = await runEffectTestPromise(Effect.exit(actionEffect));
       const failure = Exit.isFailure(exit)
-        ? Option.flatMap(Cause.findErrorOption(exit.cause), decodeActionPolicyDeniedFailure)
+        ? Option.flatMap(
+            Cause.findErrorOption(exit.cause),
+            decodeActionPolicyDeniedFailure
+          )
         : Option.none();
       assert.equal(failureTag(exit), 'ActionPolicyDenied');
       if (Option.isSome(failure)) {
@@ -821,7 +932,7 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
         database.executor
           .select()
           .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, scenario.key)),
+          .where(eq(actionInvocations.idempotencyKey, scenario.key))
       );
       assert.ok(invocation);
       const [audits, accesses, events, states] = await runEffectTestPromise(
@@ -829,26 +940,40 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
           database.executor
             .select()
             .from(auditEvents)
-            .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
+            .where(
+              eq(auditEvents.actionInvocationId, invocation.actionInvocationId)
+            ),
           database.executor
             .select()
             .from(dataAccessEvents)
-            .where(eq(dataAccessEvents.actionInvocationId, invocation.actionInvocationId)),
+            .where(
+              eq(
+                dataAccessEvents.actionInvocationId,
+                invocation.actionInvocationId
+              )
+            ),
           database.executor
             .select()
             .from(domainEvents)
-            .where(eq(domainEvents.actionInvocationId, invocation.actionInvocationId)),
+            .where(
+              eq(domainEvents.actionInvocationId, invocation.actionInvocationId)
+            ),
           database.executor
             .select()
             .from(tenantModuleStates)
-            .where(eq(tenantModuleStates.moduleKey, `test.${scenario.key}.${tenantId}`)),
-        ]),
+            .where(
+              eq(
+                tenantModuleStates.moduleKey,
+                `test.${scenario.key}.${tenantId}`
+              )
+            ),
+        ])
       );
       const messages = await runEffectTestPromise(
         database.executor
           .select()
           .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
+          .where(eq(outboxMessages.tenantId, tenantId))
       );
 
       assert.equal(invocation.status, 'rejected');
@@ -873,7 +998,8 @@ void test('atomically rejects denied global and same-owner MicroVertical Policie
 
 void test('rolls back every denied-Policy finalization persistence failure', async () => {
   const policy = defineGlobalPolicy<{ readonly value: string }>({
-    evaluate: () => Effect.fail(denyPolicy('blocked', 'This operation is blocked')),
+    evaluate: () =>
+      Effect.fail(denyPolicy('blocked', 'This operation is blocked')),
     policyKey: 'global.blocked.v1',
   });
 
@@ -891,7 +1017,7 @@ void test('rolls back every denied-Policy finalization persistence failure', asy
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
       const exit = await runEffectTestPromise(
         Effect.exit(
@@ -907,15 +1033,17 @@ void test('rolls back every denied-Policy finalization persistence failure', asy
               policies: [policy],
             }),
             transport: transport(key),
-          }),
-        ),
+          })
+        )
       );
-      const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
+      const { audits, invocation } = await runEffectTestPromise(
+        invocationEvidence(database, key)
+      );
 
       assert.equal(
         failureTag(exit),
         'ActionInvocationPersistenceError',
-        Exit.isFailure(exit) ? Cause.pretty(exit.cause) : 'success',
+        Exit.isFailure(exit) ? Cause.pretty(exit.cause) : 'success'
       );
       assert.equal(handlerExecutions, 0);
       assert.equal(invocation.status, 'received');
@@ -963,7 +1091,7 @@ void test('rolls back domain rejection, evidence persistence failure, and orphan
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
       const exit = await runEffectTestPromise(
         Effect.exit(
@@ -976,21 +1104,21 @@ void test('rolls back domain rejection, evidence persistence failure, and orphan
               moduleStateKey,
             }),
             transport: transport(scenario.key, moduleStateKey),
-          }),
-        ),
+          })
+        )
       );
 
       const states = await runEffectTestPromise(
         database.executor
           .select()
           .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+          .where(eq(tenantModuleStates.moduleKey, moduleStateKey))
       );
       const invocations = await runEffectTestPromise(
         database.executor
           .select()
           .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, scenario.key)),
+          .where(eq(actionInvocations.idempotencyKey, scenario.key))
       );
       const invocationId = invocations[0]?.actionInvocationId;
       const committedEvidence =
@@ -1000,7 +1128,7 @@ void test('rolls back domain rejection, evidence persistence failure, and orphan
               database.executor
                 .select()
                 .from(auditEvents)
-                .where(eq(auditEvents.actionInvocationId, invocationId)),
+                .where(eq(auditEvents.actionInvocationId, invocationId))
             );
       const committedAccesses =
         invocationId === undefined
@@ -1009,7 +1137,7 @@ void test('rolls back domain rejection, evidence persistence failure, and orphan
               database.executor
                 .select()
                 .from(dataAccessEvents)
-                .where(eq(dataAccessEvents.actionInvocationId, invocationId)),
+                .where(eq(dataAccessEvents.actionInvocationId, invocationId))
             );
       const committedEvents =
         invocationId === undefined
@@ -1018,7 +1146,7 @@ void test('rolls back domain rejection, evidence persistence failure, and orphan
               database.executor
                 .select()
                 .from(domainEvents)
-                .where(eq(domainEvents.actionInvocationId, invocationId)),
+                .where(eq(domainEvents.actionInvocationId, invocationId))
             );
 
       assert.equal(failureTag(exit), scenario.expectedTag);
@@ -1059,14 +1187,14 @@ void test('rolls back every individual success-evidence persistence failure', as
         database.executor
           .select()
           .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId)),
+          .where(eq(outboxMessages.tenantId, tenantId))
       );
       const runtime = makeActionRuntime(
         withEvidencePersistenceFailure(database, stage),
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
       const exit = await runEffectTestPromise(
         Effect.exit(
@@ -1079,44 +1207,45 @@ void test('rolls back every individual success-evidence persistence failure', as
               policies: stage === 'audit' ? [allowedPolicy] : [],
             }),
             transport: transport(key, moduleStateKey),
-          }),
-        ),
+          })
+        )
       );
 
       const states = await runEffectTestPromise(
         database.executor
           .select()
           .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+          .where(eq(tenantModuleStates.moduleKey, moduleStateKey))
       );
       const [invocation] = await runEffectTestPromise(
         database.executor
           .select()
           .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, key)),
+          .where(eq(actionInvocations.idempotencyKey, key))
       );
       assert.notEqual(invocation, undefined);
       const invocationId = invocation?.actionInvocationId ?? '';
-      const [audits, accesses, events, afterOutbox] = await runEffectTestPromise(
-        Effect.all([
-          database.executor
-            .select()
-            .from(auditEvents)
-            .where(eq(auditEvents.actionInvocationId, invocationId)),
-          database.executor
-            .select()
-            .from(dataAccessEvents)
-            .where(eq(dataAccessEvents.actionInvocationId, invocationId)),
-          database.executor
-            .select()
-            .from(domainEvents)
-            .where(eq(domainEvents.actionInvocationId, invocationId)),
-          database.executor
-            .select()
-            .from(outboxMessages)
-            .where(eq(outboxMessages.tenantId, tenantId)),
-        ]),
-      );
+      const [audits, accesses, events, afterOutbox] =
+        await runEffectTestPromise(
+          Effect.all([
+            database.executor
+              .select()
+              .from(auditEvents)
+              .where(eq(auditEvents.actionInvocationId, invocationId)),
+            database.executor
+              .select()
+              .from(dataAccessEvents)
+              .where(eq(dataAccessEvents.actionInvocationId, invocationId)),
+            database.executor
+              .select()
+              .from(domainEvents)
+              .where(eq(domainEvents.actionInvocationId, invocationId)),
+            database.executor
+              .select()
+              .from(outboxMessages)
+              .where(eq(outboxMessages.tenantId, tenantId)),
+          ])
+        );
 
       assert.equal(failureTag(exit), 'ActionTransactionError', stage);
       assert.equal(states.length, 0, stage);
@@ -1139,14 +1268,16 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
       makeActionRepository(),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     let evaluations = 0;
     let handlerExecutions = 0;
     const policy = defineGlobalPolicy<{ readonly value: string }>({
       evaluate: () => {
         evaluations += 1;
-        return Effect.fail(denyPolicy('terminal_rejection', 'This rejection is terminal'));
+        return Effect.fail(
+          denyPolicy('terminal_rejection', 'This rejection is terminal')
+        );
       },
       policyKey: 'global.terminal-rejection.v1',
     });
@@ -1165,9 +1296,15 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
       registration: action,
       transport: transport(key),
     };
-    const first = await runEffectTestPromise(Effect.exit(runtime.runAction(input)));
-    const retry = await runEffectTestPromise(Effect.exit(runtime.runAction(input)));
-    const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
+    const first = await runEffectTestPromise(
+      Effect.exit(runtime.runAction(input))
+    );
+    const retry = await runEffectTestPromise(
+      Effect.exit(runtime.runAction(input))
+    );
+    const { audits, invocation } = await runEffectTestPromise(
+      invocationEvidence(database, key)
+    );
 
     assert.equal(failureTag(first), 'ActionPolicyDenied');
     assert.equal(failureTag(retry), 'ActionInvocationStateError');
@@ -1178,7 +1315,9 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
 
     let concurrentEvaluations = 0;
     const concurrentKey = 'policy-terminal-concurrent';
-    const concurrentPoliciesReached = await runEffectTestPromise(Deferred.make<null>());
+    const concurrentPoliciesReached = await runEffectTestPromise(
+      Deferred.make<null>()
+    );
     const concurrentPolicy = defineGlobalPolicy<{ readonly value: string }>({
       evaluate: () =>
         Effect.gen(function* delayedDenial() {
@@ -1187,7 +1326,10 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
             yield* Deferred.succeed(concurrentPoliciesReached, null);
           }
           yield* Deferred.await(concurrentPoliciesReached);
-          return yield* denyPolicy('concurrent_rejection', 'Concurrent request rejected');
+          return yield* denyPolicy(
+            'concurrent_rejection',
+            'Concurrent request rejected'
+          );
         }),
       policyKey: 'global.concurrent-rejection.v1',
     });
@@ -1212,17 +1354,25 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
       database.executor
         .select()
         .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, concurrentKey)),
+        .where(eq(actionInvocations.idempotencyKey, concurrentKey))
     );
     assert.ok(concurrentInvocation);
     const concurrentAudits = await runEffectTestPromise(
       database.executor
         .select()
         .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, concurrentInvocation.actionInvocationId)),
+        .where(
+          eq(
+            auditEvents.actionInvocationId,
+            concurrentInvocation.actionInvocationId
+          )
+        )
     );
 
-    assert.deepEqual(concurrent.map(failureTag), ['ActionPolicyDenied', 'ActionPolicyDenied']);
+    assert.deepEqual(concurrent.map(failureTag), [
+      'ActionPolicyDenied',
+      'ActionPolicyDenied',
+    ]);
     assert.equal(concurrentEvaluations, 2);
     assert.equal(handlerExecutions, 0);
     assert.equal(concurrentInvocation.status, 'rejected');
@@ -1238,14 +1388,14 @@ void test('never lets a losing Policy denial replace a running or successful inv
       repository,
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const deniedRuntime = makeActionRuntime(
       database,
       repository,
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const handlerStarted = await runEffectTestPromise(Deferred.make<null>());
     const denialEvaluated = await runEffectTestPromise(Deferred.make<null>());
@@ -1263,7 +1413,11 @@ void test('never lets a losing Policy denial replace a running or successful inv
     const denial = defineGlobalPolicy<{ readonly value: string }>({
       evaluate: () =>
         Deferred.succeed(denialEvaluated, null).pipe(
-          Effect.andThen(Effect.fail(denyPolicy('late_denial', 'This denial arrived too late'))),
+          Effect.andThen(
+            Effect.fail(
+              denyPolicy('late_denial', 'This denial arrived too late')
+            )
+          )
         ),
       policyKey: 'global.late-denial.v1',
     });
@@ -1279,19 +1433,29 @@ void test('never lets a losing Policy denial replace a running or successful inv
     };
 
     const success = runEffectTestPromise(
-      allowedRuntime.runAction({ ...sharedInput, registration: allowed }),
+      allowedRuntime.runAction({ ...sharedInput, registration: allowed })
     );
     await runEffectTestPromise(Deferred.await(handlerStarted));
     const rejected = runEffectTestPromise(
-      Effect.exit(deniedRuntime.runAction({ ...sharedInput, registration: denied })),
+      Effect.exit(
+        deniedRuntime.runAction({ ...sharedInput, registration: denied })
+      )
     );
-    const [successResult, rejectedExit] = await Promise.all([success, rejected]);
-    const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
+    const [successResult, rejectedExit] = await Promise.all([
+      success,
+      rejected,
+    ]);
+    const { audits, invocation } = await runEffectTestPromise(
+      invocationEvidence(database, key)
+    );
 
     assert.equal(successResult.value, 'same');
     assert.equal(failureTag(rejectedExit), 'ActionInvocationPersistenceError');
     assert.equal(invocation.status, 'succeeded');
-    assert.equal(audits.filter((row) => row.eventType === 'action.rejected').length, 0);
+    assert.equal(
+      audits.filter((row) => row.eventType === 'action.rejected').length,
+      0
+    );
   });
 });
 
@@ -1318,7 +1482,7 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
           makeActionRepository(),
           concurrentAllowedPermission,
           testOperationalScopeResolver,
-          openActionRuntimeOptions,
+          openActionRuntimeOptions
         );
         let executions = 0;
         const concurrentKey = 'concurrent-once';
@@ -1337,13 +1501,13 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
           }),
           transport: transport(concurrentKey, concurrentModule),
         };
-        const firstAttempt = yield* Effect.exit(runtime.runAction(concurrentInput)).pipe(
-          Effect.forkChild,
-        );
+        const firstAttempt = yield* Effect.exit(
+          runtime.runAction(concurrentInput)
+        ).pipe(Effect.forkChild);
         yield* Deferred.await(handlerStarted);
-        const secondAttempt = yield* Effect.exit(runtime.runAction(concurrentInput)).pipe(
-          Effect.forkChild,
-        );
+        const secondAttempt = yield* Effect.exit(
+          runtime.runAction(concurrentInput)
+        ).pipe(Effect.forkChild);
         yield* Deferred.await(secondPermissionChecked);
         yield* Deferred.succeed(handlerRelease, null);
         const concurrentResults = yield* Effect.all([
@@ -1353,9 +1517,10 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
 
         assert.equal(executions, 1);
         assert.equal(concurrentResults.filter(Exit.isSuccess).length, 1);
-        assert.deepEqual(concurrentResults.filter(Exit.isFailure).map(failureTag), [
-          'ActionAlreadyCommitted',
-        ]);
+        assert.deepEqual(
+          concurrentResults.filter(Exit.isFailure).map(failureTag),
+          ['ActionAlreadyCommitted']
+        );
 
         const committedRetry = yield* Effect.exit(
           runtime.runAction({
@@ -1365,7 +1530,7 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
               correlationId: 'integration-concurrent-retry',
               traceId: 'retry-trace',
             },
-          }),
+          })
         );
         assert.equal(failureTag(committedRetry), 'ActionAlreadyCommitted');
         assert.equal(executions, 1);
@@ -1374,7 +1539,7 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
           runtime.runAction({
             ...concurrentInput,
             payload: { value: 'different' },
-          }),
+          })
         );
         assert.equal(failureTag(conflict), 'ActionRequestHashConflict');
 
@@ -1390,7 +1555,7 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
               moduleStateKey: openModule,
             }),
             transport: transport(openKey, openModule),
-          }),
+          })
         );
         assert.equal(failureTag(rejected), 'TestDomainRejected');
 
@@ -1404,16 +1569,20 @@ void test('serializes concurrent requests and enforces committed, open-retry, an
           transport: transport(openKey, openModule),
         });
         assert.equal(retried.value, 'retryable');
-      }),
-    ),
+      })
+    )
   );
 });
 
 void test('serializes Domain Event allocation by tenant commit order', async () => {
   await databasePromise(async (database) => {
-    const firstCommitRelease = await runEffectTestPromise(Deferred.make<null>());
+    const firstCommitRelease = await runEffectTestPromise(
+      Deferred.make<null>()
+    );
     const firstFlushed = await runEffectTestPromise(Deferred.make<null>());
-    const secondInsertStarted = await runEffectTestPromise(Deferred.make<null>());
+    const secondInsertStarted = await runEffectTestPromise(
+      Deferred.make<null>()
+    );
     const delayedTransaction = {
       transaction: (transactionBody) =>
         database.executor.transaction((transaction) =>
@@ -1422,12 +1591,12 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
             yield* Deferred.succeed(firstFlushed, null);
             yield* Deferred.await(firstCommitRelease);
             return result;
-          }),
+          })
         ),
     } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
     const delayedExecutor: ContextServiceContract['executor'] = Object.assign(
       Object.create(database.executor),
-      delayedTransaction,
+      delayedTransaction
     );
     const repository = makeActionRepository();
     const firstRuntime = makeActionRuntime(
@@ -1435,14 +1604,14 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
       repository,
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const secondRuntime = makeActionRuntime(
       database,
       repository,
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const firstModule = `test.sequence.first.${tenantId}`;
     const secondModule = `test.sequence.second.${tenantId}`;
@@ -1456,7 +1625,7 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
           moduleStateKey: firstModule,
         }),
         transport: transport('sequence-first', firstModule),
-      }),
+      })
     );
     await runEffectTestPromise(Deferred.await(firstFlushed));
 
@@ -1474,9 +1643,9 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
         })
         .pipe(
           Effect.provideService(TestQueryHook, () =>
-            Deferred.succeed(secondInsertStarted, null).pipe(Effect.asVoid),
-          ),
-        ),
+            Deferred.succeed(secondInsertStarted, null).pipe(Effect.asVoid)
+          )
+        )
     ).finally(() => {
       secondCompleted = true;
     });
@@ -1488,10 +1657,17 @@ void test('serializes Domain Event allocation by tenant commit order', async () 
     await Promise.all([first, second]);
 
     const events = await runEffectTestPromise(
-      database.executor.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
+      database.executor
+        .select()
+        .from(domainEvents)
+        .where(eq(domainEvents.tenantId, tenantId))
     );
-    const firstEvent = events.find((event) => event.subjectResourceId === firstModule);
-    const secondEvent = events.find((event) => event.subjectResourceId === secondModule);
+    const firstEvent = events.find(
+      (event) => event.subjectResourceId === firstModule
+    );
+    const secondEvent = events.find(
+      (event) => event.subjectResourceId === secondModule
+    );
 
     assert.ok(firstEvent);
     assert.ok(secondEvent);
@@ -1523,7 +1699,7 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       repository,
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const first = await runEffectTestPromise(
       Effect.exit(
@@ -1532,8 +1708,8 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
           principal,
           registration: actionRegistration,
           transport: transport(key, moduleStateKey),
-        }),
-      ),
+        })
+      )
     );
     assert.equal(failureTag(first), 'ActionCommitIndeterminate');
 
@@ -1542,13 +1718,13 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       repository,
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const invocations = await runEffectTestPromise(
       database.executor
         .select()
         .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key)),
+        .where(eq(actionInvocations.idempotencyKey, key))
     );
     const invocationId = invocations[0]?.actionInvocationId;
     assert.notEqual(invocationId, undefined);
@@ -1560,8 +1736,8 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
             ...principal,
             principalId: randomUUID(),
           },
-        }),
-      ),
+        })
+      )
     );
     const unavailableRuntime = makeActionRuntime(
       database,
@@ -1572,28 +1748,28 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
             new ActionInvocationPersistenceError({
               code: 'action_invocation_persistence_failed',
               reason: 'test database unavailable',
-            }),
+            })
           ),
       },
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const unavailableResolution = await runEffectTestPromise(
       Effect.exit(
         unavailableRuntime.resolveActionCommit({
           invocationId,
           principal,
-        }),
-      ),
+        })
+      )
     );
     const committedResolution = await runEffectTestPromise(
       Effect.exit(
         resolvingRuntime.resolveActionCommit({
           invocationId,
           principal,
-        }),
-      ),
+        })
+      )
     );
     const resolved = await runEffectTestPromise(
       Effect.exit(
@@ -1602,19 +1778,25 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
           principal,
           registration: actionRegistration,
           transport: transport(key, moduleStateKey),
-        }),
-      ),
+        })
+      )
     );
     const states = await runEffectTestPromise(
       database.executor
         .select()
         .from(tenantModuleStates)
-        .where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+        .where(eq(tenantModuleStates.moduleKey, moduleStateKey))
     );
 
     assert.equal(failureTag(committedResolution), 'ActionAlreadyCommitted');
-    assert.equal(failureTag(unauthorizedResolution), 'ActionInvocationNotFound');
-    assert.equal(failureTag(unavailableResolution), 'ActionCommitIndeterminate');
+    assert.equal(
+      failureTag(unauthorizedResolution),
+      'ActionInvocationNotFound'
+    );
+    assert.equal(
+      failureTag(unavailableResolution),
+      'ActionCommitIndeterminate'
+    );
     assert.equal(failureTag(resolved), 'ActionAlreadyCommitted');
     assert.equal(invocations[0]?.status, 'succeeded');
     assert.equal(states.length, 1);
@@ -1630,8 +1812,12 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         database.executor
           .transaction((transaction) =>
             transactionBody(transaction).pipe(
-              Effect.andThen(Effect.die(new Error('force rollback after the transaction body'))),
-            ),
+              Effect.andThen(
+                Effect.die(
+                  new Error('force rollback after the transaction body')
+                )
+              )
+            )
           )
           .pipe(Effect.catchCause(() => Effect.die(acknowledgementLost))),
     } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
@@ -1640,7 +1826,7 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       repository,
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      openActionRuntimeOptions
     );
     const openFirst = await runEffectTestPromise(
       Effect.exit(
@@ -1649,8 +1835,8 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
           principal,
           registration: openRegistration,
           transport: transport(openKey, openModuleStateKey),
-        }),
-      ),
+        })
+      )
     );
     assert.equal(failureTag(openFirst), 'ActionCommitIndeterminate');
 
@@ -1658,7 +1844,7 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       database.executor
         .select()
         .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, openKey)),
+        .where(eq(actionInvocations.idempotencyKey, openKey))
     );
     const openInvocationId = openInvocations[0]?.actionInvocationId;
     assert.notEqual(openInvocationId, undefined);
@@ -1666,7 +1852,7 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
       resolvingRuntime.resolveActionCommit({
         invocationId: openInvocationId,
         principal,
-      }),
+      })
     );
     const openResolved = await runEffectTestPromise(
       resolvingRuntime.runAction({
@@ -1674,13 +1860,13 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
         principal,
         registration: openRegistration,
         transport: transport(openKey, openModuleStateKey),
-      }),
+      })
     );
     const openStates = await runEffectTestPromise(
       database.executor
         .select()
         .from(tenantModuleStates)
-        .where(eq(tenantModuleStates.moduleKey, openModuleStateKey)),
+        .where(eq(tenantModuleStates.moduleKey, openModuleStateKey))
     );
 
     assert.equal(openResolution._tag, 'ActionCommitOpen');
@@ -1696,7 +1882,7 @@ void test('persists no invocation or evidence for every non-writable business mo
       database.executor
         .insert(tenantModuleStates)
         .values({ moduleKey, state: 'active', tenantId })
-        .onConflictDoNothing(),
+        .onConflictDoNothing()
     );
     let handlerExecutions = 0;
     const action = defineAction(
@@ -1711,7 +1897,10 @@ void test('persists no invocation or evidence for every non-writable business mo
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'inventory.state-matrix.write',
           moduleKey,
           role: 'action',
@@ -1727,14 +1916,14 @@ void test('persists no invocation or evidence for every non-writable business mo
       () =>
         Effect.sync(() => {
           handlerExecutions += 1;
-        }),
+        })
     );
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
       allowedPermission,
       testOperationalScopeResolver,
-      liveModuleStateOptions(database),
+      liveModuleStateOptions(database)
     );
     await runEffectTestPromise(
       runtime.runAction({
@@ -1742,7 +1931,7 @@ void test('persists no invocation or evidence for every non-writable business mo
         principal,
         registration: action,
         transport: transport('module-state-active'),
-      }),
+      })
     );
     assert.equal(handlerExecutions, 1);
 
@@ -1766,9 +1955,9 @@ void test('persists no invocation or evidence for every non-writable business mo
           .where(
             and(
               eq(tenantModuleStates.tenantId, tenantId),
-              eq(tenantModuleStates.moduleKey, moduleKey),
-            ),
-          ),
+              eq(tenantModuleStates.moduleKey, moduleKey)
+            )
+          )
       );
       const idempotencyKey = `module-state-denied-${index}`;
       const exit = await runEffectTestPromise(
@@ -1778,15 +1967,15 @@ void test('persists no invocation or evidence for every non-writable business mo
             principal,
             registration: action,
             transport: transport(idempotencyKey),
-          }),
-        ),
+          })
+        )
       );
       assert.equal(failureTag(exit), 'ModuleStateDeniedError', state);
       const invocations = await runEffectTestPromise(
         database.executor
           .select()
           .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, idempotencyKey)),
+          .where(eq(actionInvocations.idempotencyKey, idempotencyKey))
       );
       assert.equal(invocations.length, 0, state);
       await verifyDeniedStateAt(index + 1);
@@ -1799,9 +1988,9 @@ void test('persists no invocation or evidence for every non-writable business mo
         .where(
           and(
             eq(tenantModuleStates.tenantId, tenantId),
-            eq(tenantModuleStates.moduleKey, moduleKey),
-          ),
-        ),
+            eq(tenantModuleStates.moduleKey, moduleKey)
+          )
+        )
     );
     const missingExit = await runEffectTestPromise(
       Effect.exit(
@@ -1810,8 +1999,8 @@ void test('persists no invocation or evidence for every non-writable business mo
           principal,
           registration: action,
           transport: transport('module-state-missing'),
-        }),
-      ),
+        })
+      )
     );
     assert.equal(failureTag(missingExit), 'ModuleStateDeniedError');
     assert.equal(handlerExecutions, 1);

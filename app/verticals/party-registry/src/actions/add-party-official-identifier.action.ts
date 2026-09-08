@@ -2,9 +2,25 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug add-party-official-identifier
 import { createHash } from 'node:crypto';
+
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Match, Schema } from 'effect';
+
+import {
+  AddPartyOfficialIdentifierPayloadSchema,
+  AddPartyOfficialIdentifierResultSchema,
+} from '../../shared/actions/add-party-official-identifier.ts';
+import type {
+  AddPartyOfficialIdentifierPayload,
+  AddPartyOfficialIdentifierResult,
+} from '../../shared/actions/add-party-official-identifier.ts';
+import {
+  OfficialIdentifierClaimConflict,
+  OfficialIdentifierInvalid,
+  normalizeOfficialIdentifier,
+  qualifiesForExclusiveClaim,
+} from '../../shared/domain/identifier-contracts.ts';
 import {
   partyIdFromString,
   PartyNotFound,
@@ -16,14 +32,6 @@ import type {
   PartyPersistenceUnavailableError,
 } from '../../shared/domain/identity-contracts.ts';
 import {
-  OfficialIdentifierClaimConflict,
-  OfficialIdentifierInvalid,
-  normalizeOfficialIdentifier,
-  qualifiesForExclusiveClaim,
-} from '../../shared/domain/identifier-contracts.ts';
-import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
-import { PartyRefSchema } from '../../shared/resources/party.ts';
-import {
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
   PartyAliasResolutionCycle,
@@ -31,6 +39,8 @@ import {
   PartyAliasWriteRejected,
 } from '../../shared/domain/merge-alias-resolution.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
+import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
+import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { lockAndResolveClaims } from '../services/party-identifier-claim.service.ts';
 import {
   PARTY_EXACT_CLAIM_RULE_VERSION,
@@ -38,15 +48,6 @@ import {
   lockOfficialIdentifierPartyRecord,
 } from '../services/party-official-identifier-persistence.service.ts';
 import { createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
-
-import {
-  AddPartyOfficialIdentifierPayloadSchema,
-  AddPartyOfficialIdentifierResultSchema,
-} from '../../shared/actions/add-party-official-identifier.ts';
-import type {
-  AddPartyOfficialIdentifierPayload,
-  AddPartyOfficialIdentifierResult,
-} from '../../shared/actions/add-party-official-identifier.ts';
 
 export type { AddPartyOfficialIdentifierPayload } from '../../shared/actions/add-party-official-identifier.ts';
 const ErrorSchema = Schema.Union([
@@ -61,12 +62,13 @@ const ErrorSchema = Schema.Union([
   PartyAliasWriteRejected,
 ]);
 const domainEvents = {
-  'party.registry.official-identifier-added.v1': AddPartyOfficialIdentifierResultSchema,
+  'party.registry.official-identifier-added.v1':
+    AddPartyOfficialIdentifierResultSchema,
 } as const;
 interface Services {
   readonly add: (
     payload: AddPartyOfficialIdentifierPayload,
-    actionInvocationId: string,
+    actionInvocationId: string
   ) => Effect.Effect<
     AddPartyOfficialIdentifierResult,
     | PartyNotFoundError
@@ -84,39 +86,48 @@ const persistenceUnavailable = (cause: unknown) =>
       reason: 'The stored Party type could not be resolved',
     }),
     'cause',
-    { configurable: true, value: cause },
+    { configurable: true, value: cause }
   );
 
-const handle = Effect.fn('AddPartyOfficialIdentifierAction.handle')(function* addIdentifier(
-  payload: AddPartyOfficialIdentifierPayload,
-  context: ActionHandlerContext<typeof domainEvents, Services>,
-) {
-  const result = yield* context.services.add(payload, context.actionInvocationId);
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: createHash('sha256')
-      .update(`identifier-add-invariants:${result.officialIdentifierRef.resourceId}`)
-      .digest('hex'),
-    resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
-    targetResourceId: result.officialIdentifierRef.resourceId,
-    targetResourceType: result.officialIdentifierRef.resourceType,
-  });
-  const event = yield* context.addDomainEvent({
-    eventType: 'party.registry.official-identifier-added.v1',
-    payloadJson: result,
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
-    subjectResourceId: result.officialIdentifierRef.resourceId,
-    subjectResourceType: result.officialIdentifierRef.resourceType,
-  });
-  yield* context.addOutboxMessage(
-    event,
-    createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(result),
-  );
-  return result;
-});
+const handle = Effect.fn('AddPartyOfficialIdentifierAction.handle')(
+  function* addIdentifier(
+    payload: AddPartyOfficialIdentifierPayload,
+    context: ActionHandlerContext<typeof domainEvents, Services>
+  ) {
+    const result = yield* context.services.add(
+      payload,
+      context.actionInvocationId
+    );
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: createHash('sha256')
+        .update(
+          `identifier-add-invariants:${result.officialIdentifierRef.resourceId}`
+        )
+        .digest('hex'),
+      resultCount: 1,
+      servingModuleKey: 'party.registry',
+      targetModuleKey: 'party.registry',
+      targetResourceId: result.officialIdentifierRef.resourceId,
+      targetResourceType: result.officialIdentifierRef.resourceType,
+    });
+    const event = yield* context.addDomainEvent({
+      eventType: 'party.registry.official-identifier-added.v1',
+      payloadJson: result,
+      producerModuleKey: 'party.registry',
+      subjectModuleKey: 'party.registry',
+      subjectResourceId: result.officialIdentifierRef.resourceId,
+      subjectResourceType: result.officialIdentifierRef.resourceType,
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
+        result
+      )
+    );
+    return result;
+  }
+);
 export const addPartyOfficialIdentifierAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -129,7 +140,10 @@ export const addPartyOfficialIdentifierAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.add-party-official-identifier',
       moduleKey: 'party.registry',
       role: 'action',
@@ -148,19 +162,20 @@ export const addPartyOfficialIdentifierAction = defineAction(
     Effect.succeed({
       add: Effect.fn('addPartyOfficialIdentifierAction.add')(function* add(
         payload: AddPartyOfficialIdentifierPayload,
-        actionInvocationId: string,
+        actionInvocationId: string
       ) {
         const now = yield* DateTime.nowAsDate;
         if (DateTime.toDateUtc(DateTime.makeUnsafe(payload.validFrom)) > now) {
           return yield* new OfficialIdentifierInvalid({
             code: 'party_official_identifier_invalid',
-            reason: 'Future identifier acceptance requires a scheduled lifecycle operation',
+            reason:
+              'Future identifier acceptance requires a scheduled lifecycle operation',
           });
         }
         const partyResult = yield* lockOfficialIdentifierPartyRecord(
           transaction,
           scope.tenantId,
-          payload.partyRef.resourceId,
+          payload.partyRef.resourceId
         );
         const party = yield* Match.value(partyResult).pipe(
           Match.tag('not_found', () =>
@@ -169,27 +184,41 @@ export const addPartyOfficialIdentifierAction = defineAction(
                 code: 'party_not_found',
                 partyId: partyIdFromString(payload.partyRef.resourceId),
                 reason: 'The Party does not exist',
-              }),
-            ),
+              })
+            )
           ),
           Match.tag('conflict', () =>
             Effect.fail(
               new OfficialIdentifierClaimConflict({
                 code: 'party_identifier_claim_conflict',
-                reason: 'Official Identifiers cannot be added to an archived Party',
-              }),
-            ),
+                reason:
+                  'Official Identifiers cannot be added to an archived Party',
+              })
+            )
           ),
           Match.tag('found', ({ value }) => Effect.succeed(value)),
-          Match.exhaustive,
+          Match.exhaustive
         );
         const identifier = normalizeOfficialIdentifier(payload.identifier);
         const partyType = yield* Schema.decodeUnknownEffect(PartyTypeSchema)(
-          party.currentType,
+          party.currentType
         ).pipe(Effect.mapError(persistenceUnavailable));
-        if (qualifiesForExclusiveClaim(identifier, partyType, PARTY_EXACT_CLAIM_RULE_VERSION)) {
-          const [claim] = yield* lockAndResolveClaims(transaction, scope.tenantId, [identifier]);
-          if (claim?.partyId !== undefined && claim.partyId !== payload.partyRef.resourceId) {
+        if (
+          qualifiesForExclusiveClaim(
+            identifier,
+            partyType,
+            PARTY_EXACT_CLAIM_RULE_VERSION
+          )
+        ) {
+          const [claim] = yield* lockAndResolveClaims(
+            transaction,
+            scope.tenantId,
+            [identifier]
+          );
+          if (
+            claim?.partyId !== undefined &&
+            claim.partyId !== payload.partyRef.resourceId
+          ) {
             return yield* new OfficialIdentifierClaimConflict({
               code: 'party_identifier_claim_conflict',
               reason: 'This strong identifier is already claimed by a Party',
@@ -209,8 +238,10 @@ export const addPartyOfficialIdentifierAction = defineAction(
             principalId: scope.principalId,
             provenanceMethod: payload.provenanceMethod,
             provenanceSource: payload.provenanceSource,
-            validFrom: DateTime.formatIso(DateTime.makeUnsafe(payload.validFrom)),
-          },
+            validFrom: DateTime.formatIso(
+              DateTime.makeUnsafe(payload.validFrom)
+            ),
+          }
         );
         return {
           officialIdentifierRef: PartyOfficialIdentifierRefSchema.make({
@@ -227,5 +258,5 @@ export const addPartyOfficialIdentifierAction = defineAction(
           }),
         };
       }),
-    }),
+    })
 );

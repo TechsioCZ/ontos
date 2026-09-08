@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { getTableConfig } from 'drizzle-orm/pg-core';
+
 import {
   CONTACTS_SCHEMA_NAME,
   CONTACTS_TABLE_INVENTORY,
@@ -39,13 +41,21 @@ test('stores references and profile lifecycle, never Party identity facts', () =
         'created_at',
         'updated_at',
         'archived_at',
-      ],
+      ]
     );
     assert.equal(config.foreignKeys.length, 0);
-    for (const forbidden of ['customer_id', 'contact_id', 'name', 'ico', 'dic', 'email', 'phone']) {
+    for (const forbidden of [
+      'customer_id',
+      'contact_id',
+      'name',
+      'ico',
+      'dic',
+      'email',
+      'phone',
+    ]) {
       assert.equal(
         config.columns.some((column) => column.name === forbidden),
-        false,
+        false
       );
     }
     for (const required of [
@@ -55,11 +65,16 @@ test('stores references and profile lifecycle, never Party identity facts', () =
       'created_at',
       'updated_at',
     ]) {
-      assert.equal(config.columns.find((column) => column.name === required)?.notNull, true);
+      assert.equal(
+        config.columns.find((column) => column.name === required)?.notNull,
+        true
+      );
     }
     assert.equal(
-      config.columns.find((column) => column.name === 'counterparty_resource_id')?.notNull,
-      false,
+      config.columns.find(
+        (column) => column.name === 'counterparty_resource_id'
+      )?.notNull,
+      false
     );
   }
 });
@@ -72,11 +87,16 @@ test('forces tenant RLS with complete CRUD policies on both profile tables', () 
     assert.equal(config.enableRLS, true);
     assert.deepEqual(
       config.policies.map((policy) => policy.name),
-      [`${prefix}_select`, `${prefix}_insert`, `${prefix}_update`, `${prefix}_delete`],
+      [
+        `${prefix}_select`,
+        `${prefix}_insert`,
+        `${prefix}_update`,
+        `${prefix}_delete`,
+      ]
     );
     assert.deepEqual(
       config.policies.map((policy) => policy.for),
-      ['select', 'insert', 'update', 'delete'],
+      ['select', 'insert', 'update', 'delete']
     );
     for (const policy of config.policies) {
       assert.equal(policy.to, 'ontos_runtime');

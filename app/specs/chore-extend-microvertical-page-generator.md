@@ -8,28 +8,11 @@ created: 2026-08-13
 
 ## Chore Description
 
-Extend the existing Codesmith `scaffold:microvertical-page` command so a developer can generate a
-named page for an existing MicroVertical at an explicit root-relative URL. The current generator
-already accepts `--vertical` and `--page`, creates governed page and Shell wiring, and defaults to a
-private, non-indexable route. It does not accept a URL independently of the page identifier, and its
-starter renders a description and empty-state message in addition to the title.
+Extend the existing Codesmith `scaffold:microvertical-page` command so a developer can generate a named page for an existing MicroVertical at an explicit root-relative URL. The current generator already accepts `--vertical` and `--page`, creates governed page and Shell wiring, and defaults to a private, non-indexable route. It does not accept a URL independently of the page identifier, and its starter renders a description and empty-state message in addition to the title.
 
-Keep `--page` as the stable lower-kebab page name used for component, locale, entrypoint, and Module
-Federation identities. Add `--url <root-relative-path>` as a supported customization. When it is
-omitted, derive the canonical path as `/<microvertical>/<page>` from the discovered MicroVertical
-slug and page name, so `--vertical crm --page customers` produces `/crm/customers`. The i18n router
-adds the active locale at runtime, yielding `/cs/crm/customers` or `/en/crm/customers`; locale text
-must never be embedded in the generator input or canonical manifest path. Use an explicit URL to
-override the complete canonical path. Use the resulting URL to choose the nested TanStack route
-directories and every canonical/localized/Shell contribution path while continuing to use the page
-name for stable identifiers. The generated page's only visible content must be its localized title;
-route-head metadata may retain a non-visible localized description.
+Keep `--page` as the stable lower-kebab page name used for component, locale, entrypoint, and Module Federation identities. Add `--url <root-relative-path>` as a supported customization. When it is omitted, derive the canonical path as `/<microvertical>/<page>` from the discovered MicroVertical slug and page name, so `--vertical crm --page customers` produces `/crm/customers`. The i18n router adds the active locale at runtime, yielding `/cs/crm/customers` or `/en/crm/customers`; locale text must never be embedded in the generator input or canonical manifest path. Use an explicit URL to override the complete canonical path. Use the resulting URL to choose the nested TanStack route directories and every canonical/localized/Shell contribution path while continuing to use the page name for stable identifiers. The generated page's only visible content must be its localized title; route-head metadata may retain a non-visible localized description.
 
-The canonical user-facing route remains the Shell-owned connector. It must resolve the exact page
-entrypoint through the existing authenticated Shell session, selected legal entity, module-state,
-and module-permission gates before loading the private remote component. Anonymous or unresolved
-context must not load or render the generated MicroVertical page. No page-specific authentication,
-backend call, Action, BFF, React state, or shared component is added to the empty starter.
+The canonical user-facing route remains the Shell-owned connector. It must resolve the exact page entrypoint through the existing authenticated Shell session, selected legal entity, module-state, and module-permission gates before loading the private remote component. Anonymous or unresolved context must not load or render the generated MicroVertical page. No page-specific authentication, backend call, Action, BFF, React state, or shared component is added to the empty starter.
 
 ## Relevant Files
 
@@ -106,15 +89,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ## Testing Strategy
 
-Use the existing Node test runner against temporary workspaces for the generator's CLI, URL parser,
-path planning, exact output, atomic owner wiring, legacy migration, rerun, collision, traversal, and
-no-partial-write behavior. Use focused Shell unit and integration tests for the typed exact-page
-request and authenticated gateway. Retain the module-only landing route as a compatibility case.
-Use the existing Playwright authenticated CRM flow for the generated title-only starter and one
-anonymous direct-route assertion; no business loading, empty, validation, conflict, or retry UI is
-generated because the starter performs no business operation. Shell loading, selection-required,
-forbidden, not-found, and unavailable states remain explicit and are tested at their existing
-integration boundary.
+Use the existing Node test runner against temporary workspaces for the generator's CLI, URL parser, path planning, exact output, atomic owner wiring, legacy migration, rerun, collision, traversal, and no-partial-write behavior. Use focused Shell unit and integration tests for the typed exact-page request and authenticated gateway. Retain the module-only landing route as a compatibility case. Use the existing Playwright authenticated CRM flow for the generated title-only starter and one anonymous direct-route assertion; no business loading, empty, validation, conflict, or retry UI is generated because the starter performs no business operation. Shell loading, selection-required, forbidden, not-found, and unavailable states remain explicit and are tested at their existing integration boundary.
 
 ## Acceptance Criteria
 
@@ -154,33 +129,13 @@ Execute every command to validate the chore with zero regressions.
 ## Implementation Evidence
 
 - `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` passed.
-- Focused page-generator coverage now proves formatted multi-page owner slots, exact current/legacy
-  wiring (including conflicting duplicates), one- and multi-segment URLs, two-letter owner slugs,
-  exact page identities, general explicit locale-prefix rejection, and reserved, dynamic, and
-  cross-owner collision preflight. It also executes a newly generated federated page with the
-  owner's English and Czech resources. The full scaffolding suite passed 35/38; its three failures
-  are unrelated existing baselines: a stale Action fixture missing
-  `--legal-entity-scope`, unavailable generated gateway-issuer keys, and a disposable typecheck
-  fixture missing `system-principal-context-provenance.ts`. The formatter-stability generator test
-  passed.
-- `mise exec -- pnpm scaffold:microvertical-page -- --help` passed and documented the optional URL
-  plus `/<vertical>/<page>` default. A read-only real-workspace plan reports zero mutations for the
-  migrated CRM page and twelve mutations for a new CRM `customers` page; `/modules/bad` is rejected
-  against the existing `[moduleId]` route.
-- `mise exec -- pnpm --filter @app/shell-super-app test:unit` passed 146/146 tests. Exact-page UI
-  coverage proves that private registries and loaders remain untouched for selection-required,
-  forbidden, not-found, and unavailable outcomes and run once only after resolution.
-- `mise exec -- pnpm --filter @app/shell-super-app test:integration` was attempted. The suite parsed
-  the added exact-page `401`/`409`/`200`/`403`/`404`/`503` assertions but the live auth tests stopped
-  at the existing root configuration prerequisite (`AuthConfigError`/missing `DATABASE_URL`).
-- The focused Playwright command was attempted and stopped at the existing root development
-  environment prerequisite before browser execution. Checked-in coverage now asserts anonymous and
-  authenticated English/Czech CRM behavior.
-- `mise exec -- pnpm check` passed formatting, application lint, 58/58 Core Action tests,
-  typechecking, and skills checks before stopping on the unchanged CRM `modern.runtime.ts` i18n
-  boundary baseline.
-- `mise exec -- pnpm build` completed the Shell production and TypeScript build, then stopped at the
-  existing missing CRM Module Federation DTS archive prerequisite.
+- Focused page-generator coverage now proves formatted multi-page owner slots, exact current/legacy wiring (including conflicting duplicates), one- and multi-segment URLs, two-letter owner slugs, exact page identities, general explicit locale-prefix rejection, and reserved, dynamic, and cross-owner collision preflight. It also executes a newly generated federated page with the owner's English and Czech resources. The full scaffolding suite passed 35/38; its three failures are unrelated existing baselines: a stale Action fixture missing `--legal-entity-scope`, unavailable generated gateway-issuer keys, and a disposable typecheck fixture missing `system-principal-context-provenance.ts`. The formatter-stability generator test passed.
+- `mise exec -- pnpm scaffold:microvertical-page -- --help` passed and documented the optional URL plus `/<vertical>/<page>` default. A read-only real-workspace plan reports zero mutations for the migrated CRM page and twelve mutations for a new CRM `customers` page; `/modules/bad` is rejected against the existing `[moduleId]` route.
+- `mise exec -- pnpm --filter @app/shell-super-app test:unit` passed 146/146 tests. Exact-page UI coverage proves that private registries and loaders remain untouched for selection-required, forbidden, not-found, and unavailable outcomes and run once only after resolution.
+- `mise exec -- pnpm --filter @app/shell-super-app test:integration` was attempted. The suite parsed the added exact-page `401`/`409`/`200`/`403`/`404`/`503` assertions but the live auth tests stopped at the existing root configuration prerequisite (`AuthConfigError`/missing `DATABASE_URL`).
+- The focused Playwright command was attempted and stopped at the existing root development environment prerequisite before browser execution. Checked-in coverage now asserts anonymous and authenticated English/Czech CRM behavior.
+- `mise exec -- pnpm check` passed formatting, application lint, 58/58 Core Action tests, typechecking, and skills checks before stopping on the unchanged CRM `modern.runtime.ts` i18n boundary baseline.
+- `mise exec -- pnpm build` completed the Shell production and TypeScript build, then stopped at the existing missing CRM Module Federation DTS archive prerequisite.
 
 ## Notes
 

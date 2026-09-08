@@ -1,8 +1,10 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
+
 import { acquirePoolResource, makePartyDatabase } from '../../src/db/client.ts';
 
 test('finalizes the Party Registry pool when its Effect scope closes', async () => {
@@ -14,8 +16,8 @@ test('finalizes the Party Registry pool when its Effect scope closes', async () 
           finalized = true;
           return Promise.resolve();
         },
-      })),
-    ),
+      }))
+    )
   );
   assert.equal(finalized, true);
 });
@@ -26,7 +28,8 @@ test('keeps Party Registry pool acquisition failure in the typed error channel',
       Effect.scoped(
         makePartyDatabase(
           {
-            connectionString: 'postgresql://ontos_runtime:test@localhost:5433/ontos',
+            connectionString:
+              'postgresql://ontos_runtime:test@localhost:5433/ontos',
             database: 'ontos',
             host: 'localhost',
             port: 5433,
@@ -34,11 +37,14 @@ test('keeps Party Registry pool acquisition failure in the typed error channel',
           },
           () => {
             throw new Error('pool construction failed');
-          },
-        ),
-      ),
-    ),
+          }
+        )
+      )
+    )
   );
   assert.equal(error._tag, 'PartyDatabaseConnectionError');
-  assert.equal(error.reason, 'Unable to initialize the Party Registry PostgreSQL connection pool');
+  assert.equal(
+    error.reason,
+    'Unable to initialize the Party Registry PostgreSQL connection pool'
+  );
 });

@@ -2,11 +2,17 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
-import { defineRead, validateReadDescriptorInput } from '../../src/reads/definition.ts';
-import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
-const modulePermissionTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;
+import { Effect, Schema } from 'effect';
+
+import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import {
+  defineRead,
+  validateReadDescriptorInput,
+} from '../../src/reads/definition.ts';
+
+const modulePermissionTarget = () =>
+  ({ kind: 'module', moduleId: 'core.shell' }) as const;
 
 void test('defines immutable read metadata while keeping handler and service factory private', () => {
   const registration = defineRead(
@@ -14,12 +20,18 @@ void test('defines immutable read metadata while keeping handler and service fac
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.shell.list',
         moduleKey: 'core.shell',
         role: 'api',
       }),
-      evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.shell.list.evidence.v1' },
+      evidencePolicy: {
+        captureMode: 'metadata_only',
+        policyKey: 'core.shell.list.evidence.v1',
+      },
       inputSchema: Schema.Struct({}),
       legalEntityScope: 'forbidden',
       owningModuleKey: 'core.shell',
@@ -31,7 +43,7 @@ void test('defines immutable read metadata while keeping handler and service fac
     },
     () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
     () => Effect.succeed(Object.freeze({})),
-    modulePermissionTarget,
+    modulePermissionTarget
   );
   assert.deepEqual(Object.keys(registration), ['descriptor']);
   assert.equal(Object.isFrozen(registration.descriptor), true);
@@ -43,26 +55,39 @@ void test('requires an explicit valid owner-scoped read entrypoint', () => {
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.foreign.detail',
         moduleKey: 'core.foreign',
         role: 'api',
       }),
       legalEntityScope: 'forbidden',
       owningModuleKey: 'core.shell',
-    }),
+    })
   );
 });
 
 void test('supports every governed access kind and rejects forged scope metadata', () => {
-  for (const accessKind of ['detail', 'download', 'export', 'list', 'report', 'search'] as const) {
+  for (const accessKind of [
+    'detail',
+    'download',
+    'export',
+    'list',
+    'report',
+    'search',
+  ] as const) {
     assert.doesNotThrow(() =>
       defineRead(
         {
           accessKind,
           entrypoint: defineSystemModuleEntrypoint({
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: {
+              kind: 'context_permission',
+              permission: 'module.access',
+            },
             entrypointKey: `core.shell.${accessKind}`,
             moduleKey: 'core.shell',
             role: 'api',
@@ -80,25 +105,29 @@ void test('supports every governed access kind and rejects forged scope metadata
           resultSchema: Schema.Void,
           schemaVersion: '1',
         },
-        () => Effect.succeed({ evidence: { resultCount: 0 }, result: undefined }),
+        () =>
+          Effect.succeed({ evidence: { resultCount: 0 }, result: undefined }),
         () => Effect.succeed({}),
         modulePermissionTarget,
-        accessKind === 'search' ? () => [] : undefined,
-      ),
+        accessKind === 'search' ? () => [] : undefined
+      )
     );
   }
   assert.throws(() =>
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
-        authorization: { kind: 'context_permission', permission: 'module.access' },
+        authorization: {
+          kind: 'context_permission',
+          permission: 'module.access',
+        },
         entrypointKey: 'core.shell.valid',
         moduleKey: 'core.shell',
         role: 'api',
       }),
       legalEntityScope: 'implicit',
       owningModuleKey: 'core.shell',
-    }),
+    })
   );
 });
 

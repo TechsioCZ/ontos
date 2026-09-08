@@ -7,12 +7,13 @@ import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-pa
 
 const CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxProducerModuleKey =
   outboxProducerModuleKey;
-const CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxTopic = outboxTopic;
+const CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxTopic =
+  outboxTopic;
 
-export const createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage = (
-  payload: OutboxPayload,
-): OutboxMessage => ({
-  payloadJson: payload,
-  producerModuleKey: CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxProducerModuleKey,
-  topic: CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxTopic,
-});
+export const createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage =
+  (payload: OutboxPayload): OutboxMessage => ({
+    payloadJson: payload,
+    producerModuleKey:
+      CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxProducerModuleKey,
+    topic: CorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxTopic,
+  });

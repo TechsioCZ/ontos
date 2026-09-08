@@ -1,5 +1,8 @@
 import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
-import type { LegalEntityContextUnavailableError, SafeLegalEntity } from '@app/core-runtime';
+import type {
+  LegalEntityContextUnavailableError,
+  SafeLegalEntity,
+} from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 const legalEntitySelectionUnavailableFields = {
@@ -7,7 +10,7 @@ const legalEntitySelectionUnavailableFields = {
 };
 const LegalEntitySelectionUnavailableErrorValue = Schema.TaggedError<unknown>()(
   'LegalEntitySelectionUnavailableError',
-  legalEntitySelectionUnavailableFields,
+  legalEntitySelectionUnavailableFields
 );
 export type LegalEntitySelectionUnavailableError = InstanceType<
   typeof LegalEntitySelectionUnavailableErrorValue
@@ -16,7 +19,7 @@ export { LegalEntitySelectionUnavailableErrorValue as LegalEntitySelectionUnavai
 
 const LegalEntitySelectionForbiddenErrorValue = Schema.TaggedError<unknown>()(
   'LegalEntitySelectionForbiddenError',
-  {},
+  {}
 );
 export type LegalEntitySelectionForbiddenError = InstanceType<
   typeof LegalEntitySelectionForbiddenErrorValue
@@ -39,7 +42,7 @@ export type LegalEntitySelectionResolution =
     };
 
 export const resolveAuthorizedLegalEntities = Effect.fn(
-  'LegalEntitySelection.resolveAuthorizedLegalEntities',
+  'LegalEntitySelection.resolveAuthorizedLegalEntities'
 )(function* resolveAuthorizedLegalEntitiesEffect(input: {
   readonly principalId: string;
   readonly savedLegalEntityId?: string;
@@ -55,8 +58,9 @@ export const resolveAuthorizedLegalEntities = Effect.fn(
     .listActiveForTenant(input.tenantId)
     .pipe(
       Effect.mapError(
-        (failureCause) => new LegalEntitySelectionUnavailableErrorValue({ failureCause }),
-      ),
+        (failureCause) =>
+          new LegalEntitySelectionUnavailableErrorValue({ failureCause })
+      )
     );
   const decisions = yield* contextAccess.legalEntities({
     legalEntityIds: candidates.map(({ legalEntityId }) => legalEntityId),
@@ -69,7 +73,9 @@ export const resolveAuthorizedLegalEntities = Effect.fn(
   ) {
     return yield* new LegalEntitySelectionUnavailableErrorValue();
   }
-  const byId = new Map(candidates.map((candidate) => [candidate.legalEntityId, candidate]));
+  const byId = new Map(
+    candidates.map((candidate) => [candidate.legalEntityId, candidate])
+  );
   const available = decisions.flatMap(({ decision, key }) => {
     const candidate = byId.get(key);
     return decision === 'allowed' && candidate !== undefined ? [candidate] : [];
@@ -80,7 +86,9 @@ export const resolveAuthorizedLegalEntities = Effect.fn(
   const saved =
     input.savedLegalEntityId === undefined
       ? undefined
-      : available.find(({ legalEntityId }) => legalEntityId === input.savedLegalEntityId);
+      : available.find(
+          ({ legalEntityId }) => legalEntityId === input.savedLegalEntityId
+        );
   if (saved !== undefined) {
     return { available, selected: saved, state: 'selected' } as const;
   }
@@ -91,7 +99,7 @@ export const resolveAuthorizedLegalEntities = Effect.fn(
 });
 
 export const validateAuthorizedLegalEntity = Effect.fn(
-  'LegalEntitySelection.validateAuthorizedLegalEntity',
+  'LegalEntitySelection.validateAuthorizedLegalEntity'
 )(function* validateAuthorizedLegalEntityEffect(input: {
   readonly legalEntityId: string;
   readonly principalId: string;
@@ -103,9 +111,14 @@ export const validateAuthorizedLegalEntity = Effect.fn(
 > {
   const legalEntityContext = yield* LegalEntityContext;
   const contextAccess = yield* ContextAccess;
-  const failForbiddenSelection = () => Effect.fail(new LegalEntitySelectionForbiddenErrorValue());
-  const failUnavailableSelection = (failureCause: LegalEntityContextUnavailableError) =>
-    Effect.fail(new LegalEntitySelectionUnavailableErrorValue({ failureCause }));
+  const failForbiddenSelection = () =>
+    Effect.fail(new LegalEntitySelectionForbiddenErrorValue());
+  const failUnavailableSelection = (
+    failureCause: LegalEntityContextUnavailableError
+  ) =>
+    Effect.fail(
+      new LegalEntitySelectionUnavailableErrorValue({ failureCause })
+    );
   const candidate = yield* legalEntityContext
     .validateSelection(input.tenantId, input.legalEntityId)
     .pipe(
@@ -115,17 +128,24 @@ export const validateAuthorizedLegalEntity = Effect.fn(
         LegalEntityContextInvalidError: failForbiddenSelection,
         LegalEntityContextMissingError: failForbiddenSelection,
         LegalEntityContextUnavailableError: failUnavailableSelection,
-      }),
+      })
     );
   const [decision, ...unexpected] = yield* contextAccess.legalEntities({
     legalEntityIds: [candidate.legalEntityId],
     principalId: input.principalId,
     tenantId: input.tenantId,
   });
-  if (unexpected.length > 0 || decision === undefined || decision.decision === 'unavailable') {
+  if (
+    unexpected.length > 0 ||
+    decision === undefined ||
+    decision.decision === 'unavailable'
+  ) {
     return yield* new LegalEntitySelectionUnavailableErrorValue();
   }
-  if (decision.key !== candidate.legalEntityId || decision.decision !== 'allowed') {
+  if (
+    decision.key !== candidate.legalEntityId ||
+    decision.decision !== 'allowed'
+  ) {
     return yield* new LegalEntitySelectionForbiddenErrorValue();
   }
   return candidate;

@@ -1,29 +1,47 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { acceptsRuleFile, ruleFilePolicyProperties } from '../shared/rule-file-policy.ts';
+import {
+  acceptsRuleFile,
+  ruleFilePolicyProperties,
+} from '../shared/rule-file-policy.ts';
 
 const policy = { include: ['packages/**'], ignore: [], ignoreTests: false };
 
 test('rule file policy keeps source and test files in scope by default', () => {
   assert.equal(acceptsRuleFile('packages/core/src/schema.ts', policy), true);
-  assert.equal(acceptsRuleFile('packages/core/tests/schema.test.ts', policy), true);
+  assert.equal(
+    acceptsRuleFile('packages/core/tests/schema.test.ts', policy),
+    true
+  );
   assert.equal(acceptsRuleFile('apps/shell/src/schema.ts', policy), false);
-  assert.equal(acceptsRuleFile('packages/core/src/schema.ts', { ...policy, include: [] }), false);
+  assert.equal(
+    acceptsRuleFile('packages/core/src/schema.ts', { ...policy, include: [] }),
+    false
+  );
 });
 
 test('rule file policy applies ignore and optional test exclusion', () => {
   assert.equal(
-    acceptsRuleFile('packages/core/src/schema.ts', { ...policy, ignore: ['packages/core/**'] }),
-    false,
+    acceptsRuleFile('packages/core/src/schema.ts', {
+      ...policy,
+      ignore: ['packages/core/**'],
+    }),
+    false
   );
   assert.equal(
-    acceptsRuleFile('packages/core/tests/schema.test.ts', { ...policy, ignoreTests: true }),
-    false,
+    acceptsRuleFile('packages/core/tests/schema.test.ts', {
+      ...policy,
+      ignoreTests: true,
+    }),
+    false
   );
   assert.equal(
-    acceptsRuleFile('packages/core/src/schema.ts', { ...policy, ignoreTests: true }),
-    true,
+    acceptsRuleFile('packages/core/src/schema.ts', {
+      ...policy,
+      ignoreTests: true,
+    }),
+    true
   );
 });
 

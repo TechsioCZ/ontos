@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
+
 import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
-import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
 import type { ModuleEntrypointGatewayService } from '../../src/modules/module-entrypoint-gateway.ts';
+import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
 import { ModuleStateCheckUnavailableError } from '../../src/modules/module-state-gate-errors.ts';
 import { openModuleStateGate } from './open-module-state-gate.ts';
 
@@ -13,21 +14,22 @@ const unavailable = () =>
 
 const prepareSnapshotInput = <Input>(
   context: Input,
-  entrypoints: readonly ModuleEntrypointDescriptor[],
+  entrypoints: readonly ModuleEntrypointDescriptor[]
 ) =>
   decodeTrustedPrincipalContext(context).pipe(
     Effect.mapError(unavailable),
     Effect.flatMap((trustedContext) =>
-      openModuleStateGate.prepareSnapshot(trustedContext.tenantId, entrypoints),
-    ),
+      openModuleStateGate.prepareSnapshot(trustedContext.tenantId, entrypoints)
+    )
   );
 
 const run: ModuleEntrypointGatewayService['run'] = (input) =>
   input.authorize.pipe(Effect.andThen(input.load));
 
-export const openModuleEntrypointGateway: ModuleEntrypointGatewayService = Object.freeze({
-  check: () => Effect.void,
-  prepareSnapshot: prepareSnapshotInput,
-  prepareSnapshotInput,
-  run,
-});
+export const openModuleEntrypointGateway: ModuleEntrypointGatewayService =
+  Object.freeze({
+    check: () => Effect.void,
+    prepareSnapshot: prepareSnapshotInput,
+    prepareSnapshotInput,
+    run,
+  });

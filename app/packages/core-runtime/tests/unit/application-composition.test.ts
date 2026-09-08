@@ -1,7 +1,9 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+
 import {
   canonicalizeApplicationComposition,
   ApplicationCompositionSchema,
@@ -13,7 +15,7 @@ const sha256 = (character: string) => character.repeat(64);
 
 const assertInvalid = <Value>(
   effect: Effect.Effect<Value, ApplicationCompositionValidationError>,
-  reason: RegExp,
+  reason: RegExp
 ): void => assert.match(runEffectTestSync(Effect.flip(effect)).reason, reason);
 
 type Candidate = ReturnType<typeof candidate>;
@@ -24,7 +26,10 @@ const candidate = () => {
   return {
     modules: [
       {
-        allowedContributions: ['contacts.core.navigation.contacts', 'contacts.core.page.contacts'],
+        allowedContributions: [
+          'contacts.core.navigation.contacts',
+          'contacts.core.page.contacts',
+        ],
         contract: {
           sha256: sha256('a'),
           url: 'https://contacts.example/.well-known/ontos-module-manifest.json',
@@ -76,13 +81,21 @@ const candidate = () => {
 const evidence = () => ({
   contracts: {
     contacts: {
-      contractUrl: 'https://contacts.example/.well-known/ontos-module-manifest.json',
-      contributionKeys: ['contacts.core.navigation.contacts', 'contacts.core.page.contacts'],
+      contractUrl:
+        'https://contacts.example/.well-known/ontos-module-manifest.json',
+      contributionKeys: [
+        'contacts.core.navigation.contacts',
+        'contacts.core.page.contacts',
+      ],
       deployment: { appId: 'contacts', buildMarker: 'contacts-build-1' },
       federationExposes: ['./Navigation', './PageContacts'],
       mfBoundaryId: 'contacts',
       moduleId: 'contacts.core',
-      publicContract: { id: 'contacts.core', sha256: sha256('c'), version: '2' },
+      publicContract: {
+        id: 'contacts.core',
+        sha256: sha256('c'),
+        version: '2',
+      },
       sha256: sha256('a'),
     },
   },
@@ -105,20 +118,29 @@ const required = <Value>(value: Value | undefined): Value => {
 const onlyModule = (input: Candidate) => required(input.modules[0]);
 
 const federationManifest = (observations: Evidence) =>
-  required(observations.federationManifests['https://contacts.example/mf-manifest.json']);
+  required(
+    observations.federationManifests[
+      'https://contacts.example/mf-manifest.json'
+    ]
+  );
 
 test('defaults the validation error code without changing its encoded contract', () => {
-  const error = new ApplicationCompositionValidationError({ reason: 'Invalid candidate' });
-  assert.deepEqual(Schema.encodeSync(ApplicationCompositionValidationError)(error), {
-    _tag: 'ApplicationCompositionValidationError',
-    code: 'application_composition_invalid',
+  const error = new ApplicationCompositionValidationError({
     reason: 'Invalid candidate',
   });
+  assert.deepEqual(
+    Schema.encodeSync(ApplicationCompositionValidationError)(error),
+    {
+      _tag: 'ApplicationCompositionValidationError',
+      code: 'application_composition_invalid',
+      reason: 'Invalid candidate',
+    }
+  );
 });
 
 const addModuleCopy = (
   input: Candidate,
-  overrides: Partial<ReturnType<typeof onlyModule>>,
+  overrides: Partial<ReturnType<typeof onlyModule>>
 ): number => {
   const module = onlyModule(input);
   return input.modules.push({
@@ -142,15 +164,23 @@ const addModuleCopy = (
 
 test('accepts one provider-neutral composition and produces deterministic canonical JSON', () => {
   const input = candidate();
-  const composition = runEffectTestSync(validateApplicationCompositionCandidate(input, evidence()));
+  const composition = runEffectTestSync(
+    validateApplicationCompositionCandidate(input, evidence())
+  );
 
   assert.deepEqual(composition, input);
   assert.equal(Object.isFrozen(composition), true);
-  assert.equal(Object.isFrozen(required(composition.modules[0]).federation.exposes), true);
+  assert.equal(
+    Object.isFrozen(required(composition.modules[0]).federation.exposes),
+    true
+  );
   assert.equal(Object.isFrozen(input), false);
   assertInvalid(
-    validateApplicationCompositionCandidate({ ...input, provider: 'zephyr' }, evidence()),
-    /supported .* schema/u,
+    validateApplicationCompositionCandidate(
+      { ...input, provider: 'zephyr' },
+      evidence()
+    ),
+    /supported .* schema/u
   );
 
   const reordered = structuredClone(composition);
@@ -162,12 +192,14 @@ test('accepts one provider-neutral composition and produces deterministic canoni
   reordered.shell.coreCapabilities.reverse();
   reordered.shell.sharedSingletons.reverse();
   /* oxlint-disable perfectionist/sort-objects -- Deliberately reorder nested fields to test canonical encoding. expires: 2026-12-31. */
-  reordered.shell.coreCapabilities = reordered.shell.coreCapabilities.map(({ id, version }) => ({
-    version,
-    id,
-  }));
+  reordered.shell.coreCapabilities = reordered.shell.coreCapabilities.map(
+    ({ id, version }) => ({
+      version,
+      id,
+    })
+  );
   reorderedModule.sharedSingletons = reorderedModule.sharedSingletons.map(
-    ({ packageName, version }) => ({ version, packageName }),
+    ({ packageName, version }) => ({ version, packageName })
   );
   reorderedModule.contract = {
     url: reorderedModule.contract.url,
@@ -176,18 +208,23 @@ test('accepts one provider-neutral composition and produces deterministic canoni
   /* oxlint-enable perfectionist/sort-objects */
   assert.equal(
     canonicalizeApplicationComposition(reordered),
-    canonicalizeApplicationComposition(composition),
+    canonicalizeApplicationComposition(composition)
   );
   assert.deepEqual(
     Schema.decodeSync(Schema.fromJsonString(ApplicationCompositionSchema))(
-      canonicalizeApplicationComposition(composition),
+      canonicalizeApplicationComposition(composition)
     ),
-    composition,
+    composition
   );
 });
 
 test('allows loopback HTTP only with trusted development evidence', () => {
-  for (const host of ['localhost', '127.0.0.1', '[::1]', 'contacts.localhost']) {
+  for (const host of [
+    'localhost',
+    '127.0.0.1',
+    '[::1]',
+    'contacts.localhost',
+  ]) {
     for (const artifact of ['contract', 'federation']) {
       const input = candidate();
       const observations = evidence();
@@ -204,10 +241,17 @@ test('allows loopback HTTP only with trusted development evidence', () => {
           [module.federation.manifest.url]: federationManifest(observations),
         },
       };
-      for (const environment of [{}, { environment: 'stage' }, { environment: 'production' }]) {
+      for (const environment of [
+        {},
+        { environment: 'stage' },
+        { environment: 'production' },
+      ]) {
         assertInvalid(
-          validateApplicationCompositionCandidate(input, { ...observed, ...environment }),
-          /HTTPS outside development/u,
+          validateApplicationCompositionCandidate(input, {
+            ...observed,
+            ...environment,
+          }),
+          /HTTPS outside development/u
         );
       }
       assert.deepEqual(
@@ -215,23 +259,29 @@ test('allows loopback HTTP only with trusted development evidence', () => {
           validateApplicationCompositionCandidate(input, {
             ...observed,
             environment: 'development',
-          }),
+          })
         ),
-        input,
+        input
       );
     }
   }
   const input = candidate();
   onlyModule(input).contract.url = 'http://contacts.example/manifest.json';
   assertInvalid(
-    validateApplicationCompositionCandidate(input, { ...evidence(), environment: 'development' }),
-    /supported .* schema/u,
+    validateApplicationCompositionCandidate(input, {
+      ...evidence(),
+      environment: 'development',
+    }),
+    /supported .* schema/u
   );
 });
 
 test('rejects candidate-wide ownership and compatibility contradictions', () => {
   const cases: readonly [
-    mutate: (input: Candidate, observations: Evidence) => number | readonly string[] | string,
+    mutate: (
+      input: Candidate,
+      observations: Evidence
+    ) => number | readonly string[] | string,
     reason: RegExp,
   ][] = [
     [
@@ -239,21 +289,31 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
       /observed deployment contract/u,
     ],
     [
-      (_input, observations) => (observations.contracts.contacts.mfBoundaryId = 'anotherRemote'),
+      (_input, observations) =>
+        (observations.contracts.contacts.mfBoundaryId = 'anotherRemote'),
       /observed deployment contract/u,
     ],
     [
-      (_input, observations) => (federationManifest(observations).remoteName = 'anotherRemote'),
+      (_input, observations) =>
+        (federationManifest(observations).remoteName = 'anotherRemote'),
       /Module Federation manifest/u,
     ],
     [
-      (_input, observations) => (observations.contracts.contacts.contractUrl = 'invalid-url'),
+      (_input, observations) =>
+        (observations.contracts.contacts.contractUrl = 'invalid-url'),
       /observation schema/u,
     ],
-    [(input) => onlyModule(input).dependencies.push('billing.core'), /dependency billing\.core/u],
-    [(input) => onlyModule(input).dependencies.push('contacts.core'), /dependency cycle/u],
     [
-      (input) => onlyModule(input).dependencies.push('contacts.core', 'contacts.core'),
+      (input) => onlyModule(input).dependencies.push('billing.core'),
+      /dependency billing\.core/u,
+    ],
+    [
+      (input) => onlyModule(input).dependencies.push('contacts.core'),
+      /dependency cycle/u,
+    ],
+    [
+      (input) =>
+        onlyModule(input).dependencies.push('contacts.core', 'contacts.core'),
       /duplicate dependency/u,
     ],
     [
@@ -265,7 +325,10 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
       /duplicate module ID contacts\.core/u,
     ],
     [
-      (input) => (onlyModule(input).allowedContributions = ['contacts.core.page.contacts']),
+      (input) =>
+        (onlyModule(input).allowedContributions = [
+          'contacts.core.page.contacts',
+        ]),
       /observed deployment contract/u,
     ],
     [
@@ -321,7 +384,9 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
     [
       (input, observations) => {
         const moduleSingleton = required(onlyModule(input).sharedSingletons[0]);
-        const runtimeSingleton = required(observations.runtime.sharedSingletons[0]);
+        const runtimeSingleton = required(
+          observations.runtime.sharedSingletons[0]
+        );
         const shellSingleton = required(input.shell.sharedSingletons[0]);
         shellSingleton.packageName = 'foo';
         shellSingleton.version = 'bar@baz';
@@ -333,19 +398,31 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
       },
       /incompatible shared singleton foo@bar/u,
     ],
-    [(input) => (onlyModule(input).requiredShellAbi.version = '2'), /Shell contribution ABI/u],
     [
-      (input) => (required(onlyModule(input).requiredCoreCapabilities[0]).version = '2'),
+      (input) => (onlyModule(input).requiredShellAbi.version = '2'),
+      /Shell contribution ABI/u,
+    ],
+    [
+      (input) =>
+        (required(onlyModule(input).requiredCoreCapabilities[0]).version = '2'),
       /Core capability core\.authorization/u,
     ],
     [
-      (input) => input.shell.sharedSingletons.push({ packageName: 'react', version: '18.3.1' }),
+      (input) =>
+        input.shell.sharedSingletons.push({
+          packageName: 'react',
+          version: '18.3.1',
+        }),
       /shared singleton react/u,
     ],
-    [(input) => (onlyModule(input).federation.execution = 'server'), /supported .* schema/u],
+    [
+      (input) => (onlyModule(input).federation.execution = 'server'),
+      /supported .* schema/u,
+    ],
     [
       (input) =>
-        (onlyModule(input).contract.url = 'https://contacts.example/manifest.json?tag=live'),
+        (onlyModule(input).contract.url =
+          'https://contacts.example/manifest.json?tag=live'),
       /supported .* schema/u,
     ],
     [
@@ -354,7 +431,9 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
     ],
     [
       (_input, observations) => {
-        const singleton = required(federationManifest(observations).sharedSingletons[0]);
+        const singleton = required(
+          federationManifest(observations).sharedSingletons[0]
+        );
         singleton.version = '18.3.1';
         return singleton.version;
       },
@@ -366,6 +445,9 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
     const input = candidate();
     const observations = evidence();
     mutate(input, observations);
-    assertInvalid(validateApplicationCompositionCandidate(input, observations), reason);
+    assertInvalid(
+      validateApplicationCompositionCandidate(input, observations),
+      reason
+    );
   }
 });

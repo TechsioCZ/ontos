@@ -3,6 +3,7 @@
 // @ontos-resource-slug counterparty-role-period
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import {
   PartyRegistryResourceIdJsonSchema,
   PartyRegistryTenantIdJsonSchema,
@@ -14,7 +15,8 @@ export const CounterpartyRolePeriodRefSchema = Schema.Struct({
   resourceType: Schema.Literal('party.registry.counterparty-role-period'),
   tenantId: PartyRegistryTenantIdJsonSchema,
 });
-export type CounterpartyRolePeriodRef = typeof CounterpartyRolePeriodRefSchema.Type;
+export type CounterpartyRolePeriodRef =
+  typeof CounterpartyRolePeriodRefSchema.Type;
 
 export const counterpartyRolePeriodResourceDescriptor = {
   capabilities: {

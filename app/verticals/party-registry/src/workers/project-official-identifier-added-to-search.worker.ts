@@ -4,12 +4,13 @@
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.official-identifier-added.v1
 import { defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { definePartySearchWorker } from './party-search-worker.ts';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-official-identifier-added-v1';
+
+import { definePartySearchWorker } from './party-search-worker.ts';
 
 export const {
   worker: projectOfficialIdentifierAddedToSearchWorker,
@@ -19,7 +20,8 @@ export const {
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
       authorization: { kind: 'owner_local_background' },
-      entrypointKey: 'party.registry.project-official-identifier-added-to-search',
+      entrypointKey:
+        'party.registry.project-official-identifier-added-to-search',
       moduleKey: 'party.registry',
       role: 'worker',
     }),
@@ -30,5 +32,5 @@ export const {
   {
     spanName: 'handleProjectOfficialIdentifierAddedToSearch',
     target: (payload) => ({ partyId: payload.partyRef.resourceId }),
-  },
+  }
 );

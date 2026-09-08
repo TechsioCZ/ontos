@@ -2,11 +2,18 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+
 import { Option } from 'effect';
 import { Param } from 'effect/unstable/cli';
 
@@ -39,21 +46,25 @@ assert.equal(role.createDb, undefined); assert.equal(role.createRole, undefined)
   }
 }
 assert.equal(pgRole('undefined', { inherit: undefined }).inherit, undefined);
-`,
+`
     );
-    const result = spawnSync(process.execPath, [filename], { encoding: 'utf-8' });
+    const result = spawnSync(process.execPath, [filename], {
+      encoding: 'utf-8',
+    });
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stdout + result.stderr);
   }
 };
 
 void test('published dependency declarations retain strict positive and negative contracts', () => {
-  const fixture = mkdtempSync(path.join(tmpdir(), 'ontos-declaration-contract-'));
+  const fixture = mkdtempSync(
+    path.join(tmpdir(), 'ontos-declaration-contract-')
+  );
   try {
     symlinkSync(
       path.join(workspaceRoot, 'node_modules'),
       path.join(fixture, 'node_modules'),
-      'dir',
+      'dir'
     );
     const imports = `import { pgPolicy, pgRole, type PgPolicyConfig, type PgRoleConfig } from 'drizzle-orm/pg-core';
 import { cockroachPolicy, cockroachRole, type CockroachPolicyConfig, type CockroachRoleConfig } from 'drizzle-orm/cockroach-core';
@@ -105,18 +116,26 @@ cockroachRole('invalid', { createRole: 1 });
               types: ['node'],
             },
             files: [filename],
-          }),
+          })
         );
         const result = spawnSync(
           path.join(workspaceRoot, compilerRelativePath),
           ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-          { encoding: 'utf-8' },
+          { encoding: 'utf-8' }
         );
         assert.ifError(result.error);
         const diagnostics = result.stdout + result.stderr;
         assert.equal(result.status, errors === 0 ? 0 : 1, diagnostics);
-        assert.equal(countDiagnostics(diagnostics, /error TS2322:/gu), errors, diagnostics);
-        assert.equal(countDiagnostics(diagnostics, /error TS\d+:/gu), errors, diagnostics);
+        assert.equal(
+          countDiagnostics(diagnostics, /error TS2322:/gu),
+          errors,
+          diagnostics
+        );
+        assert.equal(
+          countDiagnostics(diagnostics, /error TS\d+:/gu),
+          errors,
+          diagnostics
+        );
       }
     }
     verifyDrizzleRuntimeFormats(fixture);
@@ -127,7 +146,7 @@ import { Param } from 'effect/unstable/cli';
 const metadata = Param.getParamMetadata(Param.string(Param.flagKind, 'name'));
 const expected: { readonly isOptional: boolean; readonly isVariadic: boolean; readonly variadicMin: Option.Option<number>; readonly variadicMax: Option.Option<number> } = metadata;
 const reverse: typeof metadata = expected;
-`,
+`
     );
     writeFileSync(
       path.join(fixture, configFilename),
@@ -142,12 +161,12 @@ const reverse: typeof metadata = expected;
           types: ['node'],
         },
         files: [metadataFilename],
-      }),
+      })
     );
     const result = spawnSync(
       path.join(workspaceRoot, compilerRelativePath),
       ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-      { encoding: 'utf-8' },
+      { encoding: 'utf-8' }
     );
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -159,20 +178,36 @@ const wrongVariadic: number = metadata.isVariadic;
 const wrongMin: Option.Option<string> = metadata.variadicMin;
 const wrongMax: Option.Option<string> = metadata.variadicMax;
 metadata.isOptional = true;
-`,
+`
     );
     const invalidMetadata = spawnSync(
       path.join(workspaceRoot, compilerRelativePath),
       ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-      { encoding: 'utf-8' },
+      { encoding: 'utf-8' }
     );
     assert.ifError(invalidMetadata.error);
     const diagnostics = invalidMetadata.stdout + invalidMetadata.stderr;
     assert.equal(invalidMetadata.status, 1, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS2322:/gu), 2, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS2375:/gu), 2, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS2540:/gu), 1, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS\d+:/gu), 5, diagnostics);
+    assert.equal(
+      countDiagnostics(diagnostics, /error TS2322:/gu),
+      2,
+      diagnostics
+    );
+    assert.equal(
+      countDiagnostics(diagnostics, /error TS2375:/gu),
+      2,
+      diagnostics
+    );
+    assert.equal(
+      countDiagnostics(diagnostics, /error TS2540:/gu),
+      1,
+      diagnostics
+    );
+    assert.equal(
+      countDiagnostics(diagnostics, /error TS\d+:/gu),
+      5,
+      diagnostics
+    );
   } finally {
     rmSync(fixture, { force: true, recursive: true });
   }

@@ -8,26 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Publish the Customer business fields as ordinary top-level members of the canonical CRM Customer
-contract and carry them through the existing Customer detail and list reads. Preserve the generated
-Effect BFF seam and typed error behavior.
+Publish the Customer business fields as ordinary top-level members of the canonical CRM Customer contract and carry them through the existing Customer detail and list reads. Preserve the generated Effect BFF seam and typed error behavior.
 
 ## User Story
 
-As a CRM frontend feature
-I want every Customer read to return the complete business identity
-So that create, edit, detail, and lifecycle flows share one canonical Customer representation
+As a CRM frontend feature I want every Customer read to return the complete business identity So that create, edit, detail, and lifecycle flows share one canonical Customer representation
 
 ## Problem Statement
 
-The expanded persistence and canonical Customer result still need to cross the existing detail/list
-read descriptors and generated clients consistently before frontend pages can consume the fields.
+The expanded persistence and canonical Customer result still need to cross the existing detail/list read descriptors and generated clients consistently before frontend pages can consume the fields.
 
 ## Solution Statement
 
-Carry the canonical nullable business fields through existing detail/list read results, clients,
-public exports, fixtures, and contract tests without nesting or source metadata. Mutation payload
-expansion remains owned by the following Action spec.
+Carry the canonical nullable business fields through existing detail/list read results, clients, public exports, fixtures, and contract tests without nesting or source metadata. Mutation payload expansion remains owned by the following Action spec.
 
 ## Relevant Files
 
@@ -54,13 +47,11 @@ Reuse the business-field formats established by dependency 1 in a single canonic
 
 ### Phase 2: Core Implementation
 
-Expand existing generated module API contracts and persistence DTO results while preserving their
-descriptors, endpoint identities, errors, and generated headers.
+Expand existing generated module API contracts and persistence DTO results while preserving their descriptors, endpoint identities, errors, and generated headers.
 
 ### Phase 3: Integration
 
-Regenerate or update contract-derived types as required and prove exact round trips through detail
-and list clients without changing list pagination or lifecycle semantics.
+Regenerate or update contract-derived types as required and prove exact round trips through detail and list clients without changing list pagination or lifecycle semantics.
 
 ## Step by Step Tasks
 
@@ -94,13 +85,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Decode valid complete and nullable Customer results; reject malformed IČO, legal form, dates,
-unknown nested ARES data, and undeclared result members.
+Decode valid complete and nullable Customer results; reject malformed IČO, legal form, dates, unknown nested ARES data, and undeclared result members.
 
 ### Integration Tests
 
-Use the generated clients against the CRM BFF to verify detail/list success and existing typed error
-states with the expanded persisted DTO.
+Use the generated clients against the CRM BFF to verify detail/list success and existing typed error states with the expanded persisted DTO.
 
 ### Edge Cases
 

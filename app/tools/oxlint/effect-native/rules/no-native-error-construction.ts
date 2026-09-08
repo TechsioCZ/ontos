@@ -106,24 +106,33 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
-import { bindingsFor } from '../shared/effect-imports.ts';
-import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import { booleanOption as boolean, stringList } from '../shared/options.ts';
 import { keyName, memberName, unwrapNode } from '../shared/ast.ts';
+import { bindingsFor } from '../shared/effect-imports.ts';
+import { booleanOption as boolean, stringList } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
 /** Globals through which the ambient error constructors can be reached as a property. */
-const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self', 'frames']);
+const CONTAINER_GLOBALS = new Set([
+  'globalThis',
+  'global',
+  'window',
+  'self',
+  'frames',
+]);
 
 /** Framework/build configuration files: a thrown `Error` is the build host's failure protocol. */
 const CONFIG_FILE =
   /(?:^|\/)(?:modern|rspack|drizzle(?:\.[^/]+)?|playwright|rstest|tailwind|module-federation|oxfmt|oxlint)\.config\.[cm]?[jt]sx?$/u;
 
-const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_INCLUDE: readonly string[] = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+];
 
 /**
  * A8 owns bringing `scripts/` and `tools/` under gates; `dist`/`build`/`.d.ts` are not authored code.
@@ -172,14 +181,24 @@ const DEFAULTS: RuleOptions = {
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const include = stringList(given.include, DEFAULTS.include);
-  const constructors = stringList(given.errorConstructors, DEFAULTS.errorConstructors);
+  const constructors = stringList(
+    given.errorConstructors,
+    DEFAULTS.errorConstructors
+  );
   return {
-    errorConstructors: constructors.length > 0 ? constructors : DEFAULTS.errorConstructors,
+    errorConstructors:
+      constructors.length > 0 ? constructors : DEFAULTS.errorConstructors,
     ignore: stringList(given.ignore, DEFAULTS.ignore),
-    ignoreConfigFiles: boolean(given.ignoreConfigFiles, DEFAULTS.ignoreConfigFiles),
+    ignoreConfigFiles: boolean(
+      given.ignoreConfigFiles,
+      DEFAULTS.ignoreConfigFiles
+    ),
     include: include.length > 0 ? include : DEFAULTS.include,
     includeTests: boolean(given.includeTests, DEFAULTS.includeTests),
-    requireEffectImport: boolean(given.requireEffectImport, DEFAULTS.requireEffectImport),
+    requireEffectImport: boolean(
+      given.requireEffectImport,
+      DEFAULTS.requireEffectImport
+    ),
   };
 }
 
@@ -191,7 +210,11 @@ function staticPropertyName(node: ESTree.MemberExpression): string | null {
   return memberName(node, { templates: true });
 }
 
-function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
+function resolveVariable(
+  context: Context,
+  name: string,
+  from: AnyNode
+): Variable | null {
   let scope: Scope | null = context.sourceCode.getScope(from);
   while (scope !== null) {
     const variable = scope.set.get(name);
@@ -199,9 +222,11 @@ function resolveVariable(context: Context, name: string, from: AnyNode): Variabl
       variable !== undefined &&
       variable.defs.some(
         (def) =>
-          !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSTypeParameter'].includes(
-            def.node.type,
-          ),
+          ![
+            'TSInterfaceDeclaration',
+            'TSTypeAliasDeclaration',
+            'TSTypeParameter',
+          ].includes(def.node.type)
       )
     )
       return variable;
@@ -211,7 +236,11 @@ function resolveVariable(context: Context, name: string, from: AnyNode): Variabl
 }
 
 /** `true` when `node` is the ambient global `name` — not a local, parameter, class or import. */
-function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): boolean {
+function isUnshadowedGlobal(
+  context: Context,
+  node: AnyNode,
+  name: string
+): boolean {
   if (node.type !== 'Identifier') return false;
   if ((node as ESTree.IdentifierReference).name !== name) return false;
   const variable = resolveVariable(context, name, node);
@@ -264,7 +293,8 @@ export const rule = defineRule({
           include: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
+            description:
+              'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
           },
           includeTests: {
             type: 'boolean',
@@ -297,7 +327,8 @@ export const rule = defineRule({
     if (matchesGlobs(path, options.ignore)) return {};
     if (!options.includeTests && isTestFile(path)) return {};
     if (options.ignoreConfigFiles && CONFIG_FILE.test(path)) return {};
-    if (options.requireEffectImport && !bindingsFor(context).importsEffect) return {};
+    if (options.requireEffectImport && !bindingsFor(context).importsEffect)
+      return {};
 
     const constructors = new Set(options.errorConstructors);
 
@@ -315,12 +346,16 @@ export const rule = defineRule({
       CONTAINER_GLOBALS.has(node.name) &&
       isUnshadowedGlobal(context, node, node.name);
 
-    const immutableDeclaration = (identifier: Extract<ESTree.Node, { type: 'Identifier' }>) => {
+    const immutableDeclaration = (
+      identifier: Extract<ESTree.Node, { type: 'Identifier' }>
+    ) => {
       const variable = resolveVariable(context, identifier.name, identifier);
       if (
         !variable ||
         variable.defs.length !== 1 ||
-        variable.references.some((reference) => reference.isWrite() && !reference.init)
+        variable.references.some(
+          (reference) => reference.isWrite() && !reference.init
+        )
       )
         return null;
       const declaration = variable.defs[0]!.node;
@@ -334,7 +369,10 @@ export const rule = defineRule({
       return declaration;
     };
 
-    const destructuredErrorName = (pattern: ESTree.ObjectPattern, name: string): string | null => {
+    const destructuredErrorName = (
+      pattern: ESTree.ObjectPattern,
+      name: string
+    ): string | null => {
       for (const property of pattern.properties) {
         if (
           property.type !== 'Property' ||
@@ -342,7 +380,9 @@ export const rule = defineRule({
           property.value.name !== name
         )
           continue;
-        const key = keyName(property.key, property.computed, { templates: true });
+        const key = keyName(property.key, property.computed, {
+          templates: true,
+        });
         if (key !== null && constructors.has(key)) return key;
       }
       return null;
@@ -350,19 +390,29 @@ export const rule = defineRule({
 
     const identifierErrorName = (
       identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-      depth: number,
+      depth: number
     ): string | null => {
       const name = identifier.name;
-      if (constructors.has(name) && isUnshadowedGlobal(context, identifier, name)) return name;
+      if (
+        constructors.has(name) &&
+        isUnshadowedGlobal(context, identifier, name)
+      )
+        return name;
       const declaration = immutableDeclaration(identifier);
       if (!declaration?.init) return null;
-      if (declaration.id.type === 'Identifier') return nativeErrorName(declaration.init, depth + 1);
-      if (declaration.id.type !== 'ObjectPattern' || !isContainer(unwrap(declaration.init)))
+      if (declaration.id.type === 'Identifier')
+        return nativeErrorName(declaration.init, depth + 1);
+      if (
+        declaration.id.type !== 'ObjectPattern' ||
+        !isContainer(unwrap(declaration.init))
+      )
         return null;
       return destructuredErrorName(declaration.id, name);
     };
 
-    const memberErrorName = (member: ESTree.MemberExpression): string | null => {
+    const memberErrorName = (
+      member: ESTree.MemberExpression
+    ): string | null => {
       const name = staticPropertyName(member);
       if (name === null || !constructors.has(name)) return null;
       return isContainer(unwrap(member.object)) ? name : null;

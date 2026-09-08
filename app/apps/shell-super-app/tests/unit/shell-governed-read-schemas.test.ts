@@ -1,5 +1,6 @@
 import { describe, expect, test } from '@rstest/core';
 import { Schema } from 'effect';
+
 import {
   GovernedResolvedModuleTargetSchema,
   GovernedResolveModuleTargetPayloadSchema,
@@ -19,14 +20,20 @@ describe('Shell governed module-target schemas', () => {
       writable: true,
     };
 
-    const decodedInput = Schema.decodeUnknownSync(GovernedResolveModuleTargetPayloadSchema)(input);
-    const decodedResult = Schema.decodeUnknownSync(GovernedResolvedModuleTargetSchema)(result);
+    const decodedInput = Schema.decodeUnknownSync(
+      GovernedResolveModuleTargetPayloadSchema
+    )(input);
+    const decodedResult = Schema.decodeUnknownSync(
+      GovernedResolvedModuleTargetSchema
+    )(result);
 
     expect(decodedInput).toEqual(input);
     expect(decodedResult).toEqual(result);
-    expect(Schema.encodeSync(GovernedResolveModuleTargetPayloadSchema)(decodedInput)).toEqual(
-      input,
-    );
-    expect(Schema.encodeSync(GovernedResolvedModuleTargetSchema)(decodedResult)).toEqual(result);
+    expect(
+      Schema.encodeSync(GovernedResolveModuleTargetPayloadSchema)(decodedInput)
+    ).toEqual(input);
+    expect(
+      Schema.encodeSync(GovernedResolvedModuleTargetSchema)(decodedResult)
+    ).toEqual(result);
   });
 });

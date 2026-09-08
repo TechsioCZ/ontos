@@ -1,14 +1,13 @@
-import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import assert from 'node:assert/strict';
+import test, { after, before } from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Cause, Effect, Exit, Match, Option, Schema, flow } from 'effect';
-import assert from 'node:assert/strict';
-import test, { after, before } from 'node:test';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
   actionInvocations,
@@ -20,15 +19,24 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../src/db/schema.ts';
-import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
+import type {
+  InstalledModuleCatalog,
+  OntosModuleDeploymentContract,
+} from '../../src/index.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import {
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import {
+  makeFaultInjectableCoreDatabase,
+  TestQueryHook,
+} from '../support/database-faults.ts';
+import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
 
 const tenantOne = '70000000-0000-4000-8000-000000000001';
 const tenantTwo = '70000000-0000-4000-8000-000000000002';
@@ -68,8 +76,12 @@ const installedCatalog: InstalledModuleCatalog = Object.freeze({
 
 const withDatabase = <Value, Error>(
   operation: (
-    database: DatabaseService,
-  ) => Effect.Effect<Value, Error, InstalledModuleCatalogService | TenantModuleStateService>,
+    database: DatabaseService
+  ) => Effect.Effect<
+    Value,
+    Error,
+    InstalledModuleCatalogService | TenantModuleStateService
+  >
 ) =>
   Effect.scoped(
     Effect.gen(function* tenantModuleStateDatabaseScope() {
@@ -79,15 +91,21 @@ const withDatabase = <Value, Error>(
         Effect.provideService(InstalledModuleCatalogService, {
           load: Effect.succeed(installedCatalog),
         }),
-        Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
+        Effect.provideService(
+          TenantModuleStateService,
+          makeTenantModuleStateService(database)
+        )
       );
-    }),
+    })
   );
 
 const effectCallback = <Value, Error>(effect: Effect.Effect<Value, Error>) =>
   flow(() => Effect.asVoid(effect), runEffectTestPromise);
 
-const effectTest = <Value, Error>(name: string, effect: Effect.Effect<Value, Error>): void => {
+const effectTest = <Value, Error>(
+  name: string,
+  effect: Effect.Effect<Value, Error>
+): void => {
   test(name, effectCallback(effect));
 };
 
@@ -104,9 +122,11 @@ const cleanup = withDatabase((database) =>
       principals,
       tenants,
     ]) {
-      yield* database.executor.delete(table).where(inArray(table.tenantId, tenantIds));
+      yield* database.executor
+        .delete(table)
+        .where(inArray(table.tenantId, tenantIds));
     }
-  }),
+  })
 );
 
 before(
@@ -166,9 +186,9 @@ before(
             tenantId: tenantTwo,
           },
         ]);
-      }),
+      })
     );
-  }).pipe(effectCallback),
+  }).pipe(effectCallback)
 );
 
 after(cleanup.pipe(effectCallback));
@@ -185,13 +205,14 @@ const principal = (tenantId = tenantOne, principalId = principalOne) => ({
   tenantId,
 });
 
-const testModuleKey = (prefix: string, tenantId: string): string => `${prefix}.id-${tenantId}`;
+const testModuleKey = (prefix: string, tenantId: string): string =>
+  `${prefix}.id-${tenantId}`;
 
 const actionInput = (
   moduleKey: string,
   newState: (typeof changeTenantModuleStateAction.descriptor.payloadSchema)['Type']['newState'],
   idempotencyKey: string,
-  trustedPrincipal = principal(),
+  trustedPrincipal = principal()
 ) => ({
   payload: {
     moduleKey,
@@ -209,28 +230,33 @@ const actionInput = (
   },
 });
 
-const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined => {
+const failureTag = <Error>(
+  exit: Exit.Exit<unknown, Error>
+): string | undefined => {
   const failure = Match.value(exit).pipe(
     Match.tag('Failure', ({ cause }) => Cause.findErrorOption(cause)),
     Match.tag('Success', () => Option.none<Error>()),
-    Match.exhaustive,
+    Match.exhaustive
   );
   const tag = Option.match(failure, {
     onNone: () => Option.none<string>(),
-    onSome: (error) => decodeFailureTag(error).pipe(Option.map(({ _tag }) => _tag)),
+    onSome: (error) =>
+      decodeFailureTag(error).pipe(Option.map(({ _tag }) => _tag)),
   });
   return Option.getOrUndefined(tag);
 };
 
 const verifyHistoryEvidence = (
   database: DatabaseService,
-  row: typeof tenantModuleStateChanges.$inferSelect,
+  row: typeof tenantModuleStateChanges.$inferSelect
 ) =>
   Effect.gen(function* verifyHistoryEvidenceEffect() {
     const [invocation] = yield* database.executor
       .select()
       .from(actionInvocations)
-      .where(eq(actionInvocations.actionInvocationId, row.actionInvocationId ?? ''));
+      .where(
+        eq(actionInvocations.actionInvocationId, row.actionInvocationId ?? '')
+      );
     assert.equal(invocation?.principalId, principalOne);
     assert.equal(invocation?.status, 'succeeded');
     const audit = yield* database.executor
@@ -240,12 +266,14 @@ const verifyHistoryEvidence = (
     const access = yield* database.executor
       .select()
       .from(dataAccessEvents)
-      .where(eq(dataAccessEvents.actionInvocationId, row.actionInvocationId ?? ''));
+      .where(
+        eq(dataAccessEvents.actionInvocationId, row.actionInvocationId ?? '')
+      );
     assert.ok(audit.some((event) => event.eventType === 'action.executed'));
     assert.equal(access.length, 1);
     assert.deepEqual(
       access.map((event) => event.targetResourceType),
-      ['tenant-module-state'],
+      ['tenant-module-state']
     );
     assert.ok(access.every((event) => event.accessKind === 'read'));
   });
@@ -277,8 +305,8 @@ effectTest(
       assert.deepEqual(yield* service.listTenantModuleStates(tenantTwo), [
         { moduleKey: 'list.alpha', state: 'active' },
       ]);
-    }),
-  ),
+    })
+  )
 );
 
 effectTest(
@@ -292,19 +320,27 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
       return Effect.gen(function* transitionSequence() {
-        const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
-        assert.deepEqual(created, { moduleKey, newState: 'active', previousState: null });
-        const suspended = yield* runtime.runAction(actionInput(moduleKey, 'suspended', 'suspend'));
+        const created = yield* runtime.runAction(
+          actionInput(moduleKey, 'active', 'create')
+        );
+        assert.deepEqual(created, {
+          moduleKey,
+          newState: 'active',
+          previousState: null,
+        });
+        const suspended = yield* runtime.runAction(
+          actionInput(moduleKey, 'suspended', 'suspend')
+        );
         assert.deepEqual(suspended, {
           moduleKey,
           newState: 'suspended',
           previousState: 'active',
         });
         const reactivated = yield* runtime.runAction(
-          actionInput(moduleKey, 'active', 'reactivate'),
+          actionInput(moduleKey, 'active', 'reactivate')
         );
         assert.deepEqual(reactivated, {
           moduleKey,
@@ -322,8 +358,8 @@ effectTest(
           .where(
             and(
               eq(tenantModuleStates.tenantId, tenantOne),
-              eq(tenantModuleStates.moduleKey, moduleKey),
-            ),
+              eq(tenantModuleStates.moduleKey, moduleKey)
+            )
           );
         const history = yield* database.executor
           .select()
@@ -331,8 +367,8 @@ effectTest(
           .where(
             and(
               eq(tenantModuleStateChanges.tenantId, tenantOne),
-              eq(tenantModuleStateChanges.moduleKey, moduleKey),
-            ),
+              eq(tenantModuleStateChanges.moduleKey, moduleKey)
+            )
           )
           .orderBy(asc(tenantModuleStateChanges.occurredAt));
         assert.equal(current?.state, 'active');
@@ -345,23 +381,43 @@ effectTest(
           })),
           [
             { changeSource: 'user', newState: 'active', previousState: null },
-            { changeSource: 'user', newState: 'suspended', previousState: 'active' },
-            { changeSource: 'user', newState: 'active', previousState: 'suspended' },
-          ],
+            {
+              changeSource: 'user',
+              newState: 'suspended',
+              previousState: 'active',
+            },
+            {
+              changeSource: 'user',
+              newState: 'active',
+              previousState: 'suspended',
+            },
+          ]
         );
-        assert.equal(current?.lastChangeId, history.at(-1)?.moduleStateChangeId);
-        assert.ok(history.every((row) => row.changedByPrincipalId === principalOne));
+        assert.equal(
+          current?.lastChangeId,
+          history.at(-1)?.moduleStateChangeId
+        );
+        assert.ok(
+          history.every((row) => row.changedByPrincipalId === principalOne)
+        );
         assert.ok(history.every((row) => row.actionInvocationId !== null));
         assert.ok(
-          history.every((row) => row.reason?.startsWith('Integration transition to ') === true),
+          history.every(
+            (row) =>
+              row.reason?.startsWith('Integration transition to ') === true
+          )
         );
 
-        yield* Effect.forEach(history, (row) => verifyHistoryEvidence(database, row), {
-          concurrency: 1,
-        });
-      }),
+        yield* Effect.forEach(
+          history,
+          (row) => verifyHistoryEvidence(database, row),
+          {
+            concurrency: 1,
+          }
+        );
+      })
     );
-  }),
+  })
 );
 
 effectTest(
@@ -371,14 +427,14 @@ effectTest(
     const targetModuleKey = testModuleKey('independent', tenantOne);
     const transitionCatalog = catalogFrom(
       installedContract(otherModuleKey),
-      installedContract(targetModuleKey),
+      installedContract(targetModuleKey)
     );
     yield* withDatabase((database) =>
       database.executor.insert(tenantModuleStates).values({
         moduleKey: otherModuleKey,
         state: 'inactive',
         tenantId: tenantOne,
-      }),
+      })
     );
 
     yield* withDatabase((database) => {
@@ -387,15 +443,19 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
       const withCatalog = <Value, Error, Requirements>(
-        effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
+        effect: Effect.Effect<
+          Value,
+          Error,
+          Requirements | InstalledModuleCatalogService
+        >
       ) =>
         effect.pipe(
           Effect.provideService(InstalledModuleCatalogService, {
             load: Effect.succeed(transitionCatalog),
-          }),
+          })
         );
       const states = [
         'active',
@@ -410,38 +470,56 @@ effectTest(
         states,
         (state) =>
           withCatalog(
-            runtime.runAction(actionInput(targetModuleKey, state, `independent-${state}`)),
+            runtime.runAction(
+              actionInput(targetModuleKey, state, `independent-${state}`)
+            )
           ),
-        { concurrency: 1, discard: true },
+        { concurrency: 1, discard: true }
       );
     });
 
     yield* withDatabase((database) =>
       Effect.gen(function* verifyAllDeclaredStates() {
         const stateRows = yield* database.executor
-          .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+          .select({
+            moduleKey: tenantModuleStates.moduleKey,
+            state: tenantModuleStates.state,
+          })
           .from(tenantModuleStates)
-          .where(inArray(tenantModuleStates.moduleKey, [otherModuleKey, targetModuleKey]));
+          .where(
+            inArray(tenantModuleStates.moduleKey, [
+              otherModuleKey,
+              targetModuleKey,
+            ])
+          );
         const historyRows = yield* database.executor
           .select()
           .from(tenantModuleStateChanges)
           .where(eq(tenantModuleStateChanges.moduleKey, targetModuleKey));
-        assert.deepEqual(Object.fromEntries(stateRows.map((row) => [row.moduleKey, row.state])), {
-          [otherModuleKey]: 'inactive',
-          [targetModuleKey]: 'inactive',
-        });
-        assert.deepEqual(historyRows.map(({ newState }) => newState).toSorted(), [
-          'active',
-          'archived',
-          'deprecated',
-          'inactive',
-          'quarantined',
-          'read_only',
-          'suspended',
-        ]);
-      }),
+        assert.deepEqual(
+          Object.fromEntries(
+            stateRows.map((row) => [row.moduleKey, row.state])
+          ),
+          {
+            [otherModuleKey]: 'inactive',
+            [targetModuleKey]: 'inactive',
+          }
+        );
+        assert.deepEqual(
+          historyRows.map(({ newState }) => newState).toSorted(),
+          [
+            'active',
+            'archived',
+            'deprecated',
+            'inactive',
+            'quarantined',
+            'read_only',
+            'suspended',
+          ]
+        );
+      })
     );
-  }),
+  })
 );
 
 effectTest(
@@ -456,7 +534,7 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
       return runtime.runAction(input);
     });
@@ -466,7 +544,7 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
       return Effect.exit(runtime.runAction(input));
     });
@@ -478,9 +556,11 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
-      return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'same-state')));
+      return Effect.exit(
+        runtime.runAction(actionInput(moduleKey, 'active', 'same-state'))
+      );
     });
     assert.equal(failureTag(unchanged), 'TenantModuleStateUnchangedError');
 
@@ -507,12 +587,14 @@ effectTest(
           .from(dataAccessEvents)
           .where(eq(dataAccessEvents.actionInvocationId, invocationId));
         assert.equal(unchangedAccess.length, 0);
-      }),
+      })
     );
-  }),
+  })
 );
 
-const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService => {
+const withTenantStateWriteFailure = (
+  database: DatabaseService
+): DatabaseService => {
   const transaction: DatabaseService['executor']['transaction'] = (operation) =>
     database.executor.transaction((currentTransaction) =>
       operation(currentTransaction).pipe(
@@ -524,11 +606,11 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
                     cause: new Error('Injected SQL failure'),
                     message: 'Injected current-state persistence failure',
                   }),
-                }),
+                })
               )
-            : Effect.void,
-        ),
-      ),
+            : Effect.void
+        )
+      )
     );
   const transactionOverride = { transaction } satisfies Pick<
     DatabaseService['executor'],
@@ -536,7 +618,7 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
   >;
   const executor: DatabaseService['executor'] = Object.assign(
     Object.create(database.executor),
-    transactionOverride,
+    transactionOverride
   );
   return { executor };
 };
@@ -551,14 +633,16 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
-      return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure')));
+      return Effect.exit(
+        runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure'))
+      );
     });
     assert.equal(
       failureTag(failure),
       'TenantModuleStatePersistenceUnavailableError',
-      Exit.isFailure(failure) ? Cause.pretty(failure.cause) : 'success',
+      Exit.isFailure(failure) ? Cause.pretty(failure.cause) : 'success'
     );
 
     yield* withDatabase((database) =>
@@ -581,11 +665,13 @@ effectTest(
         const audits = yield* database.executor
           .select()
           .from(auditEvents)
-          .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+          .where(
+            eq(auditEvents.actionInvocationId, invocation.actionInvocationId)
+          );
         assert.equal(audits.length, 0);
-      }),
+      })
     );
-  }),
+  })
 );
 
 effectTest(
@@ -598,9 +684,11 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
-      return runtime.runAction(actionInput(moduleKey, 'inactive', 'concurrent-initial'));
+      return runtime.runAction(
+        actionInput(moduleKey, 'inactive', 'concurrent-initial')
+      );
     });
 
     const exits = yield* Effect.forEach(
@@ -615,11 +703,13 @@ effectTest(
             makeActionRepository(),
             allowedPermission,
             testOperationalScopeResolver,
-            openActionRuntimeOptions,
+            openActionRuntimeOptions
           );
-          return Effect.exit(runtime.runAction(actionInput(moduleKey, state, key)));
+          return Effect.exit(
+            runtime.runAction(actionInput(moduleKey, state, key))
+          );
         }),
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     );
     assert.ok(exits.every(Exit.isSuccess));
 
@@ -634,19 +724,21 @@ effectTest(
           .from(tenantModuleStateChanges)
           .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
         assert.equal(history.length, 3);
-        const last = history.find((row) => row.moduleStateChangeId === current?.lastChangeId);
+        const last = history.find(
+          (row) => row.moduleStateChangeId === current?.lastChangeId
+        );
         const concurrentFirst = history.find(
           (row) =>
             row.previousState === 'inactive' &&
-            row.moduleStateChangeId !== last?.moduleStateChangeId,
+            row.moduleStateChangeId !== last?.moduleStateChangeId
         );
         assert.ok(last);
         assert.ok(concurrentFirst);
         assert.equal(last.previousState, concurrentFirst.newState);
         assert.equal(current?.state, last.newState);
-      }),
+      })
     );
-  }),
+  })
 );
 
 effectTest(
@@ -658,7 +750,7 @@ effectTest(
         moduleKey,
         state: 'active',
         tenantId: tenantTwo,
-      }),
+      })
     );
 
     yield* withDatabase((database) => {
@@ -667,23 +759,31 @@ effectTest(
         makeActionRepository(),
         allowedPermission,
         testOperationalScopeResolver,
-        openActionRuntimeOptions,
+        openActionRuntimeOptions
       );
-      return runtime.runAction(actionInput(moduleKey, 'suspended', 'tenant-isolation'));
+      return runtime.runAction(
+        actionInput(moduleKey, 'suspended', 'tenant-isolation')
+      );
     });
 
     yield* withDatabase((database) =>
       Effect.gen(function* verifyTrustedTenantScope() {
         const rows = yield* database.executor
-          .select({ state: tenantModuleStates.state, tenantId: tenantModuleStates.tenantId })
+          .select({
+            state: tenantModuleStates.state,
+            tenantId: tenantModuleStates.tenantId,
+          })
           .from(tenantModuleStates)
           .where(eq(tenantModuleStates.moduleKey, moduleKey))
           .orderBy(asc(tenantModuleStates.tenantId));
-        assert.deepEqual(Object.fromEntries(rows.map((row) => [row.tenantId, row.state])), {
-          [tenantOne]: 'suspended',
-          [tenantTwo]: 'active',
-        });
-      }),
+        assert.deepEqual(
+          Object.fromEntries(rows.map((row) => [row.tenantId, row.state])),
+          {
+            [tenantOne]: 'suspended',
+            [tenantTwo]: 'active',
+          }
+        );
+      })
     );
-  }),
+  })
 );

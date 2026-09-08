@@ -106,7 +106,8 @@ const effectNativePlugin = eslintCompatPlugin({
     'no-local-defect-seam': noLocalDefectSeam,
     'no-manual-config-in-scaffold-templates': noManualConfigInScaffoldTemplates,
     'no-manual-cookie-serialization': noManualCookieSerialization,
-    'no-manual-error-handling-in-scaffold-templates': noManualErrorHandlingInScaffoldTemplates,
+    'no-manual-error-handling-in-scaffold-templates':
+      noManualErrorHandlingInScaffoldTemplates,
     'no-manual-identity-annotations': noManualIdentityAnnotations,
     'no-manual-route-param-parsing': noManualRouteParamParsing,
     'no-manual-tag-comparison': noManualTagComparison,
@@ -137,15 +138,18 @@ const effectNativePlugin = eslintCompatPlugin({
     'no-throw-in-effect-callback': noThrowInEffectCallback,
     'no-throw-in-scripts': noThrowInScripts,
     'no-unbranded-identifier-schema': noUnbrandedIdentifierSchema,
-    'no-unjustified-file-wide-lint-suppression': noUnjustifiedFileWideLintSuppression,
+    'no-unjustified-file-wide-lint-suppression':
+      noUnjustifiedFileWideLintSuppression,
     'no-unmanaged-mutable-state': noUnmanagedMutableState,
     'no-unredacted-secret-field': noUnredactedSecretField,
     'no-wide-factory-signature': noWideFactorySignature,
     'prefer-effect-fn-for-operations': preferEffectFnForOperations,
     'prefer-match-over-tag-switch': preferMatchOverTagSwitch,
     'require-concurrency-option': requireConcurrencyOption,
-    'require-context-service-for-service-interface': requireContextServiceForServiceInterface,
-    'require-observability-layers-at-runtime-root': requireObservabilityLayersAtRuntimeRoot,
+    'require-context-service-for-service-interface':
+      requireContextServiceForServiceInterface,
+    'require-observability-layers-at-runtime-root':
+      requireObservabilityLayersAtRuntimeRoot,
     'require-timeout-on-external-effect': requireTimeoutOnExternalEffect,
   },
 });

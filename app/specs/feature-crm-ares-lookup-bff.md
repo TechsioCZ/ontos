@@ -8,29 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Expose one CRM-owned, generated Effect module API read that accepts an eight-digit IČO and returns
-flat Customer-compatible values from the private ARES adapter. The operation is a governed read,
-not an Action, because it does not mutate OntOS state.
+Expose one CRM-owned, generated Effect module API read that accepts an eight-digit IČO and returns flat Customer-compatible values from the private ARES adapter. The operation is a governed read, not an Action, because it does not mutate OntOS state.
 
 ## User Story
 
-As the Customer create feature
-I want to look up a Czech business through the generated CRM BFF client
-So that the browser never calls ARES or a private backend implementation directly
+As the Customer create feature I want to look up a Czech business through the generated CRM BFF client So that the browser never calls ARES or a private backend implementation directly
 
 ## Problem Statement
 
-The private adapter alone is not a legal frontend boundary. OntOS requires every module API to use
-the generated descriptor, Read runtime, registered server, shared HttpApi contract, and generated
-Effect client with typed errors.
+The private adapter alone is not a legal frontend boundary. OntOS requires every module API to use the generated descriptor, Read runtime, registered server, shared HttpApi contract, and generated Effect client with typed errors.
 
 ## Solution Statement
 
-Generate `customer-ares-lookup` with Codesmith before editing any API files. Adapt its request,
-response, read handler, server mapping, registration, and client to use the private adapter. Publish
-only invalid/authentication/forbidden/not-found/unavailable/internal Problem Details supported by
-the current governed Read runtime; retain upstream timeout/throttling distinctions in internal
-diagnostics while exposing them safely as retryable unavailability.
+Generate `customer-ares-lookup` with Codesmith before editing any API files. Adapt its request, response, read handler, server mapping, registration, and client to use the private adapter. Publish only invalid/authentication/forbidden/not-found/unavailable/internal Problem Details supported by the current governed Read runtime; retain upstream timeout/throttling distinctions in internal diagnostics while exposing them safely as retryable unavailability.
 
 ## Relevant Files
 
@@ -59,18 +49,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Run the mandatory module API generator and retain all generated identities and wiring before adapting
-the skeleton contract.
+Run the mandatory module API generator and retain all generated identities and wiring before adapting the skeleton contract.
 
 ### Phase 2: Core Implementation
 
-Connect the governed read to the private adapter, normalize the response to flat Customer fields,
-and exhaustively map all Read/runtime/integration failures.
+Connect the governed read to the private adapter, normalize the response to flat Customer fields, and exhaustively map all Read/runtime/integration failures.
 
 ### Phase 3: Integration
 
-Prove the generated client reaches the registered read through the real BFF and never exposes raw
-ARES JSON, address, or private implementation types.
+Prove the generated client reaches the registered read through the real BFF and never exposes raw ARES JSON, address, or private implementation types.
 
 ## Step by Step Tasks
 
@@ -109,13 +96,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Verify exact generated identities, schema decoding, public errors, adapter-error mapping, and complete
-registration/API composition.
+Verify exact generated identities, schema decoding, public errors, adapter-error mapping, and complete registration/API composition.
 
 ### Integration Tests
 
-Run the generated client against the CRM Effect BFF and governed Read runtime with a deterministic
-ARES layer, proving authentication, module access, evidence, typed errors, and response decoding.
+Run the generated client against the CRM Effect BFF and governed Read runtime with a deterministic ARES layer, proving authentication, module access, evidence, typed errors, and response decoding.
 
 ### Edge Cases
 
@@ -161,30 +146,19 @@ Execute every command to validate the feature with zero regressions.
 
 ### Summary
 
-- Generated the CRM `customer-ares-lookup` module API with Codesmith, then adapted its contract,
-  governed Read, server, generated Effect client, manifest, private registration, and CRM client seam.
-- Connected the owner-private ARES service through a substitutable Effect layer and exposed only the
-  flat Customer-compatible result with the required sanitized Problem Details union.
-- Added unit and real BFF/Read-runtime integration coverage for success, authorization, evidence,
-  correlation, validation, provider failures, decoding defects, and information-leak prevention.
+- Generated the CRM `customer-ares-lookup` module API with Codesmith, then adapted its contract, governed Read, server, generated Effect client, manifest, private registration, and CRM client seam.
+- Connected the owner-private ARES service through a substitutable Effect layer and exposed only the flat Customer-compatible result with the required sanitized Problem Details union.
+- Added unit and real BFF/Read-runtime integration coverage for success, authorization, evidence, correlation, validation, provider failures, decoding defects, and information-leak prevention.
 
 ### Changed Files
 
-- 13 files changed, 1,092 insertions, 0 deletions: CRM API/runtime/client wiring, four generated
-  module-API files, manifest and private registration, two new CRM test files, one existing
-  API-contract test, and this plan.
+- 13 files changed, 1,092 insertions, 0 deletions: CRM API/runtime/client wiring, four generated module-API files, manifest and private registration, two new CRM test files, one existing API-contract test, and this plan.
 
 ### Tests Written or Updated
 
-- `verticals/crm/tests/unit/customer-ares-lookup.test.ts` — proves the exact descriptor, codecs,
-  public status union, complete adapter-error mapping, correlation/evidence, generated publication,
-  and absence of an ARES Action.
-- `verticals/crm/tests/integration/customer-ares-lookup-bff.test.ts` — proves the generated client
-  through the real CRM BFF and governed Read runtime for success, invalid input, authentication,
-  permission denial, not found, retryable unavailability, sanitized internal failure, correlation,
-  and durable metadata-only evidence with a substituted ARES service.
-- `verticals/crm/tests/unit/customer-contact-api-contract.test.ts` — extends the exact CRM operation
-  surface with `lookupCustomerAres`.
+- `verticals/crm/tests/unit/customer-ares-lookup.test.ts` — proves the exact descriptor, codecs, public status union, complete adapter-error mapping, correlation/evidence, generated publication, and absence of an ARES Action.
+- `verticals/crm/tests/integration/customer-ares-lookup-bff.test.ts` — proves the generated client through the real CRM BFF and governed Read runtime for success, invalid input, authentication, permission denial, not found, retryable unavailability, sanitized internal failure, correlation, and durable metadata-only evidence with a substituted ARES service.
+- `verticals/crm/tests/unit/customer-contact-api-contract.test.ts` — extends the exact CRM operation surface with `lookupCustomerAres`.
 
 ### Validation
 
@@ -194,32 +168,17 @@ Execute every command to validate the feature with zero regressions.
 - `mise exec -- pnpm api:check` — passed.
 - `mise exec -- pnpm module-entrypoints:check` — passed.
 - `mise exec -- pnpm check:module-contracts` — passed.
-- `mise exec -- pnpm --filter @app/crm build` — the dirty implementation worktree correctly refused
-  a promotable envelope with `sourceRevision "workspace"`; the same source in an isolated clean
-  snapshot passed the complete CRM build and Node deployment package with an explicit Git revision.
-- `mise exec -- pnpm check` — passed, including format, lint, Core Action tests, type checking,
-  skills, i18n/API/database/module-entrypoint/module-contract/workspace checks, and performance readiness.
-- `mise exec -- pnpm build` — the dirty implementation worktree stopped at the same provenance
-  guard; the source-equivalent clean snapshot passed the complete CRM and Shell build, deployment
-  packaging, Module Federation type assertion, and performance readiness.
+- `mise exec -- pnpm --filter @app/crm build` — the dirty implementation worktree correctly refused a promotable envelope with `sourceRevision "workspace"`; the same source in an isolated clean snapshot passed the complete CRM build and Node deployment package with an explicit Git revision.
+- `mise exec -- pnpm check` — passed, including format, lint, Core Action tests, type checking, skills, i18n/API/database/module-entrypoint/module-contract/workspace checks, and performance readiness.
+- `mise exec -- pnpm build` — the dirty implementation worktree stopped at the same provenance guard; the source-equivalent clean snapshot passed the complete CRM and Shell build, deployment packaging, Module Federation type assertion, and performance readiness.
 
 ### Review
 
-- Re-read `../AGENTS.md`, `AGENTS.md`, `docs/architecture/MICROVERTICALS.md`,
-  `docs/architecture/ACTIONS.md`, `docs/architecture/ERRORS.md`,
-  `docs/architecture/ULTRAMODERN.md`, `docs/architecture/MODULE_ENTRYPOINTS.md`,
-  `docs/architecture/MODULE_MANIFESTS.md`, `docs/architecture/DATA_ACCESS.md`,
-  `docs/integrations/ares.md`, and both dependency specifications.
-- Final review confirmed the generated Effect client remains the only public seam, the private ARES
-  adapter remains owner-local, the operation is a metadata-evidenced governed Read rather than an
-  Action, and every public failure is declared, status-matched, typed, and sanitized.
-- Fixed the review findings surfaced by the repository gate: switch-case style, Effect-catch lint
-  annotation, type-only imports, Promise callback structure, and sequential test assertions.
-- No UI/browser review or screenshots were applicable because this specification changes only the
-  CRM BFF/read boundary.
+- Re-read `../AGENTS.md`, `AGENTS.md`, `docs/architecture/MICROVERTICALS.md`, `docs/architecture/ACTIONS.md`, `docs/architecture/ERRORS.md`, `docs/architecture/ULTRAMODERN.md`, `docs/architecture/MODULE_ENTRYPOINTS.md`, `docs/architecture/MODULE_MANIFESTS.md`, `docs/architecture/DATA_ACCESS.md`, `docs/integrations/ares.md`, and both dependency specifications.
+- Final review confirmed the generated Effect client remains the only public seam, the private ARES adapter remains owner-local, the operation is a metadata-evidenced governed Read rather than an Action, and every public failure is declared, status-matched, typed, and sanitized.
+- Fixed the review findings surfaced by the repository gate: switch-case style, Effect-catch lint annotation, type-only imports, Promise callback structure, and sequential test assertions.
+- No UI/browser review or screenshots were applicable because this specification changes only the CRM BFF/read boundary.
 
 ### Deviations and Follow-ups
 
-- Promotable release envelopes intentionally require a clean Git tree. Because this implementation
-  may not create a commit, build validation used a source-equivalent clean snapshot with the current
-  HEAD revision; no product-code bypass or build-configuration change was introduced.
+- Promotable release envelopes intentionally require a clean Git tree. Because this implementation may not create a commit, build validation used a source-equivalent clean snapshot with the current HEAD revision; no product-code bypass or build-configuration change was introduced.

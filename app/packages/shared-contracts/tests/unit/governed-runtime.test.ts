@@ -1,14 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from '@modern-js/plugin-bff/effect-client';
 import { Effect, Redacted, Schema, Result, flow } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
 import { FetchHttpClient } from 'effect/unstable/http';
+
 import {
   makeEffectTestCallback,
   runEffectTestPromise,
 } from '../../../core-runtime/src/testing/effect-runtime.ts';
-import { makeGovernedReadProblems } from '../../src/effect-bff-runtime.ts';
 import { makeGovernedEffectBffClient } from '../../src/client-runtime.ts';
+import { makeGovernedReadProblems } from '../../src/effect-bff-runtime.ts';
 import {
   makeProblemDetailsSchema,
   makeRetryableProblemDetailsSchema,
@@ -49,7 +55,7 @@ test('shared problem factories preserve concrete schemas, statuses, retryability
         'policyConflict',
         'policyIneligible',
         'unavailable',
-      ]),
+      ])
     )(key);
     const problem = problems[kind]();
     assert.equal(Schema.is(schemas[kind])(problem), true);
@@ -67,7 +73,7 @@ test('shared problem factories preserve concrete schemas, statuses, retryability
       status: 401,
       title: 'Authentication required',
       type: 'https://ontos.dev/problems/operation-authentication-required',
-    }),
+    })
   );
   assert.deepEqual(
     problems.internal(),
@@ -76,16 +82,23 @@ test('shared problem factories preserve concrete schemas, statuses, retryability
       status: 500,
       title: 'Read failed',
       type: 'https://ontos.dev/problems/read-failed',
-    }),
+    })
   );
 });
 
 const api = HttpApi.make('GovernedTransportTest').add(
   HttpApiGroup.make('read').add(
-    HttpApiEndpoint.get('execute', '/read', { error: schemas.unavailable, success: Schema.String }),
-  ),
+    HttpApiEndpoint.get('execute', '/read', {
+      error: schemas.unavailable,
+      success: Schema.String,
+    })
+  )
 );
-const makeClient = (credential: string, requestCorrelation: string, baseUrl: string | URL) =>
+const makeClient = (
+  credential: string,
+  requestCorrelation: string,
+  baseUrl: string | URL
+) =>
   makeGovernedEffectBffClient(
     {
       api,
@@ -93,7 +106,7 @@ const makeClient = (credential: string, requestCorrelation: string, baseUrl: str
       defaultApiPrefix: '/owner-api',
       requestCorrelation,
     },
-    { baseUrl },
+    { baseUrl }
   );
 
 test(
@@ -107,7 +120,7 @@ test(
             requests.push(new Request(input, init));
             return Response.json('ok');
           }),
-        runEffectTestPromise,
+        runEffectTestPromise
       );
       const url = new URL('https://owner.example/custom');
       const first = makeClient('Bearer first', 'first-correlation', url);
@@ -116,13 +129,13 @@ test(
       const second = makeClient(
         'Bearer second',
         'second-correlation',
-        'https://owner.example/custom',
+        'https://owner.example/custom'
       );
       assert.equal(requests.length, 0);
       for (const client of [first, second]) {
         const result = yield* client.pipe(
           Effect.flatMap((value) => value.read.execute({})),
-          Effect.provideService(FetchHttpClient.Fetch, fetch),
+          Effect.provideService(FetchHttpClient.Fetch, fetch)
         );
         assert.equal(result, 'ok');
       }
@@ -133,12 +146,20 @@ test(
           request.headers.get('x-correlation-id'),
         ]),
         [
-          ['https://owner.example/custom/read', 'Bearer first', 'first-correlation'],
-          ['https://owner.example/custom/read', 'Bearer second', 'second-correlation'],
-        ],
+          [
+            'https://owner.example/custom/read',
+            'Bearer first',
+            'first-correlation',
+          ],
+          [
+            'https://owner.example/custom/read',
+            'Bearer second',
+            'second-correlation',
+          ],
+        ]
       );
-    }),
-  ),
+    })
+  )
 );
 
 test(
@@ -151,25 +172,25 @@ test(
             Response.json(problems.unavailable(), {
               headers: { 'content-type': 'application/problem+json' },
               status: 503,
-            }),
+            })
           ),
-        runEffectTestPromise,
+        runEffectTestPromise
       );
       const result = yield* makeClient(
         'Bearer proof',
         'correlation',
-        'https://owner.example/api',
+        'https://owner.example/api'
       ).pipe(
         Effect.flatMap((client) => client.read.execute({})),
         Effect.provideService(FetchHttpClient.Fetch, fetch),
-        Effect.result,
+        Effect.result
       );
       assert.equal(Result.isFailure(result), true);
       if (Result.isFailure(result)) {
         assert.equal(Schema.is(schemas.unavailable)(result.failure), true);
       }
-    }),
-  ),
+    })
+  )
 );
 
 for (const baseUrl of [
@@ -188,22 +209,29 @@ for (const baseUrl of [
               calls += 1;
               return Response.json('unsafe');
             }),
-          runEffectTestPromise,
+          runEffectTestPromise
         );
-        const result = yield* makeClient('Bearer secret', 'correlation', baseUrl).pipe(
+        const result = yield* makeClient(
+          'Bearer secret',
+          'correlation',
+          baseUrl
+        ).pipe(
           Effect.flatMap((client) => client.read.execute({})),
           Effect.provideService(FetchHttpClient.Fetch, fetch),
-          Effect.result,
+          Effect.result
         );
         assert.equal(Result.isFailure(result), true);
         if (Result.isFailure(result)) {
           assert.equal(Schema.isSchemaError(result.failure), true);
           if (Schema.isSchemaError(result.failure)) {
-            assert.doesNotMatch(result.failure.message, /password|Bearer secret|owner\.example/u);
+            assert.doesNotMatch(
+              result.failure.message,
+              /password|Bearer secret|owner\.example/u
+            );
           }
         }
         assert.equal(calls, 0);
-      }),
-    ),
+      })
+    )
   );
 }

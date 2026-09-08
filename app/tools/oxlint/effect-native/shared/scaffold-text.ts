@@ -1,6 +1,9 @@
 import type { ESTree } from '@oxlint/plugins';
 
-export type StringNode = Extract<ESTree.Node, { type: 'TemplateLiteral' | 'Literal' }>;
+export type StringNode = Extract<
+  ESTree.Node,
+  { type: 'TemplateLiteral' | 'Literal' }
+>;
 const MODULE_PARENTS = new Set([
   'ImportDeclaration',
   'ImportExpression',
@@ -21,13 +24,13 @@ export function maskText(text: string, strings = false): string {
     (value) =>
       value.startsWith('/') || strings
         ? value.replace(/[^\r\n]+/gu, (segment) => ' '.repeat(segment.length))
-        : value,
+        : value
   );
 }
 function driverCallee(callee: ESTree.Node): boolean {
   if (callee.type === 'Identifier')
     return /^(?:Error|TypeError|exec|execSync|execFile|execFileSync|spawn|spawnSync)$/u.test(
-      callee.name,
+      callee.name
     );
   return (
     callee.type === 'MemberExpression' &&
@@ -50,11 +53,17 @@ export function driverText(node: ESTree.Node): boolean {
 /** Interpolations are opaque one-character placeholders, never evaluated. */
 export function emittedText(node: StringNode): string {
   if (node.type === 'TemplateLiteral')
-    return node.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join('_');
+    return node.quasis
+      .map((quasi) => quasi.value.cooked ?? quasi.value.raw)
+      .join('_');
   return typeof node.value === 'string' ? node.value : '';
 }
 /** Cooked offsets locate whole quasis, not guessed raw-source character ranges. */
-export function reportNode(node: StringNode, start: number, end: number): ESTree.Node {
+export function reportNode(
+  node: StringNode,
+  start: number,
+  end: number
+): ESTree.Node {
   if (node.type !== 'TemplateLiteral') return node;
   let offset = 0;
   for (const quasi of node.quasis) {

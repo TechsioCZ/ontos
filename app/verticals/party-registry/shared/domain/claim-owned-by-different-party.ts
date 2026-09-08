@@ -5,5 +5,5 @@ export class ClaimOwnedByDifferentParty extends Schema.TaggedError<ClaimOwnedByD
   {
     code: Schema.Literal('claim_owned_by_different_party'),
     reason: Schema.String,
-  },
+  }
 ) {}

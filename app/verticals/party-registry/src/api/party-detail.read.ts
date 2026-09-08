@@ -7,11 +7,15 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Match, Option } from 'effect';
+
 import {
   PartyDetailRequestSchema,
   PartyDetailResponseSchema,
 } from '../../shared/apis/party-detail.ts';
-import type { PartyDetailRequest, PartyDetailResponse } from '../../shared/apis/party-detail.ts';
+import type {
+  PartyDetailRequest,
+  PartyDetailResponse,
+} from '../../shared/apis/party-detail.ts';
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This pure helper constructs a ResourceRef, not an Effect service.
 import { makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
@@ -19,19 +23,21 @@ import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 import type { ResolvedPartyAlias } from '../merge/party-alias-resolution.service.ts';
-import { findPartyRecord } from '../services/party-identity-persistence.service.ts';
-import type { PartyLookup } from '../services/party-identity-persistence.service.ts';
 import { findPartyDetailAssertions } from '../services/party-detail-persistence.service.ts';
 import type { PartyDetailAssertions } from '../services/party-detail-persistence.service.ts';
+import { findPartyRecord } from '../services/party-identity-persistence.service.ts';
+import type { PartyLookup } from '../services/party-identity-persistence.service.ts';
 
 interface Services {
   readonly facts: (
     partyId: string,
-    includeFactHistory: boolean,
+    includeFactHistory: boolean
   ) => Effect.Effect<PartyDetailAssertions, PartyPersistenceUnavailableError>;
-  readonly find: (partyId: string) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError>;
+  readonly find: (
+    partyId: string
+  ) => Effect.Effect<PartyLookup, PartyPersistenceUnavailableError>;
   readonly resolve: (
-    partyId: string,
+    partyId: string
   ) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
 }
 
@@ -46,65 +52,73 @@ const unavailable = (cause?: unknown) => {
     reason: 'Party identity or Alias resolution is temporarily unavailable',
   });
   if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+    Object.defineProperty(failure, 'cause', {
+      configurable: true,
+      value: cause,
+    });
   }
   return failure;
 };
 
-export const readPartyDetailFromServices = Effect.fn('PartyDetailRead.readPartyDetailFromServices')(
-  function* readPartyDetailFromServicesEffect(
-    requestedPartyRef: PartyRef,
-    tenantId: string,
-    services: Services,
-    includeFactHistory: Parameters<Services['facts']>[1] = false,
-  ): Effect.fn.Return<PartyDetailResponse, ReadHandlerNotFound | ReadHandlerUnavailable> {
-    if (requestedPartyRef.tenantId !== tenantId) {
-      return yield* notFound();
-    }
+export const readPartyDetailFromServices = Effect.fn(
+  'PartyDetailRead.readPartyDetailFromServices'
+)(function* readPartyDetailFromServicesEffect(
+  requestedPartyRef: PartyRef,
+  tenantId: string,
+  services: Services,
+  includeFactHistory: Parameters<Services['facts']>[1] = false
+): Effect.fn.Return<
+  PartyDetailResponse,
+  ReadHandlerNotFound | ReadHandlerUnavailable
+> {
+  if (requestedPartyRef.tenantId !== tenantId) {
+    return yield* notFound();
+  }
 
-    const resolved = yield* services.resolve(requestedPartyRef.resourceId).pipe(
-      Effect.mapError((error) =>
-        Match.value(error).pipe(
-          Match.tags({
-            PartyAliasResolutionBrokenChain: (failure) =>
-              failure.missingPartyId === requestedPartyRef.resourceId
-                ? notFound()
-                : unavailable(failure),
-            PartyAliasResolutionCrossTenant: unavailable,
-            PartyAliasResolutionCycle: unavailable,
-            PartyAliasResolutionUnavailable: unavailable,
-          }),
-          Match.exhaustive,
-        ),
+  const resolved = yield* services.resolve(requestedPartyRef.resourceId).pipe(
+    Effect.mapError((error) =>
+      Match.value(error).pipe(
+        Match.tags({
+          PartyAliasResolutionBrokenChain: (failure) =>
+            failure.missingPartyId === requestedPartyRef.resourceId
+              ? notFound()
+              : unavailable(failure),
+          PartyAliasResolutionCrossTenant: unavailable,
+          PartyAliasResolutionCycle: unavailable,
+          PartyAliasResolutionUnavailable: unavailable,
+        }),
+        Match.exhaustive
+      )
+    )
+  );
+  const found = yield* services
+    .find(resolved.canonicalPartyId)
+    .pipe(Effect.mapError(unavailable));
+  const party = Match.value(found).pipe(
+    Match.tag('found', ({ value }) => Option.some(value)),
+    Match.tag('not_found', () => Option.none()),
+    Match.exhaustive
+  );
+  if (Option.isNone(party)) {
+    return yield* notFound();
+  }
+  const assertions = yield* services
+    .facts(resolved.canonicalPartyId, includeFactHistory)
+    .pipe(Effect.mapError(unavailable));
+
+  return {
+    ...assertions,
+    party: party.value,
+    resolution: {
+      aliasChain: resolved.traversedAliasIds.map((partyId) =>
+        makePartyRef(tenantId, partyId)
       ),
-    );
-    const found = yield* services
-      .find(resolved.canonicalPartyId)
-      .pipe(Effect.mapError(unavailable));
-    const party = Match.value(found).pipe(
-      Match.tag('found', ({ value }) => Option.some(value)),
-      Match.tag('not_found', () => Option.none()),
-      Match.exhaustive,
-    );
-    if (Option.isNone(party)) {
-      return yield* notFound();
-    }
-    const assertions = yield* services
-      .facts(resolved.canonicalPartyId, includeFactHistory)
-      .pipe(Effect.mapError(unavailable));
-
-    return {
-      ...assertions,
-      party: party.value,
-      resolution: {
-        aliasChain: resolved.traversedAliasIds.map((partyId) => makePartyRef(tenantId, partyId)),
-        canonicalPartyRef: makePartyRef(tenantId, resolved.canonicalPartyId),
-        kind: resolved.wasAlias ? 'ALIAS' : 'DIRECT',
-        requestedPartyRef,
-      },
-    };
-  },
-);
+      canonicalPartyRef: makePartyRef(tenantId, resolved.canonicalPartyId),
+      kind: resolved.wasAlias ? 'ALIAS' : 'DIRECT',
+      requestedPartyRef,
+    },
+  };
+});
 
 const partyDetailEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -144,14 +158,21 @@ export const partyDetailRead = defineRead(
       input.partyRef,
       context.scope.tenantId,
       context.services,
-      input.includeFactHistory,
+      input.includeFactHistory
     ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
   (transaction, scope) =>
     Effect.succeed({
       facts: (partyId: string, includeFactHistory: boolean) =>
-        findPartyDetailAssertions(transaction, scope.tenantId, partyId, includeFactHistory),
-      find: (partyId: string) => findPartyRecord(transaction, scope.tenantId, partyId),
-      resolve: (partyId: string) => resolvePartyAlias(transaction, scope.tenantId, partyId),
+        findPartyDetailAssertions(
+          transaction,
+          scope.tenantId,
+          partyId,
+          includeFactHistory
+        ),
+      find: (partyId: string) =>
+        findPartyRecord(transaction, scope.tenantId, partyId),
+      resolve: (partyId: string) =>
+        resolvePartyAlias(transaction, scope.tenantId, partyId),
     }),
-  partyDetailPermissionTarget,
+  partyDetailPermissionTarget
 );

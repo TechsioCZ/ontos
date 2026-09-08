@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
 import { SyntaxKind } from '@typescript/native/unstable/ast';
+
 import {
   DelimiterDepth,
   matchingDelimiter,
@@ -21,7 +23,8 @@ const endpointApi = (endpointPath: string, extra = '') =>
 const stockReadPath = '/reads/stock';
 
 void test('balanced traversal ignores nested separators but preserves source offsets', () => {
-  const source = "call({ nested: [1, 2], literal: ',);' }, /[,)]/, () => [3, 4]); next();";
+  const source =
+    "call({ nested: [1, 2], literal: ',);' }, /[,)]/, () => [3, 4]); next();";
   const structure = maskNonCode(source);
   const close = matchingDelimiter(structure, source.indexOf('('), '(', ')');
   assert.equal(close, source.indexOf('; next') - 1);
@@ -31,8 +34,13 @@ void test('balanced traversal ignores nested separators but preserves source off
     source.length - 1,
   ]);
   assert.deepEqual(
-    separatedSource(source, topLevelSeparators(structure, ',', 5, close), 5, close),
-    ["{ nested: [1, 2], literal: ',);' }", '/[,)]/', '() => [3, 4]'],
+    separatedSource(
+      source,
+      topLevelSeparators(structure, ',', 5, close),
+      5,
+      close
+    ),
+    ["{ nested: [1, 2], literal: ',);' }", '/[,)]/', '() => [3, 4]']
   );
 });
 
@@ -41,7 +49,10 @@ void test('generic parameter commas and arrow returns remain separate lexical co
   assert.deepEqual(topLevelSeparators(source, ',', 0, source.length, true), [
     source.indexOf(', next'),
   ]);
-  assert.deepEqual(topLevelSeparators('value < maximum; next > minimum;', ';'), [15, 31]);
+  assert.deepEqual(
+    topLevelSeparators('value < maximum; next > minimum;', ';'),
+    [15, 31]
+  );
   const depth = new DelimiterDepth();
   depth.update(']');
   assert.equal(depth.hasUnmatchedClose(), true);
@@ -52,15 +63,29 @@ void test('generic parameter commas and arrow returns remain separate lexical co
 void test('token rescan retains nested template expressions and excludes regex punctuation', () => {
   const source = `const result = \`outer \${ { nested: \`inner \${value}\` } }\`; const pattern = /[},;]/;`;
   const kinds = tokenizeGovernedClient(source).map(({ kind }) => kind);
-  assert.equal(kinds.filter((kind) => kind === SyntaxKind.TemplateTail).length, 2);
-  assert.equal(kinds.filter((kind) => kind === SyntaxKind.RegularExpressionLiteral).length, 1);
-  assert.equal(kinds.filter((kind) => kind === SyntaxKind.SemicolonToken).length, 2);
+  assert.equal(
+    kinds.filter((kind) => kind === SyntaxKind.TemplateTail).length,
+    2
+  );
+  assert.equal(
+    kinds.filter((kind) => kind === SyntaxKind.RegularExpressionLiteral).length,
+    1
+  );
+  assert.equal(
+    kinds.filter((kind) => kind === SyntaxKind.SemicolonToken).length,
+    2
+  );
 });
 
 void test('endpoint grammar shares only topology, preserving owner path and endpoint identity', () => {
   assert.equal(
-    hasGeneratedModuleApiContract(endpointApi(stockReadPath), 'StockApi', 'stock', 'stock'),
-    true,
+    hasGeneratedModuleApiContract(
+      endpointApi(stockReadPath),
+      'StockApi',
+      'stock',
+      'stock'
+    ),
+    true
   );
   assert.equal(
     hasGeneratedProviderApiContract(
@@ -68,9 +93,9 @@ void test('endpoint grammar shares only topology, preserving owner path and endp
       'StockApi',
       'inventory.stock',
       'stock',
-      'report',
+      'report'
     ),
-    true,
+    true
   );
   assert.equal(
     hasGeneratedProviderApiContract(
@@ -78,26 +103,26 @@ void test('endpoint grammar shares only topology, preserving owner path and endp
       'StockApi',
       'inventory.stock',
       'stock',
-      'report',
+      'report'
     ),
-    false,
+    false
   );
   assert.equal(
     hasGeneratedModuleApiContract(
       endpointApi(stockReadPath, 'UnrelatedEndpoint'),
       'StockApi',
       'stock',
-      'stock',
+      'stock'
     ),
-    false,
+    false
   );
   assert.equal(
     hasGeneratedModuleApiContract(
       endpointApi(stockReadPath).replace("'execute'", "'bypass'"),
       'StockApi',
       'stock',
-      'stock',
+      'stock'
     ),
-    false,
+    false
   );
 });

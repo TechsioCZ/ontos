@@ -1,6 +1,7 @@
 import { Effect, Layer, Schema } from 'effect';
-import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { startOutboxWorkerProcess } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 
@@ -28,14 +29,15 @@ const registration = defineOutboxWorker(
     topic: 'producer.message-created',
     workerKey: 'process-fixture.lifecycle',
   },
-  () => Effect.void,
+  () => Effect.void
 );
 
 const runtimeLayer = Layer.effect(
   OutboxRuntime,
   Effect.acquireRelease(
     Effect.succeed({
-      matchMessages: () => Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
+      matchMessages: () =>
+        Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
       runCycle: () =>
         Effect.sync(() => {
           process.stdout.write(`cycle:${process.listenerCount('SIGTERM')}\n`);
@@ -53,8 +55,8 @@ const runtimeLayer = Layer.effect(
     () =>
       Effect.sync(() => {
         process.stdout.write('disposed\n');
-      }),
-  ),
+      })
+  )
 );
 
 startOutboxWorkerProcess({

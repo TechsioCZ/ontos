@@ -3,6 +3,7 @@
 // @ontos-resource-slug party-relationship
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import {
   PartyRegistryResourceIdJsonSchema,
   PartyRegistryTenantIdJsonSchema,
@@ -24,7 +25,8 @@ export const partyRelationshipResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description: 'Temporal, provenance-backed relationship between two Party resources.',
+  description:
+    'Temporal, provenance-backed relationship between two Party resources.',
   key: 'party.registry.party-relationship',
   label: 'Party Relationship',
   owningModuleId: 'party.registry',

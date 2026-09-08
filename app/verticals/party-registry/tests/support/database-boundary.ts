@@ -1,5 +1,8 @@
+import {
+  findPostgresFailure,
+  loadDatabaseConnectionPair,
+} from '@app/core-runtime';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 import { Pool } from 'pg';
 
@@ -16,7 +19,7 @@ export const hasPostgreSqlCode =
  */
 export const openBoundaryDatabases = <Database>(
   openDatabase: (pool: Pool) => Promise<Database>,
-  runtimeConnections = 1,
+  runtimeConnections = 1
 ): Promise<{
   readonly admin: Database;
   readonly adminPool: Pool;
@@ -26,7 +29,9 @@ export const openBoundaryDatabases = <Database>(
   runEffectTestPromise(
     Effect.gen(function* openDatabases() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = new Pool({ connectionString: connections.admin.connectionString });
+      const adminPool = new Pool({
+        connectionString: connections.admin.connectionString,
+      });
       const runtimePool = new Pool({
         connectionString: connections.runtime.connectionString,
         max: runtimeConnections,
@@ -37,5 +42,5 @@ export const openBoundaryDatabases = <Database>(
         runtime: yield* Effect.promise(() => openDatabase(runtimePool)),
         runtimePool,
       };
-    }),
+    })
   );

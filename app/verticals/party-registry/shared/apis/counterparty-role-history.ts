@@ -4,54 +4,50 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { CounterpartyRolePeriodSchema } from '../domain/counterparty-contract.ts';
 import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 
 export const CounterpartyRoleHistoryRequestSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
 });
-export type CounterpartyRoleHistoryRequest = typeof CounterpartyRoleHistoryRequestSchema.Type;
+export type CounterpartyRoleHistoryRequest =
+  typeof CounterpartyRoleHistoryRequestSchema.Type;
 export const CounterpartyRoleHistoryResponseSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   roles: Schema.Array(CounterpartyRolePeriodSchema),
 });
-export type CounterpartyRoleHistoryResponse = typeof CounterpartyRoleHistoryResponseSchema.Type;
+export type CounterpartyRoleHistoryResponse =
+  typeof CounterpartyRoleHistoryResponseSchema.Type;
 
-export const CounterpartyRoleHistoryAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyRoleHistoryAuthenticationProblem',
-  401,
-);
-export const CounterpartyRoleHistoryInvalidProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyRoleHistoryInvalidProblem',
-  400,
-);
-export const CounterpartyRoleHistoryUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'CounterpartyRoleHistoryUnavailableProblem',
-  503,
-);
-export const CounterpartyRoleHistoryForbiddenProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyRoleHistoryForbiddenProblem',
-  403,
-);
-export const CounterpartyRoleHistoryNotFoundProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyRoleHistoryNotFoundProblem',
-  404,
-);
-export const CounterpartyRoleHistoryPolicyProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyRoleHistoryPolicyProblem',
-  422,
-);
-export const CounterpartyRoleHistoryPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyRoleHistoryPolicyConflictProblem',
-  409,
-);
-export const CounterpartyRoleHistoryInternalProblemSchema = makeProblemDetailsSchema(
-  'CounterpartyRoleHistoryInternalProblem',
-  500,
-);
+export const CounterpartyRoleHistoryAuthenticationProblemSchema =
+  makeProblemDetailsSchema('CounterpartyRoleHistoryAuthenticationProblem', 401);
+export const CounterpartyRoleHistoryInvalidProblemSchema =
+  makeProblemDetailsSchema('CounterpartyRoleHistoryInvalidProblem', 400);
+export const CounterpartyRoleHistoryUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'CounterpartyRoleHistoryUnavailableProblem',
+    503
+  );
+export const CounterpartyRoleHistoryForbiddenProblemSchema =
+  makeProblemDetailsSchema('CounterpartyRoleHistoryForbiddenProblem', 403);
+export const CounterpartyRoleHistoryNotFoundProblemSchema =
+  makeProblemDetailsSchema('CounterpartyRoleHistoryNotFoundProblem', 404);
+export const CounterpartyRoleHistoryPolicyProblemSchema =
+  makeProblemDetailsSchema('CounterpartyRoleHistoryPolicyProblem', 422);
+export const CounterpartyRoleHistoryPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('CounterpartyRoleHistoryPolicyConflictProblem', 409);
+export const CounterpartyRoleHistoryInternalProblemSchema =
+  makeProblemDetailsSchema('CounterpartyRoleHistoryInternalProblem', 500);
 
-export const CounterpartyRoleHistoryApi = HttpApi.make('CounterpartyRoleHistoryApi').add(
+export const CounterpartyRoleHistoryApi = HttpApi.make(
+  'CounterpartyRoleHistoryApi'
+).add(
   HttpApiGroup.make('counterpartyRoleHistory').add(
     HttpApiEndpoint.post('execute', '/reads/counterparty-role-history', {
       error: [
@@ -69,6 +65,6 @@ export const CounterpartyRoleHistoryApi = HttpApi.make('CounterpartyRoleHistoryA
       payload: CounterpartyRoleHistoryRequestSchema,
       query: {},
       success: CounterpartyRoleHistoryResponseSchema,
-    }),
-  ),
+    })
+  )
 );

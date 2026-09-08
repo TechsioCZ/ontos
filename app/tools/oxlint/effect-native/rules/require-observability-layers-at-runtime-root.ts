@@ -1,4 +1,5 @@
-import { optionRecord } from '../shared/options.ts';
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A6 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) asks for Logger,
  * Tracer/OpenTelemetry and minimum-level Layers at runtime roots.
@@ -21,15 +22,18 @@ import { optionRecord } from '../shared/options.ts';
  * serialization remain untouched. Tests/scripts are excluded by default. No fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, rootedScopePath, matchesGlobs } from '../shared/paths.ts';
-import { stringArray, booleanOption as boolOption } from '../shared/options.ts';
-import { unwrapNode as unwrap, memberName as sharedMemberName, keyName } from '../shared/ast.ts';
+import {
+  unwrapNode as unwrap,
+  memberName as sharedMemberName,
+  keyName,
+} from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { importedName } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray, booleanOption as boolOption } from '../shared/options.ts';
+import { isTestFile, rootedScopePath, matchesGlobs } from '../shared/paths.ts';
 import { isNonReferencePosition as sharedNonReferencePosition } from '../shared/reference-positions.ts';
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
@@ -60,7 +64,10 @@ const DEFAULT_RUNTIME_MEMBERS = [
 /** Framework return types that mark a factory as a BFF/composition root. */
 const DEFAULT_RUNTIME_TYPE_NAMES = ['EffectBffRuntime'];
 
-const DEFAULT_OTEL_MODULES = ['@effect/opentelemetry', '@effect/opentelemetry/**'];
+const DEFAULT_OTEL_MODULES = [
+  '@effect/opentelemetry',
+  '@effect/opentelemetry/**',
+];
 
 /** Barrels that re-export Effect namespaces verbatim; `Logger` from them is Effect's `Logger`. */
 const DEFAULT_REEXPORT_MODULES = [
@@ -91,12 +98,18 @@ function readOptions(context: Context) {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     rootFiles: stringArray(record.rootFiles, DEFAULT_ROOT_FILES),
     runtimeMembers: stringArray(record.runtimeMembers, DEFAULT_RUNTIME_MEMBERS),
-    runtimeTypeNames: stringArray(record.runtimeTypeNames, DEFAULT_RUNTIME_TYPE_NAMES),
+    runtimeTypeNames: stringArray(
+      record.runtimeTypeNames,
+      DEFAULT_RUNTIME_TYPE_NAMES
+    ),
     otelModules: stringArray(record.otelModules, DEFAULT_OTEL_MODULES),
-    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
+    reexportModules: stringArray(
+      record.reexportModules,
+      DEFAULT_REEXPORT_MODULES
+    ),
     minimumLogLevelMembers: stringArray(
       record.minimumLogLevelMembers,
-      DEFAULT_MINIMUM_LOG_LEVEL_MEMBERS,
+      DEFAULT_MINIMUM_LOG_LEVEL_MEMBERS
     ),
     includeScripts: boolOption(record.includeScripts, false),
     includeTests: boolOption(record.includeTests, false),
@@ -110,7 +123,10 @@ function readOptions(context: Context) {
 
 /** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
 function scopePath(filename: string): string {
-  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
+  return rootedScopePath(
+    filename,
+    fileURLToPath(new URL('../../../../', import.meta.url))
+  );
 }
 
 /** `["ManagedRuntime.make"]` → `Set{"ManagedRuntime.make"}`, ignoring malformed entries. */
@@ -126,10 +142,12 @@ function qualifiedSet(entries: readonly string[]): ReadonlySet<string> {
 
 function isTypeOnly(
   declaration: ESTree.ImportDeclaration,
-  specifier: ESTree.ImportDeclarationSpecifier,
+  specifier: ESTree.ImportDeclarationSpecifier
 ): boolean {
   if (declaration.importKind === 'type') return true;
-  return specifier.type === 'ImportSpecifier' && specifier.importKind === 'type';
+  return (
+    specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'
+  );
 }
 
 interface FileBindings {
@@ -167,12 +185,15 @@ type CollectedBindings = {
 function collectRuntimeTypes(
   statement: ESTree.ImportDeclaration,
   names: ReadonlySet<string>,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   for (const specifier of statement.specifiers) {
     if (specifier.type === 'ImportNamespaceSpecifier')
       bindings.runtimeTypeNamespaces.add(specifier.local.name);
-    if (specifier.type === 'ImportSpecifier' && names.has(importedName(specifier)))
+    if (
+      specifier.type === 'ImportSpecifier' &&
+      names.has(importedName(specifier))
+    )
       bindings.runtimeTypeLocals.add(specifier.local.name);
   }
 }
@@ -180,13 +201,16 @@ function collectRuntimeTypes(
 function collectEffectSpecifier(
   specifier: ESTree.ImportDeclarationSpecifier,
   source: string,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   const submodule = source.split('/').at(-1);
   const local = specifier.local.name;
   if (specifier.type === 'ImportSpecifier') {
     if (source !== EFFECT_ROOT_MODULE && submodule && /^[A-Z]/u.test(submodule))
-      bindings.directMembers.set(local, `${submodule}.${importedName(specifier)}`);
+      bindings.directMembers.set(
+        local,
+        `${submodule}.${importedName(specifier)}`
+      );
     else bindings.namespaces.set(local, importedName(specifier));
     return;
   }
@@ -197,9 +221,10 @@ function collectEffectSpecifier(
 
 function collectBarrelSpecifier(
   specifier: ESTree.ImportDeclarationSpecifier,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
-  if (specifier.type === 'ImportNamespaceSpecifier') bindings.barrels.add(specifier.local.name);
+  if (specifier.type === 'ImportNamespaceSpecifier')
+    bindings.barrels.add(specifier.local.name);
   if (specifier.type !== 'ImportSpecifier') return;
   const imported = importedName(specifier);
   if (imported === 'OpenTelemetry') {
@@ -211,23 +236,26 @@ function collectBarrelSpecifier(
 function collectEffectImport(
   specifiers: readonly ESTree.ImportDeclarationSpecifier[],
   source: string,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   if (specifiers.length === 0) return;
   bindings.importsEffect = true;
   const submodule = source.split('/').at(-1);
   if (submodule === LOGGER_NAMESPACE) bindings.loggerModuleImport = true;
   if (submodule === TRACER_NAMESPACE) bindings.tracerModuleImport = true;
-  for (const specifier of specifiers) collectEffectSpecifier(specifier, source, bindings);
+  for (const specifier of specifiers)
+    collectEffectSpecifier(specifier, source, bindings);
 }
 
 function collectValueImport(
   statement: ESTree.ImportDeclaration,
   options: RuleOptions,
-  bindings: CollectedBindings,
+  bindings: CollectedBindings
 ): void {
   const source = statement.source.value;
-  const specifiers = statement.specifiers.filter((specifier) => !isTypeOnly(statement, specifier));
+  const specifiers = statement.specifiers.filter(
+    (specifier) => !isTypeOnly(statement, specifier)
+  );
   if (EFFECT_MODULE.test(source)) {
     collectEffectImport(specifiers, source, bindings);
     return;
@@ -237,7 +265,9 @@ function collectValueImport(
       bindings.otelValueImport = true;
       bindings.otelLocals.set(
         specifier.local.name,
-        specifier.type === 'ImportSpecifier' ? importedName(specifier) : specifier.local.name,
+        specifier.type === 'ImportSpecifier'
+          ? importedName(specifier)
+          : specifier.local.name
       );
     }
     return;
@@ -249,7 +279,10 @@ function collectValueImport(
   }
 }
 
-function collectFileBindings(program: ESTree.Program, options: RuleOptions): FileBindings {
+function collectFileBindings(
+  program: ESTree.Program,
+  options: RuleOptions
+): FileBindings {
   const bindings: CollectedBindings = {
     namespaces: new Map(),
     directMembers: new Map(),
@@ -275,7 +308,11 @@ function collectFileBindings(program: ESTree.Program, options: RuleOptions): Fil
 function memberName(node: ESTree.MemberExpression): string | null {
   return sharedMemberName(node, { templates: true, unwrap: {} });
 }
-const NON_REFERENCE_TYPES = new Set(['TSTypeQuery', 'TSTypeReference', 'TSQualifiedName']);
+const NON_REFERENCE_TYPES = new Set([
+  'TSTypeQuery',
+  'TSTypeReference',
+  'TSQualifiedName',
+]);
 function isNonReferencePosition(node: ESTree.Node): boolean {
   return sharedNonReferencePosition(node, {
     variableBindings: true,
@@ -298,7 +335,8 @@ function insideFunction(node: ESTree.Node): boolean {
       while (expression.parent && unwrap(expression.parent) === current)
         expression = expression.parent;
       const parent = expression.parent;
-      if (parent?.type !== 'CallExpression' || parent.callee !== expression) return true;
+      if (parent?.type !== 'CallExpression' || parent.callee !== expression)
+        return true;
     }
     if (current.type === 'Program') return false;
     current = current.parent;
@@ -325,7 +363,11 @@ function initializedFunctionType(owner: ESTree.Node): ESTree.Node | null {
   if (annotation?.type !== 'TSTypeAnnotation') return null;
   const binding = annotation.parent;
   const declaration = binding?.parent;
-  if (declaration?.type !== 'VariableDeclarator' || declaration.id !== binding || !declaration.init)
+  if (
+    declaration?.type !== 'VariableDeclarator' ||
+    declaration.id !== binding ||
+    !declaration.init
+  )
     return null;
   return declaration;
 }
@@ -343,7 +385,8 @@ function returnAnnotationOwner(annotation: ESTree.Node): ESTree.Node | null {
 function functionOwningReturnType(node: ESTree.Node): ESTree.Node | null {
   let current = node.parent;
   while (current) {
-    if (current.type === 'TSTypeAnnotation') return returnAnnotationOwner(current);
+    if (current.type === 'TSTypeAnnotation')
+      return returnAnnotationOwner(current);
     if (!RETURN_TYPE_WRAPPERS.has(current.type)) return null;
     current = current.parent;
   }
@@ -371,7 +414,7 @@ function qualifyValue(base: string | null, key: string | null): string | null {
 function destructuredValue(
   declaration: ESTree.VariableDeclarator,
   name: string,
-  base: string | null,
+  base: string | null
 ): string | null {
   if (declaration.id.type === 'Identifier') return base;
   if (declaration.id.type !== 'ObjectPattern' || base === null) return null;
@@ -382,17 +425,25 @@ function destructuredValue(
       property.value.name !== name
     )
       continue;
-    return qualifyValue(base, keyName(property.key, property.computed, { templates: false }));
+    return qualifyValue(
+      base,
+      keyName(property.key, property.computed, { templates: false })
+    );
   }
   return null;
 }
 
 function aliasDeclaration(
   variable: Variable | null,
-  seen: Set<Variable>,
+  seen: Set<Variable>
 ): ESTree.VariableDeclarator | null {
   if (!variable || seen.has(variable)) return null;
-  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  if (
+    variable.references.some(
+      (reference) => reference.isWrite() && !reference.init
+    )
+  )
+    return null;
   seen.add(variable);
   const definition = variable.defs[0];
   if (
@@ -406,7 +457,7 @@ function aliasDeclaration(
 
 function rootAnchor(
   roots: RootHit[],
-  program: ESTree.Program,
+  program: ESTree.Program
 ): { node: ESTree.Node; kind: string } {
   roots.sort((left, right) => left.start - right.start);
   const first = roots[0];
@@ -507,7 +558,10 @@ export const rule = defineRule({
       roots.push({ node, kind, start: node.start });
     };
 
-    const resolveValue = (input: ESTree.Node, seen = new Set<Variable>()): string | null => {
+    const resolveValue = (
+      input: ESTree.Node,
+      seen = new Set<Variable>()
+    ): string | null => {
       const node = unwrap(input);
       if (node.type === 'MemberExpression') {
         const base = resolveValue(node.object, seen);
@@ -524,7 +578,11 @@ export const rule = defineRule({
         );
       const declaration = aliasDeclaration(variable, seen);
       if (!declaration?.init) return null;
-      return destructuredValue(declaration, node.name, resolveValue(declaration.init, seen));
+      return destructuredValue(
+        declaration,
+        node.name,
+        resolveValue(declaration.init, seen)
+      );
     };
 
     const recordEvidence = (qualified: string): void => {
@@ -535,10 +593,11 @@ export const rule = defineRule({
     const recordQualifiedRoot = (
       node: ESTree.Node,
       qualified: string,
-      moduleRun = qualified.startsWith('Effect.run'),
+      moduleRun = qualified.startsWith('Effect.run')
     ): void => {
       if (runtimeMembers.has(qualified)) recordRoot(node, qualified);
-      else if (moduleRun && !insideFunction(node)) recordRoot(node, `module-level ${qualified}`);
+      else if (moduleRun && !insideFunction(node))
+        recordRoot(node, `module-level ${qualified}`);
     };
     const recordOtel = (node: ESTree.Node, name: string): void => {
       if (!resolvesToImport(context, node)) return;
@@ -547,13 +606,21 @@ export const rule = defineRule({
     };
     const runtimeTypeName = (typeName: ESTree.TSTypeName): string | null => {
       if (typeName.type === 'Identifier') {
-        return bindings.runtimeTypeLocals.has(typeName.name) && resolvesToImport(context, typeName)
+        return bindings.runtimeTypeLocals.has(typeName.name) &&
+          resolvesToImport(context, typeName)
           ? typeName.name
           : null;
       }
-      if (typeName.type !== 'TSQualifiedName' || typeName.left.type !== 'Identifier') return null;
+      if (
+        typeName.type !== 'TSQualifiedName' ||
+        typeName.left.type !== 'Identifier'
+      )
+        return null;
       const name = typeName.right.name;
-      if (!runtimeTypeNameSet.has(name) || !bindings.runtimeTypeNamespaces.has(typeName.left.name))
+      if (
+        !runtimeTypeNameSet.has(name) ||
+        !bindings.runtimeTypeNamespaces.has(typeName.left.name)
+      )
         return null;
       return resolvesToImport(context, typeName.left) ? name : null;
     };
@@ -572,12 +639,19 @@ export const rule = defineRule({
         if (member === null) return;
         const namespace = resolveValue(node.object);
         if (namespace === null) {
-          if (node.object.type === 'Identifier' && bindings.otelLocals.has(node.object.name))
+          if (
+            node.object.type === 'Identifier' &&
+            bindings.otelLocals.has(node.object.name)
+          )
             recordOtel(node.object, member);
           return;
         }
         const qualified = `${namespace}.${member}`;
-        recordQualifiedRoot(node, qualified, namespace === 'Effect' && member.startsWith('run'));
+        recordQualifiedRoot(
+          node,
+          qualified,
+          namespace === 'Effect' && member.startsWith('run')
+        );
         // Namespace evidence is intentionally limited to the immediate namespace.
         if (namespace === LOGGER_NAMESPACE) hasLogger = true;
         if (namespace === TRACER_NAMESPACE) hasTracer = true;
@@ -604,7 +678,8 @@ export const rule = defineRule({
       },
 
       'Program:exit'(node) {
-        const isDeclaredRoot = matchesGlobs(path, options.rootFiles) && bindings.importsEffect;
+        const isDeclaredRoot =
+          matchesGlobs(path, options.rootFiles) && bindings.importsEffect;
         if (roots.length === 0 && !isDeclaredRoot) return;
 
         const missing = missingEvidence();
@@ -613,7 +688,11 @@ export const rule = defineRule({
         const { node: anchor, kind } = rootAnchor(roots, node);
 
         for (const entry of missing) {
-          context.report({ node: anchor, messageId: entry, data: { root: path, kind } });
+          context.report({
+            node: anchor,
+            messageId: entry,
+            data: { root: path, kind },
+          });
         }
       },
     };

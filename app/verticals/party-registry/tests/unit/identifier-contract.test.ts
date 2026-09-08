@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
 import {
   OfficialIdentifierInputSchema,
   normalizeOfficialIdentifier,
@@ -30,7 +32,10 @@ test('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
     value: '1000004',
     verification: 'VERIFIED',
   });
-  assert.equal(normalizeOfficialIdentifier(legacyShortIco).normalizedValue, '01000004');
+  assert.equal(
+    normalizeOfficialIdentifier(legacyShortIco).normalizedValue,
+    '01000004'
+  );
 
   const dic = decode(OfficialIdentifierInputSchema)({
     identifierType: 'CZ_DIC',
@@ -46,7 +51,7 @@ test('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
       namespace: 'caller-controlled',
       value: '27074358',
       verification: 'VERIFIED',
-    }),
+    })
   );
 
   assert.throws(() =>
@@ -54,7 +59,7 @@ test('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
       identifierType: 'ICO',
       value: '270 74 358',
       verification: 'VERIFIED',
-    }),
+    })
   );
 
   assert.throws(() =>
@@ -62,14 +67,14 @@ test('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
       identifierType: 'VAT_ID',
       value: 'CZ27074358',
       verification: 'VERIFIED',
-    }),
+    })
   );
   assert.throws(() =>
     decode(OfficialIdentifierInputSchema)({
       identifierType: 'OTHER',
       value: '1',
       verification: 'VERIFIED',
-    }),
+    })
   );
 });
 
@@ -82,7 +87,10 @@ test('Official Identifier writes require tenant Party identity authority and ide
     assert.equal(action.descriptor.legalEntityScope, 'optional');
     assert.equal(action.descriptor.idempotency, 'required');
     // SAFETY: these permission selectors are payload-independent; no handler receives this sentinel.
-    assert.equal(action.descriptor.tenantPermission?.({} as never), 'manage_party_identity');
+    assert.equal(
+      action.descriptor.tenantPermission?.({} as never),
+      'manage_party_identity'
+    );
   }
 });
 
@@ -95,9 +103,9 @@ test('only verified, formally valid identifiers create deterministic exclusive c
         verification: 'VERIFIED',
       },
       'ORGANIZATION',
-      'party-exact-claims.v1',
+      'party-exact-claims.v1'
     ),
-    'ICO\u0000CZ:ICO\u000027074358',
+    'ICO\u0000CZ:ICO\u000027074358'
   );
   assert.equal(
     qualifyingClaimKey(
@@ -107,9 +115,9 @@ test('only verified, formally valid identifiers create deterministic exclusive c
         verification: 'UNVERIFIED',
       },
       'ORGANIZATION',
-      'party-exact-claims.v1',
+      'party-exact-claims.v1'
     ),
-    undefined,
+    undefined
   );
   assert.equal(
     qualifyingClaimKey(
@@ -119,9 +127,9 @@ test('only verified, formally valid identifiers create deterministic exclusive c
         verification: 'VERIFIED',
       },
       'PERSON',
-      'party-exact-claims.v1',
+      'party-exact-claims.v1'
     ),
-    undefined,
+    undefined
   );
   assert.equal(
     qualifyingClaimKey(
@@ -131,9 +139,9 @@ test('only verified, formally valid identifiers create deterministic exclusive c
         verification: 'VERIFIED',
       },
       'PERSON',
-      'party-exact-claims.v1',
+      'party-exact-claims.v1'
     ),
-    undefined,
+    undefined
   );
 });
 
@@ -157,31 +165,40 @@ test('Identifier Update is a closed evidence-backed metadata or validity command
   };
   assert.equal(
     decode(UpdatePartyOfficialIdentifierPayloadSchema)(command).change.type,
-    'SET_VERIFICATION',
+    'SET_VERIFICATION'
   );
   assert.equal(
     decode(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       change: { type: 'END_VALIDITY', validTo: '2026-01-01T00:00:00.000Z' },
     }).change.type,
-    'END_VALIDITY',
+    'END_VALIDITY'
   );
-  for (const forbidden of ['value', 'normalizedValue', 'identifierType', 'namespace', 'partyRef']) {
+  for (const forbidden of [
+    'value',
+    'normalizedValue',
+    'identifierType',
+    'namespace',
+    'partyRef',
+  ]) {
     assert.throws(() =>
       decode(UpdatePartyOfficialIdentifierPayloadSchema)({
         ...command,
         [forbidden]: 'changed-identity',
-      }),
+      })
     );
   }
   assert.throws(() =>
-    decode(UpdatePartyOfficialIdentifierPayloadSchema)({ ...command, evidenceRefs: [] }),
+    decode(UpdatePartyOfficialIdentifierPayloadSchema)({
+      ...command,
+      evidenceRefs: [],
+    })
   );
   assert.throws(() =>
     decode(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       change: { type: 'REPLACE_VALUE', value: '12345678' },
-    }),
+    })
   );
 });
 

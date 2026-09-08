@@ -8,91 +8,44 @@ created: 2026-08-07
 
 ## Feature Description
 
-Make tenant and legal-entity isolation a CoreSDK invariant for every governed write and read. The
-current Shell resolves an active tenant and authorized legal entity correctly, but the generic
-Action runtime accepts a caller-provided `TrustedPrincipalContext`, validates only its shape, and
-gives handlers a general Drizzle CRUD surface. Public Shell reads perform explicit authorization
-but do not run through a reusable read/evidence runtime. A forgotten predicate can therefore still
-become a tenant leak.
+Make tenant and legal-entity isolation a CoreSDK invariant for every governed write and read. The current Shell resolves an active tenant and authorized legal entity correctly, but the generic Action runtime accepts a caller-provided `TrustedPrincipalContext`, validates only its shape, and gives handlers a general Drizzle CRUD surface. Public Shell reads perform explicit authorization but do not run through a reusable read/evidence runtime. A forgotten predicate can therefore still become a tenant leak.
 
 Add defense in depth at four layers:
 
-1. Every Action and governed read explicitly declares whether legal-entity context is `required`,
-   `optional`, or `forbidden` in addition to the existing tenant/system entrypoint scope.
-2. CoreSDK revalidates the tenant, principal, optional auth binding, legal entity, active statuses,
-   same-tenant relationship, and SpiceDB legal-entity access before private code can execute.
-3. Private handlers receive only owner-local transaction-scoped services. They do not receive raw
-   Drizzle CRUD methods or a global database service. Tenant-scoped business tables use PostgreSQL
-   row-level security (RLS) under a least-privilege runtime role as the final backstop.
-4. Public reads, lists, searches, downloads, reports, and exports run through a typed Core read
-   runtime that owns context, module state, authorization, Policy, transaction scope, result
-   decoding, and durable allowed/denied data-access evidence.
+1. Every Action and governed read explicitly declares whether legal-entity context is `required`, `optional`, or `forbidden` in addition to the existing tenant/system entrypoint scope.
+2. CoreSDK revalidates the tenant, principal, optional auth binding, legal entity, active statuses, same-tenant relationship, and SpiceDB legal-entity access before private code can execute.
+3. Private handlers receive only owner-local transaction-scoped services. They do not receive raw Drizzle CRUD methods or a global database service. Tenant-scoped business tables use PostgreSQL row-level security (RLS) under a least-privilege runtime role as the final backstop.
+4. Public reads, lists, searches, downloads, reports, and exports run through a typed Core read runtime that owns context, module state, authorization, Policy, transaction scope, result decoding, and durable allowed/denied data-access evidence.
 
-The implementation must preserve MicroVertical ownership. Core supplies the execution protocol and
-opaque transaction capability; each MicroVertical continues to own its schema, migrations,
-repositories, repository factory, handlers, and independently deployable BFF.
+The implementation must preserve MicroVertical ownership. Core supplies the execution protocol and opaque transaction capability; each MicroVertical continues to own its schema, migrations, repositories, repository factory, handlers, and independently deployable BFF.
 
 ## User Story
 
-As an authenticated OntOS user
-I want every operation to see and modify only data belonging to my resolved tenant and selected legal entity
-So that another customer's or legal entity's data cannot leak because an individual handler forgot a predicate
+As an authenticated OntOS user I want every operation to see and modify only data belonging to my resolved tenant and selected legal entity So that another customer's or legal entity's data cannot leak because an individual handler forgot a predicate
 
 ## Problem Statement
 
-The current code proves the interactive Shell selection flow but not the platform invariant required
-by `../docs/09_AUTHN_AUTHZ_MODEL.md` and
-`../docs/evidence/mvp/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md`:
+The current code proves the interactive Shell selection flow but not the platform invariant required by `../docs/09_AUTHN_AUTHZ_MODEL.md` and `../docs/evidence/mvp/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md`:
 
-- `TrustedPrincipalContext.legalEntityId` is optional without an operation-level declaration saying
-  whether it must or must not be present.
-- `ActionRuntime` schema-decodes trusted IDs but does not authoritatively recheck their persisted
-  tenant relationship, active state, or legal-entity permission.
-- `ActionHandlerContext.transaction` exposes unrestricted `select`, `insert`, `update`, `delete`,
-  and relational `query`; omitting a tenant/legal-entity predicate remains possible.
-- arbitrary Action Effect requirements can include a database service, and repository checks do not
-  currently reject that bypass.
-- Core rows that carry both `tenant_id` and a foreign identifier generally use independent foreign
-  keys rather than composite same-tenant foreign keys.
+- `TrustedPrincipalContext.legalEntityId` is optional without an operation-level declaration saying whether it must or must not be present.
+- `ActionRuntime` schema-decodes trusted IDs but does not authoritatively recheck their persisted tenant relationship, active state, or legal-entity permission.
+- `ActionHandlerContext.transaction` exposes unrestricted `select`, `insert`, `update`, `delete`, and relational `query`; omitting a tenant/legal-entity predicate remains possible.
+- arbitrary Action Effect requirements can include a database service, and repository checks do not currently reject that bypass.
+- Core rows that carry both `tenant_id` and a foreign identifier generally use independent foreign keys rather than composite same-tenant foreign keys.
 - the local runtime connects as the Compose-created PostgreSQL superuser, which would bypass RLS.
-- Shell resource/search gates do not create standalone `core.data_access_events`, and the current
-  data-access schema lacks an allowed/denied/failed outcome vocabulary.
-- generated search/report provider payloads include caller-visible context fields instead of deriving
-  identity from a verified server-side assertion.
-- tests prove legal-entity lookup and SpiceDB object qualification, but not that an intentionally
-  unscoped handler query is blocked by both the CoreSDK capability boundary and PostgreSQL.
+- Shell resource/search gates do not create standalone `core.data_access_events`, and the current data-access schema lacks an allowed/denied/failed outcome vocabulary.
+- generated search/report provider payloads include caller-visible context fields instead of deriving identity from a verified server-side assertion.
+- tests prove legal-entity lookup and SpiceDB object qualification, but not that an intentionally unscoped handler query is blocked by both the CoreSDK capability boundary and PostgreSQL.
 
 ## Solution Statement
 
-Introduce one internal `OperationalScope` produced only by CoreSDK after trusted-context
-revalidation. Add an explicit `legalEntityScope` declaration to Action and read descriptors. A
-`required` operation rejects missing context; `optional` validates it when present; `forbidden`
-rejects it when present. Definite mismatches and denials fail before handler resolution, while
-database or SpiceDB uncertainty remains a typed retryable failure.
+Introduce one internal `OperationalScope` produced only by CoreSDK after trusted-context revalidation. Add an explicit `legalEntityScope` declaration to Action and read descriptors. A `required` operation rejects missing context; `optional` validates it when present; `forbidden` rejects it when present. Definite mismatches and denials fail before handler resolution, while database or SpiceDB uncertainty remains a typed retryable failure.
 
-Replace the handler-facing `ActionTransactionExecutor` with a registration-owned, owner-local
-service factory. Core invokes that private factory only after opening its transaction, setting
-transaction-local tenant/legal-entity PostgreSQL settings, and completing the locked tenant/module
-recheck. The factory may build typed owner repositories over an opaque scoped executor; the handler
-receives only the returned services plus collector methods. Core database clients and the scoped
-executor are not public handler dependencies, and repository boundary validation rejects direct DB
-imports from Actions and BFF handlers.
+Replace the handler-facing `ActionTransactionExecutor` with a registration-owned, owner-local service factory. Core invokes that private factory only after opening its transaction, setting transaction-local tenant/legal-entity PostgreSQL settings, and completing the locked tenant/module recheck. The factory may build typed owner repositories over an opaque scoped executor; the handler receives only the returned services plus collector methods. Core database clients and the scoped executor are not public handler dependencies, and repository boundary validation rejects direct DB imports from Actions and BFF handlers.
 
-Use Drizzle `pgPolicy`/`enableRLS` for expressible policies on tenant-scoped business tables and a
-small reviewed migration statement for `FORCE ROW LEVEL SECURITY` if Drizzle Kit cannot express it.
-RLS reads `ontos.tenant_id` and optional `ontos.legal_entity_id` set with parameterized
-transaction-local `set_config`; missing settings deny all rows. The runtime connection uses a
-non-superuser, non-`BYPASSRLS` role. Migration/admin credentials remain separate. Core's global
-catalog/outbox infrastructure is not made tenant-RLS-dependent in this increment; it is protected
-from business handlers by package/capability boundaries and gains composite same-tenant
-constraints wherever tenant-qualified references exist.
+Use Drizzle `pgPolicy`/`enableRLS` for expressible policies on tenant-scoped business tables and a small reviewed migration statement for `FORCE ROW LEVEL SECURITY` if Drizzle Kit cannot express it. RLS reads `ontos.tenant_id` and optional `ontos.legal_entity_id` set with parameterized transaction-local `set_config`; missing settings deny all rows. The runtime connection uses a non-superuser, non-`BYPASSRLS` role. Migration/admin credentials remain separate. Core's global catalog/outbox infrastructure is not made tenant-RLS-dependent in this increment; it is protected from business handlers by package/capability boundaries and gains composite same-tenant constraints wherever tenant-qualified references exist.
 
-Add a typed read registration/runtime parallel to Actions, without introducing a generic HTTP
-endpoint. Owner-specific BFF endpoints call it with a verified session or gateway assertion. It
-records metadata-only evidence by default, records definite authorization/Policy denials without
-executing the handler, never returns an allowed result until its evidence commits, and does not
-store raw queries or result payloads unless the descriptor opts into an already-supported explicit
-evidence mode.
+Add a typed read registration/runtime parallel to Actions, without introducing a generic HTTP endpoint. Owner-specific BFF endpoints call it with a verified session or gateway assertion. It records metadata-only evidence by default, records definite authorization/Policy denials without executing the handler, never returns an allowed result until its evidence commits, and does not store raw queries or result payloads unless the descriptor opts into an already-supported explicit evidence mode.
 
 ## Relevant Files
 
@@ -164,29 +117,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Document and encode the two-dimensional operation scope: existing entrypoint `tenant`/`system`
-scope plus explicit legal-entity `required`/`optional`/`forbidden` scope. Introduce a Core-owned
-context validator that turns an authenticated assertion/session principal into immutable
-OperationalScope only after exact persisted tenant/principal/legal-entity checks and SpiceDB access.
-Add composite same-tenant constraints to Core and separate runtime database credentials from
-admin/migration credentials so later RLS tests cannot pass through a superuser bypass.
+Document and encode the two-dimensional operation scope: existing entrypoint `tenant`/`system` scope plus explicit legal-entity `required`/`optional`/`forbidden` scope. Introduce a Core-owned context validator that turns an authenticated assertion/session principal into immutable OperationalScope only after exact persisted tenant/principal/legal-entity checks and SpiceDB access. Add composite same-tenant constraints to Core and separate runtime database credentials from admin/migration credentials so later RLS tests cannot pass through a superuser bypass.
 
 ### Phase 2: Core Implementation
 
-Remove the raw Drizzle executor from handlers. Store each owner-local service factory privately in
-its Action/read registration and invoke it only within a Core transaction after transaction-local
-scope is installed. Add reusable Drizzle RLS helpers and catalog verification for owner business
-tables. Implement the governed read runtime and extend `data_access_events` so allowed and definite
-denied reads have durable, sanitized evidence independent of Action invocations.
+Remove the raw Drizzle executor from handlers. Store each owner-local service factory privately in its Action/read registration and invoke it only within a Core transaction after transaction-local scope is installed. Add reusable Drizzle RLS helpers and catalog verification for owner business tables. Implement the governed read runtime and extend `data_access_events` so allowed and definite denied reads have durable, sanitized evidence independent of Action invocations.
 
 ### Phase 3: Integration
 
-Update Codesmith before changing generated business artifacts. Generated Actions explicitly choose
-legal-entity scope and use scoped services. Generated module API/search/report BFFs remove identity
-from payloads, verify the existing audience-scoped Shell assertion, and call the Core read runtime.
-Compose current Shell search/detail orchestration through that runtime, while keeping media
-attachment unavailable until it is backed by a generated Action. Add boundary checks, live leakage
-tests, and repository quality gates.
+Update Codesmith before changing generated business artifacts. Generated Actions explicitly choose legal-entity scope and use scoped services. Generated module API/search/report BFFs remove identity from payloads, verify the existing audience-scoped Shell assertion, and call the Core read runtime. Compose current Shell search/detail orchestration through that runtime, while keeping media attachment unavailable until it is backed by a generated Action. Add boundary checks, live leakage tests, and repository quality gates.
 
 ## Step by Step Tasks
 
@@ -285,21 +224,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Test legal-entity scope declarations, OperationalScope classification, stale and mismatched context,
-typed error sanitization, private registration storage, absence of raw transaction methods, RLS
-setting construction, read lifecycle ordering, Policy/permission fail-closed behavior, evidence
-materialization, result decoding, generator output, and static database-boundary diagnostics. Existing
-Shell legal-entity selection tests remain and should prove that the new shared validator does not
-change one/many/zero selection behavior.
+Test legal-entity scope declarations, OperationalScope classification, stale and mismatched context, typed error sanitization, private registration storage, absence of raw transaction methods, RLS setting construction, read lifecycle ordering, Policy/permission fail-closed behavior, evidence materialization, result decoding, generator output, and static database-boundary diagnostics. Existing Shell legal-entity selection tests remain and should prove that the new shared validator does not change one/many/zero selection behavior.
 
 ### Integration Tests
 
-Use live PostgreSQL and SpiceDB. Connect migrations/fixtures with the admin identity and exercise
-application paths with the least-privilege runtime identity. Prove composite same-tenant foreign
-keys, forced RLS, transaction-local scope reset, Action rollback/commit, standalone read evidence,
-definite denial evidence, assertion verification, receiving-deployment reauthorization, and
-cross-tenant/entity isolation with colliding resource IDs. Complete the current Shell integration
-tests with a generated disposable owner fixture; no production demo vertical is required.
+Use live PostgreSQL and SpiceDB. Connect migrations/fixtures with the admin identity and exercise application paths with the least-privilege runtime identity. Prove composite same-tenant foreign keys, forced RLS, transaction-local scope reset, Action rollback/commit, standalone read evidence, definite denial evidence, assertion verification, receiving-deployment reauthorization, and cross-tenant/entity isolation with colliding resource IDs. Complete the current Shell integration tests with a generated disposable owner fixture; no production demo vertical is required.
 
 ### Edge Cases
 

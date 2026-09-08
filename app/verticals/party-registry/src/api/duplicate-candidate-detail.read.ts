@@ -2,12 +2,17 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+
 import {
   DuplicateCandidateDetailRequestSchema,
   DuplicateCandidateDetailResponseSchema,
 } from '../../shared/apis/duplicate-candidate-detail.ts';
 import { findDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
-import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
+import {
+  readUnavailable,
+  requireReadValue,
+  readDetailResult,
+} from './read-outcome.ts';
 
 const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -17,10 +22,12 @@ const duplicateCandidateDetailEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 interface Services {
-  readonly find: (caseId: string) => ReturnType<typeof findDuplicateCandidateCase>;
+  readonly find: (
+    caseId: string
+  ) => ReturnType<typeof findDuplicateCandidateCase>;
 }
 const duplicateCandidateUnavailable = readUnavailable(
-  'Duplicate Candidate persistence is unavailable',
+  'Duplicate Candidate persistence is unavailable'
 );
 export const duplicateCandidateDetailRead = defineRead(
   {
@@ -42,17 +49,20 @@ export const duplicateCandidateDetailRead = defineRead(
   (input, context: ReadHandlerContext<Services>) =>
     context.services.find(input.caseRef.resourceId).pipe(
       Effect.mapError(duplicateCandidateUnavailable),
-      Effect.flatMap(requireReadValue('The Duplicate Candidate case does not exist')),
-      Effect.flatMap((value) =>
-        Schema.decodeUnknownEffect(DuplicateCandidateDetailResponseSchema)(value).pipe(
-          Effect.mapError(duplicateCandidateUnavailable),
-        ),
+      Effect.flatMap(
+        requireReadValue('The Duplicate Candidate case does not exist')
       ),
-      Effect.map(readDetailResult),
+      Effect.flatMap((value) =>
+        Schema.decodeUnknownEffect(DuplicateCandidateDetailResponseSchema)(
+          value
+        ).pipe(Effect.mapError(duplicateCandidateUnavailable))
+      ),
+      Effect.map(readDetailResult)
     ),
   (transaction, scope) =>
     Effect.succeed({
-      find: (caseId: string) => findDuplicateCandidateCase(transaction, scope.tenantId, caseId),
+      find: (caseId: string) =>
+        findDuplicateCandidateCase(transaction, scope.tenantId, caseId),
     }),
-  () => ({ kind: 'tenant', permission: 'review_party_identity' }),
+  () => ({ kind: 'tenant', permission: 'review_party_identity' })
 );

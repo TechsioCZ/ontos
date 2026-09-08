@@ -14,9 +14,7 @@ The implementation is tooling-focused. Apart from registering the commands, pinn
 
 ## User Story
 
-As an OntOS developer or coding agent
-I want mandatory scaffolding commands for Actions, MicroVertical pages, Outbox Messages, and Policies
-So that new business code starts with the required Effect contracts, ownership boundaries, safe defaults, and repository wiring already in place
+As an OntOS developer or coding agent I want mandatory scaffolding commands for Actions, MicroVertical pages, Outbox Messages, and Policies So that new business code starts with the required Effect contracts, ownership boundaries, safe defaults, and repository wiring already in place
 
 ## Problem Statement
 

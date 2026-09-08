@@ -1,4 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 const ContactsPage = () => {

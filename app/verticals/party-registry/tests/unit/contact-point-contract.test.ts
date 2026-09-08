@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
 import {
   AddressContactPointValueSchema,
   AddressContactPointInputSchema,
@@ -13,21 +15,21 @@ import {
   normalizePhone,
   assertAddressPurposeRules,
 } from '../../shared/domain/contact-point.ts';
+import { OutboxPayloadSchema as ContactPointAddedOutboxPayloadSchema } from '../../shared/outbox/party-registry-contact-point-added-v1.ts';
 import {
   AddContactPointPayloadSchema,
   addContactPointAction,
 } from '../../src/actions/add-contact-point.action.ts';
 import {
-  UpdateContactPointPayloadSchema,
-  updateContactPointAction,
-} from '../../src/actions/update-contact-point.action.ts';
-import {
   EndContactPointPayloadSchema,
   endContactPointAction,
 } from '../../src/actions/end-contact-point.action.ts';
+import {
+  UpdateContactPointPayloadSchema,
+  updateContactPointAction,
+} from '../../src/actions/update-contact-point.action.ts';
 import { partyContactPointDetailRead } from '../../src/api/party-contact-point-detail.read.ts';
 import { partyContactPointsRead } from '../../src/api/party-contact-points.read.ts';
-import { OutboxPayloadSchema as ContactPointAddedOutboxPayloadSchema } from '../../shared/outbox/party-registry-contact-point-added-v1.ts';
 
 const partyRef = {
   moduleId: 'party.registry',
@@ -49,14 +51,14 @@ test('normalizes EMAIL without provider-specific identity heuristics', () => {
   });
   assert.notEqual(
     normalizeEmail('qa.test+one@example.com').lookupValue,
-    normalizeEmail('qatest+two@example.com').lookupValue,
+    normalizeEmail('qatest+two@example.com').lookupValue
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(EmailContactPointInputSchema)({
       preferred: false,
       type: 'EMAIL',
       value: 'not-an-email',
-    }),
+    })
   );
 });
 
@@ -80,7 +82,7 @@ test('normalizes PHONE only with explicit international or country context and p
       preferred: false,
       type: 'PHONE',
       value: '+0123456789',
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
@@ -88,15 +90,17 @@ test('normalizes PHONE only with explicit international or country context and p
       preferred: false,
       type: 'PHONE',
       value: '+420777123456',
-    }),
+    })
   );
-  assert.doesNotThrow(() => normalizePhone('+420777123456', 'CZ', '123456789012'));
+  assert.doesNotThrow(() =>
+    normalizePhone('+420777123456', 'CZ', '123456789012')
+  );
   assert.throws(() =>
     Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
       preferred: false,
       type: 'PHONE',
       value: '777 123 456',
-    }),
+    })
   );
 });
 
@@ -131,14 +135,14 @@ test('keeps ADDRESS structured, multi-purpose, and preferred independently per p
     [
       { preferred: true, purpose: 'REGISTERED' },
       { preferred: false, purpose: 'CORRESPONDENCE' },
-    ],
+    ]
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(AddressContactPointInputSchema)({
       address: { addressLine1: 'One', city: 'Prague', countryCode: 'CZ' },
       purposes: [{ preferred: false, purpose: 'OTHER' }],
       type: 'ADDRESS',
-    }),
+    })
   );
 });
 
@@ -152,8 +156,8 @@ test('requires authoritative, registry-scoped evidence only for REGISTERED', () 
           registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
         },
       ],
-      provenance,
-    ),
+      provenance
+    )
   );
   assert.doesNotThrow(() =>
     assertAddressPurposeRules(
@@ -165,8 +169,12 @@ test('requires authoritative, registry-scoped evidence only for REGISTERED', () 
         },
         { preferred: false, purpose: 'CORRESPONDENCE' },
       ],
-      { ...provenance, authoritative: true, evidenceReference: 'evidence:ares:subject:1' },
-    ),
+      {
+        ...provenance,
+        authoritative: true,
+        evidenceReference: 'evidence:ares:subject:1',
+      }
+    )
   );
 });
 
@@ -180,29 +188,43 @@ test('keeps the contact-point catalog closed to EMAIL, PHONE, and ADDRESS', () =
       type: 'ADDRESS',
     },
   ]) {
-    assert.doesNotThrow(() => Schema.decodeUnknownSync(ContactPointInputSchema)(input));
+    assert.doesNotThrow(() =>
+      Schema.decodeUnknownSync(ContactPointInputSchema)(input)
+    );
   }
-  assert.throws(() => Schema.decodeUnknownSync(ContactPointInputSchema)({ type: 'OTHER' }));
+  assert.throws(() =>
+    Schema.decodeUnknownSync(ContactPointInputSchema)({ type: 'OTHER' })
+  );
 });
 
 test('declares tenant-authorized idempotent Actions and prevents value overwrite through UPDATE', () => {
-  for (const action of [addContactPointAction, updateContactPointAction, endContactPointAction]) {
+  for (const action of [
+    addContactPointAction,
+    updateContactPointAction,
+    endContactPointAction,
+  ]) {
     assert.equal(action.descriptor.legalEntityScope, 'optional');
     assert.equal(action.descriptor.idempotency, 'required');
     assert.notEqual(action.descriptor.tenantPermission, undefined);
   }
   assert.doesNotThrow(() =>
     Schema.decodeUnknownSync(AddContactPointPayloadSchema)({
-      contactPoint: { preferred: true, type: 'EMAIL', value: 'user@example.test' },
+      contactPoint: {
+        preferred: true,
+        type: 'EMAIL',
+        value: 'user@example.test',
+      },
       partyRef,
       privacyClassification: 'PERSONAL',
       provenance,
       validFrom: '2026-09-01T00:00:00.000Z',
       verification: { state: 'UNVERIFIED' },
-    }),
+    })
   );
   assert.throws(() =>
-    Schema.decodeUnknownSync(UpdateContactPointPayloadSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownSync(UpdateContactPointPayloadSchema, {
+      onExcessProperty: 'error',
+    })({
       change: { preferred: true, type: 'SET_CHANNEL_PREFERRED' },
       contactPointRef: {
         ...partyRef,
@@ -211,7 +233,7 @@ test('declares tenant-authorized idempotent Actions and prevents value overwrite
       expectedRevision: 1,
       provenance,
       value: 'replacement@example.test',
-    }),
+    })
   );
 });
 
@@ -223,22 +245,33 @@ test('governs contact reads with tenant Party authority even when Legal Entity c
 });
 
 test('publishes stable references instead of mutable contact data', () => {
-  const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
+  const contactPointRef = {
+    ...partyRef,
+    resourceType: 'party.registry.party-contact-point',
+  };
   assert.deepEqual(
-    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema)({ contactPointRef, partyRef }),
-    { contactPointRef, partyRef },
+    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema)({
+      contactPointRef,
+      partyRef,
+    }),
+    { contactPointRef, partyRef }
   );
   assert.throws(() =>
-    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema, {
+      onExcessProperty: 'error',
+    })({
       contactPointRef,
       displayValue: 'private@example.test',
       partyRef,
-    }),
+    })
   );
 });
 
 test('models removal as a reasoned temporal end of a whole contact or one ADDRESS purpose', () => {
-  const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
+  const contactPointRef = {
+    ...partyRef,
+    resourceType: 'party.registry.party-contact-point',
+  };
   for (const target of [
     { type: 'WHOLE_CONTACT_POINT' },
     { target: { purpose: 'DELIVERY' }, type: 'ADDRESS_PURPOSE' },
@@ -250,7 +283,7 @@ test('models removal as a reasoned temporal end of a whole contact or one ADDRES
         provenance,
         reason: 'Party confirmed that this contact is no longer used',
         target,
-      }),
+      })
     );
   }
   assert.throws(() =>
@@ -260,7 +293,7 @@ test('models removal as a reasoned temporal end of a whole contact or one ADDRES
       provenance,
       reason: '',
       target: { type: 'WHOLE_CONTACT_POINT' },
-    }),
+    })
   );
 
   assert.doesNotThrow(() =>
@@ -274,7 +307,7 @@ test('models removal as a reasoned temporal end of a whole contact or one ADDRES
       contactPointRef,
       expectedRevision: 1,
       provenance,
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
@@ -282,12 +315,15 @@ test('models removal as a reasoned temporal end of a whole contact or one ADDRES
       contactPointRef,
       expectedRevision: 1,
       provenance,
-    }),
+    })
   );
 });
 
 test('models an originally wrong Contact Point as an explicit correction with optional validated replacement', () => {
-  const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
+  const contactPointRef = {
+    ...partyRef,
+    resourceType: 'party.registry.party-contact-point',
+  };
   assert.doesNotThrow(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
       change: {
@@ -300,7 +336,10 @@ test('models an originally wrong Contact Point as an explicit correction with op
             value: 'correct@example.test',
           },
           privacyClassification: 'PERSONAL',
-          provenance: { ...provenance, evidenceReference: 'evidence:customer-confirmation:42' },
+          provenance: {
+            ...provenance,
+            evidenceReference: 'evidence:customer-confirmation:42',
+          },
           validFrom: '2026-09-03T10:00:00.000Z',
           verification: { state: 'UNVERIFIED' },
         },
@@ -308,8 +347,11 @@ test('models an originally wrong Contact Point as an explicit correction with op
       },
       contactPointRef,
       expectedRevision: 3,
-      provenance: { ...provenance, evidenceReference: 'evidence:customer-confirmation:42' },
-    }),
+      provenance: {
+        ...provenance,
+        evidenceReference: 'evidence:customer-confirmation:42',
+      },
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
@@ -321,7 +363,7 @@ test('models an originally wrong Contact Point as an explicit correction with op
       contactPointRef,
       expectedRevision: 3,
       provenance,
-    }),
+    })
   );
 });
 
@@ -366,5 +408,9 @@ test('projects independently auditable whole-contact and ADDRESS-purpose ends', 
     type: 'ADDRESS',
   });
   assert.deepEqual(address.purposes[0]?.end, end);
-  assert.equal(address.purposes[0]?.current, true, 'a future end remains current before boundary');
+  assert.equal(
+    address.purposes[0]?.current,
+    true,
+    'a future end remains current before boundary'
+  );
 });

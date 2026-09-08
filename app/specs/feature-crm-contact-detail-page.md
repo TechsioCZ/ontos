@@ -8,55 +8,25 @@ created: 2026-08-16
 
 ## Feature Description
 
-Add the generated CRM MicroVertical page `ContactDetail` at canonical route
-`/crm/customers/:id/contacts/:contactId`, exposed by the locale-aware Shell as
-`/cs/crm/customers/:id/contacts/:contactId` and `/en/crm/customers/:id/contacts/:contactId`.
-The authenticated page presents one Contact within its parent Customer using the arrangement from
-Figma file `ERP`, page `Pre-Alpha Repo`, frame `Resource Detail — Běžný` (`6:780`, 1440×900): a
-compact return link, Contact heading, and responsive overview rows inside the existing Shell
-dashboard layout.
+Add the generated CRM MicroVertical page `ContactDetail` at canonical route `/crm/customers/:id/contacts/:contactId`, exposed by the locale-aware Shell as `/cs/crm/customers/:id/contacts/:contactId` and `/en/crm/customers/:id/contacts/:contactId`. The authenticated page presents one Contact within its parent Customer using the arrangement from Figma file `ERP`, page `Pre-Alpha Repo`, frame `Resource Detail — Běžný` (`6:780`, 1440×900): a compact return link, Contact heading, and responsive overview rows inside the existing Shell dashboard layout.
 
-The page must obtain Contact data by executing the existing CRM contract-derived `getContact`
-Effect client operation through the CRM BFF. This is the implemented frontend/client spelling of
-the requested `GetContactAction`; authoritative OntOS guidance models it as a governed Read because
-it does not change state. The page must not generate a new Action, create a duplicate endpoint,
-import a backend handler, read CRM persistence directly, or issue an ad hoc `fetch`.
+The page must obtain Contact data by executing the existing CRM contract-derived `getContact` Effect client operation through the CRM BFF. This is the implemented frontend/client spelling of the requested `GetContactAction`; authoritative OntOS guidance models it as a governed Read because it does not change state. The page must not generate a new Action, create a duplicate endpoint, import a backend handler, read CRM persistence directly, or issue an ad hoc `fetch`.
 
-Figma is a wireframe for component arrangement only. Use the installed `@techsio/ui-kit` components
-and tokens without copying Figma colors, spacing, typography, borders, or component styling. Do not
-add the wireframe's Documents, Timeline, or Audit tabs because this feature has no corresponding CRM
-contracts.
+Figma is a wireframe for component arrangement only. Use the installed `@techsio/ui-kit` components and tokens without copying Figma colors, spacing, typography, borders, or component styling. Do not add the wireframe's Documents, Timeline, or Audit tabs because this feature has no corresponding CRM contracts.
 
 ## User Story
 
-As a signed-in CRM user
-I want to open a Contact within a Customer URL and see its current details
-So that I can verify the Contact's identity, communication data, and lifecycle without leaving the
-authenticated CRM workspace
+As a signed-in CRM user I want to open a Contact within a Customer URL and see its current details So that I can verify the Contact's identity, communication data, and lifecycle without leaving the authenticated CRM workspace
 
 ## Problem Statement
 
-CRM already persists Contacts and exposes an authenticated governed `getContact` BFF read, but it
-has no Contact detail page or stable localized deep link. Users cannot inspect one Contact in the
-context of its parent Customer, and the application has no page-level mapping for loading,
-malformed IDs, parent/Contact mismatches, not-found, forbidden, authentication-expired, transport,
-decode, unavailable, or internal failures.
+CRM already persists Contacts and exposes an authenticated governed `getContact` BFF read, but it has no Contact detail page or stable localized deep link. Users cannot inspect one Contact in the context of its parent Customer, and the application has no page-level mapping for loading, malformed IDs, parent/Contact mismatches, not-found, forbidden, authentication-expired, transport, decode, unavailable, or internal failures.
 
 ## Solution Statement
 
-Run the mandatory MicroVertical page generator with stable page identity `contact-detail` and the
-canonical two-parameter URL. Adapt only the generated CRM page to validate both route parameters as
-CRM UUIDs, call `getContact({ contactId })` through the generated CRM Effect BFF client, and retain
-the operation's typed error union until route integration maps it to a closed presentation model.
-Include both IDs in the query key and verify that a successful Contact response has
-`customerId === routeParams.id`; render a safe not-found state instead of Contact data when the
-hierarchical URL is inconsistent.
+Run the mandatory MicroVertical page generator with stable page identity `contact-detail` and the canonical two-parameter URL. Adapt only the generated CRM page to validate both route parameters as CRM UUIDs, call `getContact({ contactId })` through the generated CRM Effect BFF client, and retain the operation's typed error union until route integration maps it to a closed presentation model. Include both IDs in the query key and verify that a successful Contact response has `customerId === routeParams.id`; render a safe not-found state instead of Contact data when the hierarchical URL is inconsistent.
 
-Follow the implemented Customer-detail page's page-local TanStack Query, Effect bridge, UI-kit,
-localization, accessibility, and responsive patterns. Link back to the localized parent Customer
-detail route. Render only fields present in the existing Contact DTO: Contact ID, Customer ID,
-email, phone, lifecycle derived from `archivedAt`, created time, and updated time, with the Contact
-name as the heading.
+Follow the implemented Customer-detail page's page-local TanStack Query, Effect bridge, UI-kit, localization, accessibility, and responsive patterns. Link back to the localized parent Customer detail route. Render only fields present in the existing Contact DTO: Contact ID, Customer ID, email, phone, lifecycle derived from `archivedAt`, created time, and updated time, with the Contact name as the heading.
 
 ## Relevant Files
 
@@ -117,24 +87,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Generate the two-parameter private Contact-detail page and all Shell/manifest/registration/Module
-Federation wiring through Codesmith. Verify the exact stable identities, route template, parameter
-order, private metadata, and post-gate prop contract before adapting generated source.
+Generate the two-parameter private Contact-detail page and all Shell/manifest/registration/Module Federation wiring through Codesmith. Verify the exact stable identities, route template, parameter order, private metadata, and post-gate prop contract before adapting generated source.
 
 ### Phase 2: Core Implementation
 
-Reuse the existing `getContact` Effect BFF client, validate both route UUIDs, create a hierarchical
-query key, map the complete client failure union to closed view states, reject a response whose
-Customer does not match the URL, and render the Contact DTO using existing UI-kit components and
-semantic HTML. Add focused component tests beside each behavior.
+Reuse the existing `getContact` Effect BFF client, validate both route UUIDs, create a hierarchical query key, map the complete client failure union to closed view states, reject a response whose Customer does not match the URL, and render the Contact DTO using existing UI-kit components and semantic HTML. Add focused component tests beside each behavior.
 
 ### Phase 3: Integration
 
-Verify that Shell authentication, legal-entity selection, module state, page permission, exact
-target resolution, and approved remote loading all occur before CRM code or `getContact` executes.
-Add Shell and browser coverage for both locales, exact ID propagation, wrong-parent suppression,
-normal/loading/not-found/forbidden/unavailable behavior, retry, and mobile layout. Finish with all
-focused commands and the complete repository quality gate.
+Verify that Shell authentication, legal-entity selection, module state, page permission, exact target resolution, and approved remote loading all occur before CRM code or `getContact` executes. Add Shell and browser coverage for both locales, exact ID propagation, wrong-parent suppression, normal/loading/not-found/forbidden/unavailable behavior, retry, and mobile layout. Finish with all focused commands and the complete repository quality gate.
 
 ## Step by Step Tasks
 
@@ -199,21 +160,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use the scaffold generator's disposable workspace to prove exact two-parameter output and atomic
-reruns. Use the new CRM component test to prove UUID decoding, hierarchical query identity, exact
-`getContact` Effect-client invocation, parent consistency, closed error classification, ready and
-loading models, lifecycle/timestamp formatting, localization parity, semantic markup, retry/focus,
-and frontend import boundaries. Extend Shell unit tests for ordered parameter selection and the
-post-gate approved-remote prop contract.
+Use the scaffold generator's disposable workspace to prove exact two-parameter output and atomic reruns. Use the new CRM component test to prove UUID decoding, hierarchical query identity, exact `getContact` Effect-client invocation, parent consistency, closed error classification, ready and loading models, lifecycle/timestamp formatting, localization parity, semantic markup, retry/focus, and frontend import boundaries. Extend Shell unit tests for ordered parameter selection and the post-gate approved-remote prop contract.
 
 ### Integration Tests
 
-Retain the existing CRM BFF/integration suite as proof that `getContact` verifies its audience,
-runs through the governed Read lifecycle, enforces tenant/module/access boundaries, returns only the
-declared DTO/errors, and commits Data Access evidence before success. Extend Playwright coverage for
-the complete Shell route → approved remote → generated Effect BFF → rendered Contact path in both
-locales, including anonymous pre-gate behavior, exact payload, wrong-parent suppression, declared
-failures, retry, and mobile layout.
+Retain the existing CRM BFF/integration suite as proof that `getContact` verifies its audience, runs through the governed Read lifecycle, enforces tenant/module/access boundaries, returns only the declared DTO/errors, and commits Data Access evidence before success. Extend Playwright coverage for the complete Shell route → approved remote → generated Effect BFF → rendered Contact path in both locales, including anonymous pre-gate behavior, exact payload, wrong-parent suppression, declared failures, retry, and mobile layout.
 
 ### Edge Cases
 

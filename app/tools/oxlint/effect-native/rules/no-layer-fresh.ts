@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A1 records that "some library layers internally
@@ -39,19 +38,25 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
-import { matchesGlobs, scopePath } from '../shared/paths.ts';
-import { stringArray } from '../shared/options.ts';
 import {
   EXPRESSION_WRAPPERS as TRANSPARENT_WRAPPERS,
   unwrapNode as unwrap,
   staticString,
 } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
-import { collectRootNamespaces, collectNamedImports } from '../shared/imports.ts';
+import {
+  collectEffectBindings,
+  effectMember,
+} from '../shared/effect-imports.ts';
+import {
+  collectRootNamespaces,
+  collectNamedImports,
+} from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray } from '../shared/options.ts';
+import { matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const LAYER_NAMESPACE = 'Layer';
 const FRESH_MEMBER = 'fresh';
@@ -94,7 +99,11 @@ function readOptions(context: Context): RuleOptions {
 /** Static string of a property key: `x.fresh`, `x["fresh"]`, and the no-substitution template key. */
 function staticKey(node: ESTree.Node, computed: boolean): string | null {
   if (!computed) return node.type === 'Identifier' ? node.name : null;
-  return staticString(node, { templates: true, singleQuasi: true, rawTemplates: false });
+  return staticString(node, {
+    templates: true,
+    singleQuasi: true,
+    rawTemplates: false,
+  });
 }
 
 function memberName(node: ESTree.MemberExpression): string | null {
@@ -108,7 +117,8 @@ function collectTypeOnlyLocals(program: ESTree.Program): Set<string> {
     for (const specifier of statement.specifiers) {
       if (
         statement.importKind === 'type' ||
-        (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type')
+        (specifier.type === 'ImportSpecifier' &&
+          specifier.importKind === 'type')
       ) {
         locals.add(specifier.local.name);
       }
@@ -134,16 +144,20 @@ function isNamePosition(node: ESTree.Node): boolean {
     computed?: boolean;
   };
   const isKey = holder.key === node || holder.property === node;
-  return NAME_POSITION_PARENTS.has(parent.type) && isKey && holder.computed !== true;
+  return (
+    NAME_POSITION_PARENTS.has(parent.type) && isKey && holder.computed !== true
+  );
 }
 
 /** `await import("effect/Layer")` / `import("effect")` → the module specifier, else `null`. */
 function dynamicEffectModule(node: ESTree.Node): string | null {
   let current = unwrap(node);
-  if (current.type === 'AwaitExpression') current = unwrap(current.argument as ESTree.Node);
+  if (current.type === 'AwaitExpression')
+    current = unwrap(current.argument as ESTree.Node);
   if (current.type !== 'ImportExpression') return null;
   const source = current.source as ESTree.Node;
-  if (source.type !== 'Literal' || typeof source.value !== 'string') return null;
+  if (source.type !== 'Literal' || typeof source.value !== 'string')
+    return null;
   return EFFECT_MODULE.test(source.value) ? source.value : null;
 }
 
@@ -186,9 +200,11 @@ export const rule = defineRule({
     const directMembers = collectNamedImports(
       program,
       (source) => EFFECT_LAYER_MODULE.test(source),
-      new Set([FRESH_MEMBER]),
+      new Set([FRESH_MEMBER])
     );
-    const hasDynamicImport = DYNAMIC_EFFECT_IMPORT.test(context.sourceCode.text);
+    const hasDynamicImport = DYNAMIC_EFFECT_IMPORT.test(
+      context.sourceCode.text
+    );
     if (
       !bindings.importsEffect &&
       rootNamespaces.size === 0 &&
@@ -209,7 +225,9 @@ export const rule = defineRule({
     const isTypePosition = (node: ESTree.Node): boolean => {
       const parent = node.parent;
       return (
-        parent != null && parent.type.startsWith('TS') && !TRANSPARENT_WRAPPERS.has(parent.type)
+        parent != null &&
+        parent.type.startsWith('TS') &&
+        !TRANSPARENT_WRAPPERS.has(parent.type)
       );
     };
 
@@ -223,13 +241,18 @@ export const rule = defineRule({
      * (parameter, `const`, catch clause, class name, …) rejects the match.
      */
     const resolvesToModuleBinding = (
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
+      identifier: Extract<ESTree.Node, { type: 'Identifier' }>
     ): boolean => {
       if (typeOnlyLocals.has(identifier.name)) return false;
       const variable = lookupVariable(context, identifier);
       if (variable === null || variable.defs.length === 0) return true;
-      if (variable.defs.some((definition) => definition.type === 'ImportBinding')) return true;
-      return variable.defs.some((definition) => dynamicLocals.has(definition.name.start));
+      if (
+        variable.defs.some((definition) => definition.type === 'ImportBinding')
+      )
+        return true;
+      return variable.defs.some((definition) =>
+        dynamicLocals.has(definition.name.start)
+      );
     };
 
     /** `Layer` / `L` / `LayerNs`, including through type-only wrappers. */
@@ -256,20 +279,28 @@ export const rule = defineRule({
 
     /** `const { fresh } = Layer` / `const { fresh: alias } = EffectNs.Layer` — report the binding site. */
     const reportFreshPatternProperties = (
-      pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>,
+      pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>
     ): void => {
       for (const property of pattern.properties) {
         if (property.type !== 'Property') continue;
-        if (staticKey(property.key as ESTree.Node, property.computed === true) !== FRESH_MEMBER)
+        if (
+          staticKey(property.key as ESTree.Node, property.computed === true) !==
+          FRESH_MEMBER
+        )
           continue;
         report(property as unknown as ESTree.Node);
       }
     };
 
-    const handleRootPattern = (pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>): void => {
+    const handleRootPattern = (
+      pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>
+    ): void => {
       for (const property of pattern.properties) {
         if (property.type !== 'Property') continue;
-        if (staticKey(property.key as ESTree.Node, property.computed === true) !== LAYER_NAMESPACE)
+        if (
+          staticKey(property.key as ESTree.Node, property.computed === true) !==
+          LAYER_NAMESPACE
+        )
           continue;
         const value = property.value as ESTree.Node;
         if (value.type === 'Identifier') {
@@ -318,8 +349,16 @@ export const rule = defineRule({
         // Fast path via the shared matcher: plain, non-computed `Layer.fresh`.
         const shared = effectMember(node, bindings);
         if (shared !== null) {
-          if (shared.namespace !== LAYER_NAMESPACE || shared.member !== FRESH_MEMBER) return;
-          if (resolvesToModuleBinding(node.object as Extract<ESTree.Node, { type: 'Identifier' }>))
+          if (
+            shared.namespace !== LAYER_NAMESPACE ||
+            shared.member !== FRESH_MEMBER
+          )
+            return;
+          if (
+            resolvesToModuleBinding(
+              node.object as Extract<ESTree.Node, { type: 'Identifier' }>
+            )
+          )
             report(node);
           return;
         }

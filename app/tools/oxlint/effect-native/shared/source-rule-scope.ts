@@ -8,7 +8,10 @@ interface SourceRuleScope {
 }
 
 /** Shared dependency/factory audit scope; preserve legacy fixture normalization and gate order. */
-export function isSourceRuleInScope(filename: string, options: SourceRuleScope): boolean {
+export function isSourceRuleInScope(
+  filename: string,
+  options: SourceRuleScope
+): boolean {
   const path = scopePath(filename);
   if (!matchesGlobs(path, options.includePaths)) return false;
   if (matchesGlobs(path, options.ignore)) return false;

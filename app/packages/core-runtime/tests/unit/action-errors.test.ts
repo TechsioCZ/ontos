@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
 import {
   ACTION_CORE_ERROR_TAGS,
   ActionAlreadyCommitted,
@@ -111,7 +113,7 @@ void test('publishes the exhaustive stable Core Action error tags', () => {
 
   assert.deepEqual(
     errors.map((error) => error._tag),
-    ACTION_CORE_ERROR_TAGS,
+    ACTION_CORE_ERROR_TAGS
   );
   for (const error of errors) {
     assert.equal(error.reason.includes('postgresql://'), false);

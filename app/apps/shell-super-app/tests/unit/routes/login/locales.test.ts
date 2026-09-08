@@ -1,4 +1,5 @@
 import { expect, test } from '@rstest/core';
+
 import cs from '../../../../locales/cs/shell.json';
 import en from '../../../../locales/en/shell.json';
 import { ultramodernRouteMetadata } from '../../../../src/routes/ultramodern-route-metadata';
@@ -15,11 +16,17 @@ test.each([
   ['dashboard.account', cs.shell.dashboard.account, en.shell.dashboard.account],
   ['dashboard.header', cs.shell.dashboard.header, en.shell.dashboard.header],
   ['dashboard.home', cs.shell.dashboard.home, en.shell.dashboard.home],
-  ['dashboard.navigation', cs.shell.dashboard.navigation, en.shell.dashboard.navigation],
+  [
+    'dashboard.navigation',
+    cs.shell.dashboard.navigation,
+    en.shell.dashboard.navigation,
+  ],
   ['dashboard.sidebar', cs.shell.dashboard.sidebar, en.shell.dashboard.sidebar],
   ['dashboard.tenant', cs.shell.dashboard.tenant, en.shell.dashboard.tenant],
 ])('aligns Czech and English %s translation keys', (_name, czech, english) => {
-  expect(Object.keys(czech).toSorted()).toEqual(Object.keys(english).toSorted());
+  expect(Object.keys(czech).toSorted()).toEqual(
+    Object.keys(english).toSorted()
+  );
 });
 
 test('keeps the Czech and English login translation contracts aligned', () => {
@@ -33,7 +40,7 @@ test('includes the login route in the generated metadata manifest', () => {
       descriptionKey: 'shell.login.seo.description',
       id: 'shell-login',
       titleKey: 'shell.login.title',
-    }),
+    })
   );
 });
 

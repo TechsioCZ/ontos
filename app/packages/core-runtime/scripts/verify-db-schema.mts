@@ -1,7 +1,8 @@
-import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 // @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { getTableName, sql } from 'drizzle-orm';
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Effect, Layer, Schema } from 'effect';
+
 import type { CatalogEntry } from '../src/db/catalog.ts';
 import { compareApplicationCatalog } from '../src/db/catalog.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
@@ -34,7 +35,7 @@ class DatabaseVerificationError extends Schema.TaggedError<DatabaseVerificationE
   'DatabaseVerificationError',
   {
     reason: Schema.String,
-  },
+  }
 ) {}
 
 const CatalogRowSchema = Schema.Struct({
@@ -55,16 +56,16 @@ const isUnsafeRuntimeRole = (role: RuntimeRoleRow | undefined): boolean =>
 
 const verifyTypedQuery = <Result,>(
   tableName: string,
-  query: () => Effect.Effect<Result, EffectDrizzleQueryError>,
+  query: () => Effect.Effect<Result, EffectDrizzleQueryError>
 ): Effect.Effect<void, DatabaseVerificationError> =>
   query().pipe(
     Effect.mapError(
       () =>
         new DatabaseVerificationError({
           reason: `Typed verification failed for ${CORE_SCHEMA_NAME}.${tableName}`,
-        }),
+        })
     ),
-    Effect.asVoid,
+    Effect.asVoid
   );
 
 const verifyRuntimeRole = Effect.gen(function* verifyRuntimeRoleEffect() {
@@ -76,37 +77,41 @@ const verifyRuntimeRole = Effect.gen(function* verifyRuntimeRoleEffect() {
         from pg_catalog.pg_roles as role
         where role.rolname = current_user
       `,
-      'objects',
+      'objects'
     )
     .pipe(
       Effect.mapError(
         () =>
-          new DatabaseVerificationError({ reason: 'Unable to verify the PostgreSQL runtime role' }),
-      ),
+          new DatabaseVerificationError({
+            reason: 'Unable to verify the PostgreSQL runtime role',
+          })
+      )
     );
   const [role] = runtimeRole;
   if (isUnsafeRuntimeRole(role)) {
     return yield* new DatabaseVerificationError({
-      reason: 'The application runtime role must be non-superuser and must not bypass RLS',
+      reason:
+        'The application runtime role must be non-superuser and must not bypass RLS',
     });
   }
   return yield* Effect.void;
 });
 
-const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect() {
-  const database = yield* CoreDatabase;
-  for (const [tableName, operations] of [
-    ['search_index_entries', ['delete', 'insert', 'select', 'update']],
-    ['search_projection_generations', ['insert', 'select', 'update']],
-    ['search_projection_rebuilds', ['insert', 'select', 'update']],
-  ] as const) {
-    const searchIsolation = yield* database.executor
-      .execute<{
-        policy_names: string[];
-        relforcerowsecurity: boolean;
-        relrowsecurity: boolean;
-      }>(
-        sql`
+const verifySearchIsolation = Effect.gen(
+  function* verifySearchIsolationEffect() {
+    const database = yield* CoreDatabase;
+    for (const [tableName, operations] of [
+      ['search_index_entries', ['delete', 'insert', 'select', 'update']],
+      ['search_projection_generations', ['insert', 'select', 'update']],
+      ['search_projection_rebuilds', ['insert', 'select', 'update']],
+    ] as const) {
+      const searchIsolation = yield* database.executor
+        .execute<{
+          policy_names: string[];
+          relforcerowsecurity: boolean;
+          relrowsecurity: boolean;
+        }>(
+          sql`
         select
           relation.relrowsecurity,
           relation.relforcerowsecurity,
@@ -120,36 +125,39 @@ const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect()
           and relation.relname = ${tableName}
         group by relation.relrowsecurity, relation.relforcerowsecurity
       `,
-        'objects',
-      )
-      .pipe(
-        Effect.mapError(
-          () =>
-            new DatabaseVerificationError({
-              reason: 'Unable to verify Core Search tenant isolation',
-            }),
-        ),
+          'objects'
+        )
+        .pipe(
+          Effect.mapError(
+            () =>
+              new DatabaseVerificationError({
+                reason: 'Unable to verify Core Search tenant isolation',
+              })
+          )
+        );
+      const [searchIsolationRow] = searchIsolation;
+      const expectedSearchPolicies = operations.map(
+        (operation) => `core_${tableName}_tenant_${operation}`
       );
-    const [searchIsolationRow] = searchIsolation;
-    const expectedSearchPolicies = operations.map(
-      (operation) => `core_${tableName}_tenant_${operation}`,
-    );
-    if (
-      searchIsolationRow === undefined ||
-      !searchIsolationRow.relrowsecurity ||
-      !searchIsolationRow.relforcerowsecurity ||
-      searchIsolationRow.policy_names.length !== expectedSearchPolicies.length ||
-      searchIsolationRow.policy_names.some(
-        (policy, index) => policy !== expectedSearchPolicies[index],
-      )
-    ) {
-      return yield* new DatabaseVerificationError({
-        reason: 'Core Search must enforce forced tenant RLS with complete owner-operation policies',
-      });
+      if (
+        searchIsolationRow === undefined ||
+        !searchIsolationRow.relrowsecurity ||
+        !searchIsolationRow.relforcerowsecurity ||
+        searchIsolationRow.policy_names.length !==
+          expectedSearchPolicies.length ||
+        searchIsolationRow.policy_names.some(
+          (policy, index) => policy !== expectedSearchPolicies[index]
+        )
+      ) {
+        return yield* new DatabaseVerificationError({
+          reason:
+            'Core Search must enforce forced tenant RLS with complete owner-operation policies',
+        });
+      }
     }
+    return yield* Effect.void;
   }
-  return yield* Effect.void;
-});
+);
 
 const verifyCatalog = Effect.gen(function* verifyCatalogEffect() {
   const database = yield* CoreDatabase;
@@ -187,15 +195,15 @@ const verifyCatalog = Effect.gen(function* verifyCatalogEffect() {
         select kind, schema_name, table_name from migration_bookkeeping
         order by kind, schema_name, table_name
       `,
-      'objects',
+      'objects'
     )
     .pipe(
       Effect.mapError(
         () =>
           new DatabaseVerificationError({
             reason: 'Unable to compare the PostgreSQL application catalog',
-          }),
-      ),
+          })
+      )
     );
 
   const entries: CatalogEntry[] = [];
@@ -226,9 +234,11 @@ const verifyCatalog = Effect.gen(function* verifyCatalogEffect() {
   migrationBookkeepingTables.sort();
 
   if (
-    migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
+    migrationBookkeepingTables.length !==
+      expectedMigrationBookkeepingTables.length ||
     migrationBookkeepingTables.some(
-      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
+      (tableName, index) =>
+        tableName !== expectedMigrationBookkeepingTables[index]
     )
   ) {
     return yield* new DatabaseVerificationError({
@@ -294,20 +304,26 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
         where namespace.nspname = ${CORE_SCHEMA_NAME}
         order by constraint_record.conname
       `,
-      'objects',
+      'objects'
     )
     .pipe(
       Effect.mapError(
-        () => new DatabaseVerificationError({ reason: 'Unable to verify same-tenant constraints' }),
-      ),
+        () =>
+          new DatabaseVerificationError({
+            reason: 'Unable to verify same-tenant constraints',
+          })
+      )
     );
   const presentCompositeConstraints = constraintRows
     .map((row) => row.conname)
     .filter((name) => requiredCompositeConstraints.includes(name))
     .toSorted();
   if (
-    presentCompositeConstraints.length !== requiredCompositeConstraints.length ||
-    presentCompositeConstraints.some((name, index) => name !== requiredCompositeConstraints[index])
+    presentCompositeConstraints.length !==
+      requiredCompositeConstraints.length ||
+    presentCompositeConstraints.some(
+      (name, index) => name !== requiredCompositeConstraints[index]
+    )
   ) {
     return yield* new DatabaseVerificationError({
       reason: 'Required composite same-tenant constraints are missing',
@@ -335,7 +351,9 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     searchProjectionRebuilds,
     workerCheckpoints,
   ].map((table) =>
-    verifyTypedQuery(getTableName(table), () => database.executor.select().from(table).limit(0)),
+    verifyTypedQuery(getTableName(table), () =>
+      database.executor.select().from(table).limit(0)
+    )
   );
 
   for (const query of typedQueries) {
@@ -349,7 +367,13 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   };
 });
 
-const DatabaseRuntimeLive = CoreDatabaseLive.pipe(Layer.provide(DatabaseConfigLive));
-const result = await Effect.runPromise(Effect.provide(verifyDatabase, DatabaseRuntimeLive));
+const DatabaseRuntimeLive = CoreDatabaseLive.pipe(
+  Layer.provide(DatabaseConfigLive)
+);
+const result = await Effect.runPromise(
+  Effect.provide(verifyDatabase, DatabaseRuntimeLive)
+);
 
-console.log(`Verified ${result.tableCount} typed tables in PostgreSQL schema ${CORE_SCHEMA_NAME}`);
+console.log(
+  `Verified ${result.tableCount} typed tables in PostgreSQL schema ${CORE_SCHEMA_NAME}`
+);

@@ -23,7 +23,7 @@ void test('apps contain no environment files that can override the app-root .env
       '-path',
       '*/node_modules/*',
     ],
-    { encoding: 'utf-8' },
+    { encoding: 'utf-8' }
   );
 
   assert.equal(result.status, 0, result.stderr);
@@ -45,7 +45,10 @@ void test('workspace discovery resolves repository, app, shell, and microvertica
 });
 
 void test('all server configuration resolves the app-root .env from any invocation directory', () => {
-  const probe = new URL('server-environment-paths.fixture.mts', import.meta.url);
+  const probe = new URL(
+    'server-environment-paths.fixture.mts',
+    import.meta.url
+  );
   const child = spawnSync(
     '/usr/bin/env',
     [
@@ -58,7 +61,7 @@ void test('all server configuration resolves the app-root .env from any invocati
     {
       cwd: '/',
       encoding: 'utf-8',
-    },
+    }
   );
 
   assert.equal(child.status, 0, child.stderr);
@@ -70,7 +73,9 @@ void test('all server configuration resolves the app-root .env from any invocati
 });
 
 void test('Drizzle configuration remains bundleable as CommonJS', () => {
-  const outputDirectory = mkdtempSync(path.join(tmpdir(), 'ontos-drizzle-cjs-'));
+  const outputDirectory = mkdtempSync(
+    path.join(tmpdir(), 'ontos-drizzle-cjs-')
+  );
   try {
     const result = spawnSync(
       path.join(appRoot, 'node_modules/.bin/esbuild'),
@@ -82,7 +87,7 @@ void test('Drizzle configuration remains bundleable as CommonJS', () => {
         '--platform=node',
         `--outfile=${path.join(outputDirectory, 'drizzle.config.cjs')}`,
       ],
-      { encoding: 'utf-8' },
+      { encoding: 'utf-8' }
     );
     assert.equal(result.status, 0, result.stderr);
   } finally {

@@ -1,9 +1,8 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { ConfigProvider, Context, Effect, Layer, Logger, Schema } from 'effect';
+
 import {
   ActionHandlerExecutionError,
   ActionIdempotencyKeyRequired,
@@ -46,29 +45,40 @@ import type {
   ReadCoreError,
   ReadRuntimeService,
 } from '@app/core-runtime';
-import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import {
+  bindActionTestServices,
+  makeActionTestHarness,
+} from '@app/core-runtime/testing/actions';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import {
+  HttpApi,
+  HttpApiBuilder,
+  HttpRouter,
+  HttpServer,
+} from '@modern-js/plugin-bff/effect-edge';
+import { ConfigProvider, Context, Effect, Layer, Logger, Schema } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import { partyRegistryApi } from '../../shared/api.ts';
-import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
+
+import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+import { organizationEngagementMutationsLive } from '../../api/engagement-profile-server.ts';
 import {
   partyRegistryCommandRecoveryLive,
   partyRegistryCommandsLive,
 } from '../../api/party-command-server.ts';
-import { organizationEngagementMutationsLive } from '../../api/engagement-profile-server.ts';
-import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
-import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
-import { createPartyAction } from '../../src/actions/create-party.action.ts';
+import { partyMatchDecisionReadApiLive } from '../../api/party-match-decision-read-server.ts';
+import { partyRegistryApi } from '../../shared/api.ts';
+import { PartyMatchDecisionRequestSchema } from '../../shared/apis/party-match-decision.ts';
+import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
 import {
   PartyEvidenceInsufficient,
   PartyPersistenceUnavailable,
   PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
-import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
-import { partyMatchDecisionReadApiLive } from '../../api/party-match-decision-read-server.ts';
-import { PartyMatchDecisionRequestSchema } from '../../shared/apis/party-match-decision.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import type { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
+import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
+import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
+import { createPartyAction } from '../../src/actions/create-party.action.ts';
 
 const principal = {
   authBindingId: 'a1000000-0000-4000-8000-000000000001',
@@ -87,7 +97,11 @@ const otherPartyRef = {
   ...partyRef,
   resourceId: 'a4000000-0000-4000-8000-000000000002',
 } as const;
-const archivePayload = { expectedRevision: 1, partyRef, reason: 'No longer active' };
+const archivePayload = {
+  expectedRevision: 1,
+  partyRef,
+  reason: 'No longer active',
+};
 const archivedParty = Schema.decodeUnknownSync(PartySchema)({
   archivedAt: '2026-09-01T00:00:00.000Z',
   createdAt: '2026-09-01T00:00:00.000Z',
@@ -191,7 +205,7 @@ const endpointNames = [
 
 const makeAssertion = async (
   audience = 'party-registry',
-  options: { readonly expiresAt?: number; readonly tokenIssuer?: string } = {},
+  options: { readonly expiresAt?: number; readonly tokenIssuer?: string } = {}
 ) => {
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const publicJwk = {
@@ -229,7 +243,9 @@ const makeAssertion = async (
   };
 };
 
-const nonPersistingRedemption: GatewayAssertionRedemption = { consume: () => Effect.void };
+const nonPersistingRedemption: GatewayAssertionRedemption = {
+  consume: () => Effect.void,
+};
 const ProblemTagSchema = Schema.Struct({ _tag: Schema.String });
 
 const mounted = (
@@ -238,12 +254,15 @@ const mounted = (
   readRuntime?: ReadRuntimeService,
   redemption: GatewayAssertionRedemption = nonPersistingRedemption,
   actionRuntime: ActionRuntimeService = harness.runtime,
-  observedLogs?: string[],
+  observedLogs?: string[]
 ) => {
   const resolvedReadRuntime = readRuntime ?? {
     runRead: () =>
       Effect.fail(
-        new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'No fixture decision' }),
+        new ReadHandlerNotFound({
+          code: 'read_handler_not_found',
+          reason: 'No fixture decision',
+        })
       ),
   };
   // Same API identity and production group: only unrelated read routes are omitted.
@@ -252,27 +271,32 @@ const mounted = (
     .add(partyRegistryApi.groups.partyCommandRecovery)
     .add(partyRegistryApi.groups.partyMatchDecision);
   const readLayer = Layer.succeed(ReadRuntime, resolvedReadRuntime);
-  const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, redemption);
+  const redemptionLayer = Layer.succeed(
+    GatewayAssertionRedemptionService,
+    redemption
+  );
   const actionLayer = Layer.succeed(ActionRuntime, actionRuntime);
   const loggerLayer =
     observedLogs === undefined
       ? Layer.empty
       : Logger.layer([
           Logger.make((options) => {
-            observedLogs.push(JSON.stringify(Logger.formatStructured.log(options)));
+            observedLogs.push(
+              JSON.stringify(Logger.formatStructured.log(options))
+            );
           }),
         ]);
   const handlers = Layer.mergeAll(
     partyRegistryCommandsLive,
     partyRegistryCommandRecoveryLive,
-    partyMatchDecisionReadApiLive,
+    partyMatchDecisionReadApiLive
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive),
     Layer.provide(actionLayer),
     Layer.provide(readLayer),
     Layer.provide(redemptionLayer),
     Layer.provide(loggerLayer),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment)))
   );
   return HttpRouter.toWebHandler(
     HttpApiBuilder.layer(api).pipe(
@@ -280,35 +304,38 @@ const mounted = (
       Layer.provideMerge(actionLayer),
       Layer.provideMerge(readLayer),
       Layer.provideMerge(redemptionLayer),
-      Layer.provide(HttpServer.layerServices),
+      Layer.provide(HttpServer.layerServices)
     ),
-    { disableLogger: true },
+    { disableLogger: true }
   );
 };
 
 const mountedOrganizationEngagement = (
   environment: Readonly<Record<string, string>>,
-  actionRuntime: ActionRuntimeService,
+  actionRuntime: ActionRuntimeService
 ) => {
   const api = HttpApi.make('PartyRegistryApi').add(
-    partyRegistryApi.groups.organizationEngagementMutations,
+    partyRegistryApi.groups.organizationEngagementMutations
   );
   const actionLayer = Layer.succeed(ActionRuntime, actionRuntime);
-  const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, nonPersistingRedemption);
+  const redemptionLayer = Layer.succeed(
+    GatewayAssertionRedemptionService,
+    nonPersistingRedemption
+  );
   const handlers = organizationEngagementMutationsLive.pipe(
     Layer.provide(ActionPrincipalVerifierLive),
     Layer.provide(actionLayer),
     Layer.provide(redemptionLayer),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment)))
   );
   return HttpRouter.toWebHandler(
     HttpApiBuilder.layer(api).pipe(
       Layer.provide(handlers),
       Layer.provideMerge(actionLayer),
       Layer.provideMerge(redemptionLayer),
-      Layer.provide(HttpServer.layerServices),
+      Layer.provide(HttpServer.layerServices)
     ),
-    { disableLogger: true },
+    { disableLogger: true }
   );
 };
 
@@ -322,7 +349,7 @@ const makeSingleUseRedemption = (): GatewayAssertionRedemption => {
           return Effect.fail(
             new GatewayAssertionReplayError({
               reason: 'The Bearer assertion is no longer usable',
-            }),
+            })
           );
         }
         redeemed.add(key);
@@ -339,24 +366,26 @@ const handle = (app: ReturnType<typeof mounted>, request: Request) =>
 
 const withMountedApp = (
   app: ReturnType<typeof mounted>,
-  run: (app: ReturnType<typeof mounted>) => Promise<void>,
+  run: (app: ReturnType<typeof mounted>) => Promise<void>
 ): Promise<void> =>
   runEffectTestPromise(
     Effect.acquireUseRelease(
       Effect.succeed(app),
       (resource) => Effect.promise(() => run(resource)),
-      (resource) => Effect.promise(() => resource.dispose()),
-    ),
+      (resource) => Effect.promise(() => resource.dispose())
+    )
   );
 
 const forEachSequential = <Item>(
   items: Iterable<Item>,
-  run: (item: Item) => Promise<void>,
+  run: (item: Item) => Promise<void>
 ): Promise<void> => {
   const iterator = items[Symbol.iterator]();
   const advance = (): Promise<void> => {
     const item = iterator.next();
-    return item.done === true ? Promise.resolve() : run(item.value).then(advance);
+    return item.done === true
+      ? Promise.resolve()
+      : run(item.value).then(advance);
   };
   return advance();
 };
@@ -369,17 +398,20 @@ const recoveryRequest = (invocationId: string, token?: string) => {
   if (token !== undefined) {
     headers.set('authorization', `Bearer ${token}`);
   }
-  return new Request('https://party.ontos.test/party-registry/action-commits/resolve', {
-    body: JSON.stringify({ invocationId }),
-    headers,
-    method: 'POST',
-  });
+  return new Request(
+    'https://party.ontos.test/party-registry/action-commits/resolve',
+    {
+      body: JSON.stringify({ invocationId }),
+      headers,
+      method: 'POST',
+    }
+  );
 };
 
 const decisionRequest = (
   actionInvocationId: string,
   token?: string,
-  extraHeaders: Readonly<Record<string, string>> = {},
+  extraHeaders: Readonly<Record<string, string>> = {}
 ) => {
   const headers = new Headers({
     'content-type': 'application/json',
@@ -400,7 +432,7 @@ const commandRequest = (
   slug: string,
   payload: CommandTestPayload,
   token?: string,
-  extraHeaders: Readonly<Record<string, string>> = {},
+  extraHeaders: Readonly<Record<string, string>> = {}
 ) => {
   const headers = new Headers({
     'content-type': 'application/json',
@@ -410,14 +442,21 @@ const commandRequest = (
   if (token !== undefined) {
     headers.set('authorization', `Bearer ${token}`);
   }
-  return new Request(`https://party.ontos.test/party-registry/actions/${slug}`, {
-    body: JSON.stringify(payload),
-    headers,
-    method: 'POST',
-  });
+  return new Request(
+    `https://party.ontos.test/party-registry/actions/${slug}`,
+    {
+      body: JSON.stringify(payload),
+      headers,
+      method: 'POST',
+    }
+  );
 };
 
-const engagementRequest = (path: string, payload: EngagementTestPayload, token: string) =>
+const engagementRequest = (
+  path: string,
+  payload: EngagementTestPayload,
+  token: string
+) =>
   new Request(`https://party.ontos.test${path}`, {
     body: JSON.stringify(payload),
     headers: {
@@ -433,16 +472,19 @@ test('every registered command is mounted and rejects missing structural input o
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
   await withMountedApp(mounted(harness, assertion.environment), async (app) => {
-    assert.equal(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length, 24);
+    assert.equal(
+      Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length,
+      24
+    );
     assert.deepEqual(
       Object.keys(partyRegistryApi.groups.partyCommands.endpoints).toSorted(),
-      [...endpointNames].toSorted(),
+      [...endpointNames].toSorted()
     );
     assert.deepEqual(
       Object.values(partyRegistryApi.groups.partyCommands.endpoints)
         .map((endpoint) => endpoint.path)
         .toSorted(),
-      actionSlugs.map((slug) => `/party-registry/actions/${slug}`).toSorted(),
+      actionSlugs.map((slug) => `/party-registry/actions/${slug}`).toSorted()
     );
     await forEachSequential(
       Object.values(partyRegistryApi.groups.partyCommands.endpoints),
@@ -456,13 +498,16 @@ test('every registered command is mounted and rejects missing structural input o
               'content-type': 'application/json',
               'x-correlation-id': 'mounted-command-test',
             },
-          }),
+          })
         );
         assert.ok(
           response.status === 400 || response.status === 401,
-          `${endpoint.path}: ${response.status}`,
+          `${endpoint.path}: ${response.status}`
         );
-        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+        assert.match(
+          response.headers.get('content-type') ?? '',
+          /application\/problem\+json/u
+        );
         const body = await response.json();
         assert.ok(
           Schema.is(
@@ -470,29 +515,37 @@ test('every registered command is mounted and rejects missing structural input o
               response.status === 400
                 ? 'PartyCommandInvalidRequestProblem'
                 : 'PartyCommandAuthenticationProblem',
-              {},
-            ),
-          )(body),
+              {}
+            )
+          )(body)
         );
         assert.equal(body.status, response.status);
-      },
+      }
     );
     const malformed = await handle(
       app,
-      new Request('https://party.ontos.test/party-registry/actions/archive-party', {
-        body: '{not-json',
-        headers: {
-          'content-type': 'application/json',
-          'x-correlation-id': 'malformed-test',
-        },
-        method: 'POST',
-      }),
+      new Request(
+        'https://party.ontos.test/party-registry/actions/archive-party',
+        {
+          body: '{not-json',
+          headers: {
+            'content-type': 'application/json',
+            'x-correlation-id': 'malformed-test',
+          },
+          method: 'POST',
+        }
+      )
     );
     assert.equal(malformed.status, 400);
-    assert.match(malformed.headers.get('content-type') ?? '', /application\/problem\+json/u);
+    assert.match(
+      malformed.headers.get('content-type') ?? '',
+      /application\/problem\+json/u
+    );
     const malformedBody = await malformed.json();
     assert.ok(
-      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(malformedBody),
+      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(
+        malformedBody
+      )
     );
     assert.equal(harness.snapshot().invocations.length, 0);
   });
@@ -521,22 +574,32 @@ test('missing, malformed, expired, tampered, wrong-audience, and wrong-issuer as
   ];
   await forEachSequential(cases, async ({ assertion, token }) => {
     const harness = makeActionTestHarness();
-    await withMountedApp(mounted(harness, assertion.environment), async (app) => {
-      const response = await handle(
-        app,
-        commandRequest('request-search-rebuild', {}, token, {
-          'idempotency-key': 'authentication-test',
-        }),
-      );
-      assert.equal(response.status, 401);
-      assert.equal(response.headers.get('www-authenticate'), 'Bearer');
-      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-      const body = await response.json();
-      assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandAuthenticationProblem', {}))(body));
-      assert.equal(body.status, 401);
-      assert.equal(JSON.stringify(body).includes(assertion.token), false);
-      assert.equal(harness.snapshot().invocations.length, 0);
-    });
+    await withMountedApp(
+      mounted(harness, assertion.environment),
+      async (app) => {
+        const response = await handle(
+          app,
+          commandRequest('request-search-rebuild', {}, token, {
+            'idempotency-key': 'authentication-test',
+          })
+        );
+        assert.equal(response.status, 401);
+        assert.equal(response.headers.get('www-authenticate'), 'Bearer');
+        assert.match(
+          response.headers.get('content-type') ?? '',
+          /application\/problem\+json/u
+        );
+        const body = await response.json();
+        assert.ok(
+          Schema.is(
+            Schema.TaggedStruct('PartyCommandAuthenticationProblem', {})
+          )(body)
+        );
+        assert.equal(body.status, 401);
+        assert.equal(JSON.stringify(body).includes(assertion.token), false);
+        assert.equal(harness.snapshot().invocations.length, 0);
+      }
+    );
   });
 });
 
@@ -545,7 +608,10 @@ test('missing and malformed verification configuration are retryable and never r
   await forEachSequential(
     [
       {},
-      { ...assertion.environment, ONTOS_GATEWAY_ISSUER: 'not-an-absolute-http-url' },
+      {
+        ...assertion.environment,
+        ONTOS_GATEWAY_ISSUER: 'not-an-absolute-http-url',
+      },
       { ...assertion.environment, ONTOS_GATEWAY_PUBLIC_JWKS: '{malformed' },
     ],
     async (environment) => {
@@ -555,17 +621,24 @@ test('missing and malformed verification configuration are retryable and never r
           app,
           commandRequest('request-search-rebuild', {}, assertion.token, {
             'idempotency-key': 'configuration-test',
-          }),
+          })
         );
         assert.equal(response.status, 503);
         assert.equal(response.headers.get('www-authenticate'), null);
-        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+        assert.match(
+          response.headers.get('content-type') ?? '',
+          /application\/problem\+json/u
+        );
         const body = await response.json();
-        assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandUnavailableProblem', {}))(body));
+        assert.ok(
+          Schema.is(Schema.TaggedStruct('PartyCommandUnavailableProblem', {}))(
+            body
+          )
+        );
         assert.equal(body.retryable, true);
         assert.equal(harness.snapshot().invocations.length, 0);
       });
-    },
+    }
   );
 });
 
@@ -583,9 +656,9 @@ test('redemption storage outages return safe retryable problems before Action an
             new ReadHandlerNotFound({
               code: 'read_handler_not_found',
               reason: 'No fixture decision',
-            }),
-          ),
-        ),
+            })
+          )
+        )
       ),
   };
   const app = mounted(harness, assertion.environment, readRuntime, {
@@ -593,7 +666,7 @@ test('redemption storage outages return safe retryable problems before Action an
       Effect.fail(
         new GatewayAssertionRedemptionUnavailableError({
           reason: 'private redemption storage diagnostic',
-        }),
+        })
       ),
   });
   const before = harness.snapshot();
@@ -601,9 +674,14 @@ test('redemption storage outages return safe retryable problems before Action an
     await forEachSequential(
       [
         {
-          request: commandRequest('request-search-rebuild', {}, assertion.token, {
-            'idempotency-key': 'redemption-unavailable',
-          }),
+          request: commandRequest(
+            'request-search-rebuild',
+            {},
+            assertion.token,
+            {
+              'idempotency-key': 'redemption-unavailable',
+            }
+          ),
           tag: 'PartyCommandUnavailableProblem',
         },
         {
@@ -615,7 +693,10 @@ test('redemption storage outages return safe retryable problems before Action an
         const response = await handle(app, request);
         assert.equal(response.status, 503);
         assert.equal(response.headers.get('www-authenticate'), null);
-        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+        assert.match(
+          response.headers.get('content-type') ?? '',
+          /application\/problem\+json/u
+        );
         const body = await response.json();
         assert.equal(body._tag, tag);
         assert.equal(body.status, 503);
@@ -627,7 +708,7 @@ test('redemption storage outages return safe retryable problems before Action an
         assert.equal(encoded.includes(principal.tenantId), false);
         assert.equal(reads, 0);
         assert.deepEqual(harness.snapshot(), before);
-      },
+      }
     );
   } finally {
     await app.dispose();
@@ -650,47 +731,70 @@ test('generated governed reads authenticate through the shared adapter before st
             new ReadHandlerNotFound({
               code: 'read_handler_not_found',
               reason: 'No fixture decision',
-            }),
-          ),
-        ),
+            })
+          )
+        )
       ),
   };
-  await withMountedApp(mounted(harness, assertion.environment, readRuntime), async (app) => {
-    await forEachSequential([undefined, 'not-a-jwt'], async (token) => {
-      const response = await handle(app, decisionRequest(randomUUID(), token));
-      assert.equal(response.status, 401);
-      assert.equal(response.headers.get('www-authenticate'), 'Bearer');
-      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-      const body = await response.json();
-      assert.ok(
-        Schema.is(Schema.TaggedStruct('PartyMatchDecisionAuthenticationProblem', {}))(body),
+  await withMountedApp(
+    mounted(harness, assertion.environment, readRuntime),
+    async (app) => {
+      await forEachSequential([undefined, 'not-a-jwt'], async (token) => {
+        const response = await handle(
+          app,
+          decisionRequest(randomUUID(), token)
+        );
+        assert.equal(response.status, 401);
+        assert.equal(response.headers.get('www-authenticate'), 'Bearer');
+        assert.match(
+          response.headers.get('content-type') ?? '',
+          /application\/problem\+json/u
+        );
+        const body = await response.json();
+        assert.ok(
+          Schema.is(
+            Schema.TaggedStruct('PartyMatchDecisionAuthenticationProblem', {})
+          )(body)
+        );
+        assert.equal(reads, 0);
+      });
+      const missingCorrelation = await handle(
+        app,
+        decisionRequest(randomUUID(), assertion.token, {
+          'x-correlation-id': '',
+        })
       );
+      assert.equal(missingCorrelation.status, 400);
       assert.equal(reads, 0);
-    });
-    const missingCorrelation = await handle(
-      app,
-      decisionRequest(randomUUID(), assertion.token, { 'x-correlation-id': '' }),
-    );
-    assert.equal(missingCorrelation.status, 400);
-    assert.equal(reads, 0);
-    const valid = await handle(app, decisionRequest(randomUUID(), assertion.token));
-    assert.equal(valid.status, 404);
-    assert.equal(reads, 1);
-    assert.deepEqual(receivedPrincipals, [principal]);
-  });
+      const valid = await handle(
+        app,
+        decisionRequest(randomUUID(), assertion.token)
+      );
+      assert.equal(valid.status, 404);
+      assert.equal(reads, 1);
+      assert.deepEqual(receivedPrincipals, [principal]);
+    }
+  );
 
-  await withMountedApp(mounted(harness, {}, readRuntime), async (unavailableApp) => {
-    const unavailable = await handle(
-      unavailableApp,
-      decisionRequest(randomUUID(), assertion.otherToken),
-    );
-    assert.equal(unavailable.status, 503);
-    assert.equal(unavailable.headers.get('www-authenticate'), null);
-    const body = await unavailable.json();
-    assert.ok(Schema.is(Schema.TaggedStruct('PartyMatchDecisionUnavailableProblem', {}))(body));
-    assert.equal(body.retryable, true);
-    assert.equal(reads, 1);
-  });
+  await withMountedApp(
+    mounted(harness, {}, readRuntime),
+    async (unavailableApp) => {
+      const unavailable = await handle(
+        unavailableApp,
+        decisionRequest(randomUUID(), assertion.otherToken)
+      );
+      assert.equal(unavailable.status, 503);
+      assert.equal(unavailable.headers.get('www-authenticate'), null);
+      const body = await unavailable.json();
+      assert.ok(
+        Schema.is(
+          Schema.TaggedStruct('PartyMatchDecisionUnavailableProblem', {})
+        )(body)
+      );
+      assert.equal(body.retryable, true);
+      assert.equal(reads, 1);
+    }
+  );
 });
 
 test('the complete generated governed Read seam maps every Core failure to its declared HTTP problem', async () => {
@@ -708,7 +812,10 @@ test('the complete generated governed Read seam maps every Core failure to its d
       'PartyMatchDecisionForbiddenProblem',
     ],
     [
-      new OperationAuthenticationRequired({ code: 'operation_authentication_required', reason }),
+      new OperationAuthenticationRequired({
+        code: 'operation_authentication_required',
+        reason,
+      }),
       401,
       'PartyMatchDecisionAuthenticationProblem',
     ],
@@ -718,27 +825,42 @@ test('the complete generated governed Read seam maps every Core failure to its d
       'PartyMatchDecisionForbiddenProblem',
     ],
     [
-      new OperationContextInvalid({ code: 'operation_context_invalid', reason }),
+      new OperationContextInvalid({
+        code: 'operation_context_invalid',
+        reason,
+      }),
       403,
       'PartyMatchDecisionForbiddenProblem',
     ],
     [
-      new OperationContextUnavailable({ code: 'operation_context_unavailable', reason }),
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason,
+      }),
       503,
       'PartyMatchDecisionUnavailableProblem',
     ],
     [
-      new ReadEvidencePersistenceError({ code: 'read_evidence_persistence_failed', reason }),
+      new ReadEvidencePersistenceError({
+        code: 'read_evidence_persistence_failed',
+        reason,
+      }),
       503,
       'PartyMatchDecisionUnavailableProblem',
     ],
     [
-      new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }),
+      new ReadEvidenceValidationError({
+        code: 'read_evidence_invalid',
+        reason,
+      }),
       500,
       'PartyMatchDecisionInternalProblem',
     ],
     [
-      new ReadHandlerExecutionError({ code: 'read_handler_execution_failed', reason }),
+      new ReadHandlerExecutionError({
+        code: 'read_handler_execution_failed',
+        reason,
+      }),
       500,
       'PartyMatchDecisionInternalProblem',
     ],
@@ -763,7 +885,10 @@ test('the complete generated governed Read seam maps every Core failure to its d
       'PartyMatchDecisionForbiddenProblem',
     ],
     [
-      new ReadPermissionUnavailable({ code: 'read_permission_unavailable', reason }),
+      new ReadPermissionUnavailable({
+        code: 'read_permission_unavailable',
+        reason,
+      }),
       503,
       'PartyMatchDecisionUnavailableProblem',
     ],
@@ -788,7 +913,10 @@ test('the complete generated governed Read seam maps every Core failure to its d
       'PartyMatchDecisionPolicyProblem',
     ],
     [
-      new ReadPolicyEvaluationError({ code: 'read_policy_evaluation_failed', reason }),
+      new ReadPolicyEvaluationError({
+        code: 'read_policy_evaluation_failed',
+        reason,
+      }),
       503,
       'PartyMatchDecisionUnavailableProblem',
     ],
@@ -809,25 +937,41 @@ test('the complete generated governed Read seam maps every Core failure to its d
   await withMountedApp(
     mounted(makeActionTestHarness(), assertion.environment, readRuntime),
     async (app) => {
-      await forEachSequential(cases, async ([nextFailure, expectedStatus, expectedTag]) => {
-        failure = nextFailure;
-        const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
-        assert.equal(response.status, expectedStatus, nextFailure._tag);
-        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-        assert.equal(
-          response.headers.get('www-authenticate'),
-          expectedStatus === 401 ? 'Bearer' : null,
-        );
-        const body = await response.json();
-        assert.ok(Schema.is(Schema.TaggedStruct(expectedTag, {}))(body), nextFailure._tag);
-        assert.equal(body.status, expectedStatus, nextFailure._tag);
-        assert.equal(JSON.stringify(body).includes(reason), false, nextFailure._tag);
-        if (expectedStatus === 503) {
-          assert.equal(body.retryable, true, nextFailure._tag);
+      await forEachSequential(
+        cases,
+        async ([nextFailure, expectedStatus, expectedTag]) => {
+          failure = nextFailure;
+          const response = await handle(
+            app,
+            decisionRequest(randomUUID(), assertion.token)
+          );
+          assert.equal(response.status, expectedStatus, nextFailure._tag);
+          assert.match(
+            response.headers.get('content-type') ?? '',
+            /application\/problem\+json/u
+          );
+          assert.equal(
+            response.headers.get('www-authenticate'),
+            expectedStatus === 401 ? 'Bearer' : null
+          );
+          const body = await response.json();
+          assert.ok(
+            Schema.is(Schema.TaggedStruct(expectedTag, {}))(body),
+            nextFailure._tag
+          );
+          assert.equal(body.status, expectedStatus, nextFailure._tag);
+          assert.equal(
+            JSON.stringify(body).includes(reason),
+            false,
+            nextFailure._tag
+          );
+          if (expectedStatus === 503) {
+            assert.equal(body.retryable, true, nextFailure._tag);
+          }
         }
-      });
+      );
       assert.equal(reads, cases.length);
-    },
+    }
   );
 });
 
@@ -839,14 +983,24 @@ test('the generated governed Read seam sanitizes unexpected runtime defects', as
   await withMountedApp(
     mounted(makeActionTestHarness(), assertion.environment, readRuntime),
     async (app) => {
-      const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
+      const response = await handle(
+        app,
+        decisionRequest(randomUUID(), assertion.token)
+      );
       assert.equal(response.status, 500);
-      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      assert.match(
+        response.headers.get('content-type') ?? '',
+        /application\/problem\+json/u
+      );
       const body = await response.json();
-      assert.ok(Schema.is(Schema.TaggedStruct('PartyMatchDecisionInternalProblem', {}))(body));
+      assert.ok(
+        Schema.is(Schema.TaggedStruct('PartyMatchDecisionInternalProblem', {}))(
+          body
+        )
+      );
       assert.equal(body.status, 500);
       assert.equal(JSON.stringify(body).includes('private'), false);
-    },
+    }
   );
 });
 
@@ -864,19 +1018,24 @@ test('replayed assertions are challenged before a second Action or generated Rea
             new ReadHandlerNotFound({
               code: 'read_handler_not_found',
               reason: 'No fixture decision',
-            }),
-          ),
-        ),
+            })
+          )
+        )
       ),
   };
   await withMountedApp(
-    mounted(harness, assertion.environment, readRuntime, makeSingleUseRedemption()),
+    mounted(
+      harness,
+      assertion.environment,
+      readRuntime,
+      makeSingleUseRedemption()
+    ),
     async (app) => {
       const firstAction = await handle(
         app,
         commandRequest('request-search-rebuild', {}, assertion.token, {
           'idempotency-key': 'first-redemption',
-        }),
+        })
       );
       assert.notEqual(firstAction.status, 401);
       assert.equal(harness.snapshot().invocations.length, 1);
@@ -885,31 +1044,46 @@ test('replayed assertions are challenged before a second Action or generated Rea
         app,
         commandRequest('request-search-rebuild', {}, assertion.token, {
           'idempotency-key': 'second-redemption',
-        }),
+        })
       );
       assert.equal(replayedAction.status, 401);
       assert.equal(replayedAction.headers.get('www-authenticate'), 'Bearer');
-      assert.match(replayedAction.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      assert.match(
+        replayedAction.headers.get('content-type') ?? '',
+        /application\/problem\+json/u
+      );
       assert.equal(harness.snapshot().invocations.length, 1);
 
       const actionAssertionReadReplay = await handle(
         app,
-        decisionRequest(randomUUID(), assertion.token),
+        decisionRequest(randomUUID(), assertion.token)
       );
       assert.equal(actionAssertionReadReplay.status, 401);
-      assert.equal(actionAssertionReadReplay.headers.get('www-authenticate'), 'Bearer');
+      assert.equal(
+        actionAssertionReadReplay.headers.get('www-authenticate'),
+        'Bearer'
+      );
       assert.equal(reads, 0);
 
-      const firstRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+      const firstRead = await handle(
+        app,
+        decisionRequest(randomUUID(), assertion.otherToken)
+      );
       assert.equal(firstRead.status, 404);
       assert.equal(reads, 1);
 
-      const replayedRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+      const replayedRead = await handle(
+        app,
+        decisionRequest(randomUUID(), assertion.otherToken)
+      );
       assert.equal(replayedRead.status, 401);
       assert.equal(replayedRead.headers.get('www-authenticate'), 'Bearer');
-      assert.match(replayedRead.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      assert.match(
+        replayedRead.headers.get('content-type') ?? '',
+        /application\/problem\+json/u
+      );
       assert.equal(reads, 1);
-    },
+    }
   );
 });
 
@@ -925,18 +1099,24 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
     },
   };
   await withMountedApp(
-    mounted(harness, assertion.environment, undefined, nonPersistingRedemption, observingRuntime),
+    mounted(
+      harness,
+      assertion.environment,
+      undefined,
+      nonPersistingRedemption,
+      observingRuntime
+    ),
     async (app) => {
       const missingKey = await handle(
         app,
-        commandRequest('request-search-rebuild', {}, assertion.token),
+        commandRequest('request-search-rebuild', {}, assertion.token)
       );
       assert.equal(missingKey.status, 428);
       const missingKeyBody = await missingKey.json();
       assert.ok(
-        Schema.is(Schema.TaggedStruct('PartyCommandPreconditionRequiredProblem', {}))(
-          missingKeyBody,
-        ),
+        Schema.is(
+          Schema.TaggedStruct('PartyCommandPreconditionRequiredProblem', {})
+        )(missingKeyBody)
       );
       assert.equal(runtimeCalls, 1);
       const missingCorrelation = await handle(
@@ -944,14 +1124,14 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
         commandRequest('request-search-rebuild', {}, assertion.token, {
           'idempotency-key': 'correlation-test',
           'x-correlation-id': '',
-        }),
+        })
       );
       assert.equal(missingCorrelation.status, 400);
       const missingCorrelationBody = await missingCorrelation.json();
       assert.ok(
         Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(
-          missingCorrelationBody,
-        ),
+          missingCorrelationBody
+        )
       );
       assert.equal(runtimeCalls, 1);
       const oversizedCorrelation = await handle(
@@ -959,15 +1139,15 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
         commandRequest('request-search-rebuild', {}, assertion.token, {
           'idempotency-key': 'oversized-correlation-test',
           'x-correlation-id': 'x'.repeat(201),
-        }),
+        })
       );
       assert.equal(oversizedCorrelation.status, 400);
       Schema.decodeUnknownSync(PartyCommandInvalidRequestProblemSchema)(
-        await oversizedCorrelation.json(),
+        await oversizedCorrelation.json()
       );
       assert.equal(runtimeCalls, 1);
       assert.equal(harness.snapshot().invocations.length, 0);
-    },
+    }
   );
 });
 
@@ -985,7 +1165,7 @@ test('the governed runner passes safe transport metadata through one complete Ac
         'idempotency-key': 'transport-test',
         'x-correlation-id': correlationId,
         'x-trace-id': 'trace-transport-test',
-      }),
+      })
     );
     assert.equal(response.status, 200);
     const snapshot = harness.snapshot();
@@ -998,7 +1178,10 @@ test('the governed runner passes safe transport metadata through one complete Ac
       traceId: 'trace-transport-test',
     });
     assert.deepEqual(snapshot.committed[0]?.principal, principal);
-    assert.equal(snapshot.committed[0]?.actionKey, 'party.registry.request-search-rebuild');
+    assert.equal(
+      snapshot.committed[0]?.actionKey,
+      'party.registry.request-search-rebuild'
+    );
   });
 });
 
@@ -1018,19 +1201,30 @@ test('a decoded relationship timestamp reaches the Action runtime exactly once',
     },
   };
   await withMountedApp(
-    mounted(harness, assertion.environment, undefined, nonPersistingRedemption, actionRuntime),
+    mounted(
+      harness,
+      assertion.environment,
+      undefined,
+      nonPersistingRedemption,
+      actionRuntime
+    ),
     async (app) => {
       const response = await handle(
         app,
-        commandRequest('create-party-relationship', relationshipPayload, assertion.token, {
-          'idempotency-key': 'relationship-timestamp-test',
-        }),
+        commandRequest(
+          'create-party-relationship',
+          relationshipPayload,
+          assertion.token,
+          {
+            'idempotency-key': 'relationship-timestamp-test',
+          }
+        )
       );
       assert.equal(response.status, 400);
       const body = await response.json();
       assert.equal(body._tag, 'PartyCommandInvalidRequestProblem');
       assert.equal(runtimeCalls, 1);
-    },
+    }
   );
 });
 
@@ -1049,20 +1243,23 @@ test('an unexpected runtime defect is sanitized by the governed outer HTTP seam'
       undefined,
       nonPersistingRedemption,
       defectiveRuntime,
-      observedLogs,
+      observedLogs
     ),
     async (app) => {
       const response = await handle(
         app,
         commandRequest('request-search-rebuild', {}, assertion.token, {
           'idempotency-key': 'runner-defect-test',
-        }),
+        })
       );
       assert.equal(response.status, 500);
       const body = await response.json();
       assert.equal(body._tag, 'PartyCommandInternalProblem');
       assert.equal(body.status, 500);
-      assert.equal(JSON.stringify(body).includes('private governed runner defect'), false);
+      assert.equal(
+        JSON.stringify(body).includes('private governed runner defect'),
+        false
+      );
       assert.equal(harness.snapshot().invocations.length, 0);
       assert.equal(observedLogs.length, 1);
       const [entry] = observedLogs;
@@ -1073,13 +1270,17 @@ test('an unexpected runtime defect is sanitized by the governed outer HTTP seam'
       assert.match(entry, /party-command-test/u);
       assert.doesNotMatch(entry, new RegExp(assertion.token, 'u'));
       assert.doesNotMatch(entry, /runner-defect-test/u);
-    },
+    }
   );
 });
 
 test('the endpoint-owned mapper preserves representative Core failure semantics', async () => {
   const assertion = await makeAssertion();
-  const cases: readonly [failure: ActionCoreError, status: number, tag: string][] = [
+  const cases: readonly [
+    failure: ActionCoreError,
+    status: number,
+    tag: string,
+  ][] = [
     [
       new ActionPayloadValidationError({
         code: 'action_payload_invalid',
@@ -1179,27 +1380,36 @@ test('the endpoint-owned mapper preserves representative Core failure semantics'
     ],
   ];
 
-  await forEachSequential(cases, async ([failure, expectedStatus, expectedTag]) => {
-    const harness = makeActionTestHarness();
-    const failingRuntime: ActionRuntimeService = {
-      resolveActionCommit: harness.runtime.resolveActionCommit,
-      runAction: () => Effect.fail(failure),
-    };
-    await withMountedApp(
-      mounted(harness, assertion.environment, undefined, nonPersistingRedemption, failingRuntime),
-      async (app) => {
-        const response = await handle(
-          app,
-          commandRequest('request-search-rebuild', {}, assertion.token, {
-            'idempotency-key': `mapping-${failure._tag}`,
-          }),
-        );
-        assert.equal(response.status, expectedStatus, failure._tag);
-        const body = await response.json();
-        assert.equal(body._tag, expectedTag, failure._tag);
-      },
-    );
-  });
+  await forEachSequential(
+    cases,
+    async ([failure, expectedStatus, expectedTag]) => {
+      const harness = makeActionTestHarness();
+      const failingRuntime: ActionRuntimeService = {
+        resolveActionCommit: harness.runtime.resolveActionCommit,
+        runAction: () => Effect.fail(failure),
+      };
+      await withMountedApp(
+        mounted(
+          harness,
+          assertion.environment,
+          undefined,
+          nonPersistingRedemption,
+          failingRuntime
+        ),
+        async (app) => {
+          const response = await handle(
+            app,
+            commandRequest('request-search-rebuild', {}, assertion.token, {
+              'idempotency-key': `mapping-${failure._tag}`,
+            })
+          );
+          assert.equal(response.status, expectedStatus, failure._tag);
+          const body = await response.json();
+          assert.equal(body._tag, expectedTag, failure._tag);
+        }
+      );
+    }
+  );
 });
 
 test('endpoint-local mappings keep declared not-found capability distinct over HTTP', async () => {
@@ -1209,10 +1419,14 @@ test('endpoint-local mappings keep declared not-found capability distinct over H
     reason: 'endpoint capability fixture',
   });
   const actionRuntime: ActionRuntimeService = {
-    resolveActionCommit: () => Effect.die('commit recovery is outside the fixture'),
+    resolveActionCommit: () =>
+      Effect.die('commit recovery is outside the fixture'),
     runAction: () => Effect.fail(failure),
   };
-  const app = mountedOrganizationEngagement(assertion.environment, actionRuntime);
+  const app = mountedOrganizationEngagement(
+    assertion.environment,
+    actionRuntime
+  );
   const profileRef = {
     moduleId: 'party.registry',
     resourceId: randomUUID(),
@@ -1222,10 +1436,16 @@ test('endpoint-local mappings keep declared not-found capability distinct over H
   try {
     const attachResponse = await handle(
       app,
-      engagementRequest('/contacts/engagement/organizations/attach', { partyRef }, assertion.token),
+      engagementRequest(
+        '/contacts/engagement/organizations/attach',
+        { partyRef },
+        assertion.token
+      )
     );
     assert.equal(attachResponse.status, 500);
-    const attachBody = Schema.decodeUnknownSync(ProblemTagSchema)(await attachResponse.json());
+    const attachBody = Schema.decodeUnknownSync(ProblemTagSchema)(
+      await attachResponse.json()
+    );
     assert.equal(attachBody._tag, 'ContactsInternalProblem');
 
     const archiveResponse = await handle(
@@ -1233,11 +1453,13 @@ test('endpoint-local mappings keep declared not-found capability distinct over H
       engagementRequest(
         '/contacts/engagement/organizations/archive',
         { profileRef },
-        assertion.otherToken,
-      ),
+        assertion.otherToken
+      )
     );
     assert.equal(archiveResponse.status, 404);
-    const archiveBody = Schema.decodeUnknownSync(ProblemTagSchema)(await archiveResponse.json());
+    const archiveBody = Schema.decodeUnknownSync(ProblemTagSchema)(
+      await archiveResponse.json()
+    );
     assert.equal(archiveBody._tag, 'ContactsNotFoundProblem');
   } finally {
     await app.dispose();
@@ -1255,11 +1477,13 @@ test('real Core permission denial is a durable 403 and does not execute the comm
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'permission-test',
-      }),
+      })
     );
     assert.equal(response.status, 403);
     const body = await response.json();
-    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandForbiddenProblem', {}))(body));
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandForbiddenProblem', {}))(body)
+    );
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().permissionDenials.length, 1);
   });
@@ -1272,7 +1496,8 @@ test('the real handler translates domain conflicts and rolls back without succes
     tenantPermission: 'allowed',
     services: [
       bindActionTestServices(archivePartyAction, {
-        transition: () => Effect.succeed({ _tag: 'conflict' as const, value: archivedParty }),
+        transition: () =>
+          Effect.succeed({ _tag: 'conflict' as const, value: archivedParty }),
       }),
     ],
   });
@@ -1281,11 +1506,13 @@ test('the real handler translates domain conflicts and rolls back without succes
       app,
       commandRequest('archive-party', archivePayload, assertion.token, {
         'idempotency-key': 'conflict-test',
-      }),
+      })
     );
     assert.equal(response.status, 409);
     const body = await response.json();
-    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandConflictProblem', {}))(body));
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandConflictProblem', {}))(body)
+    );
     assert.equal(body.code, 'party_lifecycle_conflict');
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().committed.length, 0);
@@ -1294,7 +1521,10 @@ test('the real handler translates domain conflicts and rolls back without succes
 
 test('alias conflicts preserve only safe canonical recovery metadata', async () => {
   const assertion = await makeAssertion();
-  const canonicalPartyRef = { ...partyRef, resourceId: 'a4000000-0000-4000-8000-000000000002' };
+  const canonicalPartyRef = {
+    ...partyRef,
+    resourceId: 'a4000000-0000-4000-8000-000000000002',
+  };
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
@@ -1307,7 +1537,7 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
               canonicalPartyRef,
               code: 'party_alias_write_rejected',
               reason: 'Private diagnostic must never leave the owner boundary',
-            }),
+            })
           ),
       }),
     ],
@@ -1317,11 +1547,15 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
       app,
       commandRequest('archive-party', archivePayload, assertion.token, {
         'idempotency-key': 'alias-test',
-      }),
+      })
     );
     assert.equal(response.status, 409);
     const body = await response.json();
-    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandAliasWriteRejectedProblem', {}))(body));
+    assert.ok(
+      Schema.is(
+        Schema.TaggedStruct('PartyCommandAliasWriteRejectedProblem', {})
+      )(body)
+    );
     assert.deepEqual(body.aliasPartyRef, partyRef);
     assert.deepEqual(body.canonicalPartyRef, canonicalPartyRef);
     assert.equal(JSON.stringify(body).includes('Private diagnostic'), false);
@@ -1340,7 +1574,7 @@ test('committed request replay stays a terminal 409 and does not execute or emit
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'replay-test',
-      }),
+      })
     );
     assert.equal(first.status, 200);
     const result = await first.json();
@@ -1351,13 +1585,20 @@ test('committed request replay stays a terminal 409 and does not execute or emit
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
         'idempotency-key': 'replay-test',
-      }),
+      })
     );
     assert.equal(replay.status, 409);
     const body = await replay.json();
-    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandAlreadyCommittedProblem', {}))(body));
+    assert.ok(
+      Schema.is(Schema.TaggedStruct('PartyCommandAlreadyCommittedProblem', {}))(
+        body
+      )
+    );
     assert.equal(body.code, 'action_already_committed');
-    assert.equal(body.invocationId, harness.snapshot().invocations[0]?.actionInvocationId);
+    assert.equal(
+      body.invocationId,
+      harness.snapshot().invocations[0]?.actionInvocationId
+    );
     assert.equal(body.retryCommand, false);
     assert.equal(body.resolution, 'REFRESH_GOVERNED_READS');
     assert.equal(harness.snapshot().invocations.length, 1);
@@ -1384,7 +1625,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
             new PartyPersistenceUnavailable({
               code: 'party_persistence_unavailable',
               reason: 'private database diagnostic',
-            }),
+            })
           ),
       }),
     },
@@ -1402,24 +1643,30 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
       tenantPermission: 'allowed',
       services: [item.service],
     });
-    await withMountedApp(mounted(harness, assertion.environment), async (app) => {
-      const response = await handle(
-        app,
-        commandRequest('archive-party', archivePayload, assertion.token, {
-          'idempotency-key': `failure-${item.status}`,
-        }),
-      );
-      assert.equal(response.status, item.status);
-      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-      const body = await response.json();
-      assert.ok(Schema.is(Schema.TaggedStruct(item.tag, {}))(body));
-      assert.equal(body.status, item.status);
-      assert.equal(JSON.stringify(body).includes('private'), false);
-      if (item.status === 503) {
-        assert.equal(body.retryable, true);
+    await withMountedApp(
+      mounted(harness, assertion.environment),
+      async (app) => {
+        const response = await handle(
+          app,
+          commandRequest('archive-party', archivePayload, assertion.token, {
+            'idempotency-key': `failure-${item.status}`,
+          })
+        );
+        assert.equal(response.status, item.status);
+        assert.match(
+          response.headers.get('content-type') ?? '',
+          /application\/problem\+json/u
+        );
+        const body = await response.json();
+        assert.ok(Schema.is(Schema.TaggedStruct(item.tag, {}))(body));
+        assert.equal(body.status, item.status);
+        assert.equal(JSON.stringify(body).includes('private'), false);
+        if (item.status === 503) {
+          assert.equal(body.retryable, true);
+        }
+        assert.equal(harness.snapshot().committed.length, 0);
       }
-      assert.equal(harness.snapshot().committed.length, 0);
-    });
+    );
   });
 });
 
@@ -1435,7 +1682,7 @@ test('semantically insufficient Party evidence is a declared 422, not a server d
             new PartyEvidenceInsufficient({
               code: 'party_evidence_insufficient',
               reason: 'Private evidence diagnostics',
-            }),
+            })
           ),
       }),
     ],
@@ -1445,7 +1692,7 @@ test('semantically insufficient Party evidence is a declared 422, not a server d
       app,
       commandRequest('create-party', createPayload, assertion.token, {
         'idempotency-key': 'evidence-test',
-      }),
+      })
     );
     assert.equal(response.status, 422);
     const body = await response.json();
@@ -1484,17 +1731,22 @@ test('the Core request hash rejects reuse of an idempotency key for a different 
       app,
       commandRequest('create-party', createPayload, assertion.token, {
         'idempotency-key': 'hash-test',
-      }),
+      })
     );
     assert.equal(first.status, 200);
     const changed = await handle(
       app,
       commandRequest(
         'create-party',
-        { candidate: { ...createPayload.candidate, displayName: 'Different organization' } },
+        {
+          candidate: {
+            ...createPayload.candidate,
+            displayName: 'Different organization',
+          },
+        },
         assertion.token,
-        { 'idempotency-key': 'hash-test' },
-      ),
+        { 'idempotency-key': 'hash-test' }
+      )
     );
     assert.equal(changed.status, 409);
     const changedBody = await changed.json();
@@ -1511,13 +1763,21 @@ test('commit resolution requires authentication and a valid invocation without c
     const missingAuth = await handle(app, recoveryRequest(randomUUID()));
     assert.equal(missingAuth.status, 401);
     assert.equal(missingAuth.headers.get('www-authenticate'), 'Bearer');
-    const malformed = await handle(app, recoveryRequest('not-an-id', assertion.token));
+    const malformed = await handle(
+      app,
+      recoveryRequest('not-an-id', assertion.token)
+    );
     assert.equal(malformed.status, 400);
     const malformedBody = await malformed.json();
     assert.ok(
-      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(malformedBody),
+      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(
+        malformedBody
+      )
     );
-    const absent = await handle(app, recoveryRequest(randomUUID(), assertion.token));
+    const absent = await handle(
+      app,
+      recoveryRequest(randomUUID(), assertion.token)
+    );
     assert.equal(absent.status, 404);
     assert.equal(harness.snapshot().invocations.length, 0);
   });
@@ -1529,7 +1789,8 @@ test('an open invocation resolves explicitly without authorizing automatic comma
     actionPermission: 'allowed',
     services: [
       bindActionTestServices(archivePartyAction, {
-        transition: () => Effect.succeed({ _tag: 'conflict' as const, value: archivedParty }),
+        transition: () =>
+          Effect.succeed({ _tag: 'conflict' as const, value: archivedParty }),
       }),
     ],
     tenantPermission: 'allowed',
@@ -1539,12 +1800,15 @@ test('an open invocation resolves explicitly without authorizing automatic comma
       app,
       commandRequest('archive-party', archivePayload, assertion.token, {
         'idempotency-key': 'pending-resolution',
-      }),
+      })
     );
     assert.equal(failed.status, 409);
     const invocationId = harness.snapshot().invocations[0]?.actionInvocationId;
     assert.ok(invocationId);
-    const resolution = await handle(app, recoveryRequest(invocationId, assertion.token));
+    const resolution = await handle(
+      app,
+      recoveryRequest(invocationId, assertion.token)
+    );
     assert.equal(resolution.status, 200);
     assert.deepEqual(await resolution.json(), {
       _tag: 'PartyCommandCommitResolution',
@@ -1559,7 +1823,10 @@ test('an open invocation resolves explicitly without authorizing automatic comma
 
 test('actual Core commit acknowledgement loss resolves and the mounted governed Read returns the original decision without rerunning the Action', async () => {
   const assertion = await makeAssertion();
-  const decisions = new Map<string, typeof PartyMatchDecisionRecordSchema.Type>();
+  const decisions = new Map<
+    string,
+    typeof PartyMatchDecisionRecordSchema.Type
+  >();
   let executions = 0;
   const harness = makeActionTestHarness({
     actionPermission: 'allowed',
@@ -1602,30 +1869,36 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
   const reads: ReadRuntimeService = {
     runRead: (input) =>
       Effect.gen(function* readOriginalDecision() {
-        const actor = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
-          input.principal,
-        ).pipe(
+        const actor = yield* Schema.decodeUnknownEffect(
+          TrustedPrincipalContextSchema
+        )(input.principal).pipe(
           Effect.mapError(
             () =>
-              new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'Invalid actor' }),
-          ),
+              new ReadPermissionDenied({
+                code: 'read_permission_denied',
+                reason: 'Invalid actor',
+              })
+          )
         );
-        if (actor.principalId !== principal.principalId || actor.tenantId !== principal.tenantId) {
+        if (
+          actor.principalId !== principal.principalId ||
+          actor.tenantId !== principal.tenantId
+        ) {
           return yield* new ReadPermissionDenied({
             code: 'read_permission_denied',
             reason: 'Decision belongs to another principal',
           });
         }
-        const query = yield* Schema.decodeUnknownEffect(PartyMatchDecisionRequestSchema)(
-          input.input,
-        ).pipe(
+        const query = yield* Schema.decodeUnknownEffect(
+          PartyMatchDecisionRequestSchema
+        )(input.input).pipe(
           Effect.mapError(
             () =>
               new ReadHandlerNotFound({
                 code: 'read_handler_not_found',
                 reason: 'No decision identity',
-              }),
-          ),
+              })
+          )
         );
         const decision =
           query.actionInvocationId === undefined
@@ -1637,68 +1910,93 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
             reason: 'No persisted decision',
           });
         }
-        return yield* Schema.decodeUnknownEffect(input.registration.descriptor.resultSchema)(
-          decision,
-        ).pipe(
+        return yield* Schema.decodeUnknownEffect(
+          input.registration.descriptor.resultSchema
+        )(decision).pipe(
           Effect.mapError(
             () =>
               new ReadResultValidationError({
                 code: 'read_result_invalid',
                 reason: 'Invalid decision fixture',
-              }),
-          ),
+              })
+          )
         );
       }),
   };
-  await withMountedApp(mounted(harness, assertion.environment, reads), async (app) => {
-    const uncertain = await handle(
-      app,
-      commandRequest('create-party', createPayload, assertion.token, {
-        'idempotency-key': 'uncertain-create',
-      }),
-    );
-    assert.equal(uncertain.status, 503);
-    const body = await uncertain.json();
-    assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandCommitIndeterminateProblem', {}))(body));
-    assert.equal(body.resolution, 'RESOLVE_COMMIT');
-    assert.equal(body.retryCommand, false);
-    const invocationId = harness.snapshot().invocations[0]?.actionInvocationId;
-    assert.ok(invocationId);
-    assert.equal(body.invocationId, invocationId);
-    assert.equal(harness.snapshot().committed.length, 1);
-    const committedSnapshot = harness.snapshot();
-    const deniedRecovery = await handle(app, recoveryRequest(invocationId, assertion.otherToken));
-    assert.equal(deniedRecovery.status, 404);
-    const resolution = await handle(app, recoveryRequest(invocationId, assertion.token));
-    assert.equal(resolution.status, 200);
-    assert.deepEqual(await resolution.json(), {
-      _tag: 'PartyCommandCommitResolution',
-      invocationId,
-      retryCommand: false,
-      state: 'COMMITTED',
-    });
-    const missingReadAuth = await handle(app, decisionRequest(invocationId));
-    assert.equal(missingReadAuth.status, 401);
-    const deniedRead = await handle(app, decisionRequest(invocationId, assertion.otherToken));
-    assert.equal(deniedRead.status, 403);
-    const recovered = await handle(app, decisionRequest(invocationId, assertion.token));
-    assert.equal(recovered.status, 200);
-    assert.deepEqual(await recovered.json(), decisions.get(invocationId));
-    const replay = await handle(
-      app,
-      commandRequest('create-party', createPayload, assertion.token, {
-        'idempotency-key': 'uncertain-create',
-      }),
-    );
-    assert.equal(replay.status, 409);
-    const replayBody = await replay.json();
-    assert.ok(
-      Schema.is(Schema.TaggedStruct('PartyCommandAlreadyCommittedProblem', {}))(replayBody),
-    );
-    assert.equal(replayBody.invocationId, invocationId);
-    assert.equal(replayBody.retryCommand, false);
-    assert.equal(executions, 1);
-    assert.deepEqual(harness.snapshot().committed, committedSnapshot.committed);
-    assert.equal(harness.snapshot().invocations.length, 1);
-  });
+  await withMountedApp(
+    mounted(harness, assertion.environment, reads),
+    async (app) => {
+      const uncertain = await handle(
+        app,
+        commandRequest('create-party', createPayload, assertion.token, {
+          'idempotency-key': 'uncertain-create',
+        })
+      );
+      assert.equal(uncertain.status, 503);
+      const body = await uncertain.json();
+      assert.ok(
+        Schema.is(
+          Schema.TaggedStruct('PartyCommandCommitIndeterminateProblem', {})
+        )(body)
+      );
+      assert.equal(body.resolution, 'RESOLVE_COMMIT');
+      assert.equal(body.retryCommand, false);
+      const invocationId =
+        harness.snapshot().invocations[0]?.actionInvocationId;
+      assert.ok(invocationId);
+      assert.equal(body.invocationId, invocationId);
+      assert.equal(harness.snapshot().committed.length, 1);
+      const committedSnapshot = harness.snapshot();
+      const deniedRecovery = await handle(
+        app,
+        recoveryRequest(invocationId, assertion.otherToken)
+      );
+      assert.equal(deniedRecovery.status, 404);
+      const resolution = await handle(
+        app,
+        recoveryRequest(invocationId, assertion.token)
+      );
+      assert.equal(resolution.status, 200);
+      assert.deepEqual(await resolution.json(), {
+        _tag: 'PartyCommandCommitResolution',
+        invocationId,
+        retryCommand: false,
+        state: 'COMMITTED',
+      });
+      const missingReadAuth = await handle(app, decisionRequest(invocationId));
+      assert.equal(missingReadAuth.status, 401);
+      const deniedRead = await handle(
+        app,
+        decisionRequest(invocationId, assertion.otherToken)
+      );
+      assert.equal(deniedRead.status, 403);
+      const recovered = await handle(
+        app,
+        decisionRequest(invocationId, assertion.token)
+      );
+      assert.equal(recovered.status, 200);
+      assert.deepEqual(await recovered.json(), decisions.get(invocationId));
+      const replay = await handle(
+        app,
+        commandRequest('create-party', createPayload, assertion.token, {
+          'idempotency-key': 'uncertain-create',
+        })
+      );
+      assert.equal(replay.status, 409);
+      const replayBody = await replay.json();
+      assert.ok(
+        Schema.is(
+          Schema.TaggedStruct('PartyCommandAlreadyCommittedProblem', {})
+        )(replayBody)
+      );
+      assert.equal(replayBody.invocationId, invocationId);
+      assert.equal(replayBody.retryCommand, false);
+      assert.equal(executions, 1);
+      assert.deepEqual(
+        harness.snapshot().committed,
+        committedSnapshot.committed
+      );
+      assert.equal(harness.snapshot().invocations.length, 1);
+    }
+  );
 });

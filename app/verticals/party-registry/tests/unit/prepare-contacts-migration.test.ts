@@ -1,8 +1,10 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
 import { Client } from 'pg';
+
 import {
   classifyContactsJournalState,
   prepareContactsMigration,
@@ -16,7 +18,7 @@ interface JournalClientFixture {
 const journalClient = (
   legacy: boolean,
   contacts: boolean,
-  renameFailure?: Error,
+  renameFailure?: Error
 ): JournalClientFixture => {
   const queries: string[] = [];
   const client = new Client();
@@ -56,7 +58,7 @@ test('atomically renames the legacy journal before the Contacts migration chain'
         'alter table drizzle.__drizzle_migrations_crm rename to __drizzle_migrations_contacts',
         'commit',
       ]);
-    }),
+    })
   ));
 
 test('fresh and already-migrated journal states are committed no-ops', () =>
@@ -69,37 +71,47 @@ test('fresh and already-migrated journal states are committed no-ops', () =>
       ([legacy, contacts, expected]) =>
         Effect.gen(function* commitsJournalStateNoOp() {
           const fixture = journalClient(legacy, contacts);
-          assert.equal(yield* prepareContactsMigration(fixture.client), expected);
+          assert.equal(
+            yield* prepareContactsMigration(fixture.client),
+            expected
+          );
           assert.equal(fixture.queries[0], 'begin');
           assert.equal(fixture.queries.at(-1), 'commit');
           assert.equal(
             fixture.queries.some((query) => query.startsWith('alter table')),
-            false,
+            false
           );
         }),
-      { concurrency: 'unbounded', discard: true },
-    ),
+      { concurrency: 'unbounded', discard: true }
+    )
   ));
 
 test('ambiguous or failed journal handoff rolls back without claiming success', () =>
   runEffectTestPromise(
     Effect.gen(function* rollsBackFailedJournalHandoff() {
       const ambiguous = journalClient(true, true);
-      const ambiguousFailure = yield* Effect.flip(prepareContactsMigration(ambiguous.client));
-      assert.match(ambiguousFailure.message, /both CRM and Contacts journals exist/u);
+      const ambiguousFailure = yield* Effect.flip(
+        prepareContactsMigration(ambiguous.client)
+      );
+      assert.match(
+        ambiguousFailure.message,
+        /both CRM and Contacts journals exist/u
+      );
       assert.equal(ambiguousFailure.cause, 'ambiguous');
       assert.equal(ambiguous.queries.at(-1), 'rollback');
       assert.equal(
         ambiguous.queries.some((query) => query.startsWith('alter table')),
-        false,
+        false
       );
 
       const renameError = new Error('rename failed');
       const renameFailure = journalClient(true, false, renameError);
-      const failure = yield* Effect.flip(prepareContactsMigration(renameFailure.client));
+      const failure = yield* Effect.flip(
+        prepareContactsMigration(renameFailure.client)
+      );
       assert.match(failure.message, /PostgreSQL query failed/u);
       assert.equal(failure.cause, renameError);
       assert.equal(renameFailure.queries.at(-1), 'rollback');
       assert.equal(renameFailure.queries.includes('commit'), false);
-    }),
+    })
   ));

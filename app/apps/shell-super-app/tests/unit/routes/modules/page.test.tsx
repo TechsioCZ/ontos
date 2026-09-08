@@ -3,16 +3,20 @@ import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { Schema } from 'effect';
 import type { ReactNode } from 'react';
+
 import {
   LegalEntityIdSchema,
   ResolvedModuleTargetSchema,
   SafeTenantIdentitySchema,
 } from '../../../../shared/api.ts';
 import ContactsPage from '../../../../src/routes/[lang]/contacts/page.tsx';
-import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 
-type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resolved' }>;
+type ResolvedPageModel = Extract<
+  ModuleTargetPageModel,
+  { readonly state: 'resolved' }
+>;
 
 const {
   findApprovedVerticalPageClientMock,
@@ -35,7 +39,9 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 rstest.mock('@techsio/ui-kit/atoms/status-text', () => ({
-  StatusText: ({ children }: { readonly children: ReactNode }) => <span>{children}</span>,
+  StatusText: ({ children }: { readonly children: ReactNode }) => (
+    <span>{children}</span>
+  ),
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
@@ -47,9 +53,11 @@ rstest.mock('../../../../src/api/vertical-clients.ts', () => ({
 }));
 
 rstest.mock('../../../../src/routes/shell-frame.tsx', () => ({
-  AuthenticatedDashboardLayout: ({ children }: { readonly children: ReactNode }) => (
-    <main>{children}</main>
-  ),
+  AuthenticatedDashboardLayout: ({
+    children,
+  }: {
+    readonly children: ReactNode;
+  }) => <main>{children}</main>,
 }));
 
 rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
@@ -76,15 +84,23 @@ const shell: ResolvedPageModel['shell'] = {
     tenantId: 'tenant-1',
   }),
   legalEntities: { items: [], state: 'available' as const },
-  navigation: { items: [], state: 'available' as const, unavailableDeployments: [] },
+  navigation: {
+    items: [],
+    state: 'available' as const,
+    unavailableDeployments: [],
+  },
   selectedLegalEntityId: Schema.decodeUnknownSync(LegalEntityIdSchema)(
-    '20000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000001'
   ),
   state: 'authenticated' as const,
   tenants: { items: [], state: 'available' as const },
 };
 
-const targetFixture = (componentKey: string, entrypointKey: string, writable = true) =>
+const targetFixture = (
+  componentKey: string,
+  entrypointKey: string,
+  writable = true
+) =>
   Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
     appId: 'contacts',
     componentKey,
@@ -97,7 +113,10 @@ const resolvedModel: ResolvedPageModel = {
   routeParams: { id: 'customer-1' },
   shell,
   state: 'resolved',
-  target: targetFixture('contacts.core.page-customers', 'contacts.core.page.customers'),
+  target: targetFixture(
+    'contacts.core.page-customers',
+    'contacts.core.page.customers'
+  ),
 };
 
 interface ExactPageCase {
@@ -119,7 +138,8 @@ const exactPageCases: ExactPageCase[] = [
   {
     componentKey: 'contacts.core.page-customer-detail',
     entrypointKey: 'contacts.core.page.customer-detail',
-    renderedText: 'contacts.core.page-customer-detail:11111111-1111-4111-8111-111111111111',
+    renderedText:
+      'contacts.core.page-customer-detail:11111111-1111-4111-8111-111111111111',
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
     writable: true,
   },
@@ -140,7 +160,8 @@ const exactPageCases: ExactPageCase[] = [
   {
     componentKey: 'contacts.core.page-contact-detail',
     entrypointKey: 'contacts.core.page.contact-detail',
-    renderedText: 'contacts.core.page-contact-detail:11111111-1111-4111-8111-111111111111',
+    renderedText:
+      'contacts.core.page-contact-detail:11111111-1111-4111-8111-111111111111',
     routeParams: {
       contactId: '33333333-3333-4333-8333-333333333333',
       id: '11111111-1111-4111-8111-111111111111',
@@ -150,7 +171,8 @@ const exactPageCases: ExactPageCase[] = [
   {
     componentKey: 'contacts.core.page-contact-edit',
     entrypointKey: 'contacts.core.page.contact-edit',
-    renderedText: 'contacts.core.page-contact-edit:11111111-1111-4111-8111-111111111111',
+    renderedText:
+      'contacts.core.page-contact-edit:11111111-1111-4111-8111-111111111111',
     routeParams: {
       contactId: '33333333-3333-4333-8333-333333333333',
       id: '11111111-1111-4111-8111-111111111111',
@@ -160,7 +182,8 @@ const exactPageCases: ExactPageCase[] = [
   {
     componentKey: 'contacts.core.page-contact-create',
     entrypointKey: 'contacts.core.page.contact-create',
-    renderedText: 'contacts.core.page-contact-create:11111111-1111-4111-8111-111111111111',
+    renderedText:
+      'contacts.core.page-contact-create:11111111-1111-4111-8111-111111111111',
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
     writable: false,
   },
@@ -173,13 +196,20 @@ beforeEach(() => {
       target,
     }: {
       readonly routeParams: Readonly<Record<string, string>>;
-      readonly target: { readonly componentKey: string; readonly writable: boolean };
+      readonly target: {
+        readonly componentKey: string;
+        readonly writable: boolean;
+      };
     }) => {
       remotePropsMock({ routeParams, target });
-      return <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>;
+      return (
+        <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>
+      );
     },
   });
-  findApprovedVerticalPageClientMock.mockReturnValue({ load: loadRemotePageMock });
+  findApprovedVerticalPageClientMock.mockReturnValue({
+    load: loadRemotePageMock,
+  });
 });
 
 afterEach(() => {
@@ -187,31 +217,47 @@ afterEach(() => {
   rstest.clearAllMocks();
 });
 
-test.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as const)(
+test.each([
+  'selection_required',
+  'forbidden',
+  'not_found',
+  'unavailable',
+] as const)(
   'does not consult or invoke the private registry for a %s exact-page response',
   (state) => {
-    useLoaderDataMock.mockReturnValue({ shell, state } satisfies ModuleTargetPageModel);
+    useLoaderDataMock.mockReturnValue({
+      shell,
+      state,
+    } satisfies ModuleTargetPageModel);
     render(<ModuleTargetPage />);
     expect(findApprovedVerticalPageClientMock).not.toHaveBeenCalled();
     expect(loadRemotePageMock).not.toHaveBeenCalled();
-  },
+  }
 );
 
 test('invokes the exact private page loader only after a resolved authenticated response', async () => {
   useLoaderDataMock.mockReturnValue(resolvedModel);
   render(<ModuleTargetPage />);
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
+  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(
+    resolvedModel.target
+  );
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('contacts.core.page-customers:customer-1')).toBeTruthy();
+  expect(
+    await screen.findByText('contacts.core.page-customers:customer-1')
+  ).toBeTruthy();
 });
 
 test('reads loader data from the active Party Registry owner route', () => {
-  useLoaderDataMock.mockImplementation(({ from }: { readonly from: string }) => {
-    if (from !== '/$lang/contacts') {
-      throw new Error(`Invariant failed: Could not find an active match from "${from}"`);
+  useLoaderDataMock.mockImplementation(
+    ({ from }: { readonly from: string }) => {
+      if (from !== '/$lang/contacts') {
+        throw new Error(
+          `Invariant failed: Could not find an active match from "${from}"`
+        );
+      }
+      return resolvedModel;
     }
-    return resolvedModel;
-  });
+  );
 
   expect(() => render(<ContactsPage />)).not.toThrow();
   expect(useLoaderDataMock).toHaveBeenCalledWith({
@@ -226,7 +272,9 @@ test('maps an unreachable approved remote to its safe local diagnostic', async (
 
   render(<ModuleTargetPage />);
 
-  expect(await screen.findByText('shell.moduleTarget.unavailable')).toBeTruthy();
+  expect(
+    await screen.findByText('shell.moduleTarget.unavailable')
+  ).toBeTruthy();
 });
 
 test('rejects a malformed remote module before React receives it', async () => {
@@ -235,7 +283,9 @@ test('rejects a malformed remote module before React receives it', async () => {
 
   render(<ModuleTargetPage />);
 
-  expect(await screen.findByText('shell.moduleTarget.incompatible')).toBeTruthy();
+  expect(
+    await screen.findByText('shell.moduleTarget.incompatible')
+  ).toBeTruthy();
   expect(remotePropsMock).not.toHaveBeenCalled();
 });
 
@@ -243,12 +293,20 @@ test('passes an empty route-parameter record to a resolved static page', async (
   useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
   render(<ModuleTargetPage />);
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('contacts.core.page-customers:static')).toBeTruthy();
+  expect(
+    await screen.findByText('contacts.core.page-customers:static')
+  ).toBeTruthy();
 });
 
 test.each(exactPageCases)(
   'loads the approved $componentKey remote once with its exact route context and resolved target',
-  async ({ componentKey, entrypointKey, renderedText, routeParams, writable }) => {
+  async ({
+    componentKey,
+    entrypointKey,
+    renderedText,
+    routeParams,
+    writable,
+  }) => {
     const exactModel: ResolvedPageModel = {
       ...resolvedModel,
       routeParams,
@@ -258,9 +316,14 @@ test.each(exactPageCases)(
 
     render(<ModuleTargetPage />);
 
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(exactModel.target);
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(
+      exactModel.target
+    );
     await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-    expect(remotePropsMock).toHaveBeenCalledWith({ routeParams, target: exactModel.target });
+    expect(remotePropsMock).toHaveBeenCalledWith({
+      routeParams,
+      target: exactModel.target,
+    });
     expect(await screen.findByText(renderedText)).toBeTruthy();
-  },
+  }
 );

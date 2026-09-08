@@ -2,19 +2,19 @@ import { Schema } from 'effect';
 
 const MicroVerticalAppIdSchema = Schema.String.pipe(
   Schema.brand('MicroVerticalAppId'),
-  Schema.decodeTo(Schema.String),
+  Schema.decodeTo(Schema.String)
 );
 const MicroVerticalUnitIdSchema = Schema.String.pipe(
   Schema.brand('MicroVerticalUnitId'),
-  Schema.decodeTo(Schema.String),
+  Schema.decodeTo(Schema.String)
 );
 const MicroVerticalOperationIdSchema = Schema.String.pipe(
   Schema.brand('MicroVerticalOperationId'),
-  Schema.decodeTo(Schema.String),
+  Schema.decodeTo(Schema.String)
 );
 const MicroVerticalTraceIdSchema = Schema.String.pipe(
   Schema.brand('MicroVerticalTraceId'),
-  Schema.decodeTo(Schema.String),
+  Schema.decodeTo(Schema.String)
 );
 
 export const MicroVerticalBuildMarkerSchema = Schema.Struct({
@@ -28,7 +28,8 @@ export const MicroVerticalBuildMarkerSchema = Schema.Struct({
   unitId: MicroVerticalUnitIdSchema,
   version: Schema.String,
 });
-export type MicroVerticalBuildMarker = typeof MicroVerticalBuildMarkerSchema.Type;
+export type MicroVerticalBuildMarker =
+  typeof MicroVerticalBuildMarkerSchema.Type;
 
 export const MicroVerticalReadinessSchema = Schema.Struct({
   checks: Schema.Struct({
@@ -51,7 +52,8 @@ export const MicroVerticalOperationSourceSchema = Schema.Literals([
   'data-platform',
   'unknown',
 ]);
-export type MicroVerticalOperationSource = typeof MicroVerticalOperationSourceSchema.Type;
+export type MicroVerticalOperationSource =
+  typeof MicroVerticalOperationSourceSchema.Type;
 
 export const MicroVerticalOperationContextSchema = Schema.Struct({
   method: Schema.String,
@@ -60,7 +62,8 @@ export const MicroVerticalOperationContextSchema = Schema.Struct({
   source: MicroVerticalOperationSourceSchema,
   traceId: Schema.optionalKey(MicroVerticalTraceIdSchema),
 });
-export type MicroVerticalOperationContext = typeof MicroVerticalOperationContextSchema.Type;
+export type MicroVerticalOperationContext =
+  typeof MicroVerticalOperationContextSchema.Type;
 
 export const createMicroVerticalOperationContext = <
   const Method extends string,
@@ -83,11 +86,13 @@ export const createMicroVerticalOperationContext = <
     routePath: input.routePath,
     source: 'generated-client' as const,
   };
-  return input.traceId === undefined ? context : { ...context, traceId: input.traceId };
+  return input.traceId === undefined
+    ? context
+    : { ...context, traceId: input.traceId };
 };
 
 export const microVerticalOperationAttributes = (
-  operationContext: MicroVerticalOperationContext,
+  operationContext: MicroVerticalOperationContext
 ) => {
   const attributes = {
     'modernjs.operation.id': operationContext.operationId,

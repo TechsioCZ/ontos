@@ -2,59 +2,39 @@
 
 Status: **applied**
 
-Cohort: `drizzle-orm@1.0.0-rc.5-ab785fc`, `drizzle-kit@1.0.0-rc.5-ab785fc`, `better-auth@1.7.2`,
-`@better-auth/api-key@1.7.2`, `@better-auth/drizzle-adapter@1.7.2`, `auth@1.7.2`
+Cohort: `drizzle-orm@1.0.0-rc.5-ab785fc`, `drizzle-kit@1.0.0-rc.5-ab785fc`, `better-auth@1.7.2`, `@better-auth/api-key@1.7.2`, `@better-auth/drizzle-adapter@1.7.2`, `auth@1.7.2`
 
 Native persistence: `@effect/sql-pg@4.0.0-beta.107` with `effect@4.0.0-beta.107`.
 
-This document records how OntOS moved from the stable `0.45.2`/`0.31.10` pair to the Drizzle v1
-release candidate, which repository surfaces changed, how the three migration histories were
-converted without touching any applied migration, and which proofs gate a future Drizzle bump.
-[Database Architecture](./DATABASE.md) remains the authoritative rule set; this page is the
-upgrade record and operator runbook.
+This document records how OntOS moved from the stable `0.45.2`/`0.31.10` pair to the Drizzle v1 release candidate, which repository surfaces changed, how the three migration histories were converted without touching any applied migration, and which proofs gate a future Drizzle bump. [Database Architecture](./DATABASE.md) remains the authoritative rule set; this page is the upgrade record and operator runbook.
 
 ## Decision
 
-OntOS deliberately tracks the Drizzle `rc` channel instead of waiting for `1.0.0` stable. The
-readiness analysis that preceded this upgrade (pull request `TechsioCZ/ontos#98`) deferred the move
-because `drizzle-kit up` produced a false migration for unchanged owners and because the Auth owner
-still used Relational Queries v1. Both blockers are resolved here:
+OntOS deliberately tracks the Drizzle `rc` channel instead of waiting for `1.0.0` stable. The readiness analysis that preceded this upgrade (pull request `TechsioCZ/ontos#98`) deferred the move because `drizzle-kit up` produced a false migration for unchanged owners and because the Auth owner still used Relational Queries v1. Both blockers are resolved here:
 
-- the false migration is a documented converter defect
-  ([drizzle-team/drizzle-orm#6020](https://github.com/drizzle-team/drizzle-orm/issues/6020)) that
-  is corrected once, deterministically, by normalizing SQL fragments in the converted snapshots;
-- Better Auth `1.7.2` ships the `@better-auth/drizzle-adapter/relations-v2` entrypoint, so the Auth
-  owner moves to `defineRelations` with the officially supported adapter.
+- the false migration is a documented converter defect ([drizzle-team/drizzle-orm#6020](https://github.com/drizzle-team/drizzle-orm/issues/6020)) that is corrected once, deterministically, by normalizing SQL fragments in the converted snapshots;
+- Better Auth `1.7.2` ships the `@better-auth/drizzle-adapter/relations-v2` entrypoint, so the Auth owner moves to `defineRelations` with the officially supported adapter.
 
-The initial upgrade adopted tagged `rc.4`. The native Effect migration in
-[PR #494](https://github.com/TechsioCZ/ontos/pull/494) adopts the exact published snapshot
-`1.0.0-rc.5-ab785fc` for both Drizzle packages. The `rc.4` Effect driver uses a removed
-Effect Schema API and fails with the workspace's Effect version
-([drizzle-team/drizzle-orm#6162](https://github.com/drizzle-team/drizzle-orm/issues/6162)).
-The selected snapshot contains the upstream API update; it is a pinned branch build,
-not a tagged `rc.5` release. Future bumps still require the
-[Re-proof checklist](#re-proof-checklist).
+The initial upgrade adopted tagged `rc.4`. The native Effect migration in [PR #494](https://github.com/TechsioCZ/ontos/pull/494) adopts the exact published snapshot `1.0.0-rc.5-ab785fc` for both Drizzle packages. The `rc.4` Effect driver uses a removed Effect Schema API and fails with the workspace's Effect version ([drizzle-team/drizzle-orm#6162](https://github.com/drizzle-team/drizzle-orm/issues/6162)). The selected snapshot contains the upstream API update; it is a pinned branch build, not a tagged `rc.5` release. Future bumps still require the [Re-proof checklist](#re-proof-checklist).
 
 ## What changed
 
 ### Initial rc.4 dependencies
 
-| Package                        | Before   | After        | Owners                                   |
-| ------------------------------ | -------- | ------------ | ---------------------------------------- |
-| `drizzle-orm`                  | 0.45.2   | 1.0.0-rc.4   | root, `core-runtime`, Shell, `contacts`  |
-| `drizzle-kit`                  | 0.31.10  | 1.0.0-rc.4   | `core-runtime`, Shell, `contacts`        |
-| `better-auth`                  | 1.6.23   | 1.7.2        | root, Shell                              |
-| `@better-auth/api-key`         | 1.6.23   | 1.7.2        | Shell                                    |
+| Package | Before | After | Owners |
+| --- | --- | --- | --- |
+| `drizzle-orm` | 0.45.2 | 1.0.0-rc.4 | root, `core-runtime`, Shell, `contacts` |
+| `drizzle-kit` | 0.31.10 | 1.0.0-rc.4 | `core-runtime`, Shell, `contacts` |
+| `better-auth` | 1.6.23 | 1.7.2 | root, Shell |
+| `@better-auth/api-key` | 1.6.23 | 1.7.2 | Shell |
 | `@better-auth/drizzle-adapter` | indirect | 1.7.2 direct | root, Shell (`/relations-v2` entrypoint) |
-| `auth` (Better Auth CLI)       | 1.6.23   | 1.7.2        | Shell                                    |
+| `auth` (Better Auth CLI) | 1.6.23 | 1.7.2 | Shell |
 
-This table records the original upgrade, when Party was named Contacts. The current cohort
-above supersedes its Drizzle versions. Every owner pins the identical Drizzle pair.
+This table records the original upgrade, when Party was named Contacts. The current cohort above supersedes its Drizzle versions. Every owner pins the identical Drizzle pair.
 
 ### Migration folder layout (v3)
 
-Each owner history is now one folder per migration instead of numbered SQL files plus
-`meta/_journal.json`:
+Each owner history is now one folder per migration instead of numbered SQL files plus `meta/_journal.json`:
 
 ```text
 packages/core-runtime/drizzle/
@@ -65,32 +45,19 @@ packages/core-runtime/drizzle/
   20260901102632_<latest tag>/
 ```
 
-Folder names are `<14-digit UTC timestamp>_<tag>`; the timestamp is the old journal `when`
-value. `drizzle-kit up` produced every folder, and each `migration.sql` is byte-identical to the SQL
-file it replaced (verified with `cmp` against `git show HEAD:<old path>` for all 20 files across
-Core, Auth, and Contacts). Snapshots are DDL snapshots (`version: 8`) with an `id`/`prevIds` chain
-that `drizzle-kit check` and `generate` use to detect non-commutative migrations across branches.
+Folder names are `<14-digit UTC timestamp>_<tag>`; the timestamp is the old journal `when` value. `drizzle-kit up` produced every folder, and each `migration.sql` is byte-identical to the SQL file it replaced (verified with `cmp` against `git show HEAD:<old path>` for all 20 files across Core, Auth, and Contacts). Snapshots are DDL snapshots (`version: 8`) with an `id`/`prevIds` chain that `drizzle-kit check` and `generate` use to detect non-commutative migrations across branches.
 
 Repository surfaces that referenced the old layout were updated:
 
 - `verticals/contacts/tests/unit/schema-contract.test.ts` reads `<folder>/migration.sql`;
-- `packages/core-runtime/tests/integration/contacts-identity-migration.test.ts` reads the renamed
-  Core migration folder;
-- `scripts/validate-ultramodern-workspace.mts` allowlists the historical migration files that still
-  carry the pre-rename module identity.
+- `packages/core-runtime/tests/integration/contacts-identity-migration.test.ts` reads the renamed Core migration folder;
+- `scripts/validate-ultramodern-workspace.mts` allowlists the historical migration files that still carry the pre-rename module identity.
 
 ### Snapshot normalization after `drizzle-kit up`
 
-`drizzle-kit up` copies SQL fragments from the v0 snapshots verbatim. The v1 schema reader renders
-partial-index predicates and check-constraint expressions without the `"schema"."table".`
-qualifier, so an unchanged schema diffs as changed. On OntOS this produced 39 false DDL statements
-for Core (4 partial-index rebuilds, 31 check-constraint rewrites) and 12 for Contacts.
+`drizzle-kit up` copies SQL fragments from the v0 snapshots verbatim. The v1 schema reader renders partial-index predicates and check-constraint expressions without the `"schema"."table".` qualifier, so an unchanged schema diffs as changed. On OntOS this produced 39 false DDL statements for Core (4 partial-index rebuilds, 31 check-constraint rewrites) and 12 for Contacts.
 
-The converted snapshots were normalized once with the script below, after `up` and before the first
-`generate`. It strips only the entity's own `"<schema>"."<table>".` prefix from index `where`
-predicates, check `value` expressions, and expression index columns. Row-level-security policy
-predicates are intentionally left alone: the v1 reader keeps them qualified, and stripping them
-reintroduces a false `ALTER POLICY` migration.
+The converted snapshots were normalized once with the script below, after `up` and before the first `generate`. It strips only the entity's own `"<schema>"."<table>".` prefix from index `where` predicates, check `value` expressions, and expression index columns. Row-level-security policy predicates are intentionally left alone: the v1 reader keeps them qualified, and stripping them reintroduces a false `ALTER POLICY` migration.
 
 ```js
 // normalize-v1-snapshots.mjs — run once per owner history after `drizzle-kit up`
@@ -114,7 +81,10 @@ for (const root of roots) {
       const qualifier = `"${entity.schema}"."${entity.table}".`;
       const strip = (text) => text.split(qualifier).join('');
       for (const field of fields[entity.entityType] ?? []) {
-        if (typeof entity[field] === 'string' && entity[field].includes(qualifier)) {
+        if (
+          typeof entity[field] === 'string' &&
+          entity[field].includes(qualifier)
+        ) {
           entity[field] = strip(entity[field]);
           fragments++;
           touched = true;
@@ -139,140 +109,83 @@ for (const root of roots) {
 console.log(`normalized ${fragments} fragments in ${files} snapshots`);
 ```
 
-Result on this repository: `normalized 333 fragments in 13 snapshots`. After normalization every
-owner's `db:generate` prints `No schema changes, nothing to migrate`. Snapshots are metadata for
-diffing; the normalization changes no SQL and no database object.
+Result on this repository: `normalized 333 fragments in 13 snapshots`. After normalization every owner's `db:generate` prints `No schema changes, nothing to migrate`. Snapshots are metadata for diffing; the normalization changes no SQL and no database object.
 
 ### Initial rc.4 schema and runtime changes
 
-- **Relational Queries v2.** `apps/shell-super-app/api/auth/db/schema.ts` replaces the four
-  `relations(...)` declarations with one `authRelations = defineRelations(authDatabaseSchema, ...)`
-  graph (`user.sessions`, `user.accounts`, `user.apiKeys`, and the `one` reverse edges). Core and
-  Contacts export `coreRelations` / `contactsRelations` as `defineRelations(<tables>)` with no
-  navigational relations yet, which still exposes typed `db.query.<table>` access.
-- **Executor types.** `NodePgDatabase<typeof coreRelations>`, `NodePgDatabase<typeof authRelations>`,
-  and `NodePgDatabase<typeof contactsRelations>` replace the schema-keyed generics. Every
-  `drizzle({ client, schema })` call site now passes `relations` instead.
-- **Better Auth.** All five `drizzleAdapter` imports (`service.ts`, `api-key-service.ts`,
-  `impersonation-service.ts`, `stage-demo-bootstrap-runtime-infrastructure.ts`, the e2e fixture)
-  and `scripts/initialize-local-development.mts` import from
-  `@better-auth/drizzle-adapter/relations-v2`. The adapter still receives `schema: authDatabaseSchema`
-  (tables keyed by Better Auth model name) and `transaction: true`.
-- **Row-level security.** The deprecated `table.enableRLS()` wrapper `enableGovernedRls` was removed
-  from `@app/core-runtime`; Contacts tables are declared with `contactsSchema.table.withRLS(...)`.
-  `tenantRlsPolicies` and `tenantLegalEntityRlsPolicies` are unchanged.
-- **Deprecated helpers.** `getTableColumns` became `getColumns`; the Core schema-contract test asserts
-  the sequence column through `getSQLType()` because v1 reports `dataType` as `bigint int64`.
+- **Relational Queries v2.** `apps/shell-super-app/api/auth/db/schema.ts` replaces the four `relations(...)` declarations with one `authRelations = defineRelations(authDatabaseSchema, ...)` graph (`user.sessions`, `user.accounts`, `user.apiKeys`, and the `one` reverse edges). Core and Contacts export `coreRelations` / `contactsRelations` as `defineRelations(<tables>)` with no navigational relations yet, which still exposes typed `db.query.<table>` access.
+- **Executor types.** `NodePgDatabase<typeof coreRelations>`, `NodePgDatabase<typeof authRelations>`, and `NodePgDatabase<typeof contactsRelations>` replace the schema-keyed generics. Every `drizzle({ client, schema })` call site now passes `relations` instead.
+- **Better Auth.** All five `drizzleAdapter` imports (`service.ts`, `api-key-service.ts`, `impersonation-service.ts`, `stage-demo-bootstrap-runtime-infrastructure.ts`, the e2e fixture) and `scripts/initialize-local-development.mts` import from `@better-auth/drizzle-adapter/relations-v2`. The adapter still receives `schema: authDatabaseSchema` (tables keyed by Better Auth model name) and `transaction: true`.
+- **Row-level security.** The deprecated `table.enableRLS()` wrapper `enableGovernedRls` was removed from `@app/core-runtime`; Contacts tables are declared with `contactsSchema.table.withRLS(...)`. `tenantRlsPolicies` and `tenantLegalEntityRlsPolicies` are unchanged.
+- **Deprecated helpers.** `getTableColumns` became `getColumns`; the Core schema-contract test asserts the sequence column through `getSQLType()` because v1 reports `dataType` as `bigint int64`.
 
 ### Better Auth 1.7 account identity
 
-Better Auth 1.7 keys every provider identity on `(issuer, accountId)` and requires a non-null
-`account.issuer` column with a unique index over both columns. The Auth owner adds that column in
-`20260905002342_add-account-issuer`. The migration is expand-then-tighten inside one transaction:
+Better Auth 1.7 keys every provider identity on `(issuer, accountId)` and requires a non-null `account.issuer` column with a unique index over both columns. The Auth owner adds that column in `20260905002342_add-account-issuer`. The migration is expand-then-tighten inside one transaction:
 
 1. add `issuer` as nullable;
 2. refuse to continue if any `provider_id` needs URI encoding (OntOS only has `credential`);
-3. backfill `local:credential` for credential accounts and `local:oauth:<providerId>` otherwise,
-   which is Better Auth's `provider-id` identity strategy;
+3. backfill `local:credential` for credential accounts and `local:oauth:<providerId>` otherwise, which is Better Auth's `provider-id` identity strategy;
 4. refuse to continue if two rows share an `(issuer, account_id)` identity;
 5. set `NOT NULL` and create `auth_account_issuer_account_id_uk`.
 
-Better Auth 1.6 writers do not supply `issuer`, so the migration also installs a `BEFORE INSERT`
-trigger (`auth.account_issuer_compat`) that derives the value with the same rule when a row arrives
-without one. That keeps the previous Shell release working against the expanded schema, as the
-[Deployment](./DEPLOYMENT.md) sequence requires, so the Auth migration stays expand-only. Drop the
-trigger and its function in a later contraction migration once no Better Auth 1.6 writer remains;
-Better Auth 1.7 always writes `issuer` explicitly, so the trigger is inert for the new release.
+Better Auth 1.6 writers do not supply `issuer`, so the migration also installs a `BEFORE INSERT` trigger (`auth.account_issuer_compat`) that derives the value with the same rule when a row arrives without one. That keeps the previous Shell release working against the expanded schema, as the [Deployment](./DEPLOYMENT.md) sequence requires, so the Auth migration stays expand-only. Drop the trigger and its function in a later contraction migration once no Better Auth 1.6 writer remains; Better Auth 1.7 always writes `issuer` explicitly, so the trigger is inert for the new release.
 
 ### New `db:check` script
 
-`pnpm db:check` runs `drizzle-kit check` for Core, Auth, and Contacts. It validates the snapshot
-chain and reports non-commutative migrations when two branches both add migrations. Run it after
-rebasing a branch that touches any `drizzle/` or `drizzle-auth/` folder.
+`pnpm db:check` runs `drizzle-kit check` for Core, Auth, and Contacts. It validates the snapshot chain and reports non-commutative migrations when two branches both add migrations. Run it after rebasing a branch that touches any `drizzle/` or `drizzle-auth/` folder.
 
 ## Migration bookkeeping upgrade
 
-The first `drizzle-kit migrate` with v1 against an existing database upgrades each owner's
-bookkeeping table in `drizzle` (`__drizzle_migrations_core`, `__drizzle_migrations_auth`,
-`__drizzle_migrations_contacts`):
+The first `drizzle-kit migrate` with v1 against an existing database upgrades each owner's bookkeeping table in `drizzle` (`__drizzle_migrations_core`, `__drizzle_migrations_auth`, `__drizzle_migrations_contacts`):
 
 - adds `name text` and backfills it with the v3 folder name matched by `created_at` millis;
 - adds `applied_at timestamptz default now()`; pre-upgrade rows keep `applied_at = NULL`;
 - keeps `id`, `hash`, and `created_at` unchanged.
 
-The v1 migrator applies every migration folder missing from the table, not only folders newer than
-the last applied row. This requires the administrative identity that already runs
-`pnpm db:migrate`; no manual SQL is needed.
+The v1 migrator applies every migration folder missing from the table, not only folders newer than the last applied row. This requires the administrative identity that already runs `pnpm db:migrate`; no manual SQL is needed.
 
 ## Initial rc.4 proofs
 
-Environment: Darwin arm64, Node `26.5.0` and pnpm `11.25.0` through `mise exec --`, PostgreSQL 17
-in the local Compose container on port 5433.
+Environment: Darwin arm64, Node `26.5.0` and pnpm `11.25.0` through `mise exec --`, PostgreSQL 17 in the local Compose container on port 5433.
 
-| Proof                                                    | Result                                                                             |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `drizzle-kit up` for Core, Auth, Contacts                | 9 + 6 + 4 folders; every `migration.sql` byte-identical to its predecessor         |
-| Auth `add-account-issuer` on the populated copy          | exit 0, one credential row backfilled to `local:credential`, unique index present  |
-| `db:generate` for each owner after normalization         | `No schema changes, nothing to migrate` for all three                              |
-| `db:check` for each owner                                | `Everything's fine`                                                                |
+| Proof | Result |
+| --- | --- |
+| `drizzle-kit up` for Core, Auth, Contacts | 9 + 6 + 4 folders; every `migration.sql` byte-identical to its predecessor |
+| Auth `add-account-issuer` on the populated copy | exit 0, one credential row backfilled to `local:credential`, unique index present |
+| `db:generate` for each owner after normalization | `No schema changes, nothing to migrate` for all three |
+| `db:check` for each owner | `Everything's fine` |
 | `db:migrate` on a `TEMPLATE ontos` copy with v0 journals | exit 0, 9/7/4 rows, `name` backfilled, catalog column hash identical after a rerun |
-| `db:migrate` on an empty database                        | exit 0, 9/7/4 rows, schemas `core`/`auth`/`contacts`/`drizzle` present             |
-| `db:verify` on both databases                            | exact schemas, journals, and 18/6/3 typed tables verified                          |
-| `pnpm typecheck`, `pnpm lint`                            | clean                                                                              |
-| `pnpm action:test:unit`, `pnpm outbox:test`              | 64/64 and all outbox tests passing                                                 |
-| `pnpm db:test` (Core, Auth integration, Contacts)        | see the pull request for the final run                                             |
+| `db:migrate` on an empty database | exit 0, 9/7/4 rows, schemas `core`/`auth`/`contacts`/`drizzle` present |
+| `db:verify` on both databases | exact schemas, journals, and 18/6/3 typed tables verified |
+| `pnpm typecheck`, `pnpm lint` | clean |
+| `pnpm action:test:unit`, `pnpm outbox:test` | 64/64 and all outbox tests passing |
+| `pnpm db:test` (Core, Auth integration, Contacts) | see the pull request for the final run |
 
 ## Re-proof checklist
 
 Use this sequence for `1.0.0-rc.5`, `1.0.0`, or any later Drizzle bump:
 
-1. Bump `drizzle-orm` and `drizzle-kit` together in the root, Core, Shell, and Party manifests,
-   plus the Better Auth cohort when its Drizzle peer range moves; run
-   `mise exec -- pnpm install --no-frozen-lockfile`.
-2. Run `pnpm db:generate` and `pnpm db:check`; both must report no changes for unchanged schemas.
-   A generated folder for an unchanged owner is a converter or reader regression, not a schema
-   change, and must not be committed.
-3. Create a disposable copy of a migrated database (`create database <name> template ontos`),
-   point `DATABASE_ADMIN_URL`/`DATABASE_URL` at it, and run `pnpm db:migrate` twice followed by
-   `pnpm db:verify`. Row counts per owner must not change and the second run must be a no-op.
+1. Bump `drizzle-orm` and `drizzle-kit` together in the root, Core, Shell, and Party manifests, plus the Better Auth cohort when its Drizzle peer range moves; run `mise exec -- pnpm install --no-frozen-lockfile`.
+2. Run `pnpm db:generate` and `pnpm db:check`; both must report no changes for unchanged schemas. A generated folder for an unchanged owner is a converter or reader regression, not a schema change, and must not be committed.
+3. Create a disposable copy of a migrated database (`create database <name> template ontos`), point `DATABASE_ADMIN_URL`/`DATABASE_URL` at it, and run `pnpm db:migrate` twice followed by `pnpm db:verify`. Row counts per owner must not change and the second run must be a no-op.
 4. Run `pnpm db:migrate` and `pnpm db:verify` against an empty database.
-5. Run `pnpm typecheck`, `pnpm lint`, `pnpm db:test`, `pnpm action:test:unit`, `pnpm outbox:test`,
-   and `pnpm check`.
+5. Run `pnpm typecheck`, `pnpm lint`, `pnpm db:test`, `pnpm action:test:unit`, `pnpm outbox:test`, and `pnpm check`.
 
 ## Native Effect adoption and rc.5 snapshot re-proof
 
-Core and Party now use `drizzle-orm/effect-postgres` with `@effect/sql-pg`. Their database
-factories retain scoped `pg.Pool` ownership, provide `PgClient.fromPool` and `Reactivity` to
-`makeWithDefaults`, and expose `EffectPgDatabase` executors. Queries and transaction callbacks
-are native Effects. The persistence-attempt wrappers and Effect–Promise–Effect transaction
-bridge are removed. Better Auth retains its supported `node-postgres` adapter integration.
-The four Drizzle Kit configurations omit the removed `strict` and `verbose` options.
+Core and Party now use `drizzle-orm/effect-postgres` with `@effect/sql-pg`. Their database factories retain scoped `pg.Pool` ownership, provide `PgClient.fromPool` and `Reactivity` to `makeWithDefaults`, and expose `EffectPgDatabase` executors. Queries and transaction callbacks are native Effects. The persistence-attempt wrappers and Effect–Promise–Effect transaction bridge are removed. Better Auth retains its supported `node-postgres` adapter integration. The four Drizzle Kit configurations omit the removed `strict` and `verbose` options.
 
-The current contracts, including raw `execute<Row>(sql, 'objects')` reads and native SQL
-settlement errors, are defined in [Database Architecture](./DATABASE.md). No migration SQL
-changes in this adoption. The latest Core, Party, and Contacts snapshots normalize 40, 81,
-and 7 check/index SQL fragments respectively by removing only their own table qualifier.
-This applies the same snapshot normalization described above to the current history heads.
-Every normalized entity matches the native Kit output; snapshot IDs, ancestry, RLS policies,
-and other fields remain unchanged. Without that normalization, Kit emits false constraint and
-index rebuilds for unchanged schemas. Those generated migrations must not be applied or committed.
+The current contracts, including raw `execute<Row>(sql, 'objects')` reads and native SQL settlement errors, are defined in [Database Architecture](./DATABASE.md). No migration SQL changes in this adoption. The latest Core, Party, and Contacts snapshots normalize 40, 81, and 7 check/index SQL fragments respectively by removing only their own table qualifier. This applies the same snapshot normalization described above to the current history heads. Every normalized entity matches the native Kit output; snapshot IDs, ancestry, RLS policies, and other fields remain unchanged. Without that normalization, Kit emits false constraint and index rebuilds for unchanged schemas. Those generated migrations must not be applied or committed.
 
 Re-proof on 2026-09-07 for commit `538e43a9a7b004e28eefc71df6e4a50eb814d51f`:
 
 - Frozen dependency installation passed with the exact cohort above.
-- All 890 workspace unit/component tests and 61 affected Core, Party, and Shell integration
-  tests passed, including generated-owner isolation, RLS, Action atomicity, outbox behavior,
-  repeatable-read snapshots, cancellation, rollback failure, and uncertain commit recovery.
+- All 890 workspace unit/component tests and 61 affected Core, Party, and Shell integration tests passed, including generated-owner isolation, RLS, Action atomicity, outbox behavior, repeatable-read snapshots, cancellation, rollback failure, and uncertain commit recovery.
 - Database schema verifiers passed for Core, Auth, Party, and Contacts and their journals.
-- All 19 [CI validation jobs](https://github.com/TechsioCZ/ontos/actions/runs/34147241046)
-  passed, including database/migration integration, generation and generated-code typechecking,
-  workspace contracts, lint, typecheck, and Node plus Cloudflare artifact proofs.
+- All 19 [CI validation jobs](https://github.com/TechsioCZ/ontos/actions/runs/34147241046) passed, including database/migration integration, generation and generated-code typechecking, workspace contracts, lint, typecheck, and Node plus Cloudflare artifact proofs.
 - The full local production build passed, including federation types and performance readiness.
 
-These are the native adoption proofs. The historical populated-copy conversion results above
-belong to the initial rc.4 upgrade and are not a new snapshot conversion for this bump.
+These are the native adoption proofs. The historical populated-copy conversion results above belong to the initial rc.4 upgrade and are not a new snapshot conversion for this bump.
 
-Review follow-up verified `pnpm db:generate` reports no schema changes and `pnpm db:check`
-passes for all four histories after snapshot normalization. It also reran migrations twice
-against the populated disposable development database and verified the exact schemas and
-journals afterward. Fresh-database migration and verification passed in CI.
+Review follow-up verified `pnpm db:generate` reports no schema changes and `pnpm db:check` passes for all four histories after snapshot normalization. It also reran migrations twice against the populated disposable development database and verified the exact schemas and journals afterward. Fresh-database migration and verification passed in CI.

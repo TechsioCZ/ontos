@@ -8,95 +8,43 @@ created: 2026-08-06
 
 ## Feature Description
 
-Add the missing OntOS Module Manifest contract without weakening the independently deployable
-MicroVertical boundary required by `app/docs/architecture/MICROVERTICALS.md`.
+Add the missing OntOS Module Manifest contract without weakening the independently deployable MicroVertical boundary required by `app/docs/architecture/MICROVERTICALS.md`.
 
-Each MicroVertical will author one typed manifest as an Effect Schema-validated TypeScript value.
-The manifest will describe its OntOS module identity, activation rules, dependencies, public
-Actions, public Effect API, Module Federation component surface, resource types, public events,
-search descriptors, and report descriptors. The owning deployment will keep executable handlers,
-workers, migrations, routes, and implementation bindings in a private owner-local runtime
-registration.
+Each MicroVertical will author one typed manifest as an Effect Schema-validated TypeScript value. The manifest will describe its OntOS module identity, activation rules, dependencies, public Actions, public Effect API, Module Federation component surface, resource types, public events, search descriptors, and report descriptors. The owning deployment will keep executable handlers, workers, migrations, routes, and implementation bindings in a private owner-local runtime registration.
 
-A build command will derive a serializable, deployment-safe contract document from the typed
-manifest, generated package metadata, public API contract, Module Federation configuration, and
-private registration descriptors. Each MicroVertical deployment will serve this immutable document
-at a generated well-known path. The Shell will receive an explicit deployment allowlist containing
-only known topology application IDs and contract URLs, fetch and Effect-decode those documents, and
-assemble a Shell/Core-owned installed-module catalog without importing another deployment's private
-registration or source code.
+A build command will derive a serializable, deployment-safe contract document from the typed manifest, generated package metadata, public API contract, Module Federation configuration, and private registration descriptors. Each MicroVertical deployment will serve this immutable document at a generated well-known path. The Shell will receive an explicit deployment allowlist containing only known topology application IDs and contract URLs, fetch and Effect-decode those documents, and assemble a Shell/Core-owned installed-module catalog without importing another deployment's private registration or source code.
 
 The feature must keep the two identities distinct:
 
-- the UltraModern topology application ID identifies a deployment and remains the Module
-  Federation remote and Shell gateway assertion audience, for example `property-registry`;
-- the OntOS module ID identifies the business capability and remains the Action owner, tenant
-  module-state key, resource owner, event producer, Policy owner, and Outbox owner, for example
-  `property.registry`.
+- the UltraModern topology application ID identifies a deployment and remains the Module Federation remote and Shell gateway assertion audience, for example `property-registry`;
+- the OntOS module ID identifies the business capability and remains the Action owner, tenant module-state key, resource owner, event producer, Policy owner, and Outbox owner, for example `property.registry`.
 
-All local Codesmith generators must be updated where they currently infer business ownership from
-the topology application ID or maintain a source-time cross-deployment registry.
+All local Codesmith generators must be updated where they currently infer business ownership from the topology application ID or maintain a source-time cross-deployment registry.
 
 ## User Story
 
-As an OntOS platform developer
-I want each independently deployed MicroVertical to publish a validated module contract
-So that Shell/Core can safely reason about installed modules, capabilities, dependencies, and
-tenant activation without linking private MicroVertical implementations into the Shell
+As an OntOS platform developer I want each independently deployed MicroVertical to publish a validated module contract So that Shell/Core can safely reason about installed modules, capabilities, dependencies, and tenant activation without linking private MicroVertical implementations into the Shell
 
 ## Problem Statement
 
-The `develop` branch has persisted tenant module state and an authenticated Shell operation for
-listing active modules, but it has no OntOS Module Manifest schema, authored manifest value,
-deployment contract, runtime-registration contract, or installed-module descriptor catalog.
-`apps/shell-super-app/api/verticals/installed-verticals.ts` currently derives installed identifiers
-directly from `topology/reference-topology.json` and treats topology application IDs as the values
-stored in `core.tenant_module_states.module_key`.
+The `develop` branch has persisted tenant module state and an authenticated Shell operation for listing active modules, but it has no OntOS Module Manifest schema, authored manifest value, deployment contract, runtime-registration contract, or installed-module descriptor catalog. `apps/shell-super-app/api/verticals/installed-verticals.ts` currently derives installed identifiers directly from `topology/reference-topology.json` and treats topology application IDs as the values stored in `core.tenant_module_states.module_key`.
 
-That implementation cannot represent the distinction between deployment ID `property-registry`
-and module ID `property.registry`, cannot validate dependencies or public surfaces, and cannot tell
-Core which module capabilities are actually present. The current Action, Policy, Outbox Message,
-and Outbox Worker generators repeat the same identity error by emitting the target vertical's
-`modernjs.appId` as `owningModuleKey`, producer/consumer module key, and Action/worker key prefix.
+That implementation cannot represent the distinction between deployment ID `property-registry` and module ID `property.registry`, cannot validate dependencies or public surfaces, and cannot tell Core which module capabilities are actually present. The current Action, Policy, Outbox Message, and Outbox Worker generators repeat the same identity error by emitting the target vertical's `modernjs.appId` as `owningModuleKey`, producer/consumer module key, and Action/worker key prefix.
 
-The older repository-level manifest design also assumes that the Shell statically imports every
-`vertical.registration.ts`. That would place routes, handlers, migrations, workers, and other
-private implementation hooks in a jointly linked process. It conflicts with the authoritative
-`app/` rule that every MicroVertical must remain independently deployable and that consumers cross
-the seam only through generated Effect clients, published Outbox schemas, and Module Federation
-exposures.
+The older repository-level manifest design also assumes that the Shell statically imports every `vertical.registration.ts`. That would place routes, handlers, migrations, workers, and other private implementation hooks in a jointly linked process. It conflicts with the authoritative `app/` rule that every MicroVertical must remain independently deployable and that consumers cross the seam only through generated Effect clients, published Outbox schemas, and Module Federation exposures.
 
-The Outbox generator has a related deployment coupling:
-`scripts/scaffolding/outbox-worker/scaffold.mts` scans all vertical source trees and rewrites
-`packages/core-runtime/src/outbox/subscriptions.generated.ts`. Every independently deployed worker
-therefore depends on a complete source-time catalog and must be rebuilt when an unrelated vertical
-adds a worker.
+The Outbox generator has a related deployment coupling: `scripts/scaffolding/outbox-worker/scaffold.mts` scans all vertical source trees and rewrites `packages/core-runtime/src/outbox/subscriptions.generated.ts`. Every independently deployed worker therefore depends on a complete source-time catalog and must be rebuilt when an unrelated vertical adds a worker.
 
 ## Solution Statement
 
 Implement four explicit layers with separate ownership:
 
-1. **Deployment topology and allowlist:** generated UltraModern metadata identifies independently
-   deployed application IDs, Module Federation/API locations, and an environment-specific OntOS
-   contract URL. It authorizes discovery but does not define the business module identity.
-2. **Typed OntOS Module Manifest:** an owner-authored TypeScript value validated by Effect Schema
-   holds real Action, API, component, resource, event, search, and report values. It is the source
-   contract but is never statically imported by the Shell or another MicroVertical at runtime.
-3. **Deployment contract and installed-module catalog:** a build tool derives one serializable
-   contract document per deployment. Shell/Core fetches only allowlisted documents, validates the
-   deployment-to-module mapping and complete catalog invariants, and exposes an immutable catalog
-   keyed separately by deployment ID and module ID.
-4. **Private owner-local runtime registration:** executable registrations stay inside the owning
-   MicroVertical deployment. Actions and workers execute only there; APIs cross through generated
-   Effect clients; components cross through generated Module Federation wrappers. Deployment
-   metadata may describe safe runtime identities such as worker subscriptions, but it never contains
-   handlers, source paths, migrations, route trees, repositories, or arbitrary import strings.
+1. **Deployment topology and allowlist:** generated UltraModern metadata identifies independently deployed application IDs, Module Federation/API locations, and an environment-specific OntOS contract URL. It authorizes discovery but does not define the business module identity.
+2. **Typed OntOS Module Manifest:** an owner-authored TypeScript value validated by Effect Schema holds real Action, API, component, resource, event, search, and report values. It is the source contract but is never statically imported by the Shell or another MicroVertical at runtime.
+3. **Deployment contract and installed-module catalog:** a build tool derives one serializable contract document per deployment. Shell/Core fetches only allowlisted documents, validates the deployment-to-module mapping and complete catalog invariants, and exposes an immutable catalog keyed separately by deployment ID and module ID.
+4. **Private owner-local runtime registration:** executable registrations stay inside the owning MicroVertical deployment. Actions and workers execute only there; APIs cross through generated Effect clients; components cross through generated Module Federation wrappers. Deployment metadata may describe safe runtime identities such as worker subscriptions, but it never contains handlers, source paths, migrations, route trees, repositories, or arbitrary import strings.
 
-The Shell active-module operation will intersect tenant state with catalog module IDs rather than
-topology application IDs. The topology-derived application-ID inventory remains authoritative for
-gateway JWT audiences. The existing tenant-state behavior remains otherwise unchanged: the current
-home-page list continues to show only state `active`; expanding navigation semantics for
-`read_only` or `deprecated` is outside this feature.
+The Shell active-module operation will intersect tenant state with catalog module IDs rather than topology application IDs. The topology-derived application-ID inventory remains authoritative for gateway JWT audiences. The existing tenant-state behavior remains otherwise unchanged: the current home-page list continues to show only state `active`; expanding navigation semantics for `read_only` or `deprecated` is outside this feature.
 
 ## Relevant Files
 
@@ -170,29 +118,17 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Define the app-authoritative terminology and Effect Schema contracts. Separate topology deployment
-identity from OntOS business identity, define the authored manifest and generated deployment
-document, and establish a private registration that can expose descriptors to owner-local runtime
-composition without exposing executable values to Shell/Core.
+Define the app-authoritative terminology and Effect Schema contracts. Separate topology deployment identity from OntOS business identity, define the authored manifest and generated deployment document, and establish a private registration that can expose descriptors to owner-local runtime composition without exposing executable values to Shell/Core.
 
-Add and test the module-contract Codesmith generator before any manifest or registration owner file
-is created. Because `verticals/*` is empty on `develop`, prove generated output in disposable
-UltraModern-shaped fixtures rather than adding a demonstration business MicroVertical.
+Add and test the module-contract Codesmith generator before any manifest or registration owner file is created. Because `verticals/*` is empty on `develop`, prove generated output in disposable UltraModern-shaped fixtures rather than adding a demonstration business MicroVertical.
 
 ### Phase 2: Core Implementation
 
-Implement deterministic contract emission and an immutable installed-module catalog. Update every
-affected generator to consume the manifest's OntOS module ID, patch only explicit generated owner
-slots, preserve topology application IDs at deployment/MF/authentication seams, and replace the
-source-time Outbox subscription catalog with descriptor metadata derived from deployed contracts.
+Implement deterministic contract emission and an immutable installed-module catalog. Update every affected generator to consume the manifest's OntOS module ID, patch only explicit generated owner slots, preserve topology application IDs at deployment/MF/authentication seams, and replace the source-time Outbox subscription catalog with descriptor metadata derived from deployed contracts.
 
 ### Phase 3: Integration
 
-Add Shell allowlist loading and fail-closed remote contract validation, then replace only the active
-module list's topology-ID intersection with module-ID catalog lookup. Preserve gateway audience
-behavior and private runtime execution. Extend repository validators, generated-fixture integration
-tests, documentation, and production build checks so no static import of another vertical's manifest
-or registration can reappear.
+Add Shell allowlist loading and fail-closed remote contract validation, then replace only the active module list's topology-ID intersection with module-ID catalog lookup. Preserve gateway audience behavior and private runtime execution. Extend repository validators, generated-fixture integration tests, documentation, and production build checks so no static import of another vertical's manifest or registration can reappear.
 
 ## Step by Step Tasks
 
@@ -266,28 +202,15 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use Effect Schema tests for every authored and serialized manifest surface, stable IDs, activation
-rules, dependency modes, cross-references, deployment identity, duplicate rejection, catalog graph
-validation, immutability, and private-field exclusion. Test the private registration's handler
-opacity and safe descriptor extraction. Extend Action and Outbox tests for catalog-supplied runtime
-requirements and removal of the source-generated subscription default.
+Use Effect Schema tests for every authored and serialized manifest surface, stable IDs, activation rules, dependency modes, cross-references, deployment identity, duplicate rejection, catalog graph validation, immutability, and private-field exclusion. Test the private registration's handler opacity and safe descriptor extraction. Extend Action and Outbox tests for catalog-supplied runtime requirements and removal of the source-generated subscription default.
 
-Use disposable Codesmith fixtures for the new module-contract command and all existing commands.
-Assert exact owner slots, no-partial-write preflight, preservation of developer code and JSON order,
-correct module/deployment identity use, deterministic output, formatter stability, and compilation
-against the real Core contracts.
+Use disposable Codesmith fixtures for the new module-contract command and all existing commands. Assert exact owner slots, no-partial-write preflight, preservation of developer code and JSON order, correct module/deployment identity use, deterministic output, formatter stability, and compilation against the real Core contracts.
 
 ### Integration Tests
 
-Run local fixture HTTP servers that act as two separately deployed MicroVerticals. Configure the
-Shell with an explicit allowlist, serve valid and invalid well-known contracts, and prove that the
-Shell builds its catalog without importing fixture source. Combine the catalog with real Core
-tenant-state services to prove module-ID filtering and transition rejection.
+Run local fixture HTTP servers that act as two separately deployed MicroVerticals. Configure the Shell with an explicit allowlist, serve valid and invalid well-known contracts, and prove that the Shell builds its catalog without importing fixture source. Combine the catalog with real Core tenant-state services to prove module-ID filtering and transition rejection.
 
-Exercise a generated owner-local Action and worker registration separately from the Shell process.
-Verify that only metadata crosses the deployment boundary, that the Core matcher uses the complete
-subscription snapshot, that workers claim only already-created owner-local deliveries, and that
-handler execution remains local.
+Exercise a generated owner-local Action and worker registration separately from the Shell process. Verify that only metadata crosses the deployment boundary, that the Core matcher uses the complete subscription snapshot, that workers claim only already-created owner-local deliveries, and that handler execution remains local.
 
 ### Edge Cases
 
@@ -354,45 +277,23 @@ Execute every command to validate the feature with zero regressions.
 
 ### Summary
 
-- Implemented the typed manifest, opaque owner-local runtime registration, deterministic deployment
-  contract generation, immutable dual-key catalog, environment-specific Shell allowlist, bounded
-  catalog loading, catalog-backed active-module filtering, and deployment-catalog Outbox matching.
-- Corrected the final review findings: real branded Action/API/component/Schema values are required;
-  Effect API operation keys are derived; Cloudflare output maps to `dist-cloudflare`; import checks
-  permit only same-owner registration access; activation dependency reads share the Action
-  transaction and record Data Access evidence; and the combined two-deployment proof now covers one
-  active and one inactive module plus owner-local Action/worker execution boundaries.
-- Added the generated workspace skills lock and its required third-party license so repository
-  contract validation is reproducible in this worktree. Provisioned isolated local PostgreSQL and
-  SpiceDB validation resources, then fixed a database-test fixture that could generate an invalid
-  dotted module ID when a UUID segment began with a digit.
+- Implemented the typed manifest, opaque owner-local runtime registration, deterministic deployment contract generation, immutable dual-key catalog, environment-specific Shell allowlist, bounded catalog loading, catalog-backed active-module filtering, and deployment-catalog Outbox matching.
+- Corrected the final review findings: real branded Action/API/component/Schema values are required; Effect API operation keys are derived; Cloudflare output maps to `dist-cloudflare`; import checks permit only same-owner registration access; activation dependency reads share the Action transaction and record Data Access evidence; and the combined two-deployment proof now covers one active and one inactive module plus owner-local Action/worker execution boundaries.
+- Added the generated workspace skills lock and its required third-party license so repository contract validation is reproducible in this worktree. Provisioned isolated local PostgreSQL and SpiceDB validation resources, then fixed a database-test fixture that could generate an invalid dotted module ID when a UUID segment began with a digit.
 
 ### Changed Files
 
-- 67 tracked or newly added files across Core runtime contracts, Shell discovery/runtime wiring,
-  Codesmith generators and validators, architecture guidance, topology configuration, workspace
-  skill metadata, and tests.
+- 67 tracked or newly added files across Core runtime contracts, Shell discovery/runtime wiring, Codesmith generators and validators, architecture guidance, topology configuration, workspace skill metadata, and tests.
 - The final count includes newly added files that plain `git diff --stat` omits until tracked.
 
 ### Tests Written or Updated
 
-- `packages/core-runtime/tests/unit/module-manifest.test.ts` — real typed public values, exact schema
-  decoding, ownership/reference rejection, immutability, and safe serialization.
-- `packages/core-runtime/tests/unit/module-catalog.test.ts` — dual identities, dependency graphs, and
-  complete deterministic Outbox subscription snapshots.
-- `packages/core-runtime/tests/unit/tenant-module-state.test.ts` and
-  `packages/core-runtime/tests/integration/tenant-module-state.test.ts` — installed membership,
-  supported-state and active-first checks, transaction serialization, no-write rejection, and
-  truthful dependency-read evidence; integration fixture module IDs are valid for every UUID.
-- `apps/shell-super-app/tests/unit/deployment-allowlist.test.ts`,
-  `installed-module-catalog.test.ts`, and `installed-outbox-matcher.test.ts` — safe environment URL
-  derivation, bounded atomic loading/cache revision behavior, and catalog-to-matcher provenance.
-- `apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts` — two separately served
-  contracts, active/inactive tenant state, owner-local Action and worker references, Effect API
-  client reference, Module Federation descriptor, and metadata-only HTTP discovery.
-- `scripts/scaffolding/tests/module-contract-generator.test.mts` and
-  `scaffold-generators.test.mts` — generator composition, actual Cloudflare output root, derived API
-  operations, authored/emitted contract validation, and ownership-aware private import enforcement.
+- `packages/core-runtime/tests/unit/module-manifest.test.ts` — real typed public values, exact schema decoding, ownership/reference rejection, immutability, and safe serialization.
+- `packages/core-runtime/tests/unit/module-catalog.test.ts` — dual identities, dependency graphs, and complete deterministic Outbox subscription snapshots.
+- `packages/core-runtime/tests/unit/tenant-module-state.test.ts` and `packages/core-runtime/tests/integration/tenant-module-state.test.ts` — installed membership, supported-state and active-first checks, transaction serialization, no-write rejection, and truthful dependency-read evidence; integration fixture module IDs are valid for every UUID.
+- `apps/shell-super-app/tests/unit/deployment-allowlist.test.ts`, `installed-module-catalog.test.ts`, and `installed-outbox-matcher.test.ts` — safe environment URL derivation, bounded atomic loading/cache revision behavior, and catalog-to-matcher provenance.
+- `apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts` — two separately served contracts, active/inactive tenant state, owner-local Action and worker references, Effect API client reference, Module Federation descriptor, and metadata-only HTTP discovery.
+- `scripts/scaffolding/tests/module-contract-generator.test.mts` and `scaffold-generators.test.mts` — generator composition, actual Cloudflare output root, derived API operations, authored/emitted contract validation, and ownership-aware private import enforcement.
 
 ### Validation
 
@@ -402,38 +303,26 @@ Execute every command to validate the feature with zero regressions.
 - `mise exec -- pnpm scaffold:module-contract -- --help` — passed and wrote no files.
 - `mise exec -- pnpm --filter @app/core-runtime action:test:unit` — passed, 48 tests.
 - `mise exec -- pnpm outbox:test` — passed, 19 unit and 8 database integration tests.
-- `mise exec -- pnpm --filter @app/core-runtime db:test` — passed, 127 tests against isolated local
-  PostgreSQL and SpiceDB validation resources.
+- `mise exec -- pnpm --filter @app/core-runtime db:test` — passed, 127 tests against isolated local PostgreSQL and SpiceDB validation resources.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` — passed, 71 tests.
-- `mise exec -- pnpm --filter @app/shell-super-app test:integration` — passed, 2 integration tests,
-  including authenticated Shell/Core behavior and the combined deployment-isolation proof.
+- `mise exec -- pnpm --filter @app/shell-super-app test:integration` — passed, 2 integration tests, including authenticated Shell/Core behavior and the combined deployment-isolation proof.
 - `mise exec -- pnpm check:module-contracts` — passed.
 - `mise exec -- pnpm api:check` — passed.
-- `mise exec -- pnpm contract:check` — passed after installing and validating the pinned workspace
-  skills from `.agents/skills-lock.json`.
+- `mise exec -- pnpm contract:check` — passed after installing and validating the pinned workspace skills from `.agents/skills-lock.json`.
 - `mise exec -- pnpm typecheck` — passed; direct strict Core and Shell package typechecks also passed.
 - `mise exec -- pnpm build` — passed, including MF type and performance-readiness checks.
 - `mise exec -- pnpm check` — passed as the final repository quality gate.
 
 ### Review
 
-- Re-read `../AGENTS.md`, `AGENTS.md`, all seven relevant app-local architecture guides, and the
-  referenced repository-level module, MicroVertical, and activation documents. App-local guidance
-  remains authoritative where the older product documents describe a static joint registry.
-- Reviewed `git status --short`, `git diff --check`, the diff/stat, runtime and generator changes,
-  identity usage, build roots, private imports, serialized fields, remote-fetch limits, and deleted
-  source-time Outbox catalog. The final review additionally closed a loophole that could have let an
-  owner registration import another deployment's owner file.
-- No UI component or visual behavior was introduced, so screenshot/browser review was not applicable;
-  authenticated runtime behavior was covered by the passing Shell integration suite.
+- Re-read `../AGENTS.md`, `AGENTS.md`, all seven relevant app-local architecture guides, and the referenced repository-level module, MicroVertical, and activation documents. App-local guidance remains authoritative where the older product documents describe a static joint registry.
+- Reviewed `git status --short`, `git diff --check`, the diff/stat, runtime and generator changes, identity usage, build roots, private imports, serialized fields, remote-fetch limits, and deleted source-time Outbox catalog. The final review additionally closed a loophole that could have let an owner registration import another deployment's owner file.
+- No UI component or visual behavior was introduced, so screenshot/browser review was not applicable; authenticated runtime behavior was covered by the passing Shell integration suite.
 
 ### Deviations and Follow-ups
 
-- No implementation or validation blocker remains. Disposable local database/auth configuration and
-  an isolated SpiceDB instance were used only for the final integration gates; no secret file was
-  read or modified.
-- Repository-level documentation still describing a jointly deployed/static registry remains the
-  already documented out-of-scope documentation-owner follow-up.
+- No implementation or validation blocker remains. Disposable local database/auth configuration and an isolated SpiceDB instance were used only for the final integration gates; no secret file was read or modified.
+- Repository-level documentation still describing a jointly deployed/static registry remains the already documented out-of-scope documentation-owner follow-up.
 
 ## Notes
 
@@ -445,6 +334,4 @@ Execute every command to validate the feature with zero regressions.
 - The repository currently contains no production `verticals/*` package. Disposable fixtures must prove the complete design until the first real business MicroVertical is generated.
 - A new Codesmith generator is required because `vertical.manifest.ts` and `vertical.registration.ts` are new business owner files. The generator must exist and be tested before either file is created in a real vertical; hand-creation remains forbidden.
 - No unresolved developer decision blocks implementation.
-- Final validation completed on 2026-08-07. Every command under `Validation Commands` passed in the
-  detached worktree, including database/auth integration, workspace contract, production build, and
-  final repository quality gates.
+- Final validation completed on 2026-08-07. Every command under `Validation Commands` passed in the detached worktree, including database/auth integration, workspace contract, production build, and final repository quality gates.

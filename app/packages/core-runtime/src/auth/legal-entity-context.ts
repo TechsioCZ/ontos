@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { Context, Duration, Effect, Layer } from 'effect';
+
 import { CoreDatabase } from '../db/client.ts';
 import { legalEntities } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
@@ -15,7 +16,8 @@ export { LegalEntityContextInvalidError } from './legal-entity-context-invalid-e
 export { LegalEntityContextMissingError } from './legal-entity-context-missing-error.ts';
 export { LegalEntityContextUnavailableError } from './legal-entity-context-unavailable-error.ts';
 
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export type LegalEntityContextError =
   | LegalEntityContextMissingError
@@ -46,7 +48,10 @@ const compareText = (left: string, right: string): number => {
   return 0;
 };
 
-const validRecord = (record: LegalEntityContextRecord, tenantId: string): boolean =>
+const validRecord = (
+  record: LegalEntityContextRecord,
+  tenantId: string
+): boolean =>
   uuidPattern.test(record.legalEntityId) &&
   uuidPattern.test(record.tenantId) &&
   record.tenantId === tenantId &&
@@ -55,16 +60,22 @@ const validRecord = (record: LegalEntityContextRecord, tenantId: string): boolea
 
 const validateRecords = (
   records: readonly LegalEntityContextRecord[],
-  tenantId: string,
+  tenantId: string
 ): Effect.Effect<
   readonly LegalEntityContextRecord[],
   LegalEntityContextInvalidError | LegalEntityContextAmbiguousError
 > => {
-  if (!uuidPattern.test(tenantId) || records.some((record) => !validRecord(record, tenantId))) {
+  if (
+    !uuidPattern.test(tenantId) ||
+    records.some((record) => !validRecord(record, tenantId))
+  ) {
     return Effect.fail(new LegalEntityContextInvalidError());
   }
 
-  if (new Set(records.map((record) => record.legalEntityId)).size !== records.length) {
+  if (
+    new Set(records.map((record) => record.legalEntityId)).size !==
+    records.length
+  ) {
     return Effect.fail(new LegalEntityContextAmbiguousError());
   }
 
@@ -73,7 +84,7 @@ const validateRecords = (
 
 export const classifyActiveLegalEntities = (
   records: readonly LegalEntityContextRecord[],
-  tenantId: string,
+  tenantId: string
 ): Effect.Effect<
   readonly SafeLegalEntity[],
   LegalEntityContextInvalidError | LegalEntityContextAmbiguousError
@@ -82,22 +93,22 @@ export const classifyActiveLegalEntities = (
     Effect.map((validated) =>
       validated
         .flatMap(({ legalEntityId, legalName, status }) =>
-          status === 'active' ? [{ legalEntityId, legalName }] : [],
+          status === 'active' ? [{ legalEntityId, legalName }] : []
         )
         .toSorted(
           (left, right) =>
             compareText(left.legalName, right.legalName) ||
-            compareText(left.legalEntityId, right.legalEntityId),
-        ),
-    ),
+            compareText(left.legalEntityId, right.legalEntityId)
+        )
+    )
   );
 
 export const classifySelectedLegalEntity = Effect.fn(
-  'LegalEntityContext.classifySelectedLegalEntity',
+  'LegalEntityContext.classifySelectedLegalEntity'
 )(function* classifySelectedLegalEntityEffect(
   records: readonly LegalEntityContextRecord[],
   tenantId: string,
-  legalEntityId: string,
+  legalEntityId: string
 ): Effect.fn.Return<
   SafeLegalEntity,
   Exclude<LegalEntityContextError, LegalEntityContextUnavailableError>
@@ -107,7 +118,9 @@ export const classifySelectedLegalEntity = Effect.fn(
     return yield* new LegalEntityContextInvalidError();
   }
 
-  const matching = validated.filter((record) => record.legalEntityId === legalEntityId);
+  const matching = validated.filter(
+    (record) => record.legalEntityId === legalEntityId
+  );
   if (matching.length === 0) {
     return yield* new LegalEntityContextMissingError();
   }
@@ -131,11 +144,11 @@ export const classifySelectedLegalEntity = Effect.fn(
 
 export interface LegalEntityContextService {
   readonly listActiveForTenant: (
-    tenantId: string,
+    tenantId: string
   ) => Effect.Effect<readonly SafeLegalEntity[], LegalEntityContextError>;
   readonly validateSelection: (
     tenantId: string,
-    legalEntityId: string,
+    legalEntityId: string
   ) => Effect.Effect<SafeLegalEntity, LegalEntityContextError>;
 }
 
@@ -149,22 +162,28 @@ type LegalEntityContextRecordLoadResult = Effect.Effect<
   LegalEntityContextUnavailableError
 >;
 
-interface LegalEntityContextRecordReader<Result extends LegalEntityContextRecordLoadResult> {
+interface LegalEntityContextRecordReader<
+  Result extends LegalEntityContextRecordLoadResult,
+> {
   readonly load: (tenantId: string, legalEntityId?: string) => Result;
 }
 
 const attachCause = <Failure extends object, FailureCause>(
   failure: Failure,
-  cause?: FailureCause,
+  cause?: FailureCause
 ): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+  cause === undefined
+    ? failure
+    : Object.defineProperty(failure, 'cause', { value: cause });
 
-const unavailable = <FailureCause>(cause?: FailureCause): LegalEntityContextUnavailableError =>
+const unavailable = <FailureCause>(
+  cause?: FailureCause
+): LegalEntityContextUnavailableError =>
   attachCause(
     new LegalEntityContextUnavailableError({
       reason: 'Unable to resolve the legal-entity context',
     }),
-    cause,
+    cause
   );
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
@@ -172,7 +191,10 @@ const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 const legalEntityContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): LegalEntityContextRecordReader<
-  Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError>
+  Effect.Effect<
+    readonly LegalEntityContextRecord[],
+    LegalEntityContextUnavailableError
+  >
 > => ({
   load: (tenantId, legalEntityId) =>
     database.executor
@@ -186,35 +208,45 @@ const legalEntityContextRepositoryFromDatabase = (database: {
       .where(
         and(
           eq(legalEntities.tenantId, tenantId),
-          ...(legalEntityId === undefined ? [] : [eq(legalEntities.legalEntityId, legalEntityId)]),
-        ),
+          ...(legalEntityId === undefined
+            ? []
+            : [eq(legalEntities.legalEntityId, legalEntityId)])
+        )
       )
       .pipe(
         Effect.mapError(unavailable),
         Effect.timeoutOrElse({
           duration: DATABASE_OPERATION_TIMEOUT,
           orElse: () => Effect.fail(unavailable()),
-        }),
+        })
       ),
 });
 
-const legalEntityContextFromRepository = <Result extends LegalEntityContextRecordLoadResult>(
-  repository: LegalEntityContextRecordReader<Result>,
+const legalEntityContextFromRepository = <
+  Result extends LegalEntityContextRecordLoadResult,
+>(
+  repository: LegalEntityContextRecordReader<Result>
 ): LegalEntityContextService => {
   const loadRecords = (
     tenantId: string,
-    legalEntityId?: string,
-  ): Effect.Effect<readonly LegalEntityContextRecord[], LegalEntityContextUnavailableError> =>
-    repository.load(tenantId, legalEntityId);
+    legalEntityId?: string
+  ): Effect.Effect<
+    readonly LegalEntityContextRecord[],
+    LegalEntityContextUnavailableError
+  > => repository.load(tenantId, legalEntityId);
 
   return {
     listActiveForTenant: (tenantId) =>
       loadRecords(tenantId).pipe(
-        Effect.flatMap((records) => classifyActiveLegalEntities(records, tenantId)),
+        Effect.flatMap((records) =>
+          classifyActiveLegalEntities(records, tenantId)
+        )
       ),
     validateSelection: (tenantId, legalEntityId) =>
       loadRecords(tenantId, legalEntityId).pipe(
-        Effect.flatMap((records) => classifySelectedLegalEntity(records, tenantId, legalEntityId)),
+        Effect.flatMap((records) =>
+          classifySelectedLegalEntity(records, tenantId, legalEntityId)
+        )
       ),
   };
 };
@@ -222,9 +254,11 @@ const legalEntityContextFromRepository = <Result extends LegalEntityContextRecor
 export const makeLegalEntityContext = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): LegalEntityContextService =>
-  legalEntityContextFromRepository(legalEntityContextRepositoryFromDatabase(database));
+  legalEntityContextFromRepository(
+    legalEntityContextRepositoryFromDatabase(database)
+  );
 
 export const LegalEntityContextLive = Layer.effect(
   LegalEntityContext,
-  CoreDatabase.pipe(Effect.map(makeLegalEntityContext)),
+  CoreDatabase.pipe(Effect.map(makeLegalEntityContext))
 );

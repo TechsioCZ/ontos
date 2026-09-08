@@ -1,7 +1,3 @@
-import { makeContextAccessDouble } from '../support/context-access-double.ts';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { expect, test } from '@rstest/core';
 import {
   ActionRuntime,
   ActionAlreadyCommitted,
@@ -17,8 +13,15 @@ import type {
   PrincipalResolverService,
   SupportRecoveryPrincipalContextResolverService,
 } from '@app/core-runtime';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { expect, test } from '@rstest/core';
 import { makeSignature } from 'better-auth/crypto';
 import { Context, Effect, Match, Option } from 'effect';
+
+import { PrincipalManagementRepository } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
+import type { PrincipalManagementRepositoryService } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
+import { AuthConfig } from '../../api/auth/config.ts';
 import type {
   SupportAuthProvider,
   SupportImpersonationStore,
@@ -30,17 +33,15 @@ import {
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
-import { AuthConfig } from '../../api/auth/config.ts';
 import { AuthenticationService } from '../../api/auth/service.ts';
 import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
-import { PrincipalManagementRepository } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
-import type { PrincipalManagementRepositoryService } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import {
   actionCoreFailure,
   actionDomainFailure,
   actionSuccess,
   makeActionRuntimeDouble,
 } from '../support/action-runtime-double.ts';
+import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 import {
   makeAuthenticationServiceDouble,
@@ -68,18 +69,24 @@ const unconfiguredPrincipalManagement = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
 const principalManagementRepository: PrincipalManagementRepositoryService = {
   bindApiKey: () => unconfiguredPrincipalManagement('bindApiKey'),
-  changePrincipalStatus: () => unconfiguredPrincipalManagement('changePrincipalStatus'),
-  createNonHumanPrincipal: () => unconfiguredPrincipalManagement('createNonHumanPrincipal'),
-  setApiKeyBindingStatus: () => unconfiguredPrincipalManagement('setApiKeyBindingStatus'),
+  changePrincipalStatus: () =>
+    unconfiguredPrincipalManagement('changePrincipalStatus'),
+  createNonHumanPrincipal: () =>
+    unconfiguredPrincipalManagement('createNonHumanPrincipal'),
+  setApiKeyBindingStatus: () =>
+    unconfiguredPrincipalManagement('setApiKeyBindingStatus'),
   validateSupportImpersonation: () =>
     unconfiguredPrincipalManagement('validateSupportImpersonation'),
 };
 const providePrincipalManagementRepository = Effect.provideService(
   PrincipalManagementRepository,
-  principalManagementRepository,
+  principalManagementRepository
 );
 const contextAccess = makeContextAccessDouble('allowed');
-const provideContextAccess = Effect.provideService(ContextAccess, contextAccess);
+const provideContextAccess = Effect.provideService(
+  ContextAccess,
+  contextAccess
+);
 
 const makeService = (options: {
   readonly actionRuntime: ActionRuntimeService;
@@ -96,33 +103,41 @@ const makeService = (options: {
       Context.add(AuthenticationService, options.authentication),
       Context.add(AuthConfig, options.configuration),
       Context.add(PrincipalResolver, options.resolver),
-      Context.add(SupportRecoveryPrincipalContextResolver, options.supportRecoveryPrincipal),
+      Context.add(
+        SupportRecoveryPrincipalContextResolver,
+        options.supportRecoveryPrincipal
+      ),
       Context.add(SupportAuthProviderService, options.provider),
-      Context.add(SupportImpersonationStoreService, options.store),
-    ),
+      Context.add(SupportImpersonationStoreService, options.store)
+    )
   );
   return Object.freeze({
     start: (input: Parameters<typeof service.start>[0]) =>
-      service.start(input).pipe(providePrincipalManagementRepository, provideContextAccess),
+      service
+        .start(input)
+        .pipe(providePrincipalManagementRepository, provideContextAccess),
     stop: (input: Parameters<typeof service.stop>[0]) =>
-      service.stop(input).pipe(providePrincipalManagementRepository, provideContextAccess),
+      service
+        .stop(input)
+        .pipe(providePrincipalManagementRepository, provideContextAccess),
   });
 };
-const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService = {
-  resolveStoppedImpersonation: (input: {
-    readonly originalAuthBindingId: string;
-    readonly originalPrincipalId: string;
-    readonly originalSessionId: string;
-    readonly tenantId: string;
-  }) =>
-    Effect.succeed({
-      authBindingId: input.originalAuthBindingId,
-      authContextRef: `better-auth-session:${input.originalSessionId}`,
-      authMethod: 'session',
-      principalId: input.originalPrincipalId,
-      tenantId: input.tenantId,
-    }),
-};
+const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService =
+  {
+    resolveStoppedImpersonation: (input: {
+      readonly originalAuthBindingId: string;
+      readonly originalPrincipalId: string;
+      readonly originalSessionId: string;
+      readonly tenantId: string;
+    }) =>
+      Effect.succeed({
+        authBindingId: input.originalAuthBindingId,
+        authContextRef: `better-auth-session:${input.originalSessionId}`,
+        authMethod: 'session',
+        principalId: input.originalPrincipalId,
+        tenantId: input.tenantId,
+      }),
+  };
 
 const provider = (impersonated: boolean): SupportAuthProvider => ({
   api: {
@@ -183,7 +198,7 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
           let providerCalls = 0;
           const outcome = Match.value(failure).pipe(
             Match.tag('IdentityTargetInvalidError', actionDomainFailure),
-            Match.orElse(actionCoreFailure),
+            Match.orElse(actionCoreFailure)
           );
           const service = makeService({
             actionRuntime: makeActionRuntimeDouble([outcome]).runtime,
@@ -215,7 +230,8 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
               },
             }),
             resolver: makePrincipalResolverDouble({
-              resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
+              resolveBetterAuthUserForPrincipal: () =>
+                Effect.succeed('target-provider-user'),
             }),
             store: makeSupportImpersonationStoreDouble(),
             supportRecoveryPrincipal,
@@ -232,16 +248,16 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
               .pipe(
                 Effect.provideService(
                   SupportImpersonationCorrelationId,
-                  `correlation-${failure._tag}`,
-                ),
-              ),
+                  `correlation-${failure._tag}`
+                )
+              )
           );
 
           expect(actual).toBe(failure);
           expect(providerCalls).toBe(0);
         }),
-      { concurrency: 1, discard: true },
-    ),
+      { concurrency: 1, discard: true }
+    )
   );
 });
 
@@ -285,7 +301,8 @@ test('removes the provider session and recovery when started evidence cannot com
       }),
     }),
     resolver: makePrincipalResolverDouble({
-      resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
+      resolveBetterAuthUserForPrincipal: () =>
+        Effect.succeed('target-provider-user'),
     }),
     store: makeSupportImpersonationStoreDouble({
       deleteRecovery: () =>
@@ -314,10 +331,10 @@ test('removes the provider session and recovery when started evidence cannot com
         .pipe(
           Effect.provideService(
             SupportImpersonationCorrelationId,
-            'correlation-started-compensation',
-          ),
-        ),
-    ),
+            'correlation-started-compensation'
+          )
+        )
+    )
   );
 
   expect(failure).toBe(startedFailure);
@@ -333,7 +350,9 @@ test('persists stop recovery before provider restoration and returns restored co
     reason: 'The stopped checkpoint transaction failed',
   });
   const service = makeService({
-    actionRuntime: makeActionRuntimeDouble([actionCoreFailure(transactionFailure)]).runtime,
+    actionRuntime: makeActionRuntimeDouble([
+      actionCoreFailure(transactionFailure),
+    ]).runtime,
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: provider(true),
@@ -359,7 +378,12 @@ test('persists stop recovery before provider restoration and returns restored co
         idempotencyKey: 'stop-request-1',
         requestHeaders: new Headers(),
       })
-      .pipe(Effect.provideService(SupportImpersonationCorrelationId, 'correlation-1')),
+      .pipe(
+        Effect.provideService(
+          SupportImpersonationCorrelationId,
+          'correlation-1'
+        )
+      )
   );
 
   expect(recovery).toEqual(
@@ -369,10 +393,12 @@ test('persists stop recovery before provider restoration and returns restored co
       originalPrincipalId,
       targetPrincipalId,
       tenantId,
-    }),
+    })
   );
   expect(result.checkpointPending).toBe(true);
-  expect(result.setCookieHeaders).toEqual(['session=restored; Path=/; HttpOnly']);
+  expect(result.setCookieHeaders).toEqual([
+    'session=restored; Path=/; HttpOnly',
+  ]);
   expect(resolverCalled).toBe(false);
 });
 
@@ -419,7 +445,12 @@ test('terminates the target session before retrying stopped evidence from the re
         idempotencyKey: 'stop-request-2',
         requestHeaders: new Headers(),
       })
-      .pipe(Effect.provideService(SupportImpersonationCorrelationId, 'correlation-2')),
+      .pipe(
+        Effect.provideService(
+          SupportImpersonationCorrelationId,
+          'correlation-2'
+        )
+      )
   );
 
   expect(actionRuntime.payloads[0]).toEqual({
@@ -491,12 +522,21 @@ test('completes every pending checkpoint correlated to the restored session', as
         idempotencyKey: 'stop-request-3',
         requestHeaders: new Headers(),
       })
-      .pipe(Effect.provideService(SupportImpersonationCorrelationId, 'correlation-3')),
+      .pipe(
+        Effect.provideService(
+          SupportImpersonationCorrelationId,
+          'correlation-3'
+        )
+      )
   );
 
   expect(actionRuntime.payloads).toEqual([
-    expect.objectContaining({ sessionRef: `better-auth-session:${impersonationSessionId}` }),
-    expect.objectContaining({ sessionRef: `better-auth-session:${secondImpersonationSessionId}` }),
+    expect.objectContaining({
+      sessionRef: `better-auth-session:${impersonationSessionId}`,
+    }),
+    expect.objectContaining({
+      sessionRef: `better-auth-session:${secondImpersonationSessionId}`,
+    }),
   ]);
   expect(result.checkpointPending).toBe(false);
   expect(deleteCount).toBe(4);
@@ -505,7 +545,7 @@ test('completes every pending checkpoint correlated to the restored session', as
 test('persists and completes stopped evidence on the first stop after impersonation expiry', async () => {
   const expiredToken = 'expired-impersonation-token';
   const signedToken = encodeURIComponent(
-    `${expiredToken}.${await makeSignature(expiredToken, configuration.secret)}`,
+    `${expiredToken}.${await makeSignature(expiredToken, configuration.secret)}`
   );
   let persistedRecovery: SupportRecoveryRecord | undefined;
   let deleteCalls = 0;
@@ -544,7 +584,7 @@ test('persists and completes stopped evidence on the first stop after impersonat
             reason: 'Investigate support request',
             targetPrincipalId,
             tenantId,
-          }),
+          })
         ),
     }),
     supportRecoveryPrincipal,
@@ -559,8 +599,11 @@ test('persists and completes stopped evidence on the first stop after impersonat
         }),
       })
       .pipe(
-        Effect.provideService(SupportImpersonationCorrelationId, 'correlation-first-expired-stop'),
-      ),
+        Effect.provideService(
+          SupportImpersonationCorrelationId,
+          'correlation-first-expired-stop'
+        )
+      )
   );
 
   expect(persistedRecovery).toEqual(
@@ -568,7 +611,7 @@ test('persists and completes stopped evidence on the first stop after impersonat
       actionId: 'expired-impersonation-action',
       impersonationSessionId,
       originalSessionId: restoredSessionId,
-    }),
+    })
   );
   expect(actionRuntime.payloads[0]).toEqual({
     checkpoint: 'stopped',
@@ -578,11 +621,16 @@ test('persists and completes stopped evidence on the first stop after impersonat
     targetPrincipalId,
   });
   expect(result.checkpointPending).toBe(false);
-  expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
+  expect(
+    result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))
+  ).toBe(true);
   expect(deleteCalls).toBe(2);
 });
 
-const makeLostResponseRecoveryService = (recovery: SupportRecoveryRecord, expiresAt: Date) => {
+const makeLostResponseRecoveryService = (
+  recovery: SupportRecoveryRecord,
+  expiresAt: Date
+) => {
   let deleted = false;
   const actionRuntime = makeActionRuntimeDouble([
     actionSuccess({ checkpoint: 'stopped', recorded: true }),
@@ -606,7 +654,7 @@ const makeLostResponseRecoveryService = (recovery: SupportRecoveryRecord, expire
           Option.some({
             expiresAt,
             id: restoredSessionId,
-          }),
+          })
         ),
       loadRecoveries: () => Effect.succeed([recovery]),
     }),
@@ -619,7 +667,7 @@ test('restores the original session and stopped checkpoint after the provider re
   const originalSessionToken = 'original-session-token';
   const adminValue = `${originalSessionToken}:true`;
   const adminCookie = encodeURIComponent(
-    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`,
+    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`
   );
   const requestHeaders = new Headers({
     cookie: `better-auth.admin_session=${adminCookie}; better-auth.session_token=deleted`,
@@ -637,7 +685,7 @@ test('restores the original session and stopped checkpoint after the provider re
   };
   const { actionRuntime, deleted, service } = makeLostResponseRecoveryService(
     recovery,
-    new Date('2099-01-01T00:00:00.000Z'),
+    new Date('2099-01-01T00:00:00.000Z')
   );
 
   const result = await runEffectTestPromise(
@@ -646,7 +694,12 @@ test('restores the original session and stopped checkpoint after the provider re
         idempotencyKey: 'stop-response-loss',
         requestHeaders,
       })
-      .pipe(Effect.provideService(SupportImpersonationCorrelationId, 'correlation-response-loss')),
+      .pipe(
+        Effect.provideService(
+          SupportImpersonationCorrelationId,
+          'correlation-response-loss'
+        )
+      )
   );
 
   expect(result.active).toBe(false);
@@ -654,19 +707,21 @@ test('restores the original session and stopped checkpoint after the provider re
   expect(actionRuntime.invocationCount()).toBe(1);
   expect(deleted()).toBe(true);
   const restoredSessionCookie = result.setCookieHeaders.find((header) =>
-    header.startsWith('better-auth.session_token='),
+    header.startsWith('better-auth.session_token=')
   );
   expect(restoredSessionCookie).toBeDefined();
   expect(restoredSessionCookie?.includes('Max-Age=')).toBe(false);
   const dontRememberCookie = result.setCookieHeaders.find((header) =>
-    header.startsWith('better-auth.dont_remember='),
+    header.startsWith('better-auth.dont_remember=')
   );
   expect(dontRememberCookie).toBeDefined();
   expect(dontRememberCookie?.includes('Max-Age=0')).toBe(false);
   expect(
     result.setCookieHeaders.some(
-      (header) => header.startsWith('better-auth.admin_session=') && header.includes('Max-Age=0'),
-    ),
+      (header) =>
+        header.startsWith('better-auth.admin_session=') &&
+        header.includes('Max-Age=0')
+    )
   ).toBe(true);
 });
 
@@ -674,7 +729,7 @@ test('completes stopped recovery when a lost response leaves only an expired ori
   const originalSessionToken = 'expired-original-session-token';
   const adminValue = `${originalSessionToken}:`;
   const adminCookie = encodeURIComponent(
-    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`,
+    `${adminValue}.${await makeSignature(adminValue, configuration.secret)}`
   );
   const recovery = {
     actionId: 'expired-original-action',
@@ -689,7 +744,7 @@ test('completes stopped recovery when a lost response leaves only an expired ori
   };
   const { actionRuntime, deleted, service } = makeLostResponseRecoveryService(
     recovery,
-    new Date('2000-01-01T00:00:00.000Z'),
+    new Date('2000-01-01T00:00:00.000Z')
   );
 
   const result = await runEffectTestPromise(
@@ -703,16 +758,18 @@ test('completes stopped recovery when a lost response leaves only an expired ori
       .pipe(
         Effect.provideService(
           SupportImpersonationCorrelationId,
-          'correlation-expired-lost-response',
-        ),
-      ),
+          'correlation-expired-lost-response'
+        )
+      )
   );
 
   expect(result.active).toBe(false);
   expect(result.checkpointPending).toBe(false);
   expect(actionRuntime.invocationCount()).toBe(1);
   expect(deleted()).toBe(true);
-  expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
+  expect(
+    result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))
+  ).toBe(true);
 });
 
 test('clears a mismatched restored session and completes recovery from the recorded original', async () => {
@@ -728,7 +785,10 @@ test('clears a mismatched restored session and completes recovery from the recor
       ...provider(true).api,
       stopImpersonating: async () => {
         const headers = new Headers();
-        headers.append('set-cookie', 'better-auth.session_token=unexpected; Path=/; HttpOnly');
+        headers.append(
+          'set-cookie',
+          'better-auth.session_token=unexpected; Path=/; HttpOnly'
+        );
         return {
           headers,
           response: { session: { id: 'unexpected-restored-session' } },
@@ -753,15 +813,22 @@ test('clears a mismatched restored session and completes recovery from the recor
         requestHeaders: new Headers(),
       })
       .pipe(
-        Effect.provideService(SupportImpersonationCorrelationId, 'correlation-mismatched-restore'),
-      ),
+        Effect.provideService(
+          SupportImpersonationCorrelationId,
+          'correlation-mismatched-restore'
+        )
+      )
   );
 
   expect(result.checkpointPending).toBe(false);
   expect(actionRuntime.invocationCount()).toBe(1);
   expect(deleted).toBe(true);
-  expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
-  expect(result.setCookieHeaders.some((header) => header.includes('unexpected'))).toBe(false);
+  expect(
+    result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))
+  ).toBe(true);
+  expect(
+    result.setCookieHeaders.some((header) => header.includes('unexpected'))
+  ).toBe(false);
 });
 
 test('deletes the impersonation session and clears cookies when original restoration fails', async () => {
@@ -771,7 +838,9 @@ test('deletes the impersonation session and clears cookies when original restora
     reason: 'The stopped checkpoint was denied',
   });
   const service = makeService({
-    actionRuntime: makeActionRuntimeDouble([actionCoreFailure(checkpointFailure)]).runtime,
+    actionRuntime: makeActionRuntimeDouble([
+      actionCoreFailure(checkpointFailure),
+    ]).runtime,
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
@@ -798,12 +867,17 @@ test('deletes the impersonation session and clears cookies when original restora
         requestHeaders: new Headers(),
       })
       .pipe(
-        Effect.provideService(SupportImpersonationCorrelationId, 'correlation-expired-original'),
-      ),
+        Effect.provideService(
+          SupportImpersonationCorrelationId,
+          'correlation-expired-original'
+        )
+      )
   );
 
   expect(result.active).toBe(false);
   expect(result.checkpointPending).toBe(true);
   expect(deleteCalls).toBe(1);
-  expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
+  expect(
+    result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))
+  ).toBe(true);
 });

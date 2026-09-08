@@ -4,7 +4,12 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { OfficialIdentifierAssertionSchema } from '../domain/identifier-contracts.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
@@ -19,57 +24,65 @@ export const PartyOfficialIdentifierHistoryResponseSchema = Schema.Struct({
 export type PartyOfficialIdentifierHistoryResponse =
   typeof PartyOfficialIdentifierHistoryResponseSchema.Type;
 
-export const PartyOfficialIdentifierHistoryAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierHistoryAuthenticationProblem',
-  401,
-);
-export const PartyOfficialIdentifierHistoryInvalidProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierHistoryInvalidProblem',
-  400,
-);
+export const PartyOfficialIdentifierHistoryAuthenticationProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierHistoryAuthenticationProblem',
+    401
+  );
+export const PartyOfficialIdentifierHistoryInvalidProblemSchema =
+  makeProblemDetailsSchema('PartyOfficialIdentifierHistoryInvalidProblem', 400);
 export const PartyOfficialIdentifierHistoryUnavailableProblemSchema =
-  makeRetryableProblemDetailsSchema('PartyOfficialIdentifierHistoryUnavailableProblem', 503);
-export const PartyOfficialIdentifierHistoryForbiddenProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierHistoryForbiddenProblem',
-  403,
-);
-export const PartyOfficialIdentifierHistoryNotFoundProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierHistoryNotFoundProblem',
-  404,
-);
-export const PartyOfficialIdentifierHistoryPolicyProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierHistoryPolicyProblem',
-  422,
-);
-export const PartyOfficialIdentifierHistoryPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierHistoryPolicyConflictProblem',
-  409,
-);
-export const PartyOfficialIdentifierHistoryInternalProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierHistoryInternalProblem',
-  500,
-);
+  makeRetryableProblemDetailsSchema(
+    'PartyOfficialIdentifierHistoryUnavailableProblem',
+    503
+  );
+export const PartyOfficialIdentifierHistoryForbiddenProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierHistoryForbiddenProblem',
+    403
+  );
+export const PartyOfficialIdentifierHistoryNotFoundProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierHistoryNotFoundProblem',
+    404
+  );
+export const PartyOfficialIdentifierHistoryPolicyProblemSchema =
+  makeProblemDetailsSchema('PartyOfficialIdentifierHistoryPolicyProblem', 422);
+export const PartyOfficialIdentifierHistoryPolicyConflictProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierHistoryPolicyConflictProblem',
+    409
+  );
+export const PartyOfficialIdentifierHistoryInternalProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierHistoryInternalProblem',
+    500
+  );
 
 export const PartyOfficialIdentifierHistoryApi = HttpApi.make(
-  'PartyOfficialIdentifierHistoryApi',
+  'PartyOfficialIdentifierHistoryApi'
 ).add(
   HttpApiGroup.make('partyOfficialIdentifierHistory').add(
-    HttpApiEndpoint.post('execute', '/reads/party-official-identifier-history', {
-      error: [
-        PartyOfficialIdentifierHistoryInvalidProblemSchema,
-        PartyOfficialIdentifierHistoryAuthenticationProblemSchema,
-        PartyOfficialIdentifierHistoryForbiddenProblemSchema,
-        PartyOfficialIdentifierHistoryNotFoundProblemSchema,
-        PartyOfficialIdentifierHistoryPolicyConflictProblemSchema,
-        PartyOfficialIdentifierHistoryPolicyProblemSchema,
-        PartyOfficialIdentifierHistoryUnavailableProblemSchema,
-        PartyOfficialIdentifierHistoryInternalProblemSchema,
-      ],
-      headers: {},
-      params: {},
-      payload: PartyOfficialIdentifierHistoryRequestSchema,
-      query: {},
-      success: PartyOfficialIdentifierHistoryResponseSchema,
-    }),
-  ),
+    HttpApiEndpoint.post(
+      'execute',
+      '/reads/party-official-identifier-history',
+      {
+        error: [
+          PartyOfficialIdentifierHistoryInvalidProblemSchema,
+          PartyOfficialIdentifierHistoryAuthenticationProblemSchema,
+          PartyOfficialIdentifierHistoryForbiddenProblemSchema,
+          PartyOfficialIdentifierHistoryNotFoundProblemSchema,
+          PartyOfficialIdentifierHistoryPolicyConflictProblemSchema,
+          PartyOfficialIdentifierHistoryPolicyProblemSchema,
+          PartyOfficialIdentifierHistoryUnavailableProblemSchema,
+          PartyOfficialIdentifierHistoryInternalProblemSchema,
+        ],
+        headers: {},
+        params: {},
+        payload: PartyOfficialIdentifierHistoryRequestSchema,
+        query: {},
+        success: PartyOfficialIdentifierHistoryResponseSchema,
+      }
+    )
+  )
 );

@@ -5,5 +5,5 @@ export class DuplicateCandidateConflict extends Schema.TaggedError<DuplicateCand
   {
     code: Schema.Literal('duplicate_candidate_conflict'),
     reason: Schema.String,
-  },
+  }
 ) {}

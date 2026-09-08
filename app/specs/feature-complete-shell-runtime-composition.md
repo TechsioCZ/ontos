@@ -14,9 +14,7 @@ The feature covers the complete Shell-owned surface: responsive layout, tenant a
 
 ## User Story
 
-As an authenticated OntOS operator
-I want the Shell to compose navigation, modules, resources, search, timelines, and media tools for my selected tenant and legal entity
-So that I can move safely across independently deployed business capabilities without seeing or loading code and data that are inactive, inaccessible, or outside my current company context
+As an authenticated OntOS operator I want the Shell to compose navigation, modules, resources, search, timelines, and media tools for my selected tenant and legal entity So that I can move safely across independently deployed business capabilities without seeing or loading code and data that are inactive, inaccessible, or outside my current company context
 
 ## Problem Statement
 

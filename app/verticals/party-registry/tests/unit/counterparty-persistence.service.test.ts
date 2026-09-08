@@ -1,10 +1,12 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { DateTime, Effect } from 'effect';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused test harness models the narrow Drizzle native Effect query surface used by the owner-local service. expires: 2026-12-31. */
 import type { Table } from 'drizzle-orm';
 import { getTableName } from 'drizzle-orm';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { DateTime, Effect } from 'effect';
+
 import {
   addCounterpartyRoleRecord,
   createCounterpartyRecord,
@@ -20,7 +22,8 @@ const partyId = '40000000-0000-4000-8000-000000000001';
 const rolePeriodId = '50000000-0000-4000-8000-000000000001';
 const actionInvocationId = '60000000-0000-4000-8000-000000000001';
 const principalId = '70000000-0000-4000-8000-000000000001';
-const date = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
+const date = (instant: string): Date =>
+  DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 
 const counterpartyRow = {
   archivedAt: null,
@@ -70,7 +73,7 @@ interface TransactionHarness {
 const transactionHarness = (
   selects: readonly (readonly Readonly<Record<string, unknown>>[])[],
   updates: readonly (readonly Readonly<Record<string, unknown>>[])[] = [],
-  inserts: readonly (readonly Readonly<Record<string, unknown>>[])[] = [],
+  inserts: readonly (readonly Readonly<Record<string, unknown>>[])[] = []
 ): TransactionHarness => {
   const selectQueue = [...selects];
   const updateQueue = [...updates];
@@ -92,7 +95,7 @@ const transactionHarness = (
         limit: () => chain,
         orderBy: () => chain,
         where: () => chain,
-      },
+      }
     );
     return chain;
   };
@@ -119,7 +122,7 @@ const transactionHarness = (
           insertValues.push(values);
           return chain;
         },
-      },
+      }
     );
     return chain;
   };
@@ -127,7 +130,13 @@ const transactionHarness = (
   const transaction = { insert, select, update } as unknown as Parameters<
     typeof endCounterpartyRoleRecord
   >[0];
-  return { insertValues, insertedTables, selectedTables, transaction, updateSets };
+  return {
+    insertValues,
+    insertedTables,
+    selectedTables,
+    transaction,
+    updateSets,
+  };
 };
 
 const endInput = (validTo: string, method: string) => ({
@@ -158,26 +167,32 @@ test('keeps a future-ended role active until its exclusive effective end', () =>
     endedRecordedAt: date('2026-09-03T00:00:00.000Z'),
     validTo: date(futureEnd),
   });
-  const harness = transactionHarness([[counterpartyRow], [roleRow()]], [[updated]]);
+  const harness = transactionHarness(
+    [[counterpartyRow], [roleRow()]],
+    [[updated]]
+  );
 
   return runEffectTestPromise(
     endCounterpartyRoleRecord(
       harness.transaction,
-      endInput(futureEnd, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END'),
-    ),
+      endInput(futureEnd, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END')
+    )
   ).then((result) => {
     assert.equal(result._tag, 'found');
     assert.equal(harness.updateSets[0]?.['state'], 'ACTIVE');
     assert.equal(harness.updateSets[0]?.['isCurrent'], true);
-    assert.equal(harness.updateSets[0]?.['endProvenanceSource'], 'contracts.core');
+    assert.equal(
+      harness.updateSets[0]?.['endProvenanceSource'],
+      'contracts.core'
+    );
     assert.equal(
       harness.updateSets[0]?.['endProvenanceMethod'],
-      'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      'CONFIRMED_CUSTOMER_RELATIONSHIP_END'
     );
     assert.equal(harness.insertValues.length, 2);
     assert.equal(
       harness.insertValues[1]?.['endProvenanceMethod'],
-      'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      'CONFIRMED_CUSTOMER_RELATIONSHIP_END'
     );
   });
 });
@@ -192,13 +207,16 @@ test('records a retrospective end as historical without deleting the role period
     state: 'ENDED',
     validTo: date(pastEnd),
   });
-  const harness = transactionHarness([[counterpartyRow], [roleRow()]], [[updated]]);
+  const harness = transactionHarness(
+    [[counterpartyRow], [roleRow()]],
+    [[updated]]
+  );
 
   return runEffectTestPromise(
     endCounterpartyRoleRecord(
       harness.transaction,
-      endInput(pastEnd, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END'),
-    ),
+      endInput(pastEnd, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END')
+    )
   ).then(() => {
     assert.equal(harness.updateSets[0]?.['state'], 'ENDED');
     assert.equal(harness.updateSets[0]?.['isCurrent'], false);
@@ -211,8 +229,8 @@ test('rejects inactivity evidence before persisting a CUSTOMER end', () => {
   return runEffectTestPromise(
     endCounterpartyRoleRecord(
       harness.transaction,
-      endInput('2027-01-01T00:00:00.000Z', 'ENGAGEMENT_INACTIVITY'),
-    ),
+      endInput('2027-01-01T00:00:00.000Z', 'ENGAGEMENT_INACTIVITY')
+    )
   ).then((result) => {
     assert.deepEqual(result, {
       _tag: 'evidence_insufficient',
@@ -238,8 +256,8 @@ test('reuses an exactly repeated end without another write', () => {
   return runEffectTestPromise(
     endCounterpartyRoleRecord(
       harness.transaction,
-      endInput(validTo, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END'),
-    ),
+      endInput(validTo, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END')
+    )
   ).then((result) => {
     assert.equal(result._tag, 'found');
     assert.equal(result.changed, false);
@@ -259,7 +277,12 @@ test('reads end provenance independently from the role-add provenance', () => {
   const harness = transactionHarness([[counterpartyRow], [ended]]);
 
   return runEffectTestPromise(
-    listCounterpartyRoleHistory(harness.transaction, tenantId, legalEntityId, counterpartyId),
+    listCounterpartyRoleHistory(
+      harness.transaction,
+      tenantId,
+      legalEntityId,
+      counterpartyId
+    )
   ).then((result) => {
     assert.equal(result._tag, 'found');
     assert.deepEqual(result.value[0]?.endProvenance, {
@@ -278,7 +301,12 @@ test('allows the authorized tenant-admin path to read history without payload Le
   ]);
 
   return runEffectTestPromise(
-    listCounterpartyRoleHistory(harness.transaction, tenantId, undefined, counterpartyId),
+    listCounterpartyRoleHistory(
+      harness.transaction,
+      tenantId,
+      undefined,
+      counterpartyId
+    )
   ).then((result) => {
     assert.equal(result._tag, 'found');
     assert.equal(result.value[0]?.roleType, 'CUSTOMER');
@@ -311,7 +339,7 @@ test('rejects an alias Party create target with canonical survivor guidance', ()
         source: 'contracts.core',
       },
       tenantId,
-    }),
+    })
   ).then((result) => {
     assert.equal(result._tag, 'party_alias');
     assert.equal(result.canonicalPartyRef.resourceId, survivorId);
@@ -341,14 +369,22 @@ test('admin detail follows a complete Party alias chain while retaining the stor
   ]);
 
   return runEffectTestPromise(
-    findCounterpartyRecord(harness.transaction, tenantId, undefined, counterpartyId),
+    findCounterpartyRecord(
+      harness.transaction,
+      tenantId,
+      undefined,
+      counterpartyId
+    )
   ).then((result) => {
     assert.equal(result._tag, 'found');
     assert.equal(result.value.party.storedPartyRef.resourceId, partyId);
     assert.equal(result.value.party.canonicalPartyRef.resourceId, survivorId);
     assert.equal(result.value.legalEntityRef.resourceId, legalEntityId);
     assert.equal(harness.selectedTables.includes('counterparties'), false);
-    assert.equal(harness.selectedTables.includes('counterparty_role_periods'), false);
+    assert.equal(
+      harness.selectedTables.includes('counterparty_role_periods'),
+      false
+    );
   });
 });
 
@@ -357,7 +393,7 @@ test('creates the tenant-admin snapshot atomically without creating an implicit 
   const harness = transactionHarness(
     [[], [{ partyId }], [], [{ partyId }], [party]],
     [],
-    [[counterpartyRow]],
+    [[counterpartyRow]]
   );
 
   return runEffectTestPromise(
@@ -374,21 +410,33 @@ test('creates the tenant-admin snapshot atomically without creating an implicit 
         source: 'contracts.core',
       },
       tenantId,
-    }),
+    })
   ).then((result) => {
     assert.equal(result._tag, 'found');
-    assert.deepEqual(harness.insertedTables, ['counterparties', 'counterparty_admin_read_models']);
+    assert.deepEqual(harness.insertedTables, [
+      'counterparties',
+      'counterparty_admin_read_models',
+    ]);
     assert.equal(harness.insertValues[1]?.['storedPartyId'], partyId);
   });
 });
 
 test('adds a future role and its admin history projection in the same transaction seam', () => {
   const futureStart = '2099-01-01T00:00:00.000Z';
-  const futureRole = roleRow({ isCurrent: false, validFrom: date(futureStart) });
+  const futureRole = roleRow({
+    isCurrent: false,
+    validFrom: date(futureStart),
+  });
   const harness = transactionHarness(
-    [[counterpartyRow], [], [{ partyId }], [{ archivedAt: null, partyId, tenantId }], []],
+    [
+      [counterpartyRow],
+      [],
+      [{ partyId }],
+      [{ archivedAt: null, partyId, tenantId }],
+      [],
+    ],
     [],
-    [[futureRole]],
+    [[futureRole]]
   );
 
   return runEffectTestPromise(
@@ -407,7 +455,7 @@ test('adds a future role and its admin history projection in the same transactio
       tenantId,
       validFrom: futureStart,
       validTo: null,
-    }),
+    })
   ).then((result) => {
     assert.equal(result._tag, 'found');
     assert.equal(harness.insertValues[0]?.['isCurrent'], false);

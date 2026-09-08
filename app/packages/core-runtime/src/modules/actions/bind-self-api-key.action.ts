@@ -2,24 +2,27 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug bind-self-api-key
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
-import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const ProviderSubjectIdSchema = Schema.String.check(
   Schema.isMinLength(1),
-  Schema.isMaxLength(500),
+  Schema.isMaxLength(500)
 ).pipe(Schema.brand('ProviderSubjectId'));
 const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('AuthBindingId'),
+  Schema.brand('AuthBindingId')
 );
 const BindSelfApiKeyPayloadSchema = Schema.Struct({
   providerSubjectId: ProviderSubjectIdSchema,
 });
-export type BindSelfApiKeyPayload = Schema.Schema.Type<typeof BindSelfApiKeyPayloadSchema>;
+export type BindSelfApiKeyPayload = Schema.Schema.Type<
+  typeof BindSelfApiKeyPayloadSchema
+>;
 const BindSelfApiKeyResultSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   status: Schema.Literal('active'),
@@ -27,33 +30,35 @@ const BindSelfApiKeyResultSchema = Schema.Struct({
 type BindApiKey = PrincipalManagementRepositoryService['bindApiKey'];
 type Input = Parameters<BindApiKey>[0];
 type Result = ReturnType<BindApiKey>;
-const handle = Effect.fn('BindSelfApiKeyAction.handle')(function* bindSelfApiKeyActionHandle(
-  payload: BindSelfApiKeyPayload,
-  context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
-    { readonly bind: (input: Input) => Result }
-  >,
-) {
-  const result = yield* context.services.bind({
-    managed: false,
-    principalId: context.scope.principalId,
-    providerSubjectId: payload.providerSubjectId,
-    tenantId: context.scope.tenantId,
-  });
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `principal-api-key-eligibility:${context.scope.principalId}`,
-    resultCount: 1,
-    servingModuleKey: 'core.identity',
-    targetModuleKey: 'core.identity',
-    targetResourceId: context.scope.principalId,
-    targetResourceType: 'principal',
-  });
-  return {
-    ...result,
-    authBindingId: AuthBindingIdSchema.make(result.authBindingId),
-  };
-});
+const handle = Effect.fn('BindSelfApiKeyAction.handle')(
+  function* bindSelfApiKeyActionHandle(
+    payload: BindSelfApiKeyPayload,
+    context: ActionHandlerContext<
+      Readonly<Record<never, never>>,
+      { readonly bind: (input: Input) => Result }
+    >
+  ) {
+    const result = yield* context.services.bind({
+      managed: false,
+      principalId: context.scope.principalId,
+      providerSubjectId: payload.providerSubjectId,
+      tenantId: context.scope.tenantId,
+    });
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `principal-api-key-eligibility:${context.scope.principalId}`,
+      resultCount: 1,
+      servingModuleKey: 'core.identity',
+      targetModuleKey: 'core.identity',
+      targetResourceId: context.scope.principalId,
+      targetResourceType: 'principal',
+    });
+    return {
+      ...result,
+      authBindingId: AuthBindingIdSchema.make(result.authBindingId),
+    };
+  }
+);
 export const bindSelfApiKeyAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -66,7 +71,10 @@ export const bindSelfApiKeyAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.bind-self-api-key',
       moduleKey: 'core.identity',
       role: 'action',
@@ -81,7 +89,8 @@ export const bindSelfApiKeyAction = defineAction(
   },
   handle,
   (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+    const repository =
+      principalManagementRepositoryFromTransaction(transaction);
     return Effect.succeed({ bind: repository.bindApiKey });
-  },
+  }
 );

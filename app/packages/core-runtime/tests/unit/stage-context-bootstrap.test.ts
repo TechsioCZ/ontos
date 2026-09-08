@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { STAGE_CONTEXTS } from '../../src/install/stage-context-bootstrap.ts';
 
 void test('defines the exact Techsio and Siampark stage contexts', () => {

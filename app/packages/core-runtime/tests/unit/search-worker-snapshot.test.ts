@@ -1,7 +1,9 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { CoreSearchProjectionUnavailable } from '../../src/search/projection.ts';
 import {
@@ -42,12 +44,12 @@ class SnapshotRetryFailure extends Schema.TaggedError<SnapshotRetryFailure>()(
     cause: Schema.optional(Schema.Unknown),
     code: Schema.optional(Schema.String),
     message: Schema.String,
-  },
+  }
 ) {}
 
 const effectTest = <Value, Failure>(
   name: string,
-  body: () => Effect.Effect<Value, Failure>,
+  body: () => Effect.Effect<Value, Failure>
 ): void => {
   void test(name, () => {
     runEffectTestSync(body());
@@ -86,10 +88,16 @@ effectTest(
             ...context,
             workerKey: 'party.registry.unregistered',
           }),
-          attestOutboxWorkerHandlerContext({ ...context, producerModuleKey: 'foreign.module' }),
+          attestOutboxWorkerHandlerContext({
+            ...context,
+            producerModuleKey: 'foreign.module',
+          }),
         ],
-        (candidate) => Effect.flip(snapshot.read(candidate, () => Effect.succeed('unreachable'))),
-        { concurrency: 'unbounded' },
+        (candidate) =>
+          Effect.flip(
+            snapshot.read(candidate, () => Effect.succeed('unreachable'))
+          ),
+        { concurrency: 'unbounded' }
       );
       assert.deepEqual(
         failures.map(({ _tag }) => _tag),
@@ -97,39 +105,43 @@ effectTest(
           'CoreSearchProjectionInvalid',
           'CoreSearchProjectionInvalid',
           'CoreSearchProjectionInvalid',
-        ],
+        ]
       );
       assert.equal(calls, 0);
     });
-  },
+  }
 );
 
-effectTest('identifier-update worker receives the verified Core snapshot capability', () => {
-  const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
-      readSnapshot(
-        {
-          eventWatermark: '3',
-          legalEntityIds: [],
-          projectionVersion: '1',
-          tenantId,
-        },
-        executor,
-        () => Effect.void,
-      ),
-  });
-  return Effect.gen(function* readVerifiedWorkerSnapshot() {
-    const version = yield* reader.read(
-      attestOutboxWorkerHandlerContext({
-        ...context,
-        topic: 'party.registry.official-identifier-updated.v1',
-        workerKey: 'party.registry.project-official-identifier-updated-to-search',
-      }),
-      (snapshot) => Effect.succeed(snapshot.projectionVersion),
-    );
-    assert.equal(version, '1');
-  });
-});
+effectTest(
+  'identifier-update worker receives the verified Core snapshot capability',
+  () => {
+    const reader = makeCoreSearchWorkerSnapshot({
+      run: (_context, readSnapshot) =>
+        readSnapshot(
+          {
+            eventWatermark: '3',
+            legalEntityIds: [],
+            projectionVersion: '1',
+            tenantId,
+          },
+          executor,
+          () => Effect.void
+        ),
+    });
+    return Effect.gen(function* readVerifiedWorkerSnapshot() {
+      const version = yield* reader.read(
+        attestOutboxWorkerHandlerContext({
+          ...context,
+          topic: 'party.registry.official-identifier-updated.v1',
+          workerKey:
+            'party.registry.project-official-identifier-updated-to-search',
+        }),
+        (snapshot) => Effect.succeed(snapshot.projectionVersion)
+      );
+      assert.equal(version, '1');
+    });
+  }
+);
 
 effectTest(
   'worker snapshot exposes select-only owner reads at one current watermark and restores scope',
@@ -148,30 +160,44 @@ effectTest(
           (scope) => {
             installedScopes.push(scope);
             return Effect.void;
-          },
+          }
         ),
     };
     const snapshot = makeCoreSearchWorkerSnapshot(backend);
     return Effect.gen(function* readCurrentOwnerSnapshot() {
-      const result = yield* snapshot.read(attestOutboxWorkerHandlerContext(context), (view) =>
-        Effect.gen(function* readOwnerProjection() {
-          assert.equal(view.projectionVersion, '42');
-          assert.equal(view.eventWatermark, '100');
-          assert.equal(view.tenantId, tenantId);
-          assert.deepEqual(view.legalEntityIds, [legalEntityId]);
-          const party = yield* view.tenant(readParty);
-          const counterparty = yield* view.forLegalEntity(legalEntityId, readCounterparty);
-          return { counterparty, party, projectionVersion: view.projectionVersion };
-        }),
+      const result = yield* snapshot.read(
+        attestOutboxWorkerHandlerContext(context),
+        (view) =>
+          Effect.gen(function* readOwnerProjection() {
+            assert.equal(view.projectionVersion, '42');
+            assert.equal(view.eventWatermark, '100');
+            assert.equal(view.tenantId, tenantId);
+            assert.deepEqual(view.legalEntityIds, [legalEntityId]);
+            const party = yield* view.tenant(readParty);
+            const counterparty = yield* view.forLegalEntity(
+              legalEntityId,
+              readCounterparty
+            );
+            return {
+              counterparty,
+              party,
+              projectionVersion: view.projectionVersion,
+            };
+          })
       );
       assert.deepEqual(result, {
         counterparty: 'counterparty',
         party: 'party',
         projectionVersion: '42',
       });
-      assert.deepEqual(installedScopes, [undefined, undefined, legalEntityId, undefined]);
+      assert.deepEqual(installedScopes, [
+        undefined,
+        undefined,
+        legalEntityId,
+        undefined,
+      ]);
     });
-  },
+  }
 );
 
 effectTest(
@@ -191,7 +217,7 @@ effectTest(
           (scope) => {
             installedScopes.push(scope);
             return Effect.void;
-          },
+          }
         ),
     };
     const snapshot = makeCoreSearchWorkerSnapshot(backend);
@@ -199,41 +225,50 @@ effectTest(
     return Effect.gen(function* rejectInvalidAndPreserveOwnerFailure() {
       const invalidScope = yield* Effect.flip(
         snapshot.read(verified, (view) =>
-          view.forLegalEntity('20000000-0000-4000-8000-000000000002', () => Effect.succeed('no')),
-        ),
+          view.forLegalEntity('20000000-0000-4000-8000-000000000002', () =>
+            Effect.succeed('no')
+          )
+        )
       );
       assert.equal(invalidScope._tag, 'CoreSearchProjectionInvalid');
       assert.deepEqual(installedScopes, []);
       const failure = yield* Effect.flip(
         snapshot.read(verified, (view) =>
-          view.forLegalEntity(legalEntityId, () => Effect.fail('owner-unavailable')),
-        ),
+          view.forLegalEntity(legalEntityId, () =>
+            Effect.fail('owner-unavailable')
+          )
+        )
       );
       assert.equal(failure, 'owner-unavailable');
       assert.deepEqual(installedScopes, [legalEntityId, undefined]);
     });
-  },
+  }
 );
 
-effectTest('worker snapshot maps persistence failure to a sanitized unavailable error', () => {
-  const snapshot = makeCoreSearchWorkerSnapshot({
-    run: () =>
-      Effect.fail(
-        new CoreSearchProjectionUnavailable({
-          cause: new Error('private database details'),
-          code: 'core_search_projection_unavailable',
-          reason: 'Core Search worker snapshot is temporarily unavailable',
-        }),
-      ),
-  });
-  return Effect.gen(function* mapPersistenceFailure() {
-    const failure = yield* Effect.flip(
-      snapshot.read(attestOutboxWorkerHandlerContext(context), () => Effect.succeed('no')),
-    );
-    assert.equal(failure._tag, 'CoreSearchProjectionUnavailable');
-    assert.doesNotMatch(failure.reason, /private database/u);
-  });
-});
+effectTest(
+  'worker snapshot maps persistence failure to a sanitized unavailable error',
+  () => {
+    const snapshot = makeCoreSearchWorkerSnapshot({
+      run: () =>
+        Effect.fail(
+          new CoreSearchProjectionUnavailable({
+            cause: new Error('private database details'),
+            code: 'core_search_projection_unavailable',
+            reason: 'Core Search worker snapshot is temporarily unavailable',
+          })
+        ),
+    });
+    return Effect.gen(function* mapPersistenceFailure() {
+      const failure = yield* Effect.flip(
+        snapshot.read(attestOutboxWorkerHandlerContext(context), () =>
+          Effect.succeed('no')
+        )
+      );
+      assert.equal(failure._tag, 'CoreSearchProjectionUnavailable');
+      assert.doesNotMatch(failure.reason, /private database/u);
+    });
+  }
+);
 
 effectTest(
   'snapshot generation retries serialization conflicts only and bounds repeated contention',
@@ -247,7 +282,7 @@ effectTest(
               new SnapshotRetryFailure({
                 cause: { code: '40001' },
                 message: 'wrapped serialization',
-              }),
+              })
             )
           : Effect.succeed('fresh snapshot');
       }).pipe(retryCoreSearchSnapshot);
@@ -258,8 +293,10 @@ effectTest(
       const contention = yield* Effect.flip(
         Effect.suspend(() => {
           attempts += 1;
-          return Effect.fail(new SnapshotRetryFailure({ code: '40001', message: 'contention' }));
-        }).pipe(retryCoreSearchSnapshot),
+          return Effect.fail(
+            new SnapshotRetryFailure({ code: '40001', message: 'contention' })
+          );
+        }).pipe(retryCoreSearchSnapshot)
       );
       assert.match(contention.message, /contention/u);
       assert.equal(attempts, 4);
@@ -268,51 +305,73 @@ effectTest(
       const nonSerialization = yield* Effect.flip(
         Effect.suspend(() => {
           attempts += 1;
-          return Effect.fail(new SnapshotRetryFailure({ message: 'not serialization' }));
-        }).pipe(retryCoreSearchSnapshot),
+          return Effect.fail(
+            new SnapshotRetryFailure({ message: 'not serialization' })
+          );
+        }).pipe(retryCoreSearchSnapshot)
       );
       assert.match(nonSerialization.message, /not serialization/u);
       assert.equal(attempts, 1);
     });
-  },
+  }
 );
 
-effectTest('snapshot revokes escaped scope capabilities when the owner callback finishes', () => {
-  const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
-      readSnapshot(
-        { eventWatermark: '3', legalEntityIds: [legalEntityId], projectionVersion: '1', tenantId },
-        executor,
-        () => Effect.void,
-      ),
-  });
-  return Effect.gen(function* rejectEscapedCapability() {
-    const escaped: CoreSearchWorkerSnapshotView = yield* reader.read(
-      attestOutboxWorkerHandlerContext(context),
-      Effect.succeed,
-    );
-    const failure = yield* Effect.flip(escaped.tenant(() => Effect.succeed('stale')));
-    assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
-  });
-});
+effectTest(
+  'snapshot revokes escaped scope capabilities when the owner callback finishes',
+  () => {
+    const reader = makeCoreSearchWorkerSnapshot({
+      run: (_context, readSnapshot) =>
+        readSnapshot(
+          {
+            eventWatermark: '3',
+            legalEntityIds: [legalEntityId],
+            projectionVersion: '1',
+            tenantId,
+          },
+          executor,
+          () => Effect.void
+        ),
+    });
+    return Effect.gen(function* rejectEscapedCapability() {
+      const escaped: CoreSearchWorkerSnapshotView = yield* reader.read(
+        attestOutboxWorkerHandlerContext(context),
+        Effect.succeed
+      );
+      const failure = yield* Effect.flip(
+        escaped.tenant(() => Effect.succeed('stale'))
+      );
+      assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+    });
+  }
+);
 
-effectTest('nested scope rejection does not unlock the active owner read', () => {
-  const reader = makeCoreSearchWorkerSnapshot({
-    run: (_context, readSnapshot) =>
-      readSnapshot(
-        { eventWatermark: '3', legalEntityIds: [legalEntityId], projectionVersion: '1', tenantId },
-        executor,
-        () => Effect.void,
-      ),
-  });
-  return reader.read(attestOutboxWorkerHandlerContext(context), (snapshot) =>
-    snapshot.tenant(() =>
-      Effect.gen(function* nestedReads() {
-        const first = yield* Effect.flip(snapshot.forLegalEntity(legalEntityId, readInvalid));
-        const second = yield* Effect.flip(snapshot.tenant(readStillInvalid));
-        assert.equal(first._tag, 'CoreSearchProjectionInvalid');
-        assert.equal(second._tag, 'CoreSearchProjectionInvalid');
-      }),
-    ),
-  );
-});
+effectTest(
+  'nested scope rejection does not unlock the active owner read',
+  () => {
+    const reader = makeCoreSearchWorkerSnapshot({
+      run: (_context, readSnapshot) =>
+        readSnapshot(
+          {
+            eventWatermark: '3',
+            legalEntityIds: [legalEntityId],
+            projectionVersion: '1',
+            tenantId,
+          },
+          executor,
+          () => Effect.void
+        ),
+    });
+    return reader.read(attestOutboxWorkerHandlerContext(context), (snapshot) =>
+      snapshot.tenant(() =>
+        Effect.gen(function* nestedReads() {
+          const first = yield* Effect.flip(
+            snapshot.forLegalEntity(legalEntityId, readInvalid)
+          );
+          const second = yield* Effect.flip(snapshot.tenant(readStillInvalid));
+          assert.equal(first._tag, 'CoreSearchProjectionInvalid');
+          assert.equal(second._tag, 'CoreSearchProjectionInvalid');
+        })
+      )
+    );
+  }
+);

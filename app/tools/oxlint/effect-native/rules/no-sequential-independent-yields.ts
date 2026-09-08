@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-sequential-independent-yields
  *
@@ -73,7 +72,6 @@ import { optionRecord } from '../shared/options.ts';
  * hatch for known ordering steps, not a proof that all other calls commute. Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import {
@@ -81,16 +79,33 @@ import {
   childrenOf,
   memberName as sharedMemberName,
 } from '../shared/ast.ts';
-import { bindingPath, isGenCallee as sharedIsGenCallee } from '../shared/effect-identity.ts';
+import {
+  bindingPath,
+  isGenCallee as sharedIsGenCallee,
+} from '../shared/effect-identity.ts';
 import {
   bindingsWithExtraModules,
   collectRootNamespaces,
   collectNamedImports,
 } from '../shared/imports.ts';
-import { booleanOption as boolean, stringArray, safeRegExp } from '../shared/options.ts';
-import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { optionRecord } from '../shared/options.ts';
+import {
+  booleanOption as boolean,
+  stringArray,
+  safeRegExp,
+} from '../shared/options.ts';
+import {
+  isScriptFile,
+  isTestFile,
+  scopePath,
+  matchesGlobs,
+} from '../shared/paths.ts';
 
-const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_INCLUDE: readonly string[] = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+];
 const DEFAULT_IGNORE: readonly string[] = [
   '**/dist/**',
   '**/build/**',
@@ -190,12 +205,15 @@ interface GeneratorMatcher {
 }
 
 /** `Effect.gen` / `E.gen` / `X.Effect.gen` / bare `gen` (direct member import), incl. computed + optional. */
-function isGenCallee(callee: AnyNode | null, matcher: GeneratorMatcher): boolean {
+function isGenCallee(
+  callee: AnyNode | null,
+  matcher: GeneratorMatcher
+): boolean {
   return sharedIsGenCallee(
     matcher.context,
     callee as ESTree.Node | null,
     matcher.genMembers,
-    matcher.effectModules,
+    matcher.effectModules
   );
 }
 
@@ -223,13 +241,17 @@ type Walker = (node: AnyNode) => boolean;
 function walk(
   node: AnyNode,
   visitorKeys: Readonly<Record<string, readonly string[]>>,
-  visit: Walker,
+  visit: Walker
 ): void {
   const stack = [node];
   for (let visited = 0; stack.length > 0 && visited < 200_000; visited += 1) {
     const current = stack.pop()!;
     if (!visit(current)) continue;
-    const children = childrenOf(current as unknown as ESTree.Node, visitorKeys, true);
+    const children = childrenOf(
+      current as unknown as ESTree.Node,
+      visitorKeys,
+      true
+    );
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push(children[index] as AnyNode);
     }
@@ -240,18 +262,28 @@ function walk(
 function pipeSubject(
   current: AnyNode,
   context: Context,
-  modules: readonly string[],
+  modules: readonly string[]
 ): AnyNode | null {
   if (current.type !== 'CallExpression') return current;
   const callee = unwrap(current.callee);
   if (callee === null) return current;
-  if (MEMBER_TYPES.has(callee.type) && memberName(callee) === 'pipe') return unwrap(callee.object);
-  const path = bindingPath(context, callee as unknown as ESTree.Node, modules)?.join('.') ?? '';
+  if (MEMBER_TYPES.has(callee.type) && memberName(callee) === 'pipe')
+    return unwrap(callee.object);
+  const path =
+    bindingPath(context, callee as unknown as ESTree.Node, modules)?.join(
+      '.'
+    ) ?? '';
   if (!['pipe', 'Function.pipe'].includes(path)) return current;
-  const first = Array.isArray(current.arguments) ? unwrap(current.arguments[0]) : null;
+  const first = Array.isArray(current.arguments)
+    ? unwrap(current.arguments[0])
+    : null;
   return first ?? current;
 }
-function unwrapPipe(value: unknown, context: Context, modules: readonly string[]): AnyNode | null {
+function unwrapPipe(
+  value: unknown,
+  context: Context,
+  modules: readonly string[]
+): AnyNode | null {
   let current = unwrap(value);
   for (let guard = 0; current !== null && guard < 32; guard += 1) {
     const next = pipeSubject(current, context, modules);
@@ -264,7 +296,7 @@ function unwrapPipe(value: unknown, context: Context, modules: readonly string[]
 /** Binding names introduced by a declarator pattern (object/array patterns included). */
 function collectPatternNames(
   pattern: AnyNode | null,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
+  visitorKeys: Readonly<Record<string, readonly string[]>>
 ): Set<string> {
   const names = new Set<string>();
   if (pattern === null) return names;
@@ -310,10 +342,12 @@ function collectPatternNames(
 /** Identifiers *read* by an expression: member property names and literal object keys are not reads. */
 function collectReferencedNames(
   node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
+  visitorKeys: Readonly<Record<string, readonly string[]>>
 ): Set<string> {
   const names = new Set<string>();
-  walk(node, visitorKeys, (current) => collectInto(current, names, visitorKeys));
+  walk(node, visitorKeys, (current) =>
+    collectInto(current, names, visitorKeys)
+  );
   return names;
 }
 
@@ -321,7 +355,7 @@ function collectReferencedNames(
 function collectInto(
   current: AnyNode,
   names: Set<string>,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
+  visitorKeys: Readonly<Record<string, readonly string[]>>
 ): boolean {
   if (current.type === 'Identifier') {
     names.add(current.name as string);
@@ -330,7 +364,9 @@ function collectInto(
   if (MEMBER_TYPES.has(current.type) && current.computed !== true) {
     const object = asNode(current.object);
     if (object !== null)
-      walk(object, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
+      walk(object, visitorKeys, (inner) =>
+        collectInto(inner, names, visitorKeys)
+      );
     return false;
   }
   if (
@@ -339,7 +375,10 @@ function collectInto(
   ) {
     if (current.shorthand === true) return true;
     const value = asNode(current.value);
-    if (value !== null) walk(value, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
+    if (value !== null)
+      walk(value, visitorKeys, (inner) =>
+        collectInto(inner, names, visitorKeys)
+      );
     return false;
   }
   return true;
@@ -360,13 +399,19 @@ function inScope(filename: string, options: RuleOptions): boolean {
   if (matchesGlobs(path, options.ignore)) return false;
   const script = isScriptFile(path) || matchesGlobs(path, DEFAULT_SCRIPT_GLOBS);
   if (script && !options.includeScripts) return false;
-  if (!matchesGlobs(path, options.include) && !(options.includeScripts && script)) return false;
+  if (
+    !matchesGlobs(path, options.include) &&
+    !(options.includeScripts && script)
+  )
+    return false;
   return options.includeTests || !isTestFile(path);
 }
 function singleDeclarator(statement: AnyNode): AnyNode | null {
   if (statement.type !== 'VariableDeclaration') return null;
   const declarations = statement.declarations;
-  return Array.isArray(declarations) && declarations.length === 1 ? asNode(declarations[0]) : null;
+  return Array.isArray(declarations) && declarations.length === 1
+    ? asNode(declarations[0])
+    : null;
 }
 const TRANSPARENT_MEMBERS = new Set([
   'withSpan',
@@ -378,17 +423,29 @@ const TRANSPARENT_MEMBERS = new Set([
 function transparentArguments(
   subject: AnyNode,
   context: Context,
-  modules: readonly string[],
+  modules: readonly string[]
 ): unknown[] | null {
-  const path = bindingPath(context, subject.callee as unknown as ESTree.Node, modules);
-  if (path?.length !== 2 || path[0] !== 'Effect' || !TRANSPARENT_MEMBERS.has(path[1] ?? ''))
+  const path = bindingPath(
+    context,
+    subject.callee as unknown as ESTree.Node,
+    modules
+  );
+  if (
+    path?.length !== 2 ||
+    path[0] !== 'Effect' ||
+    !TRANSPARENT_MEMBERS.has(path[1] ?? '')
+  )
     return null;
   return Array.isArray(subject.arguments) && subject.arguments.length >= 2
     ? subject.arguments
     : null;
 }
 /** Only known data-first wrappers preserve the effect; constructors and callbacks remain opaque. */
-function readSubject(value: unknown, context: Context, modules: readonly string[]): AnyNode | null {
+function readSubject(
+  value: unknown,
+  context: Context,
+  modules: readonly string[]
+): AnyNode | null {
   let subject = unwrapPipe(value, context, modules);
   while (subject?.type === 'CallExpression') {
     const args = transparentArguments(subject, context, modules);
@@ -397,7 +454,10 @@ function readSubject(value: unknown, context: Context, modules: readonly string[
   }
   return subject;
 }
-function readCallee(subject: AnyNode | null, includeFunctions: boolean): AnyNode | null {
+function readCallee(
+  subject: AnyNode | null,
+  includeFunctions: boolean
+): AnyNode | null {
   if (subject?.type !== 'CallExpression') return null;
   const callee = unwrap(subject.callee);
   if (callee === null) return null;
@@ -459,10 +519,15 @@ export const rule = defineRule({
     const directMembers = collectNamedImports(
       program,
       (source) => /^effect\/(?:.*\/)?Effect$/u.test(source),
-      new Set(options.genMembers),
+      new Set(options.genMembers)
     );
     const bindings = bindingsWithExtraModules(program, options.effectModules);
-    if (!bindings.importsEffect && rootNamespaces.size === 0 && directMembers.size === 0) return {};
+    if (
+      !bindings.importsEffect &&
+      rootNamespaces.size === 0 &&
+      directMembers.size === 0
+    )
+      return {};
 
     const matcher: GeneratorMatcher = {
       context,
@@ -470,7 +535,10 @@ export const rule = defineRule({
       genMembers: options.genMembers,
     };
     const visitorKeys = context.sourceCode.visitorKeys;
-    const ordering = safeRegExp(options.orderingCalleePattern, DEFAULT_ORDERING_PATTERN);
+    const ordering = safeRegExp(
+      options.orderingCalleePattern,
+      DEFAULT_ORDERING_PATTERN
+    );
     const analysed = new Set<number>();
 
     /** A single-declarator `const x = yield* <non-effect member call>` statement, or `null`. */
@@ -478,17 +546,32 @@ export const rule = defineRule({
       const declarator = singleDeclarator(statement);
       if (declarator === null) return null;
       const init = unwrap(declarator.init);
-      if (init === null || init.type !== 'YieldExpression' || init.delegate !== true) return null;
-      const subject = readSubject(init.argument, context, options.effectModules);
+      if (
+        init === null ||
+        init.type !== 'YieldExpression' ||
+        init.delegate !== true
+      )
+        return null;
+      const subject = readSubject(
+        init.argument,
+        context,
+        options.effectModules
+      );
       const calleeNode = readCallee(subject, options.includeFunctionCallees);
       if (calleeNode === null) return null;
       // `Effect.all(...)`, `Schema.decodeUnknown(...)`, … are the target shape, never the anti-pattern.
       if (
-        bindingPath(context, calleeNode as unknown as ESTree.Node, options.effectModules) !== null
+        bindingPath(
+          context,
+          calleeNode as unknown as ESTree.Node,
+          options.effectModules
+        ) !== null
       )
         return null;
       const calleeName =
-        calleeNode.type === 'Identifier' ? (calleeNode.name as string) : memberName(calleeNode);
+        calleeNode.type === 'Identifier'
+          ? (calleeNode.name as string)
+          : memberName(calleeNode);
       if (calleeName === null) return null;
 
       return {
@@ -505,7 +588,8 @@ export const rule = defineRule({
       let seen = new Set<string>();
       const entries = statements.flatMap((entry) => {
         const statement = asNode(entry);
-        return statement?.type === 'VariableDeclaration' && Array.isArray(statement.declarations)
+        return statement?.type === 'VariableDeclaration' &&
+          Array.isArray(statement.declarations)
           ? statement.declarations.map((declaration) => ({
               ...statement,
               declarations: [declaration],
@@ -531,14 +615,19 @@ export const rule = defineRule({
           seen = new Set(candidate.bound);
           continue;
         }
-        const dependent = [...candidate.referenced].some((name) => seen.has(name));
+        const dependent = [...candidate.referenced].some((name) =>
+          seen.has(name)
+        );
         if (dependent) {
           head = candidate;
           seen = new Set(candidate.bound);
           continue;
         }
         context.report({
-          data: { first: [...head.bound].join(', '), second: [...candidate.bound].join(', ') },
+          data: {
+            first: [...head.bound].join(', '),
+            second: [...candidate.bound].join(', '),
+          },
           messageId: 'sequentialIndependentYields',
           node: candidate.calleeNode as unknown as ESTree.Node,
         });

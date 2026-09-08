@@ -1,7 +1,9 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
+
 import { makeOperationGateway } from '../../src/operation-gateway.ts';
 
 const gatewayAcquisitionFailure = {
@@ -25,21 +27,29 @@ void test(
   'preserves the literal audience and success and failure inference',
   makeEffectTestCallback(
     Effect.gen(function* inferenceEffect() {
-      const gateway = makeOperationGateway(audience, ({ audience: receivedAudience }) => {
-        expectType<typeof audience>(receivedAudience);
-        return Effect.fail(gatewayAcquisitionFailure);
-      });
+      const gateway = makeOperationGateway(
+        audience,
+        ({ audience: receivedAudience }) => {
+          expectType<typeof audience>(receivedAudience);
+          return Effect.fail(gatewayAcquisitionFailure);
+        }
+      );
 
       yield* expectType<
-        Effect.Effect<never, typeof gatewayAcquisitionFailure | typeof operationAttemptFailure>
-      >(gateway.invoke(() => Effect.fail(operationAttemptFailure))).pipe(Effect.flip);
+        Effect.Effect<
+          never,
+          typeof gatewayAcquisitionFailure | typeof operationAttemptFailure
+        >
+      >(gateway.invoke(() => Effect.fail(operationAttemptFailure))).pipe(
+        Effect.flip
+      );
       yield* expectType<Effect.Effect<'completed'>>(
         makeOperationGateway(audience, () =>
-          Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' }),
-        ).invoke(() => Effect.succeed('completed' as const)),
+          Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' })
+        ).invoke(() => Effect.succeed('completed' as const))
       );
-    }),
-  ),
+    })
+  )
 );
 
 void test(
@@ -51,12 +61,17 @@ void test(
         readonly options: typeof options;
       }[] = [];
       const authorizations: string[] = [];
-      const gateway = makeOperationGateway(audience, (payload, receivedOptions) =>
-        Effect.sync(() => {
-          assert.equal(receivedOptions, options);
-          issuerCalls.push({ audience: payload.audience, options });
-          return { expiresAt: 1_700_000_300, token: 'header.payload.signature' };
-        }),
+      const gateway = makeOperationGateway(
+        audience,
+        (payload, receivedOptions) =>
+          Effect.sync(() => {
+            assert.equal(receivedOptions, options);
+            issuerCalls.push({ audience: payload.audience, options });
+            return {
+              expiresAt: 1_700_000_300,
+              token: 'header.payload.signature',
+            };
+          })
       );
 
       const result = yield* gateway.invoke((authorization) => {
@@ -67,8 +82,8 @@ void test(
       assert.equal(result, 'completed');
       assert.deepEqual(issuerCalls, [{ audience, options }]);
       assert.deepEqual(authorizations, ['Bearer header.payload.signature']);
-    }),
-  ),
+    })
+  )
 );
 
 void test(
@@ -80,22 +95,25 @@ void test(
         Effect.sync(() => {
           acquisitions += 1;
           return { expiresAt: 1_700_000_300, token: `attempt-${acquisitions}` };
-        }),
+        })
       );
       const authorizations: string[] = [];
       const invocation = gateway.invoke((authorization) =>
         Effect.sync(() => {
           authorizations.push(authorization);
-        }),
+        })
       );
 
       yield* invocation;
       yield* invocation;
 
       assert.equal(acquisitions, 2);
-      assert.deepEqual(authorizations, ['Bearer attempt-1', 'Bearer attempt-2']);
-    }),
-  ),
+      assert.deepEqual(authorizations, [
+        'Bearer attempt-1',
+        'Bearer attempt-2',
+      ]);
+    })
+  )
 );
 
 void test(
@@ -103,7 +121,9 @@ void test(
   makeEffectTestCallback(
     Effect.gen(function* issuerFailureEffect() {
       let attemptCalls = 0;
-      const gateway = makeOperationGateway(audience, () => Effect.fail(gatewayAcquisitionFailure));
+      const gateway = makeOperationGateway(audience, () =>
+        Effect.fail(gatewayAcquisitionFailure)
+      );
 
       const received = yield* gateway
         .invoke(() => {
@@ -114,8 +134,8 @@ void test(
 
       assert.equal(received, gatewayAcquisitionFailure);
       assert.equal(attemptCalls, 0);
-    }),
-  ),
+    })
+  )
 );
 
 void test(
@@ -123,7 +143,7 @@ void test(
   makeEffectTestCallback(
     Effect.gen(function* attemptFailureEffect() {
       const gateway = makeOperationGateway(audience, () =>
-        Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' }),
+        Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' })
       );
 
       const received = yield* gateway
@@ -131,6 +151,6 @@ void test(
         .pipe(Effect.flip);
 
       assert.equal(received, operationAttemptFailure);
-    }),
-  ),
+    })
+  )
 );

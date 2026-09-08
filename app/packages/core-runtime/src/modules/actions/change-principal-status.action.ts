@@ -2,16 +2,22 @@
 // @ontos-action-owner core.identity
 // @ontos-action-slug change-principal-status
 import { Effect, Schema } from 'effect';
+
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
-import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
+const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('PrincipalId')
+);
 const status = Schema.Literals(['active', 'disabled', 'archived']);
-const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+const reason = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(500)
+);
 const ChangePrincipalStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     expectedStatus: status,
@@ -29,16 +35,24 @@ const ChangePrincipalStatusPayloadSchema = Schema.Union([
 export type ChangePrincipalStatusPayload = Schema.Schema.Type<
   typeof ChangePrincipalStatusPayloadSchema
 >;
-const ChangePrincipalStatusResultSchema = Schema.Struct({ previousStatus: status, status });
+const ChangePrincipalStatusResultSchema = Schema.Struct({
+  previousStatus: status,
+  status,
+});
 const handle = Effect.fn('ChangePrincipalStatusAction.handle')(
   function* changePrincipalStatusActionHandle(
     payload: ChangePrincipalStatusPayload,
     context: ActionHandlerContext<
       Readonly<Record<never, never>>,
-      { readonly change: PrincipalManagementRepositoryService['changePrincipalStatus'] }
-    >,
+      {
+        readonly change: PrincipalManagementRepositoryService['changePrincipalStatus'];
+      }
+    >
   ) {
-    const result = yield* context.services.change({ ...payload, tenantId: context.scope.tenantId });
+    const result = yield* context.services.change({
+      ...payload,
+      tenantId: context.scope.tenantId,
+    });
     yield* context.recordDataAccess({
       accessKind: 'read',
       queryHash: `principal-status-prior:${payload.principalId}`,
@@ -49,7 +63,7 @@ const handle = Effect.fn('ChangePrincipalStatusAction.handle')(
       targetResourceType: 'principal',
     });
     return result;
-  },
+  }
 );
 
 export const changePrincipalStatusAction = defineAction(
@@ -64,7 +78,10 @@ export const changePrincipalStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.identity.change-principal-status',
       moduleKey: 'core.identity',
       role: 'action',
@@ -80,7 +97,8 @@ export const changePrincipalStatusAction = defineAction(
   },
   handle,
   (transaction) => {
-    const repository = principalManagementRepositoryFromTransaction(transaction);
+    const repository =
+      principalManagementRepositoryFromTransaction(transaction);
     return Effect.succeed({ change: repository.changePrincipalStatus });
-  },
+  }
 );

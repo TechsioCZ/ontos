@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-throw-in-effect-callback
  *
@@ -86,12 +85,8 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import { stringArray } from '../shared/options.ts';
 import {
   unwrapNode as unwrap,
   parentOf,
@@ -100,11 +95,20 @@ import {
 } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
 import {
   collectRootNamespaces,
   collectDirectMemberImports,
   importDeclarations,
 } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray } from '../shared/options.ts';
+import {
+  isScriptFile,
+  isTestFile,
+  scopePath,
+  matchesGlobs,
+} from '../shared/paths.ts';
 
 /** S1/A4 are application-architecture findings: `scripts/**` is excluded on purpose (see B3). */
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
@@ -180,38 +184,62 @@ function readOptions(context: Context): RuleOptions {
     includeTests: record.includeTests === true,
     mode: record.mode === 'effect-files' ? 'effect-files' : 'effect-callbacks',
     namespaces: stringArray(record.namespaces, DEFAULT_NAMESPACES),
-    localImportPrefixes: stringArray(record.localImportPrefixes, DEFAULT_LOCAL_IMPORT_PREFIXES),
+    localImportPrefixes: stringArray(
+      record.localImportPrefixes,
+      DEFAULT_LOCAL_IMPORT_PREFIXES
+    ),
     effectModules: stringArray(record.effectModules, DEFAULT_EFFECT_MODULES),
   };
 }
 
-function collectModuleView(program: ESTree.Program, options: RuleOptions): boolean {
+function collectModuleView(
+  program: ESTree.Program,
+  options: RuleOptions
+): boolean {
   const shared = collectEffectBindings(program);
   const rootNamespaces = collectRootNamespaces(program);
-  const directMembers = collectDirectMemberImports(program, undefined, {}, (source) => {
-    const namespace = EFFECT_SUBMODULE.exec(source)?.[1];
-    return namespace !== undefined && options.namespaces.includes(namespace) ? namespace : null;
-  });
+  const directMembers = collectDirectMemberImports(
+    program,
+    undefined,
+    {},
+    (source) => {
+      const namespace = EFFECT_SUBMODULE.exec(source)?.[1];
+      return namespace !== undefined && options.namespaces.includes(namespace)
+        ? namespace
+        : null;
+    }
+  );
   const barrels = importDeclarations(
     program,
-    (source) => source !== EFFECT_ROOT_MODULE && options.effectModules.includes(source),
+    (source) =>
+      source !== EFFECT_ROOT_MODULE && options.effectModules.includes(source)
   );
   return (
-    shared.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0 || barrels.length > 0
+    shared.importsEffect ||
+    rootNamespaces.size > 0 ||
+    directMembers.size > 0 ||
+    barrels.length > 0
   );
 }
 
 /** `Effect.gen` / `E.gen` / `Effect["gen"]` / `Eff.Effect.gen` / bare `gen` from `effect/Effect`. */
-function isEffectCallee(context: Context, callee: ESTree.Node, options: RuleOptions): boolean {
+function isEffectCallee(
+  context: Context,
+  callee: ESTree.Node,
+  options: RuleOptions
+): boolean {
   const target = unwrap(callee);
   if (target.type === 'CallExpression') {
     const origin = effectOrigin(context, target.callee, options.effectModules);
     return origin?.length === 2 && origin[0] === 'Effect' && origin[1] === 'fn';
   }
   const origin = effectOrigin(context, target, options.effectModules);
-  if (origin?.length !== 2 || !options.namespaces.includes(origin[0]!)) return false;
+  if (origin?.length !== 2 || !options.namespaces.includes(origin[0]!))
+    return false;
   // These APIs take values/services, not callbacks; nested functions are deferred data.
-  return !['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(origin[1]!);
+  return !['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(
+    origin[1]!
+  );
 }
 
 /** The `CallExpression` this node is (possibly wrapped) an argument of, or `null`. */
@@ -224,9 +252,11 @@ function argumentCall(node: ESTree.Node): ESTree.CallExpression | null {
       return args.includes(current) ? parent : null;
     }
     if (!ARGUMENT_WRAPPERS.has(parent.type)) return null;
-    if (parent.type === 'ConditionalExpression' && parent.test === current) return null;
+    if (parent.type === 'ConditionalExpression' && parent.test === current)
+      return null;
     // A callback used as a property *key* or a shorthand method name is not an argument value.
-    if (parent.type === 'Property' && (parent.value as ESTree.Node) !== current) return null;
+    if (parent.type === 'Property' && (parent.value as ESTree.Node) !== current)
+      return null;
     current = parent;
     parent = parentOf(current);
   }
@@ -241,17 +271,27 @@ function isAdapterCall(context: Context, call: ESTree.CallExpression): boolean {
   ]);
   return (
     origin?.length === 1 &&
-    ['useCallback', 'useMutation', 'useQuery', 'queryOptions', 'mutationOptions'].includes(
-      origin[0]!,
-    )
+    [
+      'useCallback',
+      'useMutation',
+      'useQuery',
+      'queryOptions',
+      'mutationOptions',
+    ].includes(origin[0]!)
   );
 }
 
-function isDataCall(context: Context, call: ESTree.CallExpression, options: RuleOptions): boolean {
+function isDataCall(
+  context: Context,
+  call: ESTree.CallExpression,
+  options: RuleOptions
+): boolean {
   const origin = effectOrigin(context, call.callee, options.effectModules);
   return (
     origin?.length === 2 &&
-    ['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(origin[1]!)
+    ['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(
+      origin[1]!
+    )
   );
 }
 
@@ -262,7 +302,7 @@ function isDataCall(context: Context, call: ESTree.CallExpression, options: Rule
 function isInsideEffectCallback(
   context: Context,
   node: ESTree.Node,
-  options: RuleOptions,
+  options: RuleOptions
 ): boolean {
   let cursor: ESTree.Node = node;
   for (;;) {
@@ -299,26 +339,36 @@ function importSourceOf(definition: {
 function sentinelName(
   context: Context,
   argument: ESTree.Node,
-  options: RuleOptions,
+  options: RuleOptions
 ): string | null {
   const thrown = unwrap(argument);
-  if (thrown.type !== 'NewExpression' && thrown.type !== 'CallExpression') return null;
+  if (thrown.type !== 'NewExpression' && thrown.type !== 'CallExpression')
+    return null;
   const callee = unwrap(thrown.callee as ESTree.Node);
   if (callee.type !== 'Identifier') return null;
 
   const variable = lookupVariable(context, callee);
   if (variable === null || variable.defs.length === 0) return null;
 
-  return variable.defs.some((definition) => isLocalDefinition(definition, options))
+  return variable.defs.some((definition) =>
+    isLocalDefinition(definition, options)
+  )
     ? callee.name
     : null;
 }
 
-function isLocalDefinition(definition: Variable['defs'][number], options: RuleOptions): boolean {
-  if (['ClassName', 'FunctionName', 'Variable'].includes(definition.type)) return true;
+function isLocalDefinition(
+  definition: Variable['defs'][number],
+  options: RuleOptions
+): boolean {
+  if (['ClassName', 'FunctionName', 'Variable'].includes(definition.type))
+    return true;
   if (definition.type !== 'ImportBinding') return false;
   const source = importSourceOf(definition);
-  return source !== null && options.localImportPrefixes.some((prefix) => source.startsWith(prefix));
+  return (
+    source !== null &&
+    options.localImportPrefixes.some((prefix) => source.startsWith(prefix))
+  );
 }
 
 export const rule = defineRule({
@@ -394,20 +444,31 @@ export const rule = defineRule({
         let current: ESTree.Node = node;
         while (current.parent && !FUNCTION_TYPES.has(current.parent.type)) {
           const parent: ESTree.Node = current.parent;
-          if (parent.type === 'TryStatement' && parent.block === current && parent.handler) return;
+          if (
+            parent.type === 'TryStatement' &&
+            parent.block === current &&
+            parent.handler
+          )
+            return;
           current = parent;
         }
         const insideCallback = isInsideEffectCallback(context, node, options);
         if (!insideCallback && !fileMode) return;
 
-        const name = sentinelName(context, node.argument as ESTree.Node, options);
+        const name = sentinelName(
+          context,
+          node.argument as ESTree.Node,
+          options
+        );
         if (name !== null) {
           context.report({ node, messageId: 'throwSentinel', data: { name } });
           return;
         }
         context.report({
           node,
-          messageId: insideCallback ? 'throwInEffectCallback' : 'throwInEffectFile',
+          messageId: insideCallback
+            ? 'throwInEffectCallback'
+            : 'throwInEffectFile',
         });
       },
     };

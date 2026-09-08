@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { decideAuthorizationRollout } from '../../src/authorization/rollout-decision.ts';
 import type { AuthorizationWouldDenyEvent } from '../../src/authorization/rollout-decision.ts';
 
@@ -32,7 +33,7 @@ test('active, baselined report-only compatibility preserves only missing-policy 
         events.push(event);
       },
     }),
-    'allowed',
+    'allowed'
   );
   assert.deepEqual(events, [
     {
@@ -65,7 +66,7 @@ test('enforced, expired, and unbaselined entrypoints deny without evidence', () 
           events.push(event);
         },
       }),
-      'denied',
+      'denied'
     );
     assert.deepEqual(events, []);
   }
@@ -80,14 +81,19 @@ test('a candidate allow never broadens a denial from the current authorization p
         emit: () => {
           assert.fail();
         },
-      },
+      }
     ),
-    'denied',
+    'denied'
   );
 });
 
 test('all protected surfaces keep credential, tenancy, module, replay, and infrastructure failures non-bypassable', () => {
-  for (const surface of ['action', 'capability_issuance', 'route', 'worker'] as const) {
+  for (const surface of [
+    'action',
+    'capability_issuance',
+    'route',
+    'worker',
+  ] as const) {
     for (const denialReason of [
       'cross_tenant',
       'expired_credential',
@@ -105,9 +111,9 @@ test('all protected surfaces keep credential, tenancy, module, replay, and infra
             emit: () => {
               assert.fail();
             },
-          },
+          }
         ),
-        'denied',
+        'denied'
       );
     }
   }

@@ -1,4 +1,7 @@
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import {
+  Link as LocalizedLink,
+  useModernI18n,
+} from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -27,24 +30,35 @@ const validLogin: LoginValidation = {
 const SignInFormSchema = Schema.fromFormData(
   Schema.Struct({
     email: SignInPayloadSchema.fields.email,
-    password: Schema.RedactedFromValue(SignInPayloadSchema.fields.password.value),
-  }).pipe(Schema.encodeKeys({ email: 'login' })),
+    password: Schema.RedactedFromValue(
+      SignInPayloadSchema.fields.password.value
+    ),
+  }).pipe(Schema.encodeKeys({ email: 'login' }))
 );
 const internalErrorMessageKey = 'shell.login.error.internal';
 const errorTitleKey = 'shell.login.error.title';
 
 const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
   Match.value(error).pipe(
-    Match.tag('InvalidCredentialsProblem', () => 'shell.login.error.invalid' as const),
-    Match.tag('OntosIdentityForbiddenProblem', () => 'shell.login.error.forbidden' as const),
-    Match.tag('AuthenticationUnavailableProblem', () => 'shell.login.error.unavailable' as const),
+    Match.tag(
+      'InvalidCredentialsProblem',
+      () => 'shell.login.error.invalid' as const
+    ),
+    Match.tag(
+      'OntosIdentityForbiddenProblem',
+      () => 'shell.login.error.forbidden' as const
+    ),
+    Match.tag(
+      'AuthenticationUnavailableProblem',
+      () => 'shell.login.error.unavailable' as const
+    ),
     Match.tag(
       'AuthenticationInternalProblem',
       'HttpClientError',
       'SchemaError',
-      () => internalErrorMessageKey,
+      () => internalErrorMessageKey
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
 
 const LoginPage = () => {
@@ -55,7 +69,9 @@ const LoginPage = () => {
   const passwordRef = useRef<HTMLInputElement>(null);
   const [validation, setValidation] = useState<LoginValidation>(validLogin);
   const [submitting, setSubmitting] = useState(false);
-  const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
+  const handleNavigationFailure = (
+    error: Cause.TimeoutError | Cause.UnknownError
+  ) =>
     Effect.sync(() => {
       void error;
       toaster.create({
@@ -128,11 +144,11 @@ const LoginPage = () => {
               Effect.matchEffect({
                 onFailure: handleNavigationFailure,
                 onSuccess: Effect.succeed,
-              }),
+              })
             ),
         }),
-        Effect.ensuring(Effect.sync(() => setSubmitting(false))),
-      ),
+        Effect.ensuring(Effect.sync(() => setSubmitting(false)))
+      )
     );
   };
 
@@ -145,7 +161,9 @@ const LoginPage = () => {
             {t('shell.login.back')}
           </Link>
           <div className="shell:mt-6">
-            <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
+            <h1 className="shell:text-2xl shell:font-bold">
+              {t('shell.login.title')}
+            </h1>
             <form
               action={handleSubmit}
               className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
@@ -154,7 +172,11 @@ const LoginPage = () => {
               <FormInput
                 aria-invalid={validation.loginMissing || undefined}
                 autoComplete="username"
-                helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
+                helpText={
+                  validation.loginMissing
+                    ? t('shell.login.required.login')
+                    : undefined
+                }
                 id="login"
                 label={t('shell.login.field.login')}
                 name="login"
@@ -167,7 +189,9 @@ const LoginPage = () => {
                 aria-invalid={validation.passwordMissing || undefined}
                 autoComplete="current-password"
                 helpText={
-                  validation.passwordMissing ? t('shell.login.required.password') : undefined
+                  validation.passwordMissing
+                    ? t('shell.login.required.password')
+                    : undefined
                 }
                 id="password"
                 label={t('shell.login.field.password')}
@@ -175,7 +199,9 @@ const LoginPage = () => {
                 ref={passwordRef}
                 required
                 type="password"
-                validateStatus={validation.passwordMissing ? 'error' : 'default'}
+                validateStatus={
+                  validation.passwordMissing ? 'error' : 'default'
+                }
               />
               <Button
                 block

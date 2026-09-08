@@ -1,12 +1,12 @@
-import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
-import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
-import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
+
 import type { OntosModuleDeploymentContract } from '../../src/index.ts';
+import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -25,10 +25,12 @@ import {
   resolveTenantModuleStateChangeSource,
   validateTenantModuleStateTransition,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
 
 const contract = (
   moduleId: string,
-  supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates'],
+  supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates']
 ): OntosModuleDeploymentContract =>
   makeModuleContractFixture({
     appId: 'unit-module',
@@ -43,41 +45,56 @@ void test('uses one canonical tenant module state schema', async () => {
   const decodedStates = await Promise.all(
     TENANT_MODULE_STATES.map(
       async (state) =>
-        await runEffectTestPromise(Schema.decodeEffect(TenantModuleStateSchema)(state)),
-    ),
+        await runEffectTestPromise(
+          Schema.decodeEffect(TenantModuleStateSchema)(state)
+        )
+    )
   );
   assert.deepEqual(decodedStates, TENANT_MODULE_STATES);
 
   const failure = await runEffectTestPromise(
-    Effect.flip(Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled')),
+    Effect.flip(Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled'))
   );
   assert.equal(failure._tag, 'SchemaError');
 });
 
 void test('maps only trusted supported authentication methods to history sources', async () => {
-  assert.equal(await runEffectTestPromise(resolveTenantModuleStateChangeSource('session')), 'user');
   assert.equal(
-    await runEffectTestPromise(resolveTenantModuleStateChangeSource('support_impersonation')),
-    'support',
+    await runEffectTestPromise(resolveTenantModuleStateChangeSource('session')),
+    'user'
+  );
+  assert.equal(
+    await runEffectTestPromise(
+      resolveTenantModuleStateChangeSource('support_impersonation')
+    ),
+    'support'
   );
   assert.equal(
     await runEffectTestPromise(resolveTenantModuleStateChangeSource('system')),
-    'system',
+    'system'
   );
 
   const unsupported = await runEffectTestPromise(
-    Effect.flip(resolveTenantModuleStateChangeSource('api_key')),
+    Effect.flip(resolveTenantModuleStateChangeSource('api_key'))
   );
-  assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedChangeSourceError');
-  assert.equal(unsupported.code, 'tenant_module_state_change_source_unsupported');
+  assert.equal(
+    unsupported._tag,
+    'TenantModuleStateUnsupportedChangeSourceError'
+  );
+  assert.equal(
+    unsupported.code,
+    'tenant_module_state_change_source_unsupported'
+  );
 });
 
 void test('rejects a no-op transition without changing first-state semantics', async () => {
   await runEffectTestPromise(rejectUnchangedTenantModuleState(null, 'active'));
-  await runEffectTestPromise(rejectUnchangedTenantModuleState('inactive', 'active'));
+  await runEffectTestPromise(
+    rejectUnchangedTenantModuleState('inactive', 'active')
+  );
 
   const unchanged = await runEffectTestPromise(
-    Effect.flip(rejectUnchangedTenantModuleState('active', 'active')),
+    Effect.flip(rejectUnchangedTenantModuleState('active', 'active'))
   );
   assert.equal(unchanged._tag, 'TenantModuleStateUnchangedError');
   assert.equal(unchanged.code, 'tenant_module_state_unchanged');
@@ -125,28 +142,47 @@ void test('keeps Core module-state errors stable and sanitized', () => {
 
   for (const error of errors) {
     const serialized = JSON.stringify(error);
-    assert.doesNotMatch(serialized, /postgres|select |insert |tenant-[0-9]|principal-[0-9]/iu);
+    assert.doesNotMatch(
+      serialized,
+      /postgres|select |insert |tenant-[0-9]|principal-[0-9]/iu
+    );
   }
 });
 
 void test('validates only installed membership and the target module supported states', async () => {
   const other = contract('documents.center', ['inactive', 'active']);
-  const target = contract('property.registry', ['inactive', 'active', 'read_only']);
+  const target = contract('property.registry', [
+    'inactive',
+    'active',
+    'read_only',
+  ]);
   const installed = catalog(other, target);
 
   const unknown = await runEffectTestPromise(
-    Effect.flip(validateTenantModuleStateTransition(installed, 'unknown.module', 'active')),
+    Effect.flip(
+      validateTenantModuleStateTransition(installed, 'unknown.module', 'active')
+    )
   );
   assert.equal(unknown._tag, 'TenantModuleStateUnknownModuleError');
   const unsupported = await runEffectTestPromise(
-    Effect.flip(validateTenantModuleStateTransition(installed, 'property.registry', 'archived')),
+    Effect.flip(
+      validateTenantModuleStateTransition(
+        installed,
+        'property.registry',
+        'archived'
+      )
+    )
   );
   assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedStateError');
   await runEffectTestPromise(
-    validateTenantModuleStateTransition(installed, 'property.registry', 'active'),
+    validateTenantModuleStateTransition(
+      installed,
+      'property.registry',
+      'active'
+    )
   );
   await runEffectTestPromise(
-    validateTenantModuleStateTransition(installed, 'stale.module', 'inactive'),
+    validateTenantModuleStateTransition(installed, 'stale.module', 'inactive')
   );
 });
 
@@ -158,7 +194,10 @@ void test('declares the generated Core Action contract and bounded business payl
   assert.equal(descriptor.idempotency, 'required');
   assert.deepEqual(descriptor.policies, []);
   assert.equal(Object.isFrozen(descriptor), true);
-  assert.doesNotMatch(JSON.stringify(descriptor.domainErrorSchema.ast), /dependency/iu);
+  assert.doesNotMatch(
+    JSON.stringify(descriptor.domainErrorSchema.ast),
+    /dependency/iu
+  );
 
   assert.deepEqual(
     await runEffectTestPromise(
@@ -167,14 +206,14 @@ void test('declares the generated Core Action contract and bounded business payl
         moduleKey: 'testing.module',
         newState: 'active',
         reason: 'Tenant administrator enabled the module',
-      }),
+      })
     ),
     {
       expectedState: 'inactive',
       moduleKey: 'testing.module',
       newState: 'active',
       reason: 'Tenant administrator enabled the module',
-    },
+    }
   );
   await assert.rejects(
     runEffectTestPromise(
@@ -182,8 +221,8 @@ void test('declares the generated Core Action contract and bounded business payl
         moduleKey: 'testing.module',
         newState: 'active',
         reason: 'x'.repeat(501),
-      }),
-    ),
+      })
+    )
   );
   await assert.rejects(
     runEffectTestPromise(
@@ -191,7 +230,7 @@ void test('declares the generated Core Action contract and bounded business payl
         moduleKey: 'testing.module',
         newState: 'enabled',
         tenantId: 'browser-supplied',
-      }),
-    ),
+      })
+    )
   );
 });

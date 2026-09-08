@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Effect, Schema } from 'effect';
+
 import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 import { validateQualityAuditSummary } from '../quality-audit-gate.mts';
 import { validateReport } from '../quality-audit.mts';
@@ -23,7 +25,14 @@ interface FixtureCoverage {
   weightedFindings?: number;
   workspaces?: string[];
 }
-const names = ['knip', 'jscpd', FALLOW_FILES, 'fallow-clones', FALLOW_SIMILARITY, FALLOW_HEALTH];
+const names = [
+  'knip',
+  'jscpd',
+  FALLOW_FILES,
+  'fallow-clones',
+  FALLOW_SIMILARITY,
+  FALLOW_HEALTH,
+];
 const clean = () => ({
   results: names.map((name) => {
     const coverage: FixtureCoverage = { tokenEligibleFiles: 2 };
@@ -63,12 +72,16 @@ const clean = () => ({
 });
 const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const validate = async (summary: ReturnType<typeof clean> | Schema.Json) =>
-  await runEffectTestPromise(encode(summary).pipe(Effect.flatMap(validateQualityAuditSummary)));
+  await runEffectTestPromise(
+    encode(summary).pipe(Effect.flatMap(validateQualityAuditSummary))
+  );
 
 await test('complete clean summary succeeds; semantic and UI-only findings remain advisory', async () => {
   await validate(clean());
   const summary = clean();
-  const semantic = summary.results.find(({ name }) => name === FALLOW_SIMILARITY);
+  const semantic = summary.results.find(
+    ({ name }) => name === FALLOW_SIMILARITY
+  );
   const health = summary.results.find(({ name }) => name === FALLOW_HEALTH);
   assert.ok(semantic && health);
   semantic.findings = 19;
@@ -146,7 +159,9 @@ const positiveReports = [
 await Promise.all(
   positiveReports.map(async ([name, source]) => {
     await test(`${name} real-positive analyzer report rejects through the normalized gate`, async () => {
-      const normalized = await runEffectTestPromise(validateReport(name, source));
+      const normalized = await runEffectTestPromise(
+        validateReport(name, source)
+      );
       const summary = clean();
       const result = summary.results.find((entry) => entry.name === name);
       assert.ok(result);
@@ -159,10 +174,10 @@ await Promise.all(
       }
       await assert.rejects(
         validate(summary),
-        new RegExp(`Quality audit gate failed: ${name}=1`, 'u'),
+        new RegExp(`Quality audit gate failed: ${name}=1`, 'u')
       );
     });
-  }),
+  })
 );
 
 await test('calibrated modeled consumers do not reintroduce native Knip findings', async () => {
@@ -179,35 +194,46 @@ await test('calibrated modeled consumers do not reintroduce native Knip findings
 await test('partial, duplicate, unknown, failed and empty reports fail closed', async () => {
   await assert.rejects(validate({}), /Malformed/u);
   await assert.rejects(validate({ ...clean(), status: 'error' }), /Malformed/u);
-  await assert.rejects(validate({ results: [], status: 'reported' }), /six unique/u);
+  await assert.rejects(
+    validate({ results: [], status: 'reported' }),
+    /six unique/u
+  );
   await Promise.all(
     names.map(async (name) => {
       const summary = clean();
       await assert.rejects(
-        validate({ ...summary, results: summary.results.filter((entry) => entry.name !== name) }),
-        /six unique/u,
+        validate({
+          ...summary,
+          results: summary.results.filter((entry) => entry.name !== name),
+        }),
+        /six unique/u
       );
       const result = summary.results.find((entry) => entry.name === name);
       assert.ok(result);
       await assert.rejects(
         validate({ ...summary, results: [...summary.results, result] }),
-        /six unique/u,
+        /six unique/u
       );
       result.status = 'error';
       await assert.rejects(validate(summary), /Malformed/u);
       result.status = 'reported';
       result.files = 0;
       await assert.rejects(validate(summary), /Malformed/u);
-    }),
+    })
   );
   const summary = clean();
   const [first] = summary.results;
   first.name = 'unknown';
   await assert.rejects(validate(summary), /Malformed/u);
   await Promise.all(
-    ['', '{broken', 'null', '{"status":"reported","results":{}}'].map(async (source) => {
-      await assert.rejects(runEffectTestPromise(validateQualityAuditSummary(source)), /Malformed/u);
-    }),
+    ['', '{broken', 'null', '{"status":"reported","results":{}}'].map(
+      async (source) => {
+        await assert.rejects(
+          runEffectTestPromise(validateQualityAuditSummary(source)),
+          /Malformed/u
+        );
+      }
+    )
   );
 });
 
@@ -215,17 +241,23 @@ await test('invalid counts, flags, diagnostics and inconsistent coverage cannot 
   await Promise.all(
     names.map(async (name) => {
       await Promise.all(
-        [-1, 0.5, null, '0', undefined, Number.NaN, Number.POSITIVE_INFINITY].map(
-          async (invalid) => {
-            const summary = clean();
-            const result = summary.results.find((entry) => entry.name === name);
-            assert.ok(result);
-            Object.assign(result, { findings: invalid });
-            await assert.rejects(validate(summary), /Malformed/u);
-          },
-        ),
+        [
+          -1,
+          0.5,
+          null,
+          '0',
+          undefined,
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+        ].map(async (invalid) => {
+          const summary = clean();
+          const result = summary.results.find((entry) => entry.name === name);
+          assert.ok(result);
+          Object.assign(result, { findings: invalid });
+          await assert.rejects(validate(summary), /Malformed/u);
+        })
       );
-    }),
+    })
   );
   await Promise.all(
     [
@@ -240,7 +272,7 @@ await test('invalid counts, flags, diagnostics and inconsistent coverage cannot 
       assert.ok(result);
       Object.assign(result, patch);
       await assert.rejects(validate(summary), /Malformed|inconsistent/u);
-    }),
+    })
   );
 });
 
@@ -267,6 +299,6 @@ await test('six-result duplicate and inconsistent normalization fail closed', as
       assert.ok(result);
       Object.assign(result.coverage, coverage);
       await assert.rejects(validate(summary), /Malformed|inconsistent/u);
-    }),
+    })
   );
 });

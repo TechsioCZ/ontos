@@ -2,6 +2,7 @@
 // @ontos-outbox-producer party.registry
 // @ontos-outbox-topic party.registry.counterparty-created.v1
 import { Schema } from 'effect';
+
 import { LegalEntityRefSchema } from '../domain/counterparty-contract.ts';
 import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { PartyRefSchema } from '../resources/party.ts';

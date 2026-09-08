@@ -8,13 +8,13 @@ export { OutboxWorkerDescriptorError } from './outbox-worker-descriptor-error.ts
 
 export class OutboxPersistenceError extends Schema.TaggedError<OutboxPersistenceError>()(
   'OutboxPersistenceError',
-  { code: Schema.Literal('outbox_persistence_failed'), reason: Schema.String },
+  { code: Schema.Literal('outbox_persistence_failed'), reason: Schema.String }
 ) {}
 
 const PERSISTENCE_CAUSE_PROPERTY = 'ontosOutboxPersistenceCause';
 
 export const outboxPersistenceError = <FailureCause>(
-  cause: FailureCause,
+  cause: FailureCause
 ): OutboxPersistenceError => {
   const failure = new OutboxPersistenceError({
     code: 'outbox_persistence_failed',

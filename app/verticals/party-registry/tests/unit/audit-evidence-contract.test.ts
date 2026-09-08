@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
 import {
   PartySubjectEvidenceSchema,
   makePartyRef,
 } from '../../shared/domain/identity-contracts.ts';
 import { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
-import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
+import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 
 const tenant = '11111111-1111-4111-8111-111111111111';
 const id = '22222222-2222-4222-8222-222222222222';
@@ -20,15 +22,21 @@ test('typed subject evidence accepts arbitrary reference spelling, rejects unsup
     statement: 'Met the human who submitted this request',
     subjectKey: 'request-subject',
   };
-  assert.deepEqual(Schema.decodeUnknownSync(PartySubjectEvidenceSchema)(evidence), evidence);
+  assert.deepEqual(
+    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)(evidence),
+    evidence
+  );
   assert.throws(() =>
     Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
       ...evidence,
       kind: 'AUTHORITATIVE_REGISTRY',
-    }),
+    })
   );
   assert.throws(() =>
-    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({ ...evidence, statement: '' }),
+    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
+      ...evidence,
+      statement: '',
+    })
   );
 });
 test('Create recovery distinguishes matching outcome and enforces reference invariants', () => {
@@ -49,9 +57,16 @@ test('Create recovery distinguishes matching outcome and enforces reference inva
   assert.throws(() => decode({ ...record, decidedAt: 'September 4, 2026' }));
   assert.throws(() => decode({ ...record, committedCreateOutcome: 'MATCHED' }));
   assert.throws(() => decode({ ...record, operation: 'MATCH' }));
-  assert.throws(() => decode({ ...record, caseRef: makeDuplicateCandidateCaseRef(tenant, id) }));
   assert.throws(() =>
-    decode({ ...record, committedCreateOutcome: null, outcome: 'NO_MATCH', partyRef: null }),
+    decode({ ...record, caseRef: makeDuplicateCandidateCaseRef(tenant, id) })
+  );
+  assert.throws(() =>
+    decode({
+      ...record,
+      committedCreateOutcome: null,
+      outcome: 'NO_MATCH',
+      partyRef: null,
+    })
   );
   assert.equal(
     decode({
@@ -61,7 +76,7 @@ test('Create recovery distinguishes matching outcome and enforces reference inva
       outcome: 'NO_MATCH',
       partyRef: null,
     }).outcome,
-    'NO_MATCH',
+    'NO_MATCH'
   );
 });
 
@@ -78,10 +93,12 @@ test('matching decision JSON keeps nullable and optional wire fields compatible'
     outcome: 'NO_MATCH' as const,
     partyRef: null,
   };
-  const decoded = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(record);
-  const encoded = Schema.encodeUnknownSync(Schema.toCodecJson(PartyMatchDecisionRecordSchema))(
-    decoded,
+  const decoded = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(
+    record
   );
+  const encoded = Schema.encodeUnknownSync(
+    Schema.toCodecJson(PartyMatchDecisionRecordSchema)
+  )(decoded);
   assert.deepEqual(encoded, record);
 
   const omitted = {
@@ -95,11 +112,11 @@ test('matching decision JSON keeps nullable and optional wire fields compatible'
     partyRef: record.partyRef,
   };
   const omittedEncoded = Schema.encodeUnknownSync(
-    Schema.toCodecJson(PartyMatchDecisionRecordSchema),
+    Schema.toCodecJson(PartyMatchDecisionRecordSchema)
   )(Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(omitted));
-  const omittedEncodedObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(
-    omittedEncoded,
-  );
+  const omittedEncodedObject = Schema.decodeUnknownSync(
+    Schema.Record(Schema.String, Schema.Json)
+  )(omittedEncoded);
   assert.equal('committedCreateOutcome' in omittedEncodedObject, false);
   assert.equal('evidenceEvaluation' in omittedEncodedObject, false);
 });

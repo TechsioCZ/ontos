@@ -4,7 +4,12 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { PartyCorrectionDetailSchema } from '../domain/correction-contracts.ts';
 import { PartyCorrectionRefSchema } from '../resources/party-correction.ts';
 
@@ -15,37 +20,31 @@ export type PartyCorrectionRequest = typeof PartyCorrectionRequestSchema.Type;
 export const PartyCorrectionResponseSchema = PartyCorrectionDetailSchema;
 export type PartyCorrectionResponse = typeof PartyCorrectionResponseSchema.Type;
 
-export const PartyCorrectionAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartyCorrectionAuthenticationProblem',
-  401,
-);
+export const PartyCorrectionAuthenticationProblemSchema =
+  makeProblemDetailsSchema('PartyCorrectionAuthenticationProblem', 401);
 export const PartyCorrectionInvalidProblemSchema = makeProblemDetailsSchema(
   'PartyCorrectionInvalidProblem',
-  400,
+  400
 );
-export const PartyCorrectionUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartyCorrectionUnavailableProblem',
-  503,
-);
+export const PartyCorrectionUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema('PartyCorrectionUnavailableProblem', 503);
 export const PartyCorrectionForbiddenProblemSchema = makeProblemDetailsSchema(
   'PartyCorrectionForbiddenProblem',
-  403,
+  403
 );
 export const PartyCorrectionNotFoundProblemSchema = makeProblemDetailsSchema(
   'PartyCorrectionNotFoundProblem',
-  404,
+  404
 );
 export const PartyCorrectionPolicyProblemSchema = makeProblemDetailsSchema(
   'PartyCorrectionPolicyProblem',
-  422,
+  422
 );
-export const PartyCorrectionPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartyCorrectionPolicyConflictProblem',
-  409,
-);
+export const PartyCorrectionPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('PartyCorrectionPolicyConflictProblem', 409);
 export const PartyCorrectionInternalProblemSchema = makeProblemDetailsSchema(
   'PartyCorrectionInternalProblem',
-  500,
+  500
 );
 
 export const PartyCorrectionApi = HttpApi.make('PartyCorrectionApi').add(
@@ -66,6 +65,6 @@ export const PartyCorrectionApi = HttpApi.make('PartyCorrectionApi').add(
       payload: PartyCorrectionRequestSchema,
       query: {},
       success: PartyCorrectionResponseSchema,
-    }),
-  ),
+    })
+  )
 );

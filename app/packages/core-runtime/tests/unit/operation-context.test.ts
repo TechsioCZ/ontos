@@ -1,7 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { DateTime, Effect, Exit, Schema, flow } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { DateTime, Effect, Exit, Schema, flow } from 'effect';
+
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
 import {
   decodeTrustedPrincipalContext,
@@ -40,8 +42,11 @@ const active = {
   tenantStatus: 'active',
 };
 const access = (decision: 'allowed' | 'denied' | 'unavailable') => ({
-  legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
+  legalEntities: ({
+    legalEntityIds,
+  }: {
+    readonly legalEntityIds: readonly string[];
+  }) => Effect.succeed(legalEntityIds.map((key) => ({ decision, key }))),
   modules: () => Effect.succeed([]),
   resources: () => Effect.succeed([]),
 });
@@ -49,10 +54,13 @@ const InactiveContextError = Schema.Union([
   OperationAuthenticationRequired,
   OperationContextDenied,
 ]);
-const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
+const effectTest = <Value, Failure>(
+  name: string,
+  effect: Effect.Effect<Value, Failure>
+): void => {
   test(
     name,
-    flow(() => Effect.asVoid(effect), runEffectTestPromise),
+    flow(() => Effect.asVoid(effect), runEffectTestPromise)
   );
 };
 
@@ -66,30 +74,35 @@ effectTest(
       legalEntityScope: 'required',
       principal,
     });
-    const { legalEntityId: _legalEntityId, ...principalWithoutLegalEntity } = principal;
+    const { legalEntityId: _legalEntityId, ...principalWithoutLegalEntity } =
+      principal;
     const missing = yield* Effect.flip(
       allowed.resolve({
         correlationId: 'c-1',
         legalEntityScope: 'required',
         principal: principalWithoutLegalEntity,
-      }),
+      })
     );
     const forbidden = yield* Effect.flip(
-      allowed.resolve({ correlationId: 'c-1', legalEntityScope: 'forbidden', principal }),
+      allowed.resolve({
+        correlationId: 'c-1',
+        legalEntityScope: 'forbidden',
+        principal,
+      })
     );
     const denied = yield* Effect.flip(
       makeOperationalScopeResolver(repository, access('denied')).resolve({
         correlationId: 'c-1',
         legalEntityScope: 'optional',
         principal,
-      }),
+      })
     );
     const unavailable = yield* Effect.flip(
       makeOperationalScopeResolver(repository, access('unavailable')).resolve({
         correlationId: 'c-1',
         legalEntityScope: 'optional',
         principal,
-      }),
+      })
     );
 
     assert.equal(Object.isFrozen(valid), true);
@@ -97,7 +110,7 @@ effectTest(
     assert.equal(Schema.is(OperationContextInvalid)(forbidden), true);
     assert.equal(Schema.is(OperationContextDenied)(denied), true);
     assert.equal(Schema.is(OperationContextUnavailable)(unavailable), true);
-  }),
+  })
 );
 
 effectTest(
@@ -108,28 +121,37 @@ effectTest(
       { ...active, principalStatus: 'disabled' },
       {
         ...active,
-        bindingRevokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')),
+        bindingRevokedAt: DateTime.toDateUtc(
+          DateTime.makeUnsafe('2026-01-01T00:00:00.000Z')
+        ),
       },
       { ...active, bindingTenantId: '00000000-0000-4000-8000-000000000099' },
-      { ...active, legalEntityTenantId: '00000000-0000-4000-8000-000000000099' },
+      {
+        ...active,
+        legalEntityTenantId: '00000000-0000-4000-8000-000000000099',
+      },
     ];
     const errors = yield* Effect.forEach(
       records,
       (record) => {
         const resolver = makeOperationalScopeResolver(
           { load: () => Effect.succeed(record) },
-          access('allowed'),
+          access('allowed')
         );
         return Effect.flip(
-          resolver.resolve({ correlationId: 'c-1', legalEntityScope: 'required', principal }),
+          resolver.resolve({
+            correlationId: 'c-1',
+            legalEntityScope: 'required',
+            principal,
+          })
         );
       },
-      { concurrency: 1 },
+      { concurrency: 1 }
     );
     for (const error of errors) {
       assert.equal(Schema.is(InactiveContextError)(error), true);
     }
-  }),
+  })
 );
 
 effectTest(
@@ -160,7 +182,7 @@ effectTest(
             legalEntityTenantId: null,
           }),
       },
-      access('allowed'),
+      access('allowed')
     );
 
     const scope = yield* resolver.resolve({
@@ -174,41 +196,46 @@ effectTest(
     const decoded = yield* decodeTrustedPrincipalContext(scope);
     assert.equal(decoded.authMethod, 'system');
     assert.equal(decoded.principalId, scope.principalId);
-    const untrusted = yield* Effect.exit(decodeTrustedPrincipalContext({ ...scope }));
+    const untrusted = yield* Effect.exit(
+      decodeTrustedPrincipalContext({ ...scope })
+    );
     assert.equal(Exit.isFailure(untrusted), true);
-  }),
+  })
 );
 
 effectTest(
   'permits only a resolver-branded support-stop recovery through inactive historical scope',
   Effect.gen(function* supportRecovery() {
-    const recoveryPrincipal = yield* supportRecoveryPrincipalContextResolverFromRepository({
-      load: () =>
-        Effect.succeed({
-          bindingPrincipalId: principal.principalId,
-          bindingTenantId: principal.tenantId,
-          principalKind: 'human' as const,
-          principalTenantId: principal.tenantId,
-          tenantId: principal.tenantId,
-        }).pipe(Effect.asSome),
-    }).resolveStoppedImpersonation({
-      originalAuthBindingId: principal.authBindingId,
-      originalPrincipalId: principal.principalId,
-      originalSessionId: 'expired-original-session',
-      tenantId: principal.tenantId,
-    });
+    const recoveryPrincipal =
+      yield* supportRecoveryPrincipalContextResolverFromRepository({
+        load: () =>
+          Effect.succeed({
+            bindingPrincipalId: principal.principalId,
+            bindingTenantId: principal.tenantId,
+            principalKind: 'human' as const,
+            principalTenantId: principal.tenantId,
+            tenantId: principal.tenantId,
+          }).pipe(Effect.asSome),
+      }).resolveStoppedImpersonation({
+        originalAuthBindingId: principal.authBindingId,
+        originalPrincipalId: principal.principalId,
+        originalSessionId: 'expired-original-session',
+        tenantId: principal.tenantId,
+      });
     const resolver = makeOperationalScopeResolver(
       {
         load: () =>
           Effect.succeed({
             ...active,
-            bindingRevokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-09T00:00:00.000Z')),
+            bindingRevokedAt: DateTime.toDateUtc(
+              DateTime.makeUnsafe('2026-08-09T00:00:00.000Z')
+            ),
             bindingStatus: 'revoked',
             principalStatus: 'disabled',
             tenantStatus: 'suspended',
           }),
       },
-      access('allowed'),
+      access('allowed')
     );
 
     const scope = yield* resolver.resolve({
@@ -218,10 +245,13 @@ effectTest(
     });
 
     assert.equal(
-      isTrustedSupportRecoveryPrincipalContext(scope, recordSupportImpersonationAction),
-      true,
+      isTrustedSupportRecoveryPrincipalContext(
+        scope,
+        recordSupportImpersonationAction
+      ),
+      true
     );
     assert.equal(isTrustedSupportRecoveryPrincipalContext(scope, {}), false);
     assert.equal(isTrustedSupportRecoveryPrincipalContext({ ...scope }), false);
-  }),
+  })
 );

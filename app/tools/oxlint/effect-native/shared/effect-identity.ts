@@ -1,5 +1,12 @@
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
-import { asNode, identityUnwrap, keyName, unwrapNode, type Syntax } from './ast.ts';
+
+import {
+  asNode,
+  identityUnwrap,
+  keyName,
+  unwrapNode,
+  type Syntax,
+} from './ast.ts';
 import { lookupVariable } from './bindings.ts';
 import { matchesGlobs } from './paths.ts';
 
@@ -19,12 +26,14 @@ const TYPE_DECLARATIONS = new Set([
   'TSTypeParameter',
 ]);
 function valueDefinitions(variable: Variable): Definition[] {
-  return variable.defs.filter((definition) => !TYPE_DECLARATIONS.has(definition.node.type));
+  return variable.defs.filter(
+    (definition) => !TYPE_DECLARATIONS.has(definition.node.type)
+  );
 }
 function originVariable(
   context: Context,
   node: ESTree.Node,
-  legacy: boolean,
+  legacy: boolean
 ): { variable: Variable; definitions: readonly Definition[] } | null {
   if (!legacy) {
     const variable = lookupVariable(context, node);
@@ -43,19 +52,30 @@ function originVariable(
 function moduleBase(source: string, policy: OriginPolicy): string[] | null {
   const root =
     source === 'effect' ||
-    (policy.legacyOrigin ? matchesGlobs(source, policy.barrels) : policy.barrels.includes(source));
+    (policy.legacyOrigin
+      ? matchesGlobs(source, policy.barrels)
+      : policy.barrels.includes(source));
   if (!root && !source.startsWith('effect/')) return null;
   if (policy.legacyOrigin && root) return [];
   if (!source.startsWith('effect/')) return [];
   const last = source.split('/').at(-1)!;
   return policy.legacyOrigin || /^[A-Z]/u.test(last) ? [last] : [];
 }
-function importPath(definition: Definition, policy: OriginPolicy): readonly string[] | null {
+function importPath(
+  definition: Definition,
+  policy: OriginPolicy
+): readonly string[] | null {
   const spec = definition.node;
   const parent = definition.parent;
   const declaration =
-    policy.legacyOrigin && parent?.type !== 'ImportDeclaration' ? spec.parent : parent;
-  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
+    policy.legacyOrigin && parent?.type !== 'ImportDeclaration'
+      ? spec.parent
+      : parent;
+  if (
+    declaration?.type !== 'ImportDeclaration' ||
+    declaration.importKind === 'type'
+  )
+    return null;
   if (asNode(spec)?.importKind === 'type') return null;
   const base = moduleBase(declaration.source.value, policy);
   if (base === null) return null;
@@ -64,12 +84,17 @@ function importPath(definition: Definition, policy: OriginPolicy): readonly stri
 function importedPath(
   spec: ESTree.Node,
   base: readonly string[],
-  legacy: boolean,
+  legacy: boolean
 ): readonly string[] | null {
   if (spec.type === 'ImportNamespaceSpecifier') return base;
   if (spec.type === 'ImportDefaultSpecifier') return legacy ? base : null;
   if (spec.type !== 'ImportSpecifier') return null;
-  return [...base, spec.imported.type === 'Identifier' ? spec.imported.name : spec.imported.value];
+  return [
+    ...base,
+    spec.imported.type === 'Identifier'
+      ? spec.imported.name
+      : spec.imported.value,
+  ];
 }
 
 /** Flat identifier destructuring only: defaults/nested patterns are intentionally not inferred. */
@@ -89,18 +114,25 @@ function flatBindingKey(pattern: ESTree.Node, name: string): string | null {
 function aliasDeclaration(
   definition: Definition,
   variable: Variable,
-  legacy: boolean,
+  legacy: boolean
 ): ESTree.VariableDeclarator | null {
   if (!legacy && definition.type !== 'Variable') return null;
-  if (definition.node.type !== 'VariableDeclarator' || !definition.node.init) return null;
+  if (definition.node.type !== 'VariableDeclarator' || !definition.node.init)
+    return null;
   const declaration = definition.node;
   const parent = legacy ? declaration.parent : definition.parent;
-  if (parent?.type !== 'VariableDeclaration' || parent.kind !== 'const') return null;
+  if (parent?.type !== 'VariableDeclaration' || parent.kind !== 'const')
+    return null;
   if (hasDisallowedWrites(variable, legacy)) return null;
   return declaration;
 }
 function hasDisallowedWrites(variable: Variable, legacy: boolean): boolean {
-  return legacy && variable.references.some((reference) => reference.isWrite() && !reference.init);
+  return (
+    legacy &&
+    variable.references.some(
+      (reference) => reference.isWrite() && !reference.init
+    )
+  );
 }
 function nextState(state: OriginState): OriginState {
   return { ...state, depth: state.depth + 1 };
@@ -110,9 +142,13 @@ function aliasPath(
   node: Syntax,
   definition: Definition,
   variable: Variable,
-  state: OriginState,
+  state: OriginState
 ): readonly string[] | null {
-  const declaration = aliasDeclaration(definition, variable, state.policy.legacyOrigin);
+  const declaration = aliasDeclaration(
+    definition,
+    variable,
+    state.policy.legacyOrigin
+  );
   if (!declaration?.init) return null;
   const base = resolveOrigin(context, declaration.init, nextState(state));
   if (base === null) return null;
@@ -123,7 +159,7 @@ function aliasPath(
 function identifierPath(
   context: Context,
   node: Syntax,
-  state: OriginState,
+  state: OriginState
 ): readonly string[] | null {
   const found = originVariable(context, node, state.policy.legacyOrigin);
   if (!found || found.definitions.length !== 1) return null;
@@ -137,16 +173,20 @@ function identifierPath(
 function resolveOrigin(
   context: Context,
   input: ESTree.Node,
-  state: OriginState,
+  state: OriginState
 ): readonly string[] | null {
   if (state.policy.legacyOrigin && state.depth > 24) return null;
-  const node = state.policy.legacyOrigin ? unwrapNode(input) : identityUnwrap(input);
+  const node = state.policy.legacyOrigin
+    ? unwrapNode(input)
+    : identityUnwrap(input);
   if (node.type === 'MemberExpression') {
     const key = keyName(node.property, node.computed);
     const base = resolveOrigin(context, node.object, nextState(state));
     return base !== null && key !== null ? [...base, key] : null;
   }
-  return node.type === 'Identifier' ? identifierPath(context, node as Syntax, state) : null;
+  return node.type === 'Identifier'
+    ? identifierPath(context, node as Syntax, state)
+    : null;
 }
 
 /** Generator/concurrency identity: sequence-last; exact extra modules; uppercase Effect submodules;
@@ -156,7 +196,7 @@ export function bindingPath(
   context: Context,
   expression: ESTree.Node,
   extraModules: readonly string[] = [],
-  seen = new Set<unknown>(),
+  seen = new Set<unknown>()
 ): readonly string[] | null {
   return resolveOrigin(context, expression, {
     policy: { barrels: extraModules, legacyOrigin: false },
@@ -172,7 +212,7 @@ export function effectOrigin(
   context: Context,
   input: ESTree.Node,
   barrels: readonly string[],
-  depth = 0,
+  depth = 0
 ): readonly string[] | null {
   return resolveOrigin(context, input, {
     policy: { barrels, legacyOrigin: true },
@@ -186,12 +226,16 @@ export function isGenCallee(
   context: Context,
   input: ESTree.Node | null,
   members: readonly string[],
-  extraModules: readonly string[] = [],
+  extraModules: readonly string[] = []
 ): boolean {
   if (input === null) return false;
   const target = identityUnwrap(input);
   if (target.type === 'CallExpression')
     return isGenCallee(context, target.callee, members, extraModules);
   const path = bindingPath(context, target, extraModules);
-  return path?.length === 2 && path[0] === 'Effect' && members.includes(path[1] ?? '');
+  return (
+    path?.length === 2 &&
+    path[0] === 'Effect' &&
+    members.includes(path[1] ?? '')
+  );
 }

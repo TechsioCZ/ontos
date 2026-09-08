@@ -68,7 +68,7 @@ const ultramodernSourceRevision = readInjectedSourceRevision();
 const ultramodernBuildArtifact = withUltramodernBuildIdentity(
   ultramodernGeneratedBuildArtifact,
   ultramodernBuildMarker,
-  ultramodernSourceRevision,
+  ultramodernSourceRevision
 );
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;

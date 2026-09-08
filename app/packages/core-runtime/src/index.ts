@@ -116,7 +116,10 @@ export type {
   SafeLegalEntity,
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
-export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
+export {
+  DEFAULT_DATABASE_POOL_DEADLINES,
+  configureDatabasePool,
+} from './db/pool-configuration.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
@@ -145,7 +148,10 @@ export type {
   PrincipalKind,
   PrincipalStatus,
 } from './db/schema.ts';
-export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-transaction.ts';
+export {
+  tenantLegalEntityRlsPolicies,
+  tenantRlsPolicies,
+} from './db/scoped-transaction.ts';
 export {
   DatabaseCommitAcknowledgementAmbiguous,
   DatabaseDriverFailureKindSchema,
@@ -233,7 +239,10 @@ export type {
   ResolveActionCommitInput,
   RunActionInput,
 } from './actions/runtime.ts';
-export { ActionTransportMetadataSchema, TrustedPrincipalContextSchema } from './actions/context.ts';
+export {
+  ActionTransportMetadataSchema,
+  TrustedPrincipalContextSchema,
+} from './actions/context.ts';
 export type {
   ActionCollectorMethods,
   ActionHandlerContext,
@@ -292,8 +301,16 @@ export type {
   ReadHandlerContext,
   ReadHandlerResult,
 } from './reads/context.ts';
-export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
-export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
+export {
+  READ_RUNTIME_STAGES,
+  ReadRuntime,
+  ReadRuntimeLive,
+} from './reads/runtime.ts';
+export type {
+  ReadRuntimeOptions,
+  ReadRuntimeService,
+  ReadRuntimeStage,
+} from './reads/runtime.ts';
 export {
   ReadEvidencePersistenceError,
   ReadEvidenceValidationError,
@@ -370,7 +387,11 @@ export type {
   CoreSearchWorkerSnapshotService,
   CoreSearchWorkerSnapshotView,
 } from './search/worker-snapshot.ts';
-export { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema } from './actions/events.ts';
+export {
+  DataAccessEventSchema,
+  DomainEventSchema,
+  OutboxMessageSchema,
+} from './actions/events.ts';
 export type {
   ActionAccessEvidencePolicy,
   DataAccessEvent,
@@ -474,7 +495,10 @@ export {
   decideModuleStateAccess,
   tenantStatesAllowingAccess,
 } from './modules/module-state-gate.ts';
-export type { ModuleStateGateService, ModuleStateSnapshot } from './modules/module-state-gate.ts';
+export type {
+  ModuleStateGateService,
+  ModuleStateSnapshot,
+} from './modules/module-state-gate.ts';
 export {
   ModuleEntrypointGateway,
   ModuleEntrypointGatewayLive,
@@ -599,7 +623,10 @@ export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-manag
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
 
-export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './outbox/definition.ts';
+export {
+  defineOutboxWorker,
+  extractOutboxWorkerSubscriptions,
+} from './outbox/definition.ts';
 export type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerDescriptor,
@@ -618,8 +645,14 @@ export {
   OutboxPersistenceError,
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
-export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
-export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
+export type {
+  OutboxWorkerHealth,
+  OutboxWorkerHealthServer,
+} from './outbox/health.ts';
+export {
+  parseOutboxPollingConfig,
+  runOutboxPollingLoop,
+} from './outbox/poller.ts';
 export type {
   OutboxCycleRunner,
   OutboxPollingConfig,

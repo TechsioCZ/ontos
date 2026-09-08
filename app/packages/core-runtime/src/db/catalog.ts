@@ -18,23 +18,31 @@ export interface CatalogDifference {
 }
 
 export const expectedCoreTableCatalog = CORE_TABLE_INVENTORY.map(
-  (tableName) => `${CORE_SCHEMA_NAME}.${tableName}`,
+  (tableName) => `${CORE_SCHEMA_NAME}.${tableName}`
 );
 
-export const compareApplicationCatalog = (entries: readonly CatalogEntry[]): CatalogDifference => {
+export const compareApplicationCatalog = (
+  entries: readonly CatalogEntry[]
+): CatalogDifference => {
   const actualTables = new Set(
     entries
       .filter(
         (entry): entry is Extract<CatalogEntry, { readonly kind: 'table' }> =>
-          entry.kind === 'table',
+          entry.kind === 'table'
       )
-      .map((entry) => `${entry.schemaName}.${entry.tableName}`),
+      .map((entry) => `${entry.schemaName}.${entry.tableName}`)
   );
   const expectedTables = new Set(expectedCoreTableCatalog);
-  const missing = [...expectedTables].filter((name) => !actualTables.has(name)).toSorted();
-  const unexpectedTables = [...actualTables].filter((name) => !expectedTables.has(name)).toSorted();
+  const missing = [...expectedTables]
+    .filter((name) => !actualTables.has(name))
+    .toSorted();
+  const unexpectedTables = [...actualTables]
+    .filter((name) => !expectedTables.has(name))
+    .toSorted();
   const unexpectedSchemas = entries
-    .flatMap((entry) => (entry.kind === 'schema' ? [`${entry.schemaName}.*`] : []))
+    .flatMap((entry) =>
+      entry.kind === 'schema' ? [`${entry.schemaName}.*`] : []
+    )
     .toSorted();
 
   return {

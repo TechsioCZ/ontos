@@ -1,13 +1,14 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
-
-import { eq } from 'drizzle-orm';
-import { Effect } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
+import { eq } from 'drizzle-orm';
+import { Effect } from 'effect';
+
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { legalEntities, tenants } from '../../src/db/schema.ts';
-import { makeCoreDatabase } from '../../src/db/client.ts';
 
 const tenantOne = '11000000-0000-4000-8000-000000000001';
 const tenantTwo = '11000000-0000-4000-8000-000000000002';
@@ -23,8 +24,12 @@ test(
     const { executor: database } = yield* makeCoreDatabase(configuration);
     const context = makeLegalEntityContext({ executor: database });
     const cleanup = Effect.gen(function* cleanLegalEntityContextFixtures() {
-      yield* database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantOne));
-      yield* database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantTwo));
+      yield* database
+        .delete(legalEntities)
+        .where(eq(legalEntities.tenantId, tenantOne));
+      yield* database
+        .delete(legalEntities)
+        .where(eq(legalEntities.tenantId, tenantTwo));
       yield* database.delete(tenants).where(eq(tenants.tenantId, tenantOne));
       yield* database.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
     });
@@ -90,10 +95,14 @@ test(
         legalEntityId: activeOne,
         legalName: 'Zeta entity',
       });
-      const inactiveError = yield* Effect.flip(context.validateSelection(tenantOne, suspended));
+      const inactiveError = yield* Effect.flip(
+        context.validateSelection(tenantOne, suspended)
+      );
       assert.equal(inactiveError._tag, 'LegalEntityContextInactiveError');
-      const missingError = yield* Effect.flip(context.validateSelection(tenantOne, foreign));
+      const missingError = yield* Effect.flip(
+        context.validateSelection(tenantOne, foreign)
+      );
       assert.equal(missingError._tag, 'LegalEntityContextMissingError');
     }).pipe(Effect.ensuring(cleanup.pipe(Effect.orDie)));
-  }).pipe(Effect.scoped, makeEffectTestCallback),
+  }).pipe(Effect.scoped, makeEffectTestCallback)
 );

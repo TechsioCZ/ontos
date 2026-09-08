@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { DateTime, Option, Schema } from 'effect';
+
 import {
   ContactPersonOfRelationshipType,
   CreatePartyRelationshipPayloadSchema,
@@ -43,10 +45,12 @@ const presentInstant = (value: string) => Option.some(instant(value));
 test('the production catalog contains only CONTACT_PERSON_OF', () => {
   assert.equal(
     Schema.decodeUnknownSync(PartyRelationshipTypeSchema)('CONTACT_PERSON_OF'),
-    ContactPersonOfRelationshipType,
+    ContactPersonOfRelationshipType
   );
   for (const deferred of ['EMPLOYEE_OF', 'BRANCH_OF', 'OTHER']) {
-    assert.throws(() => Schema.decodeUnknownSync(PartyRelationshipTypeSchema)(deferred));
+    assert.throws(() =>
+      Schema.decodeUnknownSync(PartyRelationshipTypeSchema)(deferred)
+    );
   }
 });
 
@@ -59,40 +63,45 @@ test('create accepts one provenance-backed PERSON to ORGANIZATION period shape',
     validFrom: '2026-09-01T10:00:00.000Z',
     validTo: null,
   } as const;
-  const decoded = Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)(payload);
+  const decoded = Schema.decodeUnknownSync(
+    CreatePartyRelationshipPayloadSchema
+  )(payload);
   assert.equal(decoded.relationshipType, 'CONTACT_PERSON_OF');
   assert.throws(() =>
     Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
       ...payload,
       toPartyRef: fromPartyRef,
-    }),
+    })
   );
   assert.ok(
     Option.isNone(
       Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
         ...payload,
         validFrom: null,
-      }).validFrom,
-    ),
+      }).validFrom
+    )
   );
-  assert.equal(DateTime.formatIso(Option.getOrThrow(decoded.validFrom)), payload.validFrom);
+  assert.equal(
+    DateTime.formatIso(Option.getOrThrow(decoded.validFrom)),
+    payload.validFrom
+  );
   assert.throws(() =>
     Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
       ...payload,
       validTo: '2026-09-01T10:00:00.000Z',
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
       ...payload,
       validFrom: '2026-02-30T10:00:00.000Z',
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
       ...payload,
       validFrom: '2026-09-01T10:00:00Z',
-    }),
+    })
   );
 });
 
@@ -105,15 +114,22 @@ test('relationship timestamps and nullable periods preserve their JSON encoding'
     validFrom: null,
     validTo: '2026-09-01T10:00:00.000Z',
   };
-  const decoded = Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
+  const decoded = Schema.decodeUnknownSync(
+    CreatePartyRelationshipPayloadSchema
+  )({
     ...wire,
     validTo: null,
   });
-  assert.deepEqual(Schema.encodeSync(CreatePartyRelationshipPayloadSchema)(decoded), {
-    ...wire,
-    validTo: null,
-  });
-  const updated = Schema.decodeUnknownSync(UpdatePartyRelationshipPayloadSchema)({
+  assert.deepEqual(
+    Schema.encodeSync(CreatePartyRelationshipPayloadSchema)(decoded),
+    {
+      ...wire,
+      validTo: null,
+    }
+  );
+  const updated = Schema.decodeUnknownSync(
+    UpdatePartyRelationshipPayloadSchema
+  )({
     changeReason: 'Clarified end',
     expectedRevision: 1,
     provenance,
@@ -121,19 +137,25 @@ test('relationship timestamps and nullable periods preserve their JSON encoding'
     validTo: null,
   });
   assert.ok(updated.validTo !== undefined && Option.isNone(updated.validTo));
-  assert.deepEqual(Schema.encodeSync(UpdatePartyRelationshipPayloadSchema)(updated), {
-    changeReason: 'Clarified end',
-    expectedRevision: 1,
-    provenance,
-    relationshipRef,
-    validTo: null,
-  });
+  assert.deepEqual(
+    Schema.encodeSync(UpdatePartyRelationshipPayloadSchema)(updated),
+    {
+      changeReason: 'Clarified end',
+      expectedRevision: 1,
+      provenance,
+      relationshipRef,
+      validTo: null,
+    }
+  );
 });
 
 test('update cannot accept endpoint or relationship type mutation fields', () => {
-  const decoded = Schema.decodeUnknownSync(UpdatePartyRelationshipPayloadSchema, {
-    onExcessProperty: 'error',
-  })({
+  const decoded = Schema.decodeUnknownSync(
+    UpdatePartyRelationshipPayloadSchema,
+    {
+      onExcessProperty: 'error',
+    }
+  )({
     changeReason: 'The planned assignment was extended',
     expectedRevision: 2,
     provenance,
@@ -142,7 +164,11 @@ test('update cannot accept endpoint or relationship type mutation fields', () =>
     validTo: '2026-12-01T10:00:00.000Z',
   });
   assert.equal(decoded.expectedRevision, 2);
-  for (const forbiddenField of ['fromPartyRef', 'toPartyRef', 'relationshipType']) {
+  for (const forbiddenField of [
+    'fromPartyRef',
+    'toPartyRef',
+    'relationshipType',
+  ]) {
     assert.throws(() =>
       Schema.decodeUnknownSync(UpdatePartyRelationshipPayloadSchema, {
         onExcessProperty: 'error',
@@ -154,7 +180,7 @@ test('update cannot accept endpoint or relationship type mutation fields', () =>
         validFrom: '2026-10-01T10:00:00.000Z',
         validTo: '2026-12-01T10:00:00.000Z',
         [forbiddenField]: fromPartyRef,
-      }),
+      })
     );
   }
 });
@@ -175,38 +201,42 @@ test('end requires effective time, provenance, and revision without inventing a 
       provenance,
       relationshipRef,
     }).reason,
-    undefined,
+    undefined
   );
 });
 
 test('validity uses an exclusive end boundary', () => {
   assert.equal(
-    classifyRelationshipValidity(absentInstant, absentInstant, instant('2026-09-01T09:59:59.999Z')),
-    'CURRENT',
+    classifyRelationshipValidity(
+      absentInstant,
+      absentInstant,
+      instant('2026-09-01T09:59:59.999Z')
+    ),
+    'CURRENT'
   );
   assert.equal(
     classifyRelationshipValidity(
       presentInstant('2026-09-01T10:00:00.000Z'),
       absentInstant,
-      instant('2026-09-01T09:59:59.999Z'),
+      instant('2026-09-01T09:59:59.999Z')
     ),
-    'SCHEDULED',
+    'SCHEDULED'
   );
   assert.equal(
     classifyRelationshipValidity(
       presentInstant('2026-09-01T10:00:00.000Z'),
       presentInstant('2026-09-02T10:00:00.000Z'),
-      instant('2026-09-02T09:59:59.999Z'),
+      instant('2026-09-02T09:59:59.999Z')
     ),
-    'CURRENT',
+    'CURRENT'
   );
   assert.equal(
     classifyRelationshipValidity(
       presentInstant('2026-09-01T10:00:00.000Z'),
       presentInstant('2026-09-02T10:00:00.000Z'),
-      instant('2026-09-02T10:00:00.000Z'),
+      instant('2026-09-02T10:00:00.000Z')
     ),
-    'HISTORICAL',
+    'HISTORICAL'
   );
 });
 
@@ -226,7 +256,7 @@ test('create reuses an exact period and conflicts on a distinct overlap', () => 
       validFrom: presentInstant('2026-09-15T10:00:00.000Z'),
       validTo: absentInstant,
     }),
-    { _tag: 'overlap', relationshipId: relationshipRef.resourceId },
+    { _tag: 'overlap', relationshipId: relationshipRef.resourceId }
   );
   assert.deepEqual(
     decideRelationshipCreate([existing], {
@@ -234,7 +264,7 @@ test('create reuses an exact period and conflicts on a distinct overlap', () => 
       validFrom: presentInstant('2026-10-01T10:00:00.000Z'),
       validTo: absentInstant,
     }),
-    { _tag: 'create' },
+    { _tag: 'create' }
   );
 });
 
@@ -251,9 +281,9 @@ test('only a still-future validity plan is ordinarily updateable', () => {
         validFrom: undefined,
         validTo: presentInstant('2027-01-01T00:00:00.000Z'),
       },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'update' },
+    { _tag: 'update' }
   );
   assert.deepEqual(
     decideRelationshipUpdate(
@@ -267,9 +297,9 @@ test('only a still-future validity plan is ordinarily updateable', () => {
         validFrom: undefined,
         validTo: presentInstant('2027-01-01T00:00:00.000Z'),
       },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'correction_required', fact: 'validTo' },
+    { _tag: 'correction_required', fact: 'validTo' }
   );
   assert.deepEqual(
     decideRelationshipUpdate(
@@ -282,9 +312,9 @@ test('only a still-future validity plan is ordinarily updateable', () => {
         expectedRevision: 2,
         validTo: presentInstant('2026-08-01T00:00:00.000Z'),
       },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'end_required' },
+    { _tag: 'end_required' }
   );
   assert.deepEqual(
     decideRelationshipUpdate(
@@ -294,9 +324,9 @@ test('only a still-future validity plan is ordinarily updateable', () => {
         validTo: absentInstant,
       },
       { expectedRevision: 1, validFrom: undefined, validTo: absentInstant },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'revision_conflict', actualRevision: 2 },
+    { _tag: 'revision_conflict', actualRevision: 2 }
   );
   assert.deepEqual(
     decideRelationshipUpdate(
@@ -306,9 +336,9 @@ test('only a still-future validity plan is ordinarily updateable', () => {
         validFrom: instant('2025-01-01T00:00:00.000Z'),
         validTo: undefined,
       },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'update' },
+    { _tag: 'update' }
   );
   assert.deepEqual(
     decideRelationshipUpdate(
@@ -322,9 +352,9 @@ test('only a still-future validity plan is ordinarily updateable', () => {
         validFrom: instant('2027-02-01T00:00:00.000Z'),
         validTo: undefined,
       },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'update' },
+    { _tag: 'update' }
   );
   assert.deepEqual(
     decideRelationshipUpdate(
@@ -338,9 +368,9 @@ test('only a still-future validity plan is ordinarily updateable', () => {
         validFrom: instant('2026-02-01T00:00:00.000Z'),
         validTo: undefined,
       },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'correction_required', fact: 'validFrom' },
+    { _tag: 'correction_required', fact: 'validFrom' }
   );
 });
 
@@ -359,23 +389,31 @@ test('end retry is exact and changed historical evidence requires correction', (
     provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
     reason: 'No longer a contact',
   } as const;
-  assert.deepEqual(decideRelationshipEnd(current, exact, instant('2026-09-03T00:00:00.000Z')), {
-    _tag: 'unchanged',
-  });
+  assert.deepEqual(
+    decideRelationshipEnd(current, exact, instant('2026-09-03T00:00:00.000Z')),
+    {
+      _tag: 'unchanged',
+    }
+  );
   assert.deepEqual(
     decideRelationshipEnd(
       current,
       { ...exact, reason: 'A different historical explanation' },
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'correction_required', fact: 'validTo' },
+    { _tag: 'correction_required', fact: 'validTo' }
   );
   assert.deepEqual(
     decideRelationshipEnd(
-      { ...current, endProvenanceMethod: null, endProvenanceSource: null, endReason: null },
+      {
+        ...current,
+        endProvenanceMethod: null,
+        endProvenanceSource: null,
+        endReason: null,
+      },
       exact,
-      instant('2026-09-03T00:00:00.000Z'),
+      instant('2026-09-03T00:00:00.000Z')
     ),
-    { _tag: 'attach_end_evidence' },
+    { _tag: 'attach_end_evidence' }
   );
 });

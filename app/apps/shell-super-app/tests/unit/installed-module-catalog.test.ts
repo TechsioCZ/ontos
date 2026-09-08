@@ -1,8 +1,9 @@
-import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off preferSchemaOverJson:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { expect, test } from '@rstest/core';
 import { Effect, Predicate } from 'effect';
+
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import type { DeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import {
   installedModuleCatalog,
@@ -25,18 +26,26 @@ const contract = (appId: string, moduleId: string) =>
     ],
   });
 
-const allowlist = (entries: DeploymentAllowlist['entries']): DeploymentAllowlist =>
-  Object.freeze({ entries: Object.freeze([...entries]), revision: JSON.stringify(entries) });
+const allowlist = (
+  entries: DeploymentAllowlist['entries']
+): DeploymentAllowlist =>
+  Object.freeze({
+    entries: Object.freeze([...entries]),
+    revision: JSON.stringify(entries),
+  });
 
 const response = <Value>(value: Value, init: ResponseInit = {}): Response => {
   const headers = {
     'content-type': 'application/json',
     ...Object.fromEntries(new Headers(init.headers)),
   };
-  return new Response(Predicate.isString(value) ? value : JSON.stringify(value), {
-    ...init,
-    headers,
-  });
+  return new Response(
+    Predicate.isString(value) ? value : JSON.stringify(value),
+    {
+      ...init,
+      headers,
+    }
+  );
 };
 
 test('loads two independent deployment contracts once and preserves both identities', async () => {
@@ -53,15 +62,21 @@ test('loads two independent deployment contracts once and preserves both identit
   ]);
   const loader = makeInstalledModuleCatalogLoader(
     allowlist([
-      { appId: 'property-registry', contractUrl: [...documents.keys()][0] ?? '' },
-      { appId: 'documents-center', contractUrl: [...documents.keys()][1] ?? '' },
+      {
+        appId: 'property-registry',
+        contractUrl: [...documents.keys()][0] ?? '',
+      },
+      {
+        appId: 'documents-center',
+        contractUrl: [...documents.keys()][1] ?? '',
+      },
     ]),
     async (url, init) => {
       const normalized = new Request(url).url;
       requests.push(normalized);
       expect(init?.redirect).toBe('manual');
       return response(documents.get(normalized));
-    },
+    }
   );
   const [first, concurrent, cached] = await Promise.all([
     runEffectTestPromise(loader),
@@ -72,10 +87,12 @@ test('loads two independent deployment contracts once and preserves both identit
   expect(first).toBe(cached);
   expect(requests).toHaveLength(2);
   expect(first.moduleIds).toEqual(['documents.center', 'property.registry']);
-  expect(first.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe(
-    'property.registry',
+  expect(
+    first.getByDeploymentAppId('property-registry')?.manifest.module.id
+  ).toBe('property.registry');
+  expect(first.getByModuleId('property.registry')?.deployment.appId).toBe(
+    'property-registry'
   );
-  expect(first.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
 });
 
 test('keeps a healthy deployment available on cold start when another is unreachable', async () => {
@@ -83,11 +100,13 @@ test('keeps a healthy deployment available on cold start when another is unreach
     allowlist([
       {
         appId: 'property-registry',
-        contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+        contractUrl:
+          'https://property.example.test/.well-known/ontos-module-manifest.json',
       },
       {
         appId: 'documents-center',
-        contractUrl: 'https://documents.example.test/.well-known/ontos-module-manifest.json',
+        contractUrl:
+          'https://documents.example.test/.well-known/ontos-module-manifest.json',
       },
     ]),
     async (url) => {
@@ -98,15 +117,23 @@ test('keeps a healthy deployment available on cold start when another is unreach
         throw new Error('deployment unreachable');
       }
       return response(contract(appId, 'documents.center'));
-    },
+    }
   );
 
   const catalog = await runEffectTestPromise(loader);
 
   expect(catalog.moduleIds).toEqual(['documents.center']);
   expect(catalog.deploymentStatuses).toEqual([
-    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
-    { appId: 'property-registry', reason: 'unavailable', status: 'unavailable' },
+    {
+      appId: 'documents-center',
+      moduleId: 'documents.center',
+      status: 'available',
+    },
+    {
+      appId: 'property-registry',
+      reason: 'unavailable',
+      status: 'unavailable',
+    },
   ]);
 });
 
@@ -125,7 +152,11 @@ test.each([
     'incompatible',
   ],
   ['malformed JSON', async () => response('{broken'), 'incompatible'],
-  ['invalid schema', async () => response({ schemaVersion: '0' }), 'incompatible'],
+  [
+    'invalid schema',
+    async () => response({ schemaVersion: '0' }),
+    'incompatible',
+  ],
   [
     'mismatched app',
     async () => response(contract('documents-center', 'property.registry')),
@@ -138,33 +169,43 @@ test.each([
       allowlist([
         {
           appId: 'property-registry',
-          contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+          contractUrl:
+            'https://property.example.test/.well-known/ontos-module-manifest.json',
         },
       ]),
-      fetcher,
+      fetcher
     );
     const catalog = await runEffectTestPromise(loader);
     expect(catalog.moduleIds).toEqual([]);
     expect(catalog.deploymentStatuses).toEqual([
-      { appId: 'property-registry', reason: expectedReason, status: 'unavailable' },
+      {
+        appId: 'property-registry',
+        reason: expectedReason,
+        status: 'unavailable',
+      },
     ]);
-  },
+  }
 );
 
 test('classifies oversized, timed-out, and duplicate-module deployments without caching failures', async () => {
   let attempts = 0;
   const one: DeploymentAllowlist['entries'][number] = {
     appId: 'property-registry',
-    contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+    contractUrl:
+      'https://property.example.test/.well-known/ontos-module-manifest.json',
   };
   const oversized = makeInstalledModuleCatalogLoader(
     allowlist([one]),
     async () => response('x'.repeat(64)),
-    { maxBytes: 32 },
+    { maxBytes: 32 }
   );
   await expect(runEffectTestPromise(oversized)).resolves.toMatchObject({
     deploymentStatuses: [
-      { appId: 'property-registry', reason: 'unavailable', status: 'unavailable' },
+      {
+        appId: 'property-registry',
+        reason: 'unavailable',
+        status: 'unavailable',
+      },
     ],
   });
 
@@ -172,15 +213,21 @@ test('classifies oversized, timed-out, and duplicate-module deployments without 
     allowlist([one]),
     async (_url, init) => {
       const pending = Promise.withResolvers<Response>();
-      init?.signal?.addEventListener('abort', () => pending.reject(new Error('aborted')), {
-        once: true,
-      });
+      init?.signal?.addEventListener(
+        'abort',
+        () => pending.reject(new Error('aborted')),
+        {
+          once: true,
+        }
+      );
       return await pending.promise;
     },
-    { timeoutMs: 10 },
+    { timeoutMs: 10 }
   );
   await expect(runEffectTestPromise(timedOut)).resolves.toMatchObject({
-    deploymentStatuses: [{ appId: 'property-registry', reason: 'timeout', status: 'unavailable' }],
+    deploymentStatuses: [
+      { appId: 'property-registry', reason: 'timeout', status: 'unavailable' },
+    ],
   });
 
   const duplicate = makeInstalledModuleCatalogLoader(
@@ -188,7 +235,8 @@ test('classifies oversized, timed-out, and duplicate-module deployments without 
       one,
       {
         appId: 'documents-center',
-        contractUrl: 'https://documents.example.test/.well-known/ontos-module-manifest.json',
+        contractUrl:
+          'https://documents.example.test/.well-known/ontos-module-manifest.json',
       },
     ]),
     async (url) => {
@@ -196,12 +244,20 @@ test('classifies oversized, timed-out, and duplicate-module deployments without 
       return new Request(url).url.includes('property')
         ? response(contract('property-registry', 'shared.module'))
         : response(contract('documents-center', 'shared.module'));
-    },
+    }
   );
   await expect(runEffectTestPromise(duplicate)).resolves.toMatchObject({
     deploymentStatuses: [
-      { appId: 'documents-center', reason: 'incompatible', status: 'unavailable' },
-      { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
+      {
+        appId: 'documents-center',
+        reason: 'incompatible',
+        status: 'unavailable',
+      },
+      {
+        appId: 'property-registry',
+        reason: 'incompatible',
+        status: 'unavailable',
+      },
     ],
   });
   await runEffectTestPromise(duplicate);
@@ -214,7 +270,8 @@ test('recovers a deployment on a later read and caches only the fully healthy re
     allowlist([
       {
         appId: 'property-registry',
-        contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+        contractUrl:
+          'https://property.example.test/.well-known/ontos-module-manifest.json',
       },
     ]),
     async () => {
@@ -223,7 +280,7 @@ test('recovers a deployment on a later read and caches only the fully healthy re
         throw new Error('temporarily unreachable');
       }
       return response(contract('property-registry', 'property.registry'));
-    },
+    }
   );
 
   const degraded = await runEffectTestPromise(loader);
@@ -231,10 +288,18 @@ test('recovers a deployment on a later read and caches only the fully healthy re
   const cached = await runEffectTestPromise(loader);
 
   expect(degraded.deploymentStatuses).toEqual([
-    { appId: 'property-registry', reason: 'unavailable', status: 'unavailable' },
+    {
+      appId: 'property-registry',
+      reason: 'unavailable',
+      status: 'unavailable',
+    },
   ]);
   expect(recovered.deploymentStatuses).toEqual([
-    { appId: 'property-registry', moduleId: 'property.registry', status: 'available' },
+    {
+      appId: 'property-registry',
+      moduleId: 'property.registry',
+      status: 'available',
+    },
   ]);
   expect(cached).toBe(recovered);
   expect(requests).toBe(2);
@@ -250,26 +315,34 @@ test('recreates the complete cache by constructing a new deployment-revision Lay
     allowlist([
       {
         appId: 'property-registry',
-        contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+        contractUrl:
+          'https://property.example.test/.well-known/ontos-module-manifest.json',
       },
     ]),
-    fetcher,
+    fetcher
   );
   const secondRevision = makeInstalledModuleCatalogLayer(
     Object.freeze({
       ...allowlist([
         {
           appId: 'property-registry',
-          contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+          contractUrl:
+            'https://property.example.test/.well-known/ontos-module-manifest.json',
         },
       ]),
       revision: 'revision-2',
     }),
-    fetcher,
+    fetcher
   );
 
-  await runEffectTestPromise(installedModuleCatalog.pipe(Effect.provide(firstRevision)));
-  await runEffectTestPromise(installedModuleCatalog.pipe(Effect.provide(firstRevision)));
-  await runEffectTestPromise(installedModuleCatalog.pipe(Effect.provide(secondRevision)));
+  await runEffectTestPromise(
+    installedModuleCatalog.pipe(Effect.provide(firstRevision))
+  );
+  await runEffectTestPromise(
+    installedModuleCatalog.pipe(Effect.provide(firstRevision))
+  );
+  await runEffectTestPromise(
+    installedModuleCatalog.pipe(Effect.provide(secondRevision))
+  );
   expect(requests).toBe(2);
 });

@@ -5,13 +5,15 @@ import {
 } from '@app/party-registry/outbox/party-registry-party-archived-v1';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-party-archived-v1';
 
-const ArchivePartyPartyRegistryPartyArchivedV1OutboxProducerModuleKey = outboxProducerModuleKey;
+const ArchivePartyPartyRegistryPartyArchivedV1OutboxProducerModuleKey =
+  outboxProducerModuleKey;
 const ArchivePartyPartyRegistryPartyArchivedV1OutboxTopic = outboxTopic;
 
 export const createArchivePartyPartyRegistryPartyArchivedV1OutboxMessage = (
-  payload: OutboxPayload,
+  payload: OutboxPayload
 ): OutboxMessage => ({
   payloadJson: payload,
-  producerModuleKey: ArchivePartyPartyRegistryPartyArchivedV1OutboxProducerModuleKey,
+  producerModuleKey:
+    ArchivePartyPartyRegistryPartyArchivedV1OutboxProducerModuleKey,
   topic: ArchivePartyPartyRegistryPartyArchivedV1OutboxTopic,
 });

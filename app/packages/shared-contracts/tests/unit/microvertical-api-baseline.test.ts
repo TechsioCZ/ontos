@@ -50,12 +50,23 @@ test('marker and readiness schemas preserve the generated wire representation', 
   };
 
   assert.deepEqual(
-    Schema.decodeUnknownSync(MicroVerticalBuildMarkerSchema)(generatedBuildMetadata),
-    marker,
+    Schema.decodeUnknownSync(MicroVerticalBuildMarkerSchema)(
+      generatedBuildMetadata
+    ),
+    marker
   );
-  assert.deepEqual(Schema.encodeSync(MicroVerticalBuildMarkerSchema)(marker), marker);
-  assert.deepEqual(Schema.decodeUnknownSync(MicroVerticalReadinessSchema)(readiness), readiness);
-  assert.deepEqual(Schema.encodeSync(MicroVerticalReadinessSchema)(readiness), readiness);
+  assert.deepEqual(
+    Schema.encodeSync(MicroVerticalBuildMarkerSchema)(marker),
+    marker
+  );
+  assert.deepEqual(
+    Schema.decodeUnknownSync(MicroVerticalReadinessSchema)(readiness),
+    readiness
+  );
+  assert.deepEqual(
+    Schema.encodeSync(MicroVerticalReadinessSchema)(readiness),
+    readiness
+  );
 });
 
 test('constructs generated-client operation metadata with and without trace identity', () => {
@@ -68,12 +79,15 @@ test('constructs generated-client operation metadata with and without trace iden
     routePath: '/inventory/readiness',
     tenantId: 'must-not-pass',
   };
-  assert.deepEqual(createMicroVerticalOperationContext(inputWithSensitiveExtras), {
-    method: 'GET',
-    operationId: 'InventoryApi:inventory:readiness',
-    routePath: '/inventory/readiness',
-    source: 'generated-client',
-  });
+  assert.deepEqual(
+    createMicroVerticalOperationContext(inputWithSensitiveExtras),
+    {
+      method: 'GET',
+      operationId: 'InventoryApi:inventory:readiness',
+      routePath: '/inventory/readiness',
+      source: 'generated-client',
+    }
+  );
   assert.deepEqual(
     createMicroVerticalOperationContext({
       method: 'POST',
@@ -87,7 +101,7 @@ test('constructs generated-client operation metadata with and without trace iden
       routePath: '/inventory',
       source: 'generated-client',
       traceId: 'trace-123',
-    },
+    }
   );
 });
 
@@ -120,13 +134,13 @@ test('projects only standard operation telemetry attributes', () => {
         method: 'GET',
         operationId: 'InventoryApi:inventory:list',
         routePath: '/inventory',
-      }),
+      })
     ),
     {
       'modernjs.operation.id': 'InventoryApi:inventory:list',
       'modernjs.operation.method': 'GET',
       'modernjs.operation.route': '/inventory',
       'modernjs.operation.source': 'generated-client',
-    },
+    }
   );
 });

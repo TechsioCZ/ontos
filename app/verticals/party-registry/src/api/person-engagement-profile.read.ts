@@ -6,12 +6,17 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PersonEngagementProfileRequestSchema,
   PersonEngagementProfileResponseSchema,
 } from '../../shared/apis/person-engagement-profile.ts';
 import { findPersonEngagementProfile } from '../services/engagement-profile-persistence.service.ts';
-import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
+import {
+  readUnavailable,
+  requireReadValue,
+  readDetailResult,
+} from './read-outcome.ts';
 
 const personEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -22,11 +27,13 @@ const personEngagementProfileEntrypoint = defineTenantModuleEntrypoint({
 });
 
 interface Services {
-  readonly find: (profileId: string) => ReturnType<typeof findPersonEngagementProfile>;
+  readonly find: (
+    profileId: string
+  ) => ReturnType<typeof findPersonEngagementProfile>;
 }
 
 const personProfileUnavailable = readUnavailable(
-  'Contacts engagement persistence is temporarily unavailable',
+  'Contacts engagement persistence is temporarily unavailable'
 );
 
 export const personEngagementProfileRead = defineRead(
@@ -51,20 +58,24 @@ export const personEngagementProfileRead = defineRead(
       .find(input.profileRef.resourceId)
       .pipe(
         Effect.mapError(personProfileUnavailable),
-        Effect.flatMap(requireReadValue('The person engagement profile does not exist')),
-        Effect.map(readDetailResult),
+        Effect.flatMap(
+          requireReadValue('The person engagement profile does not exist')
+        ),
+        Effect.map(readDetailResult)
       ),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
-          reason: 'Person engagement read requires a trusted Legal Entity scope',
-        }),
+          reason:
+            'Person engagement read requires a trusted Legal Entity scope',
+        })
       );
     }
     return Effect.succeed({
-      find: (profileId) => findPersonEngagementProfile(transaction, scope.tenantId, profileId),
+      find: (profileId) =>
+        findPersonEngagementProfile(transaction, scope.tenantId, profileId),
     });
   },
   (input) => ({
@@ -74,5 +85,5 @@ export const personEngagementProfileRead = defineRead(
       resourceId: input.profileRef.resourceId,
       resourceType: input.profileRef.resourceType,
     },
-  }),
+  })
 );

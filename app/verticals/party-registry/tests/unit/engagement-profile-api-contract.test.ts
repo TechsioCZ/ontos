@@ -1,10 +1,12 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics nodeBuiltinImport:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
+
 import {
   AttachOrganizationEngagementPayloadSchema,
   AttachPersonEngagementPayloadSchema,
@@ -30,7 +32,7 @@ const counterpartyRef = {
 test('publishes engagement operations from the Party Registry API boundary', () => {
   assert.equal(
     partyRegistryApiContract.readinessPath,
-    '/party-registry-api/party-registry/readiness',
+    '/party-registry-api/party-registry/readiness'
   );
   assert.deepEqual(
     Object.values(engagementProfileOperationContexts)
@@ -45,31 +47,38 @@ test('publishes engagement operations from the Party Registry API boundary', () 
       '/contacts/engagement/people/unarchive',
       '/reads/organization-engagement-profile',
       '/reads/person-engagement-profile',
-    ],
+    ]
   );
 });
 
 test('attach contracts accept only public Party Registry refs', () => {
   const payload = { counterpartyRef, partyRef };
   assert.deepEqual(
-    Schema.decodeUnknownSync(AttachOrganizationEngagementPayloadSchema)(payload),
-    payload,
+    Schema.decodeUnknownSync(AttachOrganizationEngagementPayloadSchema)(
+      payload
+    ),
+    payload
   );
-  assert.deepEqual(Schema.decodeUnknownSync(AttachPersonEngagementPayloadSchema)(payload), payload);
+  assert.deepEqual(
+    Schema.decodeUnknownSync(AttachPersonEngagementPayloadSchema)(payload),
+    payload
+  );
 
   for (const schema of [
     AttachOrganizationEngagementPayloadSchema,
     AttachPersonEngagementPayloadSchema,
   ] as const) {
     assert.deepEqual(
-      Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({ partyRef }),
-      { partyRef },
+      Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({
+        partyRef,
+      }),
+      { partyRef }
     );
     assert.throws(() =>
       Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({
         ...payload,
         customerId: 'd4000000-0000-4000-8000-000000000001',
-      }),
+      })
     );
   }
 });
@@ -85,7 +94,10 @@ test('public engagement mutations use the owner audience and preserve HTTP conte
     if (pathname === '/auth/gateway-context') {
       return Response.json({ expiresAt: 1, token: 'test-gateway-token' });
     }
-    assert.equal(pathname, '/party-registry-api/contacts/engagement/organizations/attach');
+    assert.equal(
+      pathname,
+      '/party-registry-api/contacts/engagement/organizations/attach'
+    );
     return Response.json({
       archivedAt: null,
       counterpartyRef,
@@ -112,44 +124,62 @@ test('public engagement mutations use the owner audience and preserve HTTP conte
         locale: 'cs',
         traceId: 'engagement-trace',
         traceparent,
-      },
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
+      }
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch))
   );
 
-  const mutationRequest = requests.find(({ url }) => url.includes('/contacts/engagement/'));
-  const gatewayRequest = requests.find(({ url }) => url.endsWith('/auth/gateway-context'));
+  const mutationRequest = requests.find(({ url }) =>
+    url.includes('/contacts/engagement/')
+  );
+  const gatewayRequest = requests.find(({ url }) =>
+    url.endsWith('/auth/gateway-context')
+  );
   assert.ok(gatewayRequest);
   assert.ok(mutationRequest);
   assert.deepEqual(await gatewayRequest.json(), { audience: 'party-registry' });
-  assert.equal(mutationRequest.headers.get('authorization'), 'Bearer test-gateway-token');
+  assert.equal(
+    mutationRequest.headers.get('authorization'),
+    'Bearer test-gateway-token'
+  );
   assert.equal(mutationRequest.headers.get('accept-language'), 'cs');
   assert.equal(mutationRequest.headers.get('x-trace-id'), 'engagement-trace');
   assert.equal(mutationRequest.headers.get('traceparent'), traceparent);
-  assert.equal(mutationRequest.headers.get('x-correlation-id'), 'engagement-correlation');
+  assert.equal(
+    mutationRequest.headers.get('x-correlation-id'),
+    'engagement-correlation'
+  );
   assert.equal(
     mutationRequest.headers.get('x-operation-id'),
-    engagementProfileOperationContexts.attachOrganizationEngagement.operationId,
+    engagementProfileOperationContexts.attachOrganizationEngagement.operationId
   );
   assert.deepEqual(
-    JSON.parse(mutationRequest.headers.get('x-modernjs-bff-operation-context') ?? ''),
-    engagementProfileOperationContexts.attachOrganizationEngagement,
+    JSON.parse(
+      mutationRequest.headers.get('x-modernjs-bff-operation-context') ?? ''
+    ),
+    engagementProfileOperationContexts.attachOrganizationEngagement
   );
 });
 
 test('public Party Registry engagement API does not expose legacy identity operations', async () => {
   const [apiSource, clientSource] = await Promise.all([
-    readFile(new URL('../../shared/engagement-profile-api.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../src/api/engagement-profile-client.ts', import.meta.url), 'utf-8'),
+    readFile(
+      new URL('../../shared/engagement-profile-api.ts', import.meta.url),
+      'utf-8'
+    ),
+    readFile(
+      new URL('../../src/api/engagement-profile-client.ts', import.meta.url),
+      'utf-8'
+    ),
   ]);
 
   for (const source of [apiSource, clientSource]) {
     assert.doesNotMatch(
       source,
-      /\b(?:createCustomer|editCustomer|archiveCustomer|unarchiveCustomer)\b/u,
+      /\b(?:createCustomer|editCustomer|archiveCustomer|unarchiveCustomer)\b/u
     );
     assert.doesNotMatch(
       source,
-      /\b(?:createContact|editContact|archiveContact|unarchiveContact)\b/u,
+      /\b(?:createContact|editContact|archiveContact|unarchiveContact)\b/u
     );
     assert.doesNotMatch(source, /CustomerAresLookup|customerId|contactId/u);
   }

@@ -5,5 +5,5 @@ export class CounterpartyTemporalConflict extends Schema.TaggedError<Counterpart
   {
     code: Schema.Literal('counterparty_temporal_conflict'),
     reason: Schema.String,
-  },
+  }
 ) {}

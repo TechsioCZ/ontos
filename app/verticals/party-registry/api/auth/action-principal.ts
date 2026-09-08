@@ -12,11 +12,13 @@ export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive } from '@ap
 
 const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
 
-const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+const verifyOperationPrincipal = (
+  authorization: Redacted.Redacted<string | undefined>
+) =>
   GatewayAssertionRedemptionService.pipe(
     Effect.flatMap((redemption) =>
-      principalVerifier.verifyAndRedeem(authorization, { redemption }),
-    ),
+      principalVerifier.verifyAndRedeem(authorization, { redemption })
+    )
   );
 
 /** Shared HTTP acquisition bound to this deployment's audience-specific verifier. */

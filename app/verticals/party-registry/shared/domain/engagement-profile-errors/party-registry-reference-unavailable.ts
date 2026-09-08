@@ -5,5 +5,5 @@ export class PartyRegistryReferenceUnavailable extends Schema.TaggedError<PartyR
   {
     code: Schema.Literal('party_registry_reference_unavailable'),
     reason: Schema.String,
-  },
+  }
 ) {}

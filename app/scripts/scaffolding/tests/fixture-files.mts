@@ -1,7 +1,11 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export const write = async (root: string, relativePath: string, content: string): Promise<void> => {
+export const write = async (
+  root: string,
+  relativePath: string,
+  content: string
+): Promise<void> => {
   const target = path.join(root, relativePath);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, content, 'utf-8');
@@ -9,7 +13,7 @@ export const write = async (root: string, relativePath: string, content: string)
 
 export const snapshotTree = async (
   root: string,
-  excludedDirectories: readonly string[] = [],
+  excludedDirectories: readonly string[] = []
 ): Promise<Readonly<Record<string, string>>> => {
   const snapshot: Record<string, string> = {};
   const visit = async (directory: string): Promise<void> => {
@@ -20,9 +24,12 @@ export const snapshotTree = async (
         if (entry.isDirectory() && !excludedDirectories.includes(entry.name)) {
           await visit(target);
         } else if (entry.isFile()) {
-          snapshot[path.relative(root, target)] = await readFile(target, 'utf-8');
+          snapshot[path.relative(root, target)] = await readFile(
+            target,
+            'utf-8'
+          );
         }
-      }),
+      })
     );
   };
   await visit(root);

@@ -9,10 +9,16 @@ interface JsonHostOptions {
 }
 
 /** Preserve each JSON rule's supported wrappers, keys, and global containers. */
-export function isJsonHost(context: Context, node: ESTree.Node, options: JsonHostOptions): boolean {
+export function isJsonHost(
+  context: Context,
+  node: ESTree.Node,
+  options: JsonHostOptions
+): boolean {
   const host = options.unwrap(node);
-  if (host.type === 'Identifier') return isUnshadowedGlobal(context, host, 'JSON', true);
-  if (host.type !== 'MemberExpression' || options.memberName(host) !== 'JSON') return false;
+  if (host.type === 'Identifier')
+    return isUnshadowedGlobal(context, host, 'JSON', true);
+  if (host.type !== 'MemberExpression' || options.memberName(host) !== 'JSON')
+    return false;
   const container = options.unwrap(host.object);
   return (
     container.type === 'Identifier' &&

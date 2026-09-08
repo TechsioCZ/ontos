@@ -8,4 +8,5 @@ export const {
   makeRef: makeDuplicateCandidateCaseRef,
   refSchema: DuplicateCandidateCaseRefSchema,
 } = timelineResource('duplicate-candidate-case', 'Duplicate Candidate Case');
-export type DuplicateCandidateCaseRef = typeof DuplicateCandidateCaseRefSchema.Type;
+export type DuplicateCandidateCaseRef =
+  typeof DuplicateCandidateCaseRefSchema.Type;

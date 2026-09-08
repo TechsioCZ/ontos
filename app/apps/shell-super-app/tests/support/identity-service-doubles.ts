@@ -1,5 +1,6 @@
 import type { PrincipalResolverService } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import type { ApiKeyServiceContract } from '../../api/auth/api-key-service.ts';
 
 const unconfigured = (operation: string) =>
@@ -16,20 +17,26 @@ const apiKeyDefaults: ApiKeyServiceContract = {
 
 const principalResolverDefaults: PrincipalResolverService = {
   listAvailableTenants: () => unconfigured('listAvailableTenants'),
-  loadApiKeyBindingForAdministration: () => unconfigured('loadApiKeyBindingForAdministration'),
-  resolveApiKeyBindingSubject: () => unconfigured('resolveApiKeyBindingSubject'),
+  loadApiKeyBindingForAdministration: () =>
+    unconfigured('loadApiKeyBindingForAdministration'),
+  resolveApiKeyBindingSubject: () =>
+    unconfigured('resolveApiKeyBindingSubject'),
   resolveBetterAuthApiKey: () => unconfigured('resolveBetterAuthApiKey'),
-  resolveBetterAuthUserForPrincipal: () => unconfigured('resolveBetterAuthUserForPrincipal'),
-  resolveBetterAuthUserForTenant: () => unconfigured('resolveBetterAuthUserForTenant'),
-  resolveDefaultBetterAuthUser: () => unconfigured('resolveDefaultBetterAuthUser'),
+  resolveBetterAuthUserForPrincipal: () =>
+    unconfigured('resolveBetterAuthUserForPrincipal'),
+  resolveBetterAuthUserForTenant: () =>
+    unconfigured('resolveBetterAuthUserForTenant'),
+  resolveDefaultBetterAuthUser: () =>
+    unconfigured('resolveDefaultBetterAuthUser'),
   resolveProviderSubject: () => unconfigured('resolveProviderSubject'),
-  verifySupportImpersonationStarted: () => unconfigured('verifySupportImpersonationStarted'),
+  verifySupportImpersonationStarted: () =>
+    unconfigured('verifySupportImpersonationStarted'),
 };
 
 export const makeApiKeyServiceDouble = (
-  overrides: Partial<ApiKeyServiceContract> = {},
+  overrides: Partial<ApiKeyServiceContract> = {}
 ): ApiKeyServiceContract => ({ ...apiKeyDefaults, ...overrides });
 
 export const makePrincipalResolverDouble = (
-  overrides: Partial<PrincipalResolverService> = {},
+  overrides: Partial<PrincipalResolverService> = {}
 ): PrincipalResolverService => ({ ...principalResolverDefaults, ...overrides });

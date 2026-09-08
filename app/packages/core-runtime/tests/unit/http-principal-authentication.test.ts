@@ -1,8 +1,9 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned HTTP application entrypoint; expires: 2026-12-31.
 import { NodeHttpServer } from '@effect/platform-node';
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import { Effect, Match, Redacted, Schema } from 'effect';
 import {
   FetchHttpClient,
@@ -11,6 +12,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from 'effect/unstable/http';
+
 import {
   OperationPrincipalVerificationErrorSchema,
   makeMicroverticalHttpPrincipalAuthentication,
@@ -25,7 +27,7 @@ const principal = {
 };
 
 const verificationFailure = (
-  _tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag'],
+  _tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']
 ) =>
   Schema.decodeSync(OperationPrincipalVerificationErrorSchema)({
     _tag,
@@ -48,19 +50,22 @@ const unavailableProblem = () => ({
   type: 'https://ontos.dev/problems/fixture-unavailable',
 });
 const ProblemResponseSchema = Schema.Struct({
-  _tag: Schema.Literals(['FixtureAuthenticationProblem', 'FixtureUnavailableProblem']),
+  _tag: Schema.Literals([
+    'FixtureAuthenticationProblem',
+    'FixtureUnavailableProblem',
+  ]),
   status: Schema.Literals([401, 503]),
 });
 const SuccessResponseSchema = Schema.Struct({ principal: Schema.Unknown });
 
 const problemResponse = (
-  problem: ReturnType<typeof authenticationProblem | typeof unavailableProblem>,
+  problem: ReturnType<typeof authenticationProblem | typeof unavailableProblem>
 ) =>
   HttpServerResponse.jsonUnsafe(problem, { status: problem.status }).pipe(
-    HttpServerResponse.setHeader('content-type', 'application/problem+json'),
+    HttpServerResponse.setHeader('content-type', 'application/problem+json')
   );
 const respondWithProblem = (
-  error: ReturnType<typeof authenticationProblem | typeof unavailableProblem>,
+  error: ReturnType<typeof authenticationProblem | typeof unavailableProblem>
 ) => Effect.succeed(problemResponse(error));
 
 // oxlint-disable-next-line typescript/promise-function-async -- Effect is the test's async control flow; expires: 2026-12-31.
@@ -77,20 +82,22 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
     ['Bearer misconfigured', 'ActionPrincipalConfigurationError'],
     ['Bearer unavailable', 'ActionPrincipalUnavailableError'],
   ]);
-  const authenticate = makeMicroverticalHttpPrincipalAuthentication((authorization) => {
-    const raw = Redacted.value(authorization);
-    const failure = failureByCredential.get(raw);
-    return failure === undefined
-      ? Effect.succeed(principal)
-      : Effect.fail(verificationFailure(failure));
-  });
+  const authenticate = makeMicroverticalHttpPrincipalAuthentication(
+    (authorization) => {
+      const raw = Redacted.value(authorization);
+      const failure = failureByCredential.get(raw);
+      return failure === undefined
+        ? Effect.succeed(principal)
+        : Effect.fail(verificationFailure(failure));
+    }
+  );
 
   return runEffectTestPromise(
     Effect.scoped(
       Effect.gen(function* mountedAuthenticationHandler() {
         const server = yield* NodeHttpServer.make(
           () => process.getBuiltinModule('http').createServer(),
-          { host: '127.0.0.1', port: 0 },
+          { host: '127.0.0.1', port: 0 }
         );
         const application = HttpServerRequest.HttpServerRequest.use((request) =>
           authenticate(Redacted.make(request.headers['authorization']), {
@@ -100,16 +107,20 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
             Effect.flatMap((trustedPrincipal) =>
               Effect.sync(() => {
                 privateOperationReached += 1;
-                return HttpServerResponse.jsonUnsafe({ principal: trustedPrincipal });
-              }),
+                return HttpServerResponse.jsonUnsafe({
+                  principal: trustedPrincipal,
+                });
+              })
             ),
-            Effect.catch(respondWithProblem),
-          ),
+            Effect.catch(respondWithProblem)
+          )
         );
         yield* server.serve(application);
         const address = yield* Match.value(server.address).pipe(
           Match.tag('TcpAddress', (tcpAddress) => Effect.succeed(tcpAddress)),
-          Match.orElse(() => Effect.die('HTTP authentication fixture did not bind to TCP')),
+          Match.orElse(() =>
+            Effect.die('HTTP authentication fixture did not bind to TCP')
+          )
         );
         const client = yield* HttpClient.HttpClient;
         const url = `http://127.0.0.1:${address.port}/operation`;
@@ -125,30 +136,37 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
             authorization === undefined
               ? HttpClientRequest.get(url)
               : HttpClientRequest.get(url).pipe(
-                  HttpClientRequest.setHeader('authorization', authorization),
+                  HttpClientRequest.setHeader('authorization', authorization)
                 );
           const response = yield* client.execute(request);
           assert.equal(response.status, expectedStatus);
-          assert.equal(response.headers['content-type'], 'application/problem+json');
+          assert.equal(
+            response.headers['content-type'],
+            'application/problem+json'
+          );
           assert.equal(
             response.headers['www-authenticate'],
-            expectedStatus === 401 ? 'Bearer' : undefined,
+            expectedStatus === 401 ? 'Bearer' : undefined
           );
           const rawBody = yield* response.json;
           assert.deepEqual(
             rawBody,
-            expectedStatus === 401 ? authenticationProblem() : unavailableProblem(),
+            expectedStatus === 401
+              ? authenticationProblem()
+              : unavailableProblem()
           );
-          const body = yield* Schema.decodeEffect(ProblemResponseSchema)(rawBody);
+          const body = yield* Schema.decodeEffect(ProblemResponseSchema)(
+            rawBody
+          );
           assert.ok(
             Schema.is(
               Schema.TaggedStruct(
                 expectedStatus === 401
                   ? 'FixtureAuthenticationProblem'
                   : 'FixtureUnavailableProblem',
-                {},
-              ),
-            )(body),
+                {}
+              )
+            )(body)
           );
           assert.equal(body.status, expectedStatus);
         }
@@ -156,16 +174,16 @@ test('mounted HTTP authentication maps verifier classes, challenges unusable cre
 
         const success = yield* client.execute(
           HttpClientRequest.get(url).pipe(
-            HttpClientRequest.setHeader('authorization', 'Bearer valid'),
-          ),
+            HttpClientRequest.setHeader('authorization', 'Bearer valid')
+          )
         );
         assert.equal(success.status, 200);
         const successBody = yield* success.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema)),
+          Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema))
         );
         assert.deepEqual(successBody.principal, principal);
         assert.equal(privateOperationReached, 1);
-      }),
-    ).pipe(Effect.provide(FetchHttpClient.layer)),
+      })
+    ).pipe(Effect.provide(FetchHttpClient.layer))
   );
 });

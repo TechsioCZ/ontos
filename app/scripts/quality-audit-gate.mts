@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import { Console, Data, Effect, FileSystem, Match, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
+
 import { runQualityCli } from './quality-cli-lifecycle.mts';
 
 const FALLOW_FILES = 'fallow-files';
 const FALLOW_HEALTH = 'fallow-health';
-const Count = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const Count = Schema.Finite.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0)
+);
 const PositiveCount = Count.check(Schema.isGreaterThan(0));
 const Counts = Schema.Record(Schema.String, Count);
 const base = {
@@ -25,17 +29,27 @@ const ResultSchema = Schema.Union([
       nativeFindingCounts: Counts,
       processed: PositiveCount,
       total: PositiveCount,
-      workspaces: Schema.Array(Schema.NonEmptyString).check(Schema.isMinLength(1)),
+      workspaces: Schema.Array(Schema.NonEmptyString).check(
+        Schema.isMinLength(1)
+      ),
     }),
     name: Schema.Literal('knip'),
   }),
-  Schema.Struct({ ...primary, coverage: tokenCoverage, name: Schema.Literal('jscpd') }),
+  Schema.Struct({
+    ...primary,
+    coverage: tokenCoverage,
+    name: Schema.Literal('jscpd'),
+  }),
   Schema.Struct({
     ...primary,
     coverage: Schema.Struct({ discoveredFiles: PositiveCount }),
     name: Schema.Literal(FALLOW_FILES),
   }),
-  Schema.Struct({ ...primary, coverage: tokenCoverage, name: Schema.Literal('fallow-clones') }),
+  Schema.Struct({
+    ...primary,
+    coverage: tokenCoverage,
+    name: Schema.Literal('fallow-clones'),
+  }),
   Schema.Struct({
     ...base,
     advisory: Schema.Literal(true),
@@ -55,13 +69,17 @@ const ResultSchema = Schema.Union([
   }),
 ]);
 const Summary = Schema.fromJsonString(
-  Schema.Struct({ results: Schema.Array(ResultSchema), status: Schema.Literal('reported') }),
+  Schema.Struct({
+    results: Schema.Array(ResultSchema),
+    status: Schema.Literal('reported'),
+  })
 );
 
 class QualityAuditGateError extends Data.TaggedError('QualityAuditGateError')<{
   message: string;
 }> {}
-const reject = (message: string) => Effect.fail(new QualityAuditGateError({ message }));
+const reject = (message: string) =>
+  Effect.fail(new QualityAuditGateError({ message }));
 const sum = (counts: Readonly<Record<string, number>>) =>
   Object.values(counts).reduce((total, count) => total + count, 0);
 
@@ -77,7 +95,8 @@ const consistent = (entry: typeof ResultSchema.Type) =>
         keys.every(
           (key) =>
             knip.nativeFindingCounts[key] ===
-            (knip.findingCounts[key] ?? 0) + (key === 'unlisted' ? knip.modeledUsages : 0),
+            (knip.findingCounts[key] ?? 0) +
+              (key === 'unlisted' ? knip.modeledUsages : 0)
         ) &&
         sum(knip.findingCounts) === findings &&
         sum(knip.nativeFindingCounts) === findings + knip.modeledUsages &&
@@ -99,50 +118,60 @@ const consistent = (entry: typeof ResultSchema.Type) =>
         health.weightedFindings <= health.analyzedFunctions
       );
     }),
-    Match.orElse((result) => result.coverage.tokenEligibleFiles === result.files),
+    Match.orElse(
+      (result) => result.coverage.tokenEligibleFiles === result.files
+    )
   );
 
-export const validateQualityAuditSummary = Effect.fn('qualityAuditGate.validate')(
-  function* validateQualityAuditSummaryEffect(source: string) {
-    const summary = yield* Schema.decodeEffect(Summary)(source).pipe(
-      Effect.mapError(
-        (cause) =>
-          new QualityAuditGateError({ message: `Malformed audit summary: ${String(cause)}` }),
-      ),
+export const validateQualityAuditSummary = Effect.fn(
+  'qualityAuditGate.validate'
+)(function* validateQualityAuditSummaryEffect(source: string) {
+  const summary = yield* Schema.decodeEffect(Summary)(source).pipe(
+    Effect.mapError(
+      (cause) =>
+        new QualityAuditGateError({
+          message: `Malformed audit summary: ${String(cause)}`,
+        })
+    )
+  );
+  // The schema admits exactly six names; cardinality plus uniqueness requires all of them.
+  if (
+    summary.results.length !== 6 ||
+    new Set(summary.results.map(({ name }) => name)).size !== 6
+  ) {
+    return yield* reject(
+      'Audit gate requires all six unique analyzer results; run the full audit'
     );
-    // The schema admits exactly six names; cardinality plus uniqueness requires all of them.
-    if (
-      summary.results.length !== 6 ||
-      new Set(summary.results.map(({ name }) => name)).size !== 6
-    ) {
+  }
+  for (const result of summary.results) {
+    if (!consistent(result)) {
       return yield* reject(
-        'Audit gate requires all six unique analyzer results; run the full audit',
+        `${result.name}: inconsistent audit counts or incomplete analysis`
       );
     }
-    for (const result of summary.results) {
-      if (!consistent(result)) {
-        return yield* reject(`${result.name}: inconsistent audit counts or incomplete analysis`);
-      }
-    }
-    const discovery = summary.results.find(({ name }) => name === FALLOW_FILES);
-    const health = summary.results.find(({ name }) => name === FALLOW_HEALTH);
-    if (discovery?.files !== health?.files) {
-      return yield* reject('Fallow discovery and health coverage disagree');
-    }
-    const findings = summary.results.filter((result) => !result.advisory && result.findings > 0);
-    const details = findings.map(({ findings: count, name }) => `${name}=${count}`).join(', ');
-    if (findings.length > 0) {
-      return yield* reject(`Quality audit gate failed: ${details}`);
-    }
-    return yield* Effect.void;
-  },
-);
+  }
+  const discovery = summary.results.find(({ name }) => name === FALLOW_FILES);
+  const health = summary.results.find(({ name }) => name === FALLOW_HEALTH);
+  if (discovery?.files !== health?.files) {
+    return yield* reject('Fallow discovery and health coverage disagree');
+  }
+  const findings = summary.results.filter(
+    (result) => !result.advisory && result.findings > 0
+  );
+  const details = findings
+    .map(({ findings: count, name }) => `${name}=${count}`)
+    .join(', ');
+  if (findings.length > 0) {
+    return yield* reject(`Quality audit gate failed: ${details}`);
+  }
+  return yield* Effect.void;
+});
 
 const cli = Command.make(
   'quality-audit-gate',
   {
     summary: Flag.string('summary').pipe(
-      Flag.withDefault('.codex/reports/quality-audit/summary.json'),
+      Flag.withDefault('.codex/reports/quality-audit/summary.json')
     ),
   },
   ({ summary }) =>
@@ -150,9 +179,13 @@ const cli = Command.make(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* path.fromFileUrl(new URL('..', import.meta.url));
-      yield* validateQualityAuditSummary(yield* fs.readFileString(path.resolve(root, summary)));
-      yield* Console.log('Quality audit gate passed (semantic similarity remains advisory)');
-    }),
+      yield* validateQualityAuditSummary(
+        yield* fs.readFileString(path.resolve(root, summary))
+      );
+      yield* Console.log(
+        'Quality audit gate passed (semantic similarity remains advisory)'
+      );
+    })
 );
 
 if (Schema.is(Schema.Struct({ main: Schema.Literal(true) }))(import.meta)) {

@@ -5,5 +5,5 @@ export class SystemWorkloadRegistrationInvalidError extends Schema.TaggedError<S
   {
     code: Schema.Literal('system_workload_registration_invalid'),
     message: Schema.String,
-  },
+  }
 ) {}

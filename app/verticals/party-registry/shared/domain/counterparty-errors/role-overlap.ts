@@ -6,5 +6,5 @@ export class CounterpartyRoleOverlap extends Schema.TaggedError<CounterpartyRole
     code: Schema.Literal('counterparty_role_overlap'),
     reason: Schema.String,
     roleType: Schema.Literals(['CUSTOMER', 'SUPPLIER']),
-  },
+  }
 ) {}

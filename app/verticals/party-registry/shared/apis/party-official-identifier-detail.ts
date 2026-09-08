@@ -4,7 +4,12 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { OfficialIdentifierAssertionSchema } from '../domain/identifier-contracts.ts';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 
@@ -13,43 +18,42 @@ export const PartyOfficialIdentifierDetailRequestSchema = Schema.Struct({
 });
 export type PartyOfficialIdentifierDetailRequest =
   typeof PartyOfficialIdentifierDetailRequestSchema.Type;
-export const PartyOfficialIdentifierDetailResponseSchema = OfficialIdentifierAssertionSchema;
+export const PartyOfficialIdentifierDetailResponseSchema =
+  OfficialIdentifierAssertionSchema;
 export type PartyOfficialIdentifierDetailResponse =
   typeof PartyOfficialIdentifierDetailResponseSchema.Type;
 
-export const PartyOfficialIdentifierDetailAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierDetailAuthenticationProblem',
-  401,
-);
-export const PartyOfficialIdentifierDetailInvalidProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierDetailInvalidProblem',
-  400,
-);
+export const PartyOfficialIdentifierDetailAuthenticationProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierDetailAuthenticationProblem',
+    401
+  );
+export const PartyOfficialIdentifierDetailInvalidProblemSchema =
+  makeProblemDetailsSchema('PartyOfficialIdentifierDetailInvalidProblem', 400);
 export const PartyOfficialIdentifierDetailUnavailableProblemSchema =
-  makeRetryableProblemDetailsSchema('PartyOfficialIdentifierDetailUnavailableProblem', 503);
-export const PartyOfficialIdentifierDetailForbiddenProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierDetailForbiddenProblem',
-  403,
-);
-export const PartyOfficialIdentifierDetailNotFoundProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierDetailNotFoundProblem',
-  404,
-);
-export const PartyOfficialIdentifierDetailPolicyProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierDetailPolicyProblem',
-  422,
-);
-export const PartyOfficialIdentifierDetailPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierDetailPolicyConflictProblem',
-  409,
-);
-export const PartyOfficialIdentifierDetailInternalProblemSchema = makeProblemDetailsSchema(
-  'PartyOfficialIdentifierDetailInternalProblem',
-  500,
-);
+  makeRetryableProblemDetailsSchema(
+    'PartyOfficialIdentifierDetailUnavailableProblem',
+    503
+  );
+export const PartyOfficialIdentifierDetailForbiddenProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierDetailForbiddenProblem',
+    403
+  );
+export const PartyOfficialIdentifierDetailNotFoundProblemSchema =
+  makeProblemDetailsSchema('PartyOfficialIdentifierDetailNotFoundProblem', 404);
+export const PartyOfficialIdentifierDetailPolicyProblemSchema =
+  makeProblemDetailsSchema('PartyOfficialIdentifierDetailPolicyProblem', 422);
+export const PartyOfficialIdentifierDetailPolicyConflictProblemSchema =
+  makeProblemDetailsSchema(
+    'PartyOfficialIdentifierDetailPolicyConflictProblem',
+    409
+  );
+export const PartyOfficialIdentifierDetailInternalProblemSchema =
+  makeProblemDetailsSchema('PartyOfficialIdentifierDetailInternalProblem', 500);
 
 export const PartyOfficialIdentifierDetailApi = HttpApi.make(
-  'PartyOfficialIdentifierDetailApi',
+  'PartyOfficialIdentifierDetailApi'
 ).add(
   HttpApiGroup.make('partyOfficialIdentifierDetail').add(
     HttpApiEndpoint.post('execute', '/reads/party-official-identifier-detail', {
@@ -68,6 +72,6 @@ export const PartyOfficialIdentifierDetailApi = HttpApi.make(
       payload: PartyOfficialIdentifierDetailRequestSchema,
       query: {},
       success: PartyOfficialIdentifierDetailResponseSchema,
-    }),
-  ),
+    })
+  )
 );

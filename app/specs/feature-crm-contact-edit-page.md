@@ -8,66 +8,29 @@ created: 2026-08-16
 
 ## Feature Description
 
-Add the generated CRM `ContactEdit` page at localized URL
-`/cs/crm/customers/:id/contacts/:contactId/edit` (canonical generator URL
-`/crm/customers/:id/contacts/:contactId/edit`, also exposed under `/en`). The authenticated Shell
-continues to own legal-entity selection, exact page resolution, module-state and page-permission
-gating, dashboard composition, and the approved lazy CRM remote load. The CRM page treats both route
-parameters as untrusted business input, loads the addressed Contact through the existing
-contract-derived `getContact` Effect BFF client, verifies that the Contact belongs to the Customer
-named by the hierarchical URL, and pre-populates the existing owner-private `ContactForm`.
+Add the generated CRM `ContactEdit` page at localized URL `/cs/crm/customers/:id/contacts/:contactId/edit` (canonical generator URL `/crm/customers/:id/contacts/:contactId/edit`, also exposed under `/en`). The authenticated Shell continues to own legal-entity selection, exact page resolution, module-state and page-permission gating, dashboard composition, and the approved lazy CRM remote load. The CRM page treats both route parameters as untrusted business input, loads the addressed Contact through the existing contract-derived `getContact` Effect BFF client, verifies that the Contact belongs to the Customer named by the hierarchical URL, and pre-populates the existing owner-private `ContactForm`.
 
-Valid edits submit `{ contactId, name, email, phone }` through the existing generated `editContact`
-Effect client. Its strict CRM BFF handler must dispatch the already generated `EditContactAction`
-through the governed Action runtime; the page must not import or call the Action, BFF server,
-persistence service, database, or HTTP endpoint directly.
+Valid edits submit `{ contactId, name, email, phone }` through the existing generated `editContact` Effect client. Its strict CRM BFF handler must dispatch the already generated `EditContactAction` through the governed Action runtime; the page must not import or call the Action, BFF server, persistence service, database, or HTTP endpoint directly.
 
-Use Figma file `ERP`, page `Pre-Alpha Repo` (not `Pre-Alpha`), frame
-`Resource Detail — Běžný` (`6:780`, 1440×900) only as an arrangement wireframe. Preserve the
-Shell-owned left navigation, compact Back link, page heading, and one main content surface, while
-replacing the read-only detail rows with the existing Contact inputs. Do not copy Figma styling or
-add the example's inert Overview/Documents/Timeline/Audit tabs. Use installed
-`@techsio/ui-kit` components and tokens, with CRM-prefixed Tailwind utilities only for responsive
-layout composition.
+Use Figma file `ERP`, page `Pre-Alpha Repo` (not `Pre-Alpha`), frame `Resource Detail — Běžný` (`6:780`, 1440×900) only as an arrangement wireframe. Preserve the Shell-owned left navigation, compact Back link, page heading, and one main content surface, while replacing the read-only detail rows with the existing Contact inputs. Do not copy Figma styling or add the example's inert Overview/Documents/Timeline/Audit tabs. Use installed `@techsio/ui-kit` components and tokens, with CRM-prefixed Tailwind utilities only for responsive layout composition.
 
 ## User Story
 
-As an authenticated CRM user with write access
-I want to edit an existing Contact within its Customer context
-So that corrected communication details are persisted through the governed CRM Action boundary
+As an authenticated CRM user with write access I want to edit an existing Contact within its Customer context So that corrected communication details are persisted through the governed CRM Action boundary
 
 ## Problem Statement
 
-CRM already owns Contact persistence, `EditContactAction`, the strict Effect BFF mutation,
-`getContact`, `editContact`, a localized Contact-detail page, and a reusable Contact create/edit
-form. It has no governed Contact-edit route that combines those capabilities. Users therefore
-cannot load current Contact values, correct them, receive accessible validation and typed failure
-feedback, or return safely to the Contact detail without bypassing the generated page/BFF seams.
+CRM already owns Contact persistence, `EditContactAction`, the strict Effect BFF mutation, `getContact`, `editContact`, a localized Contact-detail page, and a reusable Contact create/edit form. It has no governed Contact-edit route that combines those capabilities. Users therefore cannot load current Contact values, correct them, receive accessible validation and typed failure feedback, or return safely to the Contact detail without bypassing the generated page/BFF seams.
 
-The nested dynamic page also requires Codesmith-owned manifest, registration, Module Federation,
-Shell connector, route-parameter, metadata, and locale wiring. Hand-authoring that initial wiring
-would violate the repository's generator and module-entrypoint rules.
+The nested dynamic page also requires Codesmith-owned manifest, registration, Module Federation, Shell connector, route-parameter, metadata, and locale wiring. Hand-authoring that initial wiring would violate the repository's generator and module-entrypoint rules.
 
 ## Solution Statement
 
-Run the mandatory MicroVertical page generator with stable identity `contact-edit` and canonical
-URL `/crm/customers/:id/contacts/:contactId/edit`. Preserve its private/non-indexable exact-page
-descriptor, dynamic non-navigation behavior, owner-private registration, Module Federation
-exposure, approved Shell lazy client, and bounded propagation of only `id` and `contactId`. Adapt
-the generated CRM page and federation wrapper to accept the resolved target so write availability
-remains explicit.
+Run the mandatory MicroVertical page generator with stable identity `contact-edit` and canonical URL `/crm/customers/:id/contacts/:contactId/edit`. Preserve its private/non-indexable exact-page descriptor, dynamic non-navigation behavior, owner-private registration, Module Federation exposure, approved Shell lazy client, and bounded propagation of only `id` and `contactId`. Adapt the generated CRM page and federation wrapper to accept the resolved target so write availability remains explicit.
 
-At the owner boundary, bound and decode both parameters with `CrmUuidSchema`. Load the Contact only
-through `getContact({ contactId })`, retain the operation-specific typed Effect error union, and
-require `contact.customerId === id` before exposing any values. Render explicit loading,
-authentication-expired, forbidden, not-found, unavailable/retry, read-only, and ready states.
+At the owner boundary, bound and decode both parameters with `CrmUuidSchema`. Load the Contact only through `getContact({ contactId })`, retain the operation-specific typed Effect error union, and require `contact.customerId === id` before exposing any values. Render explicit loading, authentication-expired, forbidden, not-found, unavailable/retry, read-only, and ready states.
 
-In the ready state, reuse `verticals/crm/src/features/contacts/contact-form.tsx` unchanged with the
-loaded `name`, `email`, and `phone`. Submit normalized values only through `editContact` using one
-idempotency key per logical edit intent and a fresh correlation ID per network attempt. Preserve
-uncertain retry semantics for transport, decode, and retryable backend failures. On success, update
-the Contact-detail query cache and navigate to the localized existing Contact-detail route;
-Back and Cancel use that same destination without mutation.
+In the ready state, reuse `verticals/crm/src/features/contacts/contact-form.tsx` unchanged with the loaded `name`, `email`, and `phone`. Submit normalized values only through `editContact` using one idempotency key per logical edit intent and a fresh correlation ID per network attempt. Preserve uncertain retry semantics for transport, decode, and retryable backend failures. On success, update the Contact-detail query cache and navigate to the localized existing Contact-detail route; Back and Cancel use that same destination without mutation.
 
 ## Relevant Files
 
@@ -136,29 +99,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Generate `contact-edit` and all owner/Shell wiring before adapting business code. Verify the
-generator retains the locale-free two-parameter route, private/non-indexable metadata, ordered
-route parameters, dynamic non-navigation behavior, exact CRM identities, owner-private
-registration, and approved lazy-client boundary. Reuse the existing CRM query/test dependencies and
-`ContactForm`; add no Action, API, persistence service, form component, shared abstraction,
-dependency, UI-kit component, or token override.
+Generate `contact-edit` and all owner/Shell wiring before adapting business code. Verify the generator retains the locale-free two-parameter route, private/non-indexable metadata, ordered route parameters, dynamic non-navigation behavior, exact CRM identities, owner-private registration, and approved lazy-client boundary. Reuse the existing CRM query/test dependencies and `ContactForm`; add no Action, API, persistence service, form component, shared abstraction, dependency, UI-kit component, or token override.
 
 ### Phase 2: Core Implementation
 
-Adapt the generated page and federation wrapper to validate both route IDs, load the current
-Contact with `getContact`, reject a parent mismatch, preserve typed query failures, honor
-`target.writable`, and render `ContactForm` with loaded values. Submit only through `editContact`
-with logical idempotency and exhaustive error mapping, then update the detail cache and navigate to
-the localized Contact-detail page.
+Adapt the generated page and federation wrapper to validate both route IDs, load the current Contact with `getContact`, reject a parent mismatch, preserve typed query failures, honor `target.writable`, and render `ContactForm` with loaded values. Submit only through `editContact` with logical idempotency and exhaustive error mapping, then update the detail cache and navigate to the localized Contact-detail page.
 
 ### Phase 3: Integration
 
-Complete Czech/English copy, generated manifest/registration/federation/Shell verification,
-responsive and accessible loading/error/form states, focused component and Shell tests, and
-localized browser coverage. Reuse the real CRM BFF/Action integration suites as the authoritative
-proof that the page's client method reaches `EditContactAction` through the strict BFF and governed
-Action runtime. Finish with the independent CRM/Shell checks, boundary validators, build, and final
-repository quality gate.
+Complete Czech/English copy, generated manifest/registration/federation/Shell verification, responsive and accessible loading/error/form states, focused component and Shell tests, and localized browser coverage. Reuse the real CRM BFF/Action integration suites as the authoritative proof that the page's client method reaches `EditContactAction` through the strict BFF and governed Action runtime. Finish with the independent CRM/Shell checks, boundary validators, build, and final repository quality gate.
 
 ## Step by Step Tasks
 
@@ -218,26 +167,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use existing CRM Node unit tests for Contact Action/API schemas and add Rstest/Testing Library
-coverage for the generated ContactEdit page. Mock only the generated frontend Effect client seam.
-Prove two-parameter decoding, parent consistency, hierarchical query/cache identity, complete typed
-query and mutation classification, loaded form values, target writability, Action-aligned
-validation, exact `getContact`/`editContact` payloads and options, logical idempotency, correlation,
-cache/navigation outcomes, localization, keyboard/accessibility behavior, and absence of forbidden
-frontend dependencies. Run the unchanged `ContactForm` suite as regression protection for its
-reusable create/edit contract. Use Shell unit tests for post-gate ordered route parameters and
-approved remote props.
+Use existing CRM Node unit tests for Contact Action/API schemas and add Rstest/Testing Library coverage for the generated ContactEdit page. Mock only the generated frontend Effect client seam. Prove two-parameter decoding, parent consistency, hierarchical query/cache identity, complete typed query and mutation classification, loaded form values, target writability, Action-aligned validation, exact `getContact`/`editContact` payloads and options, logical idempotency, correlation, cache/navigation outcomes, localization, keyboard/accessibility behavior, and absence of forbidden frontend dependencies. Run the unchanged `ContactForm` suite as regression protection for its reusable create/edit contract. Use Shell unit tests for post-gate ordered route parameters and approved remote props.
 
 ### Integration Tests
 
-Run the existing CRM integration suites that execute Contact read/edit through the
-contract-derived client/BFF and real governed Read/Action runtimes. They prove audience assertion
-verification, `EditContactAction` dispatch, idempotency, immutable Customer ownership, Contact
-lifecycle preservation, persistence, audit/data-access evidence, typed Problem Details decoding,
-rollback, and tenant isolation. Add focused Shell browser coverage for private route gating, real
-page request construction, localized form behavior/navigation, and responsive layout while mocking
-only terminal public BFF responses when deterministic browser cleanup would otherwise duplicate
-Action-runtime ownership.
+Run the existing CRM integration suites that execute Contact read/edit through the contract-derived client/BFF and real governed Read/Action runtimes. They prove audience assertion verification, `EditContactAction` dispatch, idempotency, immutable Customer ownership, Contact lifecycle preservation, persistence, audit/data-access evidence, typed Problem Details decoding, rollback, and tenant isolation. Add focused Shell browser coverage for private route gating, real page request construction, localized form behavior/navigation, and responsive layout while mocking only terminal public BFF responses when deterministic browser cleanup would otherwise duplicate Action-runtime ownership.
 
 ### Edge Cases
 

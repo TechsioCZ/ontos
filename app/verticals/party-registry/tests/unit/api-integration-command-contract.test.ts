@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
 import {
   partyRegistryCommandsApi,
   PartyCommandAliasWriteRejectedProblemSchema,
@@ -22,25 +24,36 @@ test('every generated Action has its own statically named command endpoint', asy
     .filter((file) => file.endsWith('.action.ts'))
     .map((file) => file.replace('.action.ts', ''))
     .filter((slug) => !slug.includes('engagement'));
-  const endpoints = Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints);
+  const endpoints = Object.values(
+    partyRegistryCommandsApi.groups.partyCommands.endpoints
+  );
   assert.equal(endpoints.length, actions.length);
   assert.deepEqual(
     endpoints.map((endpoint) => endpoint.path).toSorted(),
-    actions.map((slug) => `/party-registry/actions/${slug}`).toSorted(),
+    actions.map((slug) => `/party-registry/actions/${slug}`).toSorted()
   );
   for (const slug of actions) {
     const name = slug
       .split('-')
-      .map((part, index) => (index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+      .map((part, index) =>
+        index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)
+      )
       .join('');
-    assert.ok(Object.hasOwn(partyRegistryCommandsApi.groups.partyCommands.endpoints, name));
+    assert.ok(
+      Object.hasOwn(
+        partyRegistryCommandsApi.groups.partyCommands.endpoints,
+        name
+      )
+    );
   }
 });
 
 test('missing idempotency reaches the declared 428 while malformed supplied values fail decoding', () => {
   assert.deepEqual(Schema.decodeUnknownSync(PartyCommandHeadersSchema)({}), {});
   assert.throws(() =>
-    Schema.decodeUnknownSync(PartyCommandHeadersSchema)({ 'idempotency-key': '' }),
+    Schema.decodeUnknownSync(PartyCommandHeadersSchema)({
+      'idempotency-key': '',
+    })
   );
 });
 
@@ -56,21 +69,24 @@ test('alias conflict preserves both canonical and submitted references', () => {
     type: 'urn:ontos:party:alias-write-rejected',
   };
   assert.deepEqual(
-    Schema.decodeUnknownSync(PartyCommandAliasWriteRejectedProblemSchema)(input),
-    input,
+    Schema.decodeUnknownSync(PartyCommandAliasWriteRejectedProblemSchema)(
+      input
+    ),
+    input
   );
 });
 
 test('public commands and clients never import Action runtime implementations', async () => {
   const sources = await Promise.all(
-    ['../../shared/command-api.ts', '../../src/api/party-command-client.ts'].map((path) =>
-      readFile(new URL(path, import.meta.url), 'utf-8'),
-    ),
+    [
+      '../../shared/command-api.ts',
+      '../../src/api/party-command-client.ts',
+    ].map((path) => readFile(new URL(path, import.meta.url), 'utf-8'))
   );
   for (const source of sources) {
     assert.doesNotMatch(
       source,
-      /from\s+['"][^'"]*src\/actions|from\s+['"]\.\.\/actions|\.action\.ts|Schema\.(?:Unknown|Any)\b/u,
+      /from\s+['"][^'"]*src\/actions|from\s+['"]\.\.\/actions|\.action\.ts|Schema\.(?:Unknown|Any)\b/u
     );
   }
 });

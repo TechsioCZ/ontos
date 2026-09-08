@@ -1,4 +1,7 @@
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import {
+  Link as LocalizedLink,
+  useModernI18n,
+} from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -15,14 +18,22 @@ interface HomeViewProps {
 export const HomeView = ({ initialModel }: HomeViewProps) => {
   const { t } = useModernI18n();
   const model = initialModel;
-  const controls = useShellControls(model.state === 'authenticated' ? model : undefined);
+  const controls = useShellControls(
+    model.state === 'authenticated' ? model : undefined
+  );
 
   if (model.state === 'anonymous') {
     return (
       <>
         <UltramodernRouteHead />
         <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
-          <LinkButton as={LocalizedLink} size="md" theme="solid" to="/login" variant="primary">
+          <LinkButton
+            as={LocalizedLink}
+            size="md"
+            theme="solid"
+            to="/login"
+            variant="primary"
+          >
             {t('shell.auth.loginLink')}
           </LinkButton>
         </main>
@@ -75,24 +86,34 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         >
           <dl className="shell:grid shell:gap-3">
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.displayName')}</dt>
+              <dt className="shell:font-semibold">
+                {t('shell.auth.identity.displayName')}
+              </dt>
               <dd>{model.identity.displayName}</dd>
             </div>
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.email')}</dt>
+              <dt className="shell:font-semibold">
+                {t('shell.auth.identity.email')}
+              </dt>
               <dd>{model.identity.email}</dd>
             </div>
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.principal')}</dt>
+              <dt className="shell:font-semibold">
+                {t('shell.auth.identity.principal')}
+              </dt>
               <dd>{model.identity.principalId}</dd>
             </div>
             <div>
-              <dt className="shell:font-semibold">{t('shell.auth.identity.tenant')}</dt>
+              <dt className="shell:font-semibold">
+                {t('shell.auth.identity.tenant')}
+              </dt>
               <dd>{model.identity.tenantId}</dd>
             </div>
             {model.contextState === 'authenticated' ? (
               <div>
-                <dt className="shell:font-semibold">{t('shell.auth.identity.legalEntity')}</dt>
+                <dt className="shell:font-semibold">
+                  {t('shell.auth.identity.legalEntity')}
+                </dt>
                 <dd>{model.selectedLegalEntityId}</dd>
               </div>
             ) : null}

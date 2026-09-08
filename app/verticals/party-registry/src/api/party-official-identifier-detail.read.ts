@@ -2,12 +2,17 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
+
 import {
   PartyOfficialIdentifierDetailRequestSchema,
   PartyOfficialIdentifierDetailResponseSchema,
 } from '../../shared/apis/party-official-identifier-detail.ts';
 import { findOfficialIdentifierRecord } from '../services/party-official-identifier-persistence.service.ts';
-import { readUnavailable, requireReadValue, readDetailResult } from './read-outcome.ts';
+import {
+  readUnavailable,
+  requireReadValue,
+  readDetailResult,
+} from './read-outcome.ts';
 
 const partyOfficialIdentifierDetailEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -17,16 +22,22 @@ const partyOfficialIdentifierDetailEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 interface Services {
-  readonly find: (identifierId: string) => ReturnType<typeof findOfficialIdentifierRecord>;
+  readonly find: (
+    identifierId: string
+  ) => ReturnType<typeof findOfficialIdentifierRecord>;
 }
-const unavailable = readUnavailable('Official Identifier persistence is unavailable', true);
+const unavailable = readUnavailable(
+  'Official Identifier persistence is unavailable',
+  true
+);
 export const partyOfficialIdentifierDetailRead = defineRead(
   {
     accessKind: 'detail',
     entrypoint: partyOfficialIdentifierDetailEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',
-      policyKey: 'party.registry.api.party-official-identifier-detail.evidence.v1',
+      policyKey:
+        'party.registry.api.party-official-identifier-detail.evidence.v1',
     },
     inputSchema: PartyOfficialIdentifierDetailRequestSchema,
     legalEntityScope: 'optional',
@@ -42,13 +53,15 @@ export const partyOfficialIdentifierDetailRead = defineRead(
       .find(input.officialIdentifierRef.resourceId)
       .pipe(
         Effect.mapError(unavailable),
-        Effect.flatMap(requireReadValue('The Official Identifier does not exist')),
-        Effect.map(readDetailResult),
+        Effect.flatMap(
+          requireReadValue('The Official Identifier does not exist')
+        ),
+        Effect.map(readDetailResult)
       ),
   (transaction, scope) =>
     Effect.succeed({
       find: (identifierId: string) =>
         findOfficialIdentifierRecord(transaction, scope.tenantId, identifierId),
     }),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+  () => ({ kind: 'tenant', permission: 'read_party_identity' })
 );

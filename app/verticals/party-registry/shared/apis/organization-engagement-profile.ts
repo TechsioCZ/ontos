@@ -4,7 +4,12 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { OrganizationEngagementProfileSchema } from '../domain/engagement-profile.ts';
 import { OrganizationEngagementProfileRefSchema } from '../resources/organization-engagement-profile.ts';
 
@@ -13,43 +18,42 @@ export const OrganizationEngagementProfileRequestSchema = Schema.Struct({
 });
 export type OrganizationEngagementProfileRequest =
   typeof OrganizationEngagementProfileRequestSchema.Type;
-export const OrganizationEngagementProfileResponseSchema = OrganizationEngagementProfileSchema;
+export const OrganizationEngagementProfileResponseSchema =
+  OrganizationEngagementProfileSchema;
 export type OrganizationEngagementProfileResponse =
   typeof OrganizationEngagementProfileResponseSchema.Type;
 
-export const OrganizationEngagementProfileAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'OrganizationEngagementProfileAuthenticationProblem',
-  401,
-);
-export const OrganizationEngagementProfileInvalidProblemSchema = makeProblemDetailsSchema(
-  'OrganizationEngagementProfileInvalidProblem',
-  400,
-);
+export const OrganizationEngagementProfileAuthenticationProblemSchema =
+  makeProblemDetailsSchema(
+    'OrganizationEngagementProfileAuthenticationProblem',
+    401
+  );
+export const OrganizationEngagementProfileInvalidProblemSchema =
+  makeProblemDetailsSchema('OrganizationEngagementProfileInvalidProblem', 400);
 export const OrganizationEngagementProfileUnavailableProblemSchema =
-  makeRetryableProblemDetailsSchema('OrganizationEngagementProfileUnavailableProblem', 503);
-export const OrganizationEngagementProfileForbiddenProblemSchema = makeProblemDetailsSchema(
-  'OrganizationEngagementProfileForbiddenProblem',
-  403,
-);
-export const OrganizationEngagementProfileNotFoundProblemSchema = makeProblemDetailsSchema(
-  'OrganizationEngagementProfileNotFoundProblem',
-  404,
-);
-export const OrganizationEngagementProfilePolicyProblemSchema = makeProblemDetailsSchema(
-  'OrganizationEngagementProfilePolicyProblem',
-  422,
-);
-export const OrganizationEngagementProfilePolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'OrganizationEngagementProfilePolicyConflictProblem',
-  409,
-);
-export const OrganizationEngagementProfileInternalProblemSchema = makeProblemDetailsSchema(
-  'OrganizationEngagementProfileInternalProblem',
-  500,
-);
+  makeRetryableProblemDetailsSchema(
+    'OrganizationEngagementProfileUnavailableProblem',
+    503
+  );
+export const OrganizationEngagementProfileForbiddenProblemSchema =
+  makeProblemDetailsSchema(
+    'OrganizationEngagementProfileForbiddenProblem',
+    403
+  );
+export const OrganizationEngagementProfileNotFoundProblemSchema =
+  makeProblemDetailsSchema('OrganizationEngagementProfileNotFoundProblem', 404);
+export const OrganizationEngagementProfilePolicyProblemSchema =
+  makeProblemDetailsSchema('OrganizationEngagementProfilePolicyProblem', 422);
+export const OrganizationEngagementProfilePolicyConflictProblemSchema =
+  makeProblemDetailsSchema(
+    'OrganizationEngagementProfilePolicyConflictProblem',
+    409
+  );
+export const OrganizationEngagementProfileInternalProblemSchema =
+  makeProblemDetailsSchema('OrganizationEngagementProfileInternalProblem', 500);
 
 export const OrganizationEngagementProfileApi = HttpApi.make(
-  'OrganizationEngagementProfileApi',
+  'OrganizationEngagementProfileApi'
 ).add(
   HttpApiGroup.make('organizationEngagementProfile').add(
     HttpApiEndpoint.post('execute', '/reads/organization-engagement-profile', {
@@ -68,6 +72,6 @@ export const OrganizationEngagementProfileApi = HttpApi.make(
       payload: OrganizationEngagementProfileRequestSchema,
       query: {},
       success: OrganizationEngagementProfileResponseSchema,
-    }),
-  ),
+    })
+  )
 );

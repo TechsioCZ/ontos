@@ -1,9 +1,12 @@
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
+
 import type { coreRelations } from './schema.ts';
 
 export type CoreDatabaseExecutor = EffectPgDatabase<typeof coreRelations>;
 
-type CoreTransactionCallback = Parameters<CoreDatabaseExecutor['transaction']>[0];
+type CoreTransactionCallback = Parameters<
+  CoreDatabaseExecutor['transaction']
+>[0];
 
 export type CoreTransaction = Parameters<CoreTransactionCallback>[0];
 

@@ -71,7 +71,6 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import {
@@ -97,7 +96,9 @@ const DEFAULT_INCLUDE_PATHS: readonly string[] = [
 ];
 
 /** Audit "Existing patterns to preserve": `Array.isArray` in recursive JSON normalization. */
-const DEFAULT_ALLOW_PATHS: readonly string[] = ['packages/core-runtime/src/actions/repository.ts'];
+const DEFAULT_ALLOW_PATHS: readonly string[] = [
+  'packages/core-runtime/src/actions/repository.ts',
+];
 
 /**
  * Keys owned by sibling rules: `_tag` by `no-manual-tag-comparison`, the driver-failure vocabulary by
@@ -170,10 +171,14 @@ function readOptions(raw: unknown): RuleOptions {
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
     ignoreTestFiles:
-      typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
-    includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
+      typeof given.ignoreTestFiles === 'boolean'
+        ? given.ignoreTestFiles
+        : DEFAULTS.ignoreTestFiles,
+    includePaths:
+      includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
     documentIdentifiers:
-      typeof given.documentIdentifiers === 'string' && given.documentIdentifiers.length > 0
+      typeof given.documentIdentifiers === 'string' &&
+      given.documentIdentifiers.length > 0
         ? given.documentIdentifiers
         : DEFAULTS.documentIdentifiers,
     allowInKeys: stringList(given.allowInKeys, DEFAULTS.allowInKeys),
@@ -188,24 +193,37 @@ function compilePattern(source: string): RegExp {
   }
 }
 
-function spanOf(node: AnyNode): { readonly start: number; readonly end: number } {
+function spanOf(node: AnyNode): {
+  readonly start: number;
+  readonly end: number;
+} {
   return node as unknown as { readonly start: number; readonly end: number };
 }
 
 function asStringLiteral(node: AnyNode): string | null {
-  return staticString(node, { unwrap: {}, templates: true, rawTemplates: true });
+  return staticString(node, {
+    unwrap: {},
+    templates: true,
+    rawTemplates: true,
+  });
 }
 
 /** `x.y` / `x["y"]` → `"y"`; a dynamic key → `null`. */
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
   const property = node.property as AnyNode;
   if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
+    return property.type === 'Identifier'
+      ? (property as ESTree.IdentifierName).name
+      : null;
   return asStringLiteral(property);
 }
 
 /** `true` when `node` is the unshadowed global `name`. */
-function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): boolean {
+function isUnshadowedGlobal(
+  context: Context,
+  node: AnyNode,
+  name: string
+): boolean {
   if (node.type !== 'Identifier') return false;
   if ((node as ESTree.IdentifierReference).name !== name) return false;
   const variable = resolveVariable(context, name, node);
@@ -220,14 +238,15 @@ function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): bool
       return (
         def.type === 'Type' ||
         (def.type === 'ImportBinding' &&
-          (def.node?.importKind === 'type' || def.parent?.importKind === 'type'))
+          (def.node?.importKind === 'type' ||
+            def.parent?.importKind === 'type'))
       );
     })
   );
 }
 
 function typeofComparison(
-  binary: ESTree.BinaryExpression,
+  binary: ESTree.BinaryExpression
 ): { argument: AnyNode; other: AnyNode } | null {
   const left = unwrap(binary.left);
   const right = unwrap(binary.right);
@@ -318,12 +337,20 @@ export const rule = defineRule({
     const documentIdentifier = compilePattern(options.documentIdentifiers);
     const allowedKeys = new Set(options.allowInKeys);
     /** Spans already reported as a whole object-shape guard; nested field probes stay silent there. */
-    const guardedSpans: Array<{ readonly start: number; readonly end: number }> = [];
+    const guardedSpans: Array<{
+      readonly start: number;
+      readonly end: number;
+    }> = [];
 
     const printed = (node: AnyNode): string => {
-      const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
+      const text = context.sourceCode
+        .getText(node)
+        .replace(/\s+/gu, ' ')
+        .trim();
       if (text.length === 0) return '…';
-      return text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text;
+      return text.length > MAX_TEXT_LENGTH
+        ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…`
+        : text;
     };
 
     const report = (node: AnyNode, messageId: string): void => {
@@ -332,13 +359,16 @@ export const rule = defineRule({
 
     const insideReportedGuard = (node: AnyNode): boolean => {
       const span = spanOf(node);
-      return guardedSpans.some((guard) => span.start >= guard.start && span.end <= guard.end);
+      return guardedSpans.some(
+        (guard) => span.start >= guard.start && span.end <= guard.end
+      );
     };
 
     /** `true` when this expression is the ambient `name` global (`Array`, `Object`, `JSON`). */
     const isGlobalHost = (node: AnyNode, name: string): boolean => {
       const inner = unwrap(node);
-      if (inner.type === 'Identifier') return isUnshadowedGlobal(context, inner, name);
+      if (inner.type === 'Identifier')
+        return isUnshadowedGlobal(context, inner, name);
       if (inner.type !== 'MemberExpression') return false;
       const member = inner as ESTree.MemberExpression;
       if (staticPropertyName(member) !== name) return false;
@@ -352,7 +382,11 @@ export const rule = defineRule({
     };
 
     /** `Array.isArray` / `Object.keys` / `JSON.stringify` — the global namespace method itself. */
-    const isGlobalMethod = (callee: AnyNode, host: string, method: string): boolean => {
+    const isGlobalMethod = (
+      callee: AnyNode,
+      host: string,
+      method: string
+    ): boolean => {
       const inner = unwrap(callee);
       if (inner.type !== 'MemberExpression') return false;
       const member = inner as ESTree.MemberExpression;
@@ -369,12 +403,16 @@ export const rule = defineRule({
     const namedPredicateIdentity = (
       source: string,
       imported: string,
-      submodule: boolean,
+      submodule: boolean
     ): string | null => {
       if (submodule) return imported;
-      return source === 'effect' && imported === 'Predicate' ? '@predicate' : null;
+      return source === 'effect' && imported === 'Predicate'
+        ? '@predicate'
+        : null;
     };
-    const importPredicateIdentity = (def: Variable['defs'][number]): string | null => {
+    const importPredicateIdentity = (
+      def: Variable['defs'][number]
+    ): string | null => {
       if (
         def.type !== 'ImportBinding' ||
         def.parent?.type !== 'ImportDeclaration' ||
@@ -383,13 +421,21 @@ export const rule = defineRule({
         return null;
       const source = def.parent.source.value;
       const submodule = /^effect\/(?:.*\/)?Predicate$/u.test(source);
-      if (def.node.type === 'ImportNamespaceSpecifier') return submodule ? '@predicate' : null;
-      if (def.node.type !== 'ImportSpecifier' || def.node.importKind === 'type') return null;
+      if (def.node.type === 'ImportNamespaceSpecifier')
+        return submodule ? '@predicate' : null;
+      if (def.node.type !== 'ImportSpecifier' || def.node.importKind === 'type')
+        return null;
       return namedPredicateIdentity(source, importedName(def.node), submodule);
     };
-    const constantInitializer = (def: Variable['defs'][number]): AnyNode | null => {
-      if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
-      if (def.node.id.type !== 'Identifier' || def.node.parent?.type !== 'VariableDeclaration')
+    const constantInitializer = (
+      def: Variable['defs'][number]
+    ): AnyNode | null => {
+      if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator')
+        return null;
+      if (
+        def.node.id.type !== 'Identifier' ||
+        def.node.parent?.type !== 'VariableDeclaration'
+      )
         return null;
       return def.node.parent.kind === 'const' ? def.node.init : null;
     };
@@ -410,7 +456,8 @@ export const rule = defineRule({
       }
       return null;
     };
-    const predicateGuardName = (callee: AnyNode): string | null => predicateIdentity(callee);
+    const predicateGuardName = (callee: AnyNode): string | null =>
+      predicateIdentity(callee);
 
     /** The single argument of a one-argument call, unwrapped. */
     const soleArgument = (node: ESTree.CallExpression): AnyNode | null => {
@@ -425,7 +472,8 @@ export const rule = defineRule({
       const call = unwrap(node);
       if (call.type !== 'CallExpression') return null;
       const expression = call as ESTree.CallExpression;
-      if (!isGlobalMethod(expression.callee as AnyNode, 'Array', 'isArray')) return null;
+      if (!isGlobalMethod(expression.callee as AnyNode, 'Array', 'isArray'))
+        return null;
       return soleArgument(expression);
     };
 
@@ -436,7 +484,8 @@ export const rule = defineRule({
         const binary = expression as ESTree.BinaryExpression;
         if (!EQUALITY_OPERATORS.has(binary.operator)) return null;
         const comparison = typeofComparison(binary);
-        if (!comparison || asStringLiteral(comparison.other) !== 'object') return null;
+        if (!comparison || asStringLiteral(comparison.other) !== 'object')
+          return null;
         return comparison.argument;
       }
       if (expression.type !== 'CallExpression') return null;
@@ -459,7 +508,10 @@ export const rule = defineRule({
         expression.type === 'UnaryExpression' &&
         (expression as ESTree.UnaryExpression).operator === '!'
       ) {
-        logicalLeaves((expression as ESTree.UnaryExpression).argument as AnyNode, into);
+        logicalLeaves(
+          (expression as ESTree.UnaryExpression).argument as AnyNode,
+          into
+        );
         return;
       }
       into.push(expression);
@@ -473,7 +525,8 @@ export const rule = defineRule({
         if (parent === null) return true;
         if (parent.type === 'LogicalExpression') return false;
         const negation =
-          parent.type === 'UnaryExpression' && (parent as ESTree.UnaryExpression).operator === '!';
+          parent.type === 'UnaryExpression' &&
+          (parent as ESTree.UnaryExpression).operator === '!';
         if (negation || TRANSPARENT_PARENTS.has(parent.type)) {
           current = parent;
           parent = parentOf(current);
@@ -493,7 +546,10 @@ export const rule = defineRule({
      */
     const documentRoot = (input: AnyNode): AnyNode => {
       let node = unwrap(input);
-      while (node.type === 'MemberExpression' && staticPropertyName(node) !== null)
+      while (
+        node.type === 'MemberExpression' &&
+        staticPropertyName(node) !== null
+      )
         node = unwrap(node.object);
       return node;
     };
@@ -501,7 +557,10 @@ export const rule = defineRule({
     // failure is not a decoded document merely because it is probed with a literal key.
     const isDocumentReceiver = (input: AnyNode): boolean => {
       const root = documentRoot(input);
-      if (root.type === 'MemberExpression' && root.object.type === 'ThisExpression') {
+      if (
+        root.type === 'MemberExpression' &&
+        root.object.type === 'ThisExpression'
+      ) {
         const key = root.property;
         return (
           (key.type === 'PrivateIdentifier' || key.type === 'Identifier') &&
@@ -526,10 +585,14 @@ export const rule = defineRule({
       );
     };
     const recursiveCache = new WeakMap<AnyNode, boolean>();
-    const functionIdentifier = (fn: AnyNode): ESTree.BindingIdentifier | null => {
-      if (fn.type === 'FunctionDeclaration' || fn.type === 'FunctionExpression') return fn.id;
+    const functionIdentifier = (
+      fn: AnyNode
+    ): ESTree.BindingIdentifier | null => {
+      if (fn.type === 'FunctionDeclaration' || fn.type === 'FunctionExpression')
+        return fn.id;
       const parent = parentOf(fn);
-      return parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier'
+      return parent?.type === 'VariableDeclarator' &&
+        parent.id.type === 'Identifier'
         ? parent.id
         : null;
     };
@@ -561,12 +624,14 @@ export const rule = defineRule({
           )
             recursive = true;
           if (
-            ['values', 'entries', 'keys'].some((method) => isGlobalMethod(callee, 'Object', method))
+            ['values', 'entries', 'keys'].some((method) =>
+              isGlobalMethod(callee, 'Object', method)
+            )
           )
             genericKeys = true;
           if (isGlobalMethod(callee, 'Array', 'isArray')) array = true;
         },
-        false,
+        false
       );
       const result = recursive && genericKeys && array;
       recursiveCache.set(fn, result);
@@ -574,13 +639,18 @@ export const rule = defineRule({
     };
     const serializedDocument = (node: ESTree.CallExpression): boolean => {
       const first = node.arguments[0];
-      return first !== undefined && first.type !== 'SpreadElement' && isDocumentReceiver(first);
+      return (
+        first !== undefined &&
+        first.type !== 'SpreadElement' &&
+        isDocumentReceiver(first)
+      );
     };
 
     const isSerializedComparison = (node: ESTree.BinaryExpression): boolean => {
       const left = unwrap(node.left),
         right = unwrap(node.right);
-      if (left.type !== 'CallExpression' || right.type !== 'CallExpression') return false;
+      if (left.type !== 'CallExpression' || right.type !== 'CallExpression')
+        return false;
       return (
         isGlobalMethod(left.callee, 'JSON', 'stringify') &&
         isGlobalMethod(right.callee, 'JSON', 'stringify') &&
@@ -590,19 +660,34 @@ export const rule = defineRule({
     const reportMembership = (
       node: AnyNode,
       receiver: AnyNode | undefined,
-      keyNode: AnyNode | undefined,
+      keyNode: AnyNode | undefined
     ): void => {
-      if (!receiver || receiver.type === 'SpreadElement' || !isDocumentReceiver(receiver)) return;
-      if (!keyNode || keyNode.type === 'SpreadElement' || keyNode.type === 'PrivateIdentifier')
+      if (
+        !receiver ||
+        receiver.type === 'SpreadElement' ||
+        !isDocumentReceiver(receiver)
+      )
+        return;
+      if (
+        !keyNode ||
+        keyNode.type === 'SpreadElement' ||
+        keyNode.type === 'PrivateIdentifier'
+      )
         return;
       const key = asStringLiteral(keyNode);
-      if (key !== null && !allowedKeys.has(key)) report(node, 'documentKeyProbe');
+      if (key !== null && !allowedKeys.has(key))
+        report(node, 'documentKeyProbe');
     };
     const fieldCallTarget = (call: ESTree.CallExpression): AnyNode | null => {
       const arrayTarget = arrayGuardArgument(call);
-      if (arrayTarget !== null && isDocumentField(arrayTarget)) return arrayTarget;
+      if (arrayTarget !== null && isDocumentField(arrayTarget))
+        return arrayTarget;
       const guard = predicateGuardName(call.callee);
-      if (guard === null || !(FIELD_GUARDS.has(guard) || OBJECT_GUARDS.has(guard))) return null;
+      if (
+        guard === null ||
+        !(FIELD_GUARDS.has(guard) || OBJECT_GUARDS.has(guard))
+      )
+        return null;
       const target = soleArgument(call);
       return target !== null && isDocumentField(target) ? target : null;
     };
@@ -622,7 +707,7 @@ export const rule = defineRule({
     };
     const reportExactKeyJoin = (
       call: ESTree.CallExpression,
-      member: ESTree.MemberExpression,
+      member: ESTree.MemberExpression
     ): void => {
       const sorted = unwrap(member.object);
       if (sorted.type !== 'CallExpression') return;
@@ -631,16 +716,24 @@ export const rule = defineRule({
       const method = staticPropertyName(sortCallee);
       if (method === null || !SORT_METHODS.has(method)) return;
       const keys = spreadKeys(unwrap(sortCallee.object));
-      if (keys.type !== 'CallExpression' || !isGlobalMethod(keys.callee, 'Object', 'keys')) return;
+      if (
+        keys.type !== 'CallExpression' ||
+        !isGlobalMethod(keys.callee, 'Object', 'keys')
+      )
+        return;
       const receiver = soleArgument(keys);
-      if (receiver && isDocumentReceiver(receiver)) report(call, 'exactKeyJoin');
+      if (receiver && isDocumentReceiver(receiver))
+        report(call, 'exactKeyJoin');
     };
-    const isStaticMembership = (member: ESTree.MemberExpression, method: string | null): boolean =>
+    const isStaticMembership = (
+      member: ESTree.MemberExpression,
+      method: string | null
+    ): boolean =>
       (method === 'hasOwn' && isGlobalHost(member.object, 'Object')) ||
       (method === 'has' && isGlobalHost(member.object, 'Reflect'));
     const reportMemberCall = (
       call: ESTree.CallExpression,
-      member: ESTree.MemberExpression,
+      member: ESTree.MemberExpression
     ): void => {
       const method = staticPropertyName(member);
       if (isStaticMembership(member, method)) {
@@ -653,7 +746,10 @@ export const rule = defineRule({
       }
       if (method === 'call') {
         const host = unwrap(member.object);
-        if (host.type === 'MemberExpression' && staticPropertyName(host) === 'hasOwnProperty')
+        if (
+          host.type === 'MemberExpression' &&
+          staticPropertyName(host) === 'hasOwnProperty'
+        )
           reportMembership(call, call.arguments[0], call.arguments[1]);
         return;
       }
@@ -663,7 +759,11 @@ export const rule = defineRule({
     return {
       LogicalExpression(node) {
         const expression = node as unknown as AnyNode;
-        if (!isOutermostLogical(expression) || inGenericRecursiveTraversal(expression)) return;
+        if (
+          !isOutermostLogical(expression) ||
+          inGenericRecursiveTraversal(expression)
+        )
+          return;
         const leaves: AnyNode[] = [];
         logicalLeaves(expression, leaves);
         const objectTargets = new Set<string>();
@@ -695,7 +795,8 @@ export const rule = defineRule({
         const comparison = typeofComparison(node);
         if (!comparison || asStringLiteral(comparison.other) === null) return;
         if (!isDocumentField(comparison.argument)) return;
-        if (insideReportedGuard(node) || inGenericRecursiveTraversal(node)) return;
+        if (insideReportedGuard(node) || inGenericRecursiveTraversal(node))
+          return;
         report(node, 'documentFieldGuard');
       },
       CallExpression(node) {

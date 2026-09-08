@@ -1,8 +1,10 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+
 import { createActionCollector } from '../../src/actions/collector.ts';
 
 const event = (id: string) =>
@@ -36,15 +38,24 @@ const makeCollector = () =>
       captureMode: 'metadata_only',
       policyKey: 'counter.read.v1',
     },
-    Schema.Struct({ checkpoint: Schema.String, nested: Schema.optionalKey(Schema.Json) }),
+    Schema.Struct({
+      checkpoint: Schema.String,
+      nested: Schema.optionalKey(Schema.Json),
+    })
   );
 
 void test('preserves event order, multiple messages, and events without messages', async () => {
   const collector = makeCollector();
-  const first = await runEffectTestPromise(collector.addDomainEvent(event('first')));
+  const first = await runEffectTestPromise(
+    collector.addDomainEvent(event('first'))
+  );
   await runEffectTestPromise(collector.addDomainEvent(event('second')));
-  await runEffectTestPromise(collector.addOutboxMessage(first, message('counter.project')));
-  await runEffectTestPromise(collector.addOutboxMessage(first, message('counter.notify')));
+  await runEffectTestPromise(
+    collector.addOutboxMessage(first, message('counter.project'))
+  );
+  await runEffectTestPromise(
+    collector.addOutboxMessage(first, message('counter.notify'))
+  );
   await runEffectTestPromise(
     collector.recordDataAccess({
       accessKind: 'read',
@@ -54,21 +65,24 @@ void test('preserves event order, multiple messages, and events without messages
       targetModuleKey: 'shell.core',
       targetResourceId: 'first',
       targetResourceType: 'counter',
-    }),
+    })
   );
 
   const snapshot = collector.snapshot();
 
   assert.deepEqual(
     snapshot.domainEvents.map((item) => item.subjectResourceId),
-    ['first', 'second'],
+    ['first', 'second']
   );
   assert.deepEqual(
-    snapshot.outboxMessages.map((item) => [item.domainEventIndex, item.message.topic]),
+    snapshot.outboxMessages.map((item) => [
+      item.domainEventIndex,
+      item.message.topic,
+    ]),
     [
       [0, 'counter.project'],
       [0, 'counter.notify'],
-    ],
+    ]
   );
   assert.equal(snapshot.dataAccessEvents.length, 1);
 });
@@ -76,13 +90,15 @@ void test('preserves event order, multiple messages, and events without messages
 void test('rejects orphan and foreign Domain Event references', async () => {
   const first = makeCollector();
   const second = makeCollector();
-  const foreign = await runEffectTestPromise(first.addDomainEvent(event('foreign')));
+  const foreign = await runEffectTestPromise(
+    first.addDomainEvent(event('foreign'))
+  );
 
   const foreignError = await runEffectTestPromise(
-    Effect.flip(second.addOutboxMessage(foreign, message('counter.project'))),
+    Effect.flip(second.addOutboxMessage(foreign, message('counter.project')))
   );
   const orphanError = await runEffectTestPromise(
-    Effect.flip(second.addOutboxMessageInput({}, message('counter.project'))),
+    Effect.flip(second.addOutboxMessageInput({}, message('counter.project')))
   );
 
   assert.equal(foreignError._tag, 'ActionCollectorError');
@@ -96,7 +112,7 @@ void test('does not expose externally mutable collector arrays or captured paylo
     collector.addDomainEvent({
       ...event('immutable'),
       payloadJson: { id: 'immutable', mutable: mutablePayload },
-    }),
+    })
   );
   mutablePayload.value = 2;
 
@@ -118,7 +134,9 @@ void test('does not expose externally mutable collector arrays or captured paylo
 void test('captures one immutable JSON audit-evidence object and rejects invalid repeats', async () => {
   const collector = makeCollector();
   const nested = { reason: 'support request' };
-  await runEffectTestPromise(collector.recordAuditEvidence({ checkpoint: 'started', nested }));
+  await runEffectTestPromise(
+    collector.recordAuditEvidence({ checkpoint: 'started', nested })
+  );
   nested.reason = 'mutated';
 
   const snapshot = collector.snapshot();
@@ -130,23 +148,26 @@ void test('captures one immutable JSON audit-evidence object and rejects invalid
   assert.equal(Object.isFrozen(snapshot.auditEvidence.nested), true);
 
   const repeated = await runEffectTestPromise(
-    Effect.flip(collector.recordAuditEvidence({ checkpoint: 'stopped' })),
+    Effect.flip(collector.recordAuditEvidence({ checkpoint: 'stopped' }))
   );
   const invalid = await runEffectTestPromise(
-    Effect.flip(makeCollector().recordAuditEvidenceInput({ value: undefined })),
+    Effect.flip(makeCollector().recordAuditEvidenceInput({ value: undefined }))
   );
   const undeclared = await runEffectTestPromise(
     Effect.flip(
-      makeCollector().recordAuditEvidence({ checkpoint: 'started', secret: 'must-not-persist' }),
-    ),
+      makeCollector().recordAuditEvidence({
+        checkpoint: 'started',
+        secret: 'must-not-persist',
+      })
+    )
   );
   const missingSchema = await runEffectTestPromise(
     Effect.flip(
       createActionCollector(domainEventContracts, 'shell.core', {
         captureMode: 'metadata_only',
         policyKey: 'counter.read.v1',
-      }).recordAuditEvidence({ checkpoint: 'started' }),
-    ),
+      }).recordAuditEvidence({ checkpoint: 'started' })
+    )
   );
   assert.equal(repeated._tag, 'ActionCollectorError');
   assert.equal(invalid._tag, 'ActionCollectorError');
@@ -167,8 +188,8 @@ void test('applies descriptor evidence policy and rejects incompatible evidence'
         queryHash: 'query-hash',
         resultCount: 1,
         servingModuleKey: 'shell.core',
-      }),
-    ),
+      })
+    )
   );
 
   assert.equal(error._tag, 'ActionCollectorError');
@@ -182,29 +203,31 @@ void test('applies descriptor evidence policy and rejects incompatible evidence'
       queryHash: 'metadata-query',
       resultCount: 1,
       servingModuleKey: 'shell.core',
-    }),
+    })
   );
   assert.equal(
     metadataCollector.snapshot().dataAccessEvents[0]?.evidenceCaptureMode,
-    'metadata_only',
+    'metadata_only'
   );
   assert.equal(
     metadataCollector.snapshot().dataAccessEvents[0]?.evidencePolicyKey,
-    'counter.read.v1',
+    'counter.read.v1'
   );
 });
 
 void test('rejects an Outbox producer that differs from its registered Domain Event', async () => {
   const collector = makeCollector();
-  const reference = await runEffectTestPromise(collector.addDomainEvent(event('producer')));
+  const reference = await runEffectTestPromise(
+    collector.addDomainEvent(event('producer'))
+  );
   const error = await runEffectTestPromise(
     Effect.flip(
       collector.addOutboxMessage(reference, {
         payloadJson: {},
         producerModuleKey: 'another.module',
         topic: 'counter.project',
-      }),
-    ),
+      })
+    )
   );
 
   assert.equal(error._tag, 'ActionCollectorError');
@@ -217,32 +240,32 @@ void test('enforces Action-declared event payloads and producer ownership', asyn
       collector.addDomainEventInput({
         ...event('payload'),
         payloadJson: { id: 1 },
-      }),
-    ),
+      })
+    )
   );
   const invalidProducer = await runEffectTestPromise(
     Effect.flip(
       collector.addDomainEvent({
         ...event('producer'),
         producerModuleKey: 'another.module',
-      }),
-    ),
+      })
+    )
   );
   const undeclared = await runEffectTestPromise(
     Effect.flip(
       collector.addDomainEventInput({
         ...event('undeclared'),
         eventType: 'counter.reset',
-      }),
-    ),
+      })
+    )
   );
   const inheritedName = await runEffectTestPromise(
     Effect.flip(
       collector.addDomainEventInput({
         ...event('inherited'),
         eventType: 'toString',
-      }),
-    ),
+      })
+    )
   );
 
   assert.equal(invalidPayload._tag, 'ActionCollectorError');

@@ -1,6 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { beforeEach, expect, rstest, test } from '@rstest/core';
 import { Effect } from 'effect';
+
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
@@ -9,10 +10,12 @@ import {
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
 
-const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
-  loadHomePageModelMock: rstest.fn(),
-  resolveModuleTargetMock: rstest.fn(),
-}));
+const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(
+  () => ({
+    loadHomePageModelMock: rstest.fn(),
+    resolveModuleTargetMock: rstest.fn(),
+  })
+);
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
   ...actualAuthClient,
@@ -61,7 +64,7 @@ beforeEach(() => {
       entrypointKey: 'party.registry.page.contacts',
       moduleId: 'party.registry',
       writable: false,
-    }),
+    })
   );
 });
 
@@ -74,8 +77,8 @@ test('selects only declared safe route parameters and omits overlong values', ()
         moduleId: 'attacker.module',
         overlong: 'x'.repeat(201),
       },
-      ['id', 'overlong'],
-    ),
+      ['id', 'overlong']
+    )
   ).toEqual({ id: 'party-1' });
 });
 
@@ -88,7 +91,7 @@ test('retains only declared bounded route parameters outside the resolved target
       },
       request: request(),
       routeParams: { id: 'party-1' },
-    }),
+    })
   ).resolves.toMatchObject({
     routeParams: { id: 'party-1' },
     state: 'resolved',
@@ -100,18 +103,21 @@ test('retains only declared bounded route parameters outside the resolved target
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'party.registry.page.contacts', moduleId: 'party.registry' },
-    expect.any(Object),
+    {
+      entrypointKey: 'party.registry.page.contacts',
+      moduleId: 'party.registry',
+    },
+    expect.any(Object)
   );
 });
 
 test('retains module landing behavior when no exact page entrypoint is supplied', async () => {
   await expect(
-    loader({ params: { moduleId: 'party.registry' }, request: request() }),
+    loader({ params: { moduleId: 'party.registry' }, request: request() })
   ).resolves.toMatchObject({ routeParams: {} });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
     { moduleId: 'party.registry' },
-    expect.any(Object),
+    expect.any(Object)
   );
 });
 
@@ -124,7 +130,7 @@ test('does not request or load a private target before authentication', async ()
         moduleId: 'party.registry',
       },
       request: request(),
-    }),
+    })
   ).resolves.toMatchObject({ state: 'selection_required' });
   expect(resolveModuleTargetMock).not.toHaveBeenCalled();
 });
@@ -134,15 +140,18 @@ test.each([
   ['ShellTargetForbiddenProblem', 'forbidden'],
   ['ShellTargetNotFoundProblem', 'not_found'],
   ['ShellCapabilityUnavailableProblem', 'unavailable'],
-] as const)('maps %s without returning a resolved private target', async (_tag, state) => {
-  resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag }));
-  await expect(
-    loader({
-      params: {
-        entrypointKey: 'party.registry.page.contacts',
-        moduleId: 'party.registry',
-      },
-      request: request(),
-    }),
-  ).resolves.toMatchObject({ state });
-});
+] as const)(
+  'maps %s without returning a resolved private target',
+  async (_tag, state) => {
+    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag }));
+    await expect(
+      loader({
+        params: {
+          entrypointKey: 'party.registry.page.contacts',
+          moduleId: 'party.registry',
+        },
+        request: request(),
+      })
+    ).resolves.toMatchObject({ state });
+  }
+);

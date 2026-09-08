@@ -1,6 +1,7 @@
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
-import { PartyRefSchema } from '../resources/party.ts';
+
 import { PartyRelationshipRefSchema } from '../resources/party-relationship.ts';
+import { PartyRefSchema } from '../resources/party.ts';
 
 export {
   PartyRelationshipCorrectionRequired,
@@ -15,7 +16,9 @@ export {
 } from './relationship-errors/index.ts';
 
 export const ContactPersonOfRelationshipType = 'CONTACT_PERSON_OF' as const;
-export const PartyRelationshipTypeSchema = Schema.Literal(ContactPersonOfRelationshipType);
+export const PartyRelationshipTypeSchema = Schema.Literal(
+  ContactPersonOfRelationshipType
+);
 
 export const RelationshipPartyTypeSchema = Schema.Literals([
   'PERSON',
@@ -31,27 +34,35 @@ export const RelationshipIsoTimestampSchema = Schema.String.pipe(
       return Option.isNone(parsed) || DateTime.formatIso(parsed.value) !== value
         ? 'timestamp must be one canonical UTC instant with millisecond precision'
         : undefined;
-    }),
+    })
   ),
   Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
     decode: SchemaGetter.transform(DateTime.makeUnsafe),
     encode: SchemaGetter.transform(DateTime.formatIso),
-  }),
+  })
 );
-export type RelationshipIsoTimestamp = typeof RelationshipIsoTimestampSchema.Type;
+export type RelationshipIsoTimestamp =
+  typeof RelationshipIsoTimestampSchema.Type;
 
-const BoundedTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const ReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
+const BoundedTextSchema = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300)
+);
+const ReasonSchema = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(1000)
+);
 const PositiveRevisionSchema = Schema.Finite.check(
   Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isGreaterThanOrEqualTo(1)
 );
 
 export const PartyRelationshipProvenanceSchema = Schema.Struct({
   method: BoundedTextSchema,
   source: BoundedTextSchema,
 });
-export type PartyRelationshipProvenance = typeof PartyRelationshipProvenanceSchema.Type;
+export type PartyRelationshipProvenance =
+  typeof PartyRelationshipProvenanceSchema.Type;
 
 const createPayloadFields = {
   fromPartyRef: PartyRefSchema,
@@ -62,7 +73,9 @@ const createPayloadFields = {
   validTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
 } as const;
 
-export const CreatePartyRelationshipPayloadSchema = Schema.Struct(createPayloadFields).check(
+export const CreatePartyRelationshipPayloadSchema = Schema.Struct(
+  createPayloadFields
+).check(
   Schema.makeFilter((payload) => {
     if (
       payload.fromPartyRef.tenantId !== payload.toPartyRef.tenantId ||
@@ -75,9 +88,10 @@ export const CreatePartyRelationshipPayloadSchema = Schema.Struct(createPayloadF
       DateTime.Order(payload.validTo.value, payload.validFrom.value) > 0
       ? undefined
       : 'validTo must be later than validFrom for the exclusive [from,to) interval';
-  }),
+  })
 );
-export type CreatePartyRelationshipPayload = typeof CreatePartyRelationshipPayloadSchema.Type;
+export type CreatePartyRelationshipPayload =
+  typeof CreatePartyRelationshipPayloadSchema.Type;
 
 export const UpdatePartyRelationshipPayloadSchema = Schema.Struct({
   changeReason: ReasonSchema,
@@ -85,9 +99,12 @@ export const UpdatePartyRelationshipPayloadSchema = Schema.Struct({
   provenance: PartyRelationshipProvenanceSchema,
   relationshipRef: PartyRelationshipRefSchema,
   validFrom: Schema.optionalKey(RelationshipIsoTimestampSchema),
-  validTo: Schema.optionalKey(Schema.OptionFromNullOr(RelationshipIsoTimestampSchema)),
+  validTo: Schema.optionalKey(
+    Schema.OptionFromNullOr(RelationshipIsoTimestampSchema)
+  ),
 });
-export type UpdatePartyRelationshipPayload = typeof UpdatePartyRelationshipPayloadSchema.Type;
+export type UpdatePartyRelationshipPayload =
+  typeof UpdatePartyRelationshipPayloadSchema.Type;
 
 export const EndPartyRelationshipPayloadSchema = Schema.Struct({
   effectiveAt: RelationshipIsoTimestampSchema,
@@ -96,7 +113,8 @@ export const EndPartyRelationshipPayloadSchema = Schema.Struct({
   reason: Schema.optionalKey(ReasonSchema),
   relationshipRef: PartyRelationshipRefSchema,
 });
-export type EndPartyRelationshipPayload = typeof EndPartyRelationshipPayloadSchema.Type;
+export type EndPartyRelationshipPayload =
+  typeof EndPartyRelationshipPayloadSchema.Type;
 
 const RelationshipStoredEndpointSchema = Schema.Struct({
   canonicalPartyRef: PartyRefSchema,
@@ -104,7 +122,11 @@ const RelationshipStoredEndpointSchema = Schema.Struct({
   storedPartyRef: PartyRefSchema,
 });
 
-const PartyRelationshipStateSchema = Schema.Literals(['SCHEDULED', 'CURRENT', 'HISTORICAL']);
+const PartyRelationshipStateSchema = Schema.Literals([
+  'SCHEDULED',
+  'CURRENT',
+  'HISTORICAL',
+]);
 export type PartyRelationshipState = typeof PartyRelationshipStateSchema.Type;
 
 export const PartyRelationshipAssertionStateSchema = Schema.Literals([
@@ -134,7 +156,7 @@ export const UpdateRelationshipAuditEvidenceSchema = Schema.Struct({
   relationshipRef: PartyRelationshipRefSchema,
 });
 export const UpdateRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(
-  UpdateRelationshipAuditEvidenceSchema,
+  UpdateRelationshipAuditEvidenceSchema
 );
 export const EndRelationshipAuditEvidenceSchema = Schema.Struct({
   effectiveAt: RelationshipIsoTimestampSchema,
@@ -144,12 +166,14 @@ export const EndRelationshipAuditEvidenceSchema = Schema.Struct({
   relationshipRef: PartyRelationshipRefSchema,
 });
 export const EndRelationshipAuditEvidenceJsonSchema = Schema.toEncoded(
-  EndRelationshipAuditEvidenceSchema,
+  EndRelationshipAuditEvidenceSchema
 );
 
 export const PartyRelationshipDetailSchema = Schema.Struct({
   assertionState: PartyRelationshipAssertionStateSchema,
-  endHistory: Schema.Array(RelationshipEndEvidenceSchema).check(Schema.isMaxLength(1)),
+  endHistory: Schema.Array(RelationshipEndEvidenceSchema).check(
+    Schema.isMaxLength(1)
+  ),
   from: RelationshipStoredEndpointSchema,
   provenance: PartyRelationshipProvenanceSchema,
   recordedAt: RelationshipIsoTimestampSchema,
@@ -182,9 +206,8 @@ export const PartyRelationshipLifecycleEventPayloadSchema = Schema.Struct({
   validFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
   validTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
 });
-export const PartyRelationshipLifecycleEventPayloadJsonSchema = Schema.toEncoded(
-  PartyRelationshipLifecycleEventPayloadSchema,
-);
+export const PartyRelationshipLifecycleEventPayloadJsonSchema =
+  Schema.toEncoded(PartyRelationshipLifecycleEventPayloadSchema);
 
 export const partyRef = (tenantId: string, resourceId: string) => ({
   moduleId: 'party.registry' as const,

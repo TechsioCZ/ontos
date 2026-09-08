@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseSync, visitorKeys } from 'oxc-parser';
+
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
+import { parseSync, visitorKeys } from 'oxc-parser';
+
 import {
   asNode,
   childrenOf,
@@ -13,7 +15,11 @@ import {
   type Syntax,
 } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolvesToImport } from '../shared/bindings.ts';
-import { bindingPath, effectOrigin, isGenCallee } from '../shared/effect-identity.ts';
+import {
+  bindingPath,
+  effectOrigin,
+  isGenCallee,
+} from '../shared/effect-identity.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import {
   collectDirectMemberImports,
@@ -37,13 +43,18 @@ import {
   workspacePath,
 } from '../shared/paths.ts';
 import { provenance } from '../shared/provenance.ts';
-import { snippet } from '../shared/reporting.ts';
 import {
   isInErasedTypePosition,
   isInTypePosition,
   isNonReferencePosition,
 } from '../shared/reference-positions.ts';
-import { emittedText, maskText, reportNode, type StringNode } from '../shared/scaffold-text.ts';
+import { snippet } from '../shared/reporting.ts';
+import {
+  emittedText,
+  maskText,
+  reportNode,
+  type StringNode,
+} from '../shared/scaffold-text.ts';
 import { schemaIdentity } from '../shared/schema-identity.ts';
 import { isEntryPosition } from '../shared/script-entry.ts';
 
@@ -87,7 +98,11 @@ function contextFor(program: ESTree.Program): {
       for (const declarator of declaration.declarations) {
         walk(declarator.id, visitorKeys, (node) => {
           if (node.type === 'Identifier')
-            define(node.name, { type: 'Variable', node: declarator, parent: declaration });
+            define(node.name, {
+              type: 'Variable',
+              node: declarator,
+              parent: declaration,
+            });
         });
       }
     }
@@ -129,7 +144,10 @@ test('shared path policies distinguish earliest and latest markers and script sc
   assert.equal(workspacePath(fixture), 'apps/demo.ts');
   assert.equal(inScriptScope(scriptScope(fixture)), true);
   assert.equal(inScriptScope('scripts/a.test.ts'), false);
-  assert.equal(scriptScope('packages/p/scripts/apps/demo.ts'), 'packages/p/scripts/apps/demo.ts');
+  assert.equal(
+    scriptScope('packages/p/scripts/apps/demo.ts'),
+    'packages/p/scripts/apps/demo.ts'
+  );
   assert.equal(globToRegExp('**/*.{ts,mts}').test('a.ts'), true);
   assert.equal(globToRegExp('a{').test('a{'), true);
   assert.equal(globToRegExp('x/?*.ts').test('x/a.ts'), true);
@@ -159,52 +177,72 @@ test('shared static members distinguish templates and wrapped keys', () => {
 
 test('shared imports preserve aliases and optional type-only filtering', () => {
   const program = parse(
-    'import type * as Types from "effect"; import { type gen as tgen, gen as g } from "effect/Effect"; import * as S from "effect/Schema";',
+    'import type * as Types from "effect"; import { type gen as tgen, gen as g } from "effect/Effect"; import * as S from "effect/Schema";'
   );
   assert.deepEqual([...collectRootNamespaces(program)], ['Types']);
   assert.equal(
-    collectRootNamespaces(program, (source) => source === 'effect', { valueOnly: true }).size,
-    0,
+    collectRootNamespaces(program, (source) => source === 'effect', {
+      valueOnly: true,
+    }).size,
+    0
   );
   assert.deepEqual(collectDirectMemberImports(program).get('tgen'), {
     namespace: 'Effect',
     member: 'gen',
   });
   assert.equal(
-    collectDirectMemberImports(program, undefined, { valueOnly: true }).has('tgen'),
-    false,
+    collectDirectMemberImports(program, undefined, { valueOnly: true }).has(
+      'tgen'
+    ),
+    false
   );
   const schema = collectSchemaLocals(program, collectEffectBindings(program));
   assert.equal(schema.schema.has('S'), true);
 });
 
 test('shared Effect identities preserve const aliases and direct submodule imports', () => {
-  const program = parse('import { Effect as E } from "effect"; const { gen: g } = E; g;');
+  const program = parse(
+    'import { Effect as E } from "effect"; const { gen: g } = E; g;'
+  );
   const { context } = contextFor(program);
-  assert.deepEqual(bindingPath(context, lastExpression(program)), ['Effect', 'gen']);
-  assert.equal(isGenCallee(context, lastExpression(program), ['gen']), true);
-  const direct = parse('import { gen as g } from "effect/Effect"; g;');
-  assert.deepEqual(bindingPath(contextFor(direct).context, lastExpression(direct)), [
+  assert.deepEqual(bindingPath(context, lastExpression(program)), [
     'Effect',
     'gen',
   ]);
+  assert.equal(isGenCallee(context, lastExpression(program), ['gen']), true);
+  const direct = parse('import { gen as g } from "effect/Effect"; g;');
+  assert.deepEqual(
+    bindingPath(contextFor(direct).context, lastExpression(direct)),
+    ['Effect', 'gen']
+  );
 });
 
 test('shared Effect origin policies preserve glob barrels and default-import differences', () => {
   const program = parse('import E from "effect/Effect"; E.gen;');
   const { context } = contextFor(program);
   assert.equal(bindingPath(context, lastExpression(program)), null);
-  assert.deepEqual(effectOrigin(context, lastExpression(program), []), ['Effect', 'gen']);
+  assert.deepEqual(effectOrigin(context, lastExpression(program), []), [
+    'Effect',
+    'gen',
+  ]);
   const barrel = parse('import { Effect as E } from "@app/barrel"; E.gen;');
   const b = contextFor(barrel).context;
   assert.equal(bindingPath(b, lastExpression(barrel), ['@app/*']), null);
-  assert.deepEqual(effectOrigin(b, lastExpression(barrel), ['@app/*']), ['Effect', 'gen']);
+  assert.deepEqual(effectOrigin(b, lastExpression(barrel), ['@app/*']), [
+    'Effect',
+    'gen',
+  ]);
 });
 
 test('shared script provenance accepts unwritten let aliases but rejects later writes', () => {
-  const program = parse('import * as p from "node:process"; let { stderr: sink } = p; sink.write;');
+  const program = parse(
+    'import * as p from "node:process"; let { stderr: sink } = p; sink.write;'
+  );
   const { context, variables } = contextFor(program);
-  assert.equal(provenance(context, lastExpression(program)), 'process.stderr.write');
+  assert.equal(
+    provenance(context, lastExpression(program)),
+    'process.stderr.write'
+  );
   assert.equal(bindingPath(context, lastExpression(program)), null);
   const variable = variables.get('sink')!;
   variables.set('sink', {
@@ -216,13 +254,19 @@ test('shared script provenance accepts unwritten let aliases but rejects later w
 
 test('shared script provenance follows dynamic import, require and ambient containers', () => {
   const program = parse('await import("node:process");');
-  assert.equal(provenance(contextFor(program).context, lastExpression(program)), 'process');
+  assert.equal(
+    provenance(contextFor(program).context, lastExpression(program)),
+    'process'
+  );
   const required = parse('require("node:console").warn;');
-  assert.equal(provenance(contextFor(required).context, lastExpression(required)), 'console.warn');
+  assert.equal(
+    provenance(contextFor(required).context, lastExpression(required)),
+    'console.warn'
+  );
   const global = parse('globalThis.process.stderr.write;');
   assert.equal(
     provenance(contextFor(global).context, lastExpression(global)),
-    'process.stderr.write',
+    'process.stderr.write'
   );
 });
 
@@ -238,14 +282,19 @@ test('shared global/import resolution retains opt-in type-only policy', () => {
 
 test('shared Schema identity follows aliases while rejecting mutable declarations', () => {
   const program = parse(
-    'import * as E from "effect"; const S = E.Schema; const { decodeUnknownSync: decode } = S; decode;',
+    'import * as E from "effect"; const S = E.Schema; const { decodeUnknownSync: decode } = S; decode;'
   );
   assert.equal(
     schemaIdentity(contextFor(program).context, lastExpression(program)),
-    'decodeUnknownSync',
+    'decodeUnknownSync'
   );
-  const mutable = parse('import { Schema } from "effect"; let S = Schema; S.Json;');
-  assert.equal(schemaIdentity(contextFor(mutable).context, lastExpression(mutable)), null);
+  const mutable = parse(
+    'import { Schema } from "effect"; let S = Schema; S.Json;'
+  );
+  assert.equal(
+    schemaIdentity(contextFor(mutable).context, lastExpression(mutable)),
+    null
+  );
 });
 
 test('shared template text preserves cooked offsets and diagnostic budgets', () => {
@@ -253,60 +302,83 @@ test('shared template text preserves cooked offsets and diagnostic budgets', () 
   assert.equal(emittedText(node), 'first _ last');
   assert.equal(reportNode(node, 0, 4).type, 'TemplateElement');
   assert.equal(reportNode(node, 0, 12), node);
-  assert.equal(maskText('// hi\nconst x = "a";').length, '// hi\nconst x = "a";'.length);
+  assert.equal(
+    maskText('// hi\nconst x = "a";').length,
+    '// hi\nconst x = "a";'.length
+  );
   assert.equal(maskText('"a"', true), '   ');
   assert.equal(snippet('abcdef', 4, 2), 'ab…');
 });
 
 test('shared entry detection includes module evaluation and top-level IIFEs only', () => {
   const program = parse(
-    '(() => { console.warn("x"); })(); function nested() { console.warn("y"); }',
+    '(() => { console.warn("x"); })(); function nested() { console.warn("y"); }'
   );
   const context = contextFor(program).context;
   const calls: Syntax[] = [];
   walk(program, visitorKeys, (node) => {
-    if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') calls.push(node);
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression'
+    )
+      calls.push(node);
   });
   assert.equal(isEntryPosition(context, calls[0]!), true);
   assert.equal(isEntryPosition(context, calls[1]!), false);
 });
 
 test('shared reference policies preserve declaration keys and TS expression edges', () => {
-  const program = parse('const result = Schema as unknown; type Result = typeof Schema;');
+  const program = parse(
+    'const result = Schema as unknown; type Result = typeof Schema;'
+  );
   const identifiers: Syntax[] = [];
   walk(program, visitorKeys, (node) => {
     if (node.type === 'Identifier') identifiers.push(node);
   });
   const binding = identifiers.find((node) => node.name === 'result')!;
   assert.equal(isNonReferencePosition(binding), false);
-  assert.equal(isNonReferencePosition(binding, { variableBindings: true }), true);
+  assert.equal(
+    isNonReferencePosition(binding, { variableBindings: true }),
+    true
+  );
   const schema = identifiers.filter((node) => node.name === 'Schema');
   assert.equal(isInErasedTypePosition(schema[0]!), false);
   assert.equal(isInErasedTypePosition(schema[1]!), true);
-  assert.equal(isInTypePosition(schema[0]!, new Set(['TSAsExpression'])), false);
+  assert.equal(
+    isInTypePosition(schema[0]!, new Set(['TSAsExpression'])),
+    false
+  );
   assert.equal(isInTypePosition(schema[1]!, new Set(['TSAsExpression'])), true);
 });
 
 test('Schema identity syntax policy survives aliases without widening default members', () => {
   for (const key of ['`decodeUnknownSync`', '("decodeUnknownSync" as const)']) {
     const program = parse(
-      `import { Schema } from "effect"; const S = Schema; const codec = S[${key}]; codec;`,
+      `import { Schema } from "effect"; const S = Schema; const codec = S[${key}]; codec;`
     );
     const { context } = contextFor(program);
     const node = lastExpression(program);
     assert.equal(schemaIdentity(context, node), null);
     assert.equal(
       schemaIdentity(context, node, [], 0, { templates: true, unwrap: {} }),
-      'decodeUnknownSync',
+      'decodeUnknownSync'
     );
   }
 });
 
 test('Schema identity preserves rule-specific expression wrapper limits', () => {
-  const program = parse('import { Schema } from "effect"; const S = Schema as unknown; S.Json;');
+  const program = parse(
+    'import { Schema } from "effect"; const S = Schema as unknown; S.Json;'
+  );
   const { context } = contextFor(program);
   const node = lastExpression(program);
   assert.equal(schemaIdentity(context, node), 'Json');
-  assert.equal(schemaIdentity(context, node, [], 0, { unwrap: { wrappers: new Set() } }), null);
-  assert.equal(schemaIdentity(context, node, [], 0, { unwrap: { maxDepth: 0 } }), null);
+  assert.equal(
+    schemaIdentity(context, node, [], 0, { unwrap: { wrappers: new Set() } }),
+    null
+  );
+  assert.equal(
+    schemaIdentity(context, node, [], 0, { unwrap: { maxDepth: 0 } }),
+    null
+  );
 });

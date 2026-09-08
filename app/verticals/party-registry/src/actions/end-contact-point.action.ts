@@ -4,6 +4,19 @@
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
+
+import {
+  EndContactPointPayloadSchema,
+  EndContactPointResultSchema,
+} from '../../shared/actions/end-contact-point.ts';
+import type { EndContactPointPayload } from '../../shared/actions/end-contact-point.ts';
+import {
+  PartyContactPointCorrectionRequired,
+  PartyContactPointInvalid,
+  PartyContactPointLifecycleConflict,
+  PartyContactPointNotFound,
+  PartyContactPointPersistenceUnavailable,
+} from '../../shared/domain/contact-point-errors.ts';
 import {
   ContactPointTimestampSchema,
   PartyContactPointSchema,
@@ -13,21 +26,8 @@ import type {
   ContactPointProvenance,
   PartyContactPoint,
 } from '../../shared/domain/contact-point.ts';
-import {
-  PartyContactPointCorrectionRequired,
-  PartyContactPointInvalid,
-  PartyContactPointLifecycleConflict,
-  PartyContactPointNotFound,
-  PartyContactPointPersistenceUnavailable,
-} from '../../shared/domain/contact-point-errors.ts';
 import { endContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
 import { createEndContactPointPartyRegistryContactPointEndedV1OutboxMessage } from './end-contact-point.party-registry-contact-point-ended-v1.outbox-message.ts';
-
-import {
-  EndContactPointPayloadSchema,
-  EndContactPointResultSchema,
-} from '../../shared/actions/end-contact-point.ts';
-import type { EndContactPointPayload } from '../../shared/actions/end-contact-point.ts';
 
 export { EndContactPointPayloadSchema } from '../../shared/actions/end-contact-point.ts';
 export type { EndContactPointPayload } from '../../shared/actions/end-contact-point.ts';
@@ -56,7 +56,10 @@ export interface EndContactPointCommand {
   readonly reason: string;
   readonly target:
     | Readonly<{ readonly type: 'WHOLE_CONTACT_POINT' }>
-    | Readonly<{ readonly target: AddressPurposeTarget; readonly type: 'ADDRESS_PURPOSE' }>;
+    | Readonly<{
+        readonly target: AddressPurposeTarget;
+        readonly type: 'ADDRESS_PURPOSE';
+      }>;
 }
 
 type EndError =
@@ -68,51 +71,56 @@ type EndError =
 
 interface Services {
   readonly end: (
-    command: EndContactPointCommand,
-  ) => Effect.Effect<Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>, EndError>;
+    command: EndContactPointCommand
+  ) => Effect.Effect<
+    Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>,
+    EndError
+  >;
 }
 
-const handleEndContactPoint = Effect.fn('EndContactPointAction.handleEndContactPoint')(
-  function* endContactPoint(
-    payload: EndContactPointPayload,
-    context: ActionHandlerContext<
-      Readonly<{ 'party.registry.contact-point-ended.v1': typeof ContactPointEndedEventSchema }>,
-      Services
-    >,
-  ) {
-    const result = yield* context.services.end({
-      ...payload,
-      acceptedByActionInvocationId: context.actionInvocationId,
-      acceptedByPrincipalId: context.scope.principalId,
-      effectiveEnd: DateTime.formatIso(payload.effectiveEnd),
-    });
-    if (!result.changed) {
-      return result.contactPoint;
-    }
-    const { contactPoint } = result;
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.contact-point-ended.v1',
-      payloadJson: {
-        contactPointRef: contactPoint.contactPointRef,
-        effectiveEnd: payload.effectiveEnd,
-        partyRef: contactPoint.partyRef,
-        revision: contactPoint.revision,
-      },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: contactPoint.contactPointRef.resourceId,
-      subjectResourceType: contactPoint.contactPointRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createEndContactPointPartyRegistryContactPointEndedV1OutboxMessage({
-        contactPointRef: contactPoint.contactPointRef,
-        partyRef: contactPoint.partyRef,
-      }),
-    );
-    return contactPoint;
-  },
-);
+const handleEndContactPoint = Effect.fn(
+  'EndContactPointAction.handleEndContactPoint'
+)(function* endContactPoint(
+  payload: EndContactPointPayload,
+  context: ActionHandlerContext<
+    Readonly<{
+      'party.registry.contact-point-ended.v1': typeof ContactPointEndedEventSchema;
+    }>,
+    Services
+  >
+) {
+  const result = yield* context.services.end({
+    ...payload,
+    acceptedByActionInvocationId: context.actionInvocationId,
+    acceptedByPrincipalId: context.scope.principalId,
+    effectiveEnd: DateTime.formatIso(payload.effectiveEnd),
+  });
+  if (!result.changed) {
+    return result.contactPoint;
+  }
+  const { contactPoint } = result;
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.contact-point-ended.v1',
+    payloadJson: {
+      contactPointRef: contactPoint.contactPointRef,
+      effectiveEnd: payload.effectiveEnd,
+      partyRef: contactPoint.partyRef,
+      revision: contactPoint.revision,
+    },
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: contactPoint.contactPointRef.resourceId,
+    subjectResourceType: contactPoint.contactPointRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createEndContactPointPartyRegistryContactPointEndedV1OutboxMessage({
+      contactPointRef: contactPoint.contactPointRef,
+      partyRef: contactPoint.partyRef,
+    })
+  );
+  return contactPoint;
+});
 
 export const endContactPointAction = defineAction(
   {
@@ -123,10 +131,15 @@ export const endContactPointAction = defineAction(
     actionKey: 'party.registry.end-contact-point',
     auditProfile: 'sensitive',
     domainErrorSchema: EndContactPointErrorSchema,
-    domainEvents: { 'party.registry.contact-point-ended.v1': ContactPointEndedEventSchema },
+    domainEvents: {
+      'party.registry.contact-point-ended.v1': ContactPointEndedEventSchema,
+    },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.end-contact-point',
       moduleKey: 'party.registry',
       role: 'action',
@@ -143,6 +156,7 @@ export const endContactPointAction = defineAction(
   handleEndContactPoint,
   (transaction, scope) =>
     Effect.succeed({
-      end: (command: EndContactPointCommand) => endContactPointRecord(transaction, scope, command),
-    }),
+      end: (command: EndContactPointCommand) =>
+        endContactPointRecord(transaction, scope, command),
+    })
 );

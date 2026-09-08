@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import {
   RelationshipEndpointSchema,
   RelationshipErrorBase,
@@ -13,5 +14,5 @@ export class PartyRelationshipEndpointTypeMismatch extends Schema.TaggedError<Pa
     code: Schema.Literal('party_relationship_endpoint_type_mismatch'),
     endpoint: RelationshipEndpointSchema,
     expectedPartyType: RelationshipErrorPartyTypeSchema,
-  },
+  }
 ) {}

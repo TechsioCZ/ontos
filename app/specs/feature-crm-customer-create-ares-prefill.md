@@ -8,28 +8,19 @@ created: 2026-08-17
 
 ## Feature Description
 
-Integrate the owner-private ARES loader and generated lookup read into the existing Customer create
-page. Successful lookup applies flat Customer values to the controlled form, lets the user review
-and edit them, and persists the final values through the existing CreateCustomerAction.
+Integrate the owner-private ARES loader and generated lookup read into the existing Customer create page. Successful lookup applies flat Customer values to the controlled form, lets the user review and edit them, and persists the final values through the existing CreateCustomerAction.
 
 ## User Story
 
-As a CRM user creating a Czech Customer
-I want to prefill its business identity from ARES
-So that I can avoid retyping public data while retaining control of the saved Customer
+As a CRM user creating a Czech Customer I want to prefill its business identity from ARES So that I can avoid retyping public data while retaining control of the saved Customer
 
 ## Problem Statement
 
-The lookup API, loader, and controlled Customer form are separate building blocks. The create route
-must own their application state, typed Effect execution, mapping, retry, prefill policy,
-idempotency, and final mutation without coupling presentation to data infrastructure.
+The lookup API, loader, and controlled Customer form are separate building blocks. The create route must own their application state, typed Effect execution, mapping, retry, prefill policy, idempotency, and final mutation without coupling presentation to data infrastructure.
 
 ## Solution Statement
 
-Render `CustomerAresLoader` as a sibling before `CustomerForm`. Use a page-owned TanStack mutation
-adapter to run the generated ARES lookup Effect on explicit valid IČO submission. On success,
-replace `name` and `ico`, apply non-null optional ARES values, and retain manually entered optional
-values when ARES omits them. Save the resulting controlled Customer values through `createCustomer`.
+Render `CustomerAresLoader` as a sibling before `CustomerForm`. Use a page-owned TanStack mutation adapter to run the generated ARES lookup Effect on explicit valid IČO submission. On success, replace `name` and `ico`, apply non-null optional ARES values, and retain manually entered optional values when ARES omits them. Save the resulting controlled Customer values through `createCustomer`.
 
 ## Relevant Files
 
@@ -49,18 +40,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Consume completed Action, lookup BFF, controlled form, and loader dependencies; preserve the existing
-generated page identity, route, target gating, and navigation.
+Consume completed Action, lookup BFF, controlled form, and loader dependencies; preserve the existing generated page identity, route, target gating, and navigation.
 
 ### Phase 2: Core Implementation
 
-Own lookup and form state in the page, map the complete typed lookup error union to presentation,
-apply the deterministic prefill policy, and submit the final payload with correct idempotency.
+Own lookup and form state in the page, map the complete typed lookup error union to presentation, apply the deterministic prefill policy, and submit the final payload with correct idempotency.
 
 ### Phase 3: Integration
 
-Complete localized states, accessibility, responsive composition, focused page tests, and real BFF
-coverage for both lookup and Customer creation.
+Complete localized states, accessibility, responsive composition, focused page tests, and real BFF coverage for both lookup and Customer creation.
 
 ## Step by Step Tasks
 
@@ -101,13 +89,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use component tests with mocked generated Effect clients and a real query provider to validate
-state mapping, prefill, manual editing, mutation payloads, idempotency, accessibility, and navigation.
+Use component tests with mocked generated Effect clients and a real query provider to validate state mapping, prefill, manual editing, mutation payloads, idempotency, accessibility, and navigation.
 
 ### Integration Tests
 
-Run the strict CRM BFF with a substituted ARES service and real Action runtime to prove the complete
-lookup-to-confirmed-create flow without external network dependency.
+Run the strict CRM BFF with a substituted ARES service and real Action runtime to prove the complete lookup-to-confirmed-create flow without external network dependency.
 
 ### Edge Cases
 

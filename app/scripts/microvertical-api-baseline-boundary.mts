@@ -29,7 +29,9 @@ import type {
 import { API as TypeScriptApi } from '@typescript/native/unstable/sync';
 
 const camelCaseStem = (stem: string): string =>
-  stem.replaceAll(/-(?<letter>[a-z0-9])/gu, (_match, letter: string) => letter.toUpperCase());
+  stem.replaceAll(/-(?<letter>[a-z0-9])/gu, (_match, letter: string) =>
+    letter.toUpperCase()
+  );
 
 const pascalCaseStem = (stem: string): string => {
   const camelStem = camelCaseStem(stem);
@@ -42,7 +44,9 @@ const identifierName = (node: Node | undefined): string | undefined =>
 const propertyName = (node: Node | undefined): string | undefined => {
   if (
     node !== undefined &&
-    (isIdentifier(node) || isStringLiteralLikeNode(node) || isNumericLiteral(node))
+    (isIdentifier(node) ||
+      isStringLiteralLikeNode(node) ||
+      isNumericLiteral(node))
   ) {
     return node.text;
   }
@@ -75,7 +79,9 @@ const unwrapExpression = (expression: Expression): Expression => {
   return current;
 };
 
-const stringLiteral = (expression: Expression | undefined): string | undefined => {
+const stringLiteral = (
+  expression: Expression | undefined
+): string | undefined => {
   if (expression === undefined) {
     return undefined;
   }
@@ -83,7 +89,9 @@ const stringLiteral = (expression: Expression | undefined): string | undefined =
   return isStringLiteralLikeNode(unwrapped) ? unwrapped.text : undefined;
 };
 
-const numericLiteral = (expression: Expression | undefined): number | undefined => {
+const numericLiteral = (
+  expression: Expression | undefined
+): number | undefined => {
   if (expression === undefined) {
     return undefined;
   }
@@ -93,30 +101,36 @@ const numericLiteral = (expression: Expression | undefined): number | undefined 
 
 const callExpression = (
   expression: Expression | undefined,
-  callee: readonly string[],
+  callee: readonly string[]
 ): CallExpression | undefined => {
   if (expression === undefined) {
     return undefined;
   }
   const unwrapped = unwrapExpression(expression);
-  return isCallExpression(unwrapped) && isAccessPath(unwrapped.expression, callee)
+  return isCallExpression(unwrapped) &&
+    isAccessPath(unwrapped.expression, callee)
     ? unwrapped
     : undefined;
 };
 
-const exportedConst = (sourceFile: SourceFile, name: string): VariableDeclaration | undefined => {
+const exportedConst = (
+  sourceFile: SourceFile,
+  name: string
+): VariableDeclaration | undefined => {
   for (const statement of sourceFile.statements) {
     if (
       !isVariableStatement(statement) ||
       !(
-        statement.modifiers?.some((modifier) => modifier.kind === SyntaxKind.ExportKeyword) ?? false
+        statement.modifiers?.some(
+          (modifier) => modifier.kind === SyntaxKind.ExportKeyword
+        ) ?? false
       ) ||
       statement.declarationList.flags !== NodeFlags.Const
     ) {
       continue;
     }
     const declarations = statement.declarationList.declarations.filter(
-      (declaration) => identifierName(declaration.name) === name,
+      (declaration) => identifierName(declaration.name) === name
     );
     if (declarations.length === 1) {
       return declarations[0];
@@ -125,13 +139,19 @@ const exportedConst = (sourceFile: SourceFile, name: string): VariableDeclaratio
   return undefined;
 };
 
-const localConst = (sourceFile: SourceFile, name: string): VariableDeclaration | undefined => {
+const localConst = (
+  sourceFile: SourceFile,
+  name: string
+): VariableDeclaration | undefined => {
   for (const statement of sourceFile.statements) {
-    if (!isVariableStatement(statement) || statement.declarationList.flags !== NodeFlags.Const) {
+    if (
+      !isVariableStatement(statement) ||
+      statement.declarationList.flags !== NodeFlags.Const
+    ) {
       continue;
     }
     const declarations = statement.declarationList.declarations.filter(
-      (declaration) => identifierName(declaration.name) === name,
+      (declaration) => identifierName(declaration.name) === name
     );
     if (declarations.length === 1) {
       return declarations[0];
@@ -140,7 +160,9 @@ const localConst = (sourceFile: SourceFile, name: string): VariableDeclaration |
   return undefined;
 };
 
-const objectLiteral = (expression: Expression | undefined): ObjectLiteralExpression | undefined => {
+const objectLiteral = (
+  expression: Expression | undefined
+): ObjectLiteralExpression | undefined => {
   if (expression === undefined) {
     return undefined;
   }
@@ -149,7 +171,7 @@ const objectLiteral = (expression: Expression | undefined): ObjectLiteralExpress
 };
 
 const propertyAssignments = (
-  properties: readonly ObjectLiteralElementLike[],
+  properties: readonly ObjectLiteralElementLike[]
 ): ReadonlyMap<string, PropertyAssignment> | undefined => {
   const assignments = new Map<string, PropertyAssignment>();
   for (const property of properties) {
@@ -168,7 +190,7 @@ const propertyAssignments = (
 const exactCall = (
   expression: Expression | undefined,
   callee: readonly string[],
-  argumentCount: number,
+  argumentCount: number
 ): CallExpression | undefined => {
   const call = callExpression(expression, callee);
   return call?.arguments.length === argumentCount ? call : undefined;
@@ -182,7 +204,7 @@ interface SharedSchemaObject {
 const sharedSchemaObject = (
   declaration: VariableDeclaration | undefined,
   sharedSchemaName: string,
-  protectedFields: readonly string[],
+  protectedFields: readonly string[]
 ): SharedSchemaObject | undefined => {
   if (declaration?.initializer === undefined) {
     return undefined;
@@ -198,11 +220,13 @@ const sharedSchemaObject = (
   }
   const spreads = schemaObject.properties.filter(isSpreadAssignment);
   const assignments = propertyAssignments(
-    schemaObject.properties.filter((property) => !isSpreadAssignment(property)),
+    schemaObject.properties.filter((property) => !isSpreadAssignment(property))
   );
   if (
     spreads.length !== 1 ||
-    !spreads.every((spread) => isAccessPath(spread.expression, [sharedSchemaName, 'fields'])) ||
+    !spreads.every((spread) =>
+      isAccessPath(spread.expression, [sharedSchemaName, 'fields'])
+    ) ||
     assignments === undefined ||
     protectedFields.some((field) => assignments.has(field))
   ) {
@@ -219,7 +243,9 @@ interface DirectCallChain {
   }[];
 }
 
-const directCallChain = (expression: Expression | undefined): DirectCallChain | undefined => {
+const directCallChain = (
+  expression: Expression | undefined
+): DirectCallChain | undefined => {
   if (expression === undefined) {
     return undefined;
   }
@@ -247,7 +273,7 @@ const directCallChain = (expression: Expression | undefined): DirectCallChain | 
 
 const brandedStringSchemaIsExact = (
   declaration: VariableDeclaration | undefined,
-  brand: string,
+  brand: string
 ): boolean => {
   const initializer = declaration?.initializer;
   if (initializer === undefined) {
@@ -267,7 +293,10 @@ const brandedStringSchemaIsExact = (
   return stringLiteral(brandCall?.arguments[0]) === brand;
 };
 
-const importedRuntimeNames = (statement: Node, expectedPackage: string): readonly string[] => {
+const importedRuntimeNames = (
+  statement: Node,
+  expectedPackage: string
+): readonly string[] => {
   if (
     !isImportDeclaration(statement) ||
     stringLiteral(statement.moduleSpecifier) !== expectedPackage
@@ -284,24 +313,28 @@ const importedRuntimeNames = (statement: Node, expectedPackage: string): readonl
     return [];
   }
   return bindings.elements
-    .filter((element) => !element.isTypeOnly && element.propertyName === undefined)
+    .filter(
+      (element) => !element.isTypeOnly && element.propertyName === undefined
+    )
     .map((element) => element.name.text);
 };
 
 const importsExactBindings = (
   sourceFile: SourceFile,
   expectedPackage: string,
-  expectedBindings: readonly string[],
+  expectedBindings: readonly string[]
 ): boolean => {
   const names = new Set(
-    sourceFile.statements.flatMap((statement) => importedRuntimeNames(statement, expectedPackage)),
+    sourceFile.statements.flatMap((statement) =>
+      importedRuntimeNames(statement, expectedPackage)
+    )
   );
   return expectedBindings.every((name) => names.has(name));
 };
 
 const importsSharedBaselinePrimitives = (
   sourceFile: SourceFile,
-  expectedPackage: string,
+  expectedPackage: string
 ): boolean =>
   importsExactBindings(sourceFile, expectedPackage, [
     'MicroVerticalBuildMarkerSchema',
@@ -312,7 +345,7 @@ const importsSharedBaselinePrimitives = (
 const singleAddedArgument = (
   expression: Expression | undefined,
   factory: readonly string[],
-  names: readonly string[],
+  names: readonly string[]
 ): Expression | undefined => {
   const chain = directCallChain(expression);
   if (chain === undefined || !isAccessPath(chain.base.expression, factory)) {
@@ -334,24 +367,34 @@ const singleAddedArgument = (
 const foundationIsExact = (
   declaration: VariableDeclaration | undefined,
   stem: string,
-  readinessSchemaName: string,
+  readinessSchemaName: string
 ): boolean => {
   const group = singleAddedArgument(
     declaration?.initializer,
     ['HttpApi', 'make'],
-    [`${pascalCaseStem(stem)}FoundationApi`, `${pascalCaseStem(stem)}ApiFoundation`],
+    [
+      `${pascalCaseStem(stem)}FoundationApi`,
+      `${pascalCaseStem(stem)}ApiFoundation`,
+    ]
   );
-  const endpointExpression = singleAddedArgument(group, ['HttpApiGroup', 'make'], ['foundation']);
+  const endpointExpression = singleAddedArgument(
+    group,
+    ['HttpApiGroup', 'make'],
+    ['foundation']
+  );
   const endpoint = exactCall(endpointExpression, ['HttpApiEndpoint', 'get'], 3);
   const endpointOptions = objectLiteral(endpoint?.arguments[2]);
   const endpointProperties =
-    endpointOptions === undefined ? undefined : propertyAssignments(endpointOptions.properties);
+    endpointOptions === undefined
+      ? undefined
+      : propertyAssignments(endpointOptions.properties);
   return (
     endpoint !== undefined &&
     stringLiteral(endpoint.arguments[0]) === 'readiness' &&
     stringLiteral(endpoint.arguments[1]) === `/${stem}/readiness` &&
     endpointProperties?.size === 1 &&
-    identifierName(endpointProperties.get('success')?.initializer) === readinessSchemaName
+    identifierName(endpointProperties.get('success')?.initializer) ===
+      readinessSchemaName
   );
 };
 
@@ -359,7 +402,7 @@ const rootComposesFoundation = (
   sourceFile: SourceFile,
   declaration: VariableDeclaration | undefined,
   stem: string,
-  foundationName: string,
+  foundationName: string
 ): boolean => {
   const chain = directCallChain(declaration?.initializer);
   const first = chain?.methods[0];
@@ -377,7 +420,7 @@ const rootComposesFoundation = (
           (index === chain.methods.length - 1 &&
             method.name === 'pipe' &&
             identifierName(method.arguments[0]) === 'identity' &&
-            importsExactBindings(sourceFile, 'effect', ['identity']))),
+            importsExactBindings(sourceFile, 'effect', ['identity'])))
     ) &&
     first?.name === 'addHttpApi' &&
     identifierName(first.arguments[0]) === foundationName
@@ -388,16 +431,22 @@ const operationContextFields = (property: PropertyAssignment) => {
   const constructorCall = exactCall(
     property.initializer,
     ['createMicroVerticalOperationContext'],
-    1,
+    1
   );
   const input = objectLiteral(constructorCall?.arguments[0]);
-  return input === undefined ? undefined : propertyAssignments(input.properties);
+  return input === undefined
+    ? undefined
+    : propertyAssignments(input.properties);
 };
 
 const operationContextIdentity = (
-  property: PropertyAssignment,
+  property: PropertyAssignment
 ):
-  | { readonly method: string; readonly operationId: string; readonly routePath: string }
+  | {
+      readonly method: string;
+      readonly operationId: string;
+      readonly routePath: string;
+    }
   | undefined => {
   const fields = operationContextFields(property);
   const method = stringLiteral(fields?.get('method')?.initializer);
@@ -417,14 +466,17 @@ const operationContextIdentity = (
 const operationContextIsConstructed = (
   property: PropertyAssignment,
   stem: string,
-  propertyKey: string,
+  propertyKey: string
 ): boolean => {
   const identity = operationContextIdentity(property);
   if (identity === undefined) {
     return false;
   }
   const { method, operationId, routePath } = identity;
-  if (!/^[A-Z]+$/u.test(method) || !/^\/(?!.*(?:^|\/)\.\.?\/)[^\s?#]*$/u.test(routePath)) {
+  if (
+    !/^[A-Z]+$/u.test(method) ||
+    !/^\/(?!.*(?:^|\/)\.\.?\/)[^\s?#]*$/u.test(routePath)
+  ) {
     return false;
   }
   const apiName = `${pascalCaseStem(stem)}Api`;
@@ -440,31 +492,37 @@ const operationContextIsConstructed = (
   ]).get(propertyKey);
   const requestedOperation = [method, routePath];
   const matchesGenerated =
-    generatedOperation?.every((value, index) => value === requestedOperation[index]) === true;
+    generatedOperation?.every(
+      (value, index) => value === requestedOperation[index]
+    ) === true;
   if (propertyKey === 'readiness' && !matchesGenerated) {
     return false;
   }
   return (
     operationId === `${apiName}:${routePath}` ||
-    (operationId === `${apiName}:${camelCaseStem(stem)}:${propertyKey}` && matchesGenerated)
+    (operationId === `${apiName}:${camelCaseStem(stem)}:${propertyKey}` &&
+      matchesGenerated)
   );
 };
 
 const operationMapIsConnected = (
   declaration: VariableDeclaration | undefined,
-  stem: string,
+  stem: string
 ): boolean => {
   const map = objectLiteral(declaration?.initializer);
-  const properties = map === undefined ? undefined : propertyAssignments(map.properties);
+  const properties =
+    map === undefined ? undefined : propertyAssignments(map.properties);
   return (
     properties !== undefined &&
     properties.has('readiness') &&
-    [...properties].every(([key, property]) => operationContextIsConstructed(property, stem, key))
+    [...properties].every(([key, property]) =>
+      operationContextIsConstructed(property, stem, key)
+    )
   );
 };
 
 const constAssertionObject = (
-  declaration: VariableDeclaration | undefined,
+  declaration: VariableDeclaration | undefined
 ): ObjectLiteralExpression | undefined => {
   const initializer = declaration?.initializer;
   if (
@@ -479,10 +537,11 @@ const constAssertionObject = (
 
 const metadataIsExact = (
   declaration: VariableDeclaration | undefined,
-  expectation: MicroVerticalApiBaselineExpectation,
+  expectation: MicroVerticalApiBaselineExpectation
 ): boolean => {
   const object = constAssertionObject(declaration);
-  const fields = object === undefined ? undefined : propertyAssignments(object.properties);
+  const fields =
+    object === undefined ? undefined : propertyAssignments(object.properties);
   const expectedFields = [
     ['apiPrefix', expectation.apiPrefix],
     ['basePath', expectation.basePath],
@@ -494,72 +553,84 @@ const metadataIsExact = (
     fields !== undefined &&
     fields.size === new Map(expectedFields).size &&
     [...expectedFields].every(
-      ([field, value]) => stringLiteral(fields.get(field)?.initializer) === value,
+      ([field, value]) =>
+        stringLiteral(fields.get(field)?.initializer) === value
     )
   );
 };
 
 const markerSchemaIsShared = (
   sourceFile: SourceFile,
-  declaration: VariableDeclaration | undefined,
+  declaration: VariableDeclaration | undefined
 ): boolean => {
-  const schema = sharedSchemaObject(declaration, 'MicroVerticalBuildMarkerSchema', [
-    'build',
-    'buildMarker',
-    'deployProfile',
-    'packageName',
-    'sourceRevision',
-    'surface',
-    'version',
-  ]);
+  const schema = sharedSchemaObject(
+    declaration,
+    'MicroVerticalBuildMarkerSchema',
+    [
+      'build',
+      'buildMarker',
+      'deployProfile',
+      'packageName',
+      'sourceRevision',
+      'surface',
+      'version',
+    ]
+  );
   if (schema === undefined || schema.identity) {
     return schema?.identity === true;
   }
   const brandedField = (property: PropertyAssignment, brand: string): boolean =>
     identifierName(property.initializer) === `${brand}Schema` &&
     brandedStringSchemaIsExact(localConst(sourceFile, `${brand}Schema`), brand);
-  const validators = new Map<string, (property: PropertyAssignment) => boolean>([
-    ['appId', (property) => brandedField(property, 'AppId')],
-    ['unitId', (property) => brandedField(property, 'UnitId')],
+  const validators = new Map<string, (property: PropertyAssignment) => boolean>(
     [
-      'kind',
-      (property) =>
-        stringLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) ===
-        'microvertical-delivery-unit',
-    ],
-    [
-      'schemaVersion',
-      (property) =>
-        numericLiteral(exactCall(property.initializer, ['Schema', 'Literal'], 1)?.arguments[0]) ===
-        1,
-    ],
-  ]);
+      ['appId', (property) => brandedField(property, 'AppId')],
+      ['unitId', (property) => brandedField(property, 'UnitId')],
+      [
+        'kind',
+        (property) =>
+          stringLiteral(
+            exactCall(property.initializer, ['Schema', 'Literal'], 1)
+              ?.arguments[0]
+          ) === 'microvertical-delivery-unit',
+      ],
+      [
+        'schemaVersion',
+        (property) =>
+          numericLiteral(
+            exactCall(property.initializer, ['Schema', 'Literal'], 1)
+              ?.arguments[0]
+          ) === 1,
+      ],
+    ]
+  );
   return [...schema.assignments].every(
-    ([field, property]) => validators.get(field)?.(property) === true,
+    ([field, property]) => validators.get(field)?.(property) === true
   );
 };
 
 const readinessSchemaIsShared = (
   declaration: VariableDeclaration | undefined,
   markerSchemaName: string,
-  ownerMarkerIsIdentity: boolean,
+  ownerMarkerIsIdentity: boolean
 ): boolean => {
-  const schema = sharedSchemaObject(declaration, 'MicroVerticalReadinessSchema', [
-    'checks',
-    'status',
-    'versionSkew',
-  ]);
+  const schema = sharedSchemaObject(
+    declaration,
+    'MicroVerticalReadinessSchema',
+    ['checks', 'status', 'versionSkew']
+  );
   return (
     schema !== undefined &&
     ((schema.identity && ownerMarkerIsIdentity) ||
       (schema.assignments.size === 1 &&
-        identifierName(schema.assignments.get('marker')?.initializer) === markerSchemaName))
+        identifierName(schema.assignments.get('marker')?.initializer) ===
+          markerSchemaName))
   );
 };
 
 const declarationIsIdentifier = (
   declaration: VariableDeclaration | undefined,
-  identifier: string,
+  identifier: string
 ): boolean =>
   declaration?.initializer !== undefined &&
   identifierName(unwrapExpression(declaration.initializer)) === identifier;
@@ -567,7 +638,7 @@ const declarationIsIdentifier = (
 const validateParsedContract = (
   sourceFile: SourceFile,
   stem: string,
-  expectation: MicroVerticalApiBaselineExpectation,
+  expectation: MicroVerticalApiBaselineExpectation
 ): string | undefined => {
   const exportStem = camelCaseStem(stem);
   const foundationName = `${exportStem}FoundationApi`;
@@ -584,7 +655,12 @@ const validateParsedContract = (
   ) {
     return 'MicroVertical root contract must import exact Effect API primitives from the framework client package';
   }
-  if (!importsSharedBaselinePrimitives(sourceFile, expectation.sharedContractsPackage)) {
+  if (
+    !importsSharedBaselinePrimitives(
+      sourceFile,
+      expectation.sharedContractsPackage
+    )
+  ) {
     return 'MicroVertical root contract must import exact baseline primitives from the shared contracts package';
   }
   if (!markerSchemaIsShared(sourceFile, markerDeclaration)) {
@@ -594,12 +670,21 @@ const validateParsedContract = (
     !readinessSchemaIsShared(
       exportedConst(sourceFile, readinessSchemaName),
       markerSchemaName,
-      declarationIsIdentifier(markerDeclaration, 'MicroVerticalBuildMarkerSchema'),
+      declarationIsIdentifier(
+        markerDeclaration,
+        'MicroVerticalBuildMarkerSchema'
+      )
     )
   ) {
     return 'MicroVertical readiness schema must consume the shared readiness schema without overriding shared fields';
   }
-  if (!foundationIsExact(exportedConst(sourceFile, foundationName), stem, readinessSchemaName)) {
+  if (
+    !foundationIsExact(
+      exportedConst(sourceFile, foundationName),
+      stem,
+      readinessSchemaName
+    )
+  ) {
     return 'MicroVertical readiness foundation API must directly compose its exact readiness endpoint and foundation identity';
   }
   if (
@@ -607,15 +692,25 @@ const validateParsedContract = (
       sourceFile,
       exportedConst(sourceFile, `${exportStem}Api`),
       stem,
-      foundationName,
+      foundationName
     )
   ) {
     return 'MicroVertical root API must explicitly compose its readiness foundation API';
   }
-  if (!operationMapIsConnected(exportedConst(sourceFile, `${exportStem}OperationContexts`), stem)) {
+  if (
+    !operationMapIsConnected(
+      exportedConst(sourceFile, `${exportStem}OperationContexts`),
+      stem
+    )
+  ) {
     return 'MicroVertical operation map must construct every operation with the shared context constructor';
   }
-  if (!metadataIsExact(exportedConst(sourceFile, `${exportStem}ApiContract`), expectation)) {
+  if (
+    !metadataIsExact(
+      exportedConst(sourceFile, `${exportStem}ApiContract`),
+      expectation
+    )
+  ) {
     return 'MicroVertical root contract must keep exact owner and API path metadata without forbidden fields';
   }
   return undefined;
@@ -624,7 +719,7 @@ const validateParsedContract = (
 const parseAndValidate = (
   stem: string,
   filePath: string,
-  expectation: MicroVerticalApiBaselineExpectation,
+  expectation: MicroVerticalApiBaselineExpectation
 ): string | undefined => {
   const compiler = new TypeScriptApi();
   try {
@@ -662,19 +757,20 @@ export interface MicroVerticalTopologyEntry {
 
 export const configuredMicroVerticalApiStem = (
   verticalPath: string,
-  verticals: readonly MicroVerticalTopologyEntry[],
+  verticals: readonly MicroVerticalTopologyEntry[]
 ): string | undefined => {
   const topologyVertical = verticals.find(
-    (vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath,
+    (vertical) => (vertical.path ?? `verticals/${vertical.id}`) === verticalPath
   );
   const endpoint = topologyVertical?.api?.readiness?.endpoint;
-  return endpoint?.match(/^\/(?<stem>[a-z0-9]+(?:-[a-z0-9]+)*)\/readiness$/u)?.groups?.stem;
+  return endpoint?.match(/^\/(?<stem>[a-z0-9]+(?:-[a-z0-9]+)*)\/readiness$/u)
+    ?.groups?.stem;
 };
 
 export const microVerticalApiBaselineViolation = (
   stem: string,
   filePath: string,
-  expectation?: MicroVerticalApiBaselineExpectation,
+  expectation?: MicroVerticalApiBaselineExpectation
 ): string | undefined =>
   parseAndValidate(
     stem,
@@ -687,5 +783,5 @@ export const microVerticalApiBaselineViolation = (
       ownerId: stem,
       readinessPath: `/${stem}-api/${stem}/readiness`,
       sharedContractsPackage: '@app/shared-contracts',
-    },
+    }
   );

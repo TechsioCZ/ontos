@@ -1,6 +1,8 @@
 // @effect-diagnostics asyncFunction:off -- Node test callbacks and Web handlers bridge the Effect contracts under test; expires: 2027-03-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import {
   HttpApi,
@@ -10,16 +12,18 @@ import {
   HttpRouter,
   HttpServer,
 } from '@modern-js/plugin-bff/effect-edge';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Context, Effect, Layer, Result, Schema, SchemaAST } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
+
 import {
   makeProblemDetailsSchema,
   makeRetryableProblemDetailsSchema,
 } from '../../src/problem-details.ts';
 import { ImportedUnconstrainedExtensionSchema } from '../fixtures/unconstrained-extension.ts';
 
-const statuses = [400, 401, 403, 404, 409, 422, 428, 429, 500, 503, 504] as const;
+const statuses = [
+  400, 401, 403, 404, 409, 422, 428, 429, 500, 503, 504,
+] as const;
 
 for (const status of statuses) {
   void test(`couples the ${status} body, schema, and HttpApi status`, () => {
@@ -42,20 +46,26 @@ for (const status of statuses) {
       _tag: 'Json',
       contentType: 'application/problem+json',
     });
-    assert.throws(() => Schema.decodeUnknownSync(schema)({ ...problem, status: 418 }));
+    assert.throws(() =>
+      Schema.decodeUnknownSync(schema)({ ...problem, status: 418 })
+    );
     assert.throws(() =>
       Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({
         ...problem,
         internalDiagnostic: 'must-not-pass',
-      }),
+      })
     );
   });
 }
 
 void test('adds only the deliberate retryable literal marker', () => {
-  const schema = makeRetryableProblemDetailsSchema('RetryableFixtureProblem', 503, {
-    retryAfterSeconds: Schema.Finite,
-  });
+  const schema = makeRetryableProblemDetailsSchema(
+    'RetryableFixtureProblem',
+    503,
+    {
+      retryAfterSeconds: Schema.Finite,
+    }
+  );
   const problem = {
     _tag: 'RetryableFixtureProblem',
     detail: 'Try later.',
@@ -67,13 +77,19 @@ void test('adds only the deliberate retryable literal marker', () => {
   } as const;
 
   assert.deepEqual(Schema.decodeUnknownSync(schema)(problem), problem);
-  assert.throws(() => Schema.decodeUnknownSync(schema)({ ...problem, retryable: false }));
+  assert.throws(() =>
+    Schema.decodeUnknownSync(schema)({ ...problem, retryable: false })
+  );
 });
 
 void test('drives real HttpApi responses and generated client decoding', async () => {
-  const schema = makeRetryableProblemDetailsSchema('FixtureGatewayTimeoutProblem', 504, {
-    operation: Schema.Literal('fixture-read'),
-  });
+  const schema = makeRetryableProblemDetailsSchema(
+    'FixtureGatewayTimeoutProblem',
+    504,
+    {
+      operation: Schema.Literal('fixture-read'),
+    }
+  );
   const problem = schema.make({
     detail: 'The fixture operation timed out.',
     operation: 'fixture-read',
@@ -87,18 +103,18 @@ void test('drives real HttpApi responses and generated client decoding', async (
       error: [schema],
       payload: Schema.Struct({}),
       success: Schema.Struct({ ok: Schema.Literal(true) }),
-    }),
+    })
   );
   const api = HttpApi.make('ProblemFixtureApi').add(group);
   const handlers = HttpApiBuilder.group(api, 'problemFixture', (builder) =>
-    builder.handle('execute', () => Effect.fail(problem)),
+    builder.handle('execute', () => Effect.fail(problem))
   );
   const server = HttpRouter.toWebHandler(
     HttpApiBuilder.layer(api).pipe(
       Layer.provide(handlers),
-      Layer.provide(HttpServer.layerServices),
+      Layer.provide(HttpServer.layerServices)
     ),
-    { disableLogger: true },
+    { disableLogger: true }
   );
 
   try {
@@ -109,19 +125,27 @@ void test('drives real HttpApi responses and generated client decoding', async (
     });
     const response = await server.handler(request, Context.empty());
     assert.equal(response.status, problem.status);
-    assert.match(response.headers.get('content-type') ?? '', /^application\/problem\+json\b/u);
+    assert.match(
+      response.headers.get('content-type') ?? '',
+      /^application\/problem\+json\b/u
+    );
     assert.deepEqual(await response.json(), problem);
 
-    const client = makeEffectHttpApiClient(api, { baseUrl: 'https://fixture.ontos.test' });
+    const client = makeEffectHttpApiClient(api, {
+      baseUrl: 'https://fixture.ontos.test',
+    });
     const clientResult = await runEffectTestPromise(
       client.pipe(
-        Effect.flatMap((generated) => generated.problemFixture.execute({ payload: {} })),
+        Effect.flatMap((generated) =>
+          generated.problemFixture.execute({ payload: {} })
+        ),
         Effect.result,
         Effect.provideService(
           FetchHttpClient.Fetch,
-          async (input, init) => await server.handler(new Request(input, init), Context.empty()),
-        ),
-      ),
+          async (input, init) =>
+            await server.handler(new Request(input, init), Context.empty())
+        )
+      )
     );
     assert.ok(Result.isFailure(clientResult));
     assert.deepEqual(clientResult.failure, problem);
@@ -138,40 +162,42 @@ void test('rejects reserved and unconstrained extension schemas at construction'
       makeProblemDetailsSchema('ReservedFixtureProblem', 400, {
         status: Schema.Finite,
       }),
-    /reserved/u,
+    /reserved/u
   );
   assert.throws(
     () =>
-      makeProblemDetailsSchema('PrototypeSyntaxFixtureProblem', 400, { __proto__: Schema.String }),
-    /plain object/u,
+      makeProblemDetailsSchema('PrototypeSyntaxFixtureProblem', 400, {
+        __proto__: Schema.String,
+      }),
+    /plain object/u
   );
   assert.throws(
     () =>
       makeProblemDetailsSchema('SymbolKeyFixtureProblem', 400, {
         [uniqueSymbol]: Schema.Unknown,
       }),
-    /names must be strings/u,
+    /names must be strings/u
   );
   assert.throws(
     () =>
       makeProblemDetailsSchema('PrototypeKeyFixtureProblem', 400, {
         ['__proto__']: Schema.String,
       }),
-    /reserved/u,
+    /reserved/u
   );
   assert.throws(
     () =>
       makeProblemDetailsSchema('UnknownFixtureProblem', 400, {
         unsafe: Schema.Unknown,
       }),
-    /concrete/u,
+    /concrete/u
   );
   assert.throws(
     () =>
       makeProblemDetailsSchema('AnyFixtureProblem', 400, {
         unsafe: Schema.Any,
       }),
-    /concrete/u,
+    /concrete/u
   );
   for (const unsafe of [
     Schema.Array(Schema.Unknown),
@@ -192,16 +218,22 @@ void test('rejects reserved and unconstrained extension schemas at construction'
     ImportedUnconstrainedExtensionSchema,
   ]) {
     assert.throws(
-      () => makeProblemDetailsSchema('NestedUnknownFixtureProblem', 400, { unsafe }),
-      /concrete/u,
+      () =>
+        makeProblemDetailsSchema('NestedUnknownFixtureProblem', 400, {
+          unsafe,
+        }),
+      /concrete/u
     );
   }
   for (const literal of [undefined, Symbol('non-json-literal')]) {
     // @ts-expect-error JavaScript callers can provide unsupported literal values, so the runtime factory must still reject them.
     const unsafe = Schema.Literal(literal);
     assert.throws(
-      () => makeProblemDetailsSchema('NonJsonLiteralFixtureProblem', 400, { unsafe }),
-      /concrete/u,
+      () =>
+        makeProblemDetailsSchema('NonJsonLiteralFixtureProblem', 400, {
+          unsafe,
+        }),
+      /concrete/u
     );
   }
 });
@@ -218,7 +250,7 @@ void test('rejects accessor-backed extension fields before reading them', () => 
 
   assert.throws(
     () => makeProblemDetailsSchema('AccessorFixtureProblem', 400, extensions),
-    /enumerable data property/u,
+    /enumerable data property/u
   );
   assert.equal(reads, 0);
 });
@@ -238,9 +270,13 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
         ownKeyReads += 1;
         return ownKeyReads === 1 ? [] : ['status', Symbol('unsafe')];
       },
-    },
+    }
   );
-  const stableSchema = makeProblemDetailsSchema('StableSnapshotProblem', 400, changingFields);
+  const stableSchema = makeProblemDetailsSchema(
+    'StableSnapshotProblem',
+    400,
+    changingFields
+  );
   assert.equal(ownKeyReads, 1);
   assert.throws(() =>
     Schema.decodeUnknownSync(stableSchema)({
@@ -249,7 +285,7 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
       status: 418,
       title: 'Wrong status',
       type: 'urn:ontos:test:wrong-status',
-    }),
+    })
   );
 
   let astReads = 0;
@@ -268,13 +304,17 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
       makeProblemDetailsSchema('StableAstProblem', 400, {
         diagnostics: changingSchema,
       }),
-    /concrete/u,
+    /concrete/u
   );
 
   const mutableExtension = Schema.Struct({ note: Schema.String });
-  const immutableProblem = makeProblemDetailsSchema('ImmutableAstProblem', 400, {
-    metadata: mutableExtension,
-  });
+  const immutableProblem = makeProblemDetailsSchema(
+    'ImmutableAstProblem',
+    400,
+    {
+      metadata: mutableExtension,
+    }
+  );
   assert.ok(SchemaAST.isObjects(mutableExtension.ast));
   const [note] = mutableExtension.ast.propertySignatures;
   assert.ok(note !== undefined);
@@ -287,7 +327,7 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
       status: 400,
       title: 'Immutable AST',
       type: 'urn:ontos:test:immutable-ast',
-    }),
+    })
   );
 });
 

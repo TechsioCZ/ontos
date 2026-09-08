@@ -28,8 +28,12 @@ export const user = authSchema.table('user', {
   email: text('email').notNull().unique(),
   emailVerified: boolean('email_verified').default(false).notNull(),
   image: text('image'),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
   role: text('role'),
   banned: boolean('banned').default(false),
   banReason: text('ban_reason'),
@@ -42,7 +46,9 @@ export const session = authSchema.table(
     id: text('id').primaryKey(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     token: text('token').notNull().unique(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
     ipAddress: text('ip_address'),
     userAgent: text('user_agent'),
@@ -54,12 +60,16 @@ export const session = authSchema.table(
     impersonatedBy: text('impersonated_by'),
     impersonationReason: text('impersonation_reason'),
     impersonationActionId: text('impersonation_action_id'),
-    impersonationOriginalAuthBindingId: uuid('impersonation_original_auth_binding_id'),
-    impersonationOriginalPrincipalId: uuid('impersonation_original_principal_id'),
+    impersonationOriginalAuthBindingId: uuid(
+      'impersonation_original_auth_binding_id'
+    ),
+    impersonationOriginalPrincipalId: uuid(
+      'impersonation_original_principal_id'
+    ),
     impersonationOriginalSessionId: text('impersonation_original_session_id'),
     impersonationTargetPrincipalId: uuid('impersonation_target_principal_id'),
   },
-  (table) => [index('auth_session_user_id_idx').on(table.userId)],
+  (table) => [index('auth_session_user_id_idx').on(table.userId)]
 );
 
 export const supportImpersonationRecovery = authSchema.table(
@@ -73,11 +83,15 @@ export const supportImpersonationRecovery = authSchema.table(
     targetPrincipalId: uuid('target_principal_id').notNull(),
     actionId: text('action_id').notNull(),
     reason: text('reason').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
-    index('auth_support_impersonation_recovery_original_session_idx').on(table.originalSessionId),
-  ],
+    index('auth_support_impersonation_recovery_original_session_idx').on(
+      table.originalSessionId
+    ),
+  ]
 );
 
 export const account = authSchema.table(
@@ -96,17 +110,26 @@ export const account = authSchema.table(
     accessToken: text('access_token'),
     refreshToken: text('refresh_token'),
     idToken: text('id_token'),
-    accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
-    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
+    accessTokenExpiresAt: timestamp('access_token_expires_at', {
+      withTimezone: true,
+    }),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', {
+      withTimezone: true,
+    }),
     scope: text('scope'),
     password: text('password'),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   },
   (table) => [
-    uniqueIndex('auth_account_issuer_account_id_uk').on(table.issuer, table.accountId),
+    uniqueIndex('auth_account_issuer_account_id_uk').on(
+      table.issuer,
+      table.accountId
+    ),
     index('auth_account_user_id_idx').on(table.userId),
-  ],
+  ]
 );
 
 export const verification = authSchema.table(
@@ -116,10 +139,14 @@ export const verification = authSchema.table(
     identifier: text('identifier').notNull(),
     value: text('value').notNull(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
-  (table) => [index('auth_verification_identifier_idx').on(table.identifier)],
+  (table) => [index('auth_verification_identifier_idx').on(table.identifier)]
 );
 
 export const apikey = authSchema.table(
@@ -154,9 +181,15 @@ export const apikey = authSchema.table(
     index('auth_apikey_config_id_idx').on(table.configId),
     index('auth_apikey_reference_id_idx').on(table.referenceId),
     index('auth_apikey_key_idx').on(table.key),
-    index('auth_apikey_metadata_created_at_idx').on(table.metadata, table.createdAt),
-    index('auth_apikey_metadata_jsonb_idx').using('gin', sql`(${table.metadata}::jsonb)`),
-  ],
+    index('auth_apikey_metadata_created_at_idx').on(
+      table.metadata,
+      table.createdAt
+    ),
+    index('auth_apikey_metadata_jsonb_idx').using(
+      'gin',
+      sql`(${table.metadata}::jsonb)`
+    ),
+  ]
 );
 
 export const authDatabaseSchema = {
@@ -179,13 +212,25 @@ export const authRelations = defineRelations(authDatabaseSchema, (r) => ({
     apiKeys: r.many.apikey(),
   },
   session: {
-    user: r.one.user({ from: r.session.userId, to: r.user.id, optional: false }),
+    user: r.one.user({
+      from: r.session.userId,
+      to: r.user.id,
+      optional: false,
+    }),
   },
   account: {
-    user: r.one.user({ from: r.account.userId, to: r.user.id, optional: false }),
+    user: r.one.user({
+      from: r.account.userId,
+      to: r.user.id,
+      optional: false,
+    }),
   },
   apikey: {
-    user: r.one.user({ from: r.apikey.referenceId, to: r.user.id, optional: false }),
+    user: r.one.user({
+      from: r.apikey.referenceId,
+      to: r.user.id,
+      optional: false,
+    }),
   },
 }));
 

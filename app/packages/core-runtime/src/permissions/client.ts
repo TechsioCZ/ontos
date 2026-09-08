@@ -1,9 +1,10 @@
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import { Cause, Duration, Effect, Schema } from 'effect';
 import type { Scope } from 'effect';
+
+import { SpiceDbConfigError } from './config-error.ts';
 import { allowsInsecureSpiceDbTransport } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
-import { SpiceDbConfigError } from './config-error.ts';
 
 export const SPICEDB_CHECK_TIMEOUT_MS = 2000;
 
@@ -20,26 +21,36 @@ export interface CloseableSpiceDbClient {
 
 export class SpiceDbPermissionClientError extends Schema.TaggedError<SpiceDbPermissionClientError>()(
   'SpiceDbPermissionClientError',
-  { reason: Schema.String },
+  { reason: Schema.String }
 ) {}
 
-const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+const attachCause = <Failure extends object>(
+  failure: Failure,
+  cause: unknown
+): Failure =>
+  cause === undefined
+    ? failure
+    : Object.defineProperty(failure, 'cause', { value: cause });
 
-export const spiceDbPermissionClientError = (cause?: unknown): SpiceDbPermissionClientError =>
+export const spiceDbPermissionClientError = (
+  cause?: unknown
+): SpiceDbPermissionClientError =>
   attachCause(
     new SpiceDbPermissionClientError({
       reason: 'The SpiceDB client operation did not complete safely',
     }),
-    cause,
+    cause
   );
 
 export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
   readonly checkBulkPermissions: (
-    request: v1.CheckBulkPermissionsRequest,
-  ) => Effect.Effect<v1.CheckBulkPermissionsResponse, SpiceDbPermissionClientError>;
+    request: v1.CheckBulkPermissionsRequest
+  ) => Effect.Effect<
+    v1.CheckBulkPermissionsResponse,
+    SpiceDbPermissionClientError
+  >;
   readonly checkPermission: (
-    request: v1.CheckPermissionRequest,
+    request: v1.CheckPermissionRequest
   ) => Effect.Effect<v1.CheckPermissionResponse, SpiceDbPermissionClientError>;
 }
 
@@ -47,16 +58,22 @@ const permissionTimeout = Effect.timeoutOrElse({
   duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
   orElse: () =>
     Effect.fail(
-      spiceDbPermissionClientError(new Cause.TimeoutError('SpiceDB client operation timed out')),
+      spiceDbPermissionClientError(
+        new Cause.TimeoutError('SpiceDB client operation timed out')
+      )
     ),
 });
 
 export const spiceDbClientSecurity = (
-  configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
+  configuration: Pick<
+    SpiceDbConfigValue,
+    'deploymentEnvironment' | 'endpoint' | 'insecureLocal'
+  >
 ): v1.ClientSecurity => {
   if (!allowsInsecureSpiceDbTransport(configuration)) {
     throw new SpiceDbConfigError({
-      reason: 'Insecure SpiceDB client credentials are not allowed for this endpoint',
+      reason:
+        'Insecure SpiceDB client credentials are not allowed for this endpoint',
     });
   }
   return configuration.insecureLocal
@@ -66,14 +83,14 @@ export const spiceDbClientSecurity = (
 
 export const createSpiceDbPermissionClient = (
   configuration: SpiceDbConfigValue,
-  timeoutMilliseconds: number,
+  timeoutMilliseconds: number
 ): SpiceDbPermissionClient => {
   const client = v1.NewClient(
     configuration.preSharedKey,
     configuration.endpoint,
     spiceDbClientSecurity(configuration),
     undefined,
-    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
+    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] }
   );
   return {
     checkBulkPermissions: (request) =>
@@ -92,10 +109,14 @@ export const createSpiceDbPermissionClient = (
   };
 };
 
-export const acquireSpiceDbClientResource = <Client extends CloseableSpiceDbClient, Error>(
+export const acquireSpiceDbClientResource = <
+  Client extends CloseableSpiceDbClient,
+  Error,
+>(
   acquire: () => Client,
-  onFailure: (cause: unknown) => Error,
+  onFailure: (cause: unknown) => Error
 ): Effect.Effect<Client, Error, Scope.Scope> =>
-  Effect.acquireRelease(Effect.try({ catch: onFailure, try: acquire }), (client) =>
-    Effect.sync(() => client.close()),
+  Effect.acquireRelease(
+    Effect.try({ catch: onFailure, try: acquire }),
+    (client) => Effect.sync(() => client.close())
   );

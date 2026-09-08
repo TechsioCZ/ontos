@@ -1,6 +1,7 @@
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
 import { DateTime, Effect, Schema, SchemaAST } from 'effect';
+
 import {
   AuthenticationUnavailableProblemSchema,
   CurrentSessionSchema,
@@ -35,7 +36,9 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
   if (!SchemaAST.isObjects(schema.ast)) {
     throw new Error('Expected an object problem schema');
   }
-  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
+  const tag = schema.ast.propertySignatures.find(
+    ({ name }) => name === '_tag'
+  )?.type;
   expect(tag !== undefined && SchemaAST.isLiteral(tag)).toBe(true);
   if (tag === undefined || !SchemaAST.isLiteral(tag)) {
     throw new Error('Expected a literal problem tag');
@@ -45,22 +48,33 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
 
 test('publishes authentication, identity lifecycle, and gateway operations', () => {
   const authenticationEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.authentication.endpoints,
+    ShellAuthenticationApi.groups.authentication.endpoints
   ).toSorted();
-  const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
+  const gatewayEndpoints = Object.keys(
+    ShellAuthenticationApi.groups.gatewayContext.endpoints
+  );
   const identityEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.identity.endpoints,
+    ShellAuthenticationApi.groups.identity.endpoints
   ).toSorted();
   const legalEntityEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.legalEntities.endpoints,
+    ShellAuthenticationApi.groups.legalEntities.endpoints
   ).toSorted();
-  const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
+  const tenantEndpoints = Object.keys(
+    ShellAuthenticationApi.groups.tenants.endpoints
+  ).toSorted();
   const resourceEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.resources.endpoints,
+    ShellAuthenticationApi.groups.resources.endpoints
   ).toSorted();
 
-  expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
-  expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
+  expect(authenticationEndpoints).toEqual([
+    'currentSession',
+    'signIn',
+    'signOut',
+  ]);
+  expect(gatewayEndpoints).toEqual([
+    'issueGatewayContext',
+    'issueApiKeyGatewayContext',
+  ]);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
     'createNonHumanPrincipal',
@@ -75,15 +89,25 @@ test('publishes authentication, identity lifecycle, and gateway operations', () 
     'startSupportImpersonation',
     'stopSupportImpersonation',
   ]);
-  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
+  expect(legalEntityEndpoints).toEqual([
+    'availableLegalEntities',
+    'switchLegalEntity',
+  ]);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
-  expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
+  expect(resourceEndpoints).toEqual([
+    'attachMedia',
+    'resourceDetail',
+    'search',
+  ]);
   expect(
     Object.fromEntries(
       Object.values(ShellAuthenticationApi.groups).flatMap((group) =>
-        Object.entries(group.endpoints).map(([name, endpoint]) => [name, endpoint.path]),
-      ),
-    ),
+        Object.entries(group.endpoints).map(([name, endpoint]) => [
+          name,
+          endpoint.path,
+        ])
+      )
+    )
   ).toEqual({
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
@@ -117,9 +141,9 @@ test('publishes authentication, identity lifecycle, and gateway operations', () 
     signInPath: '/shell-super-app-api/auth/sign-in',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
   });
-  expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
-    /testing|actionKey/u,
-  );
+  expect(
+    [...authenticationEndpoints, ...gatewayEndpoints].join(':')
+  ).not.toMatch(/testing|actionKey/u);
 });
 
 test('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {
@@ -146,20 +170,28 @@ test('preserves migrated Shell Problem Details wire shapes and ordered membershi
     title: 'Rate limited',
     type: 'https://ontos.dev/problems/shell-rate-limited',
   } as const;
-  expect(Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(unavailable)).toEqual(
-    unavailable,
-  );
-  expect(Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(retryable)).toEqual(
-    retryable,
-  );
-  expect(Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited)).toEqual(rateLimited);
+  expect(
+    Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(
+      unavailable
+    )
+  ).toEqual(unavailable);
+  expect(
+    Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(
+      retryable
+    )
+  ).toEqual(retryable);
+  expect(
+    Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited)
+  ).toEqual(rateLimited);
   expect(() =>
     Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema, {
       onExcessProperty: 'error',
-    })({ ...unavailable, retryable: true }),
+    })({ ...unavailable, retryable: true })
   ).toThrow();
   expect(
-    [...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error].map(problemTag),
+    [
+      ...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error,
+    ].map(problemTag)
   ).toEqual([
     'InvalidCredentialsProblem',
     'OntosIdentityForbiddenProblem',
@@ -170,27 +202,35 @@ test('preserves migrated Shell Problem Details wire shapes and ordered membershi
 
 test('decodes a missing identity idempotency header so handlers can return declared 428', async () => {
   await expect(
-    runEffectTestPromise(Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})),
+    runEffectTestPromise(
+      Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})
+    )
   ).resolves.toEqual({});
   await expect(
     runEffectTestPromise(
       Effect.flip(
         Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({
           'idempotency-key': '',
-        }),
-      ),
-    ),
+        })
+      )
+    )
   ).resolves.toBeDefined();
 });
 
 test('publishes exact legal-entity endpoints with an ID-only switch payload', async () => {
   const { availableLegalEntities, switchLegalEntity } =
     ShellAuthenticationApi.groups.legalEntities.endpoints;
-  expect({ method: availableLegalEntities.method, path: availableLegalEntities.path }).toEqual({
+  expect({
+    method: availableLegalEntities.method,
+    path: availableLegalEntities.path,
+  }).toEqual({
     method: 'GET',
     path: '/auth/legal-entities',
   });
-  expect({ method: switchLegalEntity.method, path: switchLegalEntity.path }).toEqual({
+  expect({
+    method: switchLegalEntity.method,
+    path: switchLegalEntity.path,
+  }).toEqual({
     method: 'POST',
     path: '/auth/legal-entity/switch',
   });
@@ -201,17 +241,19 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
         authorization: 'must-not-pass',
         legalEntityId,
         tenantId: 'must-not-pass',
-      }),
-    ),
+      })
+    )
   ).toEqual({ legalEntityId });
   expect(
     await runEffectTestPromise(
       Schema.decodeUnknownEffect(AvailableLegalEntitiesResponseSchema)({
-        legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
+        legalEntities: [
+          { legalEntityId, legalName: 'Alpha', token: 'must-not-pass' },
+        ],
         selectedLegalEntityId: legalEntityId,
         state: 'authenticated',
-      }),
-    ),
+      })
+    )
   ).toEqual({
     legalEntities: [{ legalEntityId, legalName: 'Alpha' }],
     selectedLegalEntityId: legalEntityId,
@@ -227,13 +269,18 @@ test('decodes an optional exact page entrypoint without accepting private routin
         importPath: 'must-not-pass',
         moduleId: 'contacts.core',
         routePath: '/contacts/customers',
-      }),
-    ),
-  ).toEqual({ entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' });
+      })
+    )
+  ).toEqual({
+    entrypointKey: 'contacts.core.page.customers',
+    moduleId: 'contacts.core',
+  });
   expect(
     await runEffectTestPromise(
-      Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({ moduleId: 'contacts.core' }),
-    ),
+      Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        moduleId: 'contacts.core',
+      })
+    )
   ).toEqual({ moduleId: 'contacts.core' });
   await expect(
     runEffectTestPromise(
@@ -241,15 +288,19 @@ test('decodes an optional exact page entrypoint without accepting private routin
         Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
           entrypointKey: '../private-page',
           moduleId: 'contacts.core',
-        }),
-      ),
-    ),
+        })
+      )
+    )
   ).resolves.toBeDefined();
 });
 
 test('publishes exact tenant methods, paths, and declared failure statuses', () => {
-  const { availableTenants, switchTenant } = ShellAuthenticationApi.groups.tenants.endpoints;
-  expect({ method: availableTenants.method, path: availableTenants.path }).toEqual({
+  const { availableTenants, switchTenant } =
+    ShellAuthenticationApi.groups.tenants.endpoints;
+  expect({
+    method: availableTenants.method,
+    path: availableTenants.path,
+  }).toEqual({
     method: 'GET',
     path: '/auth/tenants',
   });
@@ -262,12 +313,16 @@ test('publishes exact tenant methods, paths, and declared failure statuses', () 
 });
 
 test('publishes the exhaustive identity failure status contract', () => {
-  for (const endpoint of Object.values(ShellAuthenticationApi.groups.identity.endpoints)) {
+  for (const endpoint of Object.values(
+    ShellAuthenticationApi.groups.identity.endpoints
+  )) {
     const identityStatuses = [...endpoint.error]
       .map((schema) => schema.ast.annotations?.['httpApiStatus'])
       .toSorted((left, right) => Number(left) - Number(right));
 
-    expect(identityStatuses).toEqual([400, 401, 403, 404, 409, 422, 428, 429, 500, 503]);
+    expect(identityStatuses).toEqual([
+      400, 401, 403, 404, 409, 422, 428, 429, 500, 503,
+    ]);
   }
 });
 
@@ -286,8 +341,8 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
             token: 'must-not-pass',
           },
         ],
-      }),
-    ),
+      })
+    )
   ).toEqual({ tenants: [{ name: 'Alpha tenant', tenantId }] });
   expect(
     await runEffectTestPromise(
@@ -295,14 +350,20 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
         principalId: 'must-not-pass',
         selectedTenantId: tenantId,
         sessionId: 'must-not-pass',
-      }),
-    ),
+      })
+    )
   ).toEqual({ selectedTenantId: tenantId });
   expect(
-    await runEffectTestPromise(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })),
+    await runEffectTestPromise(
+      Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })
+    )
   ).toEqual({ tenantId });
   const invalidPayload = await runEffectTestPromise(
-    Effect.flip(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId: 'not-a-uuid' })),
+    Effect.flip(
+      Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({
+        tenantId: 'not-a-uuid',
+      })
+    )
   );
   expect(invalidPayload._tag).toBe('SchemaError');
 });
@@ -313,8 +374,8 @@ test('rejects malformed credentials through Effect Schema', async () => {
       Schema.decodeUnknownEffect(SignInPayloadSchema)({
         email: '',
         password: '',
-      }),
-    ),
+      })
+    )
   );
   expect(error._tag).toBe('SchemaError');
 });
@@ -329,8 +390,8 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
         expectedStatus: 'active',
         newStatus: 'disabled',
         principalId,
-      }),
-    ),
+      })
+    )
   );
   const missingRevocationReason = await runEffectTestPromise(
     Effect.flip(
@@ -338,8 +399,8 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
         authBindingId,
         expectedStatus: 'active',
         newStatus: 'revoked',
-      }),
-    ),
+      })
+    )
   );
   expect(missingPrincipalReason._tag).toBe('SchemaError');
   expect(missingRevocationReason._tag).toBe('SchemaError');
@@ -355,7 +416,7 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
       name: null,
       providerKeyId: 'private-provider-key-id',
       start: 'onto',
-    }),
+    })
   );
   expect(lifecycle).toEqual({
     authBindingId,
@@ -367,7 +428,9 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
     start: 'onto',
   });
   expect(
-    await runEffectTestPromise(Schema.encodeEffect(ApiKeyLifecycleResponseSchema)(lifecycle)),
+    await runEffectTestPromise(
+      Schema.encodeEffect(ApiKeyLifecycleResponseSchema)(lifecycle)
+    )
   ).toEqual({
     authBindingId,
     cleanupPending: false,
@@ -393,7 +456,7 @@ test('decodes only safe current-session identity fields', async () => {
         token: 'must-not-pass',
       },
       state: 'authenticated',
-    }),
+    })
   );
   expect(session).toEqual({
     identity: {

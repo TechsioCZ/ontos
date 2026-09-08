@@ -1,15 +1,19 @@
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Link } from '@techsio/ui-kit/atoms/link';
+import {
+  Link as LocalizedLink,
+  useModernI18n,
+} from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
+import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
-import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
 
 interface DashboardAccount {
@@ -121,7 +125,10 @@ interface DashboardHeaderProps {
   readonly title: string | undefined;
 }
 
-const selectorStatus = (failed: boolean, unavailable: boolean): 'default' | 'error' | 'warning' => {
+const selectorStatus = (
+  failed: boolean,
+  unavailable: boolean
+): 'default' | 'error' | 'warning' => {
   if (failed) {
     return 'error';
   }
@@ -136,7 +143,7 @@ const selectorStatusText = (
     readonly failed: string;
     readonly pending: string;
     readonly unavailable: string;
-  },
+  }
 ): string | null => {
   if (pending) {
     return messages.pending;
@@ -166,7 +173,11 @@ const DashboardSelector = ({
     name={name}
     onValueChange={({ value }) => {
       const [selected] = value;
-      if (value.length === 1 && selected !== undefined && selected !== currentValue) {
+      if (
+        value.length === 1 &&
+        selected !== undefined &&
+        selected !== currentValue
+      ) {
         onChange(selected);
       }
     }}
@@ -193,7 +204,12 @@ const DashboardSelector = ({
       </Select.Content>
     </Select.Positioner>
     {statusText === null ? null : (
-      <Select.StatusText aria-live="polite" id={statusId} showIcon status={status}>
+      <Select.StatusText
+        aria-live="polite"
+        id={statusId}
+        showIcon
+        status={status}
+      >
         {statusText}
       </Select.StatusText>
     )}
@@ -234,11 +250,16 @@ const DashboardTenantSelector = ({
       placeholder={unavailableText}
       status={selectorStatus(tenantSwitchFailed, tenantUnavailable)}
       statusId="tenant-switch-status"
-      statusText={selectorStatusText(tenantSwitchPending, tenantSwitchFailed, tenantUnavailable, {
-        failed: t('shell.dashboard.tenant.failed'),
-        pending: t('shell.dashboard.tenant.pending'),
-        unavailable: unavailableText,
-      })}
+      statusText={selectorStatusText(
+        tenantSwitchPending,
+        tenantSwitchFailed,
+        tenantUnavailable,
+        {
+          failed: t('shell.dashboard.tenant.failed'),
+          pending: t('shell.dashboard.tenant.pending'),
+          unavailable: unavailableText,
+        }
+      )}
     />
   );
 };
@@ -252,11 +273,13 @@ const DashboardLegalEntitySelector = ({
   onLegalEntityChange,
 }: DashboardLegalEntitySelectorProps) => {
   const { t } = useModernI18n();
-  const legalEntityItems = legalEntityChoices.map(({ legalEntityId, legalName }) => ({
-    displayValue: legalName,
-    label: legalName,
-    value: legalEntityId,
-  }));
+  const legalEntityItems = legalEntityChoices.map(
+    ({ legalEntityId, legalName }) => ({
+      displayValue: legalName,
+      label: legalName,
+      value: legalEntityId,
+    })
+  );
   const legalEntityUnavailable = legalEntityState === 'unavailable';
 
   return (
@@ -278,13 +301,17 @@ const DashboardLegalEntitySelector = ({
           failed: t('shell.dashboard.legalEntity.failed'),
           pending: t('shell.dashboard.legalEntity.pending'),
           unavailable: t('shell.dashboard.legalEntity.unavailable'),
-        },
+        }
       )}
     />
   );
 };
 
-const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProps) => {
+const DashboardSearch = ({
+  onSearch,
+  onValueChange,
+  value,
+}: DashboardSearchProps) => {
   const { t } = useModernI18n();
 
   return (
@@ -303,7 +330,9 @@ const DashboardSearch = ({ onSearch, onValueChange, value }: DashboardSearchProp
       <SearchForm.Control>
         <SearchForm.Input />
         <SearchForm.ClearButton />
-        <SearchForm.Button showSearchIcon>{t('shell.search.submit')}</SearchForm.Button>
+        <SearchForm.Button showSearchIcon>
+          {t('shell.search.submit')}
+        </SearchForm.Button>
       </SearchForm.Control>
     </SearchForm>
   );
@@ -319,7 +348,9 @@ const DashboardModuleNavigationItem = ({
     <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
       {module.enabled && module.href !== undefined ? (
         <Link
-          aria-current={currentModuleId === module.moduleId ? 'page' : undefined}
+          aria-current={
+            currentModuleId === module.moduleId ? 'page' : undefined
+          }
           as={LocalizedLink}
           to={module.href}
         >
@@ -358,8 +389,10 @@ const DashboardDeploymentNavigationItem = ({
       <StatusText showIcon size="sm" status="warning">
         {t(
           `shell.modules.discovery.${
-            deployment.status === 'unavailable' ? deployment.reason : deployment.status
-          }`,
+            deployment.status === 'unavailable'
+              ? deployment.reason
+              : deployment.status
+          }`
         )}
       </StatusText>
     </li>
@@ -379,7 +412,9 @@ const DashboardNavigation = ({
       <ul className="shell:flex shell:flex-col shell:gap-2">
         <li>
           <Link
-            aria-current={homeCurrent && currentModuleId === undefined ? 'page' : undefined}
+            aria-current={
+              homeCurrent && currentModuleId === undefined ? 'page' : undefined
+            }
             as={LocalizedLink}
             to="/"
           >
@@ -394,19 +429,29 @@ const DashboardNavigation = ({
           />
         ))}
         {unavailableDeployments.map((deployment) => (
-          <DashboardDeploymentNavigationItem deployment={deployment} key={deployment.appId} />
+          <DashboardDeploymentNavigationItem
+            deployment={deployment}
+            key={deployment.appId}
+          />
         ))}
       </ul>
     </nav>
   );
 };
 
-const DashboardHeader = ({ identity, logoutPending, onLogout, title }: DashboardHeaderProps) => {
+const DashboardHeader = ({
+  identity,
+  logoutPending,
+  onLogout,
+  title,
+}: DashboardHeaderProps) => {
   const { t } = useModernI18n();
   const accountItems: MenuItem[] = [
     {
       disabled: logoutPending,
-      label: t(logoutPending ? 'shell.auth.logout.pending' : 'shell.auth.logout.action'),
+      label: t(
+        logoutPending ? 'shell.auth.logout.pending' : 'shell.auth.logout.action'
+      ),
       type: 'action',
       value: 'logout',
     },
@@ -439,14 +484,18 @@ const DashboardHeader = ({ identity, logoutPending, onLogout, title }: Dashboard
   );
 };
 
-export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayoutProps) => {
+export const AuthenticatedDashboardLayout = (
+  props: AuthenticatedDashboardLayoutProps
+) => {
   const { t } = useModernI18n();
   const [searchValue, setSearchValue] = useState('');
   const { tenantSwitchFailed } = props;
 
   useEffect(() => {
     if (tenantSwitchFailed) {
-      document.querySelector('#tenant-switch-status')?.scrollIntoView({ block: 'nearest' });
+      document
+        .querySelector('#tenant-switch-status')
+        ?.scrollIntoView({ block: 'nearest' });
     }
   }, [tenantSwitchFailed]);
 
@@ -492,7 +541,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           onLogout={props.onLogout}
           title={props.title}
         />
-        <div className="shell:min-w-0 shell:flex-1 shell:px-2 shell:py-4">{props.children}</div>
+        <div className="shell:min-w-0 shell:flex-1 shell:px-2 shell:py-4">
+          {props.children}
+        </div>
       </main>
     </div>
   );

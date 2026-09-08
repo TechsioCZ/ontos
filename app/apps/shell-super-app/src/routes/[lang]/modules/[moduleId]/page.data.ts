@@ -1,5 +1,6 @@
 import { Effect, Match, Predicate, Schema } from 'effect';
 import type { Config } from 'effect';
+
 import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget } from '../../../../api/auth-client.ts';
@@ -19,18 +20,22 @@ const withOptionalProperty = <
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+  trailing: Trailing
+) =>
+  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
 
 interface ModuleTargetLoaderArguments {
-  readonly params: { readonly entrypointKey?: string; readonly moduleId: string };
+  readonly params: {
+    readonly entrypointKey?: string;
+    readonly moduleId: string;
+  };
   readonly request: Request;
   readonly routeParams?: Readonly<Record<string, string>>;
 }
 
 const RouteParameterInputSchema = Schema.Record(
   Schema.String,
-  Schema.Union([Schema.String, Schema.Undefined]),
+  Schema.Union([Schema.String, Schema.Undefined])
 );
 type RouteParameterInput = typeof RouteParameterInputSchema.Type;
 
@@ -42,7 +47,7 @@ const routeParameterValueLengthLimit = 200;
 
 export const selectRouteParams = (
   params: RouteParameterInput,
-  declaredNames: readonly string[],
+  declaredNames: readonly string[]
 ): ModulePageRouteParams =>
   Object.freeze(
     Object.fromEntries(
@@ -53,14 +58,18 @@ export const selectRouteParams = (
           value.length <= routeParameterValueLengthLimit
           ? [[name, value] as const]
           : [];
-      }),
-    ),
+      })
+    )
   );
 
 export type ModuleTargetPageModel =
   | {
       readonly shell: HomePageModel;
-      readonly state: 'forbidden' | 'not_found' | 'selection_required' | 'unavailable';
+      readonly state:
+        | 'forbidden'
+        | 'not_found'
+        | 'selection_required'
+        | 'unavailable';
     }
   | {
       readonly routeParams: ModulePageRouteParams;
@@ -71,15 +80,25 @@ export type ModuleTargetPageModel =
 
 const safeState = (
   error: Config.ConfigError | ShellTargetClientError,
-  shell: HomePageModel,
+  shell: HomePageModel
 ): ModuleTargetPageModel =>
   Match.value(error).pipe(
-    Match.tag('ShellAuthenticationRequiredProblem', 'ShellSelectionRequiredProblem', () => ({
+    Match.tag(
+      'ShellAuthenticationRequiredProblem',
+      'ShellSelectionRequiredProblem',
+      () => ({
+        shell,
+        state: 'selection_required' as const,
+      })
+    ),
+    Match.tag('ShellTargetForbiddenProblem', () => ({
       shell,
-      state: 'selection_required' as const,
+      state: 'forbidden' as const,
     })),
-    Match.tag('ShellTargetForbiddenProblem', () => ({ shell, state: 'forbidden' as const })),
-    Match.tag('ShellTargetNotFoundProblem', () => ({ shell, state: 'not_found' as const })),
+    Match.tag('ShellTargetNotFoundProblem', () => ({
+      shell,
+      state: 'not_found' as const,
+    })),
     Match.tag(
       'ConfigError',
       'HttpClientError',
@@ -91,9 +110,9 @@ const safeState = (
       'ShellPolicyUnprocessableProblem',
       'ShellPreconditionRequiredProblem',
       'ShellRateLimitedProblem',
-      () => ({ shell, state: 'unavailable' as const }),
+      () => ({ shell, state: 'unavailable' as const })
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
 
 export const loader = ({
@@ -108,10 +127,16 @@ export const loader = ({
         if (shell.state !== 'authenticated') {
           return Effect.succeed<ModuleTargetPageModel>({
             shell,
-            state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+            state:
+              shell.state === 'unavailable'
+                ? 'unavailable'
+                : 'selection_required',
           });
         }
-        const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
+        const boundedRouteParams = selectRouteParams(
+          routeParams,
+          Object.keys(routeParams)
+        );
         return shellAuthenticationClientOptionsFromRequest(request).pipe(
           Effect.flatMap((options) =>
             Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)(
@@ -120,9 +145,11 @@ export const loader = ({
                 params.entrypointKey !== undefined,
                 'entrypointKey',
                 params.entrypointKey,
-                { moduleId: params.moduleId },
-              ),
-            ).pipe(Effect.flatMap((payload) => resolveModuleTarget(payload, options))),
+                { moduleId: params.moduleId }
+              )
+            ).pipe(
+              Effect.flatMap((payload) => resolveModuleTarget(payload, options))
+            )
           ),
           Effect.map((target): ModuleTargetPageModel => ({
             routeParams: boundedRouteParams,
@@ -133,8 +160,8 @@ export const loader = ({
           Effect.matchEffect({
             onFailure: (error) => Effect.succeed(safeState(error, shell)),
             onSuccess: Effect.succeed,
-          }),
+          })
         );
-      }),
-    ),
+      })
+    )
   );

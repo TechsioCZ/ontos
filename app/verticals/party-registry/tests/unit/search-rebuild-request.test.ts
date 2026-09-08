@@ -1,16 +1,18 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { Effect, Schema } from 'effect';
+
+import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
+import { PartySearchProjector } from '../../src/services/party-search-projection.service.ts';
 import {
   handleRebuildSearch,
   rebuildSearchWorker,
 } from '../../src/workers/rebuild-search.worker.ts';
-import { PartySearchProjector } from '../../src/services/party-search-projection.service.ts';
-import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 
 const requestId = '40000000-0000-4000-8000-000000000001';
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -25,7 +27,10 @@ const request = {
   payload: {},
   principal,
   registration: requestSearchRebuildAction,
-  transport: { correlationId: 'search-rebuild-test', idempotencyKey: 'rebuild-1' },
+  transport: {
+    correlationId: 'search-rebuild-test',
+    idempotencyKey: 'rebuild-1',
+  },
 };
 
 test('tenant rebuild requests require Party administration and canonical idempotency', () => {
@@ -50,7 +55,10 @@ test('authorized rebuild commits one linked request without reading identity or 
     Effect.gen(function* authorizedRebuildRequest() {
       const result = yield* harness.runtime.runAction(request);
       assert.equal(result.status, 'QUEUED');
-      assert.equal(Schema.is(Schema.String.check(Schema.isUUID()))(result.requestId), true);
+      assert.equal(
+        Schema.is(Schema.String.check(Schema.isUUID()))(result.requestId),
+        true
+      );
       const { committed, permissionDenials } = harness.snapshot();
       assert.equal(committed.length, 1);
       assert.deepEqual(permissionDenials, []);
@@ -75,7 +83,7 @@ test('authorized rebuild commits one linked request without reading identity or 
           },
         },
       ]);
-    }),
+    })
   );
 });
 
@@ -92,7 +100,7 @@ test('denied Party administration cannot queue a rebuild even with Action execut
       assert.deepEqual(snapshot.committed, []);
       assert.equal(snapshot.permissionDenials.length, 1);
       assert.equal(snapshot.stages.includes('handler_executed'), false);
-    }),
+    })
   );
 });
 
@@ -104,14 +112,16 @@ test('replaying the same authorized rebuild request queues only once', () => {
   return runEffectTestPromise(
     Effect.gen(function* replayRebuildRequest() {
       yield* harness.runtime.runAction(request);
-      const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
+      const replay = yield* harness.runtime
+        .runAction(request)
+        .pipe(Effect.flip);
       assert.equal(replay._tag, 'ActionAlreadyCommitted');
       const snapshot = harness.snapshot();
       assert.equal(snapshot.committed.length, 1);
       assert.equal(snapshot.committed[0]?.evidence.domainEvents.length, 1);
       assert.equal(snapshot.committed[0]?.evidence.outboxMessages.length, 1);
       assert.equal(snapshot.invocations.length, 1);
-    }),
+    })
   );
 });
 
@@ -135,7 +145,10 @@ test('rebuild worker uses its trusted committed context, and failures remain ret
   });
   return runEffectTestPromise(
     Effect.gen(function* rebuildWorkerFailure() {
-      const failure = yield* handleRebuildSearch({ requestId }, workerContext).pipe(
+      const failure = yield* handleRebuildSearch(
+        { requestId },
+        workerContext
+      ).pipe(
         Effect.provideService(PartySearchProjector, {
           project: (context, target) => {
             assert.equal(context, workerContext);
@@ -143,14 +156,17 @@ test('rebuild worker uses its trusted committed context, and failures remain ret
             return Effect.fail(unavailable);
           },
         }),
-        Effect.flip,
+        Effect.flip
       );
       assert.equal(failure, unavailable);
-      assert.equal(rebuildSearchWorker.descriptor.workerKey, 'party.registry.rebuild-search');
+      assert.equal(
+        rebuildSearchWorker.descriptor.workerKey,
+        'party.registry.rebuild-search'
+      );
       assert.equal(
         rebuildSearchWorker.descriptor.topic,
-        'party.registry.search-rebuild-requested.v1',
+        'party.registry.search-rebuild-requested.v1'
       );
-    }),
+    })
   );
 });

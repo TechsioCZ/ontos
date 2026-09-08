@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
 import {
   EntrypointAuthorizationSchema,
   decodeEntrypointAuthorization,
@@ -23,7 +25,10 @@ test('decodes every closed authorization classification', () => {
   ] as const;
 
   for (const classification of classifications) {
-    assert.deepEqual(decodeEntrypointAuthorization(classification), classification);
+    assert.deepEqual(
+      decodeEntrypointAuthorization(classification),
+      classification
+    );
   }
 });
 
@@ -42,7 +47,7 @@ test('rejects omitted, unknown, excessive, and incompatible authorization fields
     assert.throws(() =>
       Schema.decodeUnknownSync(EntrypointAuthorizationSchema, {
         onExcessProperty: 'error',
-      })(value),
+      })(value)
     );
   }
 });
@@ -75,7 +80,7 @@ test('requires role-compatible authorization and freezes nested classification',
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
       role: 'action',
-    }),
+    })
   );
   assert.throws(() =>
     defineTenantModuleEntrypoint({
@@ -84,7 +89,7 @@ test('requires role-compatible authorization and freezes nested classification',
       entrypointKey: 'inventory.stock.project',
       moduleKey: 'inventory.stock',
       role: 'worker',
-    }),
+    })
   );
 });
 

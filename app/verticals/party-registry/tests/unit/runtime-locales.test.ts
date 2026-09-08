@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Predicate } from 'effect';
-import runtime from '../../src/modern.runtime.ts';
+
 import csResource from '../../locales/cs/translation.json' with { type: 'json' };
 import enResource from '../../locales/en/translation.json' with { type: 'json' };
 import { partyRegistryI18nResources } from '../../src/i18n/resources.ts';
+import runtime from '../../src/modern.runtime.ts';
 
 test('runtime registers the Party Registry page namespace alongside shared translations', () => {
-  const configuration = Predicate.isFunction(runtime) ? runtime('index') : runtime;
+  const configuration = Predicate.isFunction(runtime)
+    ? runtime('index')
+    : runtime;
   const { i18n } = configuration;
   assert.ok(i18n?.i18nInstance);
   assert.deepEqual(i18n.initOptions?.resources, {

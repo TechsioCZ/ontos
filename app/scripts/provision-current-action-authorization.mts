@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
+
 import { v1 } from '@authzed/authzed-node';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
@@ -18,6 +19,8 @@ import {
   Schema,
 } from 'effect';
 import { Command } from 'effect/unstable/cli';
+
+import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
 import {
   ActionAuthorizationProvisioningError,
   provisionActionAuthorization,
@@ -28,13 +31,12 @@ import type {
   ActionAuthorizationProvisioningClient,
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
+import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
 import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
-import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
-import { LOCAL_DEVELOPMENT_CONTEXT } from './initialize-local-development.mts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
+import { LOCAL_DEVELOPMENT_CONTEXT } from './initialize-local-development.mts';
 
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
@@ -42,7 +44,7 @@ const TopologySchema = Schema.Struct({
       id: Schema.String,
       package: Schema.String,
       path: Schema.String,
-    }),
+    })
   ),
 });
 
@@ -52,7 +54,7 @@ const OwnershipSchema = Schema.Struct({
       id: Schema.String,
       package: Schema.String,
       path: Schema.String,
-    }),
+    })
   ),
 });
 
@@ -67,10 +69,12 @@ export interface ActionAuthorizationProvisioningTarget {
 const failure = (
   code: ActionAuthorizationProvisioningError['code'],
   reason: string,
-  cause?: unknown,
+  cause?: unknown
 ): ActionAuthorizationProvisioningError => {
   const error = new ActionAuthorizationProvisioningError({ code, reason });
-  return cause === undefined ? error : Object.defineProperty(error, 'cause', { value: cause });
+  return cause === undefined
+    ? error
+    : Object.defineProperty(error, 'cause', { value: cause });
 };
 
 const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
@@ -87,8 +91,11 @@ const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
 };
 
 export const selectActionAuthorizationProvisioningTarget = (
-  configuration: SpiceDbConfigValue,
-): Effect.Effect<ActionAuthorizationProvisioningTarget, ActionAuthorizationProvisioningError> => {
+  configuration: SpiceDbConfigValue
+): Effect.Effect<
+  ActionAuthorizationProvisioningTarget,
+  ActionAuthorizationProvisioningError
+> => {
   if (
     (configuration.deploymentEnvironment === undefined ||
       configuration.deploymentEnvironment === 'development') &&
@@ -111,27 +118,29 @@ export const selectActionAuthorizationProvisioningTarget = (
     configuration.insecureLocal
   ) {
     const contexts = EffectArray.sortWith(
-      [STAGE_CONTEXTS.techsio, STAGE_CONTEXTS.siampark].map(({ principalId, tenantId }) => ({
-        principalId,
-        tenantId,
-      })),
+      [STAGE_CONTEXTS.techsio, STAGE_CONTEXTS.siampark].map(
+        ({ principalId, tenantId }) => ({
+          principalId,
+          tenantId,
+        })
+      ),
       ({ tenantId }) => tenantId,
-      Order.String,
+      Order.String
     );
     return Effect.succeed({ configuration, contexts, environment: 'stage' });
   }
   return Effect.fail(
     failure(
       'action_authorization_configuration_invalid',
-      'Current Action authorization can run only against fixed development or stage SpiceDB',
-    ),
+      'Current Action authorization can run only against fixed development or stage SpiceDB'
+    )
   );
 };
 
 const discoveryFailure = (): ActionAuthorizationProvisioningError =>
   failure(
     'action_authorization_discovery_failed',
-    'The complete current Action set could not be derived safely',
+    'The complete current Action set could not be derived safely'
   );
 
 const decodeRepositoryInventory = (workspaceRoot: string) =>
@@ -142,24 +151,33 @@ const decodeRepositoryInventory = (workspaceRoot: string) =>
       [
         fileSystem.readFileString(
           path.join(workspaceRoot, 'topology/reference-topology.json'),
-          'utf-8',
+          'utf-8'
         ),
-        fileSystem.readFileString(path.join(workspaceRoot, 'topology/ownership.json'), 'utf-8'),
+        fileSystem.readFileString(
+          path.join(workspaceRoot, 'topology/ownership.json'),
+          'utf-8'
+        ),
       ],
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     ).pipe(Effect.mapError(discoveryFailure));
-    const ownership = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnershipSchema), {
-      onExcessProperty: 'preserve',
-    })(ownershipSource).pipe(Effect.mapError(discoveryFailure));
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema), {
-      onExcessProperty: 'preserve',
-    })(topologySource).pipe(Effect.mapError(discoveryFailure));
+    const ownership = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OwnershipSchema),
+      {
+        onExcessProperty: 'preserve',
+      }
+    )(ownershipSource).pipe(Effect.mapError(discoveryFailure));
+    const topology = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(TopologySchema),
+      {
+        onExcessProperty: 'preserve',
+      }
+    )(topologySource).pipe(Effect.mapError(discoveryFailure));
     return { ownership, topology };
   });
 
 const discoverCurrentActionsEffect = (
   workspaceRoot: string,
-  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
+  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract
 ): Effect.Effect<
   readonly ActionAuthorizationProvisioningAction[],
   ActionAuthorizationProvisioningError,
@@ -167,24 +185,29 @@ const discoverCurrentActionsEffect = (
 > =>
   Effect.gen(function* discoverCurrentActionsEffectGenerator() {
     const path = yield* Path.Path;
-    const { ownership, topology } = yield* decodeRepositoryInventory(workspaceRoot);
+    const { ownership, topology } =
+      yield* decodeRepositoryInventory(workspaceRoot);
     if (topology.verticals.length === 0 || coreActionCatalog.length === 0) {
       return yield* discoveryFailure();
     }
     const ownerKeys = new Set(
       ownership.owners.map(
         ({ id, package: packageName, path: ownerPath }) =>
-          `${id}\u0000${packageName}\u0000${ownerPath}`,
-      ),
+          `${id}\u0000${packageName}\u0000${ownerPath}`
+      )
     );
-    const verticals = EffectArray.sortWith(topology.verticals, ({ id }) => id, Order.String);
+    const verticals = EffectArray.sortWith(
+      topology.verticals,
+      ({ id }) => id,
+      Order.String
+    );
     if (
       new Set(verticals.map(({ id }) => id)).size !== verticals.length ||
       verticals.some(
         ({ id, package: packageName, path: ownerPath }) =>
           !ownerKeys.has(`${id}\u0000${packageName}\u0000${ownerPath}`) ||
           path.dirname(ownerPath) !== 'verticals' ||
-          path.basename(ownerPath) !== id,
+          path.basename(ownerPath) !== id
       )
     ) {
       return yield* discoveryFailure();
@@ -194,44 +217,57 @@ const discoverCurrentActionsEffect = (
       ({ id }) =>
         Effect.tryPromise({
           catch: discoveryFailure,
-          try: async () => await deriveContract({ vertical: id, workspaceRoot }),
+          try: async () =>
+            await deriveContract({ vertical: id, workspaceRoot }),
         }).pipe(Effect.map((contract) => ({ contract, id }))),
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     );
-    const collectVerticalActions = Effect.gen(function* collectVerticalActionsEffect() {
-      const verticalActions: ActionAuthorizationProvisioningAction[] = [];
-      for (const { contract, id } of contracts) {
-        if (
-          contract.deployment.appId !== id ||
-          contract.manifest.publicSurface.actions.length === 0
-        ) {
-          return yield* discoveryFailure();
-        }
-        for (const { actionKey, entrypoint } of contract.manifest.publicSurface.actions) {
-          if (entrypoint?.authorization.kind !== 'action_execution') {
+    const collectVerticalActions = Effect.gen(
+      function* collectVerticalActionsEffect() {
+        const verticalActions: ActionAuthorizationProvisioningAction[] = [];
+        for (const { contract, id } of contracts) {
+          if (
+            contract.deployment.appId !== id ||
+            contract.manifest.publicSurface.actions.length === 0
+          ) {
             return yield* discoveryFailure();
           }
-          verticalActions.push({ actionKey, provisioning: entrypoint.authorization.provisioning });
+          for (const { actionKey, entrypoint } of contract.manifest
+            .publicSurface.actions) {
+            if (entrypoint?.authorization.kind !== 'action_execution') {
+              return yield* discoveryFailure();
+            }
+            verticalActions.push({
+              actionKey,
+              provisioning: entrypoint.authorization.provisioning,
+            });
+          }
         }
-      }
 
-      return { verticalActions };
-    });
+        return { verticalActions };
+      }
+    );
     const { verticalActions } = yield* collectVerticalActions;
     const coreActions: ActionAuthorizationProvisioningAction[] = [];
     for (const { actionKey, entrypoint } of coreActionCatalog) {
       if (entrypoint.authorization.kind !== 'action_execution') {
         return yield* discoveryFailure();
       }
-      coreActions.push({ actionKey, provisioning: entrypoint.authorization.provisioning });
+      coreActions.push({
+        actionKey,
+        provisioning: entrypoint.authorization.provisioning,
+      });
     }
     const actions = EffectArray.sortWith(
       [...coreActions, ...verticalActions],
       ({ actionKey }) => actionKey,
-      Order.String,
+      Order.String
     );
     const actionKeys = actions.map(({ actionKey }) => actionKey);
-    if (actionKeys.length === 0 || new Set(actionKeys).size !== actionKeys.length) {
+    if (
+      actionKeys.length === 0 ||
+      new Set(actionKeys).size !== actionKeys.length
+    ) {
       return yield* discoveryFailure();
     }
     return actions;
@@ -241,7 +277,7 @@ const repositoryRuntime = ManagedRuntime.make(NodeServices.layer);
 
 const discoverCurrentActionsProgram = (
   workspaceRoot: string,
-  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
+  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract
 ): Effect.Effect<
   readonly ActionAuthorizationProvisioningAction[],
   ActionAuthorizationProvisioningError,
@@ -250,35 +286,37 @@ const discoverCurrentActionsProgram = (
 
 export const discoverCurrentActions = flow(
   discoverCurrentActionsProgram,
-  repositoryRuntime.runPromise,
+  repositoryRuntime.runPromise
 );
 
 const discoverCurrentActionKeysProgram = (
   workspaceRoot: string,
-  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
+  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract
 ): Effect.Effect<
   readonly string[],
   ActionAuthorizationProvisioningError,
   FileSystem.FileSystem | Path.Path
 > =>
   discoverCurrentActionsEffect(workspaceRoot, deriveContract).pipe(
-    Effect.map((actions) => actions.map(({ actionKey }) => actionKey)),
+    Effect.map((actions) => actions.map(({ actionKey }) => actionKey))
   );
 
 export const discoverCurrentActionKeys = flow(
   discoverCurrentActionKeysProgram,
-  repositoryRuntime.runPromise,
+  repositoryRuntime.runPromise
 );
 
 interface CloseableProvisioningClient extends ActionAuthorizationProvisioningClient {
   readonly close: () => void;
 }
 
-const provisioningServiceFailure = (cause?: unknown): ActionAuthorizationProvisioningError =>
+const provisioningServiceFailure = (
+  cause?: unknown
+): ActionAuthorizationProvisioningError =>
   failure(
     'action_authorization_service_unavailable',
     'The authorization service could not provision current Action rules safely',
-    cause,
+    cause
   );
 
 const callProvisioningClient = <Value,>(operation: () => PromiseLike<Value>) =>
@@ -288,30 +326,36 @@ const callProvisioningClient = <Value,>(operation: () => PromiseLike<Value>) =>
       orElse: () =>
         Effect.fail(
           provisioningServiceFailure(
-            new Cause.TimeoutError('SpiceDB authorization provisioning request timed out'),
-          ),
+            new Cause.TimeoutError(
+              'SpiceDB authorization provisioning request timed out'
+            )
+          )
         ),
-    }),
+    })
   );
 
 const createProvisioningClient = (
-  configuration: SpiceDbConfigValue,
+  configuration: SpiceDbConfigValue
 ): CloseableProvisioningClient => {
   const client = v1.NewClient(
     configuration.preSharedKey,
     configuration.endpoint,
-    spiceDbClientSecurity(configuration),
+    spiceDbClientSecurity(configuration)
   );
   return {
     checkPermission: (request) =>
-      callProvisioningClient(client.promises.checkPermission.bind(client.promises, request)).pipe(
-        Effect.map(Option.fromNullishOr),
-      ),
+      callProvisioningClient(
+        client.promises.checkPermission.bind(client.promises, request)
+      ).pipe(Effect.map(Option.fromNullishOr)),
     close: () => client.close(),
     writeRelationships: (request) =>
-      callProvisioningClient(client.promises.writeRelationships.bind(client.promises, request)),
+      callProvisioningClient(
+        client.promises.writeRelationships.bind(client.promises, request)
+      ),
     writeSchema: (request) =>
-      callProvisioningClient(client.promises.writeSchema.bind(client.promises, request)),
+      callProvisioningClient(
+        client.promises.writeSchema.bind(client.promises, request)
+      ),
   };
 };
 
@@ -321,18 +365,20 @@ const acquireProvisioningClient = (configuration: SpiceDbConfigValue) =>
       catch: () =>
         failure(
           'action_authorization_service_unavailable',
-          'The authorization provisioning client could not be created',
+          'The authorization provisioning client could not be created'
         ),
       try: () => createProvisioningClient(configuration),
     }),
-    (client) => Effect.sync(() => client.close()),
+    (client) => Effect.sync(() => client.close())
   );
 
 const runCurrentActionAuthorizationProvisioningWithServices = (
   workspaceRoot: string,
-  commandArguments: readonly string[] = [],
+  commandArguments: readonly string[] = []
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError,
   FileSystem.FileSystem | Path.Path
 > =>
@@ -340,18 +386,19 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
     if (commandArguments.length > 0) {
       return yield* failure(
         'action_authorization_configuration_invalid',
-        'Current Action authorization provisioning accepts no command-line arguments',
+        'Current Action authorization provisioning accepts no command-line arguments'
       );
     }
     const configuration = yield* loadSpiceDbConfig().pipe(
       Effect.mapError(() =>
         failure(
           'action_authorization_configuration_invalid',
-          'The SpiceDB provisioning configuration is invalid',
-        ),
-      ),
+          'The SpiceDB provisioning configuration is invalid'
+        )
+      )
     );
-    const target = yield* selectActionAuthorizationProvisioningTarget(configuration);
+    const target =
+      yield* selectActionAuthorizationProvisioningTarget(configuration);
     const actions = yield* discoverCurrentActionsEffect(workspaceRoot);
     const client = yield* acquireProvisioningClient(target.configuration);
     const result = yield* provisionActionAuthorization(client, {
@@ -363,55 +410,75 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
 
 export function runCurrentActionAuthorizationProvisioning(
   workspaceRoot: string,
-  commandArguments: readonly [string, ...string[]],
+  commandArguments: readonly [string, ...string[]]
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError
 >;
 export function runCurrentActionAuthorizationProvisioning(
-  workspaceRoot: string,
+  workspaceRoot: string
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError,
   FileSystem.FileSystem | Path.Path
 >;
 export function runCurrentActionAuthorizationProvisioning(
   workspaceRoot: string,
-  commandArguments: readonly string[] = [],
+  commandArguments: readonly string[] = []
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & { readonly environment: 'development' | 'stage' },
+  ActionAuthorizationProvisioningResult & {
+    readonly environment: 'development' | 'stage';
+  },
   ActionAuthorizationProvisioningError,
   FileSystem.FileSystem | Path.Path
 > {
-  return runCurrentActionAuthorizationProvisioningWithServices(workspaceRoot, commandArguments);
+  return runCurrentActionAuthorizationProvisioningWithServices(
+    workspaceRoot,
+    commandArguments
+  );
 }
 
-export const formatActionAuthorizationProvisioningFailure = (cause: unknown): string =>
+export const formatActionAuthorizationProvisioningFailure = (
+  cause: unknown
+): string =>
   Schema.is(ActionAuthorizationProvisioningError)(cause)
     ? `${cause.code}: ${cause.reason}`
     : 'action_authorization_service_unavailable: Unexpected Action authorization provisioning failure';
 
-const command = Command.make('authorization-provision-current-actions', {}, () =>
-  Effect.gen(function* provisionCurrentActionsCommand() {
-    const path = yield* Path.Path;
-    const workspaceRoot = path.resolve(import.meta.dirname, '..');
-    const result = yield* runCurrentActionAuthorizationProvisioningWithServices(workspaceRoot).pipe(
-      Effect.tapError((cause) =>
-        Console.error(formatActionAuthorizationProvisioningFailure(cause)),
-      ),
-    );
-    yield* Console.log(
-      `Provisioned ${result.grantCount} explicit Action grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,
-    );
-  }),
+const command = Command.make(
+  'authorization-provision-current-actions',
+  {},
+  () =>
+    Effect.gen(function* provisionCurrentActionsCommand() {
+      const path = yield* Path.Path;
+      const workspaceRoot = path.resolve(import.meta.dirname, '..');
+      const result =
+        yield* runCurrentActionAuthorizationProvisioningWithServices(
+          workspaceRoot
+        ).pipe(
+          Effect.tapError((cause) =>
+            Console.error(formatActionAuthorizationProvisioningFailure(cause))
+          )
+        );
+      yield* Console.log(
+        `Provisioned ${result.grantCount} explicit Action grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`
+      );
+    })
 );
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   NodeRuntime.runMain(
     Layer.effectDiscard(Command.run(command, { version: '0.1.0' })).pipe(
       Layer.provide(NodeServices.layer),
-      Layer.launch,
+      Layer.launch
     ),
-    { disableErrorReporting: true },
+    { disableErrorReporting: true }
   );
 }

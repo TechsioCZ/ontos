@@ -4,5 +4,5 @@ export class PartyCreateRecoveryUnavailable extends Schema.TaggedError<PartyCrea
   'PartyCreateRecoveryUnavailable',
   {
     reason: Schema.String,
-  },
+  }
 ) {}

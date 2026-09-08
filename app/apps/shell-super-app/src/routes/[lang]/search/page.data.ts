@@ -1,5 +1,6 @@
 import { Effect, Match, Option, Schema } from 'effect';
 import { Url, UrlParams } from 'effect/unstable/http';
+
 import type { ShellSearchResponse } from '../../../../shared/api.ts';
 import { searchResources } from '../../../api/auth-client.ts';
 import { runBrowserEffect } from '../../../runtime/browser-effect-runtime.ts';
@@ -24,18 +25,25 @@ export type SearchPageModel =
       readonly state: 'ready';
     };
 
-export const SearchRouteSearch = Schema.Struct({ q: Schema.optionalKey(Schema.String) });
-export const SearchRouteSearchStandard = Schema.toStandardSchemaV1(SearchRouteSearch);
+export const SearchRouteSearch = Schema.Struct({
+  q: Schema.optionalKey(Schema.String),
+});
+export const SearchRouteSearchStandard =
+  Schema.toStandardSchemaV1(SearchRouteSearch);
 
 const searchFromRequest = (request: Request): typeof SearchRouteSearch.Type => {
   const query = UrlParams.getFirst(Url.urlParams(new URL(request.url)), 'q');
   return Option.getOrElse(
-    Schema.decodeUnknownOption(SearchRouteSearch)(Option.isSome(query) ? { q: query.value } : {}),
-    () => ({}),
+    Schema.decodeUnknownOption(SearchRouteSearch)(
+      Option.isSome(query) ? { q: query.value } : {}
+    ),
+    () => ({})
   );
 };
 
-export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageModel> => {
+export const loader = ({
+  request,
+}: SearchLoaderArguments): Promise<SearchPageModel> => {
   const query = (searchFromRequest(request).q ?? '').trim();
   return runBrowserEffect(
     Effect.tryPromise(() => loadHomePageModel(request)).pipe(
@@ -45,11 +53,18 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
           return Effect.succeed<SearchPageModel>({
             query,
             shell,
-            state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+            state:
+              shell.state === 'unavailable'
+                ? 'unavailable'
+                : 'selection_required',
           });
         }
         if (shell.contextState !== 'authenticated') {
-          return Effect.succeed<SearchPageModel>({ query, shell, state: 'selection_required' });
+          return Effect.succeed<SearchPageModel>({
+            query,
+            shell,
+            state: 'selection_required',
+          });
         }
         if (query.length === 0) {
           return Effect.succeed<SearchPageModel>({
@@ -61,7 +76,12 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
         }
         return shellAuthenticationClientOptionsFromRequest(request).pipe(
           Effect.flatMap((options) => searchResources({ query }, options)),
-          Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),
+          Effect.map((response): SearchPageModel => ({
+            query,
+            response,
+            shell,
+            state: 'ready',
+          })),
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.succeed<SearchPageModel>({
@@ -71,7 +91,7 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
                   Match.tag(
                     'ShellAuthenticationRequiredProblem',
                     'ShellSelectionRequiredProblem',
-                    () => 'selection_required' as const,
+                    () => 'selection_required' as const
                   ),
                   Match.tag(
                     'ConfigError',
@@ -86,15 +106,15 @@ export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageMo
                     'ShellRateLimitedProblem',
                     'ShellTargetForbiddenProblem',
                     'ShellTargetNotFoundProblem',
-                    () => 'unavailable' as const,
+                    () => 'unavailable' as const
                   ),
-                  Match.exhaustive,
+                  Match.exhaustive
                 ),
               }),
             onSuccess: Effect.succeed,
-          }),
+          })
         );
-      }),
-    ),
+      })
+    )
   );
 };

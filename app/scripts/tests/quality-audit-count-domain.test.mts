@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Effect, Result, Schema } from 'effect';
-import { KnipModelEvidenceSchema } from '../../quality-audit/knip-model.mts';
+
 import { makeEffectTestCallback } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
-import { validateReport } from '../quality-audit.mts';
+import { KnipModelEvidenceSchema } from '../../quality-audit/knip-model.mts';
 import { validateQualityAuditSummary } from '../quality-audit-gate.mts';
+import { validateReport } from '../quality-audit.mts';
 
 void test('audit evidence requires finite nonnegative integer source positions', () => {
   const evidence = {
@@ -31,17 +33,17 @@ void test(
       for (const count of ['1e400', '-1e400', '-1', '0.5']) {
         const audit = yield* validateReport(
           'jscpd',
-          `{"duplicates":[],"statistics":{"total":{"clones":0,"sources":${count}}}}`,
+          `{"duplicates":[],"statistics":{"total":{"clones":0,"sources":${count}}}}`
         ).pipe(Effect.result);
         assert.equal(Result.isFailure(audit), true);
         const gate = yield* validateQualityAuditSummary(
-          `{"status":"reported","results":[{"name":"jscpd","status":"reported","diagnostic":"","advisory":false,"files":${count},"findings":0,"coverage":{"tokenEligibleFiles":${count}}}]}`,
+          `{"status":"reported","results":[{"name":"jscpd","status":"reported","diagnostic":"","advisory":false,"files":${count},"findings":0,"coverage":{"tokenEligibleFiles":${count}}}]}`
         ).pipe(Effect.result);
         assert.equal(Result.isFailure(gate), true);
         if (Result.isFailure(gate)) {
           assert.match(gate.failure.message, /Malformed audit summary/u);
         }
       }
-    }),
-  ),
+    })
+  )
 );

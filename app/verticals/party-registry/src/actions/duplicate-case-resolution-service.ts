@@ -1,7 +1,8 @@
 import { Effect, Schema } from 'effect';
+
+import type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
 import { PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import { DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
-import type { ConfirmDuplicatePartiesPayload } from '../../shared/actions/confirm-duplicate-parties.ts';
 import { transitionDuplicateCandidateCase } from '../services/party-matching-persistence.service.ts';
 
 export const DuplicateCaseResolutionErrorSchema = Schema.Union([
@@ -12,7 +13,7 @@ export const DuplicateCaseResolutionErrorSchema = Schema.Union([
 export const duplicateCaseResolutionService = (
   transaction: Parameters<typeof transitionDuplicateCandidateCase>[0],
   tenantId: string,
-  outcome: Parameters<typeof transitionDuplicateCandidateCase>[1]['outcome'],
+  outcome: Parameters<typeof transitionDuplicateCandidateCase>[1]['outcome']
 ) =>
   Effect.succeed({
     resolve: (payload: ConfirmDuplicatePartiesPayload, invocationId: string) =>

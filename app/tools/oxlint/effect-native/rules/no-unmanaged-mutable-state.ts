@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 /**
  * Audit A4/C3/B4 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) targets WeakMap
  * defect-cause storage, non-reactive Contacts UI side channels and module memoization whose lifecycle
@@ -23,15 +25,16 @@
  * Report-only, with no fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-import { fileURLToPath } from 'node:url';
-
 import type { Context, ESTree, Reference, Variable } from '@oxlint/plugins';
-
-import { matchesGlobs as matchesAny, isTestFile, normalisePath } from '../shared/paths.ts';
 
 import { staticString, skipWrappers, unwrapNode } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolveVariable } from '../shared/bindings.ts';
 import { booleanOption as boolean, stringList } from '../shared/options.ts';
+import {
+  matchesGlobs as matchesAny,
+  isTestFile,
+  normalisePath,
+} from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -39,10 +42,16 @@ type AnyNode = ESTree.Node;
 function workspacePath(filename: string): string {
   const unified = filename.replaceAll('\\', '/');
   const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
+    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(
+      unified
+    );
   if (fixture?.[1]) return fixture[1];
-  const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
-  return unified.startsWith(root) ? unified.slice(root.length) : normalisePath(unified);
+  const root = fileURLToPath(
+    new URL('../../../../', import.meta.url)
+  ).replaceAll('\\', '/');
+  return unified.startsWith(root)
+    ? unified.slice(root.length)
+    : normalisePath(unified);
 }
 /** Generated output is never source; not overridable through options. */
 const ALWAYS_IGNORED: readonly string[] = [
@@ -60,12 +69,19 @@ const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self']);
 /** Identity-keyed collections that carry data beside the typed model. */
 const WEAK_CONSTRUCTORS: readonly string[] = ['WeakMap', 'WeakSet'];
 /** Added when `includeWeakRef` is enabled: lifecycle side channels rather than data side channels. */
-const WEAK_REF_CONSTRUCTORS: readonly string[] = ['WeakRef', 'FinalizationRegistry'];
+const WEAK_REF_CONSTRUCTORS: readonly string[] = [
+  'WeakRef',
+  'FinalizationRegistry',
+];
 
 /** Constructors whose instances are mutable containers when held at module scope. */
 const CONTAINER_CONSTRUCTORS = new Set(['Map', 'Set', 'Array']);
 
-const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_INCLUDE: readonly string[] = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+];
 const DEFAULT_IGNORE: readonly string[] = ['**/*.config.ts', '**/*.config.mts'];
 const DEFAULT_MUTATING_MEMBERS: readonly string[] = [
   'set',
@@ -113,7 +129,10 @@ function readOptions(raw: unknown): RuleOptions {
     includeScripts: boolean(given.includeScripts, DEFAULTS.includeScripts),
     includeTests: boolean(given.includeTests, DEFAULTS.includeTests),
     includeWeakRef: boolean(given.includeWeakRef, DEFAULTS.includeWeakRef),
-    mutatingMembers: stringList(given.mutatingMembers, DEFAULTS.mutatingMembers),
+    mutatingMembers: stringList(
+      given.mutatingMembers,
+      DEFAULTS.mutatingMembers
+    ),
   };
 }
 
@@ -122,25 +141,32 @@ function unwrap(node: AnyNode): AnyNode {
 }
 
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
+  if (!node.computed)
+    return node.property.type === 'Identifier' ? node.property.name : null;
   return staticString(unwrap(node.property), { templates: true });
 }
 
 function immutableVariable(
   context: Context,
   node: AnyNode & { readonly name: string },
-  seen: Set<Variable>,
+  seen: Set<Variable>
 ): Variable | null {
   const variable = resolveVariable(context, node.name, node);
   if (!variable || seen.has(variable)) return null;
-  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  if (
+    variable.references.some(
+      (reference) => reference.isWrite() && !reference.init
+    )
+  )
+    return null;
   seen.add(variable);
   return variable;
 }
 
 function variableInitializer(variable: Variable | null): AnyNode | null {
   const definition = variable?.defs[0];
-  return definition?.type === 'Variable' && definition.node.type === 'VariableDeclarator'
+  return definition?.type === 'Variable' &&
+    definition.node.type === 'VariableDeclarator'
     ? (definition.node.init ?? null)
     : null;
 }
@@ -165,7 +191,7 @@ function constructorAlias(variable: Variable): AnyNode | null {
 function globalConstructorName(
   context: Context,
   callee: AnyNode,
-  seen = new Set<Variable>(),
+  seen = new Set<Variable>()
 ): string | null {
   const node = unwrap(callee);
   if (node.type === 'Identifier') {
@@ -188,14 +214,17 @@ function globalConstructorName(
 }
 
 /** Module-body `VariableDeclaration`s, including the `export let x` / `export const x` wrapper. */
-function moduleDeclarations(program: ESTree.Program): readonly ESTree.VariableDeclaration[] {
+function moduleDeclarations(
+  program: ESTree.Program
+): readonly ESTree.VariableDeclaration[] {
   const declarations: ESTree.VariableDeclaration[] = [];
   for (const statement of program.body as readonly AnyNode[]) {
     const candidate =
       statement.type === 'VariableDeclaration'
         ? statement
         : statement.type === 'ExportNamedDeclaration'
-          ? ((statement as ESTree.ExportNamedDeclaration).declaration as AnyNode | null)
+          ? ((statement as ESTree.ExportNamedDeclaration)
+              .declaration as AnyNode | null)
           : null;
     if (candidate === null || candidate === undefined) continue;
     if (candidate.type !== 'VariableDeclaration') continue;
@@ -207,11 +236,13 @@ function moduleDeclarations(program: ESTree.Program): readonly ESTree.VariableDe
 }
 
 function inScope(path: string, options: RuleOptions): boolean {
-  const include = options.includeScripts ? [...options.include, 'scripts/**'] : options.include;
+  const include = options.includeScripts
+    ? [...options.include, 'scripts/**']
+    : options.include;
   if (!matchesAny(path, include)) return false;
   if (
     [ALWAYS_IGNORED, options.ignore, options.allowPaths].some((patterns) =>
-      matchesAny(path, patterns),
+      matchesAny(path, patterns)
     )
   )
     return false;
@@ -224,12 +255,15 @@ function moduleClassOwner(node: ESTree.PropertyDefinition) {
   const owner = body?.type === 'ClassBody' ? body.parent : null;
   if (owner?.type !== 'ClassDeclaration' || !owner.id) return null;
   const ancestor =
-    owner.parent?.type === 'ExportNamedDeclaration' ? owner.parent.parent : owner.parent;
+    owner.parent?.type === 'ExportNamedDeclaration'
+      ? owner.parent.parent
+      : owner.parent;
   return ancestor?.type === 'Program' ? owner : null;
 }
 
 function staticFieldKey(node: ESTree.PropertyDefinition): string | null {
-  if (node.key.type === 'Identifier' || node.key.type === 'PrivateIdentifier') return node.key.name;
+  if (node.key.type === 'Identifier' || node.key.type === 'PrivateIdentifier')
+    return node.key.name;
   return node.key.type === 'Literal' ? String(node.key.value) : null;
 }
 
@@ -267,7 +301,8 @@ export const rule = defineRule({
           include: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
+            description:
+              'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
           },
           includeScripts: {
             type: 'boolean',
@@ -281,7 +316,8 @@ export const rule = defineRule({
           },
           includeWeakRef: {
             type: 'boolean',
-            description: 'Also report `new WeakRef` / `new FinalizationRegistry` (default: false).',
+            description:
+              'Also report `new WeakRef` / `new FinalizationRegistry` (default: false).',
           },
           mutatingMembers: {
             type: 'array',
@@ -311,12 +347,17 @@ export const rule = defineRule({
     if (!inScope(path, options)) return {};
 
     const weakConstructors = new Set<string>(
-      options.includeWeakRef ? [...WEAK_CONSTRUCTORS, ...WEAK_REF_CONSTRUCTORS] : WEAK_CONSTRUCTORS,
+      options.includeWeakRef
+        ? [...WEAK_CONSTRUCTORS, ...WEAK_REF_CONSTRUCTORS]
+        : WEAK_CONSTRUCTORS
     );
     const mutatingMembers = new Set<string>(options.mutatingMembers);
 
     /** Resolve only locally known native containers; an arbitrary `.set` API is not mutation. */
-    const valueOf = (input: AnyNode | null, seen = new Set<Variable>()): AnyNode | null => {
+    const valueOf = (
+      input: AnyNode | null,
+      seen = new Set<Variable>()
+    ): AnyNode | null => {
       if (!input) return null;
       const value = unwrap(input);
       if (value.type !== 'Identifier') return value;
@@ -324,11 +365,15 @@ export const rule = defineRule({
       if (!variable || seen.has(variable)) return null;
       seen.add(variable);
       const definition = variable.defs[0];
-      return definition?.type === 'Variable' && definition.node.type === 'VariableDeclarator'
+      return definition?.type === 'Variable' &&
+        definition.node.type === 'VariableDeclarator'
         ? valueOf(definition.node.init ?? null, seen)
         : null;
     };
-    const containerKind = (input: AnyNode | null, depth = 0): 'object' | 'collection' | null => {
+    const containerKind = (
+      input: AnyNode | null,
+      depth = 0
+    ): 'object' | 'collection' | null => {
       if (depth > 16) return null;
       const value = valueOf(input);
       if (!value) return null;
@@ -338,11 +383,13 @@ export const rule = defineRule({
         const name = globalConstructorName(context, value.callee);
         return name && CONTAINER_CONSTRUCTORS.has(name) ? 'collection' : null;
       }
-      return value.type === 'CallExpression' ? factoryContainerKind(value, depth) : null;
+      return value.type === 'CallExpression'
+        ? factoryContainerKind(value, depth)
+        : null;
     };
     const factoryContainerKind = (
       value: ESTree.CallExpression,
-      depth: number,
+      depth: number
     ): 'object' | 'collection' | null => {
       const callee = unwrap(value.callee);
       if (callee.type !== 'MemberExpression') return null;
@@ -352,12 +399,25 @@ export const rule = defineRule({
         if (['create', 'fromEntries'].includes(method)) return 'object';
         if (['entries', 'keys', 'values'].includes(method)) return 'collection';
       }
-      if (isUnshadowedGlobal(context, object, 'Array') && ['from', 'of'].includes(method))
+      if (
+        isUnshadowedGlobal(context, object, 'Array') &&
+        ['from', 'of'].includes(method)
+      )
         return 'collection';
-      if (!['slice', 'concat', 'map', 'filter', 'flat', 'flatMap'].includes(method)) return null;
-      return containerKind(object, depth + 1) === 'collection' ? 'collection' : null;
+      if (
+        !['slice', 'concat', 'map', 'filter', 'flat', 'flatMap'].includes(
+          method
+        )
+      )
+        return null;
+      return containerKind(object, depth + 1) === 'collection'
+        ? 'collection'
+        : null;
     };
-    const propertyValue = (input: AnyNode | null, key: string | null): AnyNode | null => {
+    const propertyValue = (
+      input: AnyNode | null,
+      key: string | null
+    ): AnyNode | null => {
       const value = valueOf(input);
       if (value?.type !== 'ObjectExpression' || key === null) return null;
       for (const property of value.properties) {
@@ -379,7 +439,10 @@ export const rule = defineRule({
         const member = parent;
         const method = staticPropertyName(member);
         const outer = skipWrappers(member);
-        if (outer.parent?.type === 'CallExpression' && outer.parent.callee === outer.node) {
+        if (
+          outer.parent?.type === 'CallExpression' &&
+          outer.parent.callee === outer.node
+        ) {
           return (
             method !== null &&
             mutatingMembers.has(method) &&
@@ -392,12 +455,18 @@ export const rule = defineRule({
       }
       return directlyMutated(current, parent);
     };
-    const directlyMutated = (current: AnyNode, parent: AnyNode | null): boolean => {
+    const directlyMutated = (
+      current: AnyNode,
+      parent: AnyNode | null
+    ): boolean => {
       if (!parent) return false;
-      if (parent.type === 'AssignmentExpression' && parent.left === current) return true;
+      if (parent.type === 'AssignmentExpression' && parent.left === current)
+        return true;
       if (parent.type === 'UpdateExpression') return true;
-      if (parent.type === 'UnaryExpression' && parent.operator === 'delete') return true;
-      if (parent.type !== 'CallExpression' || parent.arguments[0] !== current) return false;
+      if (parent.type === 'UnaryExpression' && parent.operator === 'delete')
+        return true;
+      if (parent.type !== 'CallExpression' || parent.arguments[0] !== current)
+        return false;
       return isObjectAssign(parent.callee);
     };
     const isObjectAssign = (input: AnyNode): boolean => {
@@ -408,11 +477,17 @@ export const rule = defineRule({
         isUnshadowedGlobal(context, unwrap(callee.object), 'Object')
       );
     };
-    const isMutatingReference = (reference: Reference, init: AnyNode | null): boolean => {
+    const isMutatingReference = (
+      reference: Reference,
+      init: AnyNode | null
+    ): boolean => {
       if (reference.init) return false;
       return reference.isWrite() || mutatedAt(reference.identifier, init);
     };
-    const globalContainer = (input: AnyNode, seen = new Set<Variable>()): boolean => {
+    const globalContainer = (
+      input: AnyNode,
+      seen = new Set<Variable>()
+    ): boolean => {
       const node = unwrap(input);
       if (node.type !== 'Identifier') return false;
       if (
@@ -420,30 +495,43 @@ export const rule = defineRule({
         isUnshadowedGlobal(context, node, node.name)
       )
         return true;
-      const initial = variableInitializer(immutableVariable(context, node, seen));
+      const initial = variableInitializer(
+        immutableVariable(context, node, seen)
+      );
       return initial !== null && globalContainer(initial, seen);
     };
 
     const reportDeclarator = (declarator: ESTree.VariableDeclarator): void => {
-      const variables = context.sourceCode.getDeclaredVariables(declarator as unknown as AnyNode);
+      const variables = context.sourceCode.getDeclaredVariables(
+        declarator as unknown as AnyNode
+      );
       if (variables.length === 0) {
         context.report({
           node: declarator.id as unknown as AnyNode,
           messageId: 'moduleMutable',
-          data: { name: context.sourceCode.getText(declarator.id as unknown as AnyNode) },
+          data: {
+            name: context.sourceCode.getText(
+              declarator.id as unknown as AnyNode
+            ),
+          },
         });
         return;
       }
       for (const variable of variables) {
         const anchor =
-          (variable.identifiers[0] as AnyNode | undefined) ?? (declarator.id as unknown as AnyNode);
-        context.report({ node: anchor, messageId: 'moduleMutable', data: { name: variable.name } });
+          (variable.identifiers[0] as AnyNode | undefined) ??
+          (declarator.id as unknown as AnyNode);
+        context.report({
+          node: anchor,
+          messageId: 'moduleMutable',
+          data: { name: variable.name },
+        });
       }
     };
 
     const inspectDeclarator = (
       declarator: ESTree.VariableDeclarator,
-      kind: ESTree.VariableDeclaration['kind'],
+      kind: ESTree.VariableDeclaration['kind']
     ): void => {
       if (kind === 'let' || kind === 'var') {
         reportDeclarator(declarator);
@@ -454,8 +542,8 @@ export const rule = defineRule({
       const variables = context.sourceCode.getDeclaredVariables(declarator);
       const mutated = variables.some((variable) =>
         variable.references.some((reference) =>
-          isMutatingReference(reference, declarator.init ?? null),
-        ),
+          isMutatingReference(reference, declarator.init ?? null)
+        )
       );
       if (mutated) reportDeclarator(declarator);
     };
@@ -463,7 +551,8 @@ export const rule = defineRule({
     return {
       AssignmentExpression(node) {
         const left = unwrap(node.left);
-        if (left.type !== 'MemberExpression' || !globalContainer(left.object)) return;
+        if (left.type !== 'MemberExpression' || !globalContainer(left.object))
+          return;
         context.report({
           node: left,
           messageId: 'moduleMutable',
@@ -485,7 +574,7 @@ export const rule = defineRule({
               staticPropertyName(access) === key &&
               mutatedAt(access, node.value)
             );
-          }),
+          })
         );
         if (mutated)
           context.report({
@@ -506,7 +595,11 @@ export const rule = defineRule({
           outer.parent.arguments.includes(outer.node as never)
         )
           return;
-        if (outer.parent?.type === 'MemberExpression' && outer.parent.object === outer.node) return;
+        if (
+          outer.parent?.type === 'MemberExpression' &&
+          outer.parent.object === outer.node
+        )
+          return;
         context.report({
           node: node as unknown as AnyNode,
           messageId: 'weakSideChannel',

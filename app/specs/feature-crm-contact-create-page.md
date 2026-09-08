@@ -8,71 +8,27 @@ created: 2026-08-16
 
 ## Feature Description
 
-Add the generated CRM `ContactCreate` page at localized URL
-`/cs/crm/customers/:id/contacts/new` (canonical generator URL
-`/crm/customers/:id/contacts/new`, also exposed under `/en`). The authenticated Shell continues to
-own dashboard composition, legal-entity selection, exact page resolution, module-state gating, and
-the lazy CRM remote load. The CRM-owned page treats `:id` as the untrusted parent Customer UUID,
-validates it at the owner boundary, renders an empty Contact form, and submits `{ customerId, name,
-email, phone }` through the existing generated `createContact` Effect client. The CRM BFF endpoint
-must execute the existing `CreateContactAction`; the page must not import or call the Action,
-persistence service, backend handler, or HTTP endpoint directly.
+Add the generated CRM `ContactCreate` page at localized URL `/cs/crm/customers/:id/contacts/new` (canonical generator URL `/crm/customers/:id/contacts/new`, also exposed under `/en`). The authenticated Shell continues to own dashboard composition, legal-entity selection, exact page resolution, module-state gating, and the lazy CRM remote load. The CRM-owned page treats `:id` as the untrusted parent Customer UUID, validates it at the owner boundary, renders an empty Contact form, and submits `{ customerId, name, email, phone }` through the existing generated `createContact` Effect client. The CRM BFF endpoint must execute the existing `CreateContactAction`; the page must not import or call the Action, persistence service, backend handler, or HTTP endpoint directly.
 
-Use Figma file `ERP`, page `Pre-Alpha Repo` (not `Pre-Alpha`), frame
-`Resource Detail — Běžný` (`6:780`, 1440×900) only as an arrangement wireframe. Preserve the
-Shell-owned left navigation, compact Back link, page heading, and single main content surface, but
-replace the read-only detail rows with inputs. Do not copy Figma styling or add the example's inert
-Overview/Documents/Timeline/Audit tabs. Use the installed `@techsio/ui-kit` components and tokens,
-with CRM-prefixed Tailwind utilities only for responsive layout composition.
+Use Figma file `ERP`, page `Pre-Alpha Repo` (not `Pre-Alpha`), frame `Resource Detail — Běžný` (`6:780`, 1440×900) only as an arrangement wireframe. Preserve the Shell-owned left navigation, compact Back link, page heading, and single main content surface, but replace the read-only detail rows with inputs. Do not copy Figma styling or add the example's inert Overview/Documents/Timeline/Audit tabs. Use the installed `@techsio/ui-kit` components and tokens, with CRM-prefixed Tailwind utilities only for responsive layout composition.
 
-Create a separate owner-private `ContactForm` presentation component for the editable `name`,
-`email`, and `phone` values so a later Contact-edit page can reuse the same field, validation,
-pending, field-error, form-status, cancel, and submit contract. It receives plain values/states and
-semantic callbacks; it does not read route params, navigate, call the BFF, run Effects, access
-permissions, or depend on Contact DTO/client-error types.
+Create a separate owner-private `ContactForm` presentation component for the editable `name`, `email`, and `phone` values so a later Contact-edit page can reuse the same field, validation, pending, field-error, form-status, cancel, and submit contract. It receives plain values/states and semantic callbacks; it does not read route params, navigate, call the BFF, run Effects, access permissions, or depend on Contact DTO/client-error types.
 
 ## User Story
 
-As an authenticated CRM user with write access
-I want to add a Contact to a specific Customer from a dedicated localized page
-So that the Contact is created through the governed CRM Action boundary and remains associated with
-the intended Customer
+As an authenticated CRM user with write access I want to add a Contact to a specific Customer from a dedicated localized page So that the Contact is created through the governed CRM Action boundary and remains associated with the intended Customer
 
 ## Problem Statement
 
-CRM already owns Contact persistence, `CreateContactAction`, the strict Effect BFF mutation, and the
-generated `createContact` client, but it has no governed page for entering a Contact. Direct endpoint
-use would bypass the intended frontend seam and provide no localized, accessible validation,
-pending, denial, conflict, retry, or success experience. The dynamic nested route also requires
-Codesmith-owned manifest, registration, federation, Shell connector, route-parameter, and locale
-wiring before the business UI can be adapted safely. Without a presentation boundary, the later
-Contact-edit page would duplicate the same three fields and their interaction behavior.
+CRM already owns Contact persistence, `CreateContactAction`, the strict Effect BFF mutation, and the generated `createContact` client, but it has no governed page for entering a Contact. Direct endpoint use would bypass the intended frontend seam and provide no localized, accessible validation, pending, denial, conflict, retry, or success experience. The dynamic nested route also requires Codesmith-owned manifest, registration, federation, Shell connector, route-parameter, and locale wiring before the business UI can be adapted safely. Without a presentation boundary, the later Contact-edit page would duplicate the same three fields and their interaction behavior.
 
 ## Solution Statement
 
-Run the mandatory MicroVertical page generator with stable identity `contact-create` and canonical
-URL `/crm/customers/:id/contacts/new`. Preserve its private/non-indexable exact-page descriptor,
-dynamic non-navigation behavior, owner-private registration, Module Federation exposure, approved
-Shell lazy client, and bounded `id` propagation. Adapt the generated CRM page and federation wrapper
-to receive the resolved target so write availability remains explicit. Decode the owner-side
-`routeParams.id` with `CrmUuidSchema`; an absent, malformed, or overlong value renders a localized
-not-found state and never invokes the mutation.
+Run the mandatory MicroVertical page generator with stable identity `contact-create` and canonical URL `/crm/customers/:id/contacts/new`. Preserve its private/non-indexable exact-page descriptor, dynamic non-navigation behavior, owner-private registration, Module Federation exposure, approved Shell lazy client, and bounded `id` propagation. Adapt the generated CRM page and federation wrapper to receive the resolved target so write availability remains explicit. Decode the owner-side `routeParams.id` with `CrmUuidSchema`; an absent, malformed, or overlong value renders a localized not-found state and never invokes the mutation.
 
-Create the explicitly requested owner-private `ContactForm` directly after the page scaffold. Use
-`FormInput` for name and email, the compound `PhoneInput` for telephone entry, `Button` for
-submit/cancel, and `StatusText` for field/form feedback. Keep validation aligned with the existing
-Action input schemas: trimmed non-empty name (maximum 200), trimmed email matching the current
-3–320-character CRM email contract, and trimmed non-empty phone (maximum 100). Do not enable
-`PhoneInput`'s stricter libphonenumber native validation because `CrmPhoneSchema` does not currently
-require a valid E.164 number.
+Create the explicitly requested owner-private `ContactForm` directly after the page scaffold. Use `FormInput` for name and email, the compound `PhoneInput` for telephone entry, `Button` for submit/cancel, and `StatusText` for field/form feedback. Keep validation aligned with the existing Action input schemas: trimmed non-empty name (maximum 200), trimmed email matching the current 3–320-character CRM email contract, and trimmed non-empty phone (maximum 100). Do not enable `PhoneInput`'s stricter libphonenumber native validation because `CrmPhoneSchema` does not currently require a valid E.164 number.
 
-Use the established page-local TanStack Query mutation pattern to bridge `createContact` at the
-framework edge, retain its operation-specific typed error union, and map every expected failure into
-field or form UI state. Generate one idempotency key per logical `{ customerId, name, email, phone }`
-intent, reuse it only after an uncertain failure when all normalized values are unchanged, and
-generate a fresh correlation ID for every attempt. On success, navigate to the localized existing
-Customer-detail route `/${language}/crm/customers/${customerId}`; Back and Cancel use the same
-destination without invoking the Action.
+Use the established page-local TanStack Query mutation pattern to bridge `createContact` at the framework edge, retain its operation-specific typed error union, and map every expected failure into field or form UI state. Generate one idempotency key per logical `{ customerId, name, email, phone }` intent, reuse it only after an uncertain failure when all normalized values are unchanged, and generate a fresh correlation ID for every attempt. On success, navigate to the localized existing Customer-detail route `/${language}/crm/customers/${customerId}`; Back and Cancel use the same destination without invoking the Action.
 
 ## Relevant Files
 
@@ -137,27 +93,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Generate the exact nested page and all owner/Shell wiring before adapting business code. Verify the
-generator retains the canonical route without a locale prefix, carries only `id`, omits dynamic
-navigation, and creates stable `contact-create` identities. Then create the explicitly approved
-owner-private `ContactForm`, reusing the repository-pinned UI-kit and current CRM test/query setup;
-add no backend contract, Action, persistence, dependency, shared component, or token override.
+Generate the exact nested page and all owner/Shell wiring before adapting business code. Verify the generator retains the canonical route without a locale prefix, carries only `id`, omits dynamic navigation, and creates stable `contact-create` identities. Then create the explicitly approved owner-private `ContactForm`, reusing the repository-pinned UI-kit and current CRM test/query setup; add no backend contract, Action, persistence, dependency, shared component, or token override.
 
 ### Phase 2: Core Implementation
 
-Implement `ContactForm` as a reusable presentation contract using the installed UI-kit field and
-feedback components. Adapt the generated ContactCreate page and federation wrapper to validate the
-parent ID, honor `target.writable`, render an empty ready form, and submit through the generated
-`createContact` Effect client with correct typed error and logical-idempotency behavior. Add focused
-tests beside each reusable form and page behavior.
+Implement `ContactForm` as a reusable presentation contract using the installed UI-kit field and feedback components. Adapt the generated ContactCreate page and federation wrapper to validate the parent ID, honor `target.writable`, render an empty ready form, and submit through the generated `createContact` Effect client with correct typed error and logical-idempotency behavior. Add focused tests beside each reusable form and page behavior.
 
 ### Phase 3: Integration
 
-Complete Czech/English copy, generated manifest/registration/federation/Shell verification,
-responsive and keyboard behavior, localized parent navigation, and browser coverage. Reuse the real
-CRM BFF/Action integration suites as the authoritative proof that the page's client method reaches
-`CreateContactAction` through the strict BFF and governed Action runtime. Finish with independent
-CRM/Shell checks, boundary validators, builds, and the final repository quality gate.
+Complete Czech/English copy, generated manifest/registration/federation/Shell verification, responsive and keyboard behavior, localized parent navigation, and browser coverage. Reuse the real CRM BFF/Action integration suites as the authoritative proof that the page's client method reaches `CreateContactAction` through the strict BFF and governed Action runtime. Finish with independent CRM/Shell checks, boundary validators, builds, and the final repository quality gate.
 
 ## Step by Step Tasks
 
@@ -217,23 +161,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use the existing CRM Node unit tests for Action/API schemas and add Rstest/Testing Library coverage
-for `ContactForm` and the generated ContactCreate page. Mock only the generated frontend Effect
-client seam in page tests. Prove reusable presentation ownership, Action-aligned field validation,
-keyboard/focus/accessibility behavior, valid/invalid parent IDs, write gating, exact
-`createContact` payload/options, typed failure mapping, logical idempotency, localized parent
-navigation, and absence of forbidden frontend dependencies. Use Shell Rstest coverage for exact page
-resolution, bounded `id` propagation, and lazy remote props.
+Use the existing CRM Node unit tests for Action/API schemas and add Rstest/Testing Library coverage for `ContactForm` and the generated ContactCreate page. Mock only the generated frontend Effect client seam in page tests. Prove reusable presentation ownership, Action-aligned field validation, keyboard/focus/accessibility behavior, valid/invalid parent IDs, write gating, exact `createContact` payload/options, typed failure mapping, logical idempotency, localized parent navigation, and absence of forbidden frontend dependencies. Use Shell Rstest coverage for exact page resolution, bounded `id` propagation, and lazy remote props.
 
 ### Integration Tests
 
-Run the existing CRM integration suites that execute Contact creation through the contract-derived
-client/BFF and the real Action runtime. They prove assertion verification, `CreateContactAction`
-dispatch, Customer parent lookup, idempotency, tenant/module/write scope, persistence, data-access and
-audit evidence, typed Problem Details decoding, rollback, and tenant isolation. Add focused Shell
-browser coverage for privacy, form behavior, real page-to-BFF request construction, localized
-navigation, and responsive layout while mocking the terminal BFF response to avoid introducing new
-Action cleanup responsibilities into the browser fixture.
+Run the existing CRM integration suites that execute Contact creation through the contract-derived client/BFF and the real Action runtime. They prove assertion verification, `CreateContactAction` dispatch, Customer parent lookup, idempotency, tenant/module/write scope, persistence, data-access and audit evidence, typed Problem Details decoding, rollback, and tenant isolation. Add focused Shell browser coverage for privacy, form behavior, real page-to-BFF request construction, localized navigation, and responsive layout while mocking the terminal BFF response to avoid introducing new Action cleanup responsibilities into the browser fixture.
 
 ### Edge Cases
 

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { PartySearchProjector } from '../../src/services/party-search-projection.service.ts';
 import { definePartySearchWorker } from '../../src/workers/party-search-worker.ts';
@@ -20,7 +22,9 @@ const context: OutboxWorkerHandlerContext = {
   topic: 'party.registry.worker-test.v1',
   workerKey: 'party.registry.worker-test',
 };
-const TestResourceIdSchema = Schema.String.pipe(Schema.brand('SearchWorkerTestResourceId'));
+const TestResourceIdSchema = Schema.String.pipe(
+  Schema.brand('SearchWorkerTestResourceId')
+);
 const payloadSchema = Schema.Struct({ resourceId: TestResourceIdSchema });
 const entrypoint = defineTenantModuleEntrypoint({
   access: 'background',
@@ -47,7 +51,7 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
               targetField === 'partyId'
                 ? { partyId: payload.resourceId }
                 : { counterpartyId: payload.resourceId },
-          },
+          }
         );
         assert.deepEqual(worker.descriptor, {
           consumerModuleKey: 'party.registry',
@@ -70,8 +74,11 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
         });
         let calls = 0;
         const result = yield* handle(
-          { resourceId: yield* Schema.decodeUnknownEffect(TestResourceIdSchema)('target') },
-          context,
+          {
+            resourceId:
+              yield* Schema.decodeUnknownEffect(TestResourceIdSchema)('target'),
+          },
+          context
         ).pipe(
           Effect.provideService(PartySearchProjector, {
             project: (receivedContext, target) => {
@@ -81,10 +88,12 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
               return Effect.fail(failure);
             },
           }),
-          Effect.catchTag('PartySearchProjectionUnavailable', (error) => Effect.succeed(error)),
+          Effect.catchTag('PartySearchProjectionUnavailable', (error) =>
+            Effect.succeed(error)
+          )
         );
         assert.equal(result, failure);
         assert.equal(calls, 1);
-      }),
+      })
     ));
 }

@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-promise-shaped-port
  *
@@ -14,12 +13,17 @@ import { optionRecord } from '../shared/options.ts';
  * explicit policy controls, not proof of ownership. No fixer or suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
-import { stringArray, booleanOption as boolean } from '../shared/options.ts';
 import { parentOf, typeNameSegments } from '../shared/ast.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray, booleanOption as boolean } from '../shared/options.ts';
+import {
+  globToRegExp,
+  isTestFile,
+  scopePath,
+  matchesGlobs,
+} from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE = [
@@ -63,23 +67,33 @@ function readOptions(context: Context) {
     includeTests: boolean(record.includeTests, false),
     includeTsx: boolean(record.includeTsx, false),
     allowPaths: stringArray(record.allowPaths, DEFAULT_ALLOW_PATHS),
-    driverCallbacks: stringArray(record.driverCallbacks, DEFAULT_DRIVER_CALLBACKS),
+    driverCallbacks: stringArray(
+      record.driverCallbacks,
+      DEFAULT_DRIVER_CALLBACKS
+    ),
     allowNames: stringArray(record.allowNames, DEFAULT_ALLOW_NAMES),
     effectModules: stringArray(record.effectModules, DEFAULT_EFFECT_MODULES),
     promiseTypes: stringArray(record.promiseTypes, DEFAULT_PROMISE_TYPES),
-    includeFunctionDeclarations: boolean(record.includeFunctionDeclarations, true),
+    includeFunctionDeclarations: boolean(
+      record.includeFunctionDeclarations,
+      true
+    ),
   };
 }
 
 /** Flatten a static member chain (`E.Effect.tryPromise`) into its identifier segments. */
 function memberSegments(node: ESTree.Node): readonly string[] | null {
   let current: ESTree.Node = node;
-  if (current.type === 'ChainExpression') current = current.expression as ESTree.Node;
+  if (current.type === 'ChainExpression')
+    current = current.expression as ESTree.Node;
   const segments: string[] = [];
   while (current.type === 'MemberExpression') {
     const member = current as ESTree.MemberExpression;
     if (member.computed) {
-      if (member.property.type !== 'Literal' || typeof member.property.value !== 'string')
+      if (
+        member.property.type !== 'Literal' ||
+        typeof member.property.value !== 'string'
+      )
         return null;
       segments.unshift(member.property.value);
     } else {
@@ -176,7 +190,8 @@ export const rule = defineRule({
     };
     const variableFor = (node: any, name: string): any => {
       for (
-        let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
+        let scope: import('@oxlint/plugins').Scope | null =
+          context.sourceCode.getScope(node);
         scope;
         scope = scope.upper
       ) {
@@ -196,9 +211,13 @@ export const rule = defineRule({
     const importBindingPath = (def: any): string => {
       const source = def.parent?.source?.value;
       const name = importedExportName(def);
-      if (source === 'effect' || matchesGlobs(source ?? '', options.effectModules))
+      if (
+        source === 'effect' ||
+        matchesGlobs(source ?? '', options.effectModules)
+      )
         return `effect:${name ?? 'root'}`;
-      if (source === 'effect/Effect') return `effect:Effect${name ? `.${name}` : ''}`;
+      if (source === 'effect/Effect')
+        return `effect:Effect${name ? `.${name}` : ''}`;
       return `${source}:${name ?? '*'}`;
     };
     const immutableDefinition = (def: any, variable: any): boolean =>
@@ -210,9 +229,12 @@ export const rule = defineRule({
       const variable = variableFor(node, node.name);
       for (const def of variable?.defs ?? []) {
         if (def.type === 'ImportBinding') return importBindingPath(def);
-        if (immutableDefinition(def, variable)) return imported(def.node.init, seen);
+        if (immutableDefinition(def, variable))
+          return imported(def.node.init, seen);
       }
-      return !variable?.defs.length && node.name === 'globalThis' ? 'globalThis' : null;
+      return !variable?.defs.length && node.name === 'globalThis'
+        ? 'globalThis'
+        : null;
     };
     const imported = (raw: any, seen = new Set<any>()): string | null => {
       const node = unwrap(raw);
@@ -220,7 +242,9 @@ export const rule = defineRule({
       seen.add(node);
       if (node.type === 'MemberExpression') {
         const left = imported(node.object, seen);
-        const key = node.computed ? computedKey(node.property) : node.property.name;
+        const key = node.computed
+          ? computedKey(node.property)
+          : node.property.name;
         return left && typeof key === 'string' ? `${left}.${key}` : null;
       }
       return importedIdentifier(node, seen);
@@ -233,7 +257,8 @@ export const rule = defineRule({
       }
       if (typeof node.type !== 'string') return;
       visit(node);
-      for (const [key, value] of Object.entries(node)) if (key !== 'parent') walk(value, visit);
+      for (const [key, value] of Object.entries(node))
+        if (key !== 'parent') walk(value, visit);
     };
     const functionBody = (raw: any): any => {
       const node = unwrap(raw);
@@ -251,7 +276,10 @@ export const rule = defineRule({
       if (!node) return false;
       if (node.type === 'ImportExpression') return true;
       if (node.type === 'ArrayExpression')
-        return node.elements.length > 0 && node.elements.every((item: any) => externalValue(item));
+        return (
+          node.elements.length > 0 &&
+          node.elements.every((item: any) => externalValue(item))
+        );
       if (node.type === 'ObjectExpression') {
         let hasAdapter = false;
         const onlyAdapters = node.properties.every((property: any) => {
@@ -268,14 +296,20 @@ export const rule = defineRule({
       if (node.type === 'CallExpression') {
         const path = imported(node.callee) ?? '';
         // Only known forced SDK construction; an arbitrary imported first-party factory is not proof.
-        return /^(?:better-auth:betterAuth|drizzle-orm\/[^:]+:drizzle)$/u.test(path);
+        return /^(?:better-auth:betterAuth|drizzle-orm\/[^:]+:drizzle)$/u.test(
+          path
+        );
       }
       return false;
     };
     const mirrorTypes = new Set<any>();
     const markType = (type: any): void => {
       if (!type) return;
-      if (['TSTypeAnnotation', 'TSTypeOperator', 'TSParenthesizedType'].includes(type.type)) {
+      if (
+        ['TSTypeAnnotation', 'TSTypeOperator', 'TSParenthesizedType'].includes(
+          type.type
+        )
+      ) {
         markType(type.typeAnnotation);
         return;
       }
@@ -283,9 +317,16 @@ export const rule = defineRule({
         markType(type.elementType);
         return;
       }
-      if (type.type !== 'TSTypeReference' || type.typeName.type !== 'Identifier') return;
-      const def = variableFor(type.typeName, type.typeName.name)?.defs.find((d: any) =>
-        ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(d.node.type),
+      if (
+        type.type !== 'TSTypeReference' ||
+        type.typeName.type !== 'Identifier'
+      )
+        return;
+      const def = variableFor(type.typeName, type.typeName.name)?.defs.find(
+        (d: any) =>
+          ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(
+            d.node.type
+          )
       );
       if (def) mirrorTypes.add(def.node);
     };
@@ -294,8 +335,12 @@ export const rule = defineRule({
         markType(node.id.typeAnnotation);
       if (node.type === 'AssignmentPattern' && externalValue(node.right))
         markType(node.left.typeAnnotation);
-      if (FUNCTION_TYPES.has(node.type) && externalValue(node)) markType(node.returnType);
-      if (node.type === 'TSSatisfiesExpression' && externalValue(node.expression))
+      if (FUNCTION_TYPES.has(node.type) && externalValue(node))
+        markType(node.returnType);
+      if (
+        node.type === 'TSSatisfiesExpression' &&
+        externalValue(node.expression)
+      )
         markType(node.typeAnnotation);
     });
     const withinMirror = (node: any): boolean => {
@@ -307,7 +352,7 @@ export const rule = defineRule({
     /** `Effect.tryPromise` / `Eff.promise` / `E.Effect.tryPromise` / bare `tryPromise`. */
     const isPromiseBoundaryCall = (call: ESTree.CallExpression): boolean => {
       return /^effect:(?:root\.)?Effect\.(?:promise|tryPromise|tryMapPromise)$/u.test(
-        imported(call.callee) ?? '',
+        imported(call.callee) ?? ''
       );
     };
 
@@ -329,12 +374,16 @@ export const rule = defineRule({
         if (parent === null) return false;
         if (parent.type === 'CallExpression') {
           const call = parent as unknown as ESTree.CallExpression;
-          const isArgument = (call.arguments as readonly ESTree.Node[]).includes(
-            current as ESTree.Node,
-          );
+          const isArgument = (
+            call.arguments as readonly ESTree.Node[]
+          ).includes(current as ESTree.Node);
           if (isArgument && isPromiseBoundaryCall(call)) return true;
           // A driver callback is forced, not every service constructed inside its body.
-          if (isArgument && unwrap(current) === unwrap(node) && isDriverCallbackCall(call))
+          if (
+            isArgument &&
+            unwrap(current) === unwrap(node) &&
+            isDriverCallbackCall(call)
+          )
             return true;
         }
         current = parent;
@@ -354,7 +403,9 @@ export const rule = defineRule({
       parent.value === current &&
       parent.parent?.type === 'ObjectExpression';
     const authPropertyKey = (parent: any): unknown =>
-      parent.computed ? computedKey(parent.key) : (parent.key.name ?? parent.key.value);
+      parent.computed
+        ? computedKey(parent.key)
+        : (parent.key.name ?? parent.key.value);
     const atAuthHook = (node: any): boolean => {
       let current = node;
       const keys: string[] = [];
@@ -385,7 +436,11 @@ export const rule = defineRule({
     const insideReportedFunction = (node: AnyNode): boolean => {
       let current: AnyNode | null = parentOf(node);
       while (current !== null) {
-        if (FUNCTION_TYPES.has(current.type) && reportedFunctions.has(current.start)) return true;
+        if (
+          FUNCTION_TYPES.has(current.type) &&
+          reportedFunctions.has(current.start)
+        )
+          return true;
         current = parentOf(current);
       }
       return false;
@@ -393,13 +448,13 @@ export const rule = defineRule({
 
     /** The `Promise` / `PromiseLike` reference of a return/value annotation, if any. */
     const promiseReference = (
-      annotation: ESTree.TSTypeAnnotation | null | undefined,
+      annotation: ESTree.TSTypeAnnotation | null | undefined
     ): string | null => {
       if (annotation === null || annotation === undefined) return null;
       const isGlobalPromiseReference = (
         raw: any,
         names: readonly string[],
-        name: string,
+        name: string
       ): boolean =>
         names.length === 2 &&
         names[0] === 'globalThis' &&
@@ -413,16 +468,20 @@ export const rule = defineRule({
         if (names.length !== 1) return null;
         const variable = variableFor(raw.typeName, name);
         const alias = variable?.defs.find(
-          (d: any) => d.node.type === 'TSTypeAliasDeclaration',
+          (d: any) => d.node.type === 'TSTypeAliasDeclaration'
         )?.node;
         if (alias) return resolve(alias.typeAnnotation, seen);
-        if (variable?.defs.length || !options.promiseTypes.includes(name)) return null;
+        if (variable?.defs.length || !options.promiseTypes.includes(name))
+          return null;
         return `${name}<…>`;
       };
       const resolve = (raw: any, seen = new Set<any>()): string | null => {
         if (!raw || seen.has(raw)) return null;
         seen.add(raw);
-        if (raw.type === 'TSTypeAnnotation' || raw.type === 'TSParenthesizedType')
+        if (
+          raw.type === 'TSTypeAnnotation' ||
+          raw.type === 'TSParenthesizedType'
+        )
           return resolve(raw.typeAnnotation, seen);
         if (raw.type === 'TSUnionType' || raw.type === 'TSIntersectionType') {
           for (const item of raw.types) {
@@ -442,7 +501,8 @@ export const rule = defineRule({
       const key = (node as { readonly key?: ESTree.Node | null }).key ?? null;
       if (key !== null) {
         if (key.type === 'Identifier') return key.name;
-        if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
+        if (key.type === 'Literal' && typeof key.value === 'string')
+          return key.value;
         if (key.type === 'PrivateIdentifier') return `#${key.name}`;
       }
       const id = (node as { readonly id?: ESTree.Node | null }).id ?? null;
@@ -488,12 +548,25 @@ export const rule = defineRule({
       return memberName(owner);
     };
 
-    const report = (node: ESTree.Node, messageId: string, data: Record<string, string>): void => {
+    const report = (
+      node: ESTree.Node,
+      messageId: string,
+      data: Record<string, string>
+    ): void => {
       if (withinMirror(node)) return;
       // A5 owns the service surface, not signatures of fluent driver continuations.
       // Nested function-returned records are intentionally outside this AST-only port model.
-      for (let ancestor = (node as any).parent; ancestor; ancestor = ancestor.parent) {
-        if (['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(ancestor.type)) break;
+      for (
+        let ancestor = (node as any).parent;
+        ancestor;
+        ancestor = ancestor.parent
+      ) {
+        if (
+          ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(
+            ancestor.type
+          )
+        )
+          break;
         if (ancestor.type === 'TSFunctionType') return;
       }
       context.report({ node, messageId, data } as never);
@@ -507,7 +580,9 @@ export const rule = defineRule({
       let parent = parentOf(current);
       while (
         parent &&
-        ['TSUnionType', 'TSIntersectionType', 'TSParenthesizedType'].includes(parent.type)
+        ['TSUnionType', 'TSIntersectionType', 'TSParenthesizedType'].includes(
+          parent.type
+        )
       ) {
         current = parent;
         parent = parentOf(current);
@@ -519,7 +594,8 @@ export const rule = defineRule({
       if (owner === null) return false;
       // `const deleteRecovery: (id: string) => Promise<void> = ...` — a declared binding, not a
       // callback parameter (whose annotated `Identifier` has a function as its parent).
-      if (owner.type === 'Identifier') return parentOf(owner)?.type === 'VariableDeclarator';
+      if (owner.type === 'Identifier')
+        return parentOf(owner)?.type === 'VariableDeclarator';
       return [
         'TSPropertySignature',
         'TSIndexSignature',
@@ -532,12 +608,15 @@ export const rule = defineRule({
 
     const isModuleScopeDeclarator = (declarator: AnyNode): boolean => {
       const declaration = parentOf(declarator);
-      if (declaration === null || declaration.type !== 'VariableDeclaration') return false;
+      if (declaration === null || declaration.type !== 'VariableDeclaration')
+        return false;
       const owner = parentOf(declaration);
       if (owner === null) return false;
-      if (owner.type === 'Program' || owner.type === 'TSModuleBlock') return true;
+      if (owner.type === 'Program' || owner.type === 'TSModuleBlock')
+        return true;
       return (
-        (owner.type === 'ExportNamedDeclaration' || owner.type === 'ExportDefaultDeclaration') &&
+        (owner.type === 'ExportNamedDeclaration' ||
+          owner.type === 'ExportDefaultDeclaration') &&
         ['Program', 'TSModuleBlock'].includes(parentOf(owner)?.type ?? '')
       );
     };
@@ -548,7 +627,9 @@ export const rule = defineRule({
       if (id.type !== 'Identifier') return false;
       return variableFor(id, id.name)?.references.some(
         (r: any) =>
-          r.isRead() && r.identifier.parent && isObjectValue(r.identifier.parent, r.identifier),
+          r.isRead() &&
+          r.identifier.parent &&
+          isObjectValue(r.identifier.parent, r.identifier)
       );
     };
     const isImplementationPosition = (node: AnyNode): boolean => {
@@ -560,8 +641,16 @@ export const rule = defineRule({
       }
       if (parent === null) return false;
       if (parent.type === 'Property') return isObjectValue(parent, current);
-      if (['MethodDefinition', 'TSAbstractMethodDefinition'].includes(parent.type)) return true;
-      if (['PropertyDefinition', 'TSAbstractPropertyDefinition'].includes(parent.type)) return true;
+      if (
+        ['MethodDefinition', 'TSAbstractMethodDefinition'].includes(parent.type)
+      )
+        return true;
+      if (
+        ['PropertyDefinition', 'TSAbstractPropertyDefinition'].includes(
+          parent.type
+        )
+      )
+        return true;
       if (parent.type === 'VariableDeclarator') {
         return (
           (parent as unknown as ESTree.VariableDeclarator).init ===
@@ -578,7 +667,8 @@ export const rule = defineRule({
       if (parent === null) return false;
       if (parent.type === 'Program') return true;
       return (
-        (parent.type === 'ExportNamedDeclaration' || parent.type === 'ExportDefaultDeclaration') &&
+        (parent.type === 'ExportNamedDeclaration' ||
+          parent.type === 'ExportDefaultDeclaration') &&
         parentOf(parent)?.type === 'Program'
       );
     };
@@ -587,7 +677,8 @@ export const rule = defineRule({
       if (body?.type === 'ImportExpression') return true;
       return (
         body?.type === 'CallExpression' &&
-        imported(body.callee) === '@modern-js/plugin-bff/effect-client:runEffectRequest'
+        imported(body.callee) ===
+          '@modern-js/plugin-bff/effect-client:runEffectRequest'
       );
     };
     const exportedOwner = (owner: any): boolean =>
@@ -595,10 +686,12 @@ export const rule = defineRule({
       owner.parent?.parent?.type === 'ExportNamedDeclaration';
     const exemptReference = (ref: any, seen: Set<any>): boolean => {
       const call = ref.identifier.parent;
-      if (call?.type !== 'CallExpression' || call.callee !== ref.identifier) return false;
+      if (call?.type !== 'CallExpression' || call.callee !== ref.identifier)
+        return false;
       if (atDriverEdge(call)) return true;
       for (let current = call.parent; current; current = current.parent)
-        if (FUNCTION_TYPES.has(current.type)) return exemptHelper(current, new Set(seen));
+        if (FUNCTION_TYPES.has(current.type))
+          return exemptHelper(current, new Set(seen));
       return false;
     };
     const exemptHelper = (fn: any, seen = new Set<any>()): boolean => {
@@ -623,7 +716,9 @@ export const rule = defineRule({
     const allowedRoute = (node: AnyNode, member: string): boolean =>
       allowNames.has(member) &&
       /(?:^|\/)src\/routes\//u.test(path) &&
-      ['VariableDeclarator', 'FunctionDeclaration'].includes(namedOwner(node).type);
+      ['VariableDeclarator', 'FunctionDeclaration'].includes(
+        namedOwner(node).type
+      );
     const atImplementationBoundary = (node: AnyNode): boolean =>
       atDriverEdge(node) || atAuthHook(node) || exemptHelper(node);
     const checkImplementation = (node: AnyNode): void => {
@@ -641,33 +736,48 @@ export const rule = defineRule({
       // Framework router entrypoints (`loader`, `action`, ...) are forced to return a Promise.
       if (allowedRoute(node, member)) return;
       reportedFunctions.add(node.start);
-      report(node as ESTree.Node, isAsync ? 'asyncPort' : 'promiseReturningImplementation', {
-        member,
-        wrapper: wrapper ?? 'Promise',
-      });
+      report(
+        node as ESTree.Node,
+        isAsync ? 'asyncPort' : 'promiseReturningImplementation',
+        {
+          member,
+          wrapper: wrapper ?? 'Promise',
+        }
+      );
     };
 
     return {
       TSMethodSignature: (node: ESTree.TSMethodSignature) => {
         const wrapper = promiseReference(node.returnType);
         if (wrapper === null) return;
-        report(node, 'promisePort', { member: memberName(node as unknown as AnyNode), wrapper });
+        report(node, 'promisePort', {
+          member: memberName(node as unknown as AnyNode),
+          wrapper,
+        });
       },
       TSCallSignatureDeclaration: (node: ESTree.TSCallSignatureDeclaration) => {
         const wrapper = promiseReference(node.returnType);
         if (wrapper === null) return;
         report(node, 'promisePort', { member: 'the call signature', wrapper });
       },
-      TSConstructSignatureDeclaration: (node: ESTree.TSConstructSignatureDeclaration) => {
+      TSConstructSignatureDeclaration: (
+        node: ESTree.TSConstructSignatureDeclaration
+      ) => {
         const wrapper = promiseReference(node.returnType);
         if (wrapper === null) return;
-        report(node, 'promisePort', { member: 'the construct signature', wrapper });
+        report(node, 'promisePort', {
+          member: 'the construct signature',
+          wrapper,
+        });
       },
       TSFunctionType: (node: ESTree.TSFunctionType) => {
         const wrapper = promiseReference(node.returnType);
         if (wrapper === null) return;
         if (!isPortFunctionTypePosition(node as unknown as AnyNode)) return;
-        report(node, 'promisePort', { member: nameOf(node as unknown as AnyNode), wrapper });
+        report(node, 'promisePort', {
+          member: nameOf(node as unknown as AnyNode),
+          wrapper,
+        });
       },
       TSPropertySignature: (node: ESTree.TSPropertySignature) => {
         const wrapper = promiseReference(node.typeAnnotation);
@@ -690,7 +800,8 @@ export const rule = defineRule({
         checkImplementation(node as unknown as AnyNode),
       TSDeclareFunction: (node: any) => {
         const wrapper = promiseReference(node.returnType);
-        if (wrapper) report(node, 'promisePort', { member: nameOf(node), wrapper });
+        if (wrapper)
+          report(node, 'promisePort', { member: nameOf(node), wrapper });
       },
       FunctionDeclaration: (node: ESTree.Function) =>
         checkImplementation(node as unknown as AnyNode),

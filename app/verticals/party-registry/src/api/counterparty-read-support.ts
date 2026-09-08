@@ -1,5 +1,6 @@
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
+
 import type { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
 import type { CounterpartyRef } from '../../shared/party-registry-references.ts';
 import type { LookupResult } from '../services/counterparty-persistence.service.ts';
@@ -31,9 +32,9 @@ export const resolveCounterpartyRead = <Value>(
   ref: CounterpartyRef,
   tenantId: string,
   load: (
-    counterpartyId: string,
+    counterpartyId: string
   ) => Effect.Effect<LookupResult<Value>, CounterpartyPersistenceUnavailable>,
-  unavailableReason: string,
+  unavailableReason: string
 ) =>
   ref.tenantId === tenantId
     ? load(ref.resourceId).pipe(
@@ -44,15 +45,17 @@ export const resolveCounterpartyRead = <Value>(
               reason: unavailableReason,
             }),
             'cause',
-            { value: cause },
-          ),
+            { value: cause }
+          )
         ),
         Effect.flatMap((result) =>
           Match.value(result).pipe(
             Match.tag('found', ({ value }) => Effect.succeed(value)),
-            Match.tag('not_found', () => Effect.fail(notFound('authorized context'))),
-            Match.exhaustive,
-          ),
-        ),
+            Match.tag('not_found', () =>
+              Effect.fail(notFound('authorized context'))
+            ),
+            Match.exhaustive
+          )
+        )
       )
     : Effect.fail(notFound('trusted Tenant'));

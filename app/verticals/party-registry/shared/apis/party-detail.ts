@@ -4,10 +4,18 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { AresAppliedEvidenceSchema } from '../domain/ares-application.ts';
 import { AssertionIdSchema } from '../domain/correction-contracts.ts';
-import { IsoTimestampSchema, PartySchema } from '../domain/identity-contracts.ts';
+import {
+  IsoTimestampSchema,
+  PartySchema,
+} from '../domain/identity-contracts.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const PartyDetailRequestSchema = Schema.Struct({
@@ -26,7 +34,13 @@ export const PartyFactAssertionSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   recordedAt: IsoTimestampSchema,
   retractsAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
-  state: Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']),
+  state: Schema.Literals([
+    'ACTIVE',
+    'ENDED',
+    'SUPERSEDED',
+    'RETRACTED',
+    'DISPUTED',
+  ]),
   supersedesAssertionId: Schema.OptionFromNullOr(AssertionIdSchema),
   validFrom: IsoTimestampSchema,
   validTo: Schema.OptionFromNullOr(IsoTimestampSchema),
@@ -50,35 +64,33 @@ export type PartyDetailResponse = typeof PartyDetailResponseSchema.Type;
 
 export const PartyDetailAuthenticationProblemSchema = makeProblemDetailsSchema(
   'PartyDetailAuthenticationProblem',
-  401,
+  401
 );
 export const PartyDetailInvalidProblemSchema = makeProblemDetailsSchema(
   'PartyDetailInvalidProblem',
-  400,
+  400
 );
-export const PartyDetailUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartyDetailUnavailableProblem',
-  503,
-);
+export const PartyDetailUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema('PartyDetailUnavailableProblem', 503);
 export const PartyDetailForbiddenProblemSchema = makeProblemDetailsSchema(
   'PartyDetailForbiddenProblem',
-  403,
+  403
 );
 export const PartyDetailNotFoundProblemSchema = makeProblemDetailsSchema(
   'PartyDetailNotFoundProblem',
-  404,
+  404
 );
 export const PartyDetailPolicyProblemSchema = makeProblemDetailsSchema(
   'PartyDetailPolicyProblem',
-  422,
+  422
 );
 export const PartyDetailPolicyConflictProblemSchema = makeProblemDetailsSchema(
   'PartyDetailPolicyConflictProblem',
-  409,
+  409
 );
 export const PartyDetailInternalProblemSchema = makeProblemDetailsSchema(
   'PartyDetailInternalProblem',
-  500,
+  500
 );
 
 export const PartyDetailApi = HttpApi.make('PartyDetailApi').add(
@@ -99,6 +111,6 @@ export const PartyDetailApi = HttpApi.make('PartyDetailApi').add(
       payload: PartyDetailRequestSchema,
       query: {},
       success: PartyDetailResponseSchema,
-    }),
-  ),
+    })
+  )
 );

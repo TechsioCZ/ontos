@@ -1,7 +1,9 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Node's test API owns the Promise boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Effect, Redacted, Schema } from 'effect';
+
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
@@ -29,7 +31,10 @@ const registration = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'core.test.http-runner',
       moduleKey: 'core.shell',
       role: 'action',
@@ -42,11 +47,12 @@ const registration = defineAction(
     resultSchema: Schema.Struct({}),
     schemaVersion: '1',
   },
-  () => Effect.succeed({}),
+  () => Effect.succeed({})
 );
 
 const unusedRuntime = (onRun: () => void): ActionRuntimeService => ({
-  resolveActionCommit: () => Effect.die('Action commit recovery is outside the runner fixture'),
+  resolveActionCommit: () =>
+    Effect.die('Action commit recovery is outside the runner fixture'),
   runAction: () => {
     onRun();
     return Effect.die('The Action runtime must not be reached');
@@ -59,7 +65,7 @@ const authorization = (value?: string) => Redacted.make(value);
 
 const forEachSequential = async <Item>(
   items: Iterable<Item>,
-  run: (item: Item) => Promise<void>,
+  run: (item: Item) => Promise<void>
 ): Promise<void> => {
   const iterator = items[Symbol.iterator]();
   const advance = async (): Promise<void> => {
@@ -74,13 +80,20 @@ const forEachSequential = async <Item>(
 };
 
 test('invalid correlation metadata is rejected before principal acquisition and runtime lookup', async () => {
-  const requestHeaders = [{}, { 'x-correlation-id': '' }, { 'x-correlation-id': '   ' }] as const;
+  const requestHeaders = [
+    {},
+    { 'x-correlation-id': '' },
+    { 'x-correlation-id': '   ' },
+  ] as const;
   let authenticationCalls = 0;
   let runtimeCalls = 0;
 
   await forEachSequential(requestHeaders, async (headers) => {
     const effect = runGovernedActionHttp({
-      endpointHeaders: { idempotencyKey: 'not-reached', traceId: 'not-reached' },
+      endpointHeaders: {
+        idempotencyKey: 'not-reached',
+        traceId: 'not-reached',
+      },
       internalProblem: () => internalProblem,
       invalidCorrelationProblem: () => invalidProblem,
       mapError: () => internalProblem,
@@ -98,11 +111,14 @@ test('invalid correlation metadata is rejected before principal acquisition and 
         ActionRuntime,
         unusedRuntime(() => {
           runtimeCalls += 1;
-        }),
-      ),
+        })
+      )
     );
 
-    await assert.rejects(runEffectTestPromise(effect), (failure) => failure === invalidProblem);
+    await assert.rejects(
+      runEffectTestPromise(effect),
+      (failure) => failure === invalidProblem
+    );
   });
 
   assert.equal(authenticationCalls, 0);
@@ -129,13 +145,13 @@ test('principal authentication failure prevents Action runtime execution', async
       ActionRuntime,
       unusedRuntime(() => {
         runtimeCalls += 1;
-      }),
-    ),
+      })
+    )
   );
 
   await assert.rejects(
     runEffectTestPromise(effect),
-    (failure) => failure === authenticationProblem,
+    (failure) => failure === authenticationProblem
   );
   assert.equal(runtimeCalls, 0);
 });
@@ -166,7 +182,10 @@ test('synchronous endpoint callback defects are sanitized before the Action runt
 
   await forEachSequential(callbackDefects, async (fixture) => {
     const effect = runGovernedActionHttp({
-      endpointHeaders: { idempotencyKey: 'not-reached', traceId: 'not-reached' },
+      endpointHeaders: {
+        idempotencyKey: 'not-reached',
+        traceId: 'not-reached',
+      },
       internalProblem: () => internalProblem,
       invalidCorrelationProblem: fixture.invalidCorrelationProblem,
       mapError: () => internalProblem,
@@ -179,11 +198,14 @@ test('synchronous endpoint callback defects are sanitized before the Action runt
         ActionRuntime,
         unusedRuntime(() => {
           runtimeCalls += 1;
-        }),
-      ),
+        })
+      )
     );
 
-    await assert.rejects(runEffectTestPromise(effect), (failure) => failure === internalProblem);
+    await assert.rejects(
+      runEffectTestPromise(effect),
+      (failure) => failure === internalProblem
+    );
   });
 
   assert.equal(runtimeCalls, 0);

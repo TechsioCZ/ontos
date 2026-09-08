@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { getTableName, isTable } from 'drizzle-orm';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
+
 import * as schemaExports from '../../src/db/schema.ts';
 import {
   ACTION_INVOCATION_STATUSES,
@@ -16,10 +18,14 @@ import {
 const actionConfig = getTableConfig(actionInvocations);
 const dialect = new PgDialect();
 type SchemaExport = (typeof schemaExports)[keyof typeof schemaExports];
-const isPgTable = (value: SchemaExport): value is Extract<SchemaExport, PgTable> => isTable(value);
+const isPgTable = (
+  value: SchemaExport
+): value is Extract<SchemaExport, PgTable> => isTable(value);
 
 const getColumn = (name: string) => {
-  const column = actionConfig.columns.find((candidate) => candidate.name === name);
+  const column = actionConfig.columns.find(
+    (candidate) => candidate.name === name
+  );
   assert.ok(column, `Expected action_invocations.${name}`);
   return column;
 };
@@ -38,20 +44,20 @@ void test('exports exactly the 18 Core tables in PostgreSQL schema core', () => 
     })
     .toSorted();
   const expectedQualifiedNames = CORE_TABLE_INVENTORY.map(
-    (tableName) => `${CORE_SCHEMA_NAME}.${tableName}`,
+    (tableName) => `${CORE_SCHEMA_NAME}.${tableName}`
   ).toSorted();
 
   assert.deepEqual(qualifiedNames, expectedQualifiedNames);
   assert.equal(new Set(qualifiedNames).size, CORE_TABLE_INVENTORY.length);
   assert.equal(
     qualifiedNames.some((name) => name.startsWith('public.')),
-    false,
+    false
   );
   assert.equal(
     qualifiedNames.some((name) =>
-      /^(?:auth|ticketing|properties|property|accounting)\./u.test(name),
+      /^(?:auth|ticketing|properties|property|accounting)\./u.test(name)
     ),
-    false,
+    false
   );
 });
 
@@ -74,7 +80,7 @@ void test('supports pre-authentication Action Invocation rows and indeterminate 
   ]);
 
   const statusCheck = actionConfig.checks.find(
-    (candidate) => candidate.name === 'core_action_invocations_status_ck',
+    (candidate) => candidate.name === 'core_action_invocations_status_ck'
   );
   assert.ok(statusCheck);
   const statusSql = dialect.sqlToQuery(statusCheck.value).sql;
@@ -86,35 +92,40 @@ void test('supports pre-authentication Action Invocation rows and indeterminate 
 
 void test('preserves critical Action foreign keys and unique idempotency index', () => {
   const principalForeignKey = actionConfig.foreignKeys.find((foreignKey) =>
-    foreignKey.reference().columns.some((column) => column.name === 'principal_id'),
+    foreignKey
+      .reference()
+      .columns.some((column) => column.name === 'principal_id')
   );
   assert.ok(principalForeignKey);
   assert.equal(
     getTableName(principalForeignKey.reference().foreignTable),
-    getTableName(principals),
+    getTableName(principals)
   );
   assert.equal(principalForeignKey.onDelete, 'restrict');
   assert.deepEqual(
     principalForeignKey.reference().columns.map((column) => column.name),
-    ['tenant_id', 'principal_id'],
+    ['tenant_id', 'principal_id']
   );
 
   const idempotencyIndex = actionConfig.indexes.find(
-    (candidate) => candidate.config.name === 'core_action_invocations_idempotency_uk',
+    (candidate) =>
+      candidate.config.name === 'core_action_invocations_idempotency_uk'
   );
   assert.ok(idempotencyIndex);
   assert.equal(idempotencyIndex.config.unique, true);
   assert.ok(idempotencyIndex.config.where);
   assert.deepEqual(
-    idempotencyIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
-    ['tenant_id', 'action_key', 'principal_id', 'idempotency_key'],
+    idempotencyIndex.config.columns.map((column) =>
+      'name' in column ? column.name : false
+    ),
+    ['tenant_id', 'action_key', 'principal_id', 'idempotency_key']
   );
 });
 
 void test('allocates Domain Event order through a database-owned monotonic sequence', () => {
   const domainEventConfig = getTableConfig(domainEvents);
   const sequenceColumn = domainEventConfig.columns.find(
-    (candidate) => candidate.name === 'tenant_sequence_no',
+    (candidate) => candidate.name === 'tenant_sequence_no'
   );
 
   assert.ok(sequenceColumn);
@@ -123,13 +134,16 @@ void test('allocates Domain Event order through a database-owned monotonic seque
   assert.equal(sequenceColumn.getSQLType(), 'bigint');
 
   const sequenceIndex = domainEventConfig.indexes.find(
-    (candidate) => candidate.config.name === 'core_domain_events_tenant_sequence_uk',
+    (candidate) =>
+      candidate.config.name === 'core_domain_events_tenant_sequence_uk'
   );
   assert.ok(sequenceIndex);
   assert.equal(sequenceIndex.config.unique, true);
   assert.deepEqual(
-    sequenceIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
-    ['tenant_id', 'tenant_sequence_no'],
+    sequenceIndex.config.columns.map((column) =>
+      'name' in column ? column.name : false
+    ),
+    ['tenant_id', 'tenant_sequence_no']
   );
 });
 

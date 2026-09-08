@@ -2,7 +2,14 @@ import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, rs, test } from '@rstest/core';
 import { Effect, Exit, Fiber, Predicate } from 'effect';
 import { TestClock } from 'effect/testing';
-import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
+import {
+  decodeJwt,
+  decodeProtectedHeader,
+  exportJWK,
+  generateKeyPair,
+  jwtVerify,
+} from 'jose';
+
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import {
@@ -22,8 +29,9 @@ const withOptionalProperty = <
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+  trailing: Trailing
+) =>
+  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
 
 const issuer = 'https://shell.example.test';
 const principal = {
@@ -64,7 +72,7 @@ const makeConfiguration = async (): Promise<{
 
 const dependencies = (
   configuration: GatewayIssuerConfigValue,
-  overrides: Partial<GatewayIssuerLayerOptions> = {},
+  overrides: Partial<GatewayIssuerLayerOptions> = {}
 ): GatewayIssuerLayerOptions => ({
   currentTimeSeconds: Effect.succeed(1_700_000_000),
   generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
@@ -78,8 +86,11 @@ const issueGatewayContextAssertionWith = <Principal>(
     readonly audience: string;
     readonly principal: Principal;
   },
-  options: GatewayIssuerLayerOptions,
-) => issueGatewayContextAssertion(input).pipe(Effect.provide(makeGatewayIssuerLayer(options)));
+  options: GatewayIssuerLayerOptions
+) =>
+  issueGatewayContextAssertion(input).pipe(
+    Effect.provide(makeGatewayIssuerLayer(options))
+  );
 
 test('memoises configuration within the refresh window and issues signed assertions', async () => {
   const { configuration, publicKey } = await makeConfiguration();
@@ -90,16 +101,22 @@ test('memoises configuration within the refresh window and issues signed asserti
         configurationLoads += 1;
         return configuration;
       }),
-    }),
+    })
   );
   const [result] = await runEffectTestPromise(
     Effect.all(
       [
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        }),
       ],
-      { concurrency: 2 },
-    ).pipe(Effect.provide(layer)),
+      { concurrency: 2 }
+    ).pipe(Effect.provide(layer))
   );
   const header = decodeProtectedHeader(result.token);
   const claims = decodeJwt(result.token);
@@ -124,7 +141,7 @@ test('memoises configuration within the refresh window and issues signed asserti
   });
   expect(verified.payload['principal']).toEqual(principal);
   expect(JSON.stringify(claims)).not.toMatch(
-    /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u,
+    /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u
   );
   expect(configurationLoads).toBe(1);
 });
@@ -138,7 +155,7 @@ test('shares cached configuration across concurrent valid issuances', async () =
         loadConfigCount += 1;
         return configuration;
       }),
-    }),
+    })
   );
   const importKey = rs.spyOn(globalThis.crypto.subtle, 'importKey');
   let results: readonly { readonly token: string }[];
@@ -146,10 +163,13 @@ test('shares cached configuration across concurrent valid issuances', async () =
     results = await runEffectTestPromise(
       Effect.all(
         Array.from({ length: 8 }, () =>
-          issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+          issueGatewayContextAssertion({
+            audience: 'property-registry',
+            principal,
+          })
         ),
-        { concurrency: 8 },
-      ).pipe(Effect.provide(layer)),
+        { concurrency: 8 }
+      ).pipe(Effect.provide(layer))
     );
     // The signing key is imported once and shared: the slot serialises concurrent first callers.
     expect(importKey).toHaveBeenCalledTimes(1);
@@ -167,7 +187,7 @@ test('shares cached configuration across concurrent valid issuances', async () =
         issuer,
       });
       expect(verified.payload['principal']).toEqual(principal);
-    }),
+    })
   );
 });
 
@@ -191,8 +211,13 @@ test('allows the next issuance after interrupting a pending key import', async (
         yield* Effect.promise(async () => await started.promise);
         yield* Fiber.interrupt(first);
         expect(Exit.isFailure(yield* Fiber.await(first))).toBe(true);
-        return yield* gatewayIssuer.issue({ audience: 'property-registry', principal });
-      }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration)))),
+        return yield* gatewayIssuer.issue({
+          audience: 'property-registry',
+          principal,
+        });
+      }).pipe(
+        Effect.provide(makeGatewayIssuerLayer(dependencies(configuration)))
+      )
     );
     await jwtVerify(result.token, publicKey, {
       algorithms: ['EdDSA'],
@@ -209,8 +234,10 @@ test('allows the next issuance after interrupting a pending key import', async (
 test('refreshes configuration after 30 seconds and replaces the rotated signing key', async () => {
   const { configuration: initialConfiguration, publicKey: initialPublicKey } =
     await makeConfiguration();
-  const { configuration: generatedRotatedConfiguration, publicKey: rotatedPublicKey } =
-    await makeConfiguration();
+  const {
+    configuration: generatedRotatedConfiguration,
+    publicKey: rotatedPublicKey,
+  } = await makeConfiguration();
   const rotatedConfiguration = {
     ...generatedRotatedConfiguration,
     privateJwk: {
@@ -223,9 +250,11 @@ test('refreshes configuration after 30 seconds and replaces the rotated signing 
     dependencies(initialConfiguration, {
       loadConfig: Effect.sync(() => {
         loadConfigCount += 1;
-        return loadConfigCount === 1 ? initialConfiguration : rotatedConfiguration;
+        return loadConfigCount === 1
+          ? initialConfiguration
+          : rotatedConfiguration;
       }),
-    }),
+    })
   );
   const [initialResult, rotatedResult] = await runEffectTestPromise(
     Effect.gen(function* gatewayRotationSequence() {
@@ -238,14 +267,16 @@ test('refreshes configuration after 30 seconds and replaces the rotated signing 
         principal,
       });
       expect(loadConfigCount).toBe(1);
-      expect(decodeProtectedHeader(cached.token).kid).toBe(initialConfiguration.privateJwk.kid);
+      expect(decodeProtectedHeader(cached.token).kid).toBe(
+        initialConfiguration.privateJwk.kid
+      );
       yield* TestClock.adjust('31 seconds');
       const rotated = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
         principal,
       });
       return [initial, rotated] as const;
-    }).pipe(Effect.provide(layer), Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(layer), Effect.provide(TestClock.layer()))
   );
   const initialHeader = decodeProtectedHeader(initialResult.token);
   const rotatedHeader = decodeProtectedHeader(rotatedResult.token);
@@ -275,21 +306,26 @@ test('does not cache configuration failures', async () => {
     dependencies(configuration, {
       loadConfig: Effect.suspend(() => {
         loadConfigCount += 1;
-        return loadConfigCount === 1 ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration);
+        return loadConfigCount === 1
+          ? parseGatewayIssuerConfig({})
+          : Effect.succeed(configuration);
       }),
-    }),
+    })
   );
   const [configurationError, result] = await runEffectTestPromise(
     Effect.gen(function* gatewayFailureSequence() {
       const configurationFailure = yield* Effect.flip(
-        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        })
       );
       const issuedResult = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
         principal,
       });
       return [configurationFailure, issuedResult] as const;
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.provide(layer))
   );
   expect(configurationError.stage).toBe('configuration');
   expect(result.token.length).toBeGreaterThan(0);
@@ -305,14 +341,19 @@ test('retries a failed key import on the next issuance', async () => {
     const [error, result] = await runEffectTestPromise(
       Effect.gen(function* retryImport() {
         const failed = yield* Effect.flip(
-          issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+          issueGatewayContextAssertion({
+            audience: 'property-registry',
+            principal,
+          })
         );
         const issued = yield* issueGatewayContextAssertion({
           audience: 'property-registry',
           principal,
         });
         return [failed, issued] as const;
-      }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration)))),
+      }).pipe(
+        Effect.provide(makeGatewayIssuerLayer(dependencies(configuration)))
+      )
     );
     expect(error.stage).toBe('signing');
     await jwtVerify(result.token, publicKey, {
@@ -333,28 +374,32 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
       Effect.flip(
         issueGatewayContextAssertionWith(
           { audience: 'billing', principal },
-          dependencies(configuration),
-        ),
+          dependencies(configuration)
+        )
       ),
       Effect.flip(
         issueGatewayContextAssertionWith(
           { audience: 'property.registry', principal },
-          dependencies(configuration),
-        ),
+          dependencies(configuration)
+        )
       ),
-    ].map(async (effect) => await runEffectTestPromise(effect)),
+    ].map(async (effect) => await runEffectTestPromise(effect))
   );
   const timeError = await runEffectTestPromise(
     Effect.flip(
       issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
-        dependencies(configuration, { currentTimeSeconds: Effect.succeed(-1) }),
-      ),
-    ),
+        dependencies(configuration, { currentTimeSeconds: Effect.succeed(-1) })
+      )
+    )
   );
 
-  expect(audienceErrors.every((error) => error.code === 'gateway_audience_invalid')).toBe(true);
-  expect(audienceErrors.every((error) => error.stage === 'audience')).toBe(true);
+  expect(
+    audienceErrors.every((error) => error.code === 'gateway_audience_invalid')
+  ).toBe(true);
+  expect(audienceErrors.every((error) => error.stage === 'audience')).toBe(
+    true
+  );
   expect(timeError.code).toBe('gateway_issuer_unavailable');
   expect(timeError.stage).toBe('clock');
 });
@@ -368,9 +413,9 @@ test('rejects transport correlation or any other excess principal claim', async 
           audience: 'property-registry',
           principal: { ...principal, correlationId: 'must-remain-a-header' },
         },
-        dependencies(configuration),
-      ),
-    ),
+        dependencies(configuration)
+      )
+    )
   );
   expect(error.code).toBe('gateway_issuer_unavailable');
   expect(error.stage).toBe('principal');
@@ -384,9 +429,9 @@ test('identifies configuration and signing failures without exposing key materia
         { audience: 'property-registry', principal },
         dependencies(configuration, {
           loadConfig: parseGatewayIssuerConfig({}),
-        }),
-      ),
-    ),
+        })
+      )
+    )
   );
   const signingError = await runEffectTestPromise(
     Effect.flip(
@@ -395,9 +440,9 @@ test('identifies configuration and signing failures without exposing key materia
         dependencies({
           ...configuration,
           privateJwk: { ...configuration.privateJwk, d: 'invalid' },
-        }),
-      ),
-    ),
+        })
+      )
+    )
   );
 
   expect(configurationError.stage).toBe('configuration');
@@ -409,7 +454,14 @@ test('identifies configuration and signing failures without exposing key materia
 test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing key IDs', async () => {
   const invalidJwks = [
     undefined,
-    { alg: 'HS256', d: 'secret', kid: 'hmac', kty: 'oct', use: 'sig', x: 'secret' },
+    {
+      alg: 'HS256',
+      d: 'secret',
+      kid: 'hmac',
+      kty: 'oct',
+      use: 'sig',
+      x: 'secret',
+    },
     {
       alg: 'EdDSA',
       crv: 'X25519',
@@ -419,7 +471,14 @@ test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing ke
       use: 'sig',
       x: 'public',
     },
-    { alg: 'EdDSA', crv: 'Ed25519', d: 'private', kty: 'OKP', use: 'sig', x: 'public' },
+    {
+      alg: 'EdDSA',
+      crv: 'Ed25519',
+      d: 'private',
+      kty: 'OKP',
+      use: 'sig',
+      x: 'public',
+    },
   ];
 
   const errors = await Promise.all(
@@ -435,12 +494,16 @@ test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing ke
                 privateJwk !== undefined,
                 'ONTOS_GATEWAY_PRIVATE_JWK',
                 JSON.stringify(privateJwk),
-                {},
-              ),
-            ),
-          ),
-        ),
-    ),
+                {}
+              )
+            )
+          )
+        )
+    )
   );
-  expect(errors.every((error) => Predicate.isTagged(error, 'GatewayIssuerConfigError'))).toBe(true);
+  expect(
+    errors.every((error) =>
+      Predicate.isTagged(error, 'GatewayIssuerConfigError')
+    )
+  ).toBe(true);
 });

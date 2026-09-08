@@ -3,26 +3,44 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
-import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
-import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
+import {
+  ActionRuntime,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
+} from '@app/core-runtime';
+import type {
+  ActionRuntimeService,
+  ReadRuntimeService,
+} from '@app/core-runtime';
+import {
+  HttpApi,
+  HttpApiBuilder,
+  HttpRouter,
+  HttpServer,
+} from '@modern-js/plugin-bff/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import * as FastCheck from 'fast-check';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
-import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
-import { partyRegistryApi, partyRegistryReadinessSchema } from '../../shared/api.ts';
-import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
-import { PartyDetailAuthenticationProblemSchema } from '../../shared/apis/party-detail.ts';
-import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
-import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
-import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
-import type { AresSubjectServiceContract } from '../../src/integrations/ares/ares-subject.service.ts';
-import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import {
+  makePartyRegistryApiRuntime,
+  partyRegistryFoundationLive,
+} from '../../api/index.ts';
 import {
   partyRegistryCorsAllowedHeaders,
   partyRegistryCorsAllowedMethods,
 } from '../../api/read-server-support.ts';
+import {
+  partyRegistryApi,
+  partyRegistryReadinessSchema,
+} from '../../shared/api.ts';
+import { PartyDetailAuthenticationProblemSchema } from '../../shared/apis/party-detail.ts';
+import { PartyCommandInvalidRequestProblemSchema } from '../../shared/command-api.ts';
+import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
+import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
+import type { AresSubjectServiceContract } from '../../src/integrations/ares/ares-subject.service.ts';
 
 const principal = {
   authBindingId: 'a1000000-0000-4000-8000-000000000001',
@@ -53,7 +71,11 @@ const makeAssertion = async () => {
     use: 'sig',
   };
   const token = await new SignJWT({ principal, ver: 1 })
-    .setProtectedHeader({ alg: 'EdDSA', kid: 'party-runtime-assembly-test', typ: 'JWT' })
+    .setProtectedHeader({
+      alg: 'EdDSA',
+      kid: 'party-runtime-assembly-test',
+      typ: 'JWT',
+    })
     .setIssuer(issuer)
     .setAudience('party-registry')
     .setSubject(principal.principalId)
@@ -65,21 +87,25 @@ const makeAssertion = async () => {
 };
 
 test('serves readiness and rejects the removed placeholder write without business dependencies', async () => {
-  const readinessApi = HttpApi.make('PartyRegistryApi').add(partyRegistryApi.groups.foundation);
+  const readinessApi = HttpApi.make('PartyRegistryApi').add(
+    partyRegistryApi.groups.foundation
+  );
   const server = HttpRouter.toWebHandler(
     HttpApiBuilder.layer(readinessApi).pipe(
       Layer.provide(partyRegistryFoundationLive),
-      Layer.provide(HttpServer.layerServices),
+      Layer.provide(HttpServer.layerServices)
     ),
-    { disableLogger: true },
+    { disableLogger: true }
   );
   try {
     const response = await server.handler(
       new Request('http://localhost/party-registry/readiness'),
-      Context.empty(),
+      Context.empty()
     );
     assert.equal(response.status, 200);
-    const readiness = Schema.decodeUnknownSync(partyRegistryReadinessSchema)(await response.json());
+    const readiness = Schema.decodeUnknownSync(partyRegistryReadinessSchema)(
+      await response.json()
+    );
     assert.deepEqual(readiness.marker, ultramodernApiMarker);
     assert.equal(readiness.status, 'ready');
 
@@ -89,7 +115,7 @@ test('serves readiness and rejects the removed placeholder write without busines
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       }),
-      Context.empty(),
+      Context.empty()
     );
     assert.equal(removedWrite.status, 404);
   } finally {
@@ -112,31 +138,41 @@ test('builds every declared handler and preserves owner-local CORS through the i
     resolveActionCommit: () =>
       Effect.sync(() => {
         actionCommitCalls += 1;
-        throw new Error('Action commit substitute reached through the assembled runtime');
+        throw new Error(
+          'Action commit substitute reached through the assembled runtime'
+        );
       }),
     runAction: () =>
       Effect.sync(() => {
         actionCalls += 1;
-        throw new Error('Action substitute reached through the assembled runtime');
+        throw new Error(
+          'Action substitute reached through the assembled runtime'
+        );
       }),
   };
   const aresSubjectService = {
     subject: (_input) =>
       Effect.sync(() => {
         aresCalls += 1;
-        throw new Error('ARES substitute reached through the assembled runtime');
+        throw new Error(
+          'ARES substitute reached through the assembled runtime'
+        );
       }),
   } satisfies AresSubjectServiceContract;
   const searchProjectionGateway = {
     searchCounterparties: (_input) =>
       Effect.sync(() => {
         counterpartySearchCalls += 1;
-        throw new Error('Counterparty search substitute reached through the assembled runtime');
+        throw new Error(
+          'Counterparty search substitute reached through the assembled runtime'
+        );
       }),
     searchParties: (_input) =>
       Effect.sync(() => {
         partySearchCalls += 1;
-        throw new Error('Party search substitute reached through the assembled runtime');
+        throw new Error(
+          'Party search substitute reached through the assembled runtime'
+        );
       }),
   } satisfies PartySearchProjectionGatewayService;
   const readRuntime: ReadRuntimeService = {
@@ -144,7 +180,9 @@ test('builds every declared handler and preserves owner-local CORS through the i
       Effect.context<never>().pipe(
         Effect.flatMap((context) => {
           readCalls += 1;
-          if (registration.descriptor.readKey === 'party.registry.api.ares-lookup') {
+          if (
+            registration.descriptor.readKey === 'party.registry.api.ares-lookup'
+          ) {
             const service = Context.getOrUndefined(context, AresSubjectService);
             assert.ok(service !== undefined);
             return service
@@ -154,11 +192,18 @@ test('builds every declared handler and preserves owner-local CORS through the i
               })
               .pipe(
                 Effect.orDie,
-                Effect.andThen(Effect.die('ARES substitute completed unexpectedly')),
+                Effect.andThen(
+                  Effect.die('ARES substitute completed unexpectedly')
+                )
               );
           }
-          if (registration.descriptor.readKey === 'party.registry.search.parties') {
-            const service = Context.getOrUndefined(context, PartySearchProjectionGateway);
+          if (
+            registration.descriptor.readKey === 'party.registry.search.parties'
+          ) {
+            const service = Context.getOrUndefined(
+              context,
+              PartySearchProjectionGateway
+            );
             assert.ok(service !== undefined);
             return service
               .searchParties({
@@ -168,11 +213,19 @@ test('builds every declared handler and preserves owner-local CORS through the i
               })
               .pipe(
                 Effect.orDie,
-                Effect.andThen(Effect.die('Party search substitute completed unexpectedly')),
+                Effect.andThen(
+                  Effect.die('Party search substitute completed unexpectedly')
+                )
               );
           }
-          if (registration.descriptor.readKey === 'party.registry.search.counterparties') {
-            const service = Context.getOrUndefined(context, PartySearchProjectionGateway);
+          if (
+            registration.descriptor.readKey ===
+            'party.registry.search.counterparties'
+          ) {
+            const service = Context.getOrUndefined(
+              context,
+              PartySearchProjectionGateway
+            );
             assert.ok(service !== undefined);
             return service
               .searchCounterparties({
@@ -184,11 +237,17 @@ test('builds every declared handler and preserves owner-local CORS through the i
               })
               .pipe(
                 Effect.orDie,
-                Effect.andThen(Effect.die('Counterparty search substitute completed unexpectedly')),
+                Effect.andThen(
+                  Effect.die(
+                    'Counterparty search substitute completed unexpectedly'
+                  )
+                )
               );
           }
-          return Effect.die('Read substitute reached through the assembled runtime');
-        }),
+          return Effect.die(
+            'Read substitute reached through the assembled runtime'
+          );
+        })
       ),
   };
   const actionRuntimeLayer = Layer.mergeAll(
@@ -197,22 +256,22 @@ test('builds every declared handler and preserves owner-local CORS through the i
       ConfigProvider.fromUnknown({
         ONTOS_GATEWAY_ISSUER: assertion.issuer,
         ONTOS_GATEWAY_PUBLIC_JWKS: assertion.publicJwks,
-      }),
-    ),
+      })
+    )
   );
   const aresSubjectLayer = Layer.effect(
     AresSubjectService,
     Effect.sync(() => {
       aresLayerLoads += 1;
       return aresSubjectService;
-    }),
+    })
   );
   const searchProjectionLayer = Layer.effect(
     PartySearchProjectionGateway,
     Effect.sync(() => {
       searchLayerLoads += 1;
       return searchProjectionGateway;
-    }),
+    })
   );
   const assembledRuntime = makePartyRegistryApiRuntime(
     Layer.succeed(ReadRuntime, readRuntime),
@@ -224,7 +283,7 @@ test('builds every declared handler and preserves owner-local CORS through the i
         Effect.sync(() => {
           redemptionCalls += 1;
         }),
-    }),
+    })
   );
   const runtime = assembledRuntime.createHandler();
 
@@ -244,17 +303,17 @@ test('builds every declared handler and preserves owner-local CORS through the i
           'x-correlation-id': 'runtime-missing-credentials',
         },
         method: 'POST',
-      }),
+      })
     );
     assert.equal(unauthenticatedRead.status, 401);
     assert.equal(redemptionCalls, 0);
     assert.equal(unauthenticatedRead.headers.get('www-authenticate'), 'Bearer');
     Schema.decodeUnknownSync(PartyDetailAuthenticationProblemSchema)(
-      await unauthenticatedRead.json(),
+      await unauthenticatedRead.json()
     );
 
     const endpoints = Object.values(partyRegistryApi.groups).flatMap((group) =>
-      Object.values(group.endpoints),
+      Object.values(group.endpoints)
     );
     const headers = {
       authorization: `Bearer ${assertion.token}`,
@@ -292,7 +351,11 @@ test('builds every declared handler and preserves owner-local CORS through the i
       source: 'USER_ASSERTION',
     };
     const addContactPointPayload = {
-      contactPoint: { preferred: false, type: 'EMAIL', value: 'contact@example.test' },
+      contactPoint: {
+        preferred: false,
+        type: 'EMAIL',
+        value: 'contact@example.test',
+      },
       partyRef,
       privacyClassification: 'PUBLIC',
       provenance: contactPointProvenance,
@@ -303,19 +366,22 @@ test('builds every declared handler and preserves owner-local CORS through the i
       new Request('http://localhost/party-registry/actions/add-contact-point', {
         body: JSON.stringify({
           ...addContactPointPayload,
-          contactPoint: { ...addContactPointPayload.contactPoint, value: 'not-an-email' },
+          contactPoint: {
+            ...addContactPointPayload.contactPoint,
+            value: 'not-an-email',
+          },
         }),
         headers: { ...headers, 'idempotency-key': 'invalid-contact-point' },
         method: 'POST',
-      }),
+      })
     );
     assert.equal(invalidContactResponse.status, 400);
     assert.match(
       invalidContactResponse.headers.get('content-type') ?? '',
-      /application\/problem\+json/u,
+      /application\/problem\+json/u
     );
     Schema.decodeUnknownSync(PartyCommandInvalidRequestProblemSchema)(
-      await invalidContactResponse.json(),
+      await invalidContactResponse.json()
     );
     assert.equal(actionCalls, 0);
     assert.equal(redemptionCalls, 0);
@@ -402,9 +468,10 @@ test('builds every declared handler and preserves owner-local CORS through the i
     } as const;
     for (const [index, endpoint] of endpoints.entries()) {
       const callsBefore: number = actionCalls + actionCommitCalls + readCalls;
-      const payloadSchema = endpoint.payload.get('application/json')?.schemas[0];
+      const payloadSchema =
+        endpoint.payload.get('application/json')?.schemas[0];
       const manualPayload = Object.entries(manualPayloads).find(
-        ([path]) => path === endpoint.path,
+        ([path]) => path === endpoint.path
       )?.[1];
       const payload =
         payloadSchema === undefined
@@ -414,17 +481,23 @@ test('builds every declared handler and preserves owner-local CORS through the i
               FastCheck.sample(Schema.toArbitrary(payloadSchema)(FastCheck), {
                 numRuns: 1,
                 seed: index + 1,
-              })[0],
+              })[0]
             ));
       const request =
         payload === undefined
           ? new Request(`http://localhost${endpoint.path}`, {
-              headers: { ...headers, 'idempotency-key': `runtime-assembly-${index + 1}` },
+              headers: {
+                ...headers,
+                'idempotency-key': `runtime-assembly-${index + 1}`,
+              },
               method: endpoint.method,
             })
           : new Request(`http://localhost${endpoint.path}`, {
               body: JSON.stringify(payload),
-              headers: { ...headers, 'idempotency-key': `runtime-assembly-${index + 1}` },
+              headers: {
+                ...headers,
+                'idempotency-key': `runtime-assembly-${index + 1}`,
+              },
               method: endpoint.method,
             });
       // oxlint-disable-next-line no-await-in-loop -- Counter deltas prove each endpoint reaches exactly one substitute before the next request.
@@ -436,12 +509,12 @@ test('builds every declared handler and preserves owner-local CORS through the i
         assert.equal(
           response.status,
           500,
-          `${endpoint.method} ${endpoint.path} must execute a supplied runtime substitute`,
+          `${endpoint.method} ${endpoint.path} must execute a supplied runtime substitute`
         );
         assert.equal(
           actionCalls + actionCommitCalls + readCalls,
           callsBefore + 1,
-          `${endpoint.method} ${endpoint.path} must reach exactly one supplied core runtime`,
+          `${endpoint.method} ${endpoint.path} must reach exactly one supplied core runtime`
         );
       }
     }
@@ -463,17 +536,24 @@ test('builds every declared handler and preserves owner-local CORS through the i
           origin: 'http://localhost:3020',
         },
         method: 'OPTIONS',
-      }),
+      })
     );
     assert.equal(preflight.status, 204);
-    assert.equal(preflight.headers.get('access-control-allow-origin'), 'http://localhost:3020');
-    assert.deepEqual(
-      commaSeparatedHeader(preflight.headers.get('access-control-allow-methods')),
-      [...partyRegistryCorsAllowedMethods].toSorted(),
+    assert.equal(
+      preflight.headers.get('access-control-allow-origin'),
+      'http://localhost:3020'
     );
     assert.deepEqual(
-      commaSeparatedHeader(preflight.headers.get('access-control-allow-headers')),
-      [...partyRegistryCorsAllowedHeaders].toSorted(),
+      commaSeparatedHeader(
+        preflight.headers.get('access-control-allow-methods')
+      ),
+      [...partyRegistryCorsAllowedMethods].toSorted()
+    );
+    assert.deepEqual(
+      commaSeparatedHeader(
+        preflight.headers.get('access-control-allow-headers')
+      ),
+      [...partyRegistryCorsAllowedHeaders].toSorted()
     );
     assert.equal(preflight.headers.get('access-control-max-age'), '600');
 
@@ -484,11 +564,11 @@ test('builds every declared handler and preserves owner-local CORS through the i
           origin: 'http://127.0.0.1:3020',
         },
         method: 'OPTIONS',
-      }),
+      })
     );
     assert.equal(
       loopbackPreflight.headers.get('access-control-allow-origin'),
-      'http://127.0.0.1:3020',
+      'http://127.0.0.1:3020'
     );
     const foreignPreflight = await runtime.handler(
       new Request('http://localhost/party-registry/readiness', {
@@ -497,9 +577,12 @@ test('builds every declared handler and preserves owner-local CORS through the i
           origin: 'https://foreign.example.test',
         },
         method: 'OPTIONS',
-      }),
+      })
     );
-    assert.equal(foreignPreflight.headers.get('access-control-allow-origin'), null);
+    assert.equal(
+      foreignPreflight.headers.get('access-control-allow-origin'),
+      null
+    );
   } finally {
     await runtime.dispose();
   }

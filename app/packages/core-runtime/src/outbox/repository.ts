@@ -1,9 +1,10 @@
-import type { CoreTransaction, CoreDatabaseExecutor } from '../db/types.ts';
+import { randomUUID } from 'node:crypto';
+
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
-import { randomUUID } from 'node:crypto';
+
 import { CoreDatabase } from '../db/client.ts';
 import {
   actionInvocations,
@@ -15,7 +16,7 @@ import {
   tenants,
   workerCheckpoints,
 } from '../db/schema.ts';
-
+import type { CoreTransaction, CoreDatabaseExecutor } from '../db/types.ts';
 import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
 import type {
   AnyOutboxWorkerRegistration,
@@ -40,8 +41,9 @@ const withOptionalProperty = <
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+  trailing: Trailing
+) =>
+  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
 const BACKGROUND_ELIGIBLE_STATES = tenantStatesAllowingAccess('background');
 interface OutboxMatchResult {
   readonly deliveriesCreated: number;
@@ -70,30 +72,36 @@ export interface OutboxRepositoryService {
   readonly claimNext: (
     registrations: readonly AnyOutboxWorkerRegistration[],
     claimOwner: string,
-    now: Date,
+    now: Date
   ) => Effect.Effect<Option.Option<OutboxClaim>, OutboxPersistenceError>;
   readonly complete: (
     claim: OutboxClaim,
-    now: Date,
+    now: Date
   ) => Effect.Effect<void, OutboxClaimLostError | OutboxPersistenceError>;
   readonly fail: (
     claim: OutboxClaim,
     safeErrorMessage: string,
-    now: Date,
-  ) => Effect.Effect<OutboxFailureStatus, OutboxClaimLostError | OutboxPersistenceError>;
+    now: Date
+  ) => Effect.Effect<
+    OutboxFailureStatus,
+    OutboxClaimLostError | OutboxPersistenceError
+  >;
   readonly matchUnmatched: (
     subscriptions: readonly OutboxWorkerSubscription[],
-    now: Date,
+    now: Date
   ) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError>;
 }
-export class OutboxRepository extends Context.Service<OutboxRepository, OutboxRepositoryService>()(
-  '@app/core-runtime/outbox/repository/OutboxRepository',
-) {}
+export class OutboxRepository extends Context.Service<
+  OutboxRepository,
+  OutboxRepositoryService
+>()('@app/core-runtime/outbox/repository/OutboxRepository') {}
 const claimLostOrPersistenceError = <Failure>(error: Failure) =>
-  Schema.is(OutboxClaimLostError)(error) ? error : outboxPersistenceError(error);
+  Schema.is(OutboxClaimLostError)(error)
+    ? error
+    : outboxPersistenceError(error);
 const OutboxRepositoryInvariantError = Schema.TaggedError<unknown>()(
   'OutboxRepositoryInvariantError',
-  { reason: Schema.String },
+  { reason: Schema.String }
 );
 const claimLost = (): OutboxClaimLostError =>
   new OutboxClaimLostError({
@@ -103,32 +111,43 @@ const claimLost = (): OutboxClaimLostError =>
 const streamKeyFor = (producerModuleKey: string, topic: string): string =>
   `${producerModuleKey}:${topic}`;
 const addMilliseconds = (date: Date, milliseconds: number): Date =>
-  DateTime.toDateUtc(DateTime.addDuration(DateTime.makeUnsafe(date), milliseconds));
-const loadClaimCorrelationId = Effect.fnUntraced(function* loadClaimCorrelationId(
-  transaction: CoreTransaction,
-  actionInvocationId: string | null,
-) {
-  if (actionInvocationId === null) {
-    return null;
+  DateTime.toDateUtc(
+    DateTime.addDuration(DateTime.makeUnsafe(date), milliseconds)
+  );
+const loadClaimCorrelationId = Effect.fnUntraced(
+  function* loadClaimCorrelationId(
+    transaction: CoreTransaction,
+    actionInvocationId: string | null
+  ) {
+    if (actionInvocationId === null) {
+      return null;
+    }
+    const [invocation] = yield* transaction
+      .select({ correlationId: actionInvocations.correlationId })
+      .from(actionInvocations)
+      .where(eq(actionInvocations.actionInvocationId, actionInvocationId));
+    return invocation?.correlationId;
   }
-  const [invocation] = yield* transaction
-    .select({ correlationId: actionInvocations.correlationId })
-    .from(actionInvocations)
-    .where(eq(actionInvocations.actionInvocationId, actionInvocationId));
-  return invocation?.correlationId;
-});
+);
 
-export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepositoryService => ({
+export const makeOutboxRepository = (
+  executor: CoreDatabaseExecutor
+): OutboxRepositoryService => ({
   claimNext: (registrations, claimOwner, now) => {
     if (registrations.length === 0) {
       return Effect.succeedNone;
     }
     const byWorkerKey = new Map(
-      registrations.map((registration) => [registration.descriptor.workerKey, registration]),
+      registrations.map((registration) => [
+        registration.descriptor.workerKey,
+        registration,
+      ])
     );
     return executor
       .transaction(
-        Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
+        Effect.fn('claimNextEffect')(function* claimNextEffect(
+          transaction: CoreTransaction
+        ) {
           const candidates = yield* transaction
             .select({
               actionInvocationId: domainEvents.actionInvocationId,
@@ -148,16 +167,25 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
             .from(outboxDeliveries)
             .innerJoin(
               outboxMessages,
-              eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId),
+              eq(
+                outboxMessages.outboxMessageId,
+                outboxDeliveries.outboxMessageId
+              )
             )
-            .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
+            .innerJoin(
+              domainEvents,
+              eq(domainEvents.domainEventId, outboxMessages.domainEventId)
+            )
             .innerJoin(
               tenantModuleStates,
               and(
                 eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
-                eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
-                inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
-              ),
+                eq(
+                  tenantModuleStates.moduleKey,
+                  outboxDeliveries.consumerModuleKey
+                ),
+                inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES)
+              )
             )
             .where(
               and(
@@ -165,19 +193,19 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
                 or(
                   and(
                     eq(outboxDeliveries.status, 'pending'),
-                    lte(outboxDeliveries.availableAt, now),
+                    lte(outboxDeliveries.availableAt, now)
                   ),
                   and(
                     eq(outboxDeliveries.status, 'processing'),
-                    lte(outboxDeliveries.claimExpiresAt, now),
-                  ),
-                ),
-              ),
+                    lte(outboxDeliveries.claimExpiresAt, now)
+                  )
+                )
+              )
             )
             .orderBy(
               asc(outboxDeliveries.availableAt),
               asc(domainEvents.tenantSequenceNo),
-              asc(outboxDeliveries.outboxDeliveryId),
+              asc(outboxDeliveries.outboxDeliveryId)
             )
             .limit(1)
             .for('update', { skipLocked: true });
@@ -199,11 +227,14 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               .where(
                 and(
                   eq(outboxAttempts.outboxDeliveryId, candidate.deliveryId),
-                  isNull(outboxAttempts.finishedAt),
-                ),
+                  isNull(outboxAttempts.finishedAt)
+                )
               );
           }
-          if (candidate.attemptsCount >= registration.descriptor.retryPolicy.maxAttempts) {
+          if (
+            candidate.attemptsCount >=
+            registration.descriptor.retryPolicy.maxAttempts
+          ) {
             yield* transaction
               .update(outboxDeliveries)
               .set({
@@ -213,11 +244,16 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
                 status: 'dead',
                 updatedAt: now,
               })
-              .where(eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId));
+              .where(
+                eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId)
+              );
             return Option.none();
           }
           const claimId = `${claimOwner}:${randomUUID()}`;
-          const claimExpiresAt = addMilliseconds(now, registration.descriptor.leaseDurationMs);
+          const claimExpiresAt = addMilliseconds(
+            now,
+            registration.descriptor.leaseDurationMs
+          );
           const [claimed] = yield* transaction
             .update(outboxDeliveries)
             .set({
@@ -246,7 +282,7 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
           }
           const correlationId = yield* loadClaimCorrelationId(
             transaction,
-            candidate.actionInvocationId,
+            candidate.actionInvocationId
           );
           return Option.some(
             withOptionalProperty(
@@ -270,22 +306,24 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
                 tenantSequenceNo: candidate.tenantSequenceNo,
                 topic: candidate.topic,
                 workerKey: candidate.workerKey,
-              },
-            ) satisfies OutboxClaim,
+              }
+            ) satisfies OutboxClaim
           );
-        }),
+        })
       )
       .pipe(
         Effect.catchDefect((defect) =>
-          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect)
         ),
-        Effect.mapError(outboxPersistenceError),
+        Effect.mapError(outboxPersistenceError)
       );
   },
   complete: (claim, now) =>
     executor
       .transaction(
-        Effect.fn('completeEffect')(function* completeEffect(transaction: CoreTransaction) {
+        Effect.fn('completeEffect')(function* completeEffect(
+          transaction: CoreTransaction
+        ) {
           yield* transaction
             .select({ tenantId: tenants.tenantId })
             .from(tenants)
@@ -298,8 +336,8 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               and(
                 eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
                 eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
+                eq(outboxDeliveries.claimedBy, claim.claimId)
+              )
             )
             .for('update');
           if (owned === undefined) {
@@ -311,8 +349,8 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
             .where(
               and(
                 eq(outboxAttempts.outboxAttemptId, claim.attemptId),
-                isNull(outboxAttempts.finishedAt),
-              ),
+                isNull(outboxAttempts.finishedAt)
+              )
             )
             .returning({ attemptId: outboxAttempts.outboxAttemptId });
           if (finishedAttempts.length !== 1) {
@@ -331,8 +369,8 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               and(
                 eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
                 eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
+                eq(outboxDeliveries.claimedBy, claim.claimId)
+              )
             )
             .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
           if (completed.length !== 1) {
@@ -340,14 +378,16 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
           }
           const streamKey = streamKeyFor(claim.producerModuleKey, claim.topic);
           const [checkpoint] = yield* transaction
-            .select({ lastTenantSequenceNo: workerCheckpoints.lastTenantSequenceNo })
+            .select({
+              lastTenantSequenceNo: workerCheckpoints.lastTenantSequenceNo,
+            })
             .from(workerCheckpoints)
             .where(
               and(
                 eq(workerCheckpoints.tenantId, claim.tenantId),
                 eq(workerCheckpoints.consumerName, claim.workerKey),
-                eq(workerCheckpoints.streamKey, streamKey),
-              ),
+                eq(workerCheckpoints.streamKey, streamKey)
+              )
             )
             .for('update');
           const previous = checkpoint?.lastTenantSequenceNo ?? 0n;
@@ -359,17 +399,23 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
             .from(outboxDeliveries)
             .innerJoin(
               outboxMessages,
-              eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId),
+              eq(
+                outboxMessages.outboxMessageId,
+                outboxDeliveries.outboxMessageId
+              )
             )
-            .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
+            .innerJoin(
+              domainEvents,
+              eq(domainEvents.domainEventId, outboxMessages.domainEventId)
+            )
             .where(
               and(
                 eq(outboxMessages.tenantId, claim.tenantId),
                 eq(outboxDeliveries.workerKey, claim.workerKey),
                 eq(outboxMessages.producerModuleKey, claim.producerModuleKey),
                 eq(outboxMessages.topic, claim.topic),
-                gt(domainEvents.tenantSequenceNo, previous),
-              ),
+                gt(domainEvents.tenantSequenceNo, previous)
+              )
             )
             .orderBy(asc(domainEvents.tenantSequenceNo));
           let nextCheckpoint = previous;
@@ -404,18 +450,20 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               });
           }
           return yield* Effect.void;
-        }),
+        })
       )
       .pipe(
         Effect.catchDefect((defect) =>
-          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect)
         ),
-        Effect.mapError(claimLostOrPersistenceError),
+        Effect.mapError(claimLostOrPersistenceError)
       ),
   fail: (claim, safeErrorMessage, now) =>
     executor
       .transaction(
-        Effect.fn('failEffect')(function* failEffect(transaction: CoreTransaction) {
+        Effect.fn('failEffect')(function* failEffect(
+          transaction: CoreTransaction
+        ) {
           const [owned] = yield* transaction
             .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
             .from(outboxDeliveries)
@@ -423,8 +471,8 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               and(
                 eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
                 eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
+                eq(outboxDeliveries.claimedBy, claim.claimId)
+              )
             )
             .for('update');
           if (owned === undefined) {
@@ -439,19 +487,24 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
             .where(
               and(
                 eq(outboxAttempts.outboxAttemptId, claim.attemptId),
-                isNull(outboxAttempts.finishedAt),
-              ),
+                isNull(outboxAttempts.finishedAt)
+              )
             )
             .returning({ attemptId: outboxAttempts.outboxAttemptId });
           if (finishedAttempts.length !== 1) {
             return yield* claimLost();
           }
           const status: OutboxFailureStatus =
-            claim.attemptNumber >= claim.retryPolicy.maxAttempts ? 'dead' : 'pending';
+            claim.attemptNumber >= claim.retryPolicy.maxAttempts
+              ? 'dead'
+              : 'pending';
           const availableAt =
             status === 'dead'
               ? now
-              : addMilliseconds(now, retryBackoffMs(claim.retryPolicy, claim.attemptNumber));
+              : addMilliseconds(
+                  now,
+                  retryBackoffMs(claim.retryPolicy, claim.attemptNumber)
+                );
           const updated = yield* transaction
             .update(outboxDeliveries)
             .set({
@@ -466,27 +519,27 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               and(
                 eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
                 eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
+                eq(outboxDeliveries.claimedBy, claim.claimId)
+              )
             )
             .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
           if (updated.length !== 1) {
             return yield* claimLost();
           }
           return status;
-        }),
+        })
       )
       .pipe(
         Effect.catchDefect((defect) =>
-          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect)
         ),
-        Effect.mapError(claimLostOrPersistenceError),
+        Effect.mapError(claimLostOrPersistenceError)
       ),
   matchUnmatched: (subscriptions, now) =>
     executor
       .transaction(
         Effect.fn('matchUnmatchedEffect')(function* matchUnmatchedEffect(
-          transaction: CoreTransaction,
+          transaction: CoreTransaction
         ) {
           const messages = yield* transaction
             .select({
@@ -496,13 +549,16 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
             })
             .from(outboxMessages)
             .where(isNull(outboxMessages.matchedAt))
-            .orderBy(asc(outboxMessages.createdAt), asc(outboxMessages.outboxMessageId))
+            .orderBy(
+              asc(outboxMessages.createdAt),
+              asc(outboxMessages.outboxMessageId)
+            )
             .limit(100)
             .for('update', { skipLocked: true });
           const matchMessage = Effect.fn('OutboxRepository.matchMessage')(
             function* matchNextMessage(
               messageIndex: number,
-              deliveriesCreated: number,
+              deliveriesCreated: number
             ): Effect.fn.Return<number, EffectDrizzleQueryError> {
               const message = messages[messageIndex];
               if (message === undefined) {
@@ -510,8 +566,9 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               }
               const matches = subscriptions.filter(
                 (subscription) =>
-                  subscription.producerModuleKey === message.producerModuleKey &&
-                  subscription.topic === message.topic,
+                  subscription.producerModuleKey ===
+                    message.producerModuleKey &&
+                  subscription.topic === message.topic
               );
               let nextDeliveriesCreated = deliveriesCreated;
               if (matches.length > 0) {
@@ -522,7 +579,7 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
                       consumerModuleKey: subscription.consumerModuleKey,
                       outboxMessageId: message.messageId,
                       workerKey: subscription.workerKey,
-                    })),
+                    }))
                   )
                   .onConflictDoNothing()
                   .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
@@ -534,21 +591,24 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
                 .where(
                   and(
                     eq(outboxMessages.outboxMessageId, message.messageId),
-                    isNull(outboxMessages.matchedAt),
-                  ),
+                    isNull(outboxMessages.matchedAt)
+                  )
                 );
-              return yield* matchMessage(messageIndex + 1, nextDeliveriesCreated);
-            },
+              return yield* matchMessage(
+                messageIndex + 1,
+                nextDeliveriesCreated
+              );
+            }
           );
           const deliveriesCreated = yield* matchMessage(0, 0);
           return { deliveriesCreated, messagesMatched: messages.length };
-        }),
+        })
       )
       .pipe(
         Effect.catchDefect((defect) =>
-          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+          isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect)
         ),
-        Effect.mapError(outboxPersistenceError),
+        Effect.mapError(outboxPersistenceError)
       ),
 });
 export const OutboxRepositoryLive = Layer.effect(
@@ -556,5 +616,5 @@ export const OutboxRepositoryLive = Layer.effect(
   Effect.gen(function* makeOutboxRepositoryService() {
     const database = yield* CoreDatabase;
     return makeOutboxRepository(database.executor);
-  }),
+  })
 );

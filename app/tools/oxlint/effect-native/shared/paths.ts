@@ -17,7 +17,11 @@ export function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${pattern}$`, 'u');
 }
 
-function globPart(glob: string, index: number, char: string): { pattern: string; next: number } {
+function globPart(
+  glob: string,
+  index: number,
+  char: string
+): { pattern: string; next: number } {
   if (char === '*') return { pattern: '[^/]*', next: index + 1 };
   if (char === '?') return { pattern: '[^/]', next: index + 1 };
   if (char !== '{') return { pattern: escapeRegExp(char), next: index + 1 };
@@ -37,7 +41,13 @@ function escapeRegExp(value: string): string {
 /** Normalise an absolute filename to a repo-relative, forward-slash path (best effort, no fs access). */
 export function normalisePath(filename: string): string {
   const unified = filename.replaceAll('\\', '/');
-  const markers = ['/apps/', '/verticals/', '/packages/', '/scripts/', '/tools/'];
+  const markers = [
+    '/apps/',
+    '/verticals/',
+    '/packages/',
+    '/scripts/',
+    '/tools/',
+  ];
   let best = -1;
   for (const marker of markers) {
     const at = unified.lastIndexOf(marker);
@@ -46,12 +56,16 @@ export function normalisePath(filename: string): string {
   return best === -1 ? unified : unified.slice(best + 1);
 }
 
-export function matchesAny(filename: string, globs: readonly string[]): boolean {
+export function matchesAny(
+  filename: string,
+  globs: readonly string[]
+): boolean {
   const path = normalisePath(filename);
   return globs.some((glob) => globToRegExp(glob).test(path));
 }
 
-const TEST_PATH = /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u;
+const TEST_PATH =
+  /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u;
 
 export function isTestFile(filename: string): boolean {
   return TEST_PATH.test(normalisePath(filename));
@@ -61,7 +75,8 @@ export function isScriptFile(filename: string): boolean {
   return /(?:^|\/)scripts\//u.test(normalisePath(filename));
 }
 
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+const FIXTURE_PREFIX =
+  /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 /** Legacy source-rule normalization; scriptScope intentionally has different nested-path semantics. */
 export function scopePath(filename: string): string {
@@ -77,12 +92,14 @@ export function matchesGlobs(path: string, globs: readonly string[]): boolean {
 export function scriptScope(filename: string): string {
   const unified = filename.replaceAll('\\', '/');
   const fixture = unified.match(
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u,
+    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u
   );
   if (fixture) return fixture[1];
   if (!unified.startsWith('/') && !/^[A-Za-z]:\//u.test(unified))
     return unified.replace(/^\.\//u, '');
-  const match = unified.match(/(?:^|\/)((?:apps|packages|verticals|scripts|tools)\/.*)$/u);
+  const match = unified.match(
+    /(?:^|\/)((?:apps|packages|verticals|scripts|tools)\/.*)$/u
+  );
   return match?.[1] ?? unified;
 }
 
@@ -93,11 +110,17 @@ export function inScriptScope(path: string): boolean {
 /** Last workspace marker wins (unlike normalisePath/scopePath); callers can preserve their marker list. */
 export function workspacePath(
   filename: string,
-  markers: readonly string[] = ['/apps/', '/verticals/', '/packages/', '/scripts/'],
+  markers: readonly string[] = [
+    '/apps/',
+    '/verticals/',
+    '/packages/',
+    '/scripts/',
+  ]
 ): string {
   const unified = filename.replaceAll('\\', '/');
   let best = -1;
-  for (const marker of markers) best = Math.max(best, unified.lastIndexOf(marker));
+  for (const marker of markers)
+    best = Math.max(best, unified.lastIndexOf(marker));
   return best === -1 ? normalisePath(unified) : unified.slice(best + 1);
 }
 
@@ -105,7 +128,9 @@ export function workspacePath(
 export function rootedScopePath(filename: string, root: string): string {
   const unified = filename.replaceAll('\\', '/');
   const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
+    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(
+      unified
+    );
   if (fixture?.[1]) return fixture[1];
   const normalizedRoot = root.replaceAll('\\', '/');
   return unified.startsWith(normalizedRoot)
@@ -120,7 +145,7 @@ export function includesRuleFile(
     includePaths: readonly string[];
     allowPaths: readonly string[];
     ignoreTestFiles: boolean;
-  },
+  }
 ): boolean {
   const path = `/${scopePath(filename)}`;
   return (

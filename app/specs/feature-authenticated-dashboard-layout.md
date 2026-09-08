@@ -6,71 +6,33 @@ created: 2026-08-06
 
 # Feature: Authenticated dashboard layout
 
-> [!IMPORTANT]
-> **Historical scope:** [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [the Tenant switcher specification](./feature-tenant-switcher.md) supersede this feature's disabled-placeholder/no-switching constraint. The feature remains a record of the original dashboard delivery, not the current account-tenancy model.
+> [!IMPORTANT] **Historical scope:** [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [the Tenant switcher specification](./feature-tenant-switcher.md) supersede this feature's disabled-placeholder/no-switching constraint. The feature remains a record of the original dashboard delivery, not the current account-tenancy model.
 
 ## Feature Description
 
-Add the default signed-user dashboard layout requested by GitHub issue #77. The layout is an
-opt-in Shell presentation wrapper for authenticated pages, not global route chrome: each signed-in
-page can supply its own localized page title and active navigation key while the authenticated home
-page uses the default Home configuration.
+Add the default signed-user dashboard layout requested by GitHub issue #77. The layout is an opt-in Shell presentation wrapper for authenticated pages, not global route chrome: each signed-in page can supply its own localized page title and active navigation key while the authenticated home page uses the default Home configuration.
 
-The layout follows the arrangement in Figma project `ERP`, page `Pre-Alpha Repo`, frame
-`Home — Aktivní modul` (`6:399`): a left sidebar contains the OntOS brand, an intentionally empty
-and disabled tenant Select placeholder, a Home link, and links for the signed-in tenant's installed
-active MicroVerticals. The main area starts with a `@techsio/ui-kit` Header whose rightmost element
-is a `Menu` triggered by the signed user's display name. That Menu contains exactly one command:
-logout. Search is omitted. The current authenticated home identity and active-module content remain
-the page body, with logout moved from its standalone button into the Header Menu.
+The layout follows the arrangement in Figma project `ERP`, page `Pre-Alpha Repo`, frame `Home — Aktivní modul` (`6:399`): a left sidebar contains the OntOS brand, an intentionally empty and disabled tenant Select placeholder, a Home link, and links for the signed-in tenant's installed active MicroVerticals. The main area starts with a `@techsio/ui-kit` Header whose rightmost element is a `Menu` triggered by the signed user's display name. That Menu contains exactly one command: logout. Search is omitted. The current authenticated home identity and active-module content remain the page body, with logout moved from its standalone button into the Header Menu.
 
-Treat Figma only as a wireframe for component arrangement. Use the installed
-`@techsio/ui-kit@0.25.1` components, component tokens, and Tailwind layout utilities instead of
-copying Figma colors, measurements, or visual styling.
+Treat Figma only as a wireframe for component arrangement. Use the installed `@techsio/ui-kit@0.25.1` components, component tokens, and Tailwind layout utilities instead of copying Figma colors, measurements, or visual styling.
 
 ## User Story
 
-As a signed-in OntOS user
-I want a consistent dashboard layout with module navigation and an account menu
-So that I can recognize my current workspace, navigate to an active MicroVertical, and log out
-from every authenticated page
+As a signed-in OntOS user I want a consistent dashboard layout with module navigation and an account menu So that I can recognize my current workspace, navigate to an active MicroVertical, and log out from every authenticated page
 
 ## Problem Statement
 
-The Shell home route currently renders authenticated identity, active MicroVertical state, and a
-standalone logout button inside a centered full-screen section. The existing `shell-frame.tsx` is
-unused legacy shell chrome, depends on a custom generated header/status presentation, and cannot
-receive the current identity, module list, page title, or logout state. The global `layout.tsx`
-deliberately renders only the route outlet, so applying dashboard chrome globally would also wrap
-anonymous and login pages incorrectly.
+The Shell home route currently renders authenticated identity, active MicroVertical state, and a standalone logout button inside a centered full-screen section. The existing `shell-frame.tsx` is unused legacy shell chrome, depends on a custom generated header/status presentation, and cannot receive the current identity, module list, page title, or logout state. The global `layout.tsx` deliberately renders only the route outlet, so applying dashboard chrome globally would also wrap anonymous and login pages incorrectly.
 
-The current authenticated loader already provides the safe display name and an ordered list of
-installed MicroVerticals whose persisted tenant state is exactly `active`. The missing capability
-is therefore presentation and page-level composition, not another BFF endpoint, Core query,
-Action, or client-side fetch.
+The current authenticated loader already provides the safe display name and an ordered list of installed MicroVerticals whose persisted tenant state is exactly `active`. The missing capability is therefore presentation and page-level composition, not another BFF endpoint, Core query, Action, or client-side fetch.
 
 ## Solution Statement
 
-Refactor the existing `shell-frame.tsx` module into an `AuthenticatedDashboardLayout` component.
-Give it a small page configuration (`title` and optional current MicroVertical key), the safe
-authenticated identity, the active-module items, logout pending state, and a semantic logout
-callback. The component will own the responsive sidebar and Header/Menu chrome while rendering
-page-specific children in the main content area. An absent current MicroVertical key means Home is
-the active navigation entry, which makes the authenticated home configuration the default while
-allowing a later page to opt into the same layout with its own title and active module.
+Refactor the existing `shell-frame.tsx` module into an `AuthenticatedDashboardLayout` component. Give it a small page configuration (`title` and optional current MicroVertical key), the safe authenticated identity, the active-module items, logout pending state, and a semantic logout callback. The component will own the responsive sidebar and Header/Menu chrome while rendering page-specific children in the main content area. An absent current MicroVertical key means Home is the active navigation entry, which makes the authenticated home configuration the default while allowing a later page to opt into the same layout with its own title and active module.
 
-Use `@techsio/ui-kit/organisms/header` for the main-area header,
-`@techsio/ui-kit/molecules/menu` with one data-driven action item and `triggerText` equal to
-`identity.displayName`, `@techsio/ui-kit/molecules/select` for the disabled empty placeholder, and
-`@techsio/ui-kit/atoms/link` with the Modern i18n Link adapter for client-side localized
-navigation. Use a semantic native `aside` because the installed UI kit has no Sidebar component.
-Use only Tailwind layout utilities around UI-kit components; do not duplicate their appearance
-with component `className` overrides or add plain CSS.
+Use `@techsio/ui-kit/organisms/header` for the main-area header, `@techsio/ui-kit/molecules/menu` with one data-driven action item and `triggerText` equal to `identity.displayName`, `@techsio/ui-kit/molecules/select` for the disabled empty placeholder, and `@techsio/ui-kit/atoms/link` with the Modern i18n Link adapter for client-side localized navigation. Use a semantic native `aside` because the installed UI kit has no Sidebar component. Use only Tailwind layout utilities around UI-kit components; do not duplicate their appearance with component `className` overrides or add plain CSS.
 
-Render this layout only from the authenticated branch of `HomeView`. Keep the anonymous branch,
-session and active-module loader, strict Effect client, and BFF contracts unchanged. Keep the
-existing identity details, active-module list, unavailable feedback, and logout success/failure
-state behavior in the page body. Replace only the standalone logout Button with the Menu command.
+Render this layout only from the authenticated branch of `HomeView`. Keep the anonymous branch, session and active-module loader, strict Effect client, and BFF contracts unchanged. Keep the existing identity details, active-module list, unavailable feedback, and logout success/failure state behavior in the page body. Replace only the standalone logout Button with the Menu command.
 
 ## Relevant Files
 
@@ -99,25 +61,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Turn the existing unused shell frame into a typed, page-configurable authenticated layout while
-preserving the global outlet-only layout. Define navigation directly from the existing safe
-identity and active-module view model; do not add a store, context, hook, BFF operation, or module
-registry. Add component tests at the same time to lock the layout's page configuration and
-landmark contract.
+Turn the existing unused shell frame into a typed, page-configurable authenticated layout while preserving the global outlet-only layout. Define navigation directly from the existing safe identity and active-module view model; do not add a store, context, hook, BFF operation, or module registry. Add component tests at the same time to lock the layout's page configuration and landmark contract.
 
 ### Phase 2: Core Implementation
 
-Compose the responsive sidebar, empty disabled Select, localized Home/module links, UI-kit Header,
-and one-item user Menu. Move logout invocation into the Menu callback without weakening the
-existing duplicate-submit guard, success transition, or retryable error state. Keep authenticated
-page content as children and keep anonymous rendering outside the layout.
+Compose the responsive sidebar, empty disabled Select, localized Home/module links, UI-kit Header, and one-item user Menu. Move logout invocation into the Menu callback without weakening the existing duplicate-submit guard, success transition, or retryable error state. Keep authenticated page content as children and keep anonymous rendering outside the layout.
 
 ### Phase 3: Integration
 
-Add aligned English/Czech copy and prove the full session flow at desktop and mobile widths. Cover
-empty and unavailable active-module data, deterministic links, keyboard Menu use, logout pending,
-failure/retry, and the complete removal of authenticated chrome after successful logout. Run the
-focused Shell gates, production build, and final repository check from `app/`.
+Add aligned English/Czech copy and prove the full session flow at desktop and mobile widths. Cover empty and unavailable active-module data, deterministic links, keyboard Menu use, logout pending, failure/retry, and the complete removal of authenticated chrome after successful logout. Run the focused Shell gates, production build, and final repository check from `app/`.
 
 ## Step by Step Tasks
 
@@ -167,20 +119,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use the existing Shell component test files to cover the layout's typed page configuration,
-semantic landmarks, UI-kit composition, localized Link adapter, disabled empty Select, exact-active
-module links, Home/module current state, page-title substitution, one-item account Menu, pending
-disablement, semantic logout callback, authenticated composition, anonymous isolation, existing
-content, logout success/failure, redaction, and English/Czech locale parity.
+Use the existing Shell component test files to cover the layout's typed page configuration, semantic landmarks, UI-kit composition, localized Link adapter, disabled empty Select, exact-active module links, Home/module current state, page-title substitution, one-item account Menu, pending disablement, semantic logout callback, authenticated composition, anonymous isolation, existing content, logout success/failure, redaction, and English/Czech locale parity.
 
 ### Integration Tests
 
-Use the existing Playwright authentication fixture and real Shell BFF to prove that a valid session
-renders the layout, survives reload, invokes the existing sign-out endpoint through the Menu,
-clears the cookie and dashboard after success, and retains an accessible retry path after a failed
-request. Exercise desktop and narrow viewports plus keyboard Menu navigation. No new backend or
-database integration test is required because the identity, active-module read, and sign-out
-contracts are reused unchanged and already have focused runtime coverage.
+Use the existing Playwright authentication fixture and real Shell BFF to prove that a valid session renders the layout, survives reload, invokes the existing sign-out endpoint through the Menu, clears the cookie and dashboard after success, and retains an accessible retry path after a failed request. Exercise desktop and narrow viewports plus keyboard Menu navigation. No new backend or database integration test is required because the identity, active-module read, and sign-out contracts are reused unchanged and already have focused runtime coverage.
 
 ### Edge Cases
 

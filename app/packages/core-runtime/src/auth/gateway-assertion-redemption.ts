@@ -1,5 +1,6 @@
 import { Context } from 'effect';
 import type { Effect } from 'effect';
+
 import type { GatewayAssertionRedemptionUnavailableError } from './gateway-assertion-redemption-unavailable-error.ts';
 import type { GatewayAssertionReplayError } from './gateway-assertion-replay-error.ts';
 
@@ -19,11 +20,13 @@ export type GatewayAssertionRedemptionError =
 
 export interface GatewayAssertionRedemption {
   readonly consume: (
-    input: GatewayAssertionRedemptionInput,
+    input: GatewayAssertionRedemptionInput
   ) => Effect.Effect<void, GatewayAssertionRedemptionError>;
 }
 
 export class GatewayAssertionRedemptionService extends Context.Service<
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemption
->()('@app/core-runtime/auth/gateway-assertion-redemption/GatewayAssertionRedemptionService') {}
+>()(
+  '@app/core-runtime/auth/gateway-assertion-redemption/GatewayAssertionRedemptionService'
+) {}

@@ -32,9 +32,11 @@ export const partyRegistryFoundationLive = HttpApiBuilder.group(
         }),
         'ultramodern.api.partyRegistry.readiness',
         {
-          attributes: { ...operationAttributes(partyRegistryOperationContexts.readiness) },
+          attributes: {
+            ...operationAttributes(partyRegistryOperationContexts.readiness),
+          },
           kind: 'server',
-        },
-      ),
-    ),
+        }
+      )
+    )
 );

@@ -8,6 +8,8 @@ export default {
   ignorePatterns: rootConfig.ignorePatterns,
   jsPlugins: [{ name: 'effect-native', specifier: './index.ts' }],
   rules: Object.fromEntries(
-    Object.entries(rootConfig.rules).filter(([name]) => name.startsWith('effect-native/')),
+    Object.entries(rootConfig.rules).filter(([name]) =>
+      name.startsWith('effect-native/')
+    )
   ),
 };

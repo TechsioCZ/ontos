@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+
 import type {
   SupportAuthProvider,
   SupportImpersonationStore,
@@ -36,17 +37,21 @@ const storeDefaults: SupportImpersonationStore = {
   loadExpiredRecovery: () => unconfiguredEffect('loadExpiredRecovery'),
   loadOriginalSession: () => unconfiguredEffect('loadOriginalSession'),
   loadRecoveries: () => unconfiguredEffect('loadRecoveries'),
-  updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
+  updateImpersonationSession: () =>
+    unconfiguredEffect('updateImpersonationSession'),
 };
 
 export const makeAuthenticationServiceDouble = (
-  overrides: Partial<AuthenticationServiceContract> = {},
-): AuthenticationServiceContract => ({ ...authenticationDefaults, ...overrides });
+  overrides: Partial<AuthenticationServiceContract> = {}
+): AuthenticationServiceContract => ({
+  ...authenticationDefaults,
+  ...overrides,
+});
 
 export const makeSupportAuthProviderDouble = (
-  overrides: Partial<SupportAuthProvider['api']> = {},
+  overrides: Partial<SupportAuthProvider['api']> = {}
 ): SupportAuthProvider => ({ api: { ...providerDefaults, ...overrides } });
 
 export const makeSupportImpersonationStoreDouble = (
-  overrides: Partial<SupportImpersonationStore> = {},
+  overrides: Partial<SupportImpersonationStore> = {}
 ): SupportImpersonationStore => ({ ...storeDefaults, ...overrides });

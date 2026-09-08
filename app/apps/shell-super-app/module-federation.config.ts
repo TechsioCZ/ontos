@@ -8,7 +8,10 @@ import {
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
 } from 'effect/Option';
-import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
+import {
+  getOrThrow as getResultOrThrow,
+  isSuccess as isResultSuccess,
+} from 'effect/Result';
 import {
   Boolean as BooleanSchema,
   Literals,
@@ -28,19 +31,24 @@ import { dependencies } from './package.json';
 
 const nonEmptyBuildStringSchema = Trim.pipe(check(isMinLength(1)));
 const getOptionalBuildConfig = (name: string): string | undefined => {
-  const decoded = decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
-    getBuildConfigEnvironment(name),
-  );
-  return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
+  const decoded = decodeUnknownResult(
+    OptionFromUndefinedOr(nonEmptyBuildStringSchema)
+  )(getBuildConfigEnvironment(name));
+  return isResultSuccess(decoded)
+    ? getOptionOrUndefined(decoded.success)
+    : undefined;
 };
 const cloudflareDeployMode = getResultOrThrow(
   decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
-    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
-  ),
+    getBuildConfigEnvironment('MODERNJS_DEPLOY')
+  )
 );
-const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
+const cloudflareDeployEnabled = optionContains(
+  cloudflareDeployMode,
+  'cloudflare'
+);
 const cloudflareWorkersDevSubdomain = getOptionalBuildConfig(
-  'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
+  'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN'
 );
 const BuildBooleanSchema = Literals([
   'true',
@@ -59,16 +67,16 @@ const BuildBooleanSchema = Literals([
     transform({
       decode: (value) => ['true', 'yes', 'on', '1', 'y'].includes(value),
       encode: (value) => (value ? 'true' : 'false'),
-    }),
-  ),
+    })
+  )
 );
 const requireCloudflarePublicUrls = getOptionOrElse(
   getResultOrThrow(
     decodeUnknownResult(OptionFromUndefinedOr(BuildBooleanSchema))(
-      getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS'),
-    ),
+      getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS')
+    )
   ),
-  () => false,
+  () => false
 );
 
 const createRemoteManifestUrl = (options: {
@@ -94,7 +102,7 @@ const createRemoteManifestUrl = (options: {
 
   if (cloudflareDeployEnabled && requireCloudflarePublicUrls) {
     throw new Error(
-      `Cloudflare deploy needs ${options.publicUrlEnv}, ${options.manifestEnv}, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN for remote ${options.mfName}.`,
+      `Cloudflare deploy needs ${options.publicUrlEnv}, ${options.manifestEnv}, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN for remote ${options.mfName}.`
     );
   }
 
@@ -104,67 +112,70 @@ const createRemoteManifestUrl = (options: {
 const require = createRequire(import.meta.url);
 const PackageVersionSchema = Struct({ version: StringSchema });
 const packageVersion = (packageName: string): string =>
-  decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
+  decodeUnknownSync(PackageVersionSchema)(
+    require(`${packageName}/package.json`)
+  ).version;
 const i18nVersion = packageVersion('@modern-js/plugin-i18n');
 const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');
 const reactDomVersion = packageVersion('react-dom');
 
-const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
-  createModuleFederationConfig({
-    bridge: {
-      enableBridgeRouter: false,
+const moduleFederationConfig: Parameters<
+  typeof createModuleFederationConfig
+>[0] = createModuleFederationConfig({
+  bridge: {
+    enableBridgeRouter: false,
+  },
+  dts: {
+    consumeTypes: true,
+    generateTypes: false,
+    tsConfigPath: './tsconfig.mf-types.json',
+  },
+  filename: 'remoteEntry.js',
+  name: 'shellSuperApp',
+  remotes: {
+    partyRegistry: createRemoteManifestUrl({
+      manifestEnv: 'VERTICAL_PARTY_REGISTRY_MF_MANIFEST',
+      mfName: 'verticalPartyRegistry',
+      port: 4102,
+      publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
+      workerName: 'app-party-registry',
+    }),
+  },
+  shared: {
+    '@modern-js/plugin-i18n/runtime': {
+      import: '@modern-js/plugin-i18n/runtime/no-react-i18next',
+      requiredVersion: i18nVersion,
+      singleton: true,
+      strictVersion: true,
+      treeShaking: false,
     },
-    dts: {
-      consumeTypes: true,
-      generateTypes: false,
-      tsConfigPath: './tsconfig.mf-types.json',
+    '@modern-js/runtime': {
+      requiredVersion: runtimeVersion,
+      singleton: true,
+      treeShaking: false,
     },
-    filename: 'remoteEntry.js',
-    name: 'shellSuperApp',
-    remotes: {
-      partyRegistry: createRemoteManifestUrl({
-        manifestEnv: 'VERTICAL_PARTY_REGISTRY_MF_MANIFEST',
-        mfName: 'verticalPartyRegistry',
-        port: 4102,
-        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
-        workerName: 'app-party-registry',
-      }),
+    '@tanstack/react-router': {
+      requiredVersion: dependencies['@tanstack/react-router'],
+      singleton: true,
+      treeShaking: false,
     },
-    shared: {
-      '@modern-js/plugin-i18n/runtime': {
-        import: '@modern-js/plugin-i18n/runtime/no-react-i18next',
-        requiredVersion: i18nVersion,
-        singleton: true,
-        strictVersion: true,
-        treeShaking: false,
-      },
-      '@modern-js/runtime': {
-        requiredVersion: runtimeVersion,
-        singleton: true,
-        treeShaking: false,
-      },
-      '@tanstack/react-router': {
-        requiredVersion: dependencies['@tanstack/react-router'],
-        singleton: true,
-        treeShaking: false,
-      },
-      react: {
-        requiredVersion: reactVersion,
-        singleton: true,
-        treeShaking: false,
-      },
-      'react-dom': {
-        requiredVersion: reactDomVersion,
-        singleton: true,
-        treeShaking: false,
-      },
-      'react-dom/client': {
-        requiredVersion: reactDomVersion,
-        singleton: true,
-        treeShaking: false,
-      },
+    react: {
+      requiredVersion: reactVersion,
+      singleton: true,
+      treeShaking: false,
     },
-  });
+    'react-dom': {
+      requiredVersion: reactDomVersion,
+      singleton: true,
+      treeShaking: false,
+    },
+    'react-dom/client': {
+      requiredVersion: reactDomVersion,
+      singleton: true,
+      treeShaking: false,
+    },
+  },
+});
 
 export default moduleFederationConfig;

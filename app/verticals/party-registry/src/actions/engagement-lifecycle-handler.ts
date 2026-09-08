@@ -1,5 +1,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+
 import {
   EngagementProfileConflict,
   EngagementProfileNotFound,
@@ -16,25 +17,38 @@ export const EngagementLifecycleErrorSchema = Schema.Union([
 
 interface LifecycleServices<Value> {
   readonly transition: (
-    profileId: string,
-  ) => Effect.Effect<LifecycleResult<Value>, EngagementProfilePersistenceUnavailable>;
+    profileId: string
+  ) => Effect.Effect<
+    LifecycleResult<Value>,
+    EngagementProfilePersistenceUnavailable
+  >;
 }
 
 export const handleEngagementLifecycle =
-  <Payload extends Readonly<{ profileRef: Readonly<{ resourceId: string }> }>, Value>(
-    requestedState: 'active' | 'archived',
+  <
+    Payload extends Readonly<{ profileRef: Readonly<{ resourceId: string }> }>,
+    Value,
+  >(
+    requestedState: 'active' | 'archived'
   ) =>
   (
     payload: Payload,
     context: Pick<
-      ActionHandlerContext<Readonly<Record<string, never>>, LifecycleServices<Value>>,
+      ActionHandlerContext<
+        Readonly<Record<string, never>>,
+        LifecycleServices<Value>
+      >,
       'services'
-    >,
+    >
   ) =>
     context.services
       .transition(payload.profileRef.resourceId)
       .pipe(
         Effect.flatMap((result) =>
-          resolveEngagementLifecycle(result, payload.profileRef.resourceId, requestedState),
-        ),
+          resolveEngagementLifecycle(
+            result,
+            payload.profileRef.resourceId,
+            requestedState
+          )
+        )
       );

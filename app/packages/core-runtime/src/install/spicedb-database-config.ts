@@ -16,8 +16,8 @@ const PostgreSqlUrlSchema = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
     url.protocol === 'postgres:' || url.protocol === 'postgresql:'
       ? undefined
-      : 'URL must use PostgreSQL',
-  ),
+      : 'URL must use PostgreSQL'
+  )
 );
 
 const PercentEncodedUriComponentSchema = Schema.String.check(
@@ -29,7 +29,7 @@ const PercentEncodedUriComponentSchema = Schema.String.check(
       issue = 'URL credentials must use valid percent encoding';
     }
     return issue;
-  }),
+  })
 );
 
 const SpiceDbDatabasePairSchema = Schema.Struct({
@@ -50,7 +50,7 @@ const SpiceDbDatabasePairSchema = Schema.Struct({
     return admin.href === spicedb.href || admin.username === spicedb.username
       ? 'Administrative and SpiceDB PostgreSQL identities must be distinct'
       : undefined;
-  }),
+  })
 );
 
 const makeSpiceDbDatabaseBootstrapConfig = (fields: {
@@ -66,31 +66,39 @@ const makeSpiceDbDatabaseBootstrapConfig = (fields: {
     user: 'spicedb' as const,
   });
 
-export type SpiceDbDatabaseBootstrapConfig = ReturnType<typeof makeSpiceDbDatabaseBootstrapConfig>;
+export type SpiceDbDatabaseBootstrapConfig = ReturnType<
+  typeof makeSpiceDbDatabaseBootstrapConfig
+>;
 
 export const parseSpiceDbDatabaseBootstrapConfig = (
-  environment: SpiceDbDatabaseBootstrapEnvironment,
+  environment: SpiceDbDatabaseBootstrapEnvironment
 ): SpiceDbDatabaseBootstrapConfig => {
   const source = Result.getOrThrow(
-    Schema.decodeUnknownResult(SpiceDbDatabaseBootstrapEnvironmentSchema)(environment),
+    Schema.decodeUnknownResult(SpiceDbDatabaseBootstrapEnvironmentSchema)(
+      environment
+    )
   );
   const admin = Result.getOrThrow(
-    Schema.decodeResult(PostgreSqlUrlSchema)(source.DATABASE_ADMIN_URL),
+    Schema.decodeResult(PostgreSqlUrlSchema)(source.DATABASE_ADMIN_URL)
   );
   const spicedb = Result.getOrThrow(
-    Schema.decodeResult(PostgreSqlUrlSchema)(source.SPICEDB_DATABASE_URL),
+    Schema.decodeResult(PostgreSqlUrlSchema)(source.SPICEDB_DATABASE_URL)
   );
   const pair = Result.getOrThrow(
     Schema.decodeResult(SpiceDbDatabasePairSchema)({
       admin,
       spicedb,
       spicedbUser: decodeURIComponent(
-        Result.getOrThrow(Schema.decodeResult(PercentEncodedUriComponentSchema)(spicedb.username)),
+        Result.getOrThrow(
+          Schema.decodeResult(PercentEncodedUriComponentSchema)(
+            spicedb.username
+          )
+        )
       ),
-    }),
+    })
   );
   const encodedPassword = Result.getOrThrow(
-    Schema.decodeResult(PercentEncodedUriComponentSchema)(pair.spicedb.password),
+    Schema.decodeResult(PercentEncodedUriComponentSchema)(pair.spicedb.password)
   );
 
   return makeSpiceDbDatabaseBootstrapConfig({

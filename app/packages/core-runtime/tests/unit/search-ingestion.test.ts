@@ -1,7 +1,9 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
+
 import {
   CORE_SEARCH_INGESTION_REGISTRATIONS,
   CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
@@ -13,7 +15,10 @@ import {
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
 
-const effectTest = <A, E>(name: string, body: () => Effect.Effect<A, E>): void => {
+const effectTest = <A, E>(
+  name: string,
+  body: () => Effect.Effect<A, E>
+): void => {
   void test(name, () => {
     void runEffectTestSync(body());
   });
@@ -50,7 +55,7 @@ const observation = (projectionVersion: string, title: string) => ({
 void test('declares one immutable Core registration for every closed Party lifecycle topic', () => {
   assert.deepEqual(
     CORE_SEARCH_INGESTION_REGISTRATIONS.map(({ topic }) => topic),
-    CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
+    CORE_SEARCH_PARTY_LIFECYCLE_TOPICS
   );
   assert.equal(Object.isFrozen(CORE_SEARCH_INGESTION_REGISTRATIONS), true);
   assert.equal(
@@ -58,91 +63,103 @@ void test('declares one immutable Core registration for every closed Party lifec
       (registration) =>
         Object.isFrozen(registration) &&
         registration.consumerModuleKey === 'party.registry' &&
-        registration.producerModuleKey === 'party.registry',
+        registration.producerModuleKey === 'party.registry'
     ),
-    true,
+    true
   );
 });
 
-effectTest('ingests duplicate and out-of-order post-commit observations idempotently', () => {
-  const store = makeInMemoryCoreSearchProjectionStore();
-  const ingestion = makeCoreSearchIngestion(store);
+effectTest(
+  'ingests duplicate and out-of-order post-commit observations idempotently',
+  () => {
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const ingestion = makeCoreSearchIngestion(store);
 
-  return Effect.gen(function* ingestObservationsIdempotently() {
-    const runtime = yield* createCoreSearchQueryRuntime.pipe(
-      Effect.provideService(CoreSearchProjectionStore, store),
-    );
-    yield* ingestion.ingest(observation('2', 'Current title'));
-    yield* ingestion.ingest(observation('2', 'Current title'));
-    yield* ingestion.ingest(observation('1', 'Stale title'));
+    return Effect.gen(function* ingestObservationsIdempotently() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
+      yield* ingestion.ingest(observation('2', 'Current title'));
+      yield* ingestion.ingest(observation('2', 'Current title'));
+      yield* ingestion.ingest(observation('1', 'Stale title'));
 
-    const hits = yield* runtime.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'current',
-      resourceType: 'party.registry.party',
-      tenantId,
+      const hits = yield* runtime.search({
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'current',
+        resourceType: 'party.registry.party',
+        tenantId,
+      });
+      assert.deepEqual(
+        hits.map(({ title }) => title),
+        ['Current title']
+      );
     });
-    assert.deepEqual(
-      hits.map(({ title }) => title),
-      ['Current title'],
-    );
-  });
-});
+  }
+);
 
-effectTest('identifier updates accept only their generated self-consumer worker', () => {
-  const store = makeInMemoryCoreSearchProjectionStore();
-  const ingestion = makeCoreSearchIngestion(store);
-  const update = {
-    ...observation('3', 'Updated identifier projection'),
-    topic: 'party.registry.official-identifier-updated.v1',
-    workerKey: 'party.registry.project-official-identifier-updated-to-search',
-  };
-  return Effect.gen(function* acceptOnlyGeneratedWorker() {
-    yield* ingestion.ingest(update);
-    yield* ingestion.ingest(update);
-    const denied = yield* Effect.flip(
-      ingestion.ingest({
-        ...update,
-        workerKey: 'party.registry.project-official-identifier-added-to-search',
-      }),
-    );
-    assert.equal(denied._tag, 'CoreSearchProjectionInvalid');
-  });
-});
+effectTest(
+  'identifier updates accept only their generated self-consumer worker',
+  () => {
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const ingestion = makeCoreSearchIngestion(store);
+    const update = {
+      ...observation('3', 'Updated identifier projection'),
+      topic: 'party.registry.official-identifier-updated.v1',
+      workerKey: 'party.registry.project-official-identifier-updated-to-search',
+    };
+    return Effect.gen(function* acceptOnlyGeneratedWorker() {
+      yield* ingestion.ingest(update);
+      yield* ingestion.ingest(update);
+      const denied = yield* Effect.flip(
+        ingestion.ingest({
+          ...update,
+          workerKey:
+            'party.registry.project-official-identifier-added-to-search',
+        })
+      );
+      assert.equal(denied._tag, 'CoreSearchProjectionInvalid');
+    });
+  }
+);
 
-effectTest('rejects undeclared topics and sequence/document identity mismatches', () => {
-  const ingestion = makeCoreSearchIngestion(makeInMemoryCoreSearchProjectionStore());
-  const invalidObservations = [
-    { ...observation('1', 'Party'), topic: 'party.registry.undeclared.v1' },
-    { ...observation('1', 'Party'), producerModuleKey: 'foreign.module' },
-    {
-      ...observation('1', 'Party'),
-      workerKey: 'party.registry.project-party-created-to-search',
-    },
-    { ...observation('1', 'Party'), projectionVersion: '2' },
-    {
-      ...observation('1', 'Party'),
-      mutation: {
-        document: {
-          ...document('1', 'Party'),
-          ref: { ...ref, moduleId: 'foreign.module' },
-        },
-        kind: 'upsert',
+effectTest(
+  'rejects undeclared topics and sequence/document identity mismatches',
+  () => {
+    const ingestion = makeCoreSearchIngestion(
+      makeInMemoryCoreSearchProjectionStore()
+    );
+    const invalidObservations = [
+      { ...observation('1', 'Party'), topic: 'party.registry.undeclared.v1' },
+      { ...observation('1', 'Party'), producerModuleKey: 'foreign.module' },
+      {
+        ...observation('1', 'Party'),
+        workerKey: 'party.registry.project-party-created-to-search',
       },
-    },
-  ];
-  return Effect.forEach(
-    invalidObservations,
-    (invalidObservation) => Effect.flip(ingestion.ingest(invalidObservation)),
-    { concurrency: 'unbounded' },
-  ).pipe(
-    Effect.tap((failures) =>
-      Effect.sync(() => {
-        for (const failure of failures) {
-          assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
-        }
-      }),
-    ),
-  );
-});
+      { ...observation('1', 'Party'), projectionVersion: '2' },
+      {
+        ...observation('1', 'Party'),
+        mutation: {
+          document: {
+            ...document('1', 'Party'),
+            ref: { ...ref, moduleId: 'foreign.module' },
+          },
+          kind: 'upsert',
+        },
+      },
+    ];
+    return Effect.forEach(
+      invalidObservations,
+      (invalidObservation) => Effect.flip(ingestion.ingest(invalidObservation)),
+      { concurrency: 'unbounded' }
+    ).pipe(
+      Effect.tap((failures) =>
+        Effect.sync(() => {
+          for (const failure of failures) {
+            assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+          }
+        })
+      )
+    );
+  }
+);

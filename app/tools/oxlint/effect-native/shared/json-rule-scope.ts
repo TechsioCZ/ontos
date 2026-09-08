@@ -5,7 +5,7 @@ import { isTestFile, matchesAny, workspacePath } from './paths.ts';
 export function inJsonRuleScope(
   filename: string,
   raw: unknown,
-  defaultIncludePaths: readonly string[],
+  defaultIncludePaths: readonly string[]
 ): boolean {
   const given = (raw ?? {}) as Partial<{
     includePaths: unknown;
@@ -13,7 +13,8 @@ export function inJsonRuleScope(
     ignoreTestFiles: unknown;
   }>;
   const configuredPaths = stringList(given.includePaths, defaultIncludePaths);
-  const includePaths = configuredPaths.length > 0 ? configuredPaths : defaultIncludePaths;
+  const includePaths =
+    configuredPaths.length > 0 ? configuredPaths : defaultIncludePaths;
   const path = workspacePath(filename);
   if (!matchesAny(path, includePaths)) return false;
   if (matchesAny(path, stringList(given.allowPaths, []))) return false;

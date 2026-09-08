@@ -1,4 +1,7 @@
-import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
+import {
+  getOrThrow as getResultOrThrow,
+  isSuccess as isResultSuccess,
+} from 'effect/Result';
 import {
   Literal,
   NonEmptyString,
@@ -10,6 +13,7 @@ import {
   isMinLength,
   makeFilter,
 } from 'effect/Schema';
+
 import {
   DeploymentAllowlistOverlaySchema,
   DeploymentAllowlistTopologySchema,
@@ -58,7 +62,7 @@ const productionOriginSchema = (environmentName: string, environment: string) =>
         origin.search === ''
         ? undefined
         : `${environmentName} must be a credential-free HTTPS origin`;
-    }),
+    })
   );
 
 /** Produces immutable build input; production URLs come only from deployment configuration. */
@@ -71,17 +75,21 @@ export const createModuleDeploymentAllowlistBuildInput = ({
   const parsedDevelopmentOverlay = getResultOrThrow(
     decodeUnknownResult(DeploymentAllowlistOverlaySchema, {
       onExcessProperty: 'preserve',
-    })(developmentOverlay),
+    })(developmentOverlay)
   );
   const parsedTopology = getResultOrThrow(
     decodeUnknownResult(DeploymentAllowlistTopologySchema, {
       onExcessProperty: 'preserve',
-    })(topology),
+    })(topology)
   );
   const configuredEnvironment = getResultOrThrow(
-    decodeUnknownResult(Trim)(readEnvironment('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT') ?? ''),
+    decodeUnknownResult(Trim)(
+      readEnvironment('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT') ?? ''
+    )
   );
-  const configuredEnvironmentResult = decodeResult(NonEmptyString)(configuredEnvironment);
+  const configuredEnvironmentResult = decodeResult(NonEmptyString)(
+    configuredEnvironment
+  );
   let environment = cloudflareDeployEnabled ? 'production' : 'development';
   if (isResultSuccess(configuredEnvironmentResult)) {
     environment = configuredEnvironmentResult.success;
@@ -89,7 +97,9 @@ export const createModuleDeploymentAllowlistBuildInput = ({
 
   if (environment === 'development') {
     const development = getResultOrThrow(
-      decodeUnknownResult(Literal('development'))(parsedDevelopmentOverlay.environment),
+      decodeUnknownResult(Literal('development'))(
+        parsedDevelopmentOverlay.environment
+      )
     );
     return Object.freeze({
       environment: development,
@@ -101,24 +111,29 @@ export const createModuleDeploymentAllowlistBuildInput = ({
   const ontosModuleManifests = Object.fromEntries(
     parsedTopology.verticals.map((vertical) => {
       const deploymentVertical = getResultOrThrow(
-        decodeUnknownResult(DeploymentPublicUrlVerticalSchema)(vertical),
+        decodeUnknownResult(DeploymentPublicUrlVerticalSchema)(vertical)
       );
       const environmentName = deploymentVertical.cloudflare.publicUrlEnv;
       const configuredOrigin = getResultOrThrow(
-        decodeUnknownResult(productionOriginSchema(environmentName, environment))(
-          readEnvironment(environmentName) ?? '',
-        ),
+        decodeUnknownResult(
+          productionOriginSchema(environmentName, environment)
+        )(readEnvironment(environmentName) ?? '')
       );
-      const origin = getResultOrThrow(decodeResult(URLFromString)(configuredOrigin));
-      return [deploymentVertical.id, new URL(contractPath, origin).href] as const;
-    }),
+      const origin = getResultOrThrow(
+        decodeResult(URLFromString)(configuredOrigin)
+      );
+      return [
+        deploymentVertical.id,
+        new URL(contractPath, origin).href,
+      ] as const;
+    })
   );
   const overlay = getResultOrThrow(
     decodeUnknownResult(DeploymentAllowlistOverlaySchema)({
       environment,
       ontosModuleManifests,
       schemaVersion: parsedDevelopmentOverlay.schemaVersion,
-    }),
+    })
   );
   Object.freeze(overlay.ontosModuleManifests);
   Object.freeze(overlay);

@@ -8,82 +8,33 @@ created: 2026-08-03
 
 ## Feature Description
 
-Add one reusable, Shell-owned mechanism for propagating the authenticated OntOS principal from
-`shell-super-app` to an independently deployed MicroVertical BFF, plus one repository-owned
-Codesmith generator that prepares an existing MicroVertical to consume that identity for Action
-endpoints. The mechanism must remove per-Action Shell endpoints and loader-held tokens, preserve the
-strict MicroVertical deployment seam, and deliver a verified `TrustedPrincipalContext` to the
-existing Core Action runtime without moving credentials, sessions, or authorization into the
-MicroVertical.
+Add one reusable, Shell-owned mechanism for propagating the authenticated OntOS principal from `shell-super-app` to an independently deployed MicroVertical BFF, plus one repository-owned Codesmith generator that prepares an existing MicroVertical to consume that identity for Action endpoints. The mechanism must remove per-Action Shell endpoints and loader-held tokens, preserve the strict MicroVertical deployment seam, and deliver a verified `TrustedPrincipalContext` to the existing Core Action runtime without moving credentials, sessions, or authorization into the MicroVertical.
 
-The Shell will validate the Better Auth session and issue a short-lived, audience-scoped,
-asymmetrically signed assertion. The private signing key remains Shell-only. A generated
-MicroVertical BFF adapter will verify the assertion with public key material, validate all claims,
-and expose the trusted principal through an Effect interface. The token proves authentication and
-context only: it must contain no Action permission grant, and Core must continue to enforce
-SpiceDB permissions and executable Policies for each Action.
+The Shell will validate the Better Auth session and issue a short-lived, audience-scoped, asymmetrically signed assertion. The private signing key remains Shell-only. A generated MicroVertical BFF adapter will verify the assertion with public key material, validate all claims, and expose the trusted principal through an Effect interface. The token proves authentication and context only: it must contain no Action permission grant, and Core must continue to enforce SpiceDB permissions and executable Policies for each Action.
 
 ## User Story
 
-As an OntOS developer
-I want an existing MicroVertical to gain the standard Shell-user Action identity boundary through one generator command
-So that I can expose Action BFF operations without copying authentication, token, configuration, and client-refresh code or modifying Shell for every Action
+As an OntOS developer I want an existing MicroVertical to gain the standard Shell-user Action identity boundary through one generator command So that I can expose Action BFF operations without copying authentication, token, configuration, and client-refresh code or modifying Shell for every Action
 
 ## Problem Statement
 
-The Core Action runtime already requires a trusted principal separately from the business payload,
-but OntOS has no reusable production seam that supplies that context to an independently deployed
-MicroVertical BFF. The disposable Testing spike proved the runtime path with a five-minute HMAC
-token, but hardcoded `testing.testing` into the Shell endpoint, Shell contract, Shell client, home
-loader, Testing BFF, and Testing client. Repeating that shape would cause every new Action or
-MicroVertical to require coordinated Shell edits.
+The Core Action runtime already requires a trusted principal separately from the business payload, but OntOS has no reusable production seam that supplies that context to an independently deployed MicroVertical BFF. The disposable Testing spike proved the runtime path with a five-minute HMAC token, but hardcoded `testing.testing` into the Shell endpoint, Shell contract, Shell client, home loader, Testing BFF, and Testing client. Repeating that shape would cause every new Action or MicroVertical to require coordinated Shell edits.
 
-The prototype also places a shared signing secret and issuer/verifier implementation in Core,
-contrary to the rule that Core owns only non-secret principal bindings and context while Shell owns
-credentials and authentication mechanics. Its globally constructed `Layer.orDie` makes unrelated
-login/session operations depend on gateway configuration, and the page loader obtains a token only
-once, so a retry cannot combine a refreshed token with the original idempotency key. The HMAC design
-also gives every verifier the ability to mint assertions.
+The prototype also places a shared signing secret and issuer/verifier implementation in Core, contrary to the rule that Core owns only non-secret principal bindings and context while Shell owns credentials and authentication mechanics. Its globally constructed `Layer.orDie` makes unrelated login/session operations depend on gateway configuration, and the page loader obtains a token only once, so a retry cannot combine a refreshed token with the original idempotency key. The HMAC design also gives every verifier the ability to mint assertions.
 
-Without a generic identity module and a generator, developers must reproduce security-sensitive
-claims, Bearer parsing, signature checks, audience validation, error mapping, configuration, and
-client token acquisition. That is repetitive, easy to get wrong, and incompatible with independently
-deployable MicroVerticals authenticating each request themselves.
+Without a generic identity module and a generator, developers must reproduce security-sensitive claims, Bearer parsing, signature checks, audience validation, error mapping, configuration, and client token acquisition. That is repetitive, easy to get wrong, and incompatible with independently deployable MicroVerticals authenticating each request themselves.
 
 ## Solution Statement
 
-Keep the existing `shell-super-app` as the only deployed authentication authority. Add one generic
-strict Effect BFF operation, `issueGatewayContext`, which accepts a MicroVertical audience, validates
-the current Better Auth session, verifies that the audience is an existing vertical ID in the
-authoritative topology, and returns a five-minute EdDSA JWT plus its expiry. Do not add an Auth
-MicroVertical, another app, a package, a delivery unit, or a Module Federation remote.
+Keep the existing `shell-super-app` as the only deployed authentication authority. Add one generic strict Effect BFF operation, `issueGatewayContext`, which accepts a MicroVertical audience, validates the current Better Auth session, verifies that the audience is an existing vertical ID in the authoritative topology, and returns a five-minute EdDSA JWT plus its expiry. Do not add an Auth MicroVertical, another app, a package, a delivery unit, or a Module Federation remote.
 
-Publish the non-secret assertion schemas and the contract-derived Effect client through the existing
-`@app/shared-contracts` package. The protected header will contain algorithm, type, and key ID; the
-signed claims will contain issuer, audience, subject, issued-at, expiry, unique token ID, assertion
-version, and the safe `TrustedPrincipalContext` fields. They will
-contain no email, display name, credential, cookie, session token, Action key, permission, Policy
-decision, or business payload. Require the standard subject claim to equal the nested principal ID.
+Publish the non-secret assertion schemas and the contract-derived Effect client through the existing `@app/shared-contracts` package. The protected header will contain algorithm, type, and key ID; the signed claims will contain issuer, audience, subject, issued-at, expiry, unique token ID, assertion version, and the safe `TrustedPrincipalContext` fields. They will contain no email, display name, credential, cookie, session token, Action key, permission, Policy decision, or business payload. Require the standard subject claim to equal the nested principal ID.
 
-Use a Shell-private Ed25519 JWK with a required `kid` to sign. Give MicroVerticals only a JWKS of
-public verification keys. Permit current and retiring public keys so rotation can overlap for at
-least token TTL plus clock skew; reject unknown keys, algorithms other than EdDSA, invalid issuer or
-audience, malformed claims, future issue times outside the allowed skew, and expired assertions.
+Use a Shell-private Ed25519 JWK with a required `kid` to sign. Give MicroVerticals only a JWKS of public verification keys. Permit current and retiring public keys so rotation can overlap for at least token TTL plus clock skew; reject unknown keys, algorithms other than EdDSA, invalid issuer or audience, malformed claims, future issue times outside the allowed skew, and expired assertions.
 
-Add `mise exec -- pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>`. Run it once
-after the UltraModern CLI creates a vertical and before that vertical exposes Shell-user Action BFF
-operations. The generator will discover the vertical from package metadata and topology, add only
-the required direct dependencies, and emit a server-side Effect verifier adapter plus a client-side
-Effect token-acquisition adapter with the vertical app ID embedded as its audience. Endpoint authors
-will call the generated server adapter and exhaustively map its typed authentication/unavailability
-errors in the endpoint-specific Problem Details contract. Client Action methods will compose through
-the generated client adapter so every new attempt obtains a fresh assertion while the feature keeps
-its existing idempotency key.
+Add `mise exec -- pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>`. Run it once after the UltraModern CLI creates a vertical and before that vertical exposes Shell-user Action BFF operations. The generator will discover the vertical from package metadata and topology, add only the required direct dependencies, and emit a server-side Effect verifier adapter plus a client-side Effect token-acquisition adapter with the vertical app ID embedded as its audience. Endpoint authors will call the generated server adapter and exhaustively map its typed authentication/unavailability errors in the endpoint-specific Problem Details contract. Client Action methods will compose through the generated client adapter so every new attempt obtains a fresh assertion while the feature keeps its existing idempotency key.
 
-The generator must not create an Action, generic Action endpoint, permission, Policy, Outbox Message,
-UI, or business vertical; those remain owned by their existing generators and feature code. The Core
-Action runtime, permission service, Policy evaluator, transaction, Domain Event, and Outbox logic
-remain unchanged.
+The generator must not create an Action, generic Action endpoint, permission, Policy, Outbox Message, UI, or business vertical; those remain owned by their existing generators and feature code. The Core Action runtime, permission service, Policy evaluator, transaction, Domain Event, and Outbox logic remain unchanged.
 
 ## Relevant Files
 
@@ -136,40 +87,19 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Document the exact authentication seam and assertion security contract before changing runtime code.
-Move the non-secret gateway wire contract into the existing shared-contract package, select EdDSA
-with explicit key IDs and rotation overlap, and keep Core's trusted principal type as the canonical
-decoded context. Remove the disposable HMAC prototype from Core if it is still present. Add focused
-schema tests for required claims, safe fields, subject/principal equality, and rejection of identity
-or authorization data outside the approved contract.
+Document the exact authentication seam and assertion security contract before changing runtime code. Move the non-secret gateway wire contract into the existing shared-contract package, select EdDSA with explicit key IDs and rotation overlap, and keep Core's trusted principal type as the canonical decoded context. Remove the disposable HMAC prototype from Core if it is still present. Add focused schema tests for required claims, safe fields, subject/principal equality, and rejection of identity or authorization data outside the approved contract.
 
 ### Phase 2: Core Implementation
 
-Implement one Shell-private lazy issuer and one generic strict Effect BFF operation. Resolve the
-current Better Auth session for every issuance, derive the audience allowlist from authoritative
-topology, sign only safe claims, and map missing sessions, unknown audiences, invalid configuration,
-and signing failures to declared typed Problems. Keep ordinary sign-in/session/sign-out layers
-independent so missing gateway keys affect only the gateway operation.
+Implement one Shell-private lazy issuer and one generic strict Effect BFF operation. Resolve the current Better Auth session for every issuance, derive the audience allowlist from authoritative topology, sign only safe claims, and map missing sessions, unknown audiences, invalid configuration, and signing failures to declared typed Problems. Keep ordinary sign-in/session/sign-out layers independent so missing gateway keys affect only the gateway operation.
 
-Extend Codesmith with the MicroVertical Action-boundary command. Generate one edge-safe public-key
-verifier adapter and one Effect client acquisition adapter for the target app ID. Preflight every
-mutation, preserve package formatting and developer code, reject incompatible dependencies or
-existing outputs, and prove exact generated output in disposable fixtures. The verifier must return
-typed missing/invalid/expired/scope/configuration errors and never construct a principal from unsigned
-payload or headers.
+Extend Codesmith with the MicroVertical Action-boundary command. Generate one edge-safe public-key verifier adapter and one Effect client acquisition adapter for the target app ID. Preflight every mutation, preserve package formatting and developer code, reject incompatible dependencies or existing outputs, and prove exact generated output in disposable fixtures. The verifier must return typed missing/invalid/expired/scope/configuration errors and never construct a principal from unsigned payload or headers.
 
 ### Phase 3: Integration
 
-Prove the complete seam with an ephemeral generated vertical fixture: an authenticated Shell session
-issues an assertion, the generated adapter verifies it for the matching audience, and the resulting
-context is accepted by the existing Action trusted-context schema. Prove another audience, expired or
-tampered assertions, unknown `kid`, missing configuration, and anonymous sessions fail closed.
+Prove the complete seam with an ephemeral generated vertical fixture: an authenticated Shell session issues an assertion, the generated adapter verifies it for the matching audience, and the resulting context is accepted by the existing Action trusted-context schema. Prove another audience, expired or tampered assertions, unknown `kid`, missing configuration, and anonymous sessions fail closed.
 
-Demonstrate the generated client adapter acquiring a new assertion for each attempt while a caller
-retains one idempotency key across retry. Ensure an Action BFF endpoint can map authentication failure
-to `401` with a Bearer challenge and verification/configuration unavailability to `503`, without
-changing the Action runtime or inventing a universal Action HTTP error contract. Remove all
-Testing-specific Shell identity fields if the disposable spike has not already been reverted.
+Demonstrate the generated client adapter acquiring a new assertion for each attempt while a caller retains one idempotency key across retry. Ensure an Action BFF endpoint can map authentication failure to `401` with a Bearer challenge and verification/configuration unavailability to `503`, without changing the Action runtime or inventing a universal Action HTTP error contract. Remove all Testing-specific Shell identity fields if the disposable spike has not already been reverted.
 
 ## Step by Step Tasks
 
@@ -225,25 +155,13 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use Effect-controlled clocks and ephemeral Ed25519 keypairs to test claim construction, safe-field
-selection, topology audience validation, configuration isolation, signature verification, token
-times, subject consistency, key IDs, algorithm allowlisting, and typed errors. Use Node disposable
-fixtures for generator arguments, path containment, dependency patches, exact templates, formatting,
-typechecking, and no-partial-write behavior. Keep private keys and complete assertions out of test
-failure output.
+Use Effect-controlled clocks and ephemeral Ed25519 keypairs to test claim construction, safe-field selection, topology audience validation, configuration isolation, signature verification, token times, subject consistency, key IDs, algorithm allowlisting, and typed errors. Use Node disposable fixtures for generator arguments, path containment, dependency patches, exact templates, formatting, typechecking, and no-partial-write behavior. Keep private keys and complete assertions out of test failure output.
 
 ### Integration Tests
 
-Use the real Shell authentication service with isolated Better Auth/Core identity fixtures to prove
-only authenticated active identities can obtain an assertion. Render a disposable generated
-MicroVertical adapter, verify a real Shell-issued assertion through it, and pass the result through
-the existing Action trusted-context schema. Add a strict Effect BFF fixture to prove declared `401`
-and `503` transport behavior and a client retry test that refreshes authentication independently of
-the Action idempotency key.
+Use the real Shell authentication service with isolated Better Auth/Core identity fixtures to prove only authenticated active identities can obtain an assertion. Render a disposable generated MicroVertical adapter, verify a real Shell-issued assertion through it, and pass the result through the existing Action trusted-context schema. Add a strict Effect BFF fixture to prove declared `401` and `503` transport behavior and a client retry test that refreshes authentication independently of the Action idempotency key.
 
-Do not add or retain a demonstration business MicroVertical. The generator/runtime seam can be
-proved in OS-temporary fixtures, and the existing Core tests remain authoritative for permission,
-Policy, transaction, Domain Event, and Outbox behavior after trusted context is supplied.
+Do not add or retain a demonstration business MicroVertical. The generator/runtime seam can be proved in OS-temporary fixtures, and the existing Core tests remain authoritative for permission, Policy, transaction, Domain Event, and Outbox behavior after trusted context is supplied.
 
 ### Edge Cases
 

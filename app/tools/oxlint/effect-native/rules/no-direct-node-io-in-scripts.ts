@@ -80,10 +80,14 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { ESTree, Variable } from '@oxlint/plugins';
 
-import { memberName, skipWrappers, staticString, unwrapNode as unwrap } from '../shared/ast.ts';
+import {
+  memberName,
+  skipWrappers,
+  staticString,
+  unwrapNode as unwrap,
+} from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
 import { booleanOption, stringList } from '../shared/options.ts';
 import { inScriptScope, matchesGlobs, scriptScope } from '../shared/paths.ts';
@@ -133,7 +137,9 @@ function readOptions(raw: unknown): RuleOptions {
 
 /** `node:fs/promises` → `fs/promises`; leaves package specifiers untouched. */
 function withoutNodeProtocol(specifier: string): string {
-  return specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier;
+  return specifier.startsWith('node:')
+    ? specifier.slice('node:'.length)
+    : specifier;
 }
 
 /**
@@ -141,7 +147,10 @@ function withoutNodeProtocol(specifier: string): string {
  * `node:` protocol, or a subpath of a configured root (`fs-extra/esm`, `node:fs/promises` under
  * `fs`), so aliases of the same package cannot slip past the rule.
  */
-function isNodeIoSpecifier(specifier: string, modules: readonly string[]): boolean {
+function isNodeIoSpecifier(
+  specifier: string,
+  modules: readonly string[]
+): boolean {
   const normalised = withoutNodeProtocol(specifier);
   return modules.some((module) => {
     const candidate = withoutNodeProtocol(module);
@@ -154,21 +163,28 @@ function staticStringValue(node: AnyNode | null | undefined): string | null {
   return staticString(node, { unwrap: {}, singleQuasi: true });
 }
 
-function matchesRequiredBinding(variable: Variable, declarators: ReadonlySet<number>): boolean {
+function matchesRequiredBinding(
+  variable: Variable,
+  declarators: ReadonlySet<number>
+): boolean {
   return variable.defs.some(
-    (definition) => definition.type === 'Variable' && declarators.has(definition.node.start),
+    (definition) =>
+      definition.type === 'Variable' && declarators.has(definition.node.start)
   );
 }
 
 /** The base identifier of a (possibly nested, possibly optional) member chain: `fs.promises.readFile`. */
 function memberChainRoot(
-  node: ESTree.MemberExpression,
+  node: ESTree.MemberExpression
 ): { readonly root: AnyNode; readonly path: string[] } | null {
   const path: string[] = [];
   let current: AnyNode = node;
   while (current.type === 'MemberExpression') {
     const member = current as ESTree.MemberExpression;
-    path.unshift(memberName(member, { templates: true, singleQuasi: true, unwrap: {} }) ?? '…');
+    path.unshift(
+      memberName(member, { templates: true, singleQuasi: true, unwrap: {} }) ??
+        '…'
+    );
     current = unwrap(member.object as AnyNode);
   }
   return current.type === 'Identifier' ? { path, root: current } : null;
@@ -255,7 +271,8 @@ export const rule = defineRule({
     /** Declarator start offsets of the `require` bindings above, to reject same-named shadows. */
     const requiredDeclarators = new Set<number>();
 
-    const isNodeIo = (specifier: string): boolean => isNodeIoSpecifier(specifier, options.modules);
+    const isNodeIo = (specifier: string): boolean =>
+      isNodeIoSpecifier(specifier, options.modules);
 
     /** `true` when this identifier reference still resolves to the Node I/O binding we recorded. */
     const resolvesToNodeIo = (node: AnyNode, name: string): string | null => {
@@ -265,7 +282,8 @@ export const rule = defineRule({
       if (recordedModule === null) return null;
       const variable = resolveVariable(context, name, node);
       // Unresolved: the module-level declaration already proved the binding exists.
-      if (variable === null || variable.defs.length === 0) return recordedModule;
+      if (variable === null || variable.defs.length === 0)
+        return recordedModule;
       if (
         fromImport !== undefined &&
         variable.defs.some((definition) => definition.type === 'ImportBinding')
@@ -273,11 +291,16 @@ export const rule = defineRule({
         return fromImport;
       }
       if (fromRequire === undefined) return null;
-      return matchesRequiredBinding(variable, requiredDeclarators) ? fromRequire : null;
+      return matchesRequiredBinding(variable, requiredDeclarators)
+        ? fromRequire
+        : null;
     };
 
     /** Register `const fs = require("node:fs")` / `const { readFile } = require("node:fs/promises")`. */
-    const registerRequireBinding = (call: ESTree.CallExpression, module: string): void => {
+    const registerRequireBinding = (
+      call: ESTree.CallExpression,
+      module: string
+    ): void => {
       const { parent } = skipWrappers(call as unknown as AnyNode);
       if (parent === null || parent.type !== 'VariableDeclarator') return;
       const declarator = parent as ESTree.VariableDeclarator;
@@ -297,13 +320,26 @@ export const rule = defineRule({
       }
     };
 
-    const reportRequireCall = (node: ESTree.CallExpression, callee: AnyNode): boolean => {
+    const reportRequireCall = (
+      node: ESTree.CallExpression,
+      callee: AnyNode
+    ): boolean => {
       if (callee.type !== 'Identifier') return false;
-      const required = staticStringValue(node.arguments[0] as AnyNode | undefined);
-      if (required === null || !isNodeIo(required) || provenance(context, callee) !== 'require')
+      const required = staticStringValue(
+        node.arguments[0] as AnyNode | undefined
+      );
+      if (
+        required === null ||
+        !isNodeIo(required) ||
+        provenance(context, callee) !== 'require'
+      )
         return false;
       registerRequireBinding(node, required);
-      context.report({ node, messageId: 'nodeIoRequire', data: { module: required } });
+      context.report({
+        node,
+        messageId: 'nodeIoRequire',
+        data: { module: required },
+      });
       return true;
     };
 
@@ -314,38 +350,57 @@ export const rule = defineRule({
         // `import type fs from "node:fs"` is erased at runtime and opens nothing.
         if (node.importKind === 'type') return;
         const valueSpecifiers = node.specifiers.filter(
-          (specifier) => !(specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'),
+          (specifier) =>
+            !(
+              specifier.type === 'ImportSpecifier' &&
+              specifier.importKind === 'type'
+            )
         );
-        for (const specifier of valueSpecifiers) importedLocals.set(specifier.local.name, module);
+        for (const specifier of valueSpecifiers)
+          importedLocals.set(specifier.local.name, module);
         // `import { type Stats } from "node:fs"` — every specifier is type-only: nothing is loaded.
         if (node.specifiers.length > 0 && valueSpecifiers.length === 0) return;
         context.report({ node, messageId: 'nodeIoImport', data: { module } });
       },
       ExportNamedDeclaration(node) {
         const source = node.source;
-        if (source === null || source === undefined || !isNodeIo(source.value)) return;
+        if (source === null || source === undefined || !isNodeIo(source.value))
+          return;
         if (
           node.exportKind === 'type' ||
-          (node.specifiers.length > 0 && node.specifiers.every((s) => s.exportKind === 'type'))
+          (node.specifiers.length > 0 &&
+            node.specifiers.every((s) => s.exportKind === 'type'))
         )
           return;
-        context.report({ node, messageId: 'nodeIoImport', data: { module: source.value } });
+        context.report({
+          node,
+          messageId: 'nodeIoImport',
+          data: { module: source.value },
+        });
       },
       ExportAllDeclaration(node) {
         if (!isNodeIo(node.source.value)) return;
         if (node.exportKind === 'type') return;
-        context.report({ node, messageId: 'nodeIoImport', data: { module: node.source.value } });
+        context.report({
+          node,
+          messageId: 'nodeIoImport',
+          data: { module: node.source.value },
+        });
       },
       ImportExpression(node) {
         const module = staticStringValue(node.source as AnyNode);
         if (module === null || !isNodeIo(module)) return;
-        context.report({ node, messageId: 'nodeIoDynamicImport', data: { module } });
+        context.report({
+          node,
+          messageId: 'nodeIoDynamicImport',
+          data: { module },
+        });
       },
       TSImportEqualsDeclaration(node) {
         const reference = node.moduleReference as AnyNode;
         if (reference.type !== 'TSExternalModuleReference') return;
         const module = staticStringValue(
-          (reference as ESTree.TSExternalModuleReference).expression as AnyNode,
+          (reference as ESTree.TSExternalModuleReference).expression as AnyNode
         );
         if (module === null || !isNodeIo(module)) return;
         if (node.importKind === 'type') return;
@@ -364,7 +419,11 @@ export const rule = defineRule({
           const name = (callee as ESTree.IdentifierReference).name;
           const module = resolvesToNodeIo(callee as AnyNode, name);
           if (module === null) return;
-          context.report({ node, messageId: 'nodeIoCall', data: { call: `${name}()`, module } });
+          context.report({
+            node,
+            messageId: 'nodeIoCall',
+            data: { call: `${name}()`, module },
+          });
           return;
         }
 

@@ -8,44 +8,23 @@ created: 2026-08-13
 
 ## Feature Description
 
-Add the first CRM-owned business entities to PostgreSQL: a Customer with a name and a Contact with
-a name, email, phone, and exactly one parent Customer. A Customer represents either a company or a
-person without introducing a discriminator yet. Both entities have durable UUID identity,
-tenant ownership, timestamps, and a nullable archive timestamp.
+Add the first CRM-owned business entities to PostgreSQL: a Customer with a name and a Contact with a name, email, phone, and exactly one parent Customer. A Customer represents either a company or a person without introducing a discriminator yet. Both entities have durable UUID identity, tenant ownership, timestamps, and a nullable archive timestamp.
 
-The change establishes the CRM MicroVertical as an independent Drizzle migration owner for the
-PostgreSQL schema named exactly `crm`, adds owner-private typed database access and inferred entity
-types, generates and applies the migration, and verifies the live schema and tenant isolation. It
-does not add Actions, reads, BFF endpoints, public resource descriptors, or UI.
+The change establishes the CRM MicroVertical as an independent Drizzle migration owner for the PostgreSQL schema named exactly `crm`, adds owner-private typed database access and inferred entity types, generates and applies the migration, and verifies the live schema and tenant isolation. It does not add Actions, reads, BFF endpoints, public resource descriptors, or UI.
 
 ## User Story
 
-As an OntOS CRM developer
-I want typed Customer and Contact persistence owned by the CRM MicroVertical
-So that later generated Actions can safely create, update, archive, and read CRM records without
-reopening the database ownership design
+As an OntOS CRM developer I want typed Customer and Contact persistence owned by the CRM MicroVertical So that later generated Actions can safely create, update, archive, and read CRM records without reopening the database ownership design
 
 ## Problem Statement
 
-The CRM MicroVertical exists but owns no database schema, migration history, or domain tables.
-Later CRM behavior therefore has no canonical, tenant-isolated place to persist Customers and their
-Contacts. Adding the tables through Core or `public` would violate MicroVertical ownership, while
-an untyped or globally shared database client would bypass the governed data-access architecture.
+The CRM MicroVertical exists but owns no database schema, migration history, or domain tables. Later CRM behavior therefore has no canonical, tenant-isolated place to persist Customers and their Contacts. Adding the tables through Core or `public` would violate MicroVertical ownership, while an untyped or globally shared database client would bypass the governed data-access architecture.
 
 ## Solution Statement
 
-Create an owner-local Drizzle configuration and database boundary in `verticals/crm`, with the
-distinct journal `drizzle.__drizzle_migrations_crm`. Define `crm.customers` and `crm.contacts` as
-explicit typed Drizzle tables. Both are tenant-owned and protected by enabled and forced tenant
-RLS; Contact uses a composite `(tenant_id, customer_id)` foreign key so it cannot belong to a
-Customer from another tenant. Archiving is represented by nullable `archived_at`, and no hard-delete
-or archive operation is exposed in this increment.
+Create an owner-local Drizzle configuration and database boundary in `verticals/crm`, with the distinct journal `drizzle.__drizzle_migrations_crm`. Define `crm.customers` and `crm.contacts` as explicit typed Drizzle tables. Both are tenant-owned and protected by enabled and forced tenant RLS; Contact uses a composite `(tenant_id, customer_id)` foreign key so it cannot belong to a Customer from another tenant. Archiving is represented by nullable `archived_at`, and no hard-delete or archive operation is exposed in this increment.
 
-Keep the current business shape deliberately small. Customer has only `name`; Contact has `name`,
-`email`, and `phone`. Colocate `CustomerRecord`, `NewCustomerRecord`, `ContactRecord`, and
-`NewContactRecord` as Drizzle-inferred, owner-private entity types in the CRM schema module instead
-of inventing a separate unused domain abstraction. Future Action generators will own operation
-payload/result schemas without coupling public contracts to persistence row types.
+Keep the current business shape deliberately small. Customer has only `name`; Contact has `name`, `email`, and `phone`. Colocate `CustomerRecord`, `NewCustomerRecord`, `ContactRecord`, and `NewContactRecord` as Drizzle-inferred, owner-private entity types in the CRM schema module instead of inventing a separate unused domain abstraction. Future Action generators will own operation payload/result schemas without coupling public contracts to persistence row types.
 
 ## Relevant Files
 
@@ -94,23 +73,15 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Create a fresh worktree and branch from the intended `develop` base, then establish CRM as the
-third independent database owner. Reuse Core's public database configuration and RLS helpers while
-keeping the CRM pool, Drizzle schema, executor types, migrations, and verification private to the
-CRM package.
+Create a fresh worktree and branch from the intended `develop` base, then establish CRM as the third independent database owner. Reuse Core's public database configuration and RLS helpers while keeping the CRM pool, Drizzle schema, executor types, migrations, and verification private to the CRM package.
 
 ### Phase 2: Core Implementation
 
-Define the minimal Customer and Contact tables and inferred entity types. Add exact schema contract
-tests beside the schema, including archive representation, required business fields, composite
-same-tenant parent integrity, indexes, and tenant RLS. Add integration coverage that proves the
-runtime role sees and writes only the installed tenant scope.
+Define the minimal Customer and Contact tables and inferred entity types. Add exact schema contract tests beside the schema, including archive representation, required business fields, composite same-tenant parent integrity, indexes, and tenant RLS. Add integration coverage that proves the runtime role sees and writes only the installed tenant scope.
 
 ### Phase 3: Integration
 
-Add CRM to root migration, grants, tests, and global verification without registering CRM tables in
-Core or Auth. Generate and inspect the Drizzle migration, apply it to PostgreSQL, rerun it to prove
-idempotence, verify the exact live catalog, and finish with all focused and repository-wide gates.
+Add CRM to root migration, grants, tests, and global verification without registering CRM tables in Core or Auth. Generate and inspect the Drizzle migration, apply it to PostgreSQL, rerun it to prove idempotence, verify the exact live catalog, and finish with all focused and repository-wide gates.
 
 ## Step by Step Tasks
 
@@ -164,17 +135,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Test exact CRM table ownership, required/minimal fields, archive timestamp nullability, inferred row
-and insert types, generated defaults, non-empty string checks, indexes, composite same-tenant
-foreign key, RLS/policy definitions, exact catalog comparisons, and scoped pool lifecycle/errors.
+Test exact CRM table ownership, required/minimal fields, archive timestamp nullability, inferred row and insert types, generated defaults, non-empty string checks, indexes, composite same-tenant foreign key, RLS/policy definitions, exact catalog comparisons, and scoped pool lifecycle/errors.
 
 ### Integration Tests
 
-Apply the generated CRM migration to PostgreSQL and exercise the live tables as the least-privilege
-runtime role. Verify exact migration bookkeeping, admin ownership, runtime grants, forced tenant
-RLS, cross-tenant denial, same-tenant Customer/Contact integrity, multiple Contacts per Customer,
-and non-destructive archive timestamps. No browser or BFF test is required because this increment
-adds no public operation or UI surface.
+Apply the generated CRM migration to PostgreSQL and exercise the live tables as the least-privilege runtime role. Verify exact migration bookkeeping, admin ownership, runtime grants, forced tenant RLS, cross-tenant denial, same-tenant Customer/Contact integrity, multiple Contacts per Customer, and non-destructive archive timestamps. No browser or BFF test is required because this increment adds no public operation or UI surface.
 
 ### Edge Cases
 

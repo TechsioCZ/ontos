@@ -46,16 +46,28 @@ test('rejects empty-file runs and missing report fields', () => {
     '{}',
     '{"diagnostics":[]}',
   ]) {
-    assert.throws(() => parseOxlintOutput(stdout, '', 0), /incomplete or empty-file/);
+    assert.throws(
+      () => parseOxlintOutput(stdout, '', 0),
+      /incomplete or empty-file/
+    );
   }
 });
 
 test('rejects crashes, stderr failures, and inconsistent exit statuses', () => {
-  assert.throws(() => parseOxlintOutput(report(), '', null), /did not complete/);
+  assert.throws(
+    () => parseOxlintOutput(report(), '', null),
+    /did not complete/
+  );
   assert.throws(() => parseOxlintOutput(report(), '', 2), /did not complete/);
-  assert.throws(() => parseOxlintOutput(report(), 'plugin crashed', 0), /stderr/);
+  assert.throws(
+    () => parseOxlintOutput(report(), 'plugin crashed', 0),
+    /stderr/
+  );
   assert.throws(() => parseOxlintOutput(report(), '', 1), /contradicts/);
-  assert.throws(() => parseOxlintOutput(report([diagnostic]), '', 0), /contradicts/);
+  assert.throws(
+    () => parseOxlintOutput(report([diagnostic]), '', 0),
+    /contradicts/
+  );
 });
 
 test('rejects malformed diagnostics rather than hiding them', () => {
@@ -65,6 +77,9 @@ test('rejects malformed diagnostics rather than hiding them', () => {
     { ...diagnostic, severity: 'unknown' },
     { ...diagnostic, labels: null },
   ]) {
-    assert.throws(() => parseOxlintOutput(report([entry]), '', 1), /malformed diagnostic/);
+    assert.throws(
+      () => parseOxlintOutput(report([entry]), '', 1),
+      /malformed diagnostic/
+    );
   }
 });

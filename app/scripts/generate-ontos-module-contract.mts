@@ -51,8 +51,12 @@ import {
   toPascalCase,
 } from './scaffolding/shared.mts';
 
-export const OntosModuleContractTargetSchema = Schema.Literals(['cloudflare-dist', 'dist']);
-export type OntosModuleContractTarget = typeof OntosModuleContractTargetSchema.Type;
+export const OntosModuleContractTargetSchema = Schema.Literals([
+  'cloudflare-dist',
+  'dist',
+]);
+export type OntosModuleContractTarget =
+  typeof OntosModuleContractTargetSchema.Type;
 
 interface GenerateInput {
   readonly target: OntosModuleContractTarget;
@@ -75,7 +79,7 @@ export class OntosModuleContractGenerationError extends Schema.TaggedError<Ontos
   {
     cause: Schema.optional(Schema.Defect()),
     message: Schema.String,
-  },
+  }
 ) {}
 
 const ModulePackageSchema = Schema.Struct({
@@ -86,9 +90,9 @@ const ModulePackageSchema = Schema.Struct({
         Schema.Struct({
           moduleId: Schema.optional(OntosModuleIdSchema),
           schemaVersion: Schema.optional(Schema.Number),
-        }),
+        })
       ),
-    }),
+    })
   ),
   name: Schema.optional(Schema.String),
   version: Schema.optional(Schema.String),
@@ -99,48 +103,63 @@ const ReferenceTopologySchema = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         deliveryUnit: Schema.optional(
-          Schema.Struct({ buildMarker: Schema.optional(Schema.String) }),
+          Schema.Struct({ buildMarker: Schema.optional(Schema.String) })
         ),
         id: Schema.optional(Schema.String),
-        moduleFederation: Schema.optional(Schema.Struct({ name: Schema.optional(Schema.String) })),
+        moduleFederation: Schema.optional(
+          Schema.Struct({ name: Schema.optional(Schema.String) })
+        ),
         package: Schema.optional(Schema.String),
         path: Schema.optional(Schema.String),
-      }),
-    ),
+      })
+    )
   ),
 });
 
 const isOntosModuleManifest = (cause: unknown): cause is OntosModuleManifest =>
   Predicate.isObject(cause);
-const isVerticalRuntimeRegistration = (cause: unknown): cause is VerticalRuntimeRegistration =>
-  Predicate.isObject(cause);
+const isVerticalRuntimeRegistration = (
+  cause: unknown
+): cause is VerticalRuntimeRegistration => Predicate.isObject(cause);
 const LoadedOwnerModuleSchema = Schema.Struct({
   manifest: Schema.declare(isOntosModuleManifest),
   registration: Schema.declare(isVerticalRuntimeRegistration),
 });
-const decodeLoadedOwnerModule = Schema.decodeUnknownPromise(LoadedOwnerModuleSchema);
+const decodeLoadedOwnerModule = Schema.decodeUnknownPromise(
+  LoadedOwnerModuleSchema
+);
 
 const PackageJsonTextSchema = Schema.fromJsonString(ModulePackageSchema);
-const ReferenceTopologyTextSchema = Schema.fromJsonString(ReferenceTopologySchema);
-const ContractJsonTextSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema, {
-  space: 2,
-});
+const ReferenceTopologyTextSchema = Schema.fromJsonString(
+  ReferenceTopologySchema
+);
+const ContractJsonTextSchema = Schema.fromJsonString(
+  OntosModuleDeploymentContractSchema,
+  {
+    space: 2,
+  }
+);
 const JsonDocumentTextSchema = Schema.fromJsonString(Schema.Unknown, {
   space: 2,
 });
 const JsonStringTextSchema = Schema.fromJsonString(Schema.String);
 
 const canonicalSlugPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
-const outputRootByTarget: Readonly<Record<OntosModuleContractTarget, string>> = Object.freeze({
-  'cloudflare-dist': 'dist-cloudflare',
-  dist: 'dist',
-});
+const outputRootByTarget: Readonly<Record<OntosModuleContractTarget, string>> =
+  Object.freeze({
+    'cloudflare-dist': 'dist-cloudflare',
+    dist: 'dist',
+  });
 
-const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
+const sha256 = (value: string): string =>
+  createHash('sha256').update(value).digest('hex');
 const require = createRequire(import.meta.url);
 const moduleContractRuntime = ManagedRuntime.make(NodeServices.layer);
 
-const failure = (message: string, cause?: unknown): OntosModuleContractGenerationError =>
+const failure = (
+  message: string,
+  cause?: unknown
+): OntosModuleContractGenerationError =>
   new OntosModuleContractGenerationError({ cause, message });
 
 const repositoryEsbuildPath = (): string => {
@@ -187,25 +206,36 @@ const assertOwnerSlots = (verticalDirectory: string) =>
         fileSystem.readFileString(owner.path).pipe(
           Effect.map((content) => ({ ...owner, content })),
           Effect.mapError((cause) =>
-            failure(`unable to read module contract owner ${owner.path}`, cause),
-          ),
+            failure(`unable to read module contract owner ${owner.path}`, cause)
+          )
         ),
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     );
     for (const owner of ownerContents) {
       const { content } = owner;
       if (!content.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`)) {
-        yield* failure(`module contract owner is missing its generated header: ${owner.path}`);
+        yield* failure(
+          `module contract owner is missing its generated header: ${owner.path}`
+        );
       }
       for (const slot of owner.slots) {
-        if (!content.includes(slot) || content.indexOf(slot) !== content.lastIndexOf(slot)) {
-          yield* failure(`module contract owner must contain exactly one ${slot} slot`);
+        if (
+          !content.includes(slot) ||
+          content.indexOf(slot) !== content.lastIndexOf(slot)
+        ) {
+          yield* failure(
+            `module contract owner must contain exactly one ${slot} slot`
+          );
         }
       }
     }
   });
 
-const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, vertical: string) =>
+const loadOwnerValues = (
+  workspaceRoot: string,
+  verticalDirectory: string,
+  vertical: string
+) =>
   Effect.scoped(
     Effect.gen(function* loadOwnerValuesEffect() {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -218,34 +248,48 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
         })
         .pipe(
           Effect.mapError((cause) =>
-            failure('unable to create the module contract temporary directory', cause),
-          ),
+            failure(
+              'unable to create the module contract temporary directory',
+              cause
+            )
+          )
         );
       const entryPath = platformPath.join(temporaryDirectory, 'entry.mts');
       const bundlePath = platformPath.join(temporaryDirectory, 'bundle.mjs');
-      const manifestPath = platformPath.join(verticalDirectory, 'vertical.manifest.ts');
-      const registrationPath = platformPath.join(verticalDirectory, 'vertical.registration.ts');
-      const prefix = toCamelCase(vertical);
-      const encodedManifestPath = yield* Schema.encodeEffect(JsonStringTextSchema)(
-        manifestPath,
-      ).pipe(
-        Effect.mapError((cause) => failure('unable to encode the manifest owner path', cause)),
+      const manifestPath = platformPath.join(
+        verticalDirectory,
+        'vertical.manifest.ts'
       );
-      const encodedRegistrationPath = yield* Schema.encodeEffect(JsonStringTextSchema)(
-        registrationPath,
-      ).pipe(
-        Effect.mapError((cause) => failure('unable to encode the registration owner path', cause)),
+      const registrationPath = platformPath.join(
+        verticalDirectory,
+        'vertical.registration.ts'
+      );
+      const prefix = toCamelCase(vertical);
+      const encodedManifestPath = yield* Schema.encodeEffect(
+        JsonStringTextSchema
+      )(manifestPath).pipe(
+        Effect.mapError((cause) =>
+          failure('unable to encode the manifest owner path', cause)
+        )
+      );
+      const encodedRegistrationPath = yield* Schema.encodeEffect(
+        JsonStringTextSchema
+      )(registrationPath).pipe(
+        Effect.mapError((cause) =>
+          failure('unable to encode the registration owner path', cause)
+        )
       );
       const entry = `import { ${prefix}Manifest as manifest } from ${encodedManifestPath};\nimport { ${prefix}Registration as registration } from ${encodedRegistrationPath};\nexport { manifest, registration };\n`;
       yield* fileSystem
         .writeFileString(entryPath, entry)
         .pipe(
           Effect.mapError((cause) =>
-            failure('unable to write the module contract bundle entry', cause),
-          ),
+            failure('unable to write the module contract bundle entry', cause)
+          )
         );
       const esbuildPath = yield* Effect.try({
-        catch: (cause) => failure('unable to resolve the repository esbuild executable', cause),
+        catch: (cause) =>
+          failure('unable to resolve the repository esbuild executable', cause),
         try: repositoryEsbuildPath,
       });
       const handle = yield* spawner
@@ -260,31 +304,42 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
               '--packages=external',
               `--outfile=${bundlePath}`,
             ],
-            { cwd: workspaceRoot },
-          ),
+            { cwd: workspaceRoot }
+          )
         )
-        .pipe(Effect.mapError((cause) => failure('module contract owner bundle failed', cause)));
-      const bundleOutput = yield* Stream.mkString(handle.all.pipe(Stream.decodeText())).pipe(
+        .pipe(
+          Effect.mapError((cause) =>
+            failure('module contract owner bundle failed', cause)
+          )
+        );
+      const bundleOutput = yield* Stream.mkString(
+        handle.all.pipe(Stream.decodeText())
+      ).pipe(
         Effect.mapError((cause) =>
-          failure('unable to collect module contract bundle output', cause),
-        ),
+          failure('unable to collect module contract bundle output', cause)
+        )
       );
       const bundleExitCode = yield* handle.exitCode.pipe(
         Effect.mapError((cause) =>
-          failure('unable to read module contract bundle exit code', cause),
-        ),
+          failure('unable to read module contract bundle exit code', cause)
+        )
       );
       if (bundleExitCode !== ChildProcessSpawner.ExitCode(0)) {
-        return yield* failure(`module contract owner bundle failed: ${bundleOutput.trim()}`);
+        return yield* failure(
+          `module contract owner bundle failed: ${bundleOutput.trim()}`
+        );
       }
       return yield* Effect.tryPromise({
-        catch: (cause) => failure('unable to import the bundled module contract owners', cause),
+        catch: (cause) =>
+          failure('unable to import the bundled module contract owners', cause),
         try: async (): Promise<LoadedOwnerValues> =>
           await decodeLoadedOwnerModule(
-            await import(`${pathToFileURL(bundlePath).href}?build=${randomUUID()}`),
+            await import(
+              `${pathToFileURL(bundlePath).href}?build=${randomUUID()}`
+            )
           ),
       });
-    }),
+    })
   );
 
 const componentExposes = (verticalDirectory: string) =>
@@ -292,14 +347,17 @@ const componentExposes = (verticalDirectory: string) =>
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
     const config = yield* fileSystem
-      .readFileString(platformPath.join(verticalDirectory, 'module-federation.config.ts'))
+      .readFileString(
+        platformPath.join(verticalDirectory, 'module-federation.config.ts')
+      )
       .pipe(
         Effect.mapError((cause) =>
-          failure('unable to read the Module Federation configuration', cause),
-        ),
+          failure('unable to read the Module Federation configuration', cause)
+        )
       );
     const exposes = new Set<string>();
-    const pattern = /['"](?<key>\.\/[A-Za-z][A-Za-z0-9_-]*)['"]\s*:\s*['"][^'"]+['"]/gu;
+    const pattern =
+      /['"](?<key>\.\/[A-Za-z][A-Za-z0-9_-]*)['"]\s*:\s*['"][^'"]+['"]/gu;
     for (const match of config.matchAll(pattern)) {
       const key = match.groups?.key;
       if (key !== undefined) {
@@ -317,11 +375,13 @@ const toKebab = (value: string): string =>
 
 const sorted = <Value,>(
   values: readonly Value[],
-  compare: (left: Value, right: Value) => number,
+  compare: (left: Value, right: Value) => number
 ): readonly Value[] => {
   const result: Value[] = [];
   for (const value of values) {
-    const insertionIndex = result.findIndex((existing) => compare(value, existing) < 0);
+    const insertionIndex = result.findIndex(
+      (existing) => compare(value, existing) < 0
+    );
     if (insertionIndex === -1) {
       result.push(value);
     } else {
@@ -335,93 +395,142 @@ const deriveApiOperationKeys = (api: HttpApi.Top): readonly string[] =>
   sorted(
     Object.values(api.groups).flatMap((group) =>
       Object.values(group.endpoints).map((endpoint) =>
-        group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
-      ),
+        group.topLevel
+          ? endpoint.identifier
+          : `${group.identifier}.${endpoint.identifier}`
+      )
     ),
-    (left, right) => left.localeCompare(right),
+    (left, right) => left.localeCompare(right)
   );
 
-const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOwnerValues) =>
+const deriveContract = (
+  workspaceRoot: string,
+  vertical: string,
+  owner: LoadedOwnerValues
+) =>
   Effect.gen(function* deriveContractEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
-    const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
+    const verticalDirectory = platformPath.join(
+      workspaceRoot,
+      'verticals',
+      vertical
+    );
     const packageJsonSource = yield* fileSystem
       .readFileString(platformPath.join(verticalDirectory, 'package.json'))
       .pipe(
-        Effect.mapError((cause) => failure('unable to read the vertical package metadata', cause)),
+        Effect.mapError((cause) =>
+          failure('unable to read the vertical package metadata', cause)
+        )
       );
-    const packageJson = yield* Schema.decodeUnknownEffect(PackageJsonTextSchema)(
-      packageJsonSource,
-    ).pipe(Effect.mapError((cause) => failure('vertical package metadata is invalid', cause)));
+    const packageJson = yield* Schema.decodeUnknownEffect(
+      PackageJsonTextSchema
+    )(packageJsonSource).pipe(
+      Effect.mapError((cause) =>
+        failure('vertical package metadata is invalid', cause)
+      )
+    );
     const topologySource = yield* fileSystem
-      .readFileString(platformPath.join(workspaceRoot, 'topology/reference-topology.json'))
-      .pipe(Effect.mapError((cause) => failure('unable to read the reference topology', cause)));
-    const topology = yield* Schema.decodeUnknownEffect(ReferenceTopologyTextSchema)(
-      topologySource,
-    ).pipe(Effect.mapError((cause) => failure('reference topology is invalid', cause)));
+      .readFileString(
+        platformPath.join(workspaceRoot, 'topology/reference-topology.json')
+      )
+      .pipe(
+        Effect.mapError((cause) =>
+          failure('unable to read the reference topology', cause)
+        )
+      );
+    const topology = yield* Schema.decodeUnknownEffect(
+      ReferenceTopologyTextSchema
+    )(topologySource).pipe(
+      Effect.mapError((cause) =>
+        failure('reference topology is invalid', cause)
+      )
+    );
     const matchesOwnerModule = () =>
-      packageJson.modernjs?.ontosModule?.moduleId === owner.manifest.module.id &&
+      packageJson.modernjs?.ontosModule?.moduleId ===
+        owner.manifest.module.id &&
       packageJson.modernjs.ontosModule.schemaVersion ===
         ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION;
-    const validateDeploymentIdentity = Effect.gen(function* validateDeploymentIdentityEffect() {
-      const appId = packageJson.modernjs?.appId;
-      const topologyEntries = topology.verticals?.filter(
-        (entry) =>
-          entry.id === appId &&
-          entry.package === packageJson.name &&
-          entry.path === `verticals/${vertical}`,
-      );
-      if (appId === undefined || topologyEntries?.length !== 1) {
-        return yield* failure(
-          'vertical package and topology deployment identity do not match exactly',
+    const validateDeploymentIdentity = Effect.gen(
+      function* validateDeploymentIdentityEffect() {
+        const appId = packageJson.modernjs?.appId;
+        const topologyEntries = topology.verticals?.filter(
+          (entry) =>
+            entry.id === appId &&
+            entry.package === packageJson.name &&
+            entry.path === `verticals/${vertical}`
         );
-      }
-      if (!matchesOwnerModule()) {
-        return yield* failure('generated package module marker does not match the owner manifest');
-      }
-      const [topologyEntry] = topologyEntries;
-      if (topologyEntry === undefined || topologyEntry.moduleFederation?.name === undefined) {
-        return yield* failure('vertical topology Module Federation boundary is missing');
-      }
-      const moduleFederationName = topologyEntry.moduleFederation.name;
-
-      return { appId, moduleFederationName, topologyEntry };
-    });
-    const { appId, moduleFederationName, topologyEntry } = yield* validateDeploymentIdentity;
-    const exposes = yield* componentExposes(verticalDirectory);
-    const validatePublicDescriptors = Effect.gen(function* validatePublicDescriptorsEffect() {
-      const componentKeys = Object.keys(owner.manifest.publicSurface.components);
-      for (const key of componentKeys) {
-        if (!exposes.has(`./${toPascalCase(key)}`)) {
+        if (appId === undefined || topologyEntries?.length !== 1) {
           return yield* failure(
-            `public component ${key} has no matching Module Federation exposure`,
+            'vertical package and topology deployment identity do not match exactly'
           );
         }
-      }
-      const safeRuntime = extractVerticalRuntimeSafeDescriptors(owner.registration);
-      const manifestActionKeys = sorted(
-        owner.manifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey),
-        (left, right) => left.localeCompare(right),
-      );
-      const runtimeActionKeys = safeRuntime.actions.map(({ actionKey }) => actionKey);
-      if (
-        manifestActionKeys.length !== runtimeActionKeys.length ||
-        manifestActionKeys.some((actionKey, index) => actionKey !== runtimeActionKeys[index])
-      ) {
-        return yield* failure(
-          'manifest Actions and private runtime Action descriptors do not match',
-        );
-      }
+        if (!matchesOwnerModule()) {
+          return yield* failure(
+            'generated package module marker does not match the owner manifest'
+          );
+        }
+        const [topologyEntry] = topologyEntries;
+        if (
+          topologyEntry === undefined ||
+          topologyEntry.moduleFederation?.name === undefined
+        ) {
+          return yield* failure(
+            'vertical topology Module Federation boundary is missing'
+          );
+        }
+        const moduleFederationName = topologyEntry.moduleFederation.name;
 
-      return { componentKeys, safeRuntime };
-    });
+        return { appId, moduleFederationName, topologyEntry };
+      }
+    );
+    const { appId, moduleFederationName, topologyEntry } =
+      yield* validateDeploymentIdentity;
+    const exposes = yield* componentExposes(verticalDirectory);
+    const validatePublicDescriptors = Effect.gen(
+      function* validatePublicDescriptorsEffect() {
+        const componentKeys = Object.keys(
+          owner.manifest.publicSurface.components
+        );
+        for (const key of componentKeys) {
+          if (!exposes.has(`./${toPascalCase(key)}`)) {
+            return yield* failure(
+              `public component ${key} has no matching Module Federation exposure`
+            );
+          }
+        }
+        const safeRuntime = extractVerticalRuntimeSafeDescriptors(
+          owner.registration
+        );
+        const manifestActionKeys = sorted(
+          owner.manifest.publicSurface.actions.map(
+            ({ descriptor }) => descriptor.actionKey
+          ),
+          (left, right) => left.localeCompare(right)
+        );
+        const runtimeActionKeys = safeRuntime.actions.map(
+          ({ actionKey }) => actionKey
+        );
+        if (
+          manifestActionKeys.length !== runtimeActionKeys.length ||
+          manifestActionKeys.some(
+            (actionKey, index) => actionKey !== runtimeActionKeys[index]
+          )
+        ) {
+          return yield* failure(
+            'manifest Actions and private runtime Action descriptors do not match'
+          );
+        }
+
+        return { componentKeys, safeRuntime };
+      }
+    );
     const { componentKeys, safeRuntime } = yield* validatePublicDescriptors;
     const events = yield* Effect.forEach(
       owner.manifest.publicSurface.events,
       (event) =>
         Schema.encodeEffect(JsonDocumentTextSchema)(
-          Schema.toJsonSchemaDocument(event.payloadSchema),
+          Schema.toJsonSchemaDocument(event.payloadSchema)
         ).pipe(
           Effect.map((payloadDocument) => ({
             key: event.key,
@@ -432,10 +541,13 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
             visibility: event.visibility,
           })),
           Effect.mapError((cause) =>
-            failure(`unable to encode the ${event.key} event payload contract`, cause),
-          ),
+            failure(
+              `unable to encode the ${event.key} event payload contract`,
+              cause
+            )
+          )
         ),
-      { concurrency: 'unbounded' },
+      { concurrency: 'unbounded' }
     );
     const apiContracts = yield* Effect.forEach(
       Object.entries(owner.manifest.publicSurface.api),
@@ -447,7 +559,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           key: `${owner.manifest.module.id}.${toKebab(key)}`,
           operationKeys: deriveApiOperationKeys(value),
         });
-      },
+      }
     );
     const contract = {
       deployment: {
@@ -461,16 +573,20 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         module: owner.manifest.module,
         publicSurface: {
           actions: safeRuntime.actions,
-          api: sorted(apiContracts, (left, right) => left.key.localeCompare(right.key)),
+          api: sorted(apiContracts, (left, right) =>
+            left.key.localeCompare(right.key)
+          ),
           components: sorted(
             componentKeys.map((key) => ({
               expose: `./${toPascalCase(key)}`,
               key: `${owner.manifest.module.id}.${toKebab(key)}`,
               mfBoundaryId: moduleFederationName,
             })),
-            (left, right) => left.key.localeCompare(right.key),
+            (left, right) => left.key.localeCompare(right.key)
           ),
-          events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
+          events: sorted(events, (left, right) =>
+            left.key.localeCompare(right.key)
+          ),
           reports: owner.manifest.publicSurface.reports,
           resourceTypes: owner.manifest.publicSurface.resourceTypes,
           search: owner.manifest.publicSurface.search,
@@ -480,32 +596,51 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
       runtime: { outboxSubscriptions: safeRuntime.outboxSubscriptions },
       schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
     } as const;
-    return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
-      onExcessProperty: 'error',
-    })(contract).pipe(
-      Effect.mapError((cause) => failure('derived OntOS module contract is invalid', cause)),
+    return yield* Schema.decodeUnknownEffect(
+      OntosModuleDeploymentContractSchema,
+      {
+        onExcessProperty: 'error',
+      }
+    )(contract).pipe(
+      Effect.mapError((cause) =>
+        failure('derived OntOS module contract is invalid', cause)
+      )
     );
   });
 
-const deriveOntosModuleDeploymentContractEffect = (input: DeriveOntosModuleContractInput) =>
+const deriveOntosModuleDeploymentContractEffect = (
+  input: DeriveOntosModuleContractInput
+) =>
   Effect.gen(function* deriveDeploymentContractProgram() {
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(
-      input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..'),
+      input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..')
     );
-    const vertical = yield* assertPlainTarget(input.vertical, 'vertical', canonicalSlugPattern);
-    const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
+    const vertical = yield* assertPlainTarget(
+      input.vertical,
+      'vertical',
+      canonicalSlugPattern
+    );
+    const verticalDirectory = platformPath.join(
+      workspaceRoot,
+      'verticals',
+      vertical
+    );
     yield* assertOwnerSlots(verticalDirectory);
-    const owner = yield* loadOwnerValues(workspaceRoot, verticalDirectory, vertical);
+    const owner = yield* loadOwnerValues(
+      workspaceRoot,
+      verticalDirectory,
+      vertical
+    );
     return yield* deriveContract(workspaceRoot, vertical, owner);
   });
 
 /** Derives and validates one contract without writing deployment output. */
 export const deriveOntosModuleDeploymentContract: (
-  input: DeriveOntosModuleContractInput,
+  input: DeriveOntosModuleContractInput
 ) => Promise<OntosModuleDeploymentContract> = flow(
   deriveOntosModuleDeploymentContractEffect,
-  moduleContractRuntime.runPromise,
+  moduleContractRuntime.runPromise
 );
 
 const generateOntosModuleContractEffect = (input: GenerateInput) =>
@@ -513,65 +648,86 @@ const generateOntosModuleContractEffect = (input: GenerateInput) =>
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(
-      input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..'),
+      input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..')
     );
-    const vertical = yield* assertPlainTarget(input.vertical, 'vertical', canonicalSlugPattern);
-    const target = yield* Schema.decodeUnknownEffect(OntosModuleContractTargetSchema)(
-      input.target,
-    ).pipe(Effect.mapError(() => failure('target must be dist or cloudflare-dist')));
-    const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
+    const vertical = yield* assertPlainTarget(
+      input.vertical,
+      'vertical',
+      canonicalSlugPattern
+    );
+    const target = yield* Schema.decodeUnknownEffect(
+      OntosModuleContractTargetSchema
+    )(input.target).pipe(
+      Effect.mapError(() => failure('target must be dist or cloudflare-dist'))
+    );
+    const verticalDirectory = platformPath.join(
+      workspaceRoot,
+      'verticals',
+      vertical
+    );
     const contract = yield* deriveOntosModuleDeploymentContractEffect({
       vertical,
       workspaceRoot,
     });
-    const encodedContract = yield* Schema.encodeEffect(ContractJsonTextSchema)(contract).pipe(
-      Effect.mapError((cause) => failure('unable to encode the OntOS module contract', cause)),
+    const encodedContract = yield* Schema.encodeEffect(ContractJsonTextSchema)(
+      contract
+    ).pipe(
+      Effect.mapError((cause) =>
+        failure('unable to encode the OntOS module contract', cause)
+      )
     );
     const content = `${encodedContract}\n`;
     const bytes = Buffer.byteLength(content);
     if (bytes > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
-      return yield* failure('generated OntOS module contract exceeds the 1 MiB deployment limit');
+      return yield* failure(
+        'generated OntOS module contract exceeds the 1 MiB deployment limit'
+      );
     }
     const outputPath = platformPath.join(
       verticalDirectory,
       outputRootByTarget[target],
       'public',
-      ONTOS_MODULE_CONTRACT_PATH.slice(1),
+      ONTOS_MODULE_CONTRACT_PATH.slice(1)
     );
     yield* fileSystem
       .makeDirectory(platformPath.dirname(outputPath), { recursive: true })
       .pipe(
         Effect.mapError((cause) =>
-          failure('unable to create the module contract output directory', cause),
-        ),
+          failure(
+            'unable to create the module contract output directory',
+            cause
+          )
+        )
       );
     const temporaryPath = `${outputPath}.tmp-${randomUUID()}`;
     yield* fileSystem
       .writeFileString(temporaryPath, content)
       .pipe(
-        Effect.mapError((cause) => failure('unable to write the temporary module contract', cause)),
+        Effect.mapError((cause) =>
+          failure('unable to write the temporary module contract', cause)
+        )
       );
     yield* fileSystem
       .rename(temporaryPath, outputPath)
       .pipe(
         Effect.mapError((cause) =>
-          failure('unable to publish the generated module contract', cause),
-        ),
+          failure('unable to publish the generated module contract', cause)
+        )
       );
     const etag = `"${sha256(content)}"`;
     const headersPath = platformPath.join(
       verticalDirectory,
       outputRootByTarget[target],
       'public',
-      '_headers',
+      '_headers'
     );
     const headers = `${ONTOS_MODULE_CONTRACT_PATH}\n  Cache-Control: no-cache\n  Content-Type: application/json\n  ETag: ${etag}\n`;
     yield* fileSystem
       .writeFileString(headersPath, headers)
       .pipe(
         Effect.mapError((cause) =>
-          failure('unable to write the module contract response headers', cause),
-        ),
+          failure('unable to write the module contract response headers', cause)
+        )
       );
     return { bytes, etag, path: outputPath };
   });
@@ -590,9 +746,11 @@ const cli = Command.make(
   ({ target, vertical }) =>
     generateOntosModuleContractEffect({ target, vertical }).pipe(
       Effect.flatMap((result) =>
-        Effect.logInfo(`Generated ${result.path} (${result.bytes} bytes, ETag ${result.etag})`),
-      ),
-    ),
+        Effect.logInfo(
+          `Generated ${result.path} (${result.bytes} bytes, ETag ${result.etag})`
+        )
+      )
+    )
 );
 
 if (
@@ -600,7 +758,9 @@ if (
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
   const exit = await moduleContractRuntime.runPromiseExit(
-    Command.run({ version: '1.0.0' })(cli).pipe(Effect.tapError((error) => Effect.logError(error))),
+    Command.run({ version: '1.0.0' })(cli).pipe(
+      Effect.tapError((error) => Effect.logError(error))
+    )
   );
   if (Exit.isFailure(exit)) {
     process.exitCode = 1;

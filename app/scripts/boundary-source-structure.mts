@@ -16,7 +16,11 @@ const delimiterOpenings = new Map([
 export class DelimiterDepth {
   private readonly depths = new Map<string, number>();
 
-  update(character: string | undefined, previous?: string, angles = false): void {
+  update(
+    character: string | undefined,
+    previous?: string,
+    angles = false
+  ): void {
     if (character === undefined) {
       return;
     }
@@ -48,7 +52,7 @@ export const topLevelSeparators = (
   separators: string,
   start = 0,
   end = structure.length,
-  angles = false,
+  angles = false
 ): readonly number[] => {
   const depth = new DelimiterDepth();
   const positions: number[] = [];
@@ -65,7 +69,7 @@ export const matchingDelimiter = (
   structure: string,
   start: number,
   opening: string,
-  closing: string,
+  closing: string
 ): number | undefined => {
   let depth = 0;
   for (let index = start; index < structure.length; index += 1) {
@@ -86,7 +90,7 @@ export const separatedSource = (
   source: string,
   separators: readonly number[],
   start = 0,
-  end = source.length,
+  end = source.length
 ): readonly string[] => {
   const entries: string[] = [];
   let entryStart = start;

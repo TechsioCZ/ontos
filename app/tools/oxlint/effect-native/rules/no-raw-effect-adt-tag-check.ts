@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-raw-effect-adt-tag-check
  *
@@ -54,21 +53,33 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import { asNamedMember, staticString, unwrapNode } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
-const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
+const DEFAULT_INCLUDE = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+  'scripts/**',
+];
 
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Tag literals owned by Effect's built-in ADTs: `Option`, `Exit`, `Result`, `Either`. */
-const DEFAULT_ADT_TAGS = ['Some', 'None', 'Success', 'Failure', 'Left', 'Right'];
+const DEFAULT_ADT_TAGS = [
+  'Some',
+  'None',
+  'Success',
+  'Failure',
+  'Left',
+  'Right',
+];
 
 /** Barrels that re-export Effect namespaces verbatim (the Modern.js BFF edge barrel). */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
@@ -100,7 +111,10 @@ function readOptions(context: Context): RuleOptions {
     adtTags: stringArray(record.adtTags, DEFAULT_ADT_TAGS),
     requireEffectImport: record.requireEffectImport !== false,
     ignoreTests: record.ignoreTests === true,
-    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
+    reexportModules: stringArray(
+      record.reexportModules,
+      DEFAULT_REEXPORT_MODULES
+    ),
   };
 }
 
@@ -110,7 +124,9 @@ function unwrap(node: ESTree.Node): ESTree.Node {
 }
 
 function asTagMember(node: ESTree.Node): ESTree.MemberExpression | null {
-  return asNamedMember(node, TAG_PROPERTY, asStringLiteral, { maxDepth: MAX_UNWRAP_DEPTH });
+  return asNamedMember(node, TAG_PROPERTY, asStringLiteral, {
+    maxDepth: MAX_UNWRAP_DEPTH,
+  });
 }
 
 function asStringLiteral(node: ESTree.Node): string | null {
@@ -131,7 +147,8 @@ function directExpressionName(node: ESTree.Node): string | null {
 
 function expressionName(node: ESTree.Node): string | null {
   const object = unwrap(node);
-  if (object.type === 'CallExpression') return directExpressionName(unwrap(object.callee));
+  if (object.type === 'CallExpression')
+    return directExpressionName(unwrap(object.callee));
   if (object.type === 'AwaitExpression') return expressionName(object.argument);
   return directExpressionName(object);
 }
@@ -142,11 +159,15 @@ function receiverName(member: ESTree.MemberExpression): string | null {
 }
 
 /** Static property name of an object-pattern key: `_tag` and `'_tag'` both yield `"_tag"`. */
-function patternKeyName(property: { key: ESTree.Node; computed: boolean }): string | null {
+function patternKeyName(property: {
+  key: ESTree.Node;
+  computed: boolean;
+}): string | null {
   if (!property.computed) {
     const key = property.key;
     if (key.type === 'Identifier') return key.name;
-    if (key.type === 'Literal') return typeof key.value === 'string' ? key.value : null;
+    if (key.type === 'Literal')
+      return typeof key.value === 'string' ? key.value : null;
     return null;
   }
   return asStringLiteral(property.key);
@@ -156,25 +177,50 @@ function patternKeyName(property: { key: ESTree.Node; computed: boolean }): stri
  * `true` when `pattern` binds `name` from a `_tag` property: `const { _tag } = x`,
  * `const { _tag: kind } = x`, `const { _tag = 'None' } = x`, `const { inner: { _tag } } = x`.
  */
-function patternBindsTag(pattern: ESTree.Node, name: string, depth: number): boolean {
+function patternBindsTag(
+  pattern: ESTree.Node,
+  name: string,
+  depth: number
+): boolean {
   if (depth > MAX_PATTERN_DEPTH) return false;
-  if (pattern.type === 'AssignmentPattern') return patternBindsTag(pattern.left, name, depth + 1);
+  if (pattern.type === 'AssignmentPattern')
+    return patternBindsTag(pattern.left, name, depth + 1);
   if (pattern.type !== 'ObjectPattern') return false;
-  return pattern.properties.some((property) => propertyBindsTag(property, name, depth));
+  return pattern.properties.some((property) =>
+    propertyBindsTag(property, name, depth)
+  );
 }
 
-function propertyBindsTag(property: ESTree.Node, name: string, depth: number): boolean {
+function propertyBindsTag(
+  property: ESTree.Node,
+  name: string,
+  depth: number
+): boolean {
   if (property.type !== 'Property') return false;
   const key = patternKeyName(property);
   let value: ESTree.Node = property.value;
   while (value.type === 'AssignmentPattern') value = value.left;
-  if (key === TAG_PROPERTY && value.type === 'Identifier' && value.name === name) return true;
-  return value.type === 'ObjectPattern' && patternBindsTag(value, name, depth + 1);
+  if (
+    key === TAG_PROPERTY &&
+    value.type === 'Identifier' &&
+    value.name === name
+  )
+    return true;
+  return (
+    value.type === 'ObjectPattern' && patternBindsTag(value, name, depth + 1)
+  );
 }
 
-function aliasDeclarator(variable: Variable | null): ESTree.VariableDeclarator | null {
+function aliasDeclarator(
+  variable: Variable | null
+): ESTree.VariableDeclarator | null {
   if (variable === null || variable.defs.length !== 1) return null;
-  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  if (
+    variable.references.some(
+      (reference) => reference.isWrite() && !reference.init
+    )
+  )
+    return null;
   const definition = variable.defs[0];
   if (definition === undefined || definition.type !== 'Variable') return null;
   return definition.node.type === 'VariableDeclarator' ? definition.node : null;
@@ -186,10 +232,15 @@ function aliasDeclarator(variable: Variable | null): ESTree.VariableDeclarator |
  * Returns the receiver name (for the message's ADT vocabulary) or `null` when the identifier is not
  * a tag alias — a parameter, an import, a redeclared name, or any other local.
  */
-function aliasedTagRead(context: Context, node: ESTree.Node): { receiver: string | null } | null {
+function aliasedTagRead(
+  context: Context,
+  node: ESTree.Node
+): { receiver: string | null } | null {
   const expression = unwrap(node);
   if (expression.type !== 'Identifier') return null;
-  const declarator = aliasDeclarator(resolveVariable(context, expression.name, expression));
+  const declarator = aliasDeclarator(
+    resolveVariable(context, expression.name, expression)
+  );
   if (declarator === null) return null;
   const initialiser = declarator.init;
   if (initialiser == null) return null;
@@ -197,7 +248,9 @@ function aliasedTagRead(context: Context, node: ESTree.Node): { receiver: string
   if (declarator.id.type === 'Identifier') {
     if (declarator.id.name !== expression.name) return null;
     const member = asTagMember(initialiser);
-    return member === null ? null : { receiver: receiverName(member) ?? expression.name };
+    return member === null
+      ? null
+      : { receiver: receiverName(member) ?? expression.name };
   }
   if (!patternBindsTag(declarator.id, expression.name, 0)) return null;
   return { receiver: expressionName(initialiser) ?? expression.name };
@@ -214,16 +267,29 @@ const EITHER_COMBINATORS =
   '`Either.match(value, { onLeft, onRight })` or `Either.isLeft`/`Either.isRight`';
 
 /** Name the ADT from the tag, disambiguating the shared `Success`/`Failure` vocabulary by receiver. */
-function describeAdt(tag: string, receiver: string | null): { adt: string; combinators: string } {
-  if (tag === 'Some' || tag === 'None') return { adt: 'Option', combinators: OPTION_COMBINATORS };
-  if (tag === 'Left' || tag === 'Right') return { adt: 'Either', combinators: EITHER_COMBINATORS };
+function describeAdt(
+  tag: string,
+  receiver: string | null
+): { adt: string; combinators: string } {
+  if (tag === 'Some' || tag === 'None')
+    return { adt: 'Option', combinators: OPTION_COMBINATORS };
+  if (tag === 'Left' || tag === 'Right')
+    return { adt: 'Either', combinators: EITHER_COMBINATORS };
   const name = receiver?.toLowerCase() ?? '';
-  if (name.includes('exit')) return { adt: 'Exit', combinators: EXIT_COMBINATORS };
-  if (name.includes('result')) return { adt: 'Result', combinators: RESULT_COMBINATORS };
-  return { adt: 'Exit/Result', combinators: `${EXIT_COMBINATORS}, or ${RESULT_COMBINATORS}` };
+  if (name.includes('exit'))
+    return { adt: 'Exit', combinators: EXIT_COMBINATORS };
+  if (name.includes('result'))
+    return { adt: 'Result', combinators: RESULT_COMBINATORS };
+  return {
+    adt: 'Exit/Result',
+    combinators: `${EXIT_COMBINATORS}, or ${RESULT_COMBINATORS}`,
+  };
 }
 
-function isEffectSource(source: string, reexportModules: readonly string[]): boolean {
+function isEffectSource(
+  source: string,
+  reexportModules: readonly string[]
+): boolean {
   return EFFECT_MODULE.test(source) || reexportModules.includes(source);
 }
 
@@ -235,13 +301,18 @@ function isEffectSource(source: string, reexportModules: readonly string[]): boo
  */
 function hasStaticEffectLinkage(
   program: ESTree.Program,
-  reexportModules: readonly string[],
+  reexportModules: readonly string[]
 ): boolean {
   if (collectEffectBindings(program).importsEffect) return true;
-  return program.body.some((statement) => statementLinksEffect(statement, reexportModules));
+  return program.body.some((statement) =>
+    statementLinksEffect(statement, reexportModules)
+  );
 }
 
-function statementLinksEffect(statement: ESTree.Node, reexportModules: readonly string[]): boolean {
+function statementLinksEffect(
+  statement: ESTree.Node,
+  reexportModules: readonly string[]
+): boolean {
   if (statement.type === 'ImportDeclaration') {
     return reexportModules.includes(statement.source.value);
   }
@@ -371,7 +442,8 @@ export const rule = defineRule({
               tag,
               adt: indirect.adt,
               combinators: indirect.combinators,
-              binding: binding.type === 'Identifier' ? binding.name : TAG_PROPERTY,
+              binding:
+                binding.type === 'Identifier' ? binding.name : TAG_PROPERTY,
             },
           });
           return;
@@ -381,7 +453,11 @@ export const rule = defineRule({
       'Program:exit'() {
         if (!hasEffectLinkage) return;
         for (const report of pending) {
-          context.report({ node: report.node, messageId: report.messageId, data: report.data });
+          context.report({
+            node: report.node,
+            messageId: report.messageId,
+            data: report.data,
+          });
         }
       },
     };

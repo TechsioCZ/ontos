@@ -2,22 +2,23 @@
 // @ontos-action-owner party.registry
 // @ontos-action-slug mark-duplicate-candidate-needs-evidence
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+
 import {
   MarkDuplicateCandidateNeedsEvidencePayloadSchema,
   MarkDuplicateCandidateNeedsEvidenceResultSchema,
 } from '../../shared/actions/mark-duplicate-candidate-needs-evidence.ts';
-
+import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 import {
   DuplicateCaseResolutionErrorSchema,
   duplicateCaseResolutionService,
 } from './duplicate-case-resolution-service.ts';
-import { handleDuplicateCaseResolution } from './duplicate-case-resolution-handler.ts';
 
 export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
   {
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
-      policyKey: 'party.registry.mark-duplicate-candidate-needs-evidence.access.v1',
+      policyKey:
+        'party.registry.mark-duplicate-candidate-needs-evidence.access.v1',
     },
     actionKey: 'party.registry.mark-duplicate-candidate-needs-evidence',
     auditProfile: 'standard',
@@ -25,7 +26,10 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.mark-duplicate-candidate-needs-evidence',
       moduleKey: 'party.registry',
       role: 'action',
@@ -41,7 +45,11 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
   },
   handleDuplicateCaseResolution,
   (transaction, scope) =>
-    duplicateCaseResolutionService(transaction, scope.tenantId, 'NEEDS_EVIDENCE'),
+    duplicateCaseResolutionService(
+      transaction,
+      scope.tenantId,
+      'NEEDS_EVIDENCE'
+    )
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

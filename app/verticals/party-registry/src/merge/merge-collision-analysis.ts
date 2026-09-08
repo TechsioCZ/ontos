@@ -60,7 +60,7 @@ export interface MergeCollision {
 
 const groupsWithCollisions = <Value>(
   values: readonly Value[],
-  groupKey: (value: Value) => string,
+  groupKey: (value: Value) => string
 ): readonly [string, readonly Value[]][] => {
   const groups = new Map<string, Value[]>();
   for (const value of values) {
@@ -74,29 +74,39 @@ const groupsWithCollisions = <Value>(
 
 const periodsOverlap = (
   left: Readonly<{ validFrom: string; validTo: string | null }>,
-  right: Readonly<{ validFrom: string; validTo: string | null }>,
+  right: Readonly<{ validFrom: string; validTo: string | null }>
 ) =>
   (left.validTo === null || right.validFrom < left.validTo) &&
   (right.validTo === null || left.validFrom < right.validTo);
-const partyKey = ({ resourceId, tenantId }: PartyRef) => `${tenantId}:${resourceId}`;
+const partyKey = ({ resourceId, tenantId }: PartyRef) =>
+  `${tenantId}:${resourceId}`;
 
-export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly MergeCollision[] => {
+export const analyzeMergeCollisions = (
+  input: MergeCollisionInput
+): readonly MergeCollision[] => {
   const mergePartyKeys = new Set([
     partyKey(input.survivorPartyRef),
     ...input.absorbedPartyRefs.map(partyKey),
   ]);
-  const inMergeSet = <Value extends PartyOwnedReference>(values: readonly Value[]) =>
-    values.filter(({ partyRef }) => mergePartyKeys.has(partyKey(partyRef)));
+  const inMergeSet = <Value extends PartyOwnedReference>(
+    values: readonly Value[]
+  ) => values.filter(({ partyRef }) => mergePartyKeys.has(partyKey(partyRef)));
   const canonicalPartyId = (partyRef: PartyRef) =>
-    mergePartyKeys.has(partyKey(partyRef)) ? partyKey(input.survivorPartyRef) : partyKey(partyRef);
+    mergePartyKeys.has(partyKey(partyRef))
+      ? partyKey(input.survivorPartyRef)
+      : partyKey(partyRef);
 
   const identifierCollisions = groupsWithCollisions(
     inMergeSet(input.officialIdentifiers).filter(
-      ({ active, authoritative, strongClaim }) => active && (authoritative || strongClaim),
+      ({ active, authoritative, strongClaim }) =>
+        active && (authoritative || strongClaim)
     ),
-    ({ identifierTypeKey, namespace }) => `${identifierTypeKey}:${namespace}`,
+    ({ identifierTypeKey, namespace }) => `${identifierTypeKey}:${namespace}`
   )
-    .filter(([, rows]) => new Set(rows.map(({ normalizedValue }) => normalizedValue)).size > 1)
+    .filter(
+      ([, rows]) =>
+        new Set(rows.map(({ normalizedValue }) => normalizedValue)).size > 1
+    )
     .map(([claimKey, rows]) => ({
       code: 'STRONG_IDENTIFIER_CONFLICT' as const,
       ownerKey: `party.registry:${claimKey}`,
@@ -108,7 +118,8 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
   const relationships = input.relationships
     .filter(
       ({ fromPartyRef, toPartyRef }) =>
-        mergePartyKeys.has(partyKey(fromPartyRef)) || mergePartyKeys.has(partyKey(toPartyRef)),
+        mergePartyKeys.has(partyKey(fromPartyRef)) ||
+        mergePartyKeys.has(partyKey(toPartyRef))
     )
     .map((relationship) => ({
       ...relationship,
@@ -131,10 +142,12 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
   for (const [, rows] of groupsWithCollisions(
     relationships.filter(({ forbidsOverlap }) => forbidsOverlap),
     ({ canonicalFromPartyId, canonicalToPartyId, relationshipTypeKey }) =>
-      `${relationshipTypeKey}:${canonicalFromPartyId}:${canonicalToPartyId}`,
+      `${relationshipTypeKey}:${canonicalFromPartyId}:${canonicalToPartyId}`
   )) {
     if (
-      rows.some((left, index) => rows.slice(index + 1).some((right) => periodsOverlap(left, right)))
+      rows.some((left, index) =>
+        rows.slice(index + 1).some((right) => periodsOverlap(left, right))
+      )
     ) {
       relationshipCollisions.push({
         code: 'RELATIONSHIP_PERIOD_COLLISION',
@@ -147,12 +160,12 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
 
   const roleCollisions = groupsWithCollisions(
     inMergeSet(input.counterpartyRoles),
-    ({ legalEntityId, roleType }) => `${legalEntityId}:${roleType}`,
+    ({ legalEntityId, roleType }) => `${legalEntityId}:${roleType}`
   )
     .filter(([, rows]) =>
       rows.some((left, index) =>
-        rows.slice(index + 1).some((right) => periodsOverlap(left, right)),
-      ),
+        rows.slice(index + 1).some((right) => periodsOverlap(left, right))
+      )
     )
     .map(([, rows]) => ({
       code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION' as const,
@@ -163,7 +176,7 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
 
   const counterpartyCollisions = groupsWithCollisions(
     inMergeSet(input.counterparties),
-    ({ legalEntityId }) => legalEntityId,
+    ({ legalEntityId }) => legalEntityId
   ).map(([, rows]) => ({
     code: 'COUNTERPARTY_COLLISION' as const,
     ownerKey: 'party.registry',
@@ -171,8 +184,10 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
     resolution: 'RECONCILIATION_REQUIRED' as const,
   }));
   const consumerCollisions = groupsWithCollisions(
-    inMergeSet(input.consumerProfiles).filter(({ uniquePerParty }) => uniquePerParty),
-    ({ consumerKey }) => consumerKey,
+    inMergeSet(input.consumerProfiles).filter(
+      ({ uniquePerParty }) => uniquePerParty
+    ),
+    ({ consumerKey }) => consumerKey
   ).map(([consumerKey, rows]) => ({
     code: 'CONSUMER_PROFILE_COLLISION' as const,
     ownerKey: consumerKey,
@@ -181,11 +196,13 @@ export const analyzeMergeCollisions = (input: MergeCollisionInput): readonly Mer
   }));
   const connectorCollisions = groupsWithCollisions(
     inMergeSet(input.connectorCorrelations),
-    ({ connectorKey }) => connectorKey,
+    ({ connectorKey }) => connectorKey
   ).map(([connectorKey, rows]) => ({
     code: 'CONNECTOR_CORRELATION_COLLISION' as const,
     ownerKey: connectorKey,
-    recordIds: rows.map(({ externalSubjectId }) => externalSubjectId).toSorted(),
+    recordIds: rows
+      .map(({ externalSubjectId }) => externalSubjectId)
+      .toSorted(),
     resolution: 'RECONCILIATION_REQUIRED' as const,
   }));
 

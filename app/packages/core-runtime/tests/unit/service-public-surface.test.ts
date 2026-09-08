@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import type {
   ContextAccessService,
   InstalledModuleCatalogServiceContract,
@@ -24,7 +25,7 @@ type PublicServiceContract =
   | TenantModuleStateServiceContract;
 
 const preservePublicServiceContract = <Service extends PublicServiceContract>(
-  service: Service,
+  service: Service
 ): Service => service;
 
 void test('exports the anti-slop-compliant Core service contracts', () => {

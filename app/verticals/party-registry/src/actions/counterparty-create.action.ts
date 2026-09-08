@@ -8,6 +8,12 @@ import {
   OperationContextUnavailable,
 } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+
+import {
+  CounterpartyCreatePayloadSchema,
+  CounterpartyCreateResultSchema,
+} from '../../shared/actions/counterparty-create.ts';
+import type { CounterpartyCreatePayload } from '../../shared/actions/counterparty-create.ts';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyEvidenceInsufficient,
@@ -22,12 +28,6 @@ import { OutboxPayloadSchema as CounterpartyCreatedEventSchema } from '../../sha
 import { createCounterpartyRecord } from '../services/counterparty-persistence.service.ts';
 import type { CreateCounterpartyResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
 import { createCounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxMessage } from './counterparty-create.party-registry-counterparty-created-v1.outbox-message.ts';
-
-import {
-  CounterpartyCreatePayloadSchema,
-  CounterpartyCreateResultSchema,
-} from '../../shared/actions/counterparty-create.ts';
-import type { CounterpartyCreatePayload } from '../../shared/actions/counterparty-create.ts';
 
 export {
   CounterpartyCreatePayloadSchema,
@@ -47,7 +47,10 @@ const CounterpartyCreateError = Schema.Union([
 export interface CounterpartyCreateServices {
   readonly create: (
     payload: CounterpartyCreatePayload,
-    context: ActionHandlerContext<CounterpartyCreateDomainEvents, CounterpartyCreateServices>,
+    context: ActionHandlerContext<
+      CounterpartyCreateDomainEvents,
+      CounterpartyCreateServices
+    >
   ) => Effect.Effect<PersistenceResult, CounterpartyPersistenceUnavailable>;
 }
 
@@ -55,99 +58,106 @@ type CounterpartyCreateDomainEvents = Readonly<{
   'party.registry.counterparty-created.v1': typeof CounterpartyCreatedEventSchema;
 }>;
 
-const handleCounterpartyCreate = Effect.fn('CounterpartyCreateAction.handleCounterpartyCreate')(
-  function* createCounterparty(
-    payload: CounterpartyCreatePayload,
-    context: ActionHandlerContext<CounterpartyCreateDomainEvents, CounterpartyCreateServices>,
-  ) {
-    if (!counterpartyContextEvidenceIsSufficient(payload.provenance.method)) {
-      return yield* new CounterpartyEvidenceInsufficient({
-        code: 'counterparty_evidence_insufficient',
-        method: payload.provenance.method,
-        reason: 'The evidence does not establish a commercial or contractual context',
-      });
-    }
-    if (payload.partyRef.tenantId !== context.scope.tenantId) {
-      return yield* new CounterpartyScopeMismatch({
-        code: 'counterparty_scope_mismatch',
-        reason: 'The Party reference must belong to the trusted Tenant',
-      });
-    }
-    const persistenceResult = yield* context.services.create(payload, context);
-    const result = yield* Match.value(persistenceResult).pipe(
-      Match.tag('party_alias', ({ aliasPartyRef, canonicalPartyRef }) =>
-        Effect.fail(
-          new PartyAliasWriteRejected({
-            aliasPartyRef,
-            canonicalPartyRef,
-            code: 'party_alias_write_rejected',
-            reason: 'Counterparty Create must explicitly target the canonical survivor Party',
-          }),
-        ),
-      ),
-      Match.tag('party_not_found', ({ partyId }) =>
-        Effect.fail(
-          new CounterpartyPartyNotFound({
-            code: 'counterparty_party_not_found',
-            partyId,
-            reason: 'The Party does not exist in the trusted Tenant',
-          }),
-        ),
-      ),
-      Match.tag('party_archived', ({ partyId }) =>
-        Effect.fail(
-          new CounterpartyPartyArchived({
-            code: 'counterparty_party_archived',
-            partyId,
-            reason: 'An archived Party cannot enter a new Counterparty context',
-          }),
-        ),
-      ),
-      Match.tag('found', (found) => Effect.succeed(found)),
-      Match.exhaustive,
-    );
-    yield* context.recordAuditEvidence({
-      evidenceReference: payload.provenance.evidenceReference ?? null,
-      provenanceMethod: payload.provenance.method,
-      provenanceReason: payload.provenance.reason,
-      provenanceSource: payload.provenance.source,
+const handleCounterpartyCreate = Effect.fn(
+  'CounterpartyCreateAction.handleCounterpartyCreate'
+)(function* createCounterparty(
+  payload: CounterpartyCreatePayload,
+  context: ActionHandlerContext<
+    CounterpartyCreateDomainEvents,
+    CounterpartyCreateServices
+  >
+) {
+  if (!counterpartyContextEvidenceIsSufficient(payload.provenance.method)) {
+    return yield* new CounterpartyEvidenceInsufficient({
+      code: 'counterparty_evidence_insufficient',
+      method: payload.provenance.method,
+      reason:
+        'The evidence does not establish a commercial or contractual context',
     });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `counterparty-context:${result.partyRef.resourceId}`,
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: result.counterpartyRef.resourceId,
-      targetResourceType: 'party.registry.counterparty',
+  }
+  if (payload.partyRef.tenantId !== context.scope.tenantId) {
+    return yield* new CounterpartyScopeMismatch({
+      code: 'counterparty_scope_mismatch',
+      reason: 'The Party reference must belong to the trusted Tenant',
     });
-    if (result.created) {
-      const payloadJson = {
-        counterpartyRef: result.counterpartyRef,
-        legalEntityRef: result.legalEntityRef,
-        partyRef: result.partyRef,
-      } as const;
-      const event = yield* context.addDomainEvent({
-        eventType: 'party.registry.counterparty-created.v1',
-        payloadJson,
-        producerModuleKey: 'party.registry',
-        subjectModuleKey: 'party.registry',
-        subjectResourceId: result.counterpartyRef.resourceId,
-        subjectResourceType: 'party.registry.counterparty',
-      });
-      yield* context.addOutboxMessage(
-        event,
-        createCounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxMessage(payloadJson),
-      );
-    }
-    return {
+  }
+  const persistenceResult = yield* context.services.create(payload, context);
+  const result = yield* Match.value(persistenceResult).pipe(
+    Match.tag('party_alias', ({ aliasPartyRef, canonicalPartyRef }) =>
+      Effect.fail(
+        new PartyAliasWriteRejected({
+          aliasPartyRef,
+          canonicalPartyRef,
+          code: 'party_alias_write_rejected',
+          reason:
+            'Counterparty Create must explicitly target the canonical survivor Party',
+        })
+      )
+    ),
+    Match.tag('party_not_found', ({ partyId }) =>
+      Effect.fail(
+        new CounterpartyPartyNotFound({
+          code: 'counterparty_party_not_found',
+          partyId,
+          reason: 'The Party does not exist in the trusted Tenant',
+        })
+      )
+    ),
+    Match.tag('party_archived', ({ partyId }) =>
+      Effect.fail(
+        new CounterpartyPartyArchived({
+          code: 'counterparty_party_archived',
+          partyId,
+          reason: 'An archived Party cannot enter a new Counterparty context',
+        })
+      )
+    ),
+    Match.tag('found', (found) => Effect.succeed(found)),
+    Match.exhaustive
+  );
+  yield* context.recordAuditEvidence({
+    evidenceReference: payload.provenance.evidenceReference ?? null,
+    provenanceMethod: payload.provenance.method,
+    provenanceReason: payload.provenance.reason,
+    provenanceSource: payload.provenance.source,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `counterparty-context:${result.partyRef.resourceId}`,
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: result.counterpartyRef.resourceId,
+    targetResourceType: 'party.registry.counterparty',
+  });
+  if (result.created) {
+    const payloadJson = {
       counterpartyRef: result.counterpartyRef,
-      created: result.created,
       legalEntityRef: result.legalEntityRef,
       partyRef: result.partyRef,
-    };
-  },
-);
+    } as const;
+    const event = yield* context.addDomainEvent({
+      eventType: 'party.registry.counterparty-created.v1',
+      payloadJson,
+      producerModuleKey: 'party.registry',
+      subjectModuleKey: 'party.registry',
+      subjectResourceId: result.counterpartyRef.resourceId,
+      subjectResourceType: 'party.registry.counterparty',
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createCounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxMessage(
+        payloadJson
+      )
+    );
+  }
+  return {
+    counterpartyRef: result.counterpartyRef,
+    created: result.created,
+    legalEntityRef: result.legalEntityRef,
+    partyRef: result.partyRef,
+  };
+});
 
 export const counterpartyCreateAction = defineAction(
   {
@@ -164,7 +174,10 @@ export const counterpartyCreateAction = defineAction(
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'party.registry.counterparty-create',
       moduleKey: 'party.registry',
       role: 'action',
@@ -185,14 +198,17 @@ export const counterpartyCreateAction = defineAction(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
           reason: 'Counterparty Create requires a trusted Legal Entity scope',
-        }),
+        })
       );
     }
     const { legalEntityId } = scope;
     return Effect.succeed({
       create: (
         payload: CounterpartyCreatePayload,
-        context: ActionHandlerContext<CounterpartyCreateDomainEvents, CounterpartyCreateServices>,
+        context: ActionHandlerContext<
+          CounterpartyCreateDomainEvents,
+          CounterpartyCreateServices
+        >
       ) =>
         createCounterpartyRecord(transaction, {
           actionInvocationId: context.actionInvocationId,
@@ -204,5 +220,5 @@ export const counterpartyCreateAction = defineAction(
           tenantId: context.scope.tenantId,
         }),
     });
-  },
+  }
 );

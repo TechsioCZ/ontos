@@ -1,13 +1,17 @@
 import { DateTime, Option, Schema } from 'effect';
-import { PartyIdSchema, PartySubjectEvidenceListSchema } from './identity-contracts.ts';
+
+import { PartyCorrectionRefSchema } from '../resources/party-correction.ts';
+import { PartyRelationshipRefSchema } from '../resources/party-relationship.ts';
+import { PartyRefSchema } from '../resources/party.ts';
+import {
+  PartyIdSchema,
+  PartySubjectEvidenceListSchema,
+} from './identity-contracts.ts';
 import {
   PartyRelationshipProvenanceSchema,
   RelationshipEndEvidenceSchema,
   RelationshipIsoTimestampSchema,
 } from './relationship-contract.ts';
-import { PartyCorrectionRefSchema } from '../resources/party-correction.ts';
-import { PartyRefSchema } from '../resources/party.ts';
-import { PartyRelationshipRefSchema } from '../resources/party-relationship.ts';
 
 export const CorrectablePartyFactSchema = Schema.Literals([
   'PARTY_TYPE',
@@ -18,36 +22,39 @@ export const CorrectablePartyFactSchema = Schema.Literals([
 export type CorrectablePartyFact = typeof CorrectablePartyFactSchema.Type;
 
 const EvidenceRefsSchema = Schema.Array(
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))
 ).check(Schema.isMinLength(1), Schema.isMaxLength(32));
 export const PartyCorrectionPolicyVersion = 'party-correction.v1' as const;
 const PolicyVersionSchema = Schema.Literal(PartyCorrectionPolicyVersion);
-const ReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
+const ReasonSchema = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(1000)
+);
 const PositiveRevisionSchema = Schema.Finite.check(
   Schema.isInt(),
-  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isGreaterThanOrEqualTo(1)
 );
-export const TargetAssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('TargetAssertionId'),
-);
-export const ReplacementAssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('ReplacementAssertionId'),
-);
+export const TargetAssertionIdSchema = Schema.String.check(
+  Schema.isUUID()
+).pipe(Schema.brand('TargetAssertionId'));
+export const ReplacementAssertionIdSchema = Schema.String.check(
+  Schema.isUUID()
+).pipe(Schema.brand('ReplacementAssertionId'));
 const RetractedAssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('RetractedAssertionId'),
+  Schema.brand('RetractedAssertionId')
 );
 export const AssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('AssertionId'),
+  Schema.brand('AssertionId')
 );
-export const ActingPrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('ActingPrincipalId'),
-);
-export const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('ActionInvocationId'),
-);
-export const ApprovingPrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('ApprovingPrincipalId'),
-);
+export const ActingPrincipalIdSchema = Schema.String.check(
+  Schema.isUUID()
+).pipe(Schema.brand('ActingPrincipalId'));
+export const ActionInvocationIdSchema = Schema.String.check(
+  Schema.isUUID()
+).pipe(Schema.brand('ActionInvocationId'));
+export const ApprovingPrincipalIdSchema = Schema.String.check(
+  Schema.isUUID()
+).pipe(Schema.brand('ApprovingPrincipalId'));
 
 export const PartyCorrectionReasonCodeSchema = Schema.Literals([
   'WRONG_PARTY_TYPE',
@@ -74,20 +81,26 @@ const correctionEvidenceFields = {
 export const IdentityCorrectionCommandSchema = Schema.Struct({
   subjectEvidence: Schema.optionalKey(PartySubjectEvidenceListSchema),
   ...correctionEvidenceFields,
-  factKind: Schema.Literals(['PARTY_TYPE', 'DISPLAY_NAME', 'OFFICIAL_IDENTIFIER']),
+  factKind: Schema.Literals([
+    'PARTY_TYPE',
+    'DISPLAY_NAME',
+    'OFFICIAL_IDENTIFIER',
+  ]),
   partyId: PartyIdSchema,
   replacementValue: Schema.optionalKey(
-    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))
   ),
   targetAssertionId: TargetAssertionIdSchema,
 }).check(
   Schema.makeFilter((command) =>
-    command.factKind !== 'OFFICIAL_IDENTIFIER' && command.replacementValue === undefined
+    command.factKind !== 'OFFICIAL_IDENTIFIER' &&
+    command.replacementValue === undefined
       ? 'Party Type and display-name correction require a replacement assertion'
-      : undefined,
-  ),
+      : undefined
+  )
 );
-export type IdentityCorrectionCommand = typeof IdentityCorrectionCommandSchema.Type;
+export type IdentityCorrectionCommand =
+  typeof IdentityCorrectionCommandSchema.Type;
 
 const relationshipCorrectionFields = {
   ...correctionEvidenceFields,
@@ -105,10 +118,13 @@ export const SupersedeRelationshipCorrectionCommandSchema = Schema.Struct({
   Schema.makeFilter((command) =>
     Option.isNone(command.replacementValidFrom) ||
     Option.isNone(command.replacementValidTo) ||
-    DateTime.Order(command.replacementValidTo.value, command.replacementValidFrom.value) > 0
+    DateTime.Order(
+      command.replacementValidTo.value,
+      command.replacementValidFrom.value
+    ) > 0
       ? undefined
-      : 'replacementValidTo must be later than replacementValidFrom',
-  ),
+      : 'replacementValidTo must be later than replacementValidFrom'
+  )
 );
 
 const RetractRelationshipCorrectionCommandSchema = Schema.Struct({
@@ -120,7 +136,8 @@ const RelationshipCorrectionCommandSchema = Schema.Union([
   SupersedeRelationshipCorrectionCommandSchema,
   RetractRelationshipCorrectionCommandSchema,
 ]);
-export type RelationshipCorrectionCommand = typeof RelationshipCorrectionCommandSchema.Type;
+export type RelationshipCorrectionCommand =
+  typeof RelationshipCorrectionCommandSchema.Type;
 
 export const PartyCorrectionCommandSchema = Schema.Union([
   IdentityCorrectionCommandSchema,
@@ -142,8 +159,9 @@ const correctionRoutes = {
   PARTY_TYPE: 'LIFECYCLE_REVIEW',
   RELATIONSHIP: 'RELATIONSHIP_REVIEW',
 } as const satisfies Readonly<Record<CorrectablePartyFact, CorrectionRoute>>;
-export const classifyCorrectionRoute = (factKind: CorrectablePartyFact): CorrectionRoute =>
-  correctionRoutes[factKind];
+export const classifyCorrectionRoute = (
+  factKind: CorrectablePartyFact
+): CorrectionRoute => correctionRoutes[factKind];
 
 export const PartyCorrectionResultSchema = Schema.Struct({
   correctionRef: PartyCorrectionRefSchema,
@@ -152,17 +170,21 @@ export const PartyCorrectionResultSchema = Schema.Struct({
   partyRef: PartyRefSchema,
   relationshipRef: Schema.OptionFromNullOr(PartyRelationshipRefSchema),
   replacementAssertionId: Schema.OptionFromNullOr(ReplacementAssertionIdSchema),
-  replacementRelationshipRef: Schema.OptionFromNullOr(PartyRelationshipRefSchema),
+  replacementRelationshipRef: Schema.OptionFromNullOr(
+    PartyRelationshipRefSchema
+  ),
   retractedAssertionId: RetractedAssertionIdSchema,
 });
-export const PartyCorrectionResultJsonSchema = Schema.toEncoded(PartyCorrectionResultSchema);
+export const PartyCorrectionResultJsonSchema = Schema.toEncoded(
+  PartyCorrectionResultSchema
+);
 
 export class PartyCorrectionConflict extends Schema.TaggedError<PartyCorrectionConflict>()(
   'PartyCorrectionConflict',
   {
     code: Schema.Literal('party_correction_conflict'),
     reason: Schema.String,
-  },
+  }
 ) {}
 
 const assertionHistoryFields = {
@@ -199,7 +221,12 @@ export const PartyCorrectionAssertionValueSchema = Schema.Union([
   }),
   Schema.Struct({
     ...assertionHistoryFields,
-    assertionState: Schema.Literals(['ACTIVE', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']),
+    assertionState: Schema.Literals([
+      'ACTIVE',
+      'SUPERSEDED',
+      'RETRACTED',
+      'DISPUTED',
+    ]),
     endEvidence: Schema.OptionFromNullOr(RelationshipEndEvidenceSchema),
     factKind: Schema.Literal('RELATIONSHIP'),
     fromPartyRef: PartyRefSchema,
@@ -242,7 +269,11 @@ export const PartyCorrectionDetailSchema = Schema.Struct({
   recordedAt: RelationshipIsoTimestampSchema,
   relationshipRef: Schema.OptionFromNullOr(PartyRelationshipRefSchema),
   replacementAssertionId: Schema.OptionFromNullOr(ReplacementAssertionIdSchema),
-  replacementRelationshipRef: Schema.OptionFromNullOr(PartyRelationshipRefSchema),
-  resultingAssertion: Schema.OptionFromNullOr(PartyCorrectionAssertionValueSchema),
+  replacementRelationshipRef: Schema.OptionFromNullOr(
+    PartyRelationshipRefSchema
+  ),
+  resultingAssertion: Schema.OptionFromNullOr(
+    PartyCorrectionAssertionValueSchema
+  ),
   targetAssertionId: TargetAssertionIdSchema,
 });

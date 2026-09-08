@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { CounterpartyUuidSchema } from '../counterparty-contract.ts';
 
 export class CounterpartyNotFound extends Schema.TaggedError<CounterpartyNotFound>()(
@@ -7,5 +8,5 @@ export class CounterpartyNotFound extends Schema.TaggedError<CounterpartyNotFoun
     code: Schema.Literal('counterparty_not_found'),
     counterpartyId: CounterpartyUuidSchema,
     reason: Schema.String,
-  },
+  }
 ) {}

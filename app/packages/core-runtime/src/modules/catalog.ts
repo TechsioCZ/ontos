@@ -1,5 +1,6 @@
 import { Context, Schema } from 'effect';
 import type { Cause, Effect } from 'effect';
+
 import type {
   OntosDeploymentAppId,
   OntosModuleDeploymentContract,
@@ -15,15 +16,18 @@ const OntosModuleCatalogValidationErrorContract = Schema.TaggedStruct(
   {
     code: Schema.Literal('ontos_module_catalog_invalid'),
     reason: Schema.String,
-  },
+  }
 );
-type OntosModuleCatalogValidationErrorSelf = typeof OntosModuleCatalogValidationErrorContract.Type &
-  Cause.YieldableError;
+type OntosModuleCatalogValidationErrorSelf =
+  typeof OntosModuleCatalogValidationErrorContract.Type & Cause.YieldableError;
 const OntosModuleCatalogValidationErrorValue =
-  Schema.TaggedError<OntosModuleCatalogValidationErrorSelf>()('OntosModuleCatalogValidationError', {
-    code: Schema.Literal('ontos_module_catalog_invalid'),
-    reason: Schema.String,
-  });
+  Schema.TaggedError<OntosModuleCatalogValidationErrorSelf>()(
+    'OntosModuleCatalogValidationError',
+    {
+      code: Schema.Literal('ontos_module_catalog_invalid'),
+      reason: Schema.String,
+    }
+  );
 export type OntosModuleCatalogValidationError = InstanceType<
   typeof OntosModuleCatalogValidationErrorValue
 >;
@@ -39,7 +43,8 @@ const InstalledDeploymentFailureReasonSchema = Schema.Literals([
   'timeout',
   'unavailable',
 ]);
-export type InstalledDeploymentFailureReason = typeof InstalledDeploymentFailureReasonSchema.Type;
+export type InstalledDeploymentFailureReason =
+  typeof InstalledDeploymentFailureReasonSchema.Type;
 
 export type InstalledDeploymentStatus =
   | {
@@ -79,15 +84,20 @@ export interface InstalledModuleCatalog {
   readonly deploymentAppIds: readonly OntosDeploymentAppId[];
   readonly deploymentStatuses: readonly InstalledDeploymentStatus[];
   readonly getByDeploymentAppId: (
-    appId: OntosDeploymentAppId,
+    appId: OntosDeploymentAppId
   ) => OntosModuleDeploymentContract | undefined;
-  readonly getByModuleId: (moduleId: OntosModuleId) => OntosModuleDeploymentContract | undefined;
+  readonly getByModuleId: (
+    moduleId: OntosModuleId
+  ) => OntosModuleDeploymentContract | undefined;
   readonly moduleIds: readonly OntosModuleId[];
   readonly outboxSubscriptions: readonly OntosOutboxSubscriptionContract[];
 }
 
 export interface InstalledModuleCatalogServiceContract {
-  readonly load: Effect.Effect<InstalledModuleCatalog, TenantModuleStateValidationUnavailableError>;
+  readonly load: Effect.Effect<
+    InstalledModuleCatalog,
+    TenantModuleStateValidationUnavailableError
+  >;
 }
 
 export class InstalledModuleCatalogService extends Context.Service<
@@ -101,15 +111,21 @@ const invalid = (reason: string): OntosModuleCatalogValidationError =>
     reason,
   });
 
-const decodeContract = (input: InstalledDeploymentContractInput): OntosModuleDeploymentContract => {
+const decodeContract = (
+  input: InstalledDeploymentContractInput
+): OntosModuleDeploymentContract => {
   let contract: OntosModuleDeploymentContract;
   try {
     contract = decodeOntosModuleDeploymentContract(input.contract);
   } catch {
-    throw invalid('an installed deployment returned an invalid or unsupported module contract');
+    throw invalid(
+      'an installed deployment returned an invalid or unsupported module contract'
+    );
   }
   if (contract.deployment.appId !== input.expectedAppId) {
-    throw invalid('deployment contract app ID does not match its allowlisted topology app ID');
+    throw invalid(
+      'deployment contract app ID does not match its allowlisted topology app ID'
+    );
   }
   if (contract.manifest.module.kind !== 'business_module') {
     throw invalid('V0 deployments may claim only one business module');
@@ -117,35 +133,49 @@ const decodeContract = (input: InstalledDeploymentContractInput): OntosModuleDep
   const { publicSurface } = contract.manifest;
   try {
     validateShellContributions(publicSurface.shellContributions, {
-      actionKeys: new Set(publicSurface.actions.map(({ actionKey }) => actionKey)),
+      actionKeys: new Set(
+        publicSurface.actions.map(({ actionKey }) => actionKey)
+      ),
       apiKeys: new Set(publicSurface.api.map(({ key }) => key)),
       componentKeys: new Set(publicSurface.components.map(({ key }) => key)),
       moduleId: contract.manifest.module.id,
       reportKeys: new Set(publicSurface.reports.map(({ key }) => key)),
-      resourceTypeKeys: new Set(publicSurface.resourceTypes.map(({ key }) => key)),
+      resourceTypeKeys: new Set(
+        publicSurface.resourceTypes.map(({ key }) => key)
+      ),
       searchKeys: new Set(publicSurface.search.map(({ key }) => key)),
     });
   } catch {
-    throw invalid('deployment contract contains invalid Shell contribution references');
+    throw invalid(
+      'deployment contract contains invalid Shell contribution references'
+    );
   }
   return contract;
 };
 
-const validateOwnedOutboxSubscriptions = (contract: OntosModuleDeploymentContract): void => {
+const validateOwnedOutboxSubscriptions = (
+  contract: OntosModuleDeploymentContract
+): void => {
   const moduleId = contract.manifest.module.id;
   const workerKeys = new Set<string>();
   for (const subscription of contract.runtime.outboxSubscriptions) {
     if (subscription.consumerModuleKey !== moduleId) {
-      throw invalid('an Outbox subscription consumer must match its deployment module');
+      throw invalid(
+        'an Outbox subscription consumer must match its deployment module'
+      );
     }
     if (
       subscription.entrypoint.moduleKey !== moduleId ||
       subscription.entrypoint.entrypointKey !== subscription.workerKey
     ) {
-      throw invalid('an Outbox subscription entrypoint must match its consumer and worker');
+      throw invalid(
+        'an Outbox subscription entrypoint must match its consumer and worker'
+      );
     }
     if (workerKeys.has(subscription.workerKey)) {
-      throw invalid('an Outbox worker key may appear only once in the installed catalog');
+      throw invalid(
+        'an Outbox worker key may appear only once in the installed catalog'
+      );
     }
     workerKeys.add(subscription.workerKey);
   }
@@ -153,29 +183,33 @@ const validateOwnedOutboxSubscriptions = (contract: OntosModuleDeploymentContrac
 
 const assembleInstalledModuleCatalog = (
   contractsInput: readonly OntosModuleDeploymentContract[],
-  deploymentStatuses: readonly InstalledDeploymentStatus[],
+  deploymentStatuses: readonly InstalledDeploymentStatus[]
 ): InstalledModuleCatalog => {
   const byAppId = new Map(
-    contractsInput.map((contract) => [contract.deployment.appId, contract] as const),
+    contractsInput.map(
+      (contract) => [contract.deployment.appId, contract] as const
+    )
   );
   const byModuleId = new Map(
-    contractsInput.map((contract) => [contract.manifest.module.id, contract] as const),
+    contractsInput.map(
+      (contract) => [contract.manifest.module.id, contract] as const
+    )
   );
   const outboxSubscriptions = Object.freeze(
     contractsInput
       .flatMap(({ runtime }) => runtime.outboxSubscriptions)
-      .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
+      .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey))
   );
   const contracts = Object.freeze(
     [...contractsInput].toSorted((left, right) =>
-      left.manifest.module.id.localeCompare(right.manifest.module.id),
-    ),
+      left.manifest.module.id.localeCompare(right.manifest.module.id)
+    )
   );
   const deploymentAppIds = Object.freeze(
-    [...byAppId.keys()].toSorted((left, right) => left.localeCompare(right)),
+    [...byAppId.keys()].toSorted((left, right) => left.localeCompare(right))
   );
   const moduleIds = Object.freeze(
-    [...byModuleId.keys()].toSorted((left, right) => left.localeCompare(right)),
+    [...byModuleId.keys()].toSorted((left, right) => left.localeCompare(right))
   );
   return Object.freeze({
     contracts,
@@ -183,7 +217,7 @@ const assembleInstalledModuleCatalog = (
     deploymentStatuses: Object.freeze(
       deploymentStatuses
         .map((status) => Object.freeze({ ...status }))
-        .toSorted((left, right) => left.appId.localeCompare(right.appId)),
+        .toSorted((left, right) => left.appId.localeCompare(right.appId))
     ),
     getByDeploymentAppId: (appId: OntosDeploymentAppId) => byAppId.get(appId),
     getByModuleId: (moduleId: OntosModuleId) => byModuleId.get(moduleId),
@@ -193,17 +227,29 @@ const assembleInstalledModuleCatalog = (
 };
 
 const collectAuthoritativeDeploymentStatuses = (
-  inputs: readonly InstalledDeploymentResolutionInput[],
-): ReadonlyMap<OntosDeploymentAppId, AuthoritativeInstalledDeploymentStatus> => {
-  const statuses = new Map<OntosDeploymentAppId, AuthoritativeInstalledDeploymentStatus>();
+  inputs: readonly InstalledDeploymentResolutionInput[]
+): ReadonlyMap<
+  OntosDeploymentAppId,
+  AuthoritativeInstalledDeploymentStatus
+> => {
+  const statuses = new Map<
+    OntosDeploymentAppId,
+    AuthoritativeInstalledDeploymentStatus
+  >();
   for (const input of inputs) {
     if (input.outcome === 'revoked') {
-      statuses.set(input.expectedAppId, { appId: input.expectedAppId, status: 'revoked' });
+      statuses.set(input.expectedAppId, {
+        appId: input.expectedAppId,
+        status: 'revoked',
+      });
     } else if (
       input.outcome === 'disabled' &&
       statuses.get(input.expectedAppId)?.status !== 'revoked'
     ) {
-      statuses.set(input.expectedAppId, { appId: input.expectedAppId, status: 'disabled' });
+      statuses.set(input.expectedAppId, {
+        appId: input.expectedAppId,
+        status: 'disabled',
+      });
     }
   }
   return statuses;
@@ -211,7 +257,7 @@ const collectAuthoritativeDeploymentStatuses = (
 
 /** Pure, all-or-nothing aggregation of already fetched deployment documents. */
 export const buildInstalledModuleCatalog = (
-  inputs: readonly InstalledDeploymentContractInput[],
+  inputs: readonly InstalledDeploymentContractInput[]
 ): InstalledModuleCatalog => {
   const byAppId = new Map<string, OntosModuleDeploymentContract>();
   const byModuleId = new Map<string, OntosModuleDeploymentContract>();
@@ -225,10 +271,14 @@ export const buildInstalledModuleCatalog = (
       },
     } = contract;
     if (byAppId.has(appId)) {
-      throw invalid('one deployment app ID may appear only once in the installed catalog');
+      throw invalid(
+        'one deployment app ID may appear only once in the installed catalog'
+      );
     }
     if (byModuleId.has(moduleId)) {
-      throw invalid('one OntOS module ID may be claimed by only one deployment');
+      throw invalid(
+        'one OntOS module ID may be claimed by only one deployment'
+      );
     }
     byAppId.set(appId, contract);
     byModuleId.set(moduleId, contract);
@@ -237,7 +287,9 @@ export const buildInstalledModuleCatalog = (
   for (const contract of byModuleId.values()) {
     for (const { workerKey } of contract.runtime.outboxSubscriptions) {
       if (workerKeys.has(workerKey)) {
-        throw invalid('an Outbox worker key may appear only once in the installed catalog');
+        throw invalid(
+          'an Outbox worker key may appear only once in the installed catalog'
+        );
       }
       workerKeys.add(workerKey);
     }
@@ -248,15 +300,18 @@ export const buildInstalledModuleCatalog = (
       appId: contract.deployment.appId,
       moduleId: contract.manifest.module.id,
       status: 'available',
-    })),
+    }))
   );
 };
 
 const findConflictingDeploymentAppIds = (
-  candidates: readonly OntosModuleDeploymentContract[],
+  candidates: readonly OntosModuleDeploymentContract[]
 ): ReadonlySet<OntosDeploymentAppId> => {
   const conflictingAppIds = new Set<OntosDeploymentAppId>();
-  const byAppId = new Map<OntosDeploymentAppId, OntosModuleDeploymentContract[]>();
+  const byAppId = new Map<
+    OntosDeploymentAppId,
+    OntosModuleDeploymentContract[]
+  >();
   const byModuleId = new Map<OntosModuleId, OntosModuleDeploymentContract[]>();
   const byWorkerKey = new Map<string, OntosModuleDeploymentContract[]>();
   for (const contract of candidates) {
@@ -269,10 +324,17 @@ const findConflictingDeploymentAppIds = (
     byAppId.set(appId, [...(byAppId.get(appId) ?? []), contract]);
     byModuleId.set(moduleId, [...(byModuleId.get(moduleId) ?? []), contract]);
     for (const { workerKey } of contract.runtime.outboxSubscriptions) {
-      byWorkerKey.set(workerKey, [...(byWorkerKey.get(workerKey) ?? []), contract]);
+      byWorkerKey.set(workerKey, [
+        ...(byWorkerKey.get(workerKey) ?? []),
+        contract,
+      ]);
     }
   }
-  for (const conflicts of [...byAppId.values(), ...byModuleId.values(), ...byWorkerKey.values()]) {
+  for (const conflicts of [
+    ...byAppId.values(),
+    ...byModuleId.values(),
+    ...byWorkerKey.values(),
+  ]) {
     if (conflicts.length > 1) {
       for (const contract of conflicts) {
         conflictingAppIds.add(contract.deployment.appId);
@@ -285,8 +347,11 @@ const findConflictingDeploymentAppIds = (
 
 const collectDeploymentCandidates = (
   inputs: readonly InstalledDeploymentResolutionInput[],
-  authoritativeStatuses: ReadonlyMap<OntosDeploymentAppId, AuthoritativeInstalledDeploymentStatus>,
-  statuses: Map<OntosDeploymentAppId, InstalledDeploymentStatus>,
+  authoritativeStatuses: ReadonlyMap<
+    OntosDeploymentAppId,
+    AuthoritativeInstalledDeploymentStatus
+  >,
+  statuses: Map<OntosDeploymentAppId, InstalledDeploymentStatus>
 ): OntosModuleDeploymentContract[] => {
   const candidates: OntosModuleDeploymentContract[] = [];
   for (const input of inputs) {
@@ -314,7 +379,7 @@ const collectDeploymentCandidates = (
               reason: input.reason,
               status: 'unavailable',
             }
-          : { appId: input.expectedAppId, status: input.outcome },
+          : { appId: input.expectedAppId, status: input.outcome }
       );
     }
   }
@@ -324,15 +389,19 @@ const collectDeploymentCandidates = (
 
 /** Resolves each installed deployment independently while excluding contradictory candidates. */
 export const resolveInstalledModuleCatalog = (
-  inputs: readonly InstalledDeploymentResolutionInput[],
+  inputs: readonly InstalledDeploymentResolutionInput[]
 ): InstalledModuleCatalog => {
   const authoritativeStatuses = collectAuthoritativeDeploymentStatuses(inputs);
   const statuses = new Map<OntosDeploymentAppId, InstalledDeploymentStatus>();
-  const candidates = collectDeploymentCandidates(inputs, authoritativeStatuses, statuses);
+  const candidates = collectDeploymentCandidates(
+    inputs,
+    authoritativeStatuses,
+    statuses
+  );
   const conflictingAppIds = findConflictingDeploymentAppIds(candidates);
 
   const healthy = candidates.filter(
-    (contract) => !conflictingAppIds.has(contract.deployment.appId),
+    (contract) => !conflictingAppIds.has(contract.deployment.appId)
   );
   for (const contract of candidates) {
     const {
@@ -342,7 +411,7 @@ export const resolveInstalledModuleCatalog = (
       appId,
       conflictingAppIds.has(appId)
         ? { appId, reason: 'incompatible', status: 'unavailable' }
-        : { appId, moduleId: contract.manifest.module.id, status: 'available' },
+        : { appId, moduleId: contract.manifest.module.id, status: 'available' }
     );
   }
   return assembleInstalledModuleCatalog(healthy, [...statuses.values()]);

@@ -4,45 +4,53 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
-import { AresSubjectEvidenceSchema, AresSubjectLookupIcoSchema } from '../domain/ares-evidence.ts';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
 
-export const AresLookupRequestSchema = Schema.Struct({ ico: AresSubjectLookupIcoSchema });
+import {
+  AresSubjectEvidenceSchema,
+  AresSubjectLookupIcoSchema,
+} from '../domain/ares-evidence.ts';
+
+export const AresLookupRequestSchema = Schema.Struct({
+  ico: AresSubjectLookupIcoSchema,
+});
 export type AresLookupRequest = typeof AresLookupRequestSchema.Type;
 export const AresLookupResponseSchema = AresSubjectEvidenceSchema;
 export type AresLookupResponse = typeof AresLookupResponseSchema.Type;
 
 export const AresLookupInvalidProblemSchema = makeProblemDetailsSchema(
   'AresLookupInvalidProblem',
-  400,
+  400
 );
 export const AresLookupAuthenticationProblemSchema = makeProblemDetailsSchema(
   'AresLookupAuthenticationProblem',
-  401,
+  401
 );
 export const AresLookupForbiddenProblemSchema = makeProblemDetailsSchema(
   'AresLookupForbiddenProblem',
-  403,
+  403
 );
 export const AresLookupNotFoundProblemSchema = makeProblemDetailsSchema(
   'AresLookupNotFoundProblem',
-  404,
+  404
 );
 export const AresLookupPolicyConflictProblemSchema = makeProblemDetailsSchema(
   'AresLookupPolicyConflictProblem',
-  409,
+  409
 );
 export const AresLookupPolicyProblemSchema = makeProblemDetailsSchema(
   'AresLookupPolicyProblem',
-  422,
+  422
 );
-export const AresLookupUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'AresLookupUnavailableProblem',
-  503,
-);
+export const AresLookupUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema('AresLookupUnavailableProblem', 503);
 export const AresLookupInternalProblemSchema = makeProblemDetailsSchema(
   'AresLookupInternalProblem',
-  500,
+  500
 );
 
 export const AresLookupApi = HttpApi.make('AresLookupApi').add(
@@ -63,6 +71,6 @@ export const AresLookupApi = HttpApi.make('AresLookupApi').add(
       payload: AresLookupRequestSchema,
       query: {},
       success: AresLookupResponseSchema,
-    }),
-  ),
+    })
+  )
 );

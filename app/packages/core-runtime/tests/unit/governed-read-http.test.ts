@@ -1,8 +1,15 @@
 // @effect-diagnostics asyncFunction:off strictEffectProvide:off -- Node test and logger capture entrypoints; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runEffectTestPromise } from '../../src/testing/effect-runtime.ts';
+
+import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
+import { Headers, HttpServerRequest } from 'effect/unstable/http';
+
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import {
+  classifyReadCoreError,
+  makeGovernedReadHttpHandler,
+} from '../../src/http/governed-read.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { ModuleStateCheckUnavailableError } from '../../src/modules/module-state-check-unavailable-error.ts';
 import { ModuleStateDeniedError } from '../../src/modules/module-state-denied-error.ts';
@@ -10,6 +17,8 @@ import { OperationAuthenticationRequired } from '../../src/operations/operation-
 import { OperationContextDenied } from '../../src/operations/operation-context-denied.ts';
 import { OperationContextInvalid } from '../../src/operations/operation-context-invalid.ts';
 import { OperationContextUnavailable } from '../../src/operations/operation-context-unavailable.ts';
+import { defineRead } from '../../src/reads/definition.ts';
+import type { ReadCoreError } from '../../src/reads/errors.ts';
 import { ReadEvidencePersistenceError } from '../../src/reads/read-evidence-persistence-error.ts';
 import { ReadEvidenceValidationError } from '../../src/reads/read-evidence-validation-error.ts';
 import { ReadHandlerExecutionError } from '../../src/reads/read-handler-execution-error.ts';
@@ -21,20 +30,13 @@ import { ReadPermissionUnavailable } from '../../src/reads/read-permission-unava
 import { ReadPolicyDenied } from '../../src/reads/read-policy-denied.ts';
 import { ReadPolicyEvaluationError } from '../../src/reads/read-policy-evaluation-error.ts';
 import { ReadResultValidationError } from '../../src/reads/read-result-validation-error.ts';
-import {
-  classifyReadCoreError,
-  makeGovernedReadHttpHandler,
-} from '../../src/http/governed-read.ts';
-import { defineRead } from '../../src/reads/definition.ts';
 import { ReadRuntime } from '../../src/reads/runtime.ts';
-import type { ReadCoreError } from '../../src/reads/errors.ts';
 import type { ReadRuntimeService } from '../../src/reads/runtime.ts';
-import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
-import { Headers, HttpServerRequest } from 'effect/unstable/http';
+import { runEffectTestPromise } from '../../src/testing/effect-runtime.ts';
 
 const problem = <const Kind extends string, const Status extends number>(
   kind: Kind,
-  status: Status,
+  status: Status
 ) => ({ kind, status });
 
 const problems = {
@@ -61,48 +63,90 @@ const coreFailures: readonly [
   ReturnType<(typeof problems)[keyof typeof problems]>,
 ][] = [
   [
-    new ModuleStateCheckUnavailableError({ code: 'module_state_check_unavailable', reason }),
+    new ModuleStateCheckUnavailableError({
+      code: 'module_state_check_unavailable',
+      reason,
+    }),
     problems.unavailable(),
   ],
-  [new ModuleStateDeniedError({ code: 'module_state_denied', reason }), problems.forbidden()],
   [
-    new OperationAuthenticationRequired({ code: 'operation_authentication_required', reason }),
+    new ModuleStateDeniedError({ code: 'module_state_denied', reason }),
+    problems.forbidden(),
+  ],
+  [
+    new OperationAuthenticationRequired({
+      code: 'operation_authentication_required',
+      reason,
+    }),
     problems.authentication(),
   ],
-  [new OperationContextDenied({ code: 'operation_context_denied', reason }), problems.forbidden()],
+  [
+    new OperationContextDenied({ code: 'operation_context_denied', reason }),
+    problems.forbidden(),
+  ],
   [
     new OperationContextInvalid({ code: 'operation_context_invalid', reason }),
     problems.forbidden(),
   ],
   [
-    new OperationContextUnavailable({ code: 'operation_context_unavailable', reason }),
+    new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason,
+    }),
     problems.unavailable(),
   ],
   [
-    new ReadEvidencePersistenceError({ code: 'read_evidence_persistence_failed', reason }),
+    new ReadEvidencePersistenceError({
+      code: 'read_evidence_persistence_failed',
+      reason,
+    }),
     problems.unavailable(),
   ],
-  [new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }), problems.internal()],
   [
-    new ReadHandlerExecutionError({ code: 'read_handler_execution_failed', reason }),
+    new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }),
     problems.internal(),
   ],
-  [new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }), problems.notFound()],
+  [
+    new ReadHandlerExecutionError({
+      code: 'read_handler_execution_failed',
+      reason,
+    }),
+    problems.internal(),
+  ],
+  [
+    new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }),
+    problems.notFound(),
+  ],
   [
     new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }),
     problems.unavailable(),
   ],
-  [new ReadInputValidationError({ code: 'read_input_invalid', reason }), problems.invalid()],
-  [new ReadPermissionDenied({ code: 'read_permission_denied', reason }), problems.forbidden()],
   [
-    new ReadPermissionUnavailable({ code: 'read_permission_unavailable', reason }),
+    new ReadInputValidationError({ code: 'read_input_invalid', reason }),
+    problems.invalid(),
+  ],
+  [
+    new ReadPermissionDenied({ code: 'read_permission_denied', reason }),
+    problems.forbidden(),
+  ],
+  [
+    new ReadPermissionUnavailable({
+      code: 'read_permission_unavailable',
+      reason,
+    }),
     problems.unavailable(),
   ],
   [
-    new ReadPolicyEvaluationError({ code: 'read_policy_evaluation_failed', reason }),
+    new ReadPolicyEvaluationError({
+      code: 'read_policy_evaluation_failed',
+      reason,
+    }),
     problems.unavailable(),
   ],
-  [new ReadResultValidationError({ code: 'read_result_invalid', reason }), problems.internal()],
+  [
+    new ReadResultValidationError({ code: 'read_result_invalid', reason }),
+    problems.internal(),
+  ],
 ];
 
 test('classifies every Core governed-read failure through the endpoint problem set', () => {
@@ -135,7 +179,10 @@ const registration = defineRead(
     accessKind: 'detail',
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
-      authorization: { kind: 'context_permission', permission: 'module.access' },
+      authorization: {
+        kind: 'context_permission',
+        permission: 'module.access',
+      },
       entrypointKey: 'core.shell.governed-http-test',
       moduleKey: 'core.shell',
       role: 'api',
@@ -153,9 +200,13 @@ const registration = defineRead(
     resultSchema: Schema.Struct({ ok: Schema.Literal(true) }),
     schemaVersion: '1',
   },
-  () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+  () =>
+    Effect.succeed({
+      evidence: { resultCount: 1 },
+      result: { ok: true as const },
+    }),
   () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: 'core.shell' }),
+  () => ({ kind: 'module', moduleId: 'core.shell' })
 );
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -176,7 +227,9 @@ const readRuntime = {
     return Effect.succeed({ ok: true as const });
   },
 } as ReadRuntimeService;
-const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
+const requestService = HttpServerRequest.fromWeb(
+  new Request('https://ontos.test/reads/fixture')
+);
 
 test('validates correlation before authentication or ReadRuntime acquisition', async () => {
   let authenticationCalls = 0;
@@ -198,11 +251,11 @@ test('validates correlation before authentication or ReadRuntime acquisition', a
             'x-correlation-id': '   ',
           }),
         },
-      }),
+      })
     ).pipe(
       Effect.provideService(ReadRuntime, readRuntime),
-      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-    ),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService)
+    )
   );
   assert.equal(authenticationCalls, 0);
   assert.equal(Exit.isFailure(exit), true);
@@ -241,12 +294,17 @@ test('sanitizes synchronous defects across correlation validation and authentica
     cases.map(
       async ({ handler, headers }) =>
         await runEffectTestPromise(
-          Effect.exit(handler({ payload: { query: 'fixture' }, request: { headers } })).pipe(
+          Effect.exit(
+            handler({ payload: { query: 'fixture' }, request: { headers } })
+          ).pipe(
             Effect.provideService(ReadRuntime, readRuntime),
-            Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-          ),
-        ),
-    ),
+            Effect.provideService(
+              HttpServerRequest.HttpServerRequest,
+              requestService
+            )
+          )
+        )
+    )
   );
   for (const exit of exits) {
     assert.equal(Exit.isFailure(exit), true);
@@ -284,8 +342,8 @@ test('passes only payload, trusted principal, registration, and correlation to R
       },
     }).pipe(
       Effect.provideService(ReadRuntime, readRuntime),
-      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-    ),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService)
+    )
   );
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(observed, [
@@ -315,22 +373,33 @@ test('sanitizes unexpected defects at the complete governed handler boundary', a
       handler({
         payload: { query: 'fixture' },
         request: {
-          headers: Headers.fromInput({ 'x-correlation-id': 'correlation-defect' }),
+          headers: Headers.fromInput({
+            'x-correlation-id': 'correlation-defect',
+          }),
         },
-      }),
+      })
     ).pipe(
       Effect.provideService(ReadRuntime, defectRuntime),
-      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-      Effect.provide(capturedLoggerLayer(logEntries)),
-    ),
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        requestService
+      ),
+      Effect.provide(capturedLoggerLayer(logEntries))
+    )
   );
   assert.equal(Exit.isFailure(exit), true);
   if (Exit.isFailure(exit)) {
     const publicFailure = Cause.squash(exit.cause);
     assert.deepEqual(publicFailure, problems.internal());
-    assert.doesNotMatch(JSON.stringify(publicFailure), /private database connection detail/u);
+    assert.doesNotMatch(
+      JSON.stringify(publicFailure),
+      /private database connection detail/u
+    );
   }
   assert.equal(logEntries.length, 1);
-  assert.doesNotMatch(logEntries.join('\n'), /private database connection detail/u);
+  assert.doesNotMatch(
+    logEntries.join('\n'),
+    /private database connection detail/u
+  );
   assert.match(logEntries[0] ?? '', /correlation-defect/u);
 });

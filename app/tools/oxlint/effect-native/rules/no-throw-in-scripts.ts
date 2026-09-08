@@ -76,14 +76,17 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
+import {
+  parentOf,
+  unwrapNode as unwrap,
+  memberName as staticMemberName,
+} from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { globToRegExp, scriptScope, inScriptScope } from '../shared/paths.ts';
-import { parentOf, unwrapNode as unwrap, memberName as staticMemberName } from '../shared/ast.ts';
-import { resolveVariable } from '../shared/bindings.ts';
 import { provenance } from '../shared/provenance.ts';
 
 /** Native error globals. A `throw new X(...)` against one of these is the B3 "manual throw". */
@@ -116,13 +119,16 @@ const DEFAULTS: RuleOptions = {
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const globs =
-    Array.isArray(given.allowPaths) && given.allowPaths.every((entry) => typeof entry === 'string')
+    Array.isArray(given.allowPaths) &&
+    given.allowPaths.every((entry) => typeof entry === 'string')
       ? (given.allowPaths as readonly string[])
       : DEFAULTS.allowPaths;
   return {
     allowPaths: globs,
     allowRethrow:
-      typeof given.allowRethrow === 'boolean' ? given.allowRethrow : DEFAULTS.allowRethrow,
+      typeof given.allowRethrow === 'boolean'
+        ? given.allowRethrow
+        : DEFAULTS.allowRethrow,
     allowInsideEffectTry:
       typeof given.allowInsideEffectTry === 'boolean'
         ? given.allowInsideEffectTry
@@ -133,7 +139,11 @@ function readOptions(raw: unknown): RuleOptions {
 /** `throw error;` where `error` is bound by a `catch (error)` / `catch ({ cause })` clause. */
 function isCatchBinding(context: Context, node: AnyNode): boolean {
   if (node.type !== 'Identifier') return false;
-  const variable = resolveVariable(context, (node as ESTree.IdentifierReference).name, node);
+  const variable = resolveVariable(
+    context,
+    (node as ESTree.IdentifierReference).name,
+    node
+  );
   if (variable === null) return false;
   if (variable.scope.type === 'catch') return true;
   return variable.defs.some((definition) => definition.type === 'CatchClause');
@@ -150,14 +160,18 @@ function nativeErrorName(context: Context, node: AnyNode): string | null {
   // Unresolved, or resolved only to an implicit global, means the real native constructor.
   if (variable === null) return name;
   return variable.defs.length === 0 ||
-    variable.defs.every((definition) => definition.type === 'ImplicitGlobalVariable')
+    variable.defs.every(
+      (definition) => definition.type === 'ImplicitGlobalVariable'
+    )
     ? name
     : null;
 }
 
 /** `Effect.try` / `Effect.tryPromise` where `Effect` really comes from `effect` / `effect/*`. */
 function isEffectTryCallee(node: AnyNode, context: Context): boolean {
-  return ['Effect.try', 'Effect.tryPromise'].includes(provenance(context, node) ?? '');
+  return ['Effect.try', 'Effect.tryPromise'].includes(
+    provenance(context, node) ?? ''
+  );
 }
 
 /**
@@ -196,9 +210,12 @@ function describeInvocation(input: AnyNode, construct: boolean): string {
 
 /** A short, human-readable rendering of the thrown expression for the diagnostic text. */
 function describeThrown(node: AnyNode): string {
-  if (node.type === 'NewExpression') return describeInvocation(node.callee, true);
-  if (node.type === 'CallExpression') return describeInvocation(node.callee, false);
-  if (node.type === 'Identifier') return (node as ESTree.IdentifierReference).name;
+  if (node.type === 'NewExpression')
+    return describeInvocation(node.callee, true);
+  if (node.type === 'CallExpression')
+    return describeInvocation(node.callee, false);
+  if (node.type === 'Identifier')
+    return (node as ESTree.IdentifierReference).name;
   if (node.type === 'MemberExpression') {
     const name = staticMemberName(node as ESTree.MemberExpression);
     return name === null ? 'a property' : `...${name}`;
@@ -248,13 +265,16 @@ export const rule = defineRule({
         },
       },
     ],
-    defaultOptions: [{ allowPaths: [], allowRethrow: false, allowInsideEffectTry: false }],
+    defaultOptions: [
+      { allowPaths: [], allowRethrow: false, allowInsideEffectTry: false },
+    ],
   },
   create(context) {
     const options = readOptions(context.options[0]);
     const path = scriptScope(context.filename);
     if (!inScriptScope(path)) return {};
-    if (options.allowPaths.some((glob) => globToRegExp(glob).test(path))) return {};
+    if (options.allowPaths.some((glob) => globToRegExp(glob).test(path)))
+      return {};
 
     let bindings: EffectBindings | null = null;
 
@@ -264,7 +284,9 @@ export const rule = defineRule({
       },
       ThrowStatement(node) {
         const statement = node as unknown as AnyNode;
-        const thrown = unwrap((node as ESTree.ThrowStatement).argument as AnyNode);
+        const thrown = unwrap(
+          (node as ESTree.ThrowStatement).argument as AnyNode
+        );
         if (
           options.allowInsideEffectTry &&
           bindings !== null &&

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Result } from 'effect';
+
 import { readGeneratedSlotEntries } from '../scaffolding/shared.mts';
 
 const start = '// slot:start';
@@ -38,7 +40,12 @@ void test('empty generated slots remain empty', () => {
   assert.deepEqual(readEntries('   \n'), []);
 });
 
-for (const source of ['.addHttpApi(FirstApi', 'first: "open,', 'first: /* open', 'first: ] ,']) {
+for (const source of [
+  '.addHttpApi(FirstApi',
+  'first: "open,',
+  'first: /* open',
+  'first: ] ,',
+]) {
   void test(`incomplete or unbalanced generated slot fails closed: ${source}`, () => {
     assert.ok(Result.isFailure(Result.try(() => readEntries(source))));
   });

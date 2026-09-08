@@ -1,15 +1,17 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { getTableConfig, pgTable, uuid } from 'drizzle-orm/pg-core';
 import { Effect, Option } from 'effect';
+
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from '../../src/db/scoped-transaction.ts';
-import { getTableConfig, pgTable, uuid } from 'drizzle-orm/pg-core';
 import type { OperationalScopeTransactionService } from '../../src/db/scoped-transaction.ts';
 
 const unusedOperation = (): never => {
@@ -17,7 +19,7 @@ const unusedOperation = (): never => {
 };
 const transactionService = (
   install: OperationalScopeTransactionService['install'],
-  verify: OperationalScopeTransactionService['verify'],
+  verify: OperationalScopeTransactionService['verify']
 ): OperationalScopeTransactionService => ({
   delete: unusedOperation,
   insert: unusedOperation,
@@ -37,7 +39,7 @@ void test('installs and verifies transaction-local scope and exposes no transact
     Effect.sync(() => {
       calls += 1;
       return Option.some({ legal_entity_id: 'entity', tenant_id: 'tenant' });
-    }),
+    })
   );
   const capability = await runEffectTestPromise(
     installOperationalScopeFromTransactionService({
@@ -47,7 +49,7 @@ void test('installs and verifies transaction-local scope and exposes no transact
       legalEntityId: 'entity',
       principalId: 'principal',
       tenantId: 'tenant',
-    }).pipe(Effect.provideService(OperationalScopeTransaction, transaction)),
+    }).pipe(Effect.provideService(OperationalScopeTransaction, transaction))
   );
   assert.equal(calls, 2);
   assert.equal('commit' in capability, false);
@@ -59,7 +61,7 @@ void test('installs and verifies transaction-local scope and exposes no transact
 void test('fails closed when transaction settings do not match', async () => {
   const transaction = transactionService(
     () => Effect.void,
-    Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' }),
+    Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' })
   );
   const error = await runEffectTestPromise(
     Effect.flip(
@@ -69,8 +71,8 @@ void test('fails closed when transaction settings do not match', async () => {
         correlationId: 'c-1',
         principalId: 'principal',
         tenantId: 'tenant',
-      }).pipe(Effect.provideService(OperationalScopeTransaction, transaction)),
-    ),
+      }).pipe(Effect.provideService(OperationalScopeTransaction, transaction))
+    )
   );
   assert.equal(error._tag, 'OperationContextUnavailable');
 });
@@ -83,11 +85,15 @@ void test('creates complete CRUD RLS policies with update using and with-check p
   assert.equal(getTableConfig(fixture).enableRLS, true);
   for (const policies of [
     tenantRlsPolicies('tenant_fixture', fixture.tenantId),
-    tenantLegalEntityRlsPolicies('entity_fixture', fixture.tenantId, fixture.legalEntityId),
+    tenantLegalEntityRlsPolicies(
+      'entity_fixture',
+      fixture.tenantId,
+      fixture.legalEntityId
+    ),
   ]) {
     assert.deepEqual(
       policies.map((policy) => policy.for),
-      ['select', 'insert', 'update', 'delete'],
+      ['select', 'insert', 'update', 'delete']
     );
     assert.ok(policies[2].using);
     assert.ok(policies[2].withCheck);

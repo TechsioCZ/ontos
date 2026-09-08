@@ -1,8 +1,14 @@
-import { snapshotTree, write } from './fixture-files.mts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -11,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { Schema } from 'effect';
 
 import { getHelpText, runScaffold } from '../cli.mts';
+import { snapshotTree, write } from './fixture-files.mts';
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
@@ -37,11 +44,16 @@ type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
-const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
+const json = (value: JsonValue): string =>
+  `${JSON.stringify(value, null, 2)}\n`;
 
 const createFixture = async (): Promise<string> => {
   const root = await mkdtemp(path.join(tmpdir(), 'ontos-resource-scaffold-'));
-  await write(root, 'package.json', json({ name: 'fixture', private: true, type: 'module' }));
+  await write(
+    root,
+    'package.json',
+    json({ name: 'fixture', private: true, type: 'module' })
+  );
   await write(
     root,
     verticalPackagePath,
@@ -58,13 +70,14 @@ const createFixture = async (): Promise<string> => {
       name: '@app/property-registry',
       private: true,
       scripts: {
-        build: 'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
+        build:
+          'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
         'cloudflare:build':
           'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
       },
       type: 'module',
       version: '0.1.0',
-    }),
+    })
   );
   await write(
     root,
@@ -73,12 +86,12 @@ const createFixture = async (): Promise<string> => {
       compilerOptions: { composite: true },
       include: ['src', 'shared'],
       references: [],
-    }),
+    })
   );
   await write(
     root,
     'verticals/property-registry/module-federation.config.ts',
-    'export default { exposes: {} };\n',
+    'export default { exposes: {} };\n'
   );
   await write(
     root,
@@ -86,7 +99,7 @@ const createFixture = async (): Promise<string> => {
     `import { HttpApi } from 'effect/unstable/httpapi';
 
 export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
-`,
+`
   );
   await write(
     root,
@@ -100,7 +113,7 @@ const layer = HttpApiBuilder.layer(propertyRegistryApi).pipe(
 ) satisfies EffectRuntimeLayer;
 
 export default defineEffectBff({ api: propertyRegistryApi, layer });
-`,
+`
   );
   await write(
     root,
@@ -120,7 +133,7 @@ export default defineEffectBff({ api: propertyRegistryApi, layer });
           path: 'verticals/property-registry',
         },
       ],
-    }),
+    })
   );
   await write(
     root,
@@ -147,22 +160,31 @@ export declare const ShellPageContributionSchema: Schema.Codec<unknown, unknown>
 export declare const ShellPublicComponentContributionSchema: Schema.Codec<unknown, unknown>;
 export declare const ShellReportContributionSchema: Schema.Codec<unknown, unknown>;
 export declare const ShellSearchContributionSchema: Schema.Codec<unknown, unknown>;
-`,
+`
   );
   await mkdir(path.join(root, 'node_modules', '@app'), { recursive: true });
   await symlink(
     path.join(appRoot, 'packages/core-runtime'),
     path.join(root, 'node_modules/@app/core-runtime'),
-    'dir',
+    'dir'
   );
-  await symlink(path.join(appRoot, 'node_modules/effect'), path.join(root, 'node_modules/effect'));
-  await runScaffold('module-contract', ['--vertical', verticalName, '--module', moduleId], {
-    workspaceRoot: root,
-  });
+  await symlink(
+    path.join(appRoot, 'node_modules/effect'),
+    path.join(root, 'node_modules/effect')
+  );
+  await runScaffold(
+    'module-contract',
+    ['--vertical', verticalName, '--module', moduleId],
+    {
+      workspaceRoot: root,
+    }
+  );
   return root;
 };
 
-const withFixture = async (run: (root: string) => Promise<void>): Promise<void> => {
+const withFixture = async (
+  run: (root: string) => Promise<void>
+): Promise<void> => {
   const root = await createFixture();
   try {
     await run(root);
@@ -172,9 +194,13 @@ const withFixture = async (run: (root: string) => Promise<void>): Promise<void> 
 };
 
 const scaffoldResource = async (root: string, resource = resourceName) =>
-  await runScaffold('resource', ['--vertical', verticalName, '--resource', resource], {
-    workspaceRoot: root,
-  });
+  await runScaffold(
+    'resource',
+    ['--vertical', verticalName, '--resource', resource],
+    {
+      workspaceRoot: root,
+    }
+  );
 
 /**
  * A refused resource scaffold must leave the fixture tree byte-identical, so each guard proves
@@ -183,7 +209,7 @@ const scaffoldResource = async (root: string, resource = resourceName) =>
 const assertResourceScaffoldRefused = async (
   root: string,
   expected: RegExp,
-  ignored: readonly string[] = ['node_modules'],
+  ignored: readonly string[] = ['node_modules']
 ): Promise<void> => {
   const before = await snapshotTree(root, ignored);
   await assert.rejects(scaffoldResource(root), expected);
@@ -196,7 +222,10 @@ await test('resource help documents the public command and writes nothing', asyn
     workspaceRoot: missingRoot,
   });
   assert.deepEqual(result, { help: getHelpText('resource'), kind: 'help' });
-  assert.match(result.help, /scaffold:resource -- --vertical <vertical> --resource <resource>/u);
+  assert.match(
+    result.help,
+    /scaffold:resource -- --vertical <vertical> --resource <resource>/u
+  );
   assert.match(result.help, /lower-kebab-case/u);
 });
 
@@ -207,47 +236,68 @@ await test('resource scaffold publishes a typed ResourceRef and registers its de
 
     const resourcePath = path.join(
       root,
-      'verticals/property-registry/shared/resources/rental-unit.ts',
+      'verticals/property-registry/shared/resources/rental-unit.ts'
     );
     const [resource, manifest, packageSource] = await Promise.all([
       readFile(resourcePath, 'utf-8'),
       readFile(path.join(root, verticalManifestPath), 'utf-8'),
       readFile(path.join(root, verticalPackagePath), 'utf-8'),
     ]);
-    assert.match(resource, /import type \{ OntosResourceType \} from '@app\/core-runtime';/u);
-    assert.match(resource, /import \{ Schema \} from 'effect';/u);
-    assert.match(resource, /export const RentalUnitRefSchema = Schema\.Struct/u);
-    assert.match(resource, /Schema\.isMaxLength\(300\)/u);
-    assert.match(resource, /const TenantIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u);
-    assert.match(resource, /moduleId: Schema\.Literal\('property\.registry'\)/u);
-    assert.match(resource, /resourceType: Schema\.Literal\('property\.registry\.rental-unit'\)/u);
-    assert.match(resource, /resourceId: ResourceIdSchema/u);
-    assert.match(resource, /tenantId: TenantIdSchema/u);
-    assert.match(resource, /export type RentalUnitRef = typeof RentalUnitRefSchema\.Type;/u);
     assert.match(
       resource,
-      /export const rentalUnitResourceDescriptor = \{[\s\S]*key: 'property\.registry\.rental-unit'/u,
+      /import type \{ OntosResourceType \} from '@app\/core-runtime';/u
+    );
+    assert.match(resource, /import \{ Schema \} from 'effect';/u);
+    assert.match(
+      resource,
+      /export const RentalUnitRefSchema = Schema\.Struct/u
+    );
+    assert.match(resource, /Schema\.isMaxLength\(300\)/u);
+    assert.match(
+      resource,
+      /const TenantIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u
+    );
+    assert.match(
+      resource,
+      /moduleId: Schema\.Literal\('property\.registry'\)/u
+    );
+    assert.match(
+      resource,
+      /resourceType: Schema\.Literal\('property\.registry\.rental-unit'\)/u
+    );
+    assert.match(resource, /resourceId: ResourceIdSchema/u);
+    assert.match(resource, /tenantId: TenantIdSchema/u);
+    assert.match(
+      resource,
+      /export type RentalUnitRef = typeof RentalUnitRefSchema\.Type;/u
+    );
+    assert.match(
+      resource,
+      /export const rentalUnitResourceDescriptor = \{[\s\S]*key: 'property\.registry\.rental-unit'/u
     );
     assert.match(resource, /satisfies OntosResourceType/u);
 
     assert.match(
       manifest,
-      /import \{ rentalUnitResourceDescriptor \} from '\.\/shared\/resources\/rental-unit\.ts';/u,
+      /import \{ rentalUnitResourceDescriptor \} from '\.\/shared\/resources\/rental-unit\.ts';/u
     );
-    assert.match(manifest, /resourceTypes: \[[\s\S]*rentalUnitResourceDescriptor,/u);
+    assert.match(
+      manifest,
+      /resourceTypes: \[[\s\S]*rentalUnitResourceDescriptor,/u
+    );
     const modulePackage = Schema.decodeUnknownSync(packageJsonSchema, {
       onExcessProperty: 'preserve',
     })(JSON.parse(packageSource));
     assert.equal(
       modulePackage.exports['./resources/rental-unit'],
-      './shared/resources/rental-unit.ts',
+      './shared/resources/rental-unit.ts'
     );
 
-    const generatedModule = Schema.decodeUnknownSync(generatedResourceModuleSchema)(
-      await import(`${pathToFileURL(resourcePath).href}?test=${randomUUID()}`),
-    );
+    const generatedModule = Schema.decodeUnknownSync(
+      generatedResourceModuleSchema
+    )(await import(`${pathToFileURL(resourcePath).href}?test=${randomUUID()}`));
     const rentalUnitRefSchema = Schema.make<Schema.Codec<unknown, unknown>>(
-      generatedModule.RentalUnitRefSchema.ast,
+      generatedModule.RentalUnitRefSchema.ast
     );
     const reference = Schema.decodeUnknownSync(rentalUnitRefSchema)({
       moduleId,
@@ -269,7 +319,7 @@ await test('resource scaffold publishes a typed ResourceRef and registers its de
           resourceType,
           tenantId,
         }),
-      /length of at least 1/u,
+      /length of at least 1/u
     );
 
     const fixtureTsconfig = path.join(root, 'tsconfig.generated.json');
@@ -289,25 +339,41 @@ await test('resource scaffold publishes a typed ResourceRef and registers its de
           strict: true,
           target: 'ESNext',
         },
-        include: ['verticals/property-registry/shared/resources/**/*.ts', verticalManifestPath],
-      }),
+        include: [
+          'verticals/property-registry/shared/resources/**/*.ts',
+          verticalManifestPath,
+        ],
+      })
     );
     const compilation = spawnSync(tscPath, ['-p', fixtureTsconfig], {
       cwd: root,
       encoding: 'utf-8',
     });
-    assert.equal(compilation.status, 0, `${compilation.stdout}${compilation.stderr}`);
+    assert.equal(
+      compilation.status,
+      0,
+      `${compilation.stdout}${compilation.stderr}`
+    );
   });
 });
 
 await test('resource scaffold rejects traversal and reruns without partial writes', async () => {
   await withFixture(async (root) => {
     const beforeTraversal = await snapshotTree(root, ['node_modules']);
-    await assert.rejects(scaffoldResource(root, '../unsafe'), /lower-kebab-case/u);
-    assert.deepEqual(await snapshotTree(root, ['node_modules']), beforeTraversal);
+    await assert.rejects(
+      scaffoldResource(root, '../unsafe'),
+      /lower-kebab-case/u
+    );
+    assert.deepEqual(
+      await snapshotTree(root, ['node_modules']),
+      beforeTraversal
+    );
 
     await scaffoldResource(root);
-    await assertResourceScaffoldRefused(root, /refusing to overwrite existing business file/u);
+    await assertResourceScaffoldRefused(
+      root,
+      /refusing to overwrite existing business file/u
+    );
   });
 });
 
@@ -317,8 +383,11 @@ await test('resource scaffold leaves no artifact when generated owner slots or e
     const manifest = await readFile(manifestPath, 'utf-8');
     await writeFile(
       manifestPath,
-      manifest.replace('// <generated-module-manifest-resources>', '// invalid-resource-slot'),
-      'utf-8',
+      manifest.replace(
+        '// <generated-module-manifest-resources>',
+        '// invalid-resource-slot'
+      ),
+      'utf-8'
     );
     await assertResourceScaffoldRefused(root, /generated owner file/u);
   });
@@ -336,7 +405,10 @@ await test('resource scaffold leaves no artifact when generated owner slots or e
       },
     };
     await writeFile(packagePath, json(packageWithExportCollision), 'utf-8');
-    await assertResourceScaffoldRefused(root, /resource contract export .* already exists/u);
+    await assertResourceScaffoldRefused(
+      root,
+      /resource contract export .* already exists/u
+    );
   });
 });
 
@@ -351,9 +423,9 @@ await test('resource scaffold rejects a manifest without the governed resource s
       // <generated-module-manifest-resources>
       // </generated-module-manifest-resources>
     ],`,
-        '    resourceTypes: [],',
+        '    resourceTypes: [],'
       ),
-      'utf-8',
+      'utf-8'
     );
 
     await assertResourceScaffoldRefused(root, /slot/u, []);

@@ -1,4 +1,5 @@
 import { Schema } from 'effect';
+
 import { PartyIdJsonSchema, TenantIdJsonSchema } from './shared.ts';
 
 export class PartyAliasResolutionCycle extends Schema.TaggedError<PartyAliasResolutionCycle>()(
@@ -8,5 +9,5 @@ export class PartyAliasResolutionCycle extends Schema.TaggedError<PartyAliasReso
     partyId: PartyIdJsonSchema,
     reason: Schema.String,
     tenantId: TenantIdJsonSchema,
-  },
+  }
 ) {}

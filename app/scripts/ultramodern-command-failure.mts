@@ -2,8 +2,9 @@ import { Schema } from 'effect';
 
 class UltramodernCommandError extends Schema.TaggedError<UltramodernCommandError>()(
   'UltramodernCommandError',
-  { reason: Schema.String },
+  { reason: Schema.String }
 ) {}
 
-export const ultramodernCommandFailure = (reason: string): UltramodernCommandError =>
-  new UltramodernCommandError({ reason });
+export const ultramodernCommandFailure = (
+  reason: string
+): UltramodernCommandError => new UltramodernCommandError({ reason });

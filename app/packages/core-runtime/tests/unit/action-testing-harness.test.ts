@@ -1,13 +1,18 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+
 import { defineAction } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { bindActionTestServices, makeActionTestHarness } from '../../src/testing/actions.ts';
+import {
+  bindActionTestServices,
+  makeActionTestHarness,
+} from '../../src/testing/actions.ts';
 
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -19,14 +24,22 @@ const principal = {
 
 const lifecycleAction = defineAction(
   {
-    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.counter.read.v1' },
+    accessEvidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'test.counter.read.v1',
+    },
     actionKey: 'test.counter.increment',
     auditProfile: 'standard',
     domainErrorSchema: Schema.Never,
-    domainEvents: { 'test.counter.incremented.v1': Schema.Struct({ amount: Schema.Finite }) },
+    domainEvents: {
+      'test.counter.incremented.v1': Schema.Struct({ amount: Schema.Finite }),
+    },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: {
+        kind: 'action_execution',
+        provisioning: 'tenant_membership_default',
+      },
       entrypointKey: 'test.counter.increment',
       moduleKey: 'test.counter',
       role: 'action',
@@ -56,14 +69,17 @@ const lifecycleAction = defineAction(
         topic: 'test.counter.incremented.v1',
       });
       return { total: payload.amount };
-    }),
+    })
 );
 
 const request = {
   payload: { amount: 2 },
   principal,
   registration: lifecycleAction,
-  transport: { correlationId: 'action-harness-test', idempotencyKey: 'increment-once' },
+  transport: {
+    correlationId: 'action-harness-test',
+    idempotencyKey: 'increment-once',
+  },
 } as const;
 
 test('runs the real Action lifecycle and preserves committed replay semantics', async () => {
@@ -72,12 +88,20 @@ test('runs the real Action lifecycle and preserves committed replay semantics', 
     tenantPermission: 'allowed',
   });
 
-  assert.deepEqual(await runEffectTestPromise(harness.runtime.runAction(request)), { total: 2 });
-  const replay = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
+  assert.deepEqual(
+    await runEffectTestPromise(harness.runtime.runAction(request)),
+    { total: 2 }
+  );
+  const replay = await runEffectTestPromise(
+    harness.runtime.runAction(request).pipe(Effect.flip)
+  );
   const snapshot = harness.snapshot();
 
   assert.equal(replay._tag, 'ActionAlreadyCommitted');
-  assert.deepEqual(snapshot.stages.slice(0, ACTION_RUNTIME_STAGES.length), ACTION_RUNTIME_STAGES);
+  assert.deepEqual(
+    snapshot.stages.slice(0, ACTION_RUNTIME_STAGES.length),
+    ACTION_RUNTIME_STAGES
+  );
   assert.equal(snapshot.invocations.length, 1);
   assert.equal(snapshot.invocations[0]?.status, 'succeeded');
   assert.equal(snapshot.transactionCount, 1);
@@ -88,7 +112,9 @@ test('runs the real Action lifecycle and preserves committed replay semantics', 
 
 test('defaults authorization closed and never starts a transaction for a denial', async () => {
   const harness = makeActionTestHarness();
-  const denied = await runEffectTestPromise(harness.runtime.runAction(request).pipe(Effect.flip));
+  const denied = await runEffectTestPromise(
+    harness.runtime.runAction(request).pipe(Effect.flip)
+  );
   const snapshot = harness.snapshot();
 
   assert.equal(denied._tag, 'ActionPermissionDenied');
@@ -107,14 +133,20 @@ test('substitutes typed owner services without replacing the private handler', a
   }
   const serviceAction = defineAction(
     {
-      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.service.read.v1' },
+      accessEvidencePolicy: {
+        captureMode: 'metadata_only',
+        policyKey: 'test.service.read.v1',
+      },
       actionKey: 'test.service.increment',
       auditProfile: 'minimal',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        authorization: {
+          kind: 'action_execution',
+          provisioning: 'tenant_membership_default',
+        },
         entrypointKey: 'test.service.increment',
         moduleKey: 'test.service',
         role: 'action',
@@ -129,7 +161,7 @@ test('substitutes typed owner services without replacing the private handler', a
     },
     (payload, context) => context.services.increment(payload.amount),
     (): Effect.Effect<CounterServices> =>
-      Effect.die('production owner services must not run in this test'),
+      Effect.die('production owner services must not run in this test')
   );
   let calls = 0;
   const harness = makeActionTestHarness({
@@ -150,8 +182,11 @@ test('substitutes typed owner services without replacing the private handler', a
       payload: { amount: 4 },
       principal,
       registration: serviceAction,
-      transport: { correlationId: 'service-test', idempotencyKey: 'service-once' },
-    }),
+      transport: {
+        correlationId: 'service-test',
+        idempotencyKey: 'service-once',
+      },
+    })
   );
 
   assert.equal(result, 5);
@@ -172,7 +207,7 @@ test('rejects missing idempotency before creating an invocation', async () => {
         registration: lifecycleAction,
         transport: { correlationId: 'missing-idempotency' },
       })
-      .pipe(Effect.flip),
+      .pipe(Effect.flip)
   );
 
   assert.equal(failure._tag, 'ActionIdempotencyKeyRequired');
@@ -187,18 +222,21 @@ test('persists policy denials separately from permission denials before handler 
           ...lifecycleAction.descriptor,
           policies: [
             defineGlobalPolicy({
-              evaluate: () => Effect.fail(denyPolicy('counter_locked', 'Counter is locked')),
+              evaluate: () =>
+                Effect.fail(denyPolicy('counter_locked', 'Counter is locked')),
               policyKey: 'global.counter-locked.v1',
             }),
           ],
         },
-        () => Effect.die('A denied policy must not execute the handler'),
+        () => Effect.die('A denied policy must not execute the handler')
       );
       const harness = makeActionTestHarness({
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
       });
-      yield* harness.runtime.runAction({ ...request, registration }).pipe(Effect.flip);
+      yield* harness.runtime
+        .runAction({ ...request, registration })
+        .pipe(Effect.flip);
       const snapshot = harness.snapshot();
       assert.equal(snapshot.policyDenials.length, 1);
       assert.equal(snapshot.permissionDenials.length, 0);
@@ -206,10 +244,10 @@ test('persists policy denials separately from permission denials before handler 
       assert.equal(snapshot.invocations[0]?.completedAt?.getTime(), 0);
       assert.equal(
         snapshot.policyDenials[0]?.actionInvocationId,
-        snapshot.invocations[0]?.actionInvocationId,
+        snapshot.invocations[0]?.actionInvocationId
       );
       assert.equal(snapshot.transactionCount, 0);
       assert.equal(snapshot.committed.length, 0);
       assert.equal(snapshot.stages.includes('handler_executed'), false);
-    }),
+    })
   ));

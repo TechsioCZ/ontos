@@ -2,10 +2,7 @@
 
 This document defines the error contract from backend Effect programs, through HTTP, into generated Backend for Frontend (BFF) clients and frontend feature code.
 
-Governed context, read denial/evidence, and isolation failures follow
-[Governed Data Access and Operation Scope](./DATA_ACCESS.md). Context or authorization uncertainty
-is a declared retryable `503`; business handlers and adapters must not receive database executors or
-leak database/SpiceDB diagnostics.
+Governed context, read denial/evidence, and isolation failures follow [Governed Data Access and Operation Scope](./DATA_ACCESS.md). Context or authorization uncertainty is a declared retryable `503`; business handlers and adapters must not receive database executors or leak database/SpiceDB diagnostics.
 
 ## Non-Negotiable Rules
 
@@ -39,75 +36,40 @@ Internal domain and infrastructure errors may be more detailed than the public c
 
 Module entrypoint failures from [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md) remain typed and sanitized across every boundary. A definite tenant-state denial normally maps to a declared `403`; an unavailable/indeterminate gate check maps to a declared retryable `503`. Frontend integrations must handle both explicitly before any private implementation or remote is loaded.
 
-Shell composition uses `401` for a missing session, `409` when legal-entity selection is required,
-`403` for definite module/resource denial, `404` for safely undiscoverable targets, retryable `503`
-for catalog/state/context/authorization/provider uncertainty, and a redacted declared `500` only
-after logging an unexpected Effect cause. HTTP status and Problem Details `status` must match.
+Shell composition uses `401` for a missing session, `409` when legal-entity selection is required, `403` for definite module/resource denial, `404` for safely undiscoverable targets, retryable `503` for catalog/state/context/authorization/provider uncertainty, and a redacted declared `500` only after logging an unexpected Effect cause. HTTP status and Problem Details `status` must match.
 
 Unexpected defects are not expected failures. At the outer HTTP seam, log the full Effect cause with correlation context, then convert it to a declared, non-sensitive typed `InternalServerError` with status `500`. No defect may escape as an unstructured backend response.
 
 Generated Action BFF endpoints must also map the complete Core Action error union. `ActionPolicyDenied` carries a stable Policy reason code and safe human-readable reason, but Core deliberately assigns no HTTP status: the endpoint maps the Policy's declared semantics to the correct public Problem Details schema, such as `403` for authorization-like denial, `409` for current-state conflict, or `422` for semantic ineligibility. `ActionPolicyEvaluationError` represents a sanitized evaluator defect or unavailable required capability and must map to the endpoint's declared operational failure, commonly a retryable `503` when appropriate. Neither error may fall through to an exception, generic Action endpoint, or ad hoc response.
 
-For the Shell-user MicroVertical Action identity boundary, the generated verifier keeps expected
-failures typed as missing, invalid, expired, scope-invalid, configuration, or verification
-unavailable errors. The owning endpoint must map missing, invalid, expired, and scope-invalid
-credentials to its declared `401` Problem Details schema and attach `WWW-Authenticate: Bearer`.
-Configuration or verification capability failures map to a declared retryable `503`. Never expose
-the assertion, a JWK, signature diagnostics, or claim contents in Problem Details or logs. A verified
-assertion supplies authentication context only; SpiceDB denial remains `403` and Policy failures
-retain their endpoint-specific semantics.
+For the Shell-user MicroVertical Action identity boundary, the generated verifier keeps expected failures typed as missing, invalid, expired, scope-invalid, configuration, or verification unavailable errors. The owning endpoint must map missing, invalid, expired, and scope-invalid credentials to its declared `401` Problem Details schema and attach `WWW-Authenticate: Bearer`. Configuration or verification capability failures map to a declared retryable `503`. Never expose the assertion, a JWK, signature diagnostics, or claim contents in Problem Details or logs. A verified assertion supplies authentication context only; SpiceDB denial remains `403` and Policy failures retain their endpoint-specific semantics.
 
 ## Status Code Semantics
 
 Choose the status from the meaning of the failure, not from a generic domain-error default.
 
-| Status | Use when                                                                                                            |
-| ------ | ------------------------------------------------------------------------------------------------------------------- |
-| `400`  | The request cannot be decoded or structurally validated against its schema.                                         |
-| `401`  | Credentials are missing, invalid, expired, revoked, or otherwise unusable. Include a `WWW-Authenticate` challenge.  |
-| `403`  | Authentication succeeded, but the principal is not permitted to perform the operation.                              |
-| `404`  | The requested resource is absent and revealing that fact is allowed.                                                |
-| `409`  | The operation conflicts with the current mutable state or a concurrency invariant and may succeed after resolution. |
-| `422`  | The request is structurally valid but semantically ineligible, and the failure is not authorization or conflict.    |
-| `429`  | The caller exceeded a rate or quota limit.                                                                          |
-| `500`  | An unexpected internal defect was caught at the outer HTTP seam.                                                    |
-| `503`  | A required capability is temporarily unavailable and retry may succeed later.                                       |
-| `504`  | A required upstream operation did not complete before its deadline.                                                 |
+| Status | Use when |
+| --- | --- |
+| `400` | The request cannot be decoded or structurally validated against its schema. |
+| `401` | Credentials are missing, invalid, expired, revoked, or otherwise unusable. Include a `WWW-Authenticate` challenge. |
+| `403` | Authentication succeeded, but the principal is not permitted to perform the operation. |
+| `404` | The requested resource is absent and revealing that fact is allowed. |
+| `409` | The operation conflicts with the current mutable state or a concurrency invariant and may succeed after resolution. |
+| `422` | The request is structurally valid but semantically ineligible, and the failure is not authorization or conflict. |
+| `429` | The caller exceeded a rate or quota limit. |
+| `500` | An unexpected internal defect was caught at the outer HTTP seam. |
+| `503` | A required capability is temporarily unavailable and retry may succeed later. |
+| `504` | A required upstream operation did not complete before its deadline. |
 
-Identity endpoints apply the same meanings exhaustively. Missing or unusable Shell credentials use
-`401` with a Bearer challenge; the API-key exchange uses an API-key challenge. A definite permission
-denial or active credential bound to a forbidden tenant/principal/legal entity is `403`; lifecycle
-state races are `409`; missing runtime records are `404`; ineligible targets are `422`; a missing
-required idempotency key is `428`; provider throttling is `429`. Structurally invalid operation
-payloads are `400`. Database,
-SpiceDB, resolver, evidence, or provider uncertainty is retryable `503`, while only caught defects
-at the outer handler seam become sanitized `500`. Problem Details never include keys, hashes,
-cookies, provider diagnostics, identifiers, or signature details.
+Identity endpoints apply the same meanings exhaustively. Missing or unusable Shell credentials use `401` with a Bearer challenge; the API-key exchange uses an API-key challenge. A definite permission denial or active credential bound to a forbidden tenant/principal/legal entity is `403`; lifecycle state races are `409`; missing runtime records are `404`; ineligible targets are `422`; a missing required idempotency key is `428`; provider throttling is `429`. Structurally invalid operation payloads are `400`. Database, SpiceDB, resolver, evidence, or provider uncertainty is retryable `503`, while only caught defects at the outer handler seam become sanitized `500`. Problem Details never include keys, hashes, cookies, provider diagnostics, identifiers, or signature details.
 
-`ActionAlreadyCommitted` is a terminal idempotency conflict (`409`) at identity transports, not a
-retryable capability outage. The internal stopped-impersonation recovery path treats that exact
-outcome as successful checkpoint replay, then retries deletion of its Auth-owned recovery record.
-If any work after provider restoration remains pending, Shell forwards the restored cookie first
-and returns the declared retryable `503` without exposing recovery data.
-Requested and started checkpoint failures preserve their typed Action error: definite permission
-denial maps to `403`, invalid identity state maps to `422`, and authorization or persistence
-uncertainty maps to `503`. A stopped checkpoint that fails after mechanical termination is reported
-only as pending recovery and never reactivates the impersonated session.
+`ActionAlreadyCommitted` is a terminal idempotency conflict (`409`) at identity transports, not a retryable capability outage. The internal stopped-impersonation recovery path treats that exact outcome as successful checkpoint replay, then retries deletion of its Auth-owned recovery record. If any work after provider restoration remains pending, Shell forwards the restored cookie first and returns the declared retryable `503` without exposing recovery data. Requested and started checkpoint failures preserve their typed Action error: definite permission denial maps to `403`, invalid identity state maps to `422`, and authorization or persistence uncertainty maps to `503`. A stopped checkpoint that fails after mechanical termination is reported only as pending recovery and never reactivates the impersonated session.
 
 Use other RFC 9110 statuses when they are a more accurate semantic match. Do not disguise authentication or authorization failures as validation errors, and do not use `500` for declared business rejections.
 
 ## Core Action Permission Failures
 
-Core keeps its Action errors transport-neutral. A future Action BFF endpoint
-must exhaustively map `ActionPermissionDenied` to a declared `403` Problem
-Details schema and `ActionPermissionCheckError` to a declared `503` Problem
-Details schema. The denial exposes only its stable code and safe reason. The
-absence of an executor relationship is a definite `NO_PERMISSION` denial, not
-an unavailable configuration state. The check error covers timeout,
-unavailability, authentication or schema failure, and any conditional or
-otherwise indeterminate SpiceDB decision; it must never be reclassified as a
-permission denial or an unconfigured-Action allow. Do not introduce a generic
-Action HTTP endpoint to perform this mapping.
+Core keeps its Action errors transport-neutral. A future Action BFF endpoint must exhaustively map `ActionPermissionDenied` to a declared `403` Problem Details schema and `ActionPermissionCheckError` to a declared `503` Problem Details schema. The denial exposes only its stable code and safe reason. The absence of an executor relationship is a definite `NO_PERMISSION` denial, not an unavailable configuration state. The check error covers timeout, unavailability, authentication or schema failure, and any conditional or otherwise indeterminate SpiceDB decision; it must never be reclassified as a permission denial or an unconfigured-Action allow. Do not introduce a generic Action HTTP endpoint to perform this mapping.
 
 ## Problem Details
 
@@ -120,18 +82,9 @@ Every error response must contain a Problem Details body whose schema is declare
 
 Add structured extension members only when clients need them to recover, such as safe field issues, a retry hint, or a stable domain reason code. Keep those extensions typed in Effect Schema.
 
-Contract modules construct these schemas with the browser-safe `makeProblemDetailsSchema` and
-`makeRetryableProblemDetailsSchema` helpers from `@app/shared-contracts/problem-details`. The
-dedicated package entrypoint has no owner-local handler, environment, JOSE, database, or runtime
-dependency. The helper couples the literal body status, HttpApi status annotation, and
-`application/problem+json` representation. The retryable constructor deliberately adds only
-`retryable: true`; other safe recovery data must be supplied as concrete Effect Schema fields.
-Reserved Problem Details fields, arbitrary records, `Schema.Unknown`, and `Schema.Any` are not
-extension points.
+Contract modules construct these schemas with the browser-safe `makeProblemDetailsSchema` and `makeRetryableProblemDetailsSchema` helpers from `@app/shared-contracts/problem-details`. The dedicated package entrypoint has no owner-local handler, environment, JOSE, database, or runtime dependency. The helper couples the literal body status, HttpApi status annotation, and `application/problem+json` representation. The retryable constructor deliberately adds only `retryable: true`; other safe recovery data must be supplied as concrete Effect Schema fields. Reserved Problem Details fields, arbitrary records, `Schema.Unknown`, and `Schema.Any` are not extension points.
 
-These helpers are transport-contract infrastructure, not a catalog of business errors. Every
-contract still chooses its endpoint-specific tag, status, typed extensions, and visibly ordered
-error collection. Do not derive universal tags or endpoint semantics from status codes.
+These helpers are transport-contract infrastructure, not a catalog of business errors. Every contract still chooses its endpoint-specific tag, status, typed extensions, and visibly ordered error collection. Do not derive universal tags or endpoint semantics from status codes.
 
 ## Generated Client Contract
 
@@ -162,9 +115,4 @@ Before completing backend or BFF client work, verify:
 
 ## Single-use gateway assertions
 
-The receiving owner verifies signature, issuer, audience, expiry, version, `jti`, and trusted
-principal claims before attempting redemption. Atomic duplicate redemption is a typed unusable
-credential and maps to the same sanitized `401` family as another invalid Bearer assertion, with
-`WWW-Authenticate: Bearer`. Redemption storage failure is a typed unavailable result and maps to
-retryable `503`. Neither response exposes the assertion, `jti`, principal, tenant, or storage
-diagnostic.
+The receiving owner verifies signature, issuer, audience, expiry, version, `jti`, and trusted principal claims before attempting redemption. Atomic duplicate redemption is a typed unusable credential and maps to the same sanitized `401` family as another invalid Bearer assertion, with `WWW-Authenticate: Bearer`. Redemption storage failure is a typed unavailable result and maps to retryable `503`. Neither response exposes the assertion, `jti`, principal, tenant, or storage diagnostic.

@@ -52,7 +52,6 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import {
@@ -61,14 +60,17 @@ import {
   FUNCTION_TYPES,
 } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
-import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
+import { bindingsFor } from '../shared/effect-imports.ts';
+import type { EffectBindings } from '../shared/effect-imports.ts';
+import {
+  collectNamedImports,
+  collectRootNamespaces,
+} from '../shared/imports.ts';
+import { isTestFile, matchesAny } from '../shared/paths.ts';
 import {
   isInTypePosition as inTypePosition,
   isNonReferencePosition as nonReferencePosition,
 } from '../shared/reference-positions.ts';
-import { bindingsFor } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesAny } from '../shared/paths.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
 /** `effect/Effect`, and the same module reached through a deeper path (`effect/unstable/.../Effect`). */
@@ -112,9 +114,14 @@ interface ProvideBindings {
   readonly any: boolean;
 }
 
-function readStringArray(value: unknown, fallback: readonly string[]): readonly string[] {
+function readStringArray(
+  value: unknown,
+  fallback: readonly string[]
+): readonly string[] {
   if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
+  const entries = value.filter(
+    (entry): entry is string => typeof entry === 'string'
+  );
   return entries;
 }
 
@@ -138,7 +145,7 @@ const RUN_MEMBER = /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u;
 function collectProvideBindings(
   program: ESTree.Program,
   bindings: EffectBindings,
-  members: ReadonlySet<string>,
+  members: ReadonlySet<string>
 ): ProvideBindings {
   const isRoot = (source: string) => source === EFFECT_ROOT_MODULE;
   const isSubmodule = (source: string) => EFFECT_EFFECT_MODULE.test(source);
@@ -146,23 +153,35 @@ function collectProvideBindings(
   const namespaces = new Set(
     [...bindings.namespaces]
       .filter(([, name]) => name === EFFECT_NAMESPACE)
-      .map(([local]) => local),
+      .map(([local]) => local)
   );
   const pipes = new Set(
-    [...bindings.namespaces].filter(([, name]) => name === PIPE_NAMESPACE).map(([local]) => local),
+    [...bindings.namespaces]
+      .filter(([, name]) => name === PIPE_NAMESPACE)
+      .map(([local]) => local)
   );
   const barrels = collectRootNamespaces(program, isRoot, policy);
-  for (const local of collectRootNamespaces(program, isSubmodule, policy)) namespaces.add(local);
-  for (const [local, name] of collectNamedImports(program, isRoot, undefined, policy)) {
+  for (const local of collectRootNamespaces(program, isSubmodule, policy))
+    namespaces.add(local);
+  for (const [local, name] of collectNamedImports(
+    program,
+    isRoot,
+    undefined,
+    policy
+  )) {
     if (name === EFFECT_NAMESPACE) namespaces.add(local);
     else if (name === PIPE_NAMESPACE) pipes.add(local);
   }
   const direct = collectNamedImports(program, isSubmodule, undefined, policy);
   const directRuns = new Set(
-    [...direct].filter(([, name]) => RUN_MEMBER.test(name)).map(([local]) => local),
+    [...direct]
+      .filter(([, name]) => RUN_MEMBER.test(name))
+      .map(([local]) => local)
   );
   const directMembers = new Map(
-    [...direct].filter(([, name]) => !RUN_MEMBER.test(name) && members.has(name)),
+    [...direct].filter(
+      ([, name]) => !RUN_MEMBER.test(name) && members.has(name)
+    )
   );
   for (const [local, name] of direct) {
     if (name === PIPE_NAMESPACE && !members.has(name)) pipes.add(local);
@@ -194,7 +213,11 @@ function isInTypePosition(node: ESTree.Node): boolean {
 }
 
 function memberName(node: ESTree.MemberExpression): string | null {
-  return staticMemberName(node, { templates: true, rawTemplates: true, singleQuasi: true });
+  return staticMemberName(node, {
+    templates: true,
+    rawTemplates: true,
+    singleQuasi: true,
+  });
 }
 
 /**
@@ -204,7 +227,7 @@ function memberName(node: ESTree.MemberExpression): string | null {
 function resolveProvideMember(
   context: Context,
   node: ESTree.MemberExpression,
-  bindings: ProvideBindings,
+  bindings: ProvideBindings
 ): string | null {
   const member = memberName(node);
   if (member === null) return null;
@@ -253,7 +276,7 @@ function preservesPipeline(node: ESTree.Node): boolean {
 function isPipeCall(
   context: Context,
   call: ESTree.CallExpression,
-  bindings: ProvideBindings,
+  bindings: ProvideBindings
 ): boolean {
   const callee = unwrap(call.callee);
   if (callee.type === 'MemberExpression') return memberName(callee) === 'pipe';
@@ -262,13 +285,22 @@ function isPipeCall(
   return resolvesToImport(context, callee);
 }
 
-function isRunReference(context: Context, node: ESTree.Node, bindings: ProvideBindings): boolean {
+function isRunReference(
+  context: Context,
+  node: ESTree.Node,
+  bindings: ProvideBindings
+): boolean {
   const callee = unwrap(node);
   if (callee.type === 'Identifier')
-    return bindings.directRuns.has(callee.name) && resolvesToImport(context, callee);
+    return (
+      bindings.directRuns.has(callee.name) && resolvesToImport(context, callee)
+    );
   if (callee.type !== 'MemberExpression') return false;
   const member = resolveProvideMember(context, callee, bindings);
-  return member !== null && /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u.test(member);
+  return (
+    member !== null &&
+    /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u.test(member)
+  );
 }
 
 function isModuleEvaluation(node: ESTree.Node): boolean {
@@ -278,18 +310,24 @@ function isModuleEvaluation(node: ESTree.Node): boolean {
 }
 
 function isProgramParent(parent: ESTree.Node | null): boolean {
-  if (parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration')
+  if (
+    parent?.type === 'ExportNamedDeclaration' ||
+    parent?.type === 'ExportDefaultDeclaration'
+  )
     parent = parent.parent;
   return parent?.type === 'Program';
 }
 
 function entryFunctionIdentifier(
-  fn: ESTree.Node,
+  fn: ESTree.Node
 ): Extract<ESTree.Node, { type: 'Identifier' }> | null {
   let parent = fn.parent;
   let id: Extract<ESTree.Node, { type: 'Identifier' }> | null = null;
   if (fn.type === 'FunctionDeclaration') id = fn.id;
-  else if (parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier') {
+  else if (
+    parent?.type === 'VariableDeclarator' &&
+    parent.id.type === 'Identifier'
+  ) {
     id = parent.id;
     parent = parent.parent?.parent ?? null;
   }
@@ -298,7 +336,7 @@ function entryFunctionIdentifier(
 
 function isSingleModuleCall(
   context: Context,
-  id: Extract<ESTree.Node, { type: 'Identifier' }>,
+  id: Extract<ESTree.Node, { type: 'Identifier' }>
 ): boolean {
   const variable = lookupVariable(context, id);
   if (variable === null) return false;
@@ -306,19 +344,24 @@ function isSingleModuleCall(
     (ref) =>
       ref.isRead() &&
       ref.identifier.parent?.type !== 'ExportSpecifier' &&
-      ref.identifier.parent?.type !== 'ExportDefaultDeclaration',
+      ref.identifier.parent?.type !== 'ExportDefaultDeclaration'
   );
   if (reads.length !== 1) return false;
   const reference = reads[0]?.identifier;
   const call = reference?.parent;
-  return call?.type === 'CallExpression' && call.callee === reference && isModuleEvaluation(call);
+  return (
+    call?.type === 'CallExpression' &&
+    call.callee === reference &&
+    isModuleEvaluation(call)
+  );
 }
 
 /** Recognise only an immediately invoked wrapper or a single top-level invocation. */
 function isEntryFunction(context: Context, fn: ESTree.Node): boolean {
   if (!FUNCTION_TYPES.has(fn.type)) return false;
   const parent = fn.parent;
-  if (parent?.type === 'CallExpression' && parent.callee === fn) return isModuleEvaluation(parent);
+  if (parent?.type === 'CallExpression' && parent.callee === fn)
+    return isModuleEvaluation(parent);
   const id = entryFunctionIdentifier(fn);
   return id !== null && isSingleModuleCall(context, id);
 }
@@ -339,11 +382,17 @@ interface PipelineState {
   sawRunSeam: boolean;
 }
 
-function aliasRead(context: Context, node: ESTree.VariableDeclarator): ESTree.Node | null {
+function aliasRead(
+  context: Context,
+  node: ESTree.VariableDeclarator
+): ESTree.Node | null {
   if (node.id.type !== 'Identifier') return null;
   const variable = lookupVariable(context, node.id);
   const reads = variable?.references.filter((ref) => ref.isRead()) ?? [];
-  if (reads.length !== 1 || variable?.references.some((ref) => ref.isWrite() && !ref.init))
+  if (
+    reads.length !== 1 ||
+    variable?.references.some((ref) => ref.isWrite() && !ref.init)
+  )
     return null;
   return reads[0]!.identifier;
 }
@@ -351,7 +400,7 @@ function aliasRead(context: Context, node: ESTree.VariableDeclarator): ESTree.No
 function pipelineAlias(
   current: ESTree.Node,
   child: ESTree.Node,
-  state: PipelineState,
+  state: PipelineState
 ): current is ESTree.VariableDeclarator {
   return (
     state.inPipeline &&
@@ -365,7 +414,7 @@ function pipelineAlias(
 function hasTerminalRun(
   context: Context,
   call: ESTree.CallExpression,
-  bindings: ProvideBindings,
+  bindings: ProvideBindings
 ): boolean {
   const terminal = call.arguments.at(-1);
   return terminal !== undefined && isRunReference(context, terminal, bindings);
@@ -376,12 +425,18 @@ function visitPipelineCall(
   call: ESTree.CallExpression,
   child: ESTree.Node,
   bindings: ProvideBindings,
-  state: PipelineState,
+  state: PipelineState
 ): void {
   const pipe = isPipeCall(context, call, bindings);
-  if (state.inPipeline && pipe && hasTerminalRun(context, call, bindings)) state.sawRunSeam = true;
-  if (Object.is(unwrap(call.callee), child) || Object.is(call.callee, child)) return;
-  if (state.inPipeline && !state.sawRunSeam && isRunReference(context, call.callee, bindings))
+  if (state.inPipeline && pipe && hasTerminalRun(context, call, bindings))
+    state.sawRunSeam = true;
+  if (Object.is(unwrap(call.callee), child) || Object.is(call.callee, child))
+    return;
+  if (
+    state.inPipeline &&
+    !state.sawRunSeam &&
+    isRunReference(context, call.callee, bindings)
+  )
     state.sawRunSeam = true;
   else if (!pipe) state.inPipeline = false;
 }
@@ -391,12 +446,14 @@ function visitPipelineNode(
   current: ESTree.Node,
   child: ESTree.Node,
   bindings: ProvideBindings,
-  state: PipelineState,
+  state: PipelineState
 ): void {
   if (current.type === 'CallExpression') {
     visitPipelineCall(context, current, child, bindings, state);
   } else if (current.type === 'MemberExpression') {
-    const isObject = Object.is(current.object, child) || Object.is(unwrap(current.object), child);
+    const isObject =
+      Object.is(current.object, child) ||
+      Object.is(unwrap(current.object), child);
     if (!isObject || memberName(current) !== 'pipe') state.inPipeline = false;
   } else if (!preservesPipeline(current)) state.inPipeline = false;
 }
@@ -405,18 +462,21 @@ function isOuterRunSeam(
   context: Context,
   node: ESTree.Node,
   bindings: ProvideBindings,
-  hops = 0,
+  hops = 0
 ): boolean {
   if (hops > 8) return false;
   let child = node;
   const state: PipelineState = { inPipeline: true, sawRunSeam: false };
   for (let current = node.parent; current !== null; current = current.parent) {
-    if (isFunctionLikeBoundary(current) && !isEntryFunction(context, current)) return false;
+    if (isFunctionLikeBoundary(current) && !isEntryFunction(context, current))
+      return false;
     if (current.type === 'Program') return state.sawRunSeam;
     if (pipelineAlias(current, child, state)) {
-      if (current.parent?.parent?.type === 'ExportNamedDeclaration') return false;
+      if (current.parent?.parent?.type === 'ExportNamedDeclaration')
+        return false;
       const read = aliasRead(context, current);
-      if (read !== null) return isOuterRunSeam(context, read, bindings, hops + 1);
+      if (read !== null)
+        return isOuterRunSeam(context, read, bindings, hops + 1);
     }
     visitPipelineNode(context, current, child, bindings, state);
     child = current;
@@ -432,7 +492,7 @@ const REFERENCE_KEYS = new Set([
 ]);
 function isRuntimeImportReference(
   context: Context,
-  node: Extract<ESTree.Node, { type: 'Identifier' }>,
+  node: Extract<ESTree.Node, { type: 'Identifier' }>
 ): boolean {
   return (
     !nonReferencePosition(node, { keyParents: REFERENCE_KEYS }) &&
@@ -489,7 +549,11 @@ export const rule = defineRule({
         if (matchesAny(context.filename, options.rootFiles)) return false;
         const imports: EffectBindings = bindingsFor(context);
         if (!imports.importsEffect) return false;
-        bindings = collectProvideBindings(context.sourceCode.ast, imports, options.members);
+        bindings = collectProvideBindings(
+          context.sourceCode.ast,
+          imports,
+          options.members
+        );
         return bindings.any;
       },
       after() {
@@ -502,17 +566,30 @@ export const rule = defineRule({
         const member = resolveProvideMember(context, node, imports);
         if (member === null || !resolved.members.has(member)) return;
         if (isInTypePosition(node)) return;
-        if (resolved.allowOuterRunSeam && isOuterRunSeam(context, node, imports)) return;
+        if (
+          resolved.allowOuterRunSeam &&
+          isOuterRunSeam(context, node, imports)
+        )
+          return;
         report(node, member);
       },
       Identifier(node) {
         const resolved = options;
         const imports = bindings;
-        if (resolved === null || imports === null || imports.directMembers.size === 0) return;
+        if (
+          resolved === null ||
+          imports === null ||
+          imports.directMembers.size === 0
+        )
+          return;
         const member = imports.directMembers.get(node.name);
         if (member === undefined || !resolved.members.has(member)) return;
         if (!isRuntimeImportReference(context, node)) return;
-        if (resolved.allowOuterRunSeam && isOuterRunSeam(context, node, imports)) return;
+        if (
+          resolved.allowOuterRunSeam &&
+          isOuterRunSeam(context, node, imports)
+        )
+          return;
         report(node, member);
       },
     };

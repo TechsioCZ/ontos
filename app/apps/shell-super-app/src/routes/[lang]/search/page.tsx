@@ -1,5 +1,8 @@
 /* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import {
+  Link as LocalizedLink,
+  useModernI18n,
+} from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
@@ -22,13 +25,15 @@ const SearchResultItem = ({
     Match.when({ kind: 'resource' }, () => null),
     Match.when({ kind: 'party' }, (partyResult) => partyResult),
     Match.when({ kind: 'counterparty' }, (counterparty) => counterparty.party),
-    Match.exhaustive,
+    Match.exhaustive
   );
   const resultKindLabel = (): string => {
     if (result.kind === 'resource') {
       return result.ref.resourceType;
     }
-    return result.kind === 'party' ? t('shell.search.party') : t('shell.search.counterparty');
+    return result.kind === 'party'
+      ? t('shell.search.party')
+      : t('shell.search.counterparty');
   };
   return (
     <li
@@ -95,7 +100,7 @@ const SearchPage = () => {
   const { t } = useModernI18n();
   const model = useLoaderData({ from: '/$lang/search' });
   const controls = useShellControls(
-    model.shell.state === 'authenticated' ? model.shell : undefined,
+    model.shell.state === 'authenticated' ? model.shell : undefined
   );
   if (model.shell.state !== 'authenticated') {
     return (
@@ -104,7 +109,7 @@ const SearchPage = () => {
           {t(
             model.shell.state === 'unavailable'
               ? 'shell.dashboard.unavailable'
-              : 'shell.search.selection_required',
+              : 'shell.search.selection_required'
           )}
         </StatusText>
       </main>
@@ -145,7 +150,11 @@ const SearchPage = () => {
       </section>
     );
   return (
-    <ShellContentLayout controls={controls} shell={model.shell} title={t('shell.search.title')}>
+    <ShellContentLayout
+      controls={controls}
+      shell={model.shell}
+      title={t('shell.search.title')}
+    >
       {content}
     </ShellContentLayout>
   );

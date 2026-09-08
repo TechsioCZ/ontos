@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-throw-in-configuration-parser
  *
@@ -85,10 +84,8 @@ import { optionRecord } from '../shared/options.ts';
  * The rule never fixes and never suggests.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import {
   keyName as staticKeyName,
   memberName,
@@ -97,7 +94,14 @@ import {
   unwrapNode,
 } from '../shared/ast.ts';
 import { resolveVariable as lookupNamedVariable } from '../shared/bindings.ts';
-import { stringArray, safeRegExp, stringOption, positiveInteger } from '../shared/options.ts';
+import { optionRecord } from '../shared/options.ts';
+import {
+  stringArray,
+  safeRegExp,
+  stringOption,
+  positiveInteger,
+} from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -105,10 +109,15 @@ function keyName(key: AnyNode): string | null {
   return staticKeyName(key, false, { templates: false });
 }
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+];
 
 /** Spec default: alias names that stand for "the environment record". */
-const DEFAULT_ENVIRONMENT_TYPE_NAMES = '(^|\\.)(Environment|ProcessEnv|StageDemoEnvironment)$';
+const DEFAULT_ENVIRONMENT_TYPE_NAMES =
+  '(^|\\.)(Environment|ProcessEnv|StageDemoEnvironment)$';
 
 /** Binding names that stand for an environment bag (`environment['X']`, `env.PORT`). */
 const DEFAULT_ENVIRONMENT_IDENTIFIERS =
@@ -241,15 +250,26 @@ function readOptions(context: Context): RuleOptions {
   return {
     allowPaths: stringArray(record.allowPaths, DEFAULTS.allowPaths),
     ignoreTestFiles: record.ignoreTestFiles !== false,
-    includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
+    includePaths:
+      includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
     environmentIdentifiers: stringOption(
       record.environmentIdentifiers,
-      DEFAULTS.environmentIdentifiers,
+      DEFAULTS.environmentIdentifiers
     ),
-    environmentReaders: stringArray(record.environmentReaders, DEFAULTS.environmentReaders),
-    environmentTypeNames: stringOption(record.environmentTypeNames, DEFAULTS.environmentTypeNames),
+    environmentReaders: stringArray(
+      record.environmentReaders,
+      DEFAULTS.environmentReaders
+    ),
+    environmentTypeNames: stringOption(
+      record.environmentTypeNames,
+      DEFAULTS.environmentTypeNames
+    ),
     followLocalHelpers: record.followLocalHelpers !== false,
-    maxHelperDepth: positiveInteger(record.maxHelperDepth, DEFAULTS.maxHelperDepth, 0),
+    maxHelperDepth: positiveInteger(
+      record.maxHelperDepth,
+      DEFAULTS.maxHelperDepth,
+      0
+    ),
   };
 }
 
@@ -345,7 +365,8 @@ export const rule = defineRule({
           maxHelperDepth: {
             type: 'integer',
             minimum: 0,
-            description: 'How many local call hops followLocalHelpers propagates (default: 3).',
+            description:
+              'How many local call hops followLocalHelpers propagates (default: 3).',
           },
         },
       },
@@ -374,11 +395,11 @@ export const rule = defineRule({
 
     const environmentIdentifier = safeRegExp(
       options.environmentIdentifiers,
-      DEFAULTS.environmentIdentifiers,
+      DEFAULTS.environmentIdentifiers
     );
     const environmentTypeName = safeRegExp(
       options.environmentTypeNames,
-      DEFAULTS.environmentTypeNames,
+      DEFAULTS.environmentTypeNames
     );
     const environmentReaders = new Set(options.environmentReaders);
 
@@ -415,37 +436,51 @@ export const rule = defineRule({
       if (
         !variable ||
         variable.defs.length !== 1 ||
-        variable.references.some((reference) => reference.isWrite() && !reference.init)
+        variable.references.some(
+          (reference) => reference.isWrite() && !reference.init
+        )
       )
         return null;
       const definition = variable.defs[0];
-      return definition.type === 'Variable' && definition.node.type === 'VariableDeclarator'
+      return definition.type === 'Variable' &&
+        definition.node.type === 'VariableDeclarator'
         ? (definition.node as ESTree.VariableDeclarator)
         : null;
     };
     const isValueImport = (
       specifier: ESTree.ImportDeclaration['specifiers'][number],
-      declaration: ESTree.ImportDeclaration,
+      declaration: ESTree.ImportDeclaration
     ): boolean =>
       declaration?.type === 'ImportDeclaration' &&
       declaration.importKind !== 'type' &&
-      !(specifier.type === 'ImportSpecifier' && specifier.importKind === 'type');
-    const importOf = (node: AnyNode): { source: string; member: string } | null => {
+      !(
+        specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'
+      );
+    const importOf = (
+      node: AnyNode
+    ): { source: string; member: string } | null => {
       if (node.type !== 'Identifier') return null;
       const variable = resolveVariable(node.name, node);
-      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      const definition =
+        variable?.defs.length === 1 ? variable.defs[0] : undefined;
       if (definition?.type !== 'ImportBinding') return null;
-      const specifier = definition.node as ESTree.ImportDeclaration['specifiers'][number];
-      const declaration = parentOf(specifier as AnyNode) as ESTree.ImportDeclaration;
+      const specifier =
+        definition.node as ESTree.ImportDeclaration['specifiers'][number];
+      const declaration = parentOf(
+        specifier as AnyNode
+      ) as ESTree.ImportDeclaration;
       if (!isValueImport(specifier, declaration)) return null;
       return {
         source: declaration.source.value,
-        member: specifier.type === 'ImportSpecifier' ? (keyName(specifier.imported) ?? '') : '*',
+        member:
+          specifier.type === 'ImportSpecifier'
+            ? (keyName(specifier.imported) ?? '')
+            : '*',
       };
     };
     const isIdentifierEnvHost = (
       node: Extract<AnyNode, { type: 'Identifier' }>,
-      depth: number,
+      depth: number
     ): boolean => {
       const imported = importOf(node);
       if (imported)
@@ -453,7 +488,8 @@ export const rule = defineRule({
           PROCESS_MODULES.has(imported.source) &&
           (imported.member === '*' || imported.member === 'default')
         );
-      if (ENV_HOSTS.has(node.name) && isUnshadowedGlobal(node, node.name)) return true;
+      if (ENV_HOSTS.has(node.name) && isUnshadowedGlobal(node, node.name))
+        return true;
       const declaration = declarationOf(node);
       return (
         declaration?.id.type === 'Identifier' &&
@@ -464,16 +500,23 @@ export const rule = defineRule({
     const isEnvHost = (input: AnyNode, depth = 0): boolean => {
       if (depth > 12) return false;
       const node = unwrap(input);
-      if (node.type === 'AwaitExpression') return isEnvHost(node.argument, depth + 1);
+      if (node.type === 'AwaitExpression')
+        return isEnvHost(node.argument, depth + 1);
       if (node.type === 'ImportExpression')
-        return node.source.type === 'Literal' && PROCESS_MODULES.has(String(node.source.value));
+        return (
+          node.source.type === 'Literal' &&
+          PROCESS_MODULES.has(String(node.source.value))
+        );
       if (node.type === 'MetaProperty')
         return node.meta.name === 'import' && node.property.name === 'meta';
       if (node.type === 'Identifier') return isIdentifierEnvHost(node, depth);
       return isContainerEnvHost(node);
     };
     const isContainerEnvHost = (node: AnyNode): boolean => {
-      if (node.type !== 'MemberExpression' || !ENV_HOSTS.has(staticPropertyName(node) ?? ''))
+      if (
+        node.type !== 'MemberExpression' ||
+        !ENV_HOSTS.has(staticPropertyName(node) ?? '')
+      )
         return false;
       const container = unwrap(node.object as AnyNode);
       return (
@@ -482,18 +525,23 @@ export const rule = defineRule({
         isUnshadowedGlobal(container, container.name)
       );
     };
-    const isEnvironmentClassMember = (member: ESTree.Node, key: string): boolean => {
+    const isEnvironmentClassMember = (
+      member: ESTree.Node,
+      key: string
+    ): boolean => {
       if (member.type === 'PropertyDefinition' && keyName(member.key) === key)
         return (
-          !!member.typeAnnotation && isEnvironmentRecordType(member.typeAnnotation.typeAnnotation)
+          !!member.typeAnnotation &&
+          isEnvironmentRecordType(member.typeAnnotation.typeAnnotation)
         );
-      if (member.type !== 'MethodDefinition' || member.kind !== 'constructor') return false;
+      if (member.type !== 'MethodDefinition' || member.kind !== 'constructor')
+        return false;
       return member.value.params.some(
         (parameter) =>
           parameter.type === 'TSParameterProperty' &&
           parameterInfo(parameter).name === key &&
           parameterInfo(parameter).type !== null &&
-          isEnvironmentRecordType(parameterInfo(parameter).type as AnyNode),
+          isEnvironmentRecordType(parameterInfo(parameter).type as AnyNode)
       );
     };
     const isClassEnvBag = (node: ESTree.MemberExpression): boolean => {
@@ -508,12 +556,14 @@ export const rule = defineRule({
       )
         enclosing = parentOf(enclosing);
       if (!enclosing || key === null) return false;
-      return enclosing.body.body.some((member) => isEnvironmentClassMember(member, key));
+      return enclosing.body.body.some((member) =>
+        isEnvironmentClassMember(member, key)
+      );
     };
     const initializedEnvBag = (
       declaration: ESTree.VariableDeclarator,
       name: string,
-      depth: number,
+      depth: number
     ): boolean | null => {
       if (declaration.init) {
         if (declaration.id.type === 'Identifier') {
@@ -522,17 +572,21 @@ export const rule = defineRule({
             return init.properties.some((property) =>
               property.type === 'SpreadElement'
                 ? isEnvBag(property.argument, depth + 1)
-                : property.type === 'Property' && isEnvDerived(property.value, depth + 1),
+                : property.type === 'Property' &&
+                  isEnvDerived(property.value, depth + 1)
             );
           return isEnvBag(init, depth + 1);
         }
-        if (declaration.id.type === 'ObjectPattern' && isEnvHost(declaration.init as AnyNode))
+        if (
+          declaration.id.type === 'ObjectPattern' &&
+          isEnvHost(declaration.init as AnyNode)
+        )
           return declaration.id.properties.some(
             (property) =>
               property.type === 'Property' &&
               keyName(property.key) === 'env' &&
               property.value.type === 'Identifier' &&
-              property.value.name === name,
+              property.value.name === name
           );
       }
       return null;
@@ -541,7 +595,11 @@ export const rule = defineRule({
       if (depth > 12) return false;
       const node = unwrap(input);
       if (node.type === 'MemberExpression') {
-        if (staticPropertyName(node) === 'env' && isEnvHost(node.object as AnyNode)) return true;
+        if (
+          staticPropertyName(node) === 'env' &&
+          isEnvHost(node.object as AnyNode)
+        )
+          return true;
         return isClassEnvBag(node);
       }
       if (node.type !== 'Identifier') return false;
@@ -549,24 +607,34 @@ export const rule = defineRule({
     };
     const isIdentifierEnvBag = (
       node: Extract<AnyNode, { type: 'Identifier' }>,
-      depth: number,
+      depth: number
     ): boolean => {
       const imported = importOf(node);
-      if (imported) return PROCESS_MODULES.has(imported.source) && imported.member === 'env';
+      if (imported)
+        return (
+          PROCESS_MODULES.has(imported.source) && imported.member === 'env'
+        );
       const declaration = declarationOf(node);
-      const initialized = declaration ? initializedEnvBag(declaration, node.name, depth) : null;
+      const initialized = declaration
+        ? initializedEnvBag(declaration, node.name, depth)
+        : null;
       if (initialized !== null) return initialized;
       const variable = resolveVariable(node.name, node);
       const definition = variable?.defs[0];
       const annotation = (
-        definition?.name as unknown as { typeAnnotation?: { typeAnnotation: AnyNode } }
+        definition?.name as unknown as {
+          typeAnnotation?: { typeAnnotation: AnyNode };
+        }
       )?.typeAnnotation;
       return (
         (annotation && isEnvironmentRecordType(annotation.typeAnnotation)) ||
         environmentIdentifier.test(node.name)
       );
     };
-    const isEnvironmentBagRead = (node: ESTree.MemberExpression, depth = 0): boolean => {
+    const isEnvironmentBagRead = (
+      node: ESTree.MemberExpression,
+      depth = 0
+    ): boolean => {
       const key = staticPropertyName(node);
       return (
         (key === null ? node.computed : ENV_VARIABLE_KEY.test(key)) &&
@@ -580,21 +648,35 @@ export const rule = defineRule({
       if (
         !variable ||
         variable.defs.length !== 1 ||
-        variable.references.some((reference) => reference.isWrite() && !reference.init)
+        variable.references.some(
+          (reference) => reference.isWrite() && !reference.init
+        )
       )
         return null;
       const definition = variable.defs[0];
-      if (definition.node.type === 'FunctionDeclaration') return definition.node as AnyNode;
+      if (definition.node.type === 'FunctionDeclaration')
+        return definition.node as AnyNode;
       if (definition.node.type !== 'VariableDeclarator') return null;
       const init = (definition.node as ESTree.VariableDeclarator).init;
-      return init && isFunctionNode(unwrap(init as AnyNode)) ? unwrap(init as AnyNode) : null;
+      return init && isFunctionNode(unwrap(init as AnyNode))
+        ? unwrap(init as AnyNode)
+        : null;
     };
-    const isCallEnvDerived = (node: ESTree.CallExpression, depth: number): boolean => {
+    const isCallEnvDerived = (
+      node: ESTree.CallExpression,
+      depth: number
+    ): boolean => {
       const callee = unwrap(node.callee as AnyNode);
       const imported = importOf(callee);
-      if (callee.type === 'Identifier' && environmentReaders.has(imported?.member ?? callee.name))
+      if (
+        callee.type === 'Identifier' &&
+        environmentReaders.has(imported?.member ?? callee.name)
+      )
         return true;
-      if (callee.type === 'MemberExpression' && isEnvDerived(callee.object as AnyNode, depth + 1))
+      if (
+        callee.type === 'MemberExpression' &&
+        isEnvDerived(callee.object as AnyNode, depth + 1)
+      )
         return true;
       const target = resolveFunction(callee);
       if (!target) return false;
@@ -605,7 +687,7 @@ export const rule = defineRule({
         (statement) =>
           statement.type === 'ReturnStatement' &&
           statement.argument !== null &&
-          isEnvDerived(statement.argument, depth + 1),
+          isEnvDerived(statement.argument, depth + 1)
       );
     };
     const isIdentifierEnvDerived = (node: AnyNode, depth: number): boolean => {
@@ -617,17 +699,29 @@ export const rule = defineRule({
           : isEnvDerived(declaration.init as AnyNode, depth + 1))
       );
     };
-    const isMemberEnvDerived = (node: ESTree.MemberExpression, depth: number): boolean =>
-      isEnvironmentBagRead(node, depth + 1) || isEnvDerived(node.object as AnyNode, depth + 1);
+    const isMemberEnvDerived = (
+      node: ESTree.MemberExpression,
+      depth: number
+    ): boolean =>
+      isEnvironmentBagRead(node, depth + 1) ||
+      isEnvDerived(node.object as AnyNode, depth + 1);
     const isEnvDerived = (input: AnyNode, depth = 0): boolean => {
       if (depth > 12) return false;
       const node = unwrap(input);
-      if (node.type === 'MemberExpression') return isMemberEnvDerived(node, depth);
-      if (node.type === 'Identifier') return isIdentifierEnvDerived(node, depth);
+      if (node.type === 'MemberExpression')
+        return isMemberEnvDerived(node, depth);
+      if (node.type === 'Identifier')
+        return isIdentifierEnvDerived(node, depth);
       if (node.type === 'LogicalExpression' || node.type === 'BinaryExpression')
-        return isEnvDerived(node.left as AnyNode, depth + 1) || isEnvDerived(node.right, depth + 1);
+        return (
+          isEnvDerived(node.left as AnyNode, depth + 1) ||
+          isEnvDerived(node.right, depth + 1)
+        );
       if (node.type === 'ConditionalExpression')
-        return isEnvDerived(node.consequent, depth + 1) || isEnvDerived(node.alternate, depth + 1);
+        return (
+          isEnvDerived(node.consequent, depth + 1) ||
+          isEnvDerived(node.alternate, depth + 1)
+        );
       if (node.type === 'CallExpression') return isCallEnvDerived(node, depth);
       return false;
     };
@@ -645,33 +739,46 @@ export const rule = defineRule({
     };
 
     /** Innermost enclosing function `start`, or `-1` at module scope. */
-    const currentOwner = (): number => functionStack[functionStack.length - 1] ?? -1;
+    const currentOwner = (): number =>
+      functionStack[functionStack.length - 1] ?? -1;
 
     /** `{ name, typeText }` for one formal parameter; `name` is `null` for destructured params. */
-    const parameterInfo = (parameter: AnyNode): { name: string | null; type: AnyNode | null } => {
+    const parameterInfo = (
+      parameter: AnyNode
+    ): { name: string | null; type: AnyNode | null } => {
       let target = parameter;
       if (target.type === 'TSParameterProperty')
         target = (target as { parameter: AnyNode }).parameter;
       if (target.type === 'AssignmentPattern')
         target = (target as ESTree.AssignmentPattern).left as AnyNode;
-      if (target.type === 'RestElement') target = (target as { argument: AnyNode }).argument;
-      const annotation = (target as { typeAnnotation?: { typeAnnotation?: AnyNode } | null })
-        .typeAnnotation;
+      if (target.type === 'RestElement')
+        target = (target as { argument: AnyNode }).argument;
+      const annotation = (
+        target as { typeAnnotation?: { typeAnnotation?: AnyNode } | null }
+      ).typeAnnotation;
       const type = annotation?.typeAnnotation ?? null;
-      const name = target.type === 'Identifier' ? (target as ESTree.BindingIdentifier).name : null;
+      const name =
+        target.type === 'Identifier'
+          ? (target as ESTree.BindingIdentifier).name
+          : null;
       return { name, type };
     };
 
     /** The type *names* referenced anywhere inside a type annotation (`Readonly<Environment>` → both). */
     const typeNamesIn = (type: AnyNode): readonly string[] => {
       const names: string[] = [];
-      const visitReference = (node: ESTree.TSTypeReference, depth: number): void => {
+      const visitReference = (
+        node: ESTree.TSTypeReference,
+        depth: number
+      ): void => {
         const reference = node as ESTree.TSTypeReference;
         const name = qualifiedTypeName(reference.typeName as AnyNode);
         if (name !== null) names.push(name);
-        const parameters = (reference as { typeArguments?: { params?: AnyNode[] } | null })
-          .typeArguments;
-        for (const parameter of parameters?.params ?? []) visit(parameter, depth + 1);
+        const parameters = (
+          reference as { typeArguments?: { params?: AnyNode[] } | null }
+        ).typeArguments;
+        for (const parameter of parameters?.params ?? [])
+          visit(parameter, depth + 1);
       };
       const visit = (node: AnyNode | null | undefined, depth: number): void => {
         if (!node || depth > 6) return;
@@ -680,7 +787,10 @@ export const rule = defineRule({
           return;
         }
         if (['TSTypeOperator', 'TSParenthesizedType'].includes(node.type)) {
-          visit((node as { typeAnnotation?: AnyNode }).typeAnnotation, depth + 1);
+          visit(
+            (node as { typeAnnotation?: AnyNode }).typeAnnotation,
+            depth + 1
+          );
           return;
         }
         if (['TSUnionType', 'TSIntersectionType'].includes(node.type)) {
@@ -696,7 +806,7 @@ export const rule = defineRule({
     const resolvedEnvironmentType = (
       type: ESTree.TSTypeReference,
       depth: number,
-      optional: boolean,
+      optional: boolean
     ): boolean | null => {
       if (type.typeName.type === 'Identifier') {
         const variable = resolveVariable(type.typeName.name, type.typeName);
@@ -704,27 +814,48 @@ export const rule = defineRule({
           if (variable.defs.length !== 1) return false;
           const definition = variable.defs[0].node as AnyNode;
           if (definition.type === 'TSTypeAliasDeclaration')
-            return isEnvironmentRecordType(definition.typeAnnotation, depth + 1, optional);
+            return isEnvironmentRecordType(
+              definition.typeAnnotation,
+              depth + 1,
+              optional
+            );
           if (definition.type === 'TSInterfaceDeclaration')
-            return isEnvironmentRecordType(definition.body, depth + 1, optional);
+            return isEnvironmentRecordType(
+              definition.body,
+              depth + 1,
+              optional
+            );
           return false;
         }
       }
       return null;
     };
-    const isEnvironmentRecordType = (type: AnyNode, depth = 0, optional = false): boolean => {
+    const isEnvironmentRecordType = (
+      type: AnyNode,
+      depth = 0,
+      optional = false
+    ): boolean => {
       if (depth > 12) return false;
-      if (type.type === 'TSTypeAnnotation' || type.type === 'TSParenthesizedType') {
-        return isEnvironmentRecordType(type.typeAnnotation, depth + 1, optional);
+      if (
+        type.type === 'TSTypeAnnotation' ||
+        type.type === 'TSParenthesizedType'
+      ) {
+        return isEnvironmentRecordType(
+          type.typeAnnotation,
+          depth + 1,
+          optional
+        );
       }
       if (type.type === 'TSTypeLiteral' || type.type === 'TSInterfaceBody') {
-        const members = type.type === 'TSTypeLiteral' ? type.members : type.body;
+        const members =
+          type.type === 'TSTypeLiteral' ? type.members : type.body;
         return members.some(
           (member) =>
             member.type === 'TSIndexSignature' &&
-            member.parameters[0]?.typeAnnotation?.typeAnnotation.type === 'TSStringKeyword' &&
+            member.parameters[0]?.typeAnnotation?.typeAnnotation.type ===
+              'TSStringKeyword' &&
             !!member.typeAnnotation &&
-            isStringValueType(member.typeAnnotation.typeAnnotation, optional),
+            isStringValueType(member.typeAnnotation.typeAnnotation, optional)
         );
       }
       if (type.type !== 'TSTypeReference') return false;
@@ -733,7 +864,7 @@ export const rule = defineRule({
     const isEnvironmentTypeReference = (
       type: ESTree.TSTypeReference,
       depth: number,
-      optional: boolean,
+      optional: boolean
     ): boolean => {
       const name = qualifiedTypeName(type.typeName);
       const args = type.typeArguments?.params ?? [];
@@ -742,12 +873,20 @@ export const rule = defineRule({
       if (name === 'NodeJS.ProcessEnv') return true;
       if (name === 'Readonly' || name === 'Partial') {
         return (
-          !!args[0] && isEnvironmentRecordType(args[0], depth + 1, optional || name === 'Partial')
+          !!args[0] &&
+          isEnvironmentRecordType(
+            args[0],
+            depth + 1,
+            optional || name === 'Partial'
+          )
         );
       }
       return name === 'Record' && isStringRecordArguments(args, optional);
     };
-    const isStringRecordArguments = (args: readonly AnyNode[], optional: boolean): boolean => {
+    const isStringRecordArguments = (
+      args: readonly AnyNode[],
+      optional: boolean
+    ): boolean => {
       return (
         args.length === 2 &&
         args[0]?.type === 'TSStringKeyword' &&
@@ -762,10 +901,14 @@ export const rule = defineRule({
         type.types.some((member) => member.type === 'TSStringKeyword') &&
         (optional ||
           type.types.some(
-            (member) => member.type === 'TSNullKeyword' || member.type === 'TSUndefinedKeyword',
+            (member) =>
+              member.type === 'TSNullKeyword' ||
+              member.type === 'TSUndefinedKeyword'
           )) &&
         type.types.every((member) =>
-          ['TSStringKeyword', 'TSNullKeyword', 'TSUndefinedKeyword'].includes(member.type),
+          ['TSStringKeyword', 'TSNullKeyword', 'TSUndefinedKeyword'].includes(
+            member.type
+          )
         )
       );
     };
@@ -780,7 +923,9 @@ export const rule = defineRule({
       if (type !== null)
         return (
           isEnvironmentRecordType(type) ||
-          typeNamesIn(type).some((typeName) => environmentTypeName.test(typeName))
+          typeNamesIn(type).some((typeName) =>
+            environmentTypeName.test(typeName)
+          )
         );
       return name !== null && environmentIdentifier.test(name);
     };
@@ -809,7 +954,8 @@ export const rule = defineRule({
       if (object.type === 'Identifier') {
         return isEffectImport(object);
       }
-      if (object.type === 'MemberExpression') return isEffectBarrelMember(object);
+      if (object.type === 'MemberExpression')
+        return isEffectBarrelMember(object);
       return staticPropertyName(callee) === 'pipe' && isEffectHostCall(object);
     };
 
@@ -818,14 +964,18 @@ export const rule = defineRule({
      * array / spread positions) of an Effect combinator call — those throws are owned by
      * `effect-native/no-throw-in-effect-callback`.
      */
-    const isEffectArgument = (ancestors: readonly AnyNode[], index: number): boolean => {
+    const isEffectArgument = (
+      ancestors: readonly AnyNode[],
+      index: number
+    ): boolean => {
       let child: AnyNode = ancestors[index] as AnyNode;
       let cursor = index - 1;
       while (cursor >= 0) {
         const parent = ancestors[cursor] as AnyNode;
         if (parent.type === 'CallExpression') {
           const callee = (parent as ESTree.CallExpression).callee as AnyNode;
-          const isCallee = callee.start === child.start && callee.end === child.end;
+          const isCallee =
+            callee.start === child.start && callee.end === child.end;
           if (!isCallee && isEffectHostCall(parent)) return true;
           break;
         }
@@ -845,7 +995,8 @@ export const rule = defineRule({
     };
 
     const recordFunctionName = (start: number, name: string | null): void => {
-      if (name !== null && !functionNames.has(start)) functionNames.set(start, name);
+      if (name !== null && !functionNames.has(start))
+        functionNames.set(start, name);
     };
 
     type CallSite = (typeof calls)[number];
@@ -853,13 +1004,21 @@ export const rule = defineRule({
       let parent = parentOf(target);
       if (parent?.type === 'VariableDeclarator') parent = parentOf(parent);
       if (parent?.type === 'VariableDeclaration') parent = parentOf(parent);
-      if (parent?.type === 'ExportNamedDeclaration' || parent?.type === 'ExportDefaultDeclaration')
+      if (
+        parent?.type === 'ExportNamedDeclaration' ||
+        parent?.type === 'ExportDefaultDeclaration'
+      )
         return false;
       return true;
     };
-    const hasNonCallReferences = (start: number, sites: readonly CallSite[]): boolean => {
+    const hasNonCallReferences = (
+      start: number,
+      sites: readonly CallSite[]
+    ): boolean => {
       const name = functionNames.get(start);
-      const variable = name ? resolveVariable(name, sites[0].node.callee as AnyNode) : null;
+      const variable = name
+        ? resolveVariable(name, sites[0].node.callee as AnyNode)
+        : null;
       if (
         !variable ||
         variable.references.some((reference) => {
@@ -877,16 +1036,22 @@ export const rule = defineRule({
     const canMarkHelper = (start: number, target: AnyNode): boolean => {
       if (markedFunctions.has(start) || !isPrivateHelper(target)) return false;
       const sites = calls.filter(
-        (entry) => resolveFunction(entry.node.callee as AnyNode)?.start === start,
+        (entry) =>
+          resolveFunction(entry.node.callee as AnyNode)?.start === start
       );
-      if (sites.length === 0 || sites.some((entry) => !markedFunctions.has(entry.owner)))
+      if (
+        sites.length === 0 ||
+        sites.some((entry) => !markedFunctions.has(entry.owner))
+      )
         return false;
       if (hasNonCallReferences(start, sites)) return false;
       if (
         !sites.every(
           (entry) =>
             helperMarked.has(entry.owner) ||
-            entry.node.arguments.some((argument) => isEnvDerived(argument as AnyNode)),
+            entry.node.arguments.some((argument) =>
+              isEnvDerived(argument as AnyNode)
+            )
         )
       )
         return false;
@@ -909,14 +1074,20 @@ export const rule = defineRule({
       if (record.insideEffectCallback) return;
       if (record.chain.length === 0) {
         if (markedModule)
-          context.report({ node: record.node, messageId: 'throwInConfigurationParser' });
+          context.report({
+            node: record.node,
+            messageId: 'throwInConfigurationParser',
+          });
         return;
       }
       const parser = record.chain.find(
-        (start) => markedFunctions.has(start) && !helperMarked.has(start),
+        (start) => markedFunctions.has(start) && !helperMarked.has(start)
       );
       if (parser !== undefined) {
-        context.report({ node: record.node, messageId: 'throwInConfigurationParser' });
+        context.report({
+          node: record.node,
+          messageId: 'throwInConfigurationParser',
+        });
         return;
       }
       const helper = record.chain.find((start) => helperMarked.has(start));
@@ -931,7 +1102,10 @@ export const rule = defineRule({
     return {
       // Environment reads: `<host>.env`, `environment['X']`, `env.PORT`.
       MemberExpression(node) {
-        if (staticPropertyName(node) === 'env' && isEnvHost(node.object as AnyNode)) {
+        if (
+          staticPropertyName(node) === 'env' &&
+          isEnvHost(node.object as AnyNode)
+        ) {
           markEnclosing();
           return;
         }
@@ -947,12 +1121,14 @@ export const rule = defineRule({
       FunctionDeclaration(node) {
         const start = (node as unknown as AnyNode).start;
         functionStack.push(start);
-        const id = (node as { id?: ESTree.BindingIdentifier | null }).id ?? null;
+        const id =
+          (node as { id?: ESTree.BindingIdentifier | null }).id ?? null;
         if (id !== null) {
           functionNodes.set(start, node as AnyNode);
           recordFunctionName(start, id.name);
         }
-        if (takesEnvironmentParameter(node as unknown as AnyNode)) markedFunctions.add(start);
+        if (takesEnvironmentParameter(node as unknown as AnyNode))
+          markedFunctions.add(start);
       },
       'FunctionDeclaration:exit'() {
         functionStack.pop();
@@ -960,7 +1136,8 @@ export const rule = defineRule({
       FunctionExpression(node) {
         const start = (node as unknown as AnyNode).start;
         functionStack.push(start);
-        if (takesEnvironmentParameter(node as unknown as AnyNode)) markedFunctions.add(start);
+        if (takesEnvironmentParameter(node as unknown as AnyNode))
+          markedFunctions.add(start);
       },
       'FunctionExpression:exit'() {
         functionStack.pop();
@@ -968,7 +1145,8 @@ export const rule = defineRule({
       ArrowFunctionExpression(node) {
         const start = (node as unknown as AnyNode).start;
         functionStack.push(start);
-        if (takesEnvironmentParameter(node as unknown as AnyNode)) markedFunctions.add(start);
+        if (takesEnvironmentParameter(node as unknown as AnyNode))
+          markedFunctions.add(start);
       },
       'ArrowFunctionExpression:exit'() {
         functionStack.pop();
@@ -978,7 +1156,8 @@ export const rule = defineRule({
       VariableDeclarator(node) {
         const init = (node.init ?? null) as AnyNode | null;
         const id = node.id as AnyNode;
-        if (init === null || !isFunctionNode(init) || id.type !== 'Identifier') return;
+        if (init === null || !isFunctionNode(init) || id.type !== 'Identifier')
+          return;
         const name = (id as ESTree.BindingIdentifier).name;
         functionNodes.set(init.start, init);
         recordFunctionName(init.start, name);

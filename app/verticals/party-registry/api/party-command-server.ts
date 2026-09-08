@@ -1,8 +1,15 @@
 import { ActionRuntime } from '@app/core-runtime';
-import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
-import { Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type {
+  ActionRegistration,
+  DomainEventContractMap,
+} from '@app/core-runtime';
+import {
+  Effect,
+  HttpApiBuilder,
+  Layer,
+} from '@modern-js/plugin-bff/effect-edge';
 import { Redacted, Schema } from 'effect';
+import type { HttpServerRequest } from 'effect/unstable/http';
 
 import { partyRegistryApi } from '../shared/api.ts';
 import type {
@@ -12,7 +19,6 @@ import type {
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
 import { bindActionHttpRunner } from './action-http-runner.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
-import { partyCommandRegistrations } from './party-command-registrations.ts';
 import {
   failPartyCommandProblem,
   isPartyCommandAuthenticationProblem,
@@ -21,8 +27,11 @@ import {
   partyCommandSchemaErrorLive,
 } from './party-command-problems.ts';
 import type { PartyActionError } from './party-command-problems.ts';
+import { partyCommandRegistrations } from './party-command-registrations.ts';
 
-const verifyPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
+const verifyPrincipal = (
+  authorization: Redacted.Redacted<string | undefined>
+) =>
   authenticateOperationPrincipal(authorization, {
     authentication: partyCommandProblem.authentication,
     unavailable: partyCommandProblem.unavailable,
@@ -35,7 +44,8 @@ const runActionHttp = bindActionHttpRunner({
 
 const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
   function* runPartyCommandEffect<
-    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+    PayloadSchema extends Schema.ConstraintDecoder<unknown> &
+      Schema.ConstraintEncoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
     DomainErrorSchema extends Schema.ConstraintDecoder<PartyActionError>,
     DomainEvents extends DomainEventContractMap,
@@ -54,7 +64,7 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
     >,
     payload: PayloadSchema['Type'],
     idempotencyKey: string | undefined,
-    request: HttpServerRequest.HttpServerRequest,
+    request: HttpServerRequest.HttpServerRequest
   ) {
     const correlationId = request.headers['x-correlation-id'];
     if (correlationId !== undefined && correlationId.length > 200) {
@@ -86,47 +96,53 @@ const runPartyCommand = Effect.fn('PartyCommandServer.runPartyCommand')(
         authorization: Redacted.make(request.headers['authorization']),
         'x-correlation-id': request.headers['x-correlation-id'],
       },
-    }).pipe(Effect.catchIf(isPartyCommandAuthenticationProblem, failPartyCommandProblem));
-  },
+    }).pipe(
+      Effect.catchIf(
+        isPartyCommandAuthenticationProblem,
+        failPartyCommandProblem
+      )
+    );
+  }
 );
 
-const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadPartyCommand')(
-  function* runWirePayloadPartyCommandEffect<
-    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown>,
-    DomainErrorSchema extends Schema.ConstraintDecoder<PartyActionError>,
-    DomainEvents extends DomainEventContractMap,
-    Owner extends string,
+const runWirePayloadPartyCommand = Effect.fn(
+  'PartyCommandServer.runWirePayloadPartyCommand'
+)(function* runWirePayloadPartyCommandEffect<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown> &
+    Schema.ConstraintEncoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<PartyActionError>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  Requirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
     Services,
-    Requirements,
-  >(
-    registration: ActionRegistration<
-      PayloadSchema,
-      ResultSchema,
-      DomainErrorSchema,
-      DomainEvents,
-      Owner,
-      Services,
-      Requirements
-    >,
-    payload: PayloadSchema['Encoded'],
-    idempotencyKey: string | undefined,
-    request: HttpServerRequest.HttpServerRequest,
-  ) {
-    const decodedPayload = yield* Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)(
-      payload,
-    ).pipe(Effect.mapError(partyCommandProblem.invalid));
-    return yield* runPartyCommand<
-      PayloadSchema,
-      ResultSchema,
-      DomainErrorSchema,
-      DomainEvents,
-      Owner,
-      Services,
-      Requirements
-    >(registration, decodedPayload, idempotencyKey, request);
-  },
-);
+    Requirements
+  >,
+  payload: PayloadSchema['Encoded'],
+  idempotencyKey: string | undefined,
+  request: HttpServerRequest.HttpServerRequest
+) {
+  const decodedPayload = yield* Schema.decodeUnknownEffect(
+    registration.descriptor.payloadSchema
+  )(payload).pipe(Effect.mapError(partyCommandProblem.invalid));
+  return yield* runPartyCommand<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    Requirements
+  >(registration, decodedPayload, idempotencyKey, request);
+});
 
 export const partyRegistryCommandsLive = HttpApiBuilder.group(
   partyRegistryApi,
@@ -138,247 +154,260 @@ export const partyRegistryCommandsLive = HttpApiBuilder.group(
           partyCommandRegistrations.addContactPoint,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('addPartyOfficialIdentifier', ({ payload, headers, request }) =>
         runWirePayloadPartyCommand(
           partyCommandRegistrations.addPartyOfficialIdentifier,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('archiveParty', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.archiveParty,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('confirmDuplicateParties', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.confirmDuplicateParties,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('correctPartyFact', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.correctPartyFact,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('counterpartyCreate', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.counterpartyCreate,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('counterpartyRoleAdd', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.counterpartyRoleAdd,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('counterpartyRoleEnd', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.counterpartyRoleEnd,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('createParty', ({ payload, headers, request }) =>
         runWirePayloadPartyCommand(
           partyCommandRegistrations.createParty,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('createPartyRelationship', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.createPartyRelationship,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('dismissDuplicateCandidate', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.dismissDuplicateCandidate,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('endContactPoint', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.endContactPoint,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('endPartyOfficialIdentifier', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.endPartyOfficialIdentifier,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('endPartyRelationship', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.endPartyRelationship,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
-      .handle('markDuplicateCandidateNeedsEvidence', ({ payload, headers, request }) =>
-        runPartyCommand(
-          partyCommandRegistrations.markDuplicateCandidateNeedsEvidence,
-          payload,
-          headers['idempotency-key'],
-          request,
-        ),
+      .handle(
+        'markDuplicateCandidateNeedsEvidence',
+        ({ payload, headers, request }) =>
+          runPartyCommand(
+            partyCommandRegistrations.markDuplicateCandidateNeedsEvidence,
+            payload,
+            headers['idempotency-key'],
+            request
+          )
       )
       .handle('matchParty', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.matchParty,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('requestSearchRebuild', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.requestSearchRebuild,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
-      .handle('resolveDuplicateCandidateCreate', ({ payload, headers, request }) =>
-        runPartyCommand(
-          partyCommandRegistrations.resolveDuplicateCandidateCreate,
-          payload,
-          headers['idempotency-key'],
-          request,
-        ),
+      .handle(
+        'resolveDuplicateCandidateCreate',
+        ({ payload, headers, request }) =>
+          runPartyCommand(
+            partyCommandRegistrations.resolveDuplicateCandidateCreate,
+            payload,
+            headers['idempotency-key'],
+            request
+          )
       )
-      .handle('resolveDuplicateCandidateMatch', ({ payload, headers, request }) =>
-        runPartyCommand(
-          partyCommandRegistrations.resolveDuplicateCandidateMatch,
-          payload,
-          headers['idempotency-key'],
-          request,
-        ),
+      .handle(
+        'resolveDuplicateCandidateMatch',
+        ({ payload, headers, request }) =>
+          runPartyCommand(
+            partyCommandRegistrations.resolveDuplicateCandidateMatch,
+            payload,
+            headers['idempotency-key'],
+            request
+          )
       )
       .handle('unarchiveParty', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.unarchiveParty,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('updateContactPoint', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.updateContactPoint,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
       .handle('updateParty', ({ payload, headers, request }) =>
         runWirePayloadPartyCommand(
           partyCommandRegistrations.updateParty,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
+          request
+        )
       )
-      .handle('updatePartyOfficialIdentifier', ({ payload, headers, request }) =>
-        runPartyCommand(
-          partyCommandRegistrations.updatePartyOfficialIdentifier,
-          payload,
-          headers['idempotency-key'],
-          request,
-        ),
+      .handle(
+        'updatePartyOfficialIdentifier',
+        ({ payload, headers, request }) =>
+          runPartyCommand(
+            partyCommandRegistrations.updatePartyOfficialIdentifier,
+            payload,
+            headers['idempotency-key'],
+            request
+          )
       )
       .handle('updatePartyRelationship', ({ payload, headers, request }) =>
         runPartyCommand(
           partyCommandRegistrations.updatePartyRelationship,
           payload,
           headers['idempotency-key'],
-          request,
-        ),
-      ),
+          request
+        )
+      )
 ).pipe(Layer.provide(partyCommandSchemaErrorLive));
 
-const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyCommandCommit')(
-  function* resolvePartyCommandCommitEffect(
-    payload: ResolvePartyCommandCommitPayload,
-    request: HttpServerRequest.HttpServerRequest,
+const resolvePartyCommandCommit = Effect.fn(
+  'PartyCommandServer.resolvePartyCommandCommit'
+)(function* resolvePartyCommandCommitEffect(
+  payload: ResolvePartyCommandCommitPayload,
+  request: HttpServerRequest.HttpServerRequest
+) {
+  const correlationId = request.headers['x-correlation-id'];
+  if (
+    correlationId === undefined ||
+    correlationId.trim().length === 0 ||
+    correlationId.length > 200
   ) {
-    const correlationId = request.headers['x-correlation-id'];
-    if (
-      correlationId === undefined ||
-      correlationId.trim().length === 0 ||
-      correlationId.length > 200
-    ) {
-      return yield* failPartyCommandProblem(partyCommandProblem.invalid());
-    }
-    const principal = yield* verifyPrincipal(Redacted.make(request.headers['authorization']));
-    const runtime = yield* ActionRuntime;
-    return yield* runtime
-      .resolveActionCommit({ invocationId: payload.invocationId, principal })
-      .pipe(
-        Effect.map((resolution): ResolvePartyCommandCommitResult => ({
+    return yield* failPartyCommandProblem(partyCommandProblem.invalid());
+  }
+  const principal = yield* verifyPrincipal(
+    Redacted.make(request.headers['authorization'])
+  );
+  const runtime = yield* ActionRuntime;
+  return yield* runtime
+    .resolveActionCommit({ invocationId: payload.invocationId, principal })
+    .pipe(
+      Effect.map((resolution): ResolvePartyCommandCommitResult => ({
+        _tag: 'PartyCommandCommitResolution',
+        invocationId: resolution.invocationId,
+        retryCommand: false,
+        state: 'OPEN',
+      })),
+      Effect.catchTag('ActionAlreadyCommitted', (committed) =>
+        Effect.succeed<ResolvePartyCommandCommitResult>({
           _tag: 'PartyCommandCommitResolution',
-          invocationId: resolution.invocationId,
+          invocationId: ActionInvocationIdSchema.make(committed.invocationId),
           retryCommand: false,
-          state: 'OPEN',
-        })),
-        Effect.catchTag('ActionAlreadyCommitted', (committed) =>
-          Effect.succeed<ResolvePartyCommandCommitResult>({
-            _tag: 'PartyCommandCommitResolution',
-            invocationId: ActionInvocationIdSchema.make(committed.invocationId),
-            retryCommand: false,
-            state: 'COMMITTED',
-          }),
-        ),
-        Effect.catchTags({
-          ActionCommitIndeterminate: (failure) =>
-            failPartyCommandProblem(partyCommandProblem.indeterminate(failure.invocationId)),
-          ActionInvocationNotFound: () => failPartyCommandProblem(partyCommandProblem.notFound()),
-          ActionInvocationStateError: (failure) =>
-            failPartyCommandProblem(partyCommandProblem.conflict(failure.code)),
-          ActionPayloadValidationError: () =>
-            failPartyCommandProblem(partyCommandProblem.invalid()),
-          ActionTrustedContextValidationError: () =>
-            failPartyCommandProblem(partyCommandProblem.authentication()),
-        }),
-      );
-  },
-);
+          state: 'COMMITTED',
+        })
+      ),
+      Effect.catchTags({
+        ActionCommitIndeterminate: (failure) =>
+          failPartyCommandProblem(
+            partyCommandProblem.indeterminate(failure.invocationId)
+          ),
+        ActionInvocationNotFound: () =>
+          failPartyCommandProblem(partyCommandProblem.notFound()),
+        ActionInvocationStateError: (failure) =>
+          failPartyCommandProblem(partyCommandProblem.conflict(failure.code)),
+        ActionPayloadValidationError: () =>
+          failPartyCommandProblem(partyCommandProblem.invalid()),
+        ActionTrustedContextValidationError: () =>
+          failPartyCommandProblem(partyCommandProblem.authentication()),
+      })
+    );
+});
 
 export const partyRegistryCommandRecoveryLive = HttpApiBuilder.group(
   partyRegistryApi,
   'partyCommandRecovery',
   (handlers) =>
     handlers.handle('resolve', ({ payload, request }) =>
-      resolvePartyCommandCommit(payload, request),
-    ),
+      resolvePartyCommandCommit(payload, request)
+    )
 ).pipe(Layer.provide(partyCommandSchemaErrorLive));

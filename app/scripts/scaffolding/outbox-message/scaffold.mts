@@ -29,23 +29,29 @@ import type {
 
 class OutboxMessageScaffoldError extends Schema.TaggedError<OutboxMessageScaffoldError>()(
   'OutboxMessageScaffoldError',
-  { cause: Schema.optional(Schema.Unknown), reason: Schema.String },
+  { cause: Schema.optional(Schema.Unknown), reason: Schema.String }
 ) {
   override get message(): string {
     return this.reason;
   }
 }
 
-const planningFailure = (reason: string, cause?: unknown): OutboxMessageScaffoldError =>
+const planningFailure = (
+  reason: string,
+  cause?: unknown
+): OutboxMessageScaffoldError =>
   cause === undefined
     ? new OutboxMessageScaffoldError({ reason })
     : new OutboxMessageScaffoldError({ cause, reason });
 
 const failureFromCause = (cause: unknown): OutboxMessageScaffoldError =>
-  planningFailure(Predicate.isError(cause) ? cause.message : String(cause), cause);
+  planningFailure(
+    Predicate.isError(cause) ? cause.message : String(cause),
+    cause
+  );
 
 const fromLegacySync = <Value,>(
-  operation: () => Value,
+  operation: () => Value
 ): Effect.Effect<Value, OutboxMessageScaffoldError> =>
   Effect.try({ catch: failureFromCause, try: operation });
 
@@ -57,7 +63,7 @@ const isNotFoundPlatformError = Schema.is(
   Schema.Struct({
     _tag: Schema.Literal('PlatformError'),
     reason: Schema.Struct({ _tag: Schema.Literal('NotFound') }),
-  }),
+  })
 );
 
 const isScaffoldFailure = Schema.is(ScaffoldFailure);
@@ -67,7 +73,7 @@ const rethrowDiscoveryCause = (cause: Cause.Cause<ScaffoldFailure>) =>
 
 const recoverDiscoveryCause = (cause: Cause.Cause<ScaffoldFailure>) => {
   const hasUnexpectedDefect = cause.reasons.some(
-    (reason) => Cause.isDieReason(reason) && !isScaffoldFailure(reason.defect),
+    (reason) => Cause.isDieReason(reason) && !isScaffoldFailure(reason.defect)
   );
   if (Cause.hasInterrupts(cause) || hasUnexpectedDefect) {
     return rethrowDiscoveryCause(cause);
@@ -88,7 +94,7 @@ const FORMATTED_ACTION_GENERATOR_PREFIX =
 const renderOutboxMessage = (
   vertical: OntosVerticalMetadata,
   action: string,
-  topic: string,
+  topic: string
 ): string => {
   const actionType = toPascalCase(action);
   const topicType = toPascalCase(topicToSlug(topic));
@@ -113,7 +119,10 @@ export const create${base}Message = (
 `;
 };
 
-const renderOutboxContract = (vertical: OntosVerticalMetadata, topic: string): string =>
+const renderOutboxContract = (
+  vertical: OntosVerticalMetadata,
+  topic: string
+): string =>
   `${OUTBOX_CONTRACT_GENERATOR_HEADER}
 // @ontos-outbox-producer ${vertical.moduleId}
 // @ontos-outbox-topic ${topic}
@@ -131,11 +140,13 @@ export const outboxProducerModuleKey = '${vertical.moduleId}' as const;
 const isMatchingGeneratedAction = (
   actionContent: string,
   vertical: OntosVerticalMetadata,
-  action: string,
+  action: string
 ): boolean => {
   const hasGeneratedActionPrefix =
     actionContent.startsWith(`${ACTION_GENERATOR_HEADER}\n`) ||
-    actionContent.startsWith(`${FORMATTED_ACTION_GENERATOR_PREFIX}${ACTION_GENERATOR_HEADER}\n`);
+    actionContent.startsWith(
+      `${FORMATTED_ACTION_GENERATOR_PREFIX}${ACTION_GENERATOR_HEADER}\n`
+    );
   return (
     hasGeneratedActionPrefix &&
     [
@@ -152,7 +163,7 @@ const isMatchingGeneratedAction = (
 
 const planOutboxScaffold = (
   workspaceRoot: string,
-  config: OutboxScaffoldConfig,
+  config: OutboxScaffoldConfig
 ): Effect.Effect<
   ScaffoldPlan<OutboxScaffoldResult>,
   OutboxMessageScaffoldError | PlatformError.PlatformError | ScaffoldFailure,
@@ -160,11 +171,14 @@ const planOutboxScaffold = (
 > =>
   Effect.gen(function* planOutboxScaffoldEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
-    const action = yield* fromLegacySync(() => requireCanonicalSlug(config.action, 'action'));
-    const topic = yield* fromLegacySync(() => requireTopic(config.topic));
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical).pipe(
-      Effect.catchCause(recoverDiscoveryCause),
+    const action = yield* fromLegacySync(() =>
+      requireCanonicalSlug(config.action, 'action')
     );
+    const topic = yield* fromLegacySync(() => requireTopic(config.topic));
+    const vertical = yield* discoverOntosModuleEffect(
+      workspaceRoot,
+      config.vertical
+    ).pipe(Effect.catchCause(recoverDiscoveryCause));
     const actionPath = yield* fromLegacySync(() =>
       resolveContainedPath(
         workspaceRoot,
@@ -172,23 +186,26 @@ const planOutboxScaffold = (
         vertical.slug,
         'src',
         'actions',
-        `${action}.action.ts`,
-      ),
+        `${action}.action.ts`
+      )
     );
     const actionContent = yield* fileSystem
       .readFileString(actionPath)
       .pipe(
         Effect.catchIf(isNotFoundPlatformError, (cause) =>
           Effect.fail(
-            planningFailure(`Outbox Message requires the generated Action at ${actionPath}`, cause),
-          ),
-        ),
+            planningFailure(
+              `Outbox Message requires the generated Action at ${actionPath}`,
+              cause
+            )
+          )
+        )
       );
     if (!isMatchingGeneratedAction(actionContent, vertical, action)) {
       return yield* Effect.fail(
         planningFailure(
-          'Outbox Message can extend only the matching generated Action with its governed write entrypoint',
-        ),
+          'Outbox Message can extend only the matching generated Action with its governed write entrypoint'
+        )
       );
     }
     const topicSlug = topicToSlug(topic);
@@ -196,10 +213,12 @@ const planOutboxScaffold = (
     if (
       new RegExp(
         `\\b(?:${base}(?:Payload|PayloadSchema|ProducerModuleKey|Topic)|create${base}Message)\\b`,
-        'u',
+        'u'
       ).test(actionContent)
     ) {
-      return yield* Effect.fail(planningFailure(`Outbox identifier ${base} already exists`));
+      return yield* Effect.fail(
+        planningFailure(`Outbox identifier ${base} already exists`)
+      );
     }
     const messagePath = yield* fromLegacySync(() =>
       resolveContainedPath(
@@ -208,8 +227,8 @@ const planOutboxScaffold = (
         vertical.slug,
         'src',
         'actions',
-        `${action}.${topicSlug}.outbox-message.ts`,
-      ),
+        `${action}.${topicSlug}.outbox-message.ts`
+      )
     );
     const contractPath = yield* fromLegacySync(() =>
       resolveContainedPath(
@@ -218,16 +237,16 @@ const planOutboxScaffold = (
         vertical.slug,
         'shared',
         'outbox',
-        `${topicSlug}.ts`,
-      ),
+        `${topicSlug}.ts`
+      )
     );
     const contractMutation = yield* createMutationEffect(
       contractPath,
-      renderOutboxContract(vertical, topic),
+      renderOutboxContract(vertical, topic)
     );
     const messageMutation = yield* createMutationEffect(
       messagePath,
-      renderOutboxMessage(vertical, action, topic),
+      renderOutboxMessage(vertical, action, topic)
     );
     const exportSource = `./${action}.${topicSlug}.outbox-message.ts`;
     const exportEntries = [
@@ -245,50 +264,73 @@ const planOutboxScaffold = (
         exportEntries,
         (candidate) =>
           /^export (?:type )?\{ [A-Za-z0-9]+ \} from '\.\/[a-z0-9.-]+\.outbox-message\.ts';$/u.test(
-            candidate,
-          ),
-      ),
+            candidate
+          )
+      )
     );
-    const actionMutation = updateMutation(actionPath, actionContent, patchedAction);
+    const actionMutation = updateMutation(
+      actionPath,
+      actionContent,
+      patchedAction
+    );
     if (actionMutation === undefined) {
       return yield* Effect.fail(
-        planningFailure('Outbox Message Action export patch unexpectedly made no change'),
+        planningFailure(
+          'Outbox Message Action export patch unexpectedly made no change'
+        )
       );
     }
     const packageDocument = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(PackageExportsSchema),
-      { onExcessProperty: 'preserve' },
+      { onExcessProperty: 'preserve' }
     )(vertical.packageContent).pipe(
       Effect.mapError((cause) =>
-        planningFailure(`vertical ${vertical.slug} package exports must be a JSON object`, cause),
-      ),
+        planningFailure(
+          `vertical ${vertical.slug} package exports must be a JSON object`,
+          cause
+        )
+      )
     );
     const exportsValue = packageDocument.exports;
     const contractExport = `./outbox/${topicSlug}`;
     if (exportsValue[contractExport] !== undefined) {
       return yield* Effect.fail(
-        planningFailure(`Outbox contract export ${contractExport} already exists`),
+        planningFailure(
+          `Outbox contract export ${contractExport} already exists`
+        )
       );
     }
     const patchedExports = Object.fromEntries(
       Object.entries({
         ...exportsValue,
         [contractExport]: `./shared/outbox/${topicSlug}.ts`,
-      }).toSorted(([left], [right]) => left.localeCompare(right)),
+      }).toSorted(([left], [right]) => left.localeCompare(right))
     );
     const packageMutation = yield* fromLegacySync(() =>
       updateMutation(
         vertical.packagePath,
         vertical.packageContent,
-        patchJsonObjectProperty(vertical.packageContent, [], 'exports', patchedExports),
-      ),
+        patchJsonObjectProperty(
+          vertical.packageContent,
+          [],
+          'exports',
+          patchedExports
+        )
+      )
     );
     if (packageMutation === undefined) {
       return yield* Effect.fail(
-        planningFailure('Outbox Message package export patch unexpectedly made no change'),
+        planningFailure(
+          'Outbox Message package export patch unexpectedly made no change'
+        )
       );
     }
-    const mutations = [contractMutation, messageMutation, actionMutation, packageMutation];
+    const mutations = [
+      contractMutation,
+      messageMutation,
+      actionMutation,
+      packageMutation,
+    ];
     yield* fromLegacySync(() => ensureUniqueMutationPaths(mutations));
     return { mutations, result: { contractPath, messagePath } };
   });

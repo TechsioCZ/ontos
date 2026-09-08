@@ -16,6 +16,7 @@ import type {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
+
 import {
   ResourceRefSchema,
   ShellCompositionSchema,
@@ -30,14 +31,17 @@ import type {
   ShellResourceResponse,
   ShellSearchResponse,
 } from '../../shared/api.ts';
+import { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
+import { ShellCompositionFactory } from './shell-composition.ts';
 import {
   GovernedResolvedModuleTargetSchema,
   GovernedResolveModuleTargetPayloadSchema,
 } from './shell-governed-read-schemas.ts';
-import { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
-import { ShellCompositionFactory } from './shell-composition.ts';
 import { ShellResourceServicesFactory } from './shell-resources.ts';
-import type { ShellProviderAssertionIssuer, ShellResourceGateways } from './shell-resources.ts';
+import type {
+  ShellProviderAssertionIssuer,
+  ShellResourceGateways,
+} from './shell-resources.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -49,8 +53,9 @@ const withOptionalProperty = <
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+  trailing: Trailing
+) =>
+  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
 
 interface ShellReadRequest {
   readonly correlationId: string;
@@ -58,30 +63,37 @@ interface ShellReadRequest {
 }
 
 export type ShellScopedModuleStateFactory = (
-  transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor'],
+  transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor']
 ) => TenantModuleStateServiceContract;
 
 export interface ShellGovernedReadsService {
-  readonly composition: (input: ShellReadRequest) => Effect.Effect<ShellComposition, ReadCoreError>;
+  readonly composition: (
+    input: ShellReadRequest
+  ) => Effect.Effect<ShellComposition, ReadCoreError>;
   readonly moduleTarget: (
-    input: ShellReadRequest & { readonly entrypointKey?: string; readonly moduleId: string },
+    input: ShellReadRequest & {
+      readonly entrypointKey?: string;
+      readonly moduleId: string;
+    }
   ) => Effect.Effect<ResolvedModuleTarget, ReadCoreError>;
   readonly resourceDetail: (
-    input: ShellReadRequest & { readonly ref: ResourceRef },
+    input: ShellReadRequest & { readonly ref: ResourceRef }
   ) => Effect.Effect<ShellResourceResponse, ReadCoreError>;
   readonly search: (
     input: ShellReadRequest & {
       readonly includeArchived?: boolean;
       readonly query: string;
       readonly role?: 'CUSTOMER' | 'SUPPLIER';
-    },
+    }
   ) => Effect.Effect<ShellSearchResponse, ReadCoreError>;
 }
 
 export class ShellGovernedReads extends Context.Service<
   ShellGovernedReads,
   ShellGovernedReadsService
->()('@app/shell-super-app/api/modules/shell-governed-reads/ShellGovernedReads') {}
+>()(
+  '@app/shell-super-app/api/modules/shell-governed-reads/ShellGovernedReads'
+) {}
 
 const emptyInput = Schema.Struct({});
 const compositionEntrypoint = defineSystemModuleEntrypoint({
@@ -126,9 +138,16 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
     const moduleStates = yield* TenantModuleStateService;
     const compositionFactory = yield* ShellCompositionFactory;
     const resourceServicesFactory = yield* ShellResourceServicesFactory;
-    const dependencies = { ...assertionIssuer, catalog: catalog.load, contextAccess, moduleStates };
+    const dependencies = {
+      ...assertionIssuer,
+      catalog: catalog.load,
+      contextAccess,
+      moduleStates,
+    };
     const serviceFactory = (
-      transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor'],
+      transaction: Parameters<
+        typeof makeTenantModuleStateService
+      >[0]['executor']
     ) => {
       const scopedDependencies = {
         ...dependencies,
@@ -139,10 +158,13 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
           composition: compositionFactory.create(scopedDependencies),
           resourceDetail: resourceServicesFactory.createResourceDetail(
             scopedDependencies,
-            gateways.resource,
+            gateways.resource
           ),
-          search: resourceServicesFactory.createSearch(scopedDependencies, gateways.search),
-        }),
+          search: resourceServicesFactory.createSearch(
+            scopedDependencies,
+            gateways.search
+          ),
+        })
       );
     };
     const composition = defineRead(
@@ -173,12 +195,12 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
               new ReadHandlerUnavailable({
                 code: 'read_handler_unavailable',
                 reason: 'Shell composition is temporarily unavailable',
-              }),
-            ),
-          ),
+              })
+            )
+          )
         ),
       serviceFactory,
-      () => ({ kind: 'legal_entity' }),
+      () => ({ kind: 'legal_entity' })
     );
     const search = defineRead(
       {
@@ -208,14 +230,14 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
               new ReadHandlerUnavailable({
                 code: 'read_handler_unavailable',
                 reason: 'Shell search is temporarily unavailable',
-              }),
-            ),
-          ),
+              })
+            )
+          )
         ),
       serviceFactory,
       // Provider-specific Party tenant and Counterparty resource checks run inside the orchestrator.
       () => ({ kind: 'tenant', permission: 'access' }),
-      () => [],
+      () => []
     );
     const moduleTarget = defineRead(
       {
@@ -238,9 +260,15 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
         context.services.composition
           .resolveModuleTarget(
             context.scope,
-            withOptionalProperty({}, entrypointKey !== undefined, 'entrypointKey', entrypointKey, {
-              moduleId,
-            }),
+            withOptionalProperty(
+              {},
+              entrypointKey !== undefined,
+              'entrypointKey',
+              entrypointKey,
+              {
+                moduleId,
+              }
+            )
           )
           .pipe(
             Effect.catchTag('ShellCompositionUnavailableError', () =>
@@ -248,22 +276,24 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
                 new ReadHandlerUnavailable({
                   code: 'read_handler_unavailable',
                   reason: 'The Shell module target is temporarily unavailable',
-                }),
-              ),
+                })
+              )
             ),
             Effect.flatMap(
               (
-                resolution,
+                resolution
               ): Effect.Effect<
                 ReadHandlerResult<ResolvedModuleTarget>,
-                ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
+                | ReadHandlerNotFound
+                | ReadHandlerUnavailable
+                | ReadPermissionDenied
               > => {
                 if (resolution.outcome === 'not_found') {
                   return Effect.fail(
                     new ReadHandlerNotFound({
                       code: 'read_handler_not_found',
                       reason: 'The requested module target was not found',
-                    }),
+                    })
                   );
                 }
                 if (resolution.outcome === 'forbidden') {
@@ -271,18 +301,21 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
                     new ReadPermissionDenied({
                       code: 'read_permission_denied',
                       reason: 'The requested module target is forbidden',
-                    }),
+                    })
                   );
                 }
                 if (resolution.outcome !== 'resolved') {
                   return Effect.fail(
                     new ReadHandlerUnavailable({
                       code: 'read_handler_unavailable',
-                      reason: 'The Shell module target is temporarily unavailable',
-                    }),
+                      reason:
+                        'The Shell module target is temporarily unavailable',
+                    })
                   );
                 }
-                return Schema.decodeUnknownEffect(GovernedResolvedModuleTargetSchema)({
+                return Schema.decodeUnknownEffect(
+                  GovernedResolvedModuleTargetSchema
+                )({
                   appId: resolution.appId,
                   componentKey: resolution.page.componentKey,
                   entrypointKey: resolution.page.entrypoint.entrypointKey,
@@ -296,17 +329,21 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
                   Effect.mapError((cause) => {
                     const error = new ReadHandlerUnavailable({
                       code: 'read_handler_unavailable',
-                      reason: 'The Shell module target is temporarily unavailable',
+                      reason:
+                        'The Shell module target is temporarily unavailable',
                     });
-                    Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+                    Object.defineProperty(error, 'cause', {
+                      configurable: true,
+                      value: cause,
+                    });
                     return error;
-                  }),
+                  })
                 );
-              },
-            ),
+              }
+            )
           ),
       serviceFactory,
-      ({ moduleId }) => ({ kind: 'module', moduleId }),
+      ({ moduleId }) => ({ kind: 'module', moduleId })
     );
     const resourceDetail = defineRead(
       {
@@ -332,7 +369,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
             new ReadHandlerUnavailable({
               code: 'read_handler_unavailable',
               reason: 'Shell resource scope is unavailable',
-            }),
+            })
           );
         }
         return context.services.resourceDetail
@@ -340,17 +377,19 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
           .pipe(
             Effect.flatMap(
               (
-                resolution,
+                resolution
               ): Effect.Effect<
                 ReadHandlerResult<ShellResourceResponse>,
-                ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
+                | ReadHandlerNotFound
+                | ReadHandlerUnavailable
+                | ReadPermissionDenied
               > => {
                 if (resolution.outcome === 'not_found') {
                   return Effect.fail(
                     new ReadHandlerNotFound({
                       code: 'read_handler_not_found',
                       reason: 'The requested Shell resource was not found',
-                    }),
+                    })
                   );
                 }
                 if (resolution.outcome === 'forbidden') {
@@ -358,15 +397,16 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
                     new ReadPermissionDenied({
                       code: 'read_permission_denied',
                       reason: 'The requested Shell resource is forbidden',
-                    }),
+                    })
                   );
                 }
                 if (resolution.outcome !== 'resolved') {
                   return Effect.fail(
                     new ReadHandlerUnavailable({
                       code: 'read_handler_unavailable',
-                      reason: 'The Shell resource provider is temporarily unavailable',
-                    }),
+                      reason:
+                        'The Shell resource provider is temporarily unavailable',
+                    })
                   );
                 }
                 return Effect.succeed({
@@ -379,15 +419,15 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
                     timeline: resolution.timeline,
                   },
                 });
-              },
-            ),
+              }
+            )
           );
       },
       serviceFactory,
-      (ref) => ({ kind: 'resource', resource: ref }),
+      (ref) => ({ kind: 'resource', resource: ref })
     );
     return { composition, moduleTarget, resourceDetail, search } as const;
-  },
+  }
 );
 
 export const createShellGovernedReadsLayer = (
@@ -404,7 +444,7 @@ export const createShellGovernedReadsLayer = (
       const registrations = yield* makeRegistrations(
         gateways,
         assertionIssuer,
-        scopedModuleStateFactory,
+        scopedModuleStateFactory
       );
       return {
         composition: (request) =>
@@ -423,7 +463,7 @@ export const createShellGovernedReadsLayer = (
               request.entrypointKey,
               {
                 moduleId: request.moduleId,
-              },
+              }
             ),
             principal: request.principal,
             registration: registrations.moduleTarget,
@@ -453,12 +493,12 @@ export const createShellGovernedReadsLayer = (
                 includeArchived !== undefined,
                 'includeArchived',
                 includeArchived,
-                {},
+                {}
               ),
               role !== undefined,
               'role',
               role,
-              {},
+              {}
             ),
             principal: request.principal,
             registration: registrations.search,
@@ -466,5 +506,5 @@ export const createShellGovernedReadsLayer = (
           });
         },
       };
-    }),
+    })
   );

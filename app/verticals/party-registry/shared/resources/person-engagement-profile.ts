@@ -3,6 +3,7 @@
 // @ontos-resource-slug person-engagement-profile
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import {
   PartyRegistryResourceIdJsonSchema,
   PartyRegistryTenantIdJsonSchema,
@@ -14,7 +15,8 @@ export const PersonEngagementProfileRefSchema = Schema.Struct({
   resourceType: Schema.Literal('party.registry.person-engagement-profile'),
   tenantId: PartyRegistryTenantIdJsonSchema,
 });
-export type PersonEngagementProfileRef = typeof PersonEngagementProfileRefSchema.Type;
+export type PersonEngagementProfileRef =
+  typeof PersonEngagementProfileRefSchema.Type;
 
 export const personEngagementProfileResourceDescriptor = {
   capabilities: {

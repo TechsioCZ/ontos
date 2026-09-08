@@ -3,6 +3,7 @@
 // @ontos-resource-slug party-alias
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
+
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import { PartyMergeRefSchema } from './party-merge.ts';
 import { PartyRefSchema } from './party.ts';
@@ -33,15 +34,19 @@ export const PartyAliasSchema = Schema.Struct({
       aliasPartyRef.tenantId !== mergeRef.tenantId
     ) {
       issues.push({
-        issue: 'Party Alias, survivor, and merge Resource must share one tenant',
+        issue:
+          'Party Alias, survivor, and merge Resource must share one tenant',
         path: ['survivorPartyRef'],
       });
     }
     if (aliasPartyRef.resourceId === survivorPartyRef.resourceId) {
-      issues.push({ issue: 'Party Alias cannot target itself', path: ['survivorPartyRef'] });
+      issues.push({
+        issue: 'Party Alias cannot target itself',
+        path: ['survivorPartyRef'],
+      });
     }
     return issues;
-  }),
+  })
 );
 export type PartyAlias = typeof PartyAliasSchema.Type;
 
@@ -53,7 +58,8 @@ export const partyAliasResourceDescriptor = {
     searchable: false,
     timelineVisible: false,
   },
-  description: 'Permanent absorbed Party identity mapping to a canonical survivor.',
+  description:
+    'Permanent absorbed Party identity mapping to a canonical survivor.',
   key: 'party.registry.party-alias',
   label: 'Party Alias',
   owningModuleId: 'party.registry',

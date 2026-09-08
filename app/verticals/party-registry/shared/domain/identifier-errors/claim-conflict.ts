@@ -5,5 +5,5 @@ export class OfficialIdentifierClaimConflict extends Schema.TaggedError<Official
   {
     code: Schema.Literal('party_identifier_claim_conflict'),
     reason: Schema.String,
-  },
+  }
 ) {}

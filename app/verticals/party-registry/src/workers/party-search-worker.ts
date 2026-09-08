@@ -1,23 +1,31 @@
 import { defineOutboxWorker } from '@app/core-runtime';
-import type { OutboxWorkerDescriptor, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import type {
+  OutboxWorkerDescriptor,
+  OutboxWorkerHandlerContext,
+} from '@app/core-runtime';
 import { Effect } from 'effect';
 import type { Schema } from 'effect';
+
 import { PartySearchProjector } from '../services/party-search-projection.service.ts';
 import type { PartySearchProjectionTarget } from '../services/party-search-projection.service.ts';
 
-export const definePartySearchWorker = <PayloadSchema extends Schema.ConstraintDecoder<unknown>>(
+export const definePartySearchWorker = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+>(
   descriptor: Pick<
     OutboxWorkerDescriptor<PayloadSchema, 'party.registry', 'party.registry'>,
     'entrypoint' | 'payloadSchema' | 'producerModuleKey' | 'topic'
   >,
   projection: {
     readonly spanName: string;
-    readonly target: (payload: PayloadSchema['Type']) => PartySearchProjectionTarget;
-  },
+    readonly target: (
+      payload: PayloadSchema['Type']
+    ) => PartySearchProjectionTarget;
+  }
 ) => {
   const handle = Effect.fn(projection.spanName)(function* projectCommittedEvent(
     payload: PayloadSchema['Type'],
-    context: OutboxWorkerHandlerContext,
+    context: OutboxWorkerHandlerContext
   ) {
     const projector = yield* PartySearchProjector;
     yield* projector.project(context, projection.target(payload));
@@ -35,7 +43,7 @@ export const definePartySearchWorker = <PayloadSchema extends Schema.ConstraintD
       },
       workerKey: descriptor.entrypoint.entrypointKey,
     },
-    handle,
+    handle
   );
   return { handle, worker };
 };

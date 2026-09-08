@@ -8,93 +8,40 @@ created: 2026-07-29
 
 ## Feature Description
 
-Add the first server-side Action execution runtime to Shell/Core. An Action is
-a typed command or intent, such as creating, changing, or deleting one or more
-business entities. A Domain Event is a business fact that occurred as a result
-of a successful Action.
+Add the first server-side Action execution runtime to Shell/Core. An Action is a typed command or intent, such as creating, changing, or deleting one or more business entities. A Domain Event is a business fact that occurred as a result of a successful Action.
 
-The runtime accepts a typed Action registration, a payload, and a trusted
-principal context supplied separately from that payload. Shell/Core owns the
-Action Invocation lifecycle and the database transaction; the owning Action
-handler receives the trusted principal, typed payload, a transaction-scoped
-database executor, and controlled methods for recording Data Access Events,
-adding Domain Events, and adding Outbox Messages.
+The runtime accepts a typed Action registration, a payload, and a trusted principal context supplied separately from that payload. Shell/Core owns the Action Invocation lifecycle and the database transaction; the owning Action handler receives the trusted principal, typed payload, a transaction-scoped database executor, and controlled methods for recording Data Access Events, adding Domain Events, and adding Outbox Messages.
 
-Every structurally valid Action creates an Action Invocation Log before the
-business transaction. The handler's business changes, successful execution
-audit record, Data Access Events, Domain Events, Outbox Messages, and successful
-Action Invocation update commit atomically. If handler execution or the
-transaction fails, all transactional records roll back, the invocation remains
-open, no read data reaches the client, and the caller receives a typed Effect
-error. Open failed invocations are intentionally not finalized in this
-increment.
+Every structurally valid Action creates an Action Invocation Log before the business transaction. The handler's business changes, successful execution audit record, Data Access Events, Domain Events, Outbox Messages, and successful Action Invocation update commit atomically. If handler execution or the transaction fails, all transactional records roll back, the invocation remains open, no read data reaches the client, and the caller receives a typed Effect error. Open failed invocations are intentionally not finalized in this increment.
 
-An Outbox Message can be added only with a Domain Event registered by the same
-Action execution. A repeated idempotency key may retry an open invocation when
-the request hash matches. Once the earlier transaction has committed, the same
-idempotency key fails with a typed already-committed error; the runtime does not
-store or replay the original response.
+An Outbox Message can be added only with a Domain Event registered by the same Action execution. A repeated idempotency key may retry an open invocation when the request hash matches. Once the earlier transaction has committed, the same idempotency key fails with a typed already-committed error; the runtime does not store or replay the original response.
 
 ## User Story
 
-As an OntOS module developer
-I want Shell/Core to execute typed Actions through one transaction and evidence lifecycle
-So that business writes, access records, Domain Events, and Outbox Messages remain consistent and auditable
+As an OntOS module developer I want Shell/Core to execute typed Actions through one transaction and evidence lifecycle So that business writes, access records, Domain Events, and Outbox Messages remain consistent and auditable
 
 ## Problem Statement
 
-OntOS has authoritative Action lifecycle and database schemas but no executable
-Shell/Core Action runtime. Shell and future MicroVertical BFF handlers therefore
-cannot yet submit typed commands to one shared runtime that separates trusted
-identity from user payload, owns transactions, records successful reads and
-results, binds Outbox Messages to Domain Events, preserves typed failures, and
-enforces idempotency.
+OntOS has authoritative Action lifecycle and database schemas but no executable Shell/Core Action runtime. Shell and future MicroVertical BFF handlers therefore cannot yet submit typed commands to one shared runtime that separates trusted identity from user payload, owns transactions, records successful reads and results, binds Outbox Messages to Domain Events, preserves typed failures, and enforces idempotency.
 
-The Core database foundation exposed raw typed Drizzle
-execution but not Action descriptors, private handlers, execution context,
-evidence collectors, idempotency coordination, or transaction orchestration.
-The documented lifecycle also needs to reflect the agreed behavior that a
-definitely failed transaction leaves its Action Invocation open and persists no
-terminal failure or Data Access Event.
+The Core database foundation exposed raw typed Drizzle execution but not Action descriptors, private handlers, execution context, evidence collectors, idempotency coordination, or transaction orchestration. The documented lifecycle also needs to reflect the agreed behavior that a definitely failed transaction leaves its Action Invocation open and persists no terminal failure or Data Access Event.
 
 ## Solution Statement
 
-Implement an Effect-based Action runtime in `@app/core-runtime` using typed
-object/interface composition rather than an inheritance hierarchy:
+Implement an Effect-based Action runtime in `@app/core-runtime` using typed object/interface composition rather than an inheritance hierarchy:
 
-- An Action descriptor owns its stable key and Effect Schema payload/result
-  contracts, declared domain-error schema, and permitted Domain Event payload
-  schemas.
+- An Action descriptor owns its stable key and Effect Schema payload/result contracts, declared domain-error schema, and permitted Domain Event payload schemas.
 - A private handler is paired with the descriptor in an Action registration.
-- `runAction` receives the registration, unknown payload, trusted principal
-  context, and transport/idempotency metadata as separate values.
-- Core decodes the payload before entering the lifecycle, inserts or resolves
-  the Action Invocation, serializes concurrent use of its idempotency key, and
-  opens the Drizzle transaction.
-- The handler receives the decoded payload and a restricted execution context
-  containing the principal, transaction executor, and append-only collector
-  methods. It cannot commit or roll back the transaction.
-- `addDomainEvent` returns an execution-local typed reference.
-  `addOutboxMessage` requires that reference and rejects foreign or missing
-  Domain Events before persistence.
-- On handler success, Core persists the result audit record, recorded Data
-  Access Events, Domain Events, Outbox Messages, and the `succeeded` invocation
-  update in the same transaction as the business writes.
-- On a typed handler rejection, defect, persistence failure, or definite
-  rollback, Core returns a transport-neutral typed Effect error and leaves the
-  invocation open.
-- If commit acknowledgement is lost, Core returns a typed indeterminate result
-  until its explicit commit-resolution operation can query and lock the
-  invocation. A committed `succeeded` update proves the transaction committed;
-  an open invocation permits a same-hash retry after the original database
-  lock is released.
-- Upper BFF layers remain responsible for exhaustively mapping Core and domain
-  errors to declared HTTP error schemas and statuses.
+- `runAction` receives the registration, unknown payload, trusted principal context, and transport/idempotency metadata as separate values.
+- Core decodes the payload before entering the lifecycle, inserts or resolves the Action Invocation, serializes concurrent use of its idempotency key, and opens the Drizzle transaction.
+- The handler receives the decoded payload and a restricted execution context containing the principal, transaction executor, and append-only collector methods. It cannot commit or roll back the transaction.
+- `addDomainEvent` returns an execution-local typed reference. `addOutboxMessage` requires that reference and rejects foreign or missing Domain Events before persistence.
+- On handler success, Core persists the result audit record, recorded Data Access Events, Domain Events, Outbox Messages, and the `succeeded` invocation update in the same transaction as the business writes.
+- On a typed handler rejection, defect, persistence failure, or definite rollback, Core returns a transport-neutral typed Effect error and leaves the invocation open.
+- If commit acknowledgement is lost, Core returns a typed indeterminate result until its explicit commit-resolution operation can query and lock the invocation. A committed `succeeded` update proves the transaction committed; an open invocation permits a same-hash retry after the original database lock is released.
+- Upper BFF layers remain responsible for exhaustively mapping Core and domain errors to declared HTTP error schemas and statuses.
 
-The runtime is packaged infrastructure. This feature does not create a
-production business Action or generic untyped `/actions` endpoint. Tests use
-test-local Action registrations, so the currently unavailable Codesmith Action
-generator is intentionally not invoked.
+The runtime is packaged infrastructure. This feature does not create a production business Action or generic untyped `/actions` endpoint. Tests use test-local Action registrations, so the currently unavailable Codesmith Action generator is intentionally not invoked.
 
 ## Relevant Files
 
@@ -141,47 +88,21 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Finish and validate the Core PostgreSQL/Drizzle foundation, then align
-`ACTIONS.md` and the Core schema with the agreed lifecycle. Define the Action
-descriptor, registration, trusted principal context, transport metadata,
-transport-neutral errors, and append-only event collector contracts. Keep
-payload identity-free and use `Schema.Void` for Actions without a business
-payload.
+Finish and validate the Core PostgreSQL/Drizzle foundation, then align `ACTIONS.md` and the Core schema with the agreed lifecycle. Define the Action descriptor, registration, trusted principal context, transport metadata, transport-neutral errors, and append-only event collector contracts. Keep payload identity-free and use `Schema.Void` for Actions without a business payload.
 
-Ensure the database can allocate ordered Domain Event sequence values safely
-under concurrent transactions without application-side `max + 1` logic.
-Serialize allocation and commit order for each tenant through the existing
-tenant row.
-Generated migrations remain Core-only. Preserve the existing invocation row as
-the idempotency anchor: create it before the business transaction, allow
-controlled lifecycle updates, and leave it open after a definite failure.
+Ensure the database can allocate ordered Domain Event sequence values safely under concurrent transactions without application-side `max + 1` logic. Serialize allocation and commit order for each tenant through the existing tenant row. Generated migrations remain Core-only. Preserve the existing invocation row as the idempotency anchor: create it before the business transaction, allow controlled lifecycle updates, and leave it open after a definite failure.
 
 ### Phase 2: Core Implementation
 
-Implement the controlled collectors, typed Drizzle repositories, and Effect
-Action runtime. The runtime validates payloads, creates or finds invocations,
-checks request hashes, runs the deferred gate boundaries before the business
-transaction, transitions an accepted invocation to `running`, and serializes
-private handler execution inside a Core-owned transaction.
+Implement the controlled collectors, typed Drizzle repositories, and Effect Action runtime. The runtime validates payloads, creates or finds invocations, checks request hashes, runs the deferred gate boundaries before the business transaction, transitions an accepted invocation to `running`, and serializes private handler execution inside a Core-owned transaction.
 
-Persist only successful execution evidence. Flush all recorded Data Access
-Events, Domain Events, and Domain Event-linked Outbox Messages before updating
-the invocation to `succeeded`; any failure rolls the whole transaction back.
-Preserve declared domain errors in the Effect error channel and map database or
-runtime failures to safe Core errors without attaching HTTP statuses.
+Persist only successful execution evidence. Flush all recorded Data Access Events, Domain Events, and Domain Event-linked Outbox Messages before updating the invocation to `succeeded`; any failure rolls the whole transaction back. Preserve declared domain errors in the Effect error channel and map database or runtime failures to safe Core errors without attaching HTTP statuses.
 
 ### Phase 3: Integration
 
-Export the Action registration and runtime surface narrowly from
-`@app/core-runtime` so Shell BFFs and server-side MicroVertical adapters can
-submit registrations without exposing private handlers to browsers or other
-verticals. Do not add a generic action-key/unknown-payload HTTP endpoint.
-Generated per-Action BFF endpoints will reuse each descriptor's schemas and
-perform HTTP mapping in later feature work.
+Export the Action registration and runtime surface narrowly from `@app/core-runtime` so Shell BFFs and server-side MicroVertical adapters can submit registrations without exposing private handlers to browsers or other verticals. Do not add a generic action-key/unknown-payload HTTP endpoint. Generated per-Action BFF endpoints will reuse each descriptor's schemas and perform HTTP mapping in later feature work.
 
-Prove the complete behavior with test-local Shell/Core and MicroVertical-shaped
-registrations. The same Core runtime contract must execute both without the
-Shell importing a deployed MicroVertical implementation across a network seam.
+Prove the complete behavior with test-local Shell/Core and MicroVertical-shaped registrations. The same Core runtime contract must execute both without the Shell importing a deployed MicroVertical implementation across a network seam.
 
 ## Step by Step Tasks
 
@@ -291,21 +212,11 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### Unit Tests
 
-Use Effect-aware tests or the existing Node test runner to verify descriptors,
-Schema decoding, trusted-context separation, error unions, request hashing,
-collector invariants, lifecycle ordering, transaction ownership, and every
-typed failure branch. Runtime tests must use controlled collaborators so they
-can assert exactly which persistence operations occur before, during, and after
-the transaction.
+Use Effect-aware tests or the existing Node test runner to verify descriptors, Schema decoding, trusted-context separation, error unions, request hashing, collector invariants, lifecycle ordering, transaction ownership, and every typed failure branch. Runtime tests must use controlled collaborators so they can assert exactly which persistence operations occur before, during, and after the transaction.
 
 ### Integration Tests
 
-Run the Core Action runtime against local PostgreSQL to prove actual transaction
-atomicity, row locking, invocation persistence outside the transaction,
-successful invocation update inside the transaction, Domain Event/Outbox
-foreign keys, concurrent idempotency behavior, rollback behavior, and
-commit-acknowledgement recovery. Use only Core-owned test records; no
-MicroVertical schema or production business Action is required.
+Run the Core Action runtime against local PostgreSQL to prove actual transaction atomicity, row locking, invocation persistence outside the transaction, successful invocation update inside the transaction, Domain Event/Outbox foreign keys, concurrent idempotency behavior, rollback behavior, and commit-acknowledgement recovery. Use only Core-owned test records; no MicroVertical schema or production business Action is required.
 
 ### Edge Cases
 

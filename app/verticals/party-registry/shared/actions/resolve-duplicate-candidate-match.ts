@@ -1,5 +1,6 @@
 // Canonical schema-only contract extracted from the generated resolve-duplicate-candidate-match Action.
 import { Schema } from 'effect';
+
 import { DuplicateCaseResolutionPayloadSchema } from '../domain/matching-contracts.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 

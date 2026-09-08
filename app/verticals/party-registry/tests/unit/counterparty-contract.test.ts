@@ -1,6 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
+import {
+  CounterpartyReadRequestSchema,
+  CounterpartyReadResponseSchema,
+} from '../../shared/apis/counterparty-read.ts';
+import {
+  CounterpartyRoleHistoryRequestSchema,
+  CounterpartyRoleHistoryResponseSchema,
+} from '../../shared/apis/counterparty-role-history.ts';
+import {
+  CounterpartyAuditEvidenceSchema,
+  CounterpartyIsoTimestampSchema,
+  CounterpartyPartyProjectionSchema,
+  CounterpartyRolePeriodSchema,
+  LegalEntityRefSchema,
+} from '../../shared/domain/counterparty-contract.ts';
+import { OutboxPayloadSchema as CounterpartyCreatedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-created-v1.ts';
+import { OutboxPayloadSchema as CounterpartyRoleAddedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-role-added-v1.ts';
+import { OutboxPayloadSchema as CounterpartyRoleEndedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-role-ended-v1.ts';
 import {
   CounterpartyCreatePayloadSchema,
   CounterpartyCreateResultSchema,
@@ -24,24 +44,6 @@ import {
   counterpartyRoleHistoryPermissionTarget,
   counterpartyRoleHistoryRead,
 } from '../../src/api/counterparty-role-history.read.ts';
-import {
-  CounterpartyReadRequestSchema,
-  CounterpartyReadResponseSchema,
-} from '../../shared/apis/counterparty-read.ts';
-import {
-  CounterpartyRoleHistoryRequestSchema,
-  CounterpartyRoleHistoryResponseSchema,
-} from '../../shared/apis/counterparty-role-history.ts';
-import {
-  CounterpartyAuditEvidenceSchema,
-  CounterpartyIsoTimestampSchema,
-  CounterpartyPartyProjectionSchema,
-  CounterpartyRolePeriodSchema,
-  LegalEntityRefSchema,
-} from '../../shared/domain/counterparty-contract.ts';
-import { OutboxPayloadSchema as CounterpartyCreatedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-created-v1.ts';
-import { OutboxPayloadSchema as CounterpartyRoleAddedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-role-added-v1.ts';
-import { OutboxPayloadSchema as CounterpartyRoleEndedOutboxPayloadSchema } from '../../shared/outbox/party-registry-counterparty-role-ended-v1.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyId = '20000000-0000-4000-8000-000000000001';
@@ -82,15 +84,17 @@ const provenance = {
 
 test('declares required Legal Entity scope and Counterparty resource authorization', () => {
   assert.deepEqual(
-    [counterpartyCreateAction, counterpartyRoleAddAction, counterpartyRoleEndAction].map(
-      ({ descriptor }) => ({
-        actionKey: descriptor.actionKey,
-        idempotency: descriptor.idempotency,
-        legalEntityPermission: descriptor.legalEntityPermission,
-        legalEntityScope: descriptor.legalEntityScope,
-        resourcePermission: descriptor.resourcePermission?.kind,
-      }),
-    ),
+    [
+      counterpartyCreateAction,
+      counterpartyRoleAddAction,
+      counterpartyRoleEndAction,
+    ].map(({ descriptor }) => ({
+      actionKey: descriptor.actionKey,
+      idempotency: descriptor.idempotency,
+      legalEntityPermission: descriptor.legalEntityPermission,
+      legalEntityScope: descriptor.legalEntityScope,
+      resourcePermission: descriptor.resourcePermission?.kind,
+    })),
     [
       {
         actionKey: 'party.registry.counterparty-create',
@@ -113,7 +117,7 @@ test('declares required Legal Entity scope and Counterparty resource authorizati
         legalEntityScope: 'required',
         resourcePermission: 'resource',
       },
-    ],
+    ]
   );
 });
 
@@ -123,17 +127,23 @@ test('creates a durable Counterparty without inventing an implicit role', () => 
   })({ partyRef, provenance });
   assert.deepEqual(payload, { partyRef, provenance });
   assert.throws(() =>
-    Schema.decodeUnknownSync(CounterpartyCreatePayloadSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownSync(CounterpartyCreatePayloadSchema, {
+      onExcessProperty: 'error',
+    })({
       partyRef,
       provenance,
       roleType: 'CUSTOMER',
-    }),
+    })
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(CounterpartyCreatePayloadSchema)({
       partyRef,
-      provenance: { method: 'SIGNED_CONTRACT', reason: 'Evidence is mandatory.', source: 'test' },
-    }),
+      provenance: {
+        method: 'SIGNED_CONTRACT',
+        reason: 'Evidence is mandatory.',
+        source: 'test',
+      },
+    })
   );
   assert.deepEqual(
     Schema.decodeUnknownSync(CounterpartyCreateResultSchema)({
@@ -142,7 +152,7 @@ test('creates a durable Counterparty without inventing an implicit role', () => 
       legalEntityRef,
       partyRef,
     }),
-    { counterpartyRef, created: true, legalEntityRef, partyRef },
+    { counterpartyRef, created: true, legalEntityRef, partyRef }
   );
 });
 
@@ -151,7 +161,7 @@ test('publishes only stable references and bounded lifecycle facts', () => {
     Schema.decodeUnknownSync(CounterpartyCreatedOutboxPayloadSchema, {
       onExcessProperty: 'error',
     })({ counterpartyRef, legalEntityRef, partyRef }),
-    { counterpartyRef, legalEntityRef, partyRef },
+    { counterpartyRef, legalEntityRef, partyRef }
   );
   const added = {
     counterpartyRef,
@@ -162,19 +172,19 @@ test('publishes only stable references and bounded lifecycle facts', () => {
   };
   assert.deepEqual(
     Schema.decodeUnknownSync(CounterpartyRoleAddedOutboxPayloadSchema)(added),
-    added,
+    added
   );
   assert.equal(
     Schema.decodeUnknownSync(CounterpartyRoleEndedOutboxPayloadSchema)({
       ...added,
       validTo: '2027-01-31T23:59:59.000Z',
     }).validTo,
-    '2027-01-31T23:59:59.000Z',
+    '2027-01-31T23:59:59.000Z'
   );
   assert.throws(() =>
     Schema.decodeUnknownSync(CounterpartyCreatedOutboxPayloadSchema, {
       onExcessProperty: 'error',
-    })({ counterpartyRef, displayName: 'ACME', legalEntityRef, partyRef }),
+    })({ counterpartyRef, displayName: 'ACME', legalEntityRef, partyRef })
   );
 });
 
@@ -182,15 +192,15 @@ test('preserves Counterparty JSON round trips for timestamps, references, and ab
   const timestamp = '2026-09-03T10:00:00.000Z';
   assert.equal(
     Schema.encodeSync(CounterpartyIsoTimestampSchema)(
-      Schema.decodeUnknownSync(CounterpartyIsoTimestampSchema)(timestamp),
+      Schema.decodeUnknownSync(CounterpartyIsoTimestampSchema)(timestamp)
     ),
-    timestamp,
+    timestamp
   );
   assert.deepEqual(
     Schema.encodeSync(LegalEntityRefSchema)(
-      Schema.decodeUnknownSync(LegalEntityRefSchema)(legalEntityRef),
+      Schema.decodeUnknownSync(LegalEntityRefSchema)(legalEntityRef)
     ),
-    legalEntityRef,
+    legalEntityRef
   );
 
   const roleWithoutEndProvenance = {
@@ -204,18 +214,20 @@ test('preserves Counterparty JSON round trips for timestamps, references, and ab
   };
   assert.deepEqual(
     Schema.encodeSync(CounterpartyRolePeriodSchema)(
-      Schema.decodeUnknownSync(CounterpartyRolePeriodSchema)(roleWithoutEndProvenance),
+      Schema.decodeUnknownSync(CounterpartyRolePeriodSchema)(
+        roleWithoutEndProvenance
+      )
     ),
-    roleWithoutEndProvenance,
+    roleWithoutEndProvenance
   );
   assert.deepEqual(
     Schema.encodeSync(CounterpartyRolePeriodSchema)(
       Schema.decodeUnknownSync(CounterpartyRolePeriodSchema)({
         ...roleWithoutEndProvenance,
         endProvenance: null,
-      }),
+      })
     ),
-    { ...roleWithoutEndProvenance, endProvenance: null },
+    { ...roleWithoutEndProvenance, endProvenance: null }
   );
   assert.deepEqual(
     Schema.encodeSync(CounterpartyAuditEvidenceSchema)(
@@ -224,14 +236,14 @@ test('preserves Counterparty JSON round trips for timestamps, references, and ab
         provenanceMethod: provenance.method,
         provenanceReason: provenance.reason,
         provenanceSource: provenance.source,
-      }),
+      })
     ),
     {
       evidenceReference: null,
       provenanceMethod: provenance.method,
       provenanceReason: provenance.reason,
       provenanceSource: provenance.source,
-    },
+    }
   );
   assert.deepEqual(
     Schema.encodeSync(CounterpartyPartyProjectionSchema)(
@@ -241,7 +253,7 @@ test('preserves Counterparty JSON round trips for timestamps, references, and ab
         displayName: null,
         partyType: 'ORGANIZATION',
         storedPartyRef: partyRef,
-      }),
+      })
     ),
     {
       archived: false,
@@ -249,7 +261,7 @@ test('preserves Counterparty JSON round trips for timestamps, references, and ab
       displayName: null,
       partyType: 'ORGANIZATION',
       storedPartyRef: partyRef,
-    },
+    }
   );
 });
 
@@ -262,7 +274,7 @@ test('accepts only CUSTOMER and SUPPLIER role periods with explicit evidence', (
         roleType,
         validFrom: '2026-09-03T10:00:00.000Z',
       }).roleType,
-      roleType,
+      roleType
     );
   }
   for (const roleType of ['BUSINESS_PARTNER', 'OTHER']) {
@@ -272,17 +284,20 @@ test('accepts only CUSTOMER and SUPPLIER role periods with explicit evidence', (
         provenance,
         roleType,
         validFrom: '2026-09-03T10:00:00.000Z',
-      }),
+      })
     );
   }
-  for (const validFrom of ['2026-02-30T00:00:00.000Z', '2026-01-01T00:00:00Z']) {
+  for (const validFrom of [
+    '2026-02-30T00:00:00.000Z',
+    '2026-01-01T00:00:00Z',
+  ]) {
     assert.throws(() =>
       Schema.decodeUnknownSync(CounterpartyRoleAddPayloadSchema)({
         counterpartyRef,
         provenance,
         roleType: 'CUSTOMER',
         validFrom,
-      }),
+      })
     );
   }
   assert.deepEqual(
@@ -299,7 +314,7 @@ test('accepts only CUSTOMER and SUPPLIER role periods with explicit evidence', (
       roleType: 'CUSTOMER',
       validFrom: '2026-09-03T10:00:00.000Z',
       validTo: null,
-    },
+    }
   );
   assert.equal(
     Schema.decodeUnknownSync(CounterpartyRoleAddPayloadSchema)({
@@ -312,7 +327,7 @@ test('accepts only CUSTOMER and SUPPLIER role periods with explicit evidence', (
       roleType: 'CUSTOMER',
       validFrom: '2026-09-03T10:00:00.000Z',
     }).provenance.reason,
-    undefined,
+    undefined
   );
 });
 
@@ -337,7 +352,7 @@ test('ends one named role period without deleting Counterparty history', () => {
       validFrom: '2026-09-03T10:00:00.000Z',
       validTo: '2027-01-31T23:59:59.000Z',
     }).validTo,
-    '2027-01-31T23:59:59.000Z',
+    '2027-01-31T23:59:59.000Z'
   );
   assert.equal(
     Schema.decodeUnknownSync(CounterpartyRoleEndPayloadSchema)({
@@ -350,12 +365,14 @@ test('ends one named role period without deleting Counterparty history', () => {
       rolePeriodRef,
       validTo: '2027-01-31T23:59:59.000Z',
     }).provenance.reason,
-    undefined,
+    undefined
   );
 });
 
 test('publishes a minimum Party projection and keeps full role history separate', () => {
-  const request = Schema.decodeUnknownSync(CounterpartyReadRequestSchema)({ counterpartyRef });
+  const request = Schema.decodeUnknownSync(CounterpartyReadRequestSchema)({
+    counterpartyRef,
+  });
   assert.deepEqual(request, { counterpartyRef });
   const currentRole = {
     provenance,
@@ -387,41 +404,53 @@ test('publishes a minimum Party projection and keeps full role history separate'
       ...result,
       party: { ...result.party, displayName: null },
     }).party.displayName,
-    null,
+    null
   );
   assert.deepEqual(
     result.currentRoles.map(({ roleType }) => roleType),
-    ['CUSTOMER'],
+    ['CUSTOMER']
   );
   assert.deepEqual(
     Schema.decodeUnknownSync(CounterpartyReadResponseSchema)({
       ...result,
       currentRoles: [],
     }).currentRoles,
-    [],
+    []
   );
   assert.throws(() =>
-    Schema.decodeUnknownSync(CounterpartyReadResponseSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownSync(CounterpartyReadResponseSchema, {
+      onExcessProperty: 'error',
+    })({
       ...result,
       party: { ...result.party, contactPoints: [] },
-    }),
+    })
   );
 
   assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartyRoleHistoryRequestSchema)({ counterpartyRef }),
-    { counterpartyRef },
+    Schema.decodeUnknownSync(CounterpartyRoleHistoryRequestSchema)({
+      counterpartyRef,
+    }),
+    { counterpartyRef }
   );
   assert.equal(
     Schema.decodeUnknownSync(CounterpartyRoleHistoryResponseSchema)({
       counterpartyRef,
-      roles: [{ ...currentRole, state: 'ENDED', validTo: '2027-01-31T23:59:59.000Z' }],
+      roles: [
+        { ...currentRole, state: 'ENDED', validTo: '2027-01-31T23:59:59.000Z' },
+      ],
     }).roles[0]?.state,
-    'ENDED',
+    'ENDED'
   );
   assert.equal(counterpartyReadRead.descriptor.permissionTarget, 'resource');
-  assert.equal(counterpartyRoleHistoryRead.descriptor.permissionTarget, 'resource');
+  assert.equal(
+    counterpartyRoleHistoryRead.descriptor.permissionTarget,
+    'resource'
+  );
   assert.equal(counterpartyReadRead.descriptor.legalEntityScope, 'optional');
-  assert.equal(counterpartyRoleHistoryRead.descriptor.legalEntityScope, 'optional');
+  assert.equal(
+    counterpartyRoleHistoryRead.descriptor.legalEntityScope,
+    'optional'
+  );
   assert.deepEqual(counterpartyReadPermissionTarget({ counterpartyRef }), {
     kind: 'any_of',
     targets: [
@@ -438,6 +467,6 @@ test('publishes a minimum Party projection and keeps full role history separate'
   });
   assert.deepEqual(
     counterpartyRoleHistoryPermissionTarget({ counterpartyRef }),
-    counterpartyReadPermissionTarget({ counterpartyRef }),
+    counterpartyReadPermissionTarget({ counterpartyRef })
   );
 });

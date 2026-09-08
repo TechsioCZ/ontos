@@ -10,7 +10,10 @@ import {
   partyRegistryApiContract,
   partyRegistryReadinessSchema,
 } from '../../shared/api.ts';
-import type { OperationContext, partyRegistryOperationContexts } from '../../shared/api.ts';
+import type {
+  OperationContext,
+  partyRegistryOperationContexts,
+} from '../../shared/api.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const apiNames = [
@@ -40,7 +43,9 @@ const apiNames = [
 ] as const;
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+  (<Value>() => Value extends Left ? 1 : 2) extends <
+    Value,
+  >() => Value extends Right ? 1 : 2
     ? true
     : false;
 type Expect<Value extends true> = Value;
@@ -66,7 +71,8 @@ const operationContextRejectsIdentityMetadata: OperationContext = {
   tenantId: 'must-not-enter-generic-operation-metadata',
 };
 void operationContextRejectsIdentityMetadata;
-const literalTypeProof: ReadinessPathRemainsLiteral & ReadinessOperationRouteRemainsLiteral = true;
+const literalTypeProof: ReadinessPathRemainsLiteral &
+  ReadinessOperationRouteRemainsLiteral = true;
 void literalTypeProof;
 
 test('aggregates every governed read and search API beside readiness', () => {
@@ -78,19 +84,24 @@ test('aggregates every governed read and search API beside readiness', () => {
     readinessPath: '/party-registry-api/party-registry/readiness',
   });
 
-  const endpointPaths = Object.values(partyRegistryApi.groups).flatMap((group) =>
-    Object.values(group.endpoints).map(({ path }) => path),
+  const endpointPaths = Object.values(partyRegistryApi.groups).flatMap(
+    (group) => Object.values(group.endpoints).map(({ path }) => path)
   );
-  assert.equal(new Set(Object.keys(partyRegistryApi.groups)).size, apiNames.length);
+  assert.equal(
+    new Set(Object.keys(partyRegistryApi.groups)).size,
+    apiNames.length
+  );
   assert.equal(new Set(endpointPaths).size, endpointPaths.length);
   assert.equal(endpointPaths.includes('/party-registry/readiness'), true);
   assert.equal(
     endpointPaths.some((path) => path === '/party-registry'),
-    false,
+    false
   );
   assert.equal(
-    endpointPaths.some((path) => path === '/actions' || path === '/party-registry/actions'),
-    false,
+    endpointPaths.some(
+      (path) => path === '/actions' || path === '/party-registry/actions'
+    ),
+    false
   );
 });
 
@@ -107,14 +118,14 @@ test('keeps readiness tied to the immutable build marker', () => {
       status: 'ready',
       versionSkew: 'none',
     }),
-    true,
+    true
   );
 });
 
 test('re-exports every governed generated client without exposing private executors', async () => {
   const source = await readFile(
     new URL('../../src/api/party-registry-client.ts', import.meta.url),
-    'utf-8',
+    'utf-8'
   );
 
   for (const client of apiNames.filter(
@@ -123,9 +134,12 @@ test('re-exports every governed generated client without exposing private execut
       name !== 'organizationEngagementMutations' &&
       name !== 'partyCommands' &&
       name !== 'partyCommandRecovery' &&
-      name !== 'personEngagementMutations',
+      name !== 'personEngagementMutations'
   )) {
-    const file = client.replaceAll(/[A-Z]/gu, (value) => `-${value.toLowerCase()}`);
+    const file = client.replaceAll(
+      /[A-Z]/gu,
+      (value) => `-${value.toLowerCase()}`
+    );
     assert.match(source, new RegExp(`\\./${file}-client\\.ts`, 'u'));
   }
   assert.match(source, /\.\/engagement-profile-client\.ts/u);
@@ -137,23 +151,37 @@ test('re-exports every governed generated client without exposing private execut
   assert.doesNotMatch(source, /makeEffectHttpApiClient\(partyRegistryApi/u);
   assert.doesNotMatch(
     source,
-    /export const (?:createPartyRegistry|listPartyRegistry|getPartyRegistry)\s*=/u,
+    /export const (?:createPartyRegistry|listPartyRegistry|getPartyRegistry)\s*=/u
   );
   assert.doesNotMatch(source, /action\.ts|runAction|ActionRuntime/u);
 });
 
 test('exposes only the backend Effect API and no placeholder UI module', async () => {
-  const [frontendFederation, backendFederation, packageSource] = await Promise.all([
-    readFile(new URL('../../module-federation.config.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../backend-federation.config.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
-  ]);
-  const packageJson: { readonly exports: Record<string, string> } = JSON.parse(packageSource);
+  const [frontendFederation, backendFederation, packageSource] =
+    await Promise.all([
+      readFile(
+        new URL('../../module-federation.config.ts', import.meta.url),
+        'utf-8'
+      ),
+      readFile(
+        new URL('../../backend-federation.config.ts', import.meta.url),
+        'utf-8'
+      ),
+      readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
+    ]);
+  const packageJson: { readonly exports: Record<string, string> } =
+    JSON.parse(packageSource);
 
-  assert.doesNotMatch(frontendFederation, /['"]\.\/Route['"]|['"]\.\/Widget['"]/u);
+  assert.doesNotMatch(
+    frontendFederation,
+    /['"]\.\/Route['"]|['"]\.\/Widget['"]/u
+  );
   assert.match(backendFederation, /['"]\.\/effect-api['"]/u);
   assert.equal(packageJson.exports['./Route'], undefined);
   assert.equal(packageJson.exports['./Widget'], undefined);
   assert.equal(packageJson.exports['./api'], './shared/api.ts');
-  assert.equal(packageJson.exports['./api/client'], './src/api/party-registry-client.ts');
+  assert.equal(
+    packageJson.exports['./api/client'],
+    './src/api/party-registry-client.ts'
+  );
 });

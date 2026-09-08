@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/require-concurrency-option
  *
@@ -63,11 +62,8 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import {
   skipWrappers,
   staticString,
@@ -75,20 +71,35 @@ import {
   memberName as staticMemberName,
 } from '../shared/ast.ts';
 import { bindingPath } from '../shared/effect-identity.ts';
-import { stringArray, positiveInteger } from '../shared/options.ts';
+import {
+  collectEffectBindings,
+  type EffectBindings,
+} from '../shared/effect-imports.ts';
 import {
   collectRootNamespaces,
   collectDirectMemberImports,
   collectNamedImports,
   importDeclarations,
 } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import { stringArray, positiveInteger } from '../shared/options.ts';
+import {
+  isScriptFile,
+  isTestFile,
+  matchesGlobs,
+  scopePath,
+} from '../shared/paths.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
 /** `effect/Effect`, `effect/Stream`, and any nested re-export path ending in those names. */
 const EFFECT_SUBMODULE = /^effect\/(?:.*\/)?(Effect|Stream)$/u;
 
 /** B1 is about production workers, reads and route loaders. */
-const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_INCLUDE: readonly string[] = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+];
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /**
@@ -101,7 +112,11 @@ const DEFAULT_REEXPORT_MODULES: readonly string[] = [
   '@modern-js/plugin-bff/effect-client',
   '@modern-js/plugin-bff/effect-edge',
 ];
-const DEFAULT_STREAM_MEMBERS: readonly string[] = ['mapEffect', 'flatMap', 'forEach'];
+const DEFAULT_STREAM_MEMBERS: readonly string[] = [
+  'mapEffect',
+  'flatMap',
+  'forEach',
+];
 const DEFAULT_MIN_ITEMS = 2;
 
 const CONCURRENCY_KEY = 'concurrency';
@@ -188,8 +203,13 @@ function readOptions(context: Context): RuleOptions {
     includeScripts: record.includeScripts === true,
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
-    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
-    streamMembers: new Set(stringArray(record.streamMembers, DEFAULT_STREAM_MEMBERS)),
+    reexportModules: stringArray(
+      record.reexportModules,
+      DEFAULT_REEXPORT_MODULES
+    ),
+    streamMembers: new Set(
+      stringArray(record.streamMembers, DEFAULT_STREAM_MEMBERS)
+    ),
   };
 }
 
@@ -216,19 +236,26 @@ function memberName(node: ESTree.MemberExpression): string | null {
  */
 function collectBindings(
   program: ESTree.Program,
-  reexportModules: readonly string[],
+  reexportModules: readonly string[]
 ): EffectBindings {
   const shared = collectEffectBindings(program);
   const accepts = (source: string) => matchesGlobs(source, reexportModules);
-  const namespaces = new Map([...shared.namespaces, ...collectNamedImports(program, accepts)]);
+  const namespaces = new Map([
+    ...shared.namespaces,
+    ...collectNamedImports(program, accepts),
+  ]);
   return {
     namespaces,
-    importsEffect: shared.importsEffect || importDeclarations(program, accepts).length > 0,
+    importsEffect:
+      shared.importsEffect || importDeclarations(program, accepts).length > 0,
   };
 }
 
 /** A curried application `f(...)(...)`, or an operator slot in `pipe(subject, …)` / `subject.pipe(…)`. */
-function isDataLastPosition(call: ESTree.CallExpression, context: Context): boolean {
+function isDataLastPosition(
+  call: ESTree.CallExpression,
+  context: Context
+): boolean {
   const { node: current, parent } = skipWrappers(call, CALL_WRAPPERS);
   if (parent?.type !== 'CallExpression') return false;
   if (unwrap(parent.callee) === current) return true; // `Effect.forEach(f)(xs)`
@@ -236,14 +263,24 @@ function isDataLastPosition(call: ESTree.CallExpression, context: Context): bool
   if (index === -1) return false;
   const outerCallee = unwrap(parent.callee);
   // `subject.pipe(op, op)` — every argument is an operator.
-  if (outerCallee.type === 'MemberExpression' && memberName(outerCallee) === 'pipe') return true;
+  if (
+    outerCallee.type === 'MemberExpression' &&
+    memberName(outerCallee) === 'pipe'
+  )
+    return true;
   // `pipe(subject, op, op)` — argument 0 is the subject, the rest are operators.
   const identity = bindingPath(context, outerCallee);
-  return index >= 1 && (identity?.join('.') === 'pipe' || identity?.join('.') === 'Function.pipe');
+  return (
+    index >= 1 &&
+    (identity?.join('.') === 'pipe' || identity?.join('.') === 'Function.pipe')
+  );
 }
 
 function isFunctionLike(node: ESTree.Node): boolean {
-  return node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression';
+  return (
+    node.type === 'ArrowFunctionExpression' ||
+    node.type === 'FunctionExpression'
+  );
 }
 
 /** Literal collection size, or `null` when the length is not statically known. */
@@ -251,12 +288,16 @@ function literalLength(node: ESTree.Node | undefined): number | null {
   if (node === undefined) return null;
   const value = unwrap(node);
   if (value.type === 'ArrayExpression') {
-    return value.elements.some((element) => element !== null && element.type === 'SpreadElement')
+    return value.elements.some(
+      (element) => element !== null && element.type === 'SpreadElement'
+    )
       ? null
       : value.elements.length;
   }
   if (value.type === 'ObjectExpression') {
-    return value.properties.some((property) => property.type === 'SpreadElement')
+    return value.properties.some(
+      (property) => property.type === 'SpreadElement'
+    )
       ? null
       : value.properties.length;
   }
@@ -279,7 +320,10 @@ const OK: Verdict = { kind: 'ok' };
 const UNKNOWN: Verdict = { kind: 'unknown' };
 const MISSING: Verdict = { kind: 'missing' };
 
-function inspectOptions(argument: ESTree.Node | undefined, options: RuleOptions): Verdict {
+function inspectOptions(
+  argument: ESTree.Node | undefined,
+  options: RuleOptions
+): Verdict {
   if (argument === undefined) return MISSING;
   const value = unwrap(argument);
   // A non-literal options bag (`Effect.all(effects, baseOptions)`) cannot be inspected syntactically.
@@ -297,7 +341,10 @@ function inspectOptions(argument: ESTree.Node | undefined, options: RuleOptions)
   return MISSING;
 }
 
-function inspectConcurrency(value: ESTree.Node, allowUnbounded: boolean): Verdict {
+function inspectConcurrency(
+  value: ESTree.Node,
+  allowUnbounded: boolean
+): Verdict {
   const literal = staticString(unwrap(value));
   if (literal !== null && UNBOUNDED_VALUES.has(literal) && !allowUnbounded)
     return { kind: 'unbounded', value: literal };
@@ -307,14 +354,18 @@ function inspectConcurrency(value: ESTree.Node, allowUnbounded: boolean): Verdic
 function memberShape(
   namespace: string,
   member: string,
-  options: RuleOptions,
+  options: RuleOptions
 ): MemberShape | undefined {
   if (namespace === 'Effect') return EFFECT_MEMBERS.get(member);
-  if (namespace === 'Stream' && options.streamMembers.has(member)) return STREAM;
+  if (namespace === 'Stream' && options.streamMembers.has(member))
+    return STREAM;
   return undefined;
 }
 
-function hasDataLastArguments(args: readonly ESTree.Argument[], shape: MemberShape): boolean {
+function hasDataLastArguments(
+  args: readonly ESTree.Argument[],
+  shape: MemberShape
+): boolean {
   if (!shape.callbackSecond) return false;
   if (args.length === 1) return true;
   if (args[0] !== undefined && isFunctionLike(unwrap(args[0]))) return true;
@@ -325,7 +376,7 @@ function isSmallCollection(
   args: readonly ESTree.Argument[],
   shape: MemberShape,
   dataLast: boolean,
-  minItems: number,
+  minItems: number
 ): boolean {
   if (dataLast || shape.collection === -1) return false;
   const length = literalLength(args[shape.collection]);
@@ -336,7 +387,7 @@ function reportVerdict(
   context: Context,
   node: ESTree.Node,
   callee: { readonly namespace: string; readonly member: string },
-  verdict: Verdict,
+  verdict: Verdict
 ): void {
   if (verdict.kind === 'ok' || verdict.kind === 'unknown') return;
   if (verdict.kind === 'missing') {
@@ -350,7 +401,11 @@ function reportVerdict(
   context.report({
     node,
     messageId: 'unboundedConcurrency',
-    data: { namespace: callee.namespace, member: callee.member, value: verdict.value },
+    data: {
+      namespace: callee.namespace,
+      member: callee.member,
+      value: verdict.value,
+    },
   });
 }
 
@@ -412,7 +467,10 @@ export const rule = defineRule({
     let options: RuleOptions | null = null;
     let bindings: EffectBindings | null = null;
     let rootNamespaces: ReadonlySet<string> = new Set();
-    let directMembers: ReadonlyMap<string, { namespace: string; member: string }> = new Map();
+    let directMembers: ReadonlyMap<
+      string,
+      { namespace: string; member: string }
+    > = new Map();
 
     return {
       before() {
@@ -430,15 +488,20 @@ export const rule = defineRule({
         rootNamespaces = collectRootNamespaces(
           program,
           (source) =>
-            source === EFFECT_ROOT_MODULE || matchesGlobs(source, resolved.reexportModules),
+            source === EFFECT_ROOT_MODULE ||
+            matchesGlobs(source, resolved.reexportModules)
         );
         directMembers = collectDirectMemberImports(
           program,
           undefined,
           {},
-          (source) => EFFECT_SUBMODULE.exec(source)?.[1] ?? null,
+          (source) => EFFECT_SUBMODULE.exec(source)?.[1] ?? null
         );
-        return bindings.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0;
+        return (
+          bindings.importsEffect ||
+          rootNamespaces.size > 0 ||
+          directMembers.size > 0
+        );
       },
       after() {
         bindings = null;
@@ -450,7 +513,11 @@ export const rule = defineRule({
         const imports = bindings;
         if (resolved === null || imports === null) return;
 
-        const identity = bindingPath(context, node.callee, resolved.reexportModules);
+        const identity = bindingPath(
+          context,
+          node.callee,
+          resolved.reexportModules
+        );
         if (identity?.length !== 2) return;
         const callee = { namespace: identity[0], member: identity[1] };
 
@@ -458,8 +525,12 @@ export const rule = defineRule({
         if (shape === undefined) return;
 
         const args = node.arguments;
-        const dataLast = isDataLastPosition(node, context) || hasDataLastArguments(args, shape);
-        const optionsIndex = dataLast ? shape.dataLastOptions : shape.dataFirstOptions;
+        const dataLast =
+          isDataLastPosition(node, context) ||
+          hasDataLastArguments(args, shape);
+        const optionsIndex = dataLast
+          ? shape.dataLastOptions
+          : shape.dataFirstOptions;
         // A literal collection shorter than minItems is not a fan-out.
         if (isSmallCollection(args, shape, dataLast, resolved.minItems)) return;
 

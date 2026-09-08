@@ -4,13 +4,21 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { MergeReadinessResultSchema } from '../domain/merge-readiness.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const PartyMergeReadinessRequestSchema = Schema.Struct({
   partyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
-  policyVersion: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
+  policyVersion: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(120)
+  ),
 }).check(
   Schema.makeFilter(({ partyRefs }) => {
     const tenants = new Set(partyRefs.map(({ tenantId }) => tenantId));
@@ -23,49 +31,47 @@ export const PartyMergeReadinessRequestSchema = Schema.Struct({
       });
     }
     if (identities.size !== partyRefs.length) {
-      issues.push({ issue: 'merge readiness Parties must be distinct', path: ['partyRefs'] });
+      issues.push({
+        issue: 'merge readiness Parties must be distinct',
+        path: ['partyRefs'],
+      });
     }
     return issues;
-  }),
+  })
 );
-export type PartyMergeReadinessRequest = typeof PartyMergeReadinessRequestSchema.Type;
+export type PartyMergeReadinessRequest =
+  typeof PartyMergeReadinessRequestSchema.Type;
 export const PartyMergeReadinessResponseSchema = MergeReadinessResultSchema;
-export type PartyMergeReadinessResponse = typeof PartyMergeReadinessResponseSchema.Type;
+export type PartyMergeReadinessResponse =
+  typeof PartyMergeReadinessResponseSchema.Type;
 
-export const PartyMergeReadinessAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartyMergeReadinessAuthenticationProblem',
-  401,
-);
+export const PartyMergeReadinessAuthenticationProblemSchema =
+  makeProblemDetailsSchema('PartyMergeReadinessAuthenticationProblem', 401);
 export const PartyMergeReadinessInvalidProblemSchema = makeProblemDetailsSchema(
   'PartyMergeReadinessInvalidProblem',
-  400,
+  400
 );
-export const PartyMergeReadinessUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartyMergeReadinessUnavailableProblem',
-  503,
-);
-export const PartyMergeReadinessForbiddenProblemSchema = makeProblemDetailsSchema(
-  'PartyMergeReadinessForbiddenProblem',
-  403,
-);
-export const PartyMergeReadinessNotFoundProblemSchema = makeProblemDetailsSchema(
-  'PartyMergeReadinessNotFoundProblem',
-  404,
-);
+export const PartyMergeReadinessUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'PartyMergeReadinessUnavailableProblem',
+    503
+  );
+export const PartyMergeReadinessForbiddenProblemSchema =
+  makeProblemDetailsSchema('PartyMergeReadinessForbiddenProblem', 403);
+export const PartyMergeReadinessNotFoundProblemSchema =
+  makeProblemDetailsSchema('PartyMergeReadinessNotFoundProblem', 404);
 export const PartyMergeReadinessPolicyProblemSchema = makeProblemDetailsSchema(
   'PartyMergeReadinessPolicyProblem',
-  422,
+  422
 );
-export const PartyMergeReadinessPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartyMergeReadinessPolicyConflictProblem',
-  409,
-);
-export const PartyMergeReadinessInternalProblemSchema = makeProblemDetailsSchema(
-  'PartyMergeReadinessInternalProblem',
-  500,
-);
+export const PartyMergeReadinessPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('PartyMergeReadinessPolicyConflictProblem', 409);
+export const PartyMergeReadinessInternalProblemSchema =
+  makeProblemDetailsSchema('PartyMergeReadinessInternalProblem', 500);
 
-export const PartyMergeReadinessApi = HttpApi.make('PartyMergeReadinessApi').add(
+export const PartyMergeReadinessApi = HttpApi.make(
+  'PartyMergeReadinessApi'
+).add(
   HttpApiGroup.make('partyMergeReadiness').add(
     HttpApiEndpoint.post('execute', '/reads/party-merge-readiness', {
       error: [
@@ -83,6 +89,6 @@ export const PartyMergeReadinessApi = HttpApi.make('PartyMergeReadinessApi').add
       payload: PartyMergeReadinessRequestSchema,
       query: {},
       success: PartyMergeReadinessResponseSchema,
-    }),
-  ),
+    })
+  )
 );

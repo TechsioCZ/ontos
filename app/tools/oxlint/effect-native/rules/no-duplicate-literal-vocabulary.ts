@@ -1,4 +1,3 @@
-import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-duplicate-literal-vocabulary
  *
@@ -81,18 +80,27 @@ import { optionRecord } from '../shared/options.ts';
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { collectSchemaLocals } from '../shared/imports.ts';
 import { memberName, staticString, unwrapNode } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
-import { booleanOption, positiveInteger, stringArray } from '../shared/options.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { collectSchemaLocals } from '../shared/imports.ts';
+import { optionRecord } from '../shared/options.ts';
+import {
+  booleanOption,
+  positiveInteger,
+  stringArray,
+} from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
-const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
+const DEFAULT_INCLUDE: readonly string[] = [
+  'apps/**',
+  'verticals/**',
+  'packages/**',
+  'scripts/**',
+];
 
 const DEFAULT_IGNORE: readonly string[] = [];
 
@@ -125,7 +133,10 @@ function readOptions(context: Context) {
     reportSubsets: booleanOption(record.reportSubsets, false),
     minMembers: positiveInteger(record.minMembers, DEFAULT_MIN_MEMBERS),
     factories: stringArray(record.factories, DEFAULT_FACTORIES),
-    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
+    reexportModules: stringArray(
+      record.reexportModules,
+      DEFAULT_REEXPORT_MODULES
+    ),
   };
 }
 
@@ -148,19 +159,26 @@ const VOCABULARY_WRAPPERS: ReadonlySet<string> = new Set([
 
 /** Preserve the vocabulary rule's bounded, deliberately narrow wrapper policy. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  return unwrapNode(node, { wrappers: VOCABULARY_WRAPPERS, maxDepth: MAX_NAME_DEPTH });
+  return unwrapNode(node, {
+    wrappers: VOCABULARY_WRAPPERS,
+    maxDepth: MAX_NAME_DEPTH,
+  });
 }
 
 function constBindingDeclarator(
   context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
+  identifier: Extract<ESTree.Node, { type: 'Identifier' }>
 ): ESTree.VariableDeclarator | null {
   const variable = lookupVariable(context, identifier);
   if (variable === null || variable.defs.length !== 1) return null;
   const definition = variable.defs[0];
   if (definition === undefined || definition.type !== 'Variable') return null;
   const declaration = definition.parent;
-  if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') return null;
+  if (
+    declaration?.type !== 'VariableDeclaration' ||
+    declaration.kind !== 'const'
+  )
+    return null;
   return definition.node.type === 'VariableDeclarator' ? definition.node : null;
 }
 
@@ -171,10 +189,14 @@ function constBindingDeclarator(
  */
 function constInitializer(
   context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
+  identifier: Extract<ESTree.Node, { type: 'Identifier' }>
 ): ESTree.Node | null {
   const declarator = constBindingDeclarator(context, identifier);
-  if (declarator === null || declarator.init === null || declarator.id.type !== 'Identifier')
+  if (
+    declarator === null ||
+    declarator.init === null ||
+    declarator.id.type !== 'Identifier'
+  )
     return null;
   return unwrap(declarator.init);
 }
@@ -184,7 +206,7 @@ function isSchemaNamespace(
   node: ESTree.Node,
   context: Context,
   locals: SchemaLocals,
-  hops: number,
+  hops: number
 ): boolean {
   // `Schema.Literals([...])` / `S.Literals([...])` / `Schema['Literals']([...])`.
   if (node.type === 'Identifier') {
@@ -192,13 +214,16 @@ function isSchemaNamespace(
     if (hops <= 0) return false;
     // `const Sch = Schema; Sch.Literals([...])`.
     const init = constInitializer(context, node);
-    return init === null ? false : isSchemaNamespace(init, context, locals, hops - 1);
+    return init === null
+      ? false
+      : isSchemaNamespace(init, context, locals, hops - 1);
   }
   // `Effect.Schema.Literals([...])` through a root barrel namespace import.
   if (node.type === 'MemberExpression') {
     if (memberName(node) !== SCHEMA_NAMESPACE) return false;
     const root = unwrap(node.object);
-    if (root.type !== 'Identifier' || !locals.barrel.has(root.name)) return false;
+    if (root.type !== 'Identifier' || !locals.barrel.has(root.name))
+      return false;
     return resolvesToImport(context, root);
   }
   return false;
@@ -213,7 +238,7 @@ function identifierFactory(
   context: Context,
   locals: SchemaLocals,
   factories: readonly string[],
-  hops: number,
+  hops: number
 ): string | null {
   const exported = locals.direct.get(callee.name);
   if (exported !== undefined) {
@@ -222,7 +247,9 @@ function identifierFactory(
   }
   if (hops <= 0) return null;
   const init = constInitializer(context, callee);
-  return init === null ? null : factoryOf(init, context, locals, factories, hops - 1);
+  return init === null
+    ? null
+    : factoryOf(init, context, locals, factories, hops - 1);
 }
 
 function factoryOf(
@@ -230,7 +257,7 @@ function factoryOf(
   context: Context,
   locals: SchemaLocals,
   factories: readonly string[],
-  hops: number,
+  hops: number
 ): string | null {
   const callee = unwrap(node);
   if (callee.type === 'Identifier')
@@ -238,14 +265,16 @@ function factoryOf(
   if (callee.type !== 'MemberExpression') return null;
   const member = memberName(callee);
   if (member === null || !factories.includes(member)) return null;
-  return isSchemaNamespace(unwrap(callee.object), context, locals, hops) ? member : null;
+  return isSchemaNamespace(unwrap(callee.object), context, locals, hops)
+    ? member
+    : null;
 }
 
 function vocabularyFactory(
   call: ESTree.CallExpression,
   context: Context,
   locals: SchemaLocals,
-  factories: readonly string[],
+  factories: readonly string[]
 ): string | null {
   return factoryOf(call.callee, context, locals, factories, MAX_ALIAS_HOPS);
 }
@@ -282,7 +311,7 @@ function inlineStringMembers(argument: ESTree.Node): readonly string[] | null {
  */
 function constantVocabulary(
   context: Context,
-  argument: ESTree.Node,
+  argument: ESTree.Node
 ): { readonly name: string; readonly members: readonly string[] } | null {
   const node = unwrap(argument);
   if (node.type !== 'Identifier') return null;
@@ -292,13 +321,19 @@ function constantVocabulary(
   return members === null ? null : { name: node.name, members };
 }
 
-function bindingOwnerName(current: ESTree.Node, previous: ESTree.Node): string | null {
+function bindingOwnerName(
+  current: ESTree.Node,
+  previous: ESTree.Node
+): string | null {
   if (current.type === 'VariableDeclarator') {
     if (current.init !== previous) return null;
     return current.id.type === 'Identifier' ? current.id.name : null;
   }
-  if (current.type !== 'PropertyDefinition' || current.value !== previous) return null;
-  return current.key.type === 'Identifier' && !current.computed ? current.key.name : null;
+  if (current.type !== 'PropertyDefinition' || current.value !== previous)
+    return null;
+  return current.key.type === 'Identifier' && !current.computed
+    ? current.key.name
+    : null;
 }
 
 /** The name this call is bound to, through at most the original eight ancestors. */
@@ -307,7 +342,8 @@ function boundName(call: ESTree.CallExpression): string | null {
   let current: ESTree.Node | null | undefined = call.parent;
   for (let depth = 0; depth < MAX_NAME_DEPTH; depth += 1) {
     if (current === null || current === undefined) return null;
-    if (!VOCABULARY_WRAPPERS.has(current.type)) return bindingOwnerName(current, previous);
+    if (!VOCABULARY_WRAPPERS.has(current.type))
+      return bindingOwnerName(current, previous);
     previous = current;
     current = current.parent;
   }
@@ -336,7 +372,10 @@ function vocabularyKey(members: readonly string[]): readonly string[] {
   return [...new Set(members)].sort();
 }
 
-function isStrictSubset(inner: readonly string[], outer: readonly string[]): boolean {
+function isStrictSubset(
+  inner: readonly string[],
+  outer: readonly string[]
+): boolean {
   if (inner.length >= outer.length) return false;
   const set = new Set(outer);
   return inner.every((member) => set.has(member));
@@ -347,10 +386,11 @@ function collectVocabulary(
   node: ESTree.CallExpression,
   argument: ESTree.Node,
   minMembers: number,
-  groups: Map<string, Group>,
+  groups: Map<string, Group>
 ): void {
   const inline = inlineStringMembers(argument);
-  const constant = inline === null ? constantVocabulary(context, argument) : null;
+  const constant =
+    inline === null ? constantVocabulary(context, argument) : null;
   const written = inline ?? constant?.members ?? null;
   if (written === null) return;
   const members = vocabularyKey(written);
@@ -363,7 +403,8 @@ function collectVocabulary(
     line: context.sourceCode.getLoc(node).start.line,
     authority: constant !== null,
   };
-  if (existing === undefined) groups.set(key, { members, occurrences: [occurrence] });
+  if (existing === undefined)
+    groups.set(key, { members, occurrences: [occurrence] });
   else existing.occurrences.push(occurrence);
 }
 
@@ -375,12 +416,16 @@ function duplicateMessage(canonical: Occurrence) {
 function reportDuplicateGroup(
   context: Context,
   group: Group,
-  reported: Set<ESTree.CallExpression>,
+  reported: Set<ESTree.CallExpression>
 ): void {
   // Calls built from a shared constant are authorities, never copies to report.
-  const copies = group.occurrences.filter((occurrence) => !occurrence.authority);
+  const copies = group.occurrences.filter(
+    (occurrence) => !occurrence.authority
+  );
   if (copies.length === 0) return;
-  const authority = group.occurrences.find((occurrence) => occurrence.authority);
+  const authority = group.occurrences.find(
+    (occurrence) => occurrence.authority
+  );
   const named = copies.find((occurrence) => occurrence.name !== null);
   const canonical = authority ?? named ?? copies[0];
   if (canonical === undefined) return;
@@ -406,9 +451,11 @@ function reportSubsetGroup(
   context: Context,
   group: Group,
   all: readonly Group[],
-  reported: Set<ESTree.CallExpression>,
+  reported: Set<ESTree.CallExpression>
 ): void {
-  const superset = all.find((other) => isStrictSubset(group.members, other.members));
+  const superset = all.find((other) =>
+    isStrictSubset(group.members, other.members)
+  );
   if (superset === undefined) return;
   const owner = superset.occurrences[0];
   if (owner === undefined) return;
@@ -506,7 +553,11 @@ export const rule = defineRule({
         if (resolved.ignoreTests && isTestFile(path)) return false;
         const program = context.sourceCode.ast;
         const bindings = collectEffectBindings(program);
-        const schemaLocals = collectSchemaLocals(program, bindings, resolved.reexportModules);
+        const schemaLocals = collectSchemaLocals(
+          program,
+          bindings,
+          resolved.reexportModules
+        );
         if (
           schemaLocals.schema.size === 0 &&
           schemaLocals.barrel.size === 0 &&
@@ -529,7 +580,11 @@ export const rule = defineRule({
         if (resolved === null || schemaLocals === null) return;
         const argument = node.arguments[0];
         if (argument === undefined || argument.type === 'SpreadElement') return;
-        if (vocabularyFactory(node, context, schemaLocals, resolved.factories) === null) return;
+        if (
+          vocabularyFactory(node, context, schemaLocals, resolved.factories) ===
+          null
+        )
+          return;
         collectVocabulary(context, node, argument, resolved.minMembers, groups);
       },
 
@@ -541,7 +596,8 @@ export const rule = defineRule({
 
         for (const group of all) reportDuplicateGroup(context, group, reported);
         if (!resolved.reportSubsets) return;
-        for (const group of all) reportSubsetGroup(context, group, all, reported);
+        for (const group of all)
+          reportSubsetGroup(context, group, all, reported);
       },
     };
   },

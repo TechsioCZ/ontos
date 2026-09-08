@@ -1,8 +1,14 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { Effect } from 'effect';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readDetailResult, readUnavailable, requireReadValue } from '../../src/api/read-outcome.ts';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { Effect } from 'effect';
+
+import {
+  readDetailResult,
+  readUnavailable,
+  requireReadValue,
+} from '../../src/api/read-outcome.ts';
 
 test('detail lookup preserves the value and one-result evidence', () => {
   const value = { revision: 7 };
@@ -13,10 +19,10 @@ test('detail lookup preserves the value and one-result evidence', () => {
         Effect.sync(() => {
           assert.equal(output.result, value);
           assert.deepEqual(output.evidence, { resultCount: 1 });
-        }),
+        })
       ),
-      Effect.asVoid,
-    ),
+      Effect.asVoid
+    )
   );
 });
 
@@ -29,16 +35,19 @@ test('missing detail produces the caller-specific typed failure without result e
         Effect.sync(() => {
           assert.equal(failure.code, 'read_handler_not_found');
           assert.equal(failure.reason, reason);
-        }),
-      ),
-    ),
+        })
+      )
+    )
   );
 });
 
 test('unavailable mapping retains hidden diagnostic cause and descriptor policy', () => {
   const cause = { diagnostic: 'private' };
   for (const configurable of [false, true]) {
-    const failure = readUnavailable('Read storage unavailable', configurable)(cause);
+    const failure = readUnavailable(
+      'Read storage unavailable',
+      configurable
+    )(cause);
     assert.equal(failure.code, 'read_handler_unavailable');
     assert.equal(failure.reason, 'Read storage unavailable');
     assert.deepEqual(Object.getOwnPropertyDescriptor(failure, 'cause'), {

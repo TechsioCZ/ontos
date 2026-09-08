@@ -4,6 +4,7 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
+
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import {
   PartyContactPointAlreadyExists,
@@ -44,12 +45,18 @@ import {
   resolvePartyAlias,
 } from '../merge/party-alias-resolution.service.ts';
 
-type PartyScopedTransaction = Pick<PartyTransaction, 'insert' | 'select' | 'update'>;
+type PartyScopedTransaction = Pick<
+  PartyTransaction,
+  'insert' | 'select' | 'update'
+>;
 type PurposeRecord = typeof partyContactPointPurposes.$inferSelect;
-const transactionAliasService = (transaction: PartyScopedTransaction): AliasOperations => ({
+const transactionAliasService = (
+  transaction: PartyScopedTransaction
+): AliasOperations => ({
   requireCanonicalWriteTarget: (tenantId, partyId) =>
     requireCanonicalPartyWriteTarget(transaction, tenantId, partyId),
-  resolvePartyAlias: (tenantId, partyId) => resolvePartyAlias(transaction, tenantId, partyId),
+  resolvePartyAlias: (tenantId, partyId) =>
+    resolvePartyAlias(transaction, tenantId, partyId),
 });
 
 const unavailable = (cause?: unknown) =>
@@ -58,12 +65,13 @@ const unavailable = (cause?: unknown) =>
       code: 'party_contact_point_persistence_unavailable',
       reason: 'Party Contact Point persistence is temporarily unavailable',
     }),
-    { cause },
+    { cause }
   );
 
 const instantAsDate = (instant: string | DateTime.Utc): Date =>
   DateTime.toDateUtc(DateTime.makeUnsafe(instant));
-const instantFromDate = (instant: Date): DateTime.Utc => DateTime.makeUnsafe(instant);
+const instantFromDate = (instant: Date): DateTime.Utc =>
+  DateTime.makeUnsafe(instant);
 const toEpochMillis = (instant: Date): number =>
   DateTime.toEpochMillis(DateTime.makeUnsafe(instant));
 
@@ -91,7 +99,10 @@ type ProvenanceRecord = Pick<
 >;
 type VerificationRecord = Pick<
   PartyContactPointRecord,
-  'verificationMethod' | 'verificationState' | 'verifiedAt' | 'verifierReference'
+  | 'verificationMethod'
+  | 'verificationState'
+  | 'verifiedAt'
+  | 'verifierReference'
 >;
 type EndRecord = Pick<
   PartyContactPointRecord,
@@ -105,97 +116,112 @@ type EndRecord = Pick<
   | 'validTo'
 >;
 
-const provenanceDto = Effect.fn('PartyContactPointPersistenceService.provenanceDto')(
-  function* makeProvenanceDto(
-    row: ProvenanceRecord,
-    additionalEvidenceRefs: readonly string[] = [],
-  ) {
-    const externalEvidence =
-      row.externalEvidence === null
-        ? undefined
-        : yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)(row.externalEvidence).pipe(
-            Effect.mapError(unavailable),
-          );
-    return {
-      authoritative: row.provenanceAuthoritative,
-      evidenceReferences: [
-        ...new Set([
-          ...(row.evidenceReference === null ? [] : [row.evidenceReference]),
-          ...additionalEvidenceRefs,
-        ]),
-      ],
-      ...(row.evidenceReference === null ? {} : { evidenceReference: row.evidenceReference }),
-      ...(externalEvidence === undefined ? {} : { externalEvidence }),
-      method: row.provenanceMethod as
-        | 'DECLARED_BY_PARTY'
-        | 'DOCUMENT_REVIEW'
-        | 'MANUAL_CONFIRMATION'
-        | 'MIGRATION'
-        | 'PROVIDER_OBSERVATION',
-      source: row.provenanceSource as
-        | 'EXTERNAL_EVIDENCE'
-        | 'MIGRATION_DATASET'
-        | 'PARTY_DECLARATION'
-        | 'USER_ASSERTION',
-    };
-  },
-);
-
-const encodeExternalEvidence = (provenance: AddContactPointCommand['provenance']) =>
-  provenance.externalEvidence === undefined
-    ? Effect.succeed(null)
-    : Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(provenance.externalEvidence).pipe(
-        Effect.mapError(unavailable),
-      );
-
-const verificationDto = (row: VerificationRecord) => ({
-  ...(row.verificationMethod === null ? {} : { method: row.verificationMethod }),
-  state: row.verificationState as 'REJECTED' | 'UNVERIFIED' | 'VERIFIED',
-  ...(row.verifiedAt === null ? {} : { verifiedAt: instantFromDate(row.verifiedAt) }),
-  ...(row.verifierReference === null ? {} : { verifierReference: row.verifierReference }),
-});
-
-const endDto = Effect.fn('PartyContactPointPersistenceService.endDto')(function* makeEndDto(
-  row: EndRecord,
+const provenanceDto = Effect.fn(
+  'PartyContactPointPersistenceService.provenanceDto'
+)(function* makeProvenanceDto(
+  row: ProvenanceRecord,
+  additionalEvidenceRefs: readonly string[] = []
 ) {
-  if (row.validTo === null) {
-    return null;
-  }
-  if (
-    row.endEvidenceRefs === null ||
-    row.endProvenanceMethod === null ||
-    row.endProvenanceSource === null ||
-    row.endReason === null ||
-    row.endedByActionInvocationId === null ||
-    row.endedByPrincipalId === null ||
-    row.endedRecordedAt === null
-  ) {
-    return yield* Effect.die('Persisted Contact Point end metadata is incomplete');
-  }
+  const externalEvidence =
+    row.externalEvidence === null
+      ? undefined
+      : yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)(
+          row.externalEvidence
+        ).pipe(Effect.mapError(unavailable));
   return {
-    effectiveEnd: instantFromDate(row.validTo),
-    endedByActionInvocationId: row.endedByActionInvocationId,
-    endedByPrincipalId: row.endedByPrincipalId,
-    provenance: {
-      evidenceReferences: row.endEvidenceRefs,
-      method: row.endProvenanceMethod as
-        | 'DECLARED_BY_PARTY'
-        | 'DOCUMENT_REVIEW'
-        | 'MANUAL_CONFIRMATION'
-        | 'MIGRATION'
-        | 'PROVIDER_OBSERVATION',
-      source: row.endProvenanceSource as
-        | 'EXTERNAL_EVIDENCE'
-        | 'MIGRATION_DATASET'
-        | 'PARTY_DECLARATION'
-        | 'USER_ASSERTION',
-    },
-    reason: row.endReason,
-    recordedAt: instantFromDate(row.endedRecordedAt),
+    authoritative: row.provenanceAuthoritative,
+    evidenceReferences: [
+      ...new Set([
+        ...(row.evidenceReference === null ? [] : [row.evidenceReference]),
+        ...additionalEvidenceRefs,
+      ]),
+    ],
+    ...(row.evidenceReference === null
+      ? {}
+      : { evidenceReference: row.evidenceReference }),
+    ...(externalEvidence === undefined ? {} : { externalEvidence }),
+    method: row.provenanceMethod as
+      | 'DECLARED_BY_PARTY'
+      | 'DOCUMENT_REVIEW'
+      | 'MANUAL_CONFIRMATION'
+      | 'MIGRATION'
+      | 'PROVIDER_OBSERVATION',
+    source: row.provenanceSource as
+      | 'EXTERNAL_EVIDENCE'
+      | 'MIGRATION_DATASET'
+      | 'PARTY_DECLARATION'
+      | 'USER_ASSERTION',
   };
 });
 
-const hasExactEndSemantics = (row: EndRecord, command: EndContactPointCommand): boolean => {
+const encodeExternalEvidence = (
+  provenance: AddContactPointCommand['provenance']
+) =>
+  provenance.externalEvidence === undefined
+    ? Effect.succeed(null)
+    : Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(
+        provenance.externalEvidence
+      ).pipe(Effect.mapError(unavailable));
+
+const verificationDto = (row: VerificationRecord) => ({
+  ...(row.verificationMethod === null
+    ? {}
+    : { method: row.verificationMethod }),
+  state: row.verificationState as 'REJECTED' | 'UNVERIFIED' | 'VERIFIED',
+  ...(row.verifiedAt === null
+    ? {}
+    : { verifiedAt: instantFromDate(row.verifiedAt) }),
+  ...(row.verifierReference === null
+    ? {}
+    : { verifierReference: row.verifierReference }),
+});
+
+const endDto = Effect.fn('PartyContactPointPersistenceService.endDto')(
+  function* makeEndDto(row: EndRecord) {
+    if (row.validTo === null) {
+      return null;
+    }
+    if (
+      row.endEvidenceRefs === null ||
+      row.endProvenanceMethod === null ||
+      row.endProvenanceSource === null ||
+      row.endReason === null ||
+      row.endedByActionInvocationId === null ||
+      row.endedByPrincipalId === null ||
+      row.endedRecordedAt === null
+    ) {
+      return yield* Effect.die(
+        'Persisted Contact Point end metadata is incomplete'
+      );
+    }
+    return {
+      effectiveEnd: instantFromDate(row.validTo),
+      endedByActionInvocationId: row.endedByActionInvocationId,
+      endedByPrincipalId: row.endedByPrincipalId,
+      provenance: {
+        evidenceReferences: row.endEvidenceRefs,
+        method: row.endProvenanceMethod as
+          | 'DECLARED_BY_PARTY'
+          | 'DOCUMENT_REVIEW'
+          | 'MANUAL_CONFIRMATION'
+          | 'MIGRATION'
+          | 'PROVIDER_OBSERVATION',
+        source: row.endProvenanceSource as
+          | 'EXTERNAL_EVIDENCE'
+          | 'MIGRATION_DATASET'
+          | 'PARTY_DECLARATION'
+          | 'USER_ASSERTION',
+      },
+      reason: row.endReason,
+      recordedAt: instantFromDate(row.endedRecordedAt),
+    };
+  }
+);
+
+const hasExactEndSemantics = (
+  row: EndRecord,
+  command: EndContactPointCommand
+): boolean => {
   const requestedEvidence =
     command.provenance.evidenceReference === undefined
       ? []
@@ -206,7 +232,9 @@ const hasExactEndSemantics = (row: EndRecord, command: EndContactPointCommand): 
     row.endProvenanceMethod === command.provenance.method &&
     row.endEvidenceRefs !== null &&
     row.endEvidenceRefs.length === requestedEvidence.length &&
-    row.endEvidenceRefs.every((reference, index) => reference === requestedEvidence[index])
+    row.endEvidenceRefs.every(
+      (reference, index) => reference === requestedEvidence[index]
+    )
   );
 };
 
@@ -222,7 +250,9 @@ const isPurposeCurrentAt = (row: PurposeRecord, now: Date): boolean =>
   toEpochMillis(row.validFrom) <= toEpochMillis(now) &&
   (row.validTo === null || toEpochMillis(row.validTo) > toEpochMillis(now));
 
-const purposeRegistryColumns = (context: AddressPurposeAssignment['registryContext']) => ({
+const purposeRegistryColumns = (
+  context: AddressPurposeAssignment['registryContext']
+) => ({
   jurisdiction: context?.jurisdiction.toUpperCase() ?? 'ZZ',
   registryContext: context?.registryKey ?? 'GENERAL',
 });
@@ -234,10 +264,19 @@ const purposeDto = Effect.fn('PartyContactPointPersistenceService.purposeDto')(
       end: yield* endDto(row),
       preferred: row.preferred,
       provenance: yield* provenanceDto(row),
-      purpose: row.purposeKey as 'BILLING' | 'CORRESPONDENCE' | 'DELIVERY' | 'REGISTERED',
+      purpose: row.purposeKey as
+        | 'BILLING'
+        | 'CORRESPONDENCE'
+        | 'DELIVERY'
+        | 'REGISTERED',
       recordedAt: instantFromDate(row.recordedAt),
       revision: row.revision,
-      state: row.state as 'ACTIVE' | 'DISPUTED' | 'ENDED' | 'RETRACTED' | 'SUPERSEDED',
+      state: row.state as
+        | 'ACTIVE'
+        | 'DISPUTED'
+        | 'ENDED'
+        | 'RETRACTED'
+        | 'SUPERSEDED',
       validFrom: instantFromDate(row.validFrom),
       validTo: row.validTo === null ? null : instantFromDate(row.validTo),
       verification: verificationDto(row),
@@ -250,12 +289,12 @@ const purposeDto = Effect.fn('PartyContactPointPersistenceService.purposeDto')(
           }
         : {}),
     };
-  },
+  }
 );
 
 const contactPointValueDto = (
   row: PartyContactPointRecord,
-  purposeDtos: readonly Effect.Success<ReturnType<typeof purposeDto>>[],
+  purposeDtos: readonly Effect.Success<ReturnType<typeof purposeDto>>[]
 ) => {
   const value =
     row.contactPointType === 'EMAIL'
@@ -289,45 +328,57 @@ const contactPointValueDto = (
   return value;
 };
 
-const contactPointDto = Effect.fn('PartyContactPointPersistenceService.contactPointDto')(
-  function* makeContactPointDto(input: {
-    readonly now: Date;
-    readonly purposes: readonly PurposeRecord[];
-    readonly row: PartyContactPointRecord;
-  }) {
-    const { now, purposes, row } = input;
-    const currentPurposes = purposes.filter((purpose) => isPurposeCurrentAt(purpose, now));
-    const purposeDtos = yield* Effect.forEach(purposes, (purpose) => purposeDto(purpose, now), {
+const contactPointDto = Effect.fn(
+  'PartyContactPointPersistenceService.contactPointDto'
+)(function* makeContactPointDto(input: {
+  readonly now: Date;
+  readonly purposes: readonly PurposeRecord[];
+  readonly row: PartyContactPointRecord;
+}) {
+  const { now, purposes, row } = input;
+  const currentPurposes = purposes.filter((purpose) =>
+    isPurposeCurrentAt(purpose, now)
+  );
+  const purposeDtos = yield* Effect.forEach(
+    purposes,
+    (purpose) => purposeDto(purpose, now),
+    {
       concurrency: 1,
-    });
-    const value = contactPointValueDto(row, purposeDtos);
-    return {
-      contactPointRef: contactPointRef(row.tenantId, row.contactPointId),
-      current:
-        isCurrentAt(row, now) && (row.contactPointType !== 'ADDRESS' || currentPurposes.length > 0),
-      end: yield* endDto(row),
-      partyRef: partyRef(row.tenantId, row.partyId),
-      privacyClassification: row.privacyClassification as
-        | 'BUSINESS_SENSITIVE'
-        | 'PERSONAL'
-        | 'PUBLIC',
-      provenance: yield* provenanceDto(row, row.additionalEvidenceRefs),
-      recordedAt: instantFromDate(row.recordedAt),
-      revision: row.revision,
-      state: row.state as 'ACTIVE' | 'DISPUTED' | 'ENDED' | 'RETRACTED' | 'SUPERSEDED',
-      storedPartyRef: partyRef(row.tenantId, row.partyId),
-      validFrom: instantFromDate(row.validFrom),
-      validTo: row.validTo === null ? null : instantFromDate(row.validTo),
-      value,
-      verification: verificationDto(row),
-    } satisfies PartyContactPoint;
-  },
-);
+    }
+  );
+  const value = contactPointValueDto(row, purposeDtos);
+  return {
+    contactPointRef: contactPointRef(row.tenantId, row.contactPointId),
+    current:
+      isCurrentAt(row, now) &&
+      (row.contactPointType !== 'ADDRESS' || currentPurposes.length > 0),
+    end: yield* endDto(row),
+    partyRef: partyRef(row.tenantId, row.partyId),
+    privacyClassification: row.privacyClassification as
+      | 'BUSINESS_SENSITIVE'
+      | 'PERSONAL'
+      | 'PUBLIC',
+    provenance: yield* provenanceDto(row, row.additionalEvidenceRefs),
+    recordedAt: instantFromDate(row.recordedAt),
+    revision: row.revision,
+    state: row.state as
+      | 'ACTIVE'
+      | 'DISPUTED'
+      | 'ENDED'
+      | 'RETRACTED'
+      | 'SUPERSEDED',
+    storedPartyRef: partyRef(row.tenantId, row.partyId),
+    validFrom: instantFromDate(row.validFrom),
+    validTo: row.validTo === null ? null : instantFromDate(row.validTo),
+    value,
+    verification: verificationDto(row),
+  } satisfies PartyContactPoint;
+});
 
 const loadPurposes = (
   transaction: PartyScopedTransaction,
   tenantId: string,
-  contactPointId: string,
+  contactPointId: string
 ) =>
   transaction
     .select()
@@ -335,8 +386,8 @@ const loadPurposes = (
     .where(
       and(
         eq(partyContactPointPurposes.tenantId, tenantId),
-        eq(partyContactPointPurposes.contactPointId, contactPointId),
-      ),
+        eq(partyContactPointPurposes.contactPointId, contactPointId)
+      )
     )
     .orderBy(asc(partyContactPointPurposes.recordedAt))
     .pipe(Effect.mapError(unavailable));
@@ -346,7 +397,7 @@ const loadDto = Effect.fn('PartyContactPointPersistenceService.loadDto')(
     transaction: PartyScopedTransaction,
     row: PartyContactPointRecord,
     now: Date,
-    aliases: AliasOperations = transactionAliasService(transaction),
+    aliases: AliasOperations = transactionAliasService(transaction)
   ) {
     const { purposes, resolution } = yield* Effect.all(
       {
@@ -355,7 +406,7 @@ const loadDto = Effect.fn('PartyContactPointPersistenceService.loadDto')(
           .resolvePartyAlias(row.tenantId, row.partyId)
           .pipe(Effect.mapError(unavailable)),
       },
-      { concurrency: 1 },
+      { concurrency: 1 }
     );
     const contactPoint = yield* contactPointDto({ now, purposes, row });
     return {
@@ -363,7 +414,7 @@ const loadDto = Effect.fn('PartyContactPointPersistenceService.loadDto')(
       partyRef: partyRef(row.tenantId, resolution.canonicalPartyId),
       storedPartyRef: partyRef(row.tenantId, row.partyId),
     };
-  },
+  }
 );
 
 const storedAddressKey = (row: PartyContactPointRecord) =>
@@ -378,7 +429,7 @@ const storedAddressKey = (row: PartyContactPointRecord) =>
 
 const enrichedEvidenceReferences = (
   row: PartyContactPointRecord,
-  provenance: AddContactPointCommand['provenance'],
+  provenance: AddContactPointCommand['provenance']
 ) => {
   const additionalEvidenceRefs = [
     ...new Set([
@@ -394,7 +445,7 @@ const enrichedEvidenceReferences = (
 
 const sameCanonicalContact = (
   row: PartyContactPointRecord,
-  command: AddContactPointCommand,
+  command: AddContactPointCommand
 ): boolean => {
   const normalized = normalizeContactPointInput(command.contactPoint);
   if (normalized.type !== row.contactPointType) {
@@ -405,16 +456,23 @@ const sameCanonicalContact = (
   }
   if (normalized.type === 'PHONE') {
     return (
-      row.normalizedValue === normalized.lookupValue && row.phoneExtension === normalized.extension
+      row.normalizedValue === normalized.lookupValue &&
+      row.phoneExtension === normalized.extension
     );
   }
   if (command.contactPoint.type !== 'ADDRESS') {
     return false;
   }
-  return normalizedAddressKey(command.contactPoint.address) === storedAddressKey(row);
+  return (
+    normalizedAddressKey(command.contactPoint.address) === storedAddressKey(row)
+  );
 };
 
-const lockParty = (transaction: PartyScopedTransaction, tenantId: string, partyId: string) =>
+const lockParty = (
+  transaction: PartyScopedTransaction,
+  tenantId: string,
+  partyId: string
+) =>
   transaction
     .select({ partyId: parties.partyId })
     .from(parties)
@@ -427,7 +485,7 @@ const currentContactRows = (
   transaction: PartyScopedTransaction,
   tenantId: string,
   partyId: string,
-  type: string,
+  type: string
 ) =>
   transaction
     .select()
@@ -437,82 +495,89 @@ const currentContactRows = (
         eq(partyContactPoints.tenantId, tenantId),
         eq(partyContactPoints.partyId, partyId),
         eq(partyContactPoints.contactPointType, type),
-        eq(partyContactPoints.isCurrent, true),
-      ),
+        eq(partyContactPoints.isCurrent, true)
+      )
     )
     .pipe(Effect.mapError(unavailable));
 
-const loadPurposeScope = Effect.fn('PartyContactPointPersistenceService.loadPurposeScope')(
-  function* loadCurrentPurposeScope(
-    transaction: PartyScopedTransaction,
-    tenantId: string,
-    partyId: string,
-    assignment: AddressPurposeAssignment,
-    effectiveAt: Date,
-  ) {
-    const rows = yield* transaction
-      .select()
-      .from(partyContactPointPurposes)
-      .where(
-        and(
-          eq(partyContactPointPurposes.tenantId, tenantId),
-          eq(partyContactPointPurposes.partyId, partyId),
-          eq(partyContactPointPurposes.purposeKey, assignment.purpose),
-          eq(
-            partyContactPointPurposes.registryContext,
-            assignment.registryContext?.registryKey ?? 'GENERAL',
-          ),
-          eq(
-            partyContactPointPurposes.jurisdiction,
-            assignment.registryContext?.jurisdiction.toUpperCase() ?? 'ZZ',
-          ),
-          eq(partyContactPointPurposes.isCurrent, true),
+const loadPurposeScope = Effect.fn(
+  'PartyContactPointPersistenceService.loadPurposeScope'
+)(function* loadCurrentPurposeScope(
+  transaction: PartyScopedTransaction,
+  tenantId: string,
+  partyId: string,
+  assignment: AddressPurposeAssignment,
+  effectiveAt: Date
+) {
+  const rows = yield* transaction
+    .select()
+    .from(partyContactPointPurposes)
+    .where(
+      and(
+        eq(partyContactPointPurposes.tenantId, tenantId),
+        eq(partyContactPointPurposes.partyId, partyId),
+        eq(partyContactPointPurposes.purposeKey, assignment.purpose),
+        eq(
+          partyContactPointPurposes.registryContext,
+          assignment.registryContext?.registryKey ?? 'GENERAL'
         ),
+        eq(
+          partyContactPointPurposes.jurisdiction,
+          assignment.registryContext?.jurisdiction.toUpperCase() ?? 'ZZ'
+        ),
+        eq(partyContactPointPurposes.isCurrent, true)
       )
-      .pipe(Effect.mapError(unavailable));
-    const expired = rows.filter(
-      (row) => row.validTo !== null && toEpochMillis(row.validTo) <= toEpochMillis(effectiveAt),
-    );
-    yield* Effect.forEach(
-      expired,
-      (row) =>
-        transaction
-          .update(partyContactPointPurposes)
-          .set({
-            isCurrent: false,
-            preferred: false,
-            revision: row.revision + 1,
-            state: 'ENDED',
-          })
-          .where(
-            and(
-              eq(partyContactPointPurposes.tenantId, tenantId),
-              eq(partyContactPointPurposes.contactPointPurposeId, row.contactPointPurposeId),
-            ),
+    )
+    .pipe(Effect.mapError(unavailable));
+  const expired = rows.filter(
+    (row) =>
+      row.validTo !== null &&
+      toEpochMillis(row.validTo) <= toEpochMillis(effectiveAt)
+  );
+  yield* Effect.forEach(
+    expired,
+    (row) =>
+      transaction
+        .update(partyContactPointPurposes)
+        .set({
+          isCurrent: false,
+          preferred: false,
+          revision: row.revision + 1,
+          state: 'ENDED',
+        })
+        .where(
+          and(
+            eq(partyContactPointPurposes.tenantId, tenantId),
+            eq(
+              partyContactPointPurposes.contactPointPurposeId,
+              row.contactPointPurposeId
+            )
           )
-          .pipe(Effect.mapError(unavailable)),
-      { concurrency: 1, discard: true },
-    );
-    return rows.filter(
-      (row) => row.validTo === null || toEpochMillis(row.validTo) > toEpochMillis(effectiveAt),
-    );
-  },
-);
+        )
+        .pipe(Effect.mapError(unavailable)),
+    { concurrency: 1, discard: true }
+  );
+  return rows.filter(
+    (row) =>
+      row.validTo === null ||
+      toEpochMillis(row.validTo) > toEpochMillis(effectiveAt)
+  );
+});
 
 const transferPurposePreference = Effect.fn(
-  'PartyContactPointPersistenceService.transferPurposePreference',
+  'PartyContactPointPersistenceService.transferPurposePreference'
 )(function* transferPreferredPurpose(
   transaction: PartyScopedTransaction,
   tenantId: string,
   targetContactPointId: string,
   rows: readonly PurposeRecord[],
-  targetPurposeId?: string,
+  targetPurposeId?: string
 ) {
   const preferredRows = rows.filter(
-    (row) => row.preferred && row.contactPointPurposeId !== targetPurposeId,
+    (row) => row.preferred && row.contactPointPurposeId !== targetPurposeId
   );
   const transferSinglePurposePreference = Effect.fn(
-    'PartyContactPointPersistenceService.transferSinglePurposePreference',
+    'PartyContactPointPersistenceService.transferSinglePurposePreference'
   )(function* transferSinglePurposePreference(row: PurposeRecord) {
     yield* transaction
       .update(partyContactPointPurposes)
@@ -523,8 +588,11 @@ const transferPurposePreference = Effect.fn(
       .where(
         and(
           eq(partyContactPointPurposes.tenantId, tenantId),
-          eq(partyContactPointPurposes.contactPointPurposeId, row.contactPointPurposeId),
-        ),
+          eq(
+            partyContactPointPurposes.contactPointPurposeId,
+            row.contactPointPurposeId
+          )
+        )
       );
     if (row.contactPointId === targetContactPointId) {
       return;
@@ -537,8 +605,8 @@ const transferPurposePreference = Effect.fn(
       .where(
         and(
           eq(partyContactPoints.tenantId, tenantId),
-          eq(partyContactPoints.contactPointId, row.contactPointId),
-        ),
+          eq(partyContactPoints.contactPointId, row.contactPointId)
+        )
       );
   }, Effect.mapError(unavailable));
   yield* Effect.forEach(preferredRows, transferSinglePurposePreference, {
@@ -547,7 +615,9 @@ const transferPurposePreference = Effect.fn(
   });
 });
 
-const contactValueColumns = (normalized: ReturnType<typeof normalizeContactPointInput>) => {
+const contactValueColumns = (
+  normalized: ReturnType<typeof normalizeContactPointInput>
+) => {
   const addressColumns =
     normalized.type === 'ADDRESS'
       ? normalized.address
@@ -591,39 +661,45 @@ const acceptedVerificationColumns = (command: AddContactPointCommand) => ({
       ? null
       : DateTime.toDateUtc(command.verification.verifiedAt),
   verifiedByPrincipalId:
-    command.verification.state === 'VERIFIED' ? command.acceptedByPrincipalId : null,
+    command.verification.state === 'VERIFIED'
+      ? command.acceptedByPrincipalId
+      : null,
   verifierReference: command.verification.verifierReference ?? null,
 });
 
 export const addContactPointRecord = Effect.fn(
-  'PartyContactPointPersistenceService.addContactPointRecord',
+  'PartyContactPointPersistenceService.addContactPointRecord'
 )(function* addContactPoint(
   transaction: PartyScopedTransaction,
   scope: OperationalScope,
   command: AddContactPointCommand,
-  aliases: AliasOperations = transactionAliasService(transaction),
+  aliases: AliasOperations = transactionAliasService(transaction)
 ) {
-  const contactPoint = yield* Schema.decodeUnknownEffect(ContactPointInputSchema, {
-    onExcessProperty: 'error',
-  })(command.contactPoint).pipe(
+  const contactPoint = yield* Schema.decodeUnknownEffect(
+    ContactPointInputSchema,
+    {
+      onExcessProperty: 'error',
+    }
+  )(command.contactPoint).pipe(
     Effect.mapError((cause) =>
       Object.assign(
         new PartyContactPointInvalid({
           code: 'party_contact_point_invalid',
           reason: 'Contact Point value does not satisfy the closed type rules',
         }),
-        { cause },
-      ),
-    ),
+        { cause }
+      )
+    )
   );
   const normalized = yield* Effect.try({
     catch: (cause) =>
       Object.assign(
         new PartyContactPointInvalid({
           code: 'party_contact_point_invalid',
-          reason: 'Contact Point value or evidence does not satisfy the closed type rules',
+          reason:
+            'Contact Point value or evidence does not satisfy the closed type rules',
         }),
-        { cause },
+        { cause }
       ),
     try: () => {
       assertVerificationRules(command.verification);
@@ -634,7 +710,11 @@ export const addContactPointRecord = Effect.fn(
     },
   });
   const externalEvidence = yield* encodeExternalEvidence(command.provenance);
-  const [party] = yield* lockParty(transaction, scope.tenantId, command.partyRef.resourceId);
+  const [party] = yield* lockParty(
+    transaction,
+    scope.tenantId,
+    command.partyRef.resourceId
+  );
   if (party === undefined) {
     return yield* new PartyContactPointPartyNotFound({
       code: 'party_contact_point_party_not_found',
@@ -646,18 +726,19 @@ export const addContactPointRecord = Effect.fn(
     .requireCanonicalWriteTarget(scope.tenantId, command.partyRef.resourceId)
     .pipe(
       Effect.mapError((error) =>
-        Schema.is(PartyAliasWriteRejected)(error) ? error : unavailable(error),
-      ),
+        Schema.is(PartyAliasWriteRejected)(error) ? error : unavailable(error)
+      )
     );
   const selected = yield* currentContactRows(
     transaction,
     scope.tenantId,
     command.partyRef.resourceId,
-    command.contactPoint.type,
+    command.contactPoint.type
   );
   const now = yield* DateTime.nowAsDate;
   const expired = selected.filter(
-    (row) => row.validTo !== null && toEpochMillis(row.validTo) <= toEpochMillis(now),
+    (row) =>
+      row.validTo !== null && toEpochMillis(row.validTo) <= toEpochMillis(now)
   );
   yield* Effect.forEach(
     expired,
@@ -668,60 +749,75 @@ export const addContactPointRecord = Effect.fn(
         .where(
           and(
             eq(partyContactPoints.tenantId, scope.tenantId),
-            eq(partyContactPoints.contactPointId, row.contactPointId),
-          ),
+            eq(partyContactPoints.contactPointId, row.contactPointId)
+          )
         )
         .pipe(Effect.mapError(unavailable)),
-    { concurrency: 1, discard: true },
+    { concurrency: 1, discard: true }
   );
   const existing = selected.filter(
-    (row) => row.validTo === null || toEpochMillis(row.validTo) > toEpochMillis(now),
+    (row) =>
+      row.validTo === null || toEpochMillis(row.validTo) > toEpochMillis(now)
   );
   const duplicate = existing.find((row) => sameCanonicalContact(row, command));
   if (duplicate !== undefined) {
     return yield* new PartyContactPointAlreadyExists({
       code: 'party_contact_point_already_exists',
-      existingContactPointRef: contactPointRef(scope.tenantId, duplicate.contactPointId),
+      existingContactPointRef: contactPointRef(
+        scope.tenantId,
+        duplicate.contactPointId
+      ),
       reason:
         'This Party already has the same current canonical Contact Point; update its metadata instead',
     });
   }
-  const preparePurpose = Effect.fn('PartyContactPointPersistenceService.preparePurpose')(
-    function* preparePurpose(assignment: AddressPurposeAssignment) {
-      const rows = yield* loadPurposeScope(
-        transaction,
-        scope.tenantId,
-        command.partyRef.resourceId,
-        assignment,
-        now,
-      );
-      if (assignment.purpose === 'REGISTERED' && rows[0] !== undefined) {
-        return yield* new PartyContactPointAlreadyExists({
-          code: 'party_contact_point_already_exists',
-          existingContactPointRef: contactPointRef(scope.tenantId, rows[0].contactPointId),
-          reason:
-            'An accepted REGISTERED address already occupies this registry context; end or correct it explicitly',
-        });
-      }
-      return { assignment, rows };
-    },
-  );
+  const preparePurpose = Effect.fn(
+    'PartyContactPointPersistenceService.preparePurpose'
+  )(function* preparePurpose(assignment: AddressPurposeAssignment) {
+    const rows = yield* loadPurposeScope(
+      transaction,
+      scope.tenantId,
+      command.partyRef.resourceId,
+      assignment,
+      now
+    );
+    if (assignment.purpose === 'REGISTERED' && rows[0] !== undefined) {
+      return yield* new PartyContactPointAlreadyExists({
+        code: 'party_contact_point_already_exists',
+        existingContactPointRef: contactPointRef(
+          scope.tenantId,
+          rows[0].contactPointId
+        ),
+        reason:
+          'An accepted REGISTERED address already occupies this registry context; end or correct it explicitly',
+      });
+    }
+    return { assignment, rows };
+  });
   const preparedPurposes =
     normalized.type === 'ADDRESS'
-      ? yield* Effect.forEach(normalized.purposes, preparePurpose, { concurrency: 1 })
+      ? yield* Effect.forEach(normalized.purposes, preparePurpose, {
+          concurrency: 1,
+        })
       : [];
-  if ((normalized.type === 'EMAIL' || normalized.type === 'PHONE') && normalized.preferred) {
+  if (
+    (normalized.type === 'EMAIL' || normalized.type === 'PHONE') &&
+    normalized.preferred
+  ) {
     yield* transaction
       .update(partyContactPoints)
-      .set({ preferred: false, revision: sql`${partyContactPoints.revision} + 1` })
+      .set({
+        preferred: false,
+        revision: sql`${partyContactPoints.revision} + 1`,
+      })
       .where(
         and(
           eq(partyContactPoints.tenantId, scope.tenantId),
           eq(partyContactPoints.partyId, command.partyRef.resourceId),
           eq(partyContactPoints.contactPointType, normalized.type),
           eq(partyContactPoints.isCurrent, true),
-          eq(partyContactPoints.preferred, true),
-        ),
+          eq(partyContactPoints.preferred, true)
+        )
       )
       .pipe(Effect.mapError(unavailable));
   }
@@ -750,48 +846,56 @@ export const addContactPointRecord = Effect.fn(
   if (created === undefined) {
     return yield* unavailable();
   }
-  const insertPurpose = Effect.fn('PartyContactPointPersistenceService.insertPurpose')(
-    function* insertPurpose(input: {
-      readonly assignment: AddressPurposeAssignment;
-      readonly rows: readonly PurposeRecord[];
-    }) {
-      const { assignment, rows } = input;
-      const context = assignment.registryContext;
-      if (assignment.preferred) {
-        yield* transferPurposePreference(transaction, scope.tenantId, created.contactPointId, rows);
-      }
-      yield* transaction
-        .insert(partyContactPointPurposes)
-        .values({
-          acceptedByActionInvocationId: command.acceptedByActionInvocationId,
-          acceptedByPrincipalId: command.acceptedByPrincipalId,
-          contactPointId: created.contactPointId,
-          evidenceReference: command.provenance.evidenceReference ?? null,
-          externalEvidence,
-          isCurrent: true,
-          jurisdiction: context?.jurisdiction.toUpperCase() ?? 'ZZ',
-          partyId: command.partyRef.resourceId,
-          policyVersion: 'party-contact-point.v1',
-          preferred: assignment.preferred,
-          provenanceAuthoritative: command.provenance.authoritative,
-          provenanceMethod: command.provenance.method,
-          provenanceSource: command.provenance.source,
-          purposeKey: assignment.purpose,
-          registryContext: context?.registryKey ?? 'GENERAL',
-          tenantId: scope.tenantId,
-          validFrom: instantAsDate(command.validFrom),
-        })
-        .pipe(Effect.mapError(unavailable));
-    },
-  );
-  yield* Effect.forEach(preparedPurposes, insertPurpose, { concurrency: 1, discard: true });
+  const insertPurpose = Effect.fn(
+    'PartyContactPointPersistenceService.insertPurpose'
+  )(function* insertPurpose(input: {
+    readonly assignment: AddressPurposeAssignment;
+    readonly rows: readonly PurposeRecord[];
+  }) {
+    const { assignment, rows } = input;
+    const context = assignment.registryContext;
+    if (assignment.preferred) {
+      yield* transferPurposePreference(
+        transaction,
+        scope.tenantId,
+        created.contactPointId,
+        rows
+      );
+    }
+    yield* transaction
+      .insert(partyContactPointPurposes)
+      .values({
+        acceptedByActionInvocationId: command.acceptedByActionInvocationId,
+        acceptedByPrincipalId: command.acceptedByPrincipalId,
+        contactPointId: created.contactPointId,
+        evidenceReference: command.provenance.evidenceReference ?? null,
+        externalEvidence,
+        isCurrent: true,
+        jurisdiction: context?.jurisdiction.toUpperCase() ?? 'ZZ',
+        partyId: command.partyRef.resourceId,
+        policyVersion: 'party-contact-point.v1',
+        preferred: assignment.preferred,
+        provenanceAuthoritative: command.provenance.authoritative,
+        provenanceMethod: command.provenance.method,
+        provenanceSource: command.provenance.source,
+        purposeKey: assignment.purpose,
+        registryContext: context?.registryKey ?? 'GENERAL',
+        tenantId: scope.tenantId,
+        validFrom: instantAsDate(command.validFrom),
+      })
+      .pipe(Effect.mapError(unavailable));
+  });
+  yield* Effect.forEach(preparedPurposes, insertPurpose, {
+    concurrency: 1,
+    discard: true,
+  });
   return yield* loadDto(transaction, created, now, aliases);
 });
 
 const lockContactPoint = (
   transaction: PartyScopedTransaction,
   tenantId: string,
-  contactPointId: string,
+  contactPointId: string
 ) =>
   transaction
     .select()
@@ -799,8 +903,8 @@ const lockContactPoint = (
     .where(
       and(
         eq(partyContactPoints.tenantId, tenantId),
-        eq(partyContactPoints.contactPointId, contactPointId),
-      ),
+        eq(partyContactPoints.contactPointId, contactPointId)
+      )
     )
     .limit(1)
     .for('update')
@@ -809,7 +913,7 @@ const lockContactPoint = (
 const findContactPointRow = (
   transaction: PartyScopedTransaction,
   tenantId: string,
-  contactPointId: string,
+  contactPointId: string
 ) =>
   transaction
     .select()
@@ -817,8 +921,8 @@ const findContactPointRow = (
     .where(
       and(
         eq(partyContactPoints.tenantId, tenantId),
-        eq(partyContactPoints.contactPointId, contactPointId),
-      ),
+        eq(partyContactPoints.contactPointId, contactPointId)
+      )
     )
     .limit(1)
     .pipe(Effect.mapError(unavailable));
@@ -826,7 +930,7 @@ const findContactPointRow = (
 const requireMutableContact = (
   row: PartyContactPointRecord | undefined,
   contactRef: UpdateContactPointCommand['contactPointRef'],
-  expectedRevision: number,
+  expectedRevision: number
 ) => {
   if (row === undefined) {
     return Effect.fail(
@@ -834,15 +938,16 @@ const requireMutableContact = (
         code: 'party_contact_point_not_found',
         contactPointRef: contactRef,
         reason: 'The requested Party Contact Point does not exist',
-      }),
+      })
     );
   }
   if (!row.isCurrent || row.state !== 'ACTIVE') {
     return Effect.fail(
       new PartyContactPointLifecycleConflict({
         code: 'party_contact_point_lifecycle_conflict',
-        reason: 'Only a current active Contact Point can receive a metadata update',
-      }),
+        reason:
+          'Only a current active Contact Point can receive a metadata update',
+      })
     );
   }
   if (row.revision !== expectedRevision) {
@@ -851,14 +956,14 @@ const requireMutableContact = (
         code: 'party_contact_point_revision_conflict',
         currentRevision: row.revision,
         reason: 'The Contact Point changed after the caller read it',
-      }),
+      })
     );
   }
   return Effect.succeed(row);
 };
 
 const loadUpdatedContactPoint = Effect.fn(
-  'PartyContactPointPersistenceService.loadUpdatedContactPoint',
+  'PartyContactPointPersistenceService.loadUpdatedContactPoint'
 )(function* loadUpdatedContactPoint(input: {
   readonly aliases: AliasOperations;
   readonly row: PartyContactPointRecord;
@@ -866,7 +971,11 @@ const loadUpdatedContactPoint = Effect.fn(
   readonly transaction: PartyScopedTransaction;
 }) {
   const { aliases, row, scope, transaction } = input;
-  const [updated] = yield* lockContactPoint(transaction, scope.tenantId, row.contactPointId);
+  const [updated] = yield* lockContactPoint(
+    transaction,
+    scope.tenantId,
+    row.contactPointId
+  );
   if (updated === undefined) {
     return yield* unavailable();
   }
@@ -885,25 +994,25 @@ const endContactPointFromUpdate = (
   transaction: PartyScopedTransaction,
   scope: OperationalScope,
   command: EndContactPointCommand,
-  aliases: AliasOperations,
+  aliases: AliasOperations
 ): Effect.Effect<
   Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>,
   EndContactPointFailure
 > => endContactPointRecord(transaction, scope, command, aliases);
 
 export const updateContactPointRecord = Effect.fn(
-  'PartyContactPointPersistenceService.updateContactPointRecord',
+  'PartyContactPointPersistenceService.updateContactPointRecord'
 )(function* updateContactPoint(
   transaction: PartyScopedTransaction,
   scope: OperationalScope,
   command: UpdateContactPointCommand,
-  aliases: AliasOperations = transactionAliasService(transaction),
+  aliases: AliasOperations = transactionAliasService(transaction)
 ) {
   const { change } = command;
   const [observed] = yield* findContactPointRow(
     transaction,
     scope.tenantId,
-    command.contactPointRef.resourceId,
+    command.contactPointRef.resourceId
   );
   const canonicalPartyId =
     observed === undefined
@@ -917,23 +1026,26 @@ export const updateContactPointRecord = Effect.fn(
   const [locked] = yield* lockContactPoint(
     transaction,
     scope.tenantId,
-    command.contactPointRef.resourceId,
+    command.contactPointRef.resourceId
   );
   const row = yield* requireMutableContact(
     locked,
     command.contactPointRef,
-    command.expectedRevision,
+    command.expectedRevision
   );
   const operationTime = yield* DateTime.nowAsDate;
-  if (row.validTo !== null && toEpochMillis(row.validTo) <= toEpochMillis(operationTime)) {
+  if (
+    row.validTo !== null &&
+    toEpochMillis(row.validTo) <= toEpochMillis(operationTime)
+  ) {
     yield* transaction
       .update(partyContactPoints)
       .set({ isCurrent: false, preferred: false, state: 'ENDED' })
       .where(
         and(
           eq(partyContactPoints.tenantId, scope.tenantId),
-          eq(partyContactPoints.contactPointId, row.contactPointId),
-        ),
+          eq(partyContactPoints.contactPointId, row.contactPointId)
+        )
       )
       .pipe(Effect.mapError(unavailable));
     return yield* new PartyContactPointLifecycleConflict({
@@ -956,15 +1068,21 @@ export const updateContactPointRecord = Effect.fn(
           reason: change.reason,
           target: { target: change.target, type: 'ADDRESS_PURPOSE' },
         },
-        aliases,
+        aliases
       );
       return result.contactPoint;
-    }).pipe(Effect.withSpan('PartyContactPointPersistenceService.endPurposeFromUpdate'));
+    }).pipe(
+      Effect.withSpan(
+        'PartyContactPointPersistenceService.endPurposeFromUpdate'
+      )
+    );
   }
   if (change.type === 'CORRECT_CONTACT_POINT') {
     return yield* Effect.gen(function* correctContactPoint() {
       const correctionEffectiveEnd =
-        toEpochMillis(row.validFrom) > toEpochMillis(operationTime) ? row.validFrom : operationTime;
+        toEpochMillis(row.validFrom) > toEpochMillis(operationTime)
+          ? row.validFrom
+          : operationTime;
       const correctionEndAudit = {
         endEvidenceRefs: change.evidenceReferences,
         endProvenanceMethod: command.provenance.method,
@@ -989,8 +1107,8 @@ export const updateContactPointRecord = Effect.fn(
         .where(
           and(
             eq(partyContactPoints.tenantId, scope.tenantId),
-            eq(partyContactPoints.contactPointId, row.contactPointId),
-          ),
+            eq(partyContactPoints.contactPointId, row.contactPointId)
+          )
         )
         .pipe(Effect.mapError(unavailable));
       if (row.contactPointType === 'ADDRESS') {
@@ -1007,8 +1125,8 @@ export const updateContactPointRecord = Effect.fn(
             and(
               eq(partyContactPointPurposes.tenantId, scope.tenantId),
               eq(partyContactPointPurposes.contactPointId, row.contactPointId),
-              eq(partyContactPointPurposes.isCurrent, true),
-            ),
+              eq(partyContactPointPurposes.isCurrent, true)
+            )
           )
           .pipe(Effect.mapError(unavailable));
       }
@@ -1020,11 +1138,15 @@ export const updateContactPointRecord = Effect.fn(
               scope,
               {
                 ...change.replacement,
-                acceptedByActionInvocationId: command.acceptedByActionInvocationId,
+                acceptedByActionInvocationId:
+                  command.acceptedByActionInvocationId,
                 acceptedByPrincipalId: command.acceptedByPrincipalId,
-                partyRef: partyRef(scope.tenantId, canonicalPartyId ?? row.partyId),
+                partyRef: partyRef(
+                  scope.tenantId,
+                  canonicalPartyId ?? row.partyId
+                ),
               },
-              aliases,
+              aliases
             );
       yield* transaction
         .insert(partyCorrections)
@@ -1036,32 +1158,43 @@ export const updateContactPointRecord = Effect.fn(
           partyId: row.partyId,
           policyVersion: 'party-contact-point-correction.v1',
           reason: change.reason,
-          replacementContactPointId: replacement?.contactPointRef.resourceId ?? null,
+          replacementContactPointId:
+            replacement?.contactPointRef.resourceId ?? null,
           tenantId: scope.tenantId,
         })
         .pipe(Effect.mapError(unavailable));
       if (replacement !== null) {
         return replacement;
       }
-      const [corrected] = yield* lockContactPoint(transaction, scope.tenantId, row.contactPointId);
+      const [corrected] = yield* lockContactPoint(
+        transaction,
+        scope.tenantId,
+        row.contactPointId
+      );
       if (corrected === undefined) {
         return yield* unavailable();
       }
       return yield* loadDto(transaction, corrected, operationTime, aliases);
-    }).pipe(Effect.withSpan('PartyContactPointPersistenceService.correctContactPoint'));
+    }).pipe(
+      Effect.withSpan('PartyContactPointPersistenceService.correctContactPoint')
+    );
   }
   if (change.type === 'SET_CHANNEL_PREFERRED') {
     return yield* Effect.gen(function* setChannelPreference() {
       if (row.contactPointType === 'ADDRESS') {
         return yield* new PartyContactPointCorrectionRequired({
           code: 'party_contact_point_correction_required',
-          reason: 'ADDRESS preference is scoped per purpose, not on the address as a whole',
+          reason:
+            'ADDRESS preference is scoped per purpose, not on the address as a whole',
         });
       }
       if (change.preferred) {
         yield* transaction
           .update(partyContactPoints)
-          .set({ preferred: false, revision: sql`${partyContactPoints.revision} + 1` })
+          .set({
+            preferred: false,
+            revision: sql`${partyContactPoints.revision} + 1`,
+          })
           .where(
             and(
               eq(partyContactPoints.tenantId, scope.tenantId),
@@ -1069,8 +1202,8 @@ export const updateContactPointRecord = Effect.fn(
               eq(partyContactPoints.contactPointType, row.contactPointType),
               eq(partyContactPoints.isCurrent, true),
               eq(partyContactPoints.preferred, true),
-              ne(partyContactPoints.contactPointId, row.contactPointId),
-            ),
+              ne(partyContactPoints.contactPointId, row.contactPointId)
+            )
           )
           .pipe(Effect.mapError(unavailable));
       }
@@ -1080,12 +1213,21 @@ export const updateContactPointRecord = Effect.fn(
         .where(
           and(
             eq(partyContactPoints.tenantId, scope.tenantId),
-            eq(partyContactPoints.contactPointId, row.contactPointId),
-          ),
+            eq(partyContactPoints.contactPointId, row.contactPointId)
+          )
         )
         .pipe(Effect.mapError(unavailable));
-      return yield* loadUpdatedContactPoint({ aliases, row, scope, transaction });
-    }).pipe(Effect.withSpan('PartyContactPointPersistenceService.setChannelPreference'));
+      return yield* loadUpdatedContactPoint({
+        aliases,
+        row,
+        scope,
+        transaction,
+      });
+    }).pipe(
+      Effect.withSpan(
+        'PartyContactPointPersistenceService.setChannelPreference'
+      )
+    );
   }
   if (change.type === 'ENRICH_VERIFICATION') {
     return yield* Effect.gen(function* enrichVerification() {
@@ -1100,18 +1242,27 @@ export const updateContactPointRecord = Effect.fn(
               ? null
               : DateTime.toDateUtc(change.verification.verifiedAt),
           verifiedByPrincipalId:
-            change.verification.state === 'VERIFIED' ? command.acceptedByPrincipalId : null,
+            change.verification.state === 'VERIFIED'
+              ? command.acceptedByPrincipalId
+              : null,
           verifierReference: change.verification.verifierReference ?? null,
         })
         .where(
           and(
             eq(partyContactPoints.tenantId, scope.tenantId),
-            eq(partyContactPoints.contactPointId, row.contactPointId),
-          ),
+            eq(partyContactPoints.contactPointId, row.contactPointId)
+          )
         )
         .pipe(Effect.mapError(unavailable));
-      return yield* loadUpdatedContactPoint({ aliases, row, scope, transaction });
-    }).pipe(Effect.withSpan('PartyContactPointPersistenceService.enrichVerification'));
+      return yield* loadUpdatedContactPoint({
+        aliases,
+        row,
+        scope,
+        transaction,
+      });
+    }).pipe(
+      Effect.withSpan('PartyContactPointPersistenceService.enrichVerification')
+    );
   }
   if (change.type === 'ADD_PROVENANCE') {
     return yield* Effect.gen(function* addProvenance() {
@@ -1121,24 +1272,31 @@ export const updateContactPointRecord = Effect.fn(
       ) {
         return yield* new PartyContactPointCorrectionRequired({
           code: 'party_contact_point_correction_required',
-          reason: 'Replacing provenance would erase assertion history; use correction semantics',
+          reason:
+            'Replacing provenance would erase assertion history; use correction semantics',
         });
       }
       if (
         row.externalEvidence !== null &&
         change.provenance.externalEvidence !== undefined &&
-        row.externalEvidence.evidenceRef !== change.provenance.externalEvidence.evidenceRef
+        row.externalEvidence.evidenceRef !==
+          change.provenance.externalEvidence.evidenceRef
       ) {
         return yield* new PartyContactPointCorrectionRequired({
           code: 'party_contact_point_correction_required',
-          reason: 'Replacing external observation evidence would erase accepted provenance',
+          reason:
+            'Replacing external observation evidence would erase accepted provenance',
         });
       }
-      const additionalEvidenceRefs = enrichedEvidenceReferences(row, change.provenance);
+      const additionalEvidenceRefs = enrichedEvidenceReferences(
+        row,
+        change.provenance
+      );
       if (additionalEvidenceRefs.length > 32) {
         return yield* new PartyContactPointInvalid({
           code: 'party_contact_point_invalid',
-          reason: 'Contact Point evidence enrichment exceeds its bounded history',
+          reason:
+            'Contact Point evidence enrichment exceeds its bounded history',
         });
       }
       const externalEvidence = yield* encodeExternalEvidence(change.provenance);
@@ -1147,24 +1305,33 @@ export const updateContactPointRecord = Effect.fn(
         .set({
           additionalEvidenceRefs,
           externalEvidence: row.externalEvidence ?? externalEvidence,
-          provenanceAuthoritative: row.provenanceAuthoritative || change.provenance.authoritative,
+          provenanceAuthoritative:
+            row.provenanceAuthoritative || change.provenance.authoritative,
           revision: nextRevision,
         })
         .where(
           and(
             eq(partyContactPoints.tenantId, scope.tenantId),
-            eq(partyContactPoints.contactPointId, row.contactPointId),
-          ),
+            eq(partyContactPoints.contactPointId, row.contactPointId)
+          )
         )
         .pipe(Effect.mapError(unavailable));
-      return yield* loadUpdatedContactPoint({ aliases, row, scope, transaction });
-    }).pipe(Effect.withSpan('PartyContactPointPersistenceService.addProvenance'));
+      return yield* loadUpdatedContactPoint({
+        aliases,
+        row,
+        scope,
+        transaction,
+      });
+    }).pipe(
+      Effect.withSpan('PartyContactPointPersistenceService.addProvenance')
+    );
   }
   return yield* Effect.gen(function* setAddressPurpose() {
     if (row.contactPointType !== 'ADDRESS') {
       return yield* new PartyContactPointInvalid({
         code: 'party_contact_point_invalid',
-        reason: 'Address purpose metadata can be changed only on ADDRESS Contact Points',
+        reason:
+          'Address purpose metadata can be changed only on ADDRESS Contact Points',
       });
     }
     const assignment = change.assignment;
@@ -1177,7 +1344,7 @@ export const updateContactPointRecord = Effect.fn(
             reason:
               'Address purpose requires a valid registry context and authoritative provenance',
           }),
-          { cause },
+          { cause }
         ),
     });
     const purposes = yield* loadPurposeScope(
@@ -1185,17 +1352,23 @@ export const updateContactPointRecord = Effect.fn(
       scope.tenantId,
       row.partyId,
       assignment,
-      operationTime,
+      operationTime
     );
     const current = purposes.find(
       (purpose) =>
-        purpose.contactPointId === row.contactPointId && isPurposeCurrentAt(purpose, operationTime),
+        purpose.contactPointId === row.contactPointId &&
+        isPurposeCurrentAt(purpose, operationTime)
     );
-    const conflicting = purposes.find((purpose) => purpose.contactPointId !== row.contactPointId);
+    const conflicting = purposes.find(
+      (purpose) => purpose.contactPointId !== row.contactPointId
+    );
     if (assignment.purpose === 'REGISTERED' && conflicting !== undefined) {
       return yield* new PartyContactPointAlreadyExists({
         code: 'party_contact_point_already_exists',
-        existingContactPointRef: contactPointRef(scope.tenantId, conflicting.contactPointId),
+        existingContactPointRef: contactPointRef(
+          scope.tenantId,
+          conflicting.contactPointId
+        ),
         reason:
           'An accepted REGISTERED address already occupies this registry context; end or correct it explicitly',
       });
@@ -1206,7 +1379,8 @@ export const updateContactPointRecord = Effect.fn(
     ) {
       return yield* new PartyContactPointLifecycleConflict({
         code: 'party_contact_point_lifecycle_conflict',
-        reason: 'A future ADDRESS purpose already reserves this effective period',
+        reason:
+          'A future ADDRESS purpose already reserves this effective period',
       });
     }
     if (assignment.preferred) {
@@ -1215,7 +1389,7 @@ export const updateContactPointRecord = Effect.fn(
         scope.tenantId,
         row.contactPointId,
         purposes,
-        current?.contactPointPurposeId,
+        current?.contactPointPurposeId
       );
     }
     const externalEvidence = yield* encodeExternalEvidence(command.provenance);
@@ -1244,12 +1418,18 @@ export const updateContactPointRecord = Effect.fn(
     } else {
       yield* transaction
         .update(partyContactPointPurposes)
-        .set({ preferred: assignment.preferred, revision: current.revision + 1 })
+        .set({
+          preferred: assignment.preferred,
+          revision: current.revision + 1,
+        })
         .where(
           and(
             eq(partyContactPointPurposes.tenantId, scope.tenantId),
-            eq(partyContactPointPurposes.contactPointPurposeId, current.contactPointPurposeId),
-          ),
+            eq(
+              partyContactPointPurposes.contactPointPurposeId,
+              current.contactPointPurposeId
+            )
+          )
         )
         .pipe(Effect.mapError(unavailable));
     }
@@ -1259,44 +1439,51 @@ export const updateContactPointRecord = Effect.fn(
       .where(
         and(
           eq(partyContactPoints.tenantId, scope.tenantId),
-          eq(partyContactPoints.contactPointId, row.contactPointId),
-        ),
+          eq(partyContactPoints.contactPointId, row.contactPointId)
+        )
       )
       .pipe(Effect.mapError(unavailable));
     return yield* loadUpdatedContactPoint({ aliases, row, scope, transaction });
-  }).pipe(Effect.withSpan('PartyContactPointPersistenceService.setAddressPurpose'));
+  }).pipe(
+    Effect.withSpan('PartyContactPointPersistenceService.setAddressPurpose')
+  );
 });
 
-const validatePurposeEnd = Effect.fn('PartyContactPointPersistenceService.validatePurposeEnd')(
-  function* validatePurposeEnd(purpose: PurposeRecord, effectiveEndMillis: number) {
-    if (purpose.validTo !== null) {
-      return yield* new PartyContactPointCorrectionRequired({
-        code: 'party_contact_point_correction_required',
-        reason: 'Changing a planned ADDRESS purpose end requires correction semantics',
-      });
-    }
-    if (effectiveEndMillis < toEpochMillis(purpose.validFrom)) {
-      return yield* new PartyContactPointInvalid({
-        code: 'party_contact_point_invalid',
-        reason: 'The effective end cannot precede the ADDRESS purpose effective start',
-      });
-    }
-  },
-);
+const validatePurposeEnd = Effect.fn(
+  'PartyContactPointPersistenceService.validatePurposeEnd'
+)(function* validatePurposeEnd(
+  purpose: PurposeRecord,
+  effectiveEndMillis: number
+) {
+  if (purpose.validTo !== null) {
+    return yield* new PartyContactPointCorrectionRequired({
+      code: 'party_contact_point_correction_required',
+      reason:
+        'Changing a planned ADDRESS purpose end requires correction semantics',
+    });
+  }
+  if (effectiveEndMillis < toEpochMillis(purpose.validFrom)) {
+    return yield* new PartyContactPointInvalid({
+      code: 'party_contact_point_invalid',
+      reason:
+        'The effective end cannot precede the ADDRESS purpose effective start',
+    });
+  }
+});
 
 export const endContactPointRecord = Effect.fn(
-  'PartyContactPointPersistenceService.endContactPointRecord',
+  'PartyContactPointPersistenceService.endContactPointRecord'
 )(function* endContactPoint(
   transaction: PartyScopedTransaction,
   scope: OperationalScope,
   command: EndContactPointCommand,
-  aliases: AliasOperations = transactionAliasService(transaction),
+  aliases: AliasOperations = transactionAliasService(transaction)
 ) {
   const { target } = command;
   const [observed] = yield* findContactPointRow(
     transaction,
     scope.tenantId,
-    command.contactPointRef.resourceId,
+    command.contactPointRef.resourceId
   );
   if (observed !== undefined) {
     const resolution = yield* aliases
@@ -1307,7 +1494,7 @@ export const endContactPointRecord = Effect.fn(
   const [row] = yield* lockContactPoint(
     transaction,
     scope.tenantId,
-    command.contactPointRef.resourceId,
+    command.contactPointRef.resourceId
   );
   if (row === undefined) {
     return yield* new PartyContactPointNotFound({
@@ -1320,7 +1507,8 @@ export const endContactPointRecord = Effect.fn(
   if (toEpochMillis(effectiveEnd) < toEpochMillis(row.validFrom)) {
     return yield* new PartyContactPointInvalid({
       code: 'party_contact_point_invalid',
-      reason: 'The effective end cannot precede the Contact Point effective start',
+      reason:
+        'The effective end cannot precede the Contact Point effective start',
     });
   }
   const now = yield* DateTime.nowAsDate;
@@ -1350,228 +1538,260 @@ export const endContactPointRecord = Effect.fn(
   }
   const unchanged = yield* Match.value(target).pipe(
     Match.discriminatorsExhaustive('type')({
-      ADDRESS_PURPOSE: Effect.fn('PartyContactPointPersistenceService.endAddressPurpose')(
-        function* endAddressPurpose(
-          selectedTarget: Extract<
-            EndContactPointCommand['target'],
-            { readonly type: 'ADDRESS_PURPOSE' }
-          >,
+      ADDRESS_PURPOSE: Effect.fn(
+        'PartyContactPointPersistenceService.endAddressPurpose'
+      )(function* endAddressPurpose(
+        selectedTarget: Extract<
+          EndContactPointCommand['target'],
+          { readonly type: 'ADDRESS_PURPOSE' }
+        >
+      ) {
+        if (row.contactPointType !== 'ADDRESS') {
+          return yield* new PartyContactPointInvalid({
+            code: 'party_contact_point_invalid',
+            reason: 'A purpose can be ended only on an ADDRESS Contact Point',
+          });
+        }
+        if (
+          (selectedTarget.target.purpose === 'REGISTERED') !==
+          (selectedTarget.target.registryContext !== undefined)
         ) {
-          if (row.contactPointType !== 'ADDRESS') {
-            return yield* new PartyContactPointInvalid({
-              code: 'party_contact_point_invalid',
-              reason: 'A purpose can be ended only on an ADDRESS Contact Point',
-            });
+          return yield* new PartyContactPointInvalid({
+            code: 'party_contact_point_invalid',
+            reason: 'Only REGISTERED purpose uses an explicit registry context',
+          });
+        }
+        const purposes = yield* loadPurposes(
+          transaction,
+          scope.tenantId,
+          row.contactPointId
+        );
+        const sameBoundary = purposes.find(
+          (candidate) =>
+            candidate.purposeKey === selectedTarget.target.purpose &&
+            candidate.registryContext ===
+              (selectedTarget.target.registryContext?.registryKey ??
+                'GENERAL') &&
+            candidate.jurisdiction ===
+              (selectedTarget.target.registryContext?.jurisdiction.toUpperCase() ??
+                'ZZ') &&
+            (candidate.validTo === null
+              ? undefined
+              : toEpochMillis(candidate.validTo)) === effectiveEndMillis
+        );
+        if (sameBoundary !== undefined) {
+          if (hasExactEndSemantics(sameBoundary, command)) {
+            return {
+              changed: false,
+              contactPoint: yield* loadDto(transaction, row, now, aliases),
+            };
           }
-          if (
-            (selectedTarget.target.purpose === 'REGISTERED') !==
-            (selectedTarget.target.registryContext !== undefined)
-          ) {
-            return yield* new PartyContactPointInvalid({
-              code: 'party_contact_point_invalid',
-              reason: 'Only REGISTERED purpose uses an explicit registry context',
-            });
-          }
-          const purposes = yield* loadPurposes(transaction, scope.tenantId, row.contactPointId);
-          const sameBoundary = purposes.find(
-            (candidate) =>
-              candidate.purposeKey === selectedTarget.target.purpose &&
-              candidate.registryContext ===
-                (selectedTarget.target.registryContext?.registryKey ?? 'GENERAL') &&
-              candidate.jurisdiction ===
-                (selectedTarget.target.registryContext?.jurisdiction.toUpperCase() ?? 'ZZ') &&
-              (candidate.validTo === null ? undefined : toEpochMillis(candidate.validTo)) ===
-                effectiveEndMillis,
-          );
-          if (sameBoundary !== undefined) {
-            if (hasExactEndSemantics(sameBoundary, command)) {
-              return {
-                changed: false,
-                contactPoint: yield* loadDto(transaction, row, now, aliases),
-              };
-            }
-            return yield* new PartyContactPointCorrectionRequired({
-              code: 'party_contact_point_correction_required',
-              reason: 'The ADDRESS purpose has different end evidence at this effective boundary',
-            });
-          }
-          const purpose = purposes.find(
-            (candidate) =>
-              candidate.purposeKey === selectedTarget.target.purpose &&
-              candidate.registryContext ===
-                (selectedTarget.target.registryContext?.registryKey ?? 'GENERAL') &&
-              candidate.jurisdiction ===
-                (selectedTarget.target.registryContext?.jurisdiction.toUpperCase() ?? 'ZZ') &&
-              candidate.isCurrent,
-          );
-          if (purpose === undefined) {
-            return yield* new PartyContactPointLifecycleConflict({
-              code: 'party_contact_point_lifecycle_conflict',
-              reason: 'The ADDRESS purpose is not current or was ended at a different time',
-            });
-          }
-          yield* validatePurposeEnd(purpose, effectiveEndMillis);
-          yield* transaction
-            .update(partyContactPointPurposes)
-            .set({
-              ...endAudit,
-              isCurrent: isFutureEnd,
-              preferred: isFutureEnd ? purpose.preferred : false,
-              revision: purpose.revision + 1,
-              state: isFutureEnd ? 'ACTIVE' : 'ENDED',
-              validTo: effectiveEnd,
-            })
-            .where(
-              and(
-                eq(partyContactPointPurposes.tenantId, scope.tenantId),
-                eq(partyContactPointPurposes.contactPointPurposeId, purpose.contactPointPurposeId),
-              ),
+          return yield* new PartyContactPointCorrectionRequired({
+            code: 'party_contact_point_correction_required',
+            reason:
+              'The ADDRESS purpose has different end evidence at this effective boundary',
+          });
+        }
+        const purpose = purposes.find(
+          (candidate) =>
+            candidate.purposeKey === selectedTarget.target.purpose &&
+            candidate.registryContext ===
+              (selectedTarget.target.registryContext?.registryKey ??
+                'GENERAL') &&
+            candidate.jurisdiction ===
+              (selectedTarget.target.registryContext?.jurisdiction.toUpperCase() ??
+                'ZZ') &&
+            candidate.isCurrent
+        );
+        if (purpose === undefined) {
+          return yield* new PartyContactPointLifecycleConflict({
+            code: 'party_contact_point_lifecycle_conflict',
+            reason:
+              'The ADDRESS purpose is not current or was ended at a different time',
+          });
+        }
+        yield* validatePurposeEnd(purpose, effectiveEndMillis);
+        yield* transaction
+          .update(partyContactPointPurposes)
+          .set({
+            ...endAudit,
+            isCurrent: isFutureEnd,
+            preferred: isFutureEnd ? purpose.preferred : false,
+            revision: purpose.revision + 1,
+            state: isFutureEnd ? 'ACTIVE' : 'ENDED',
+            validTo: effectiveEnd,
+          })
+          .where(
+            and(
+              eq(partyContactPointPurposes.tenantId, scope.tenantId),
+              eq(
+                partyContactPointPurposes.contactPointPurposeId,
+                purpose.contactPointPurposeId
+              )
             )
-            .pipe(Effect.mapError(unavailable));
-          const remaining = purposes.filter(
-            (candidate) =>
-              candidate.contactPointPurposeId !== purpose.contactPointPurposeId &&
-              candidate.isCurrent,
-          );
-          if (remaining.length === 0 && !isFutureEnd) {
-            yield* transaction
-              .update(partyContactPoints)
-              .set({
-                ...endAudit,
-                isCurrent: false,
-                preferred: false,
-                revision: row.revision + 1,
-                state: 'ENDED',
-                validTo: effectiveEnd,
-              })
-              .where(
-                and(
-                  eq(partyContactPoints.tenantId, scope.tenantId),
-                  eq(partyContactPoints.contactPointId, row.contactPointId),
-                ),
-              )
-              .pipe(Effect.mapError(unavailable));
-          } else {
-            yield* transaction
-              .update(partyContactPoints)
-              .set({ revision: row.revision + 1 })
-              .where(
-                and(
-                  eq(partyContactPoints.tenantId, scope.tenantId),
-                  eq(partyContactPoints.contactPointId, row.contactPointId),
-                ),
-              )
-              .pipe(Effect.mapError(unavailable));
-          }
-          return yield* Effect.void;
-        },
-      ),
-      WHOLE_CONTACT_POINT: Effect.fn('PartyContactPointPersistenceService.endWholeContactPoint')(
-        function* endWholeContactPoint() {
-          if (
-            (row.validTo === null ? undefined : toEpochMillis(row.validTo)) === effectiveEndMillis
-          ) {
-            if (hasExactEndSemantics(row, command)) {
-              return {
-                changed: false,
-                contactPoint: yield* loadDto(transaction, row, now, aliases),
-              };
-            }
-            return yield* new PartyContactPointCorrectionRequired({
-              code: 'party_contact_point_correction_required',
-              reason: 'The Contact Point has different end evidence at this effective boundary',
-            });
-          }
-          if (row.validTo !== null) {
-            return yield* new PartyContactPointCorrectionRequired({
-              code: 'party_contact_point_correction_required',
-              reason: 'Changing a planned Contact Point end requires correction semantics',
-            });
-          }
-          if (!row.isCurrent) {
-            return yield* new PartyContactPointLifecycleConflict({
-              code: 'party_contact_point_lifecycle_conflict',
-              reason: 'The Contact Point was already ended at a different effective time',
-            });
-          }
+          )
+          .pipe(Effect.mapError(unavailable));
+        const remaining = purposes.filter(
+          (candidate) =>
+            candidate.contactPointPurposeId !== purpose.contactPointPurposeId &&
+            candidate.isCurrent
+        );
+        if (remaining.length === 0 && !isFutureEnd) {
           yield* transaction
             .update(partyContactPoints)
             .set({
               ...endAudit,
-              isCurrent: isFutureEnd,
-              preferred: isFutureEnd ? row.preferred : false,
+              isCurrent: false,
+              preferred: false,
               revision: row.revision + 1,
-              state: isFutureEnd ? 'ACTIVE' : 'ENDED',
+              state: 'ENDED',
               validTo: effectiveEnd,
             })
             .where(
               and(
                 eq(partyContactPoints.tenantId, scope.tenantId),
-                eq(partyContactPoints.contactPointId, row.contactPointId),
-              ),
+                eq(partyContactPoints.contactPointId, row.contactPointId)
+              )
             )
             .pipe(Effect.mapError(unavailable));
-          if (row.contactPointType === 'ADDRESS') {
-            const purposes = yield* loadPurposes(transaction, scope.tenantId, row.contactPointId);
-            if (
-              purposes.some(
-                (purpose) =>
-                  purpose.isCurrent && effectiveEndMillis < toEpochMillis(purpose.validFrom),
+        } else {
+          yield* transaction
+            .update(partyContactPoints)
+            .set({ revision: row.revision + 1 })
+            .where(
+              and(
+                eq(partyContactPoints.tenantId, scope.tenantId),
+                eq(partyContactPoints.contactPointId, row.contactPointId)
               )
-            ) {
-              return yield* new PartyContactPointCorrectionRequired({
-                code: 'party_contact_point_correction_required',
-                reason: 'The Contact Point end predates a current ADDRESS purpose',
-              });
-            }
-            const purposesToEnd = purposes.filter(
+            )
+            .pipe(Effect.mapError(unavailable));
+        }
+        return yield* Effect.void;
+      }),
+      WHOLE_CONTACT_POINT: Effect.fn(
+        'PartyContactPointPersistenceService.endWholeContactPoint'
+      )(function* endWholeContactPoint() {
+        if (
+          (row.validTo === null ? undefined : toEpochMillis(row.validTo)) ===
+          effectiveEndMillis
+        ) {
+          if (hasExactEndSemantics(row, command)) {
+            return {
+              changed: false,
+              contactPoint: yield* loadDto(transaction, row, now, aliases),
+            };
+          }
+          return yield* new PartyContactPointCorrectionRequired({
+            code: 'party_contact_point_correction_required',
+            reason:
+              'The Contact Point has different end evidence at this effective boundary',
+          });
+        }
+        if (row.validTo !== null) {
+          return yield* new PartyContactPointCorrectionRequired({
+            code: 'party_contact_point_correction_required',
+            reason:
+              'Changing a planned Contact Point end requires correction semantics',
+          });
+        }
+        if (!row.isCurrent) {
+          return yield* new PartyContactPointLifecycleConflict({
+            code: 'party_contact_point_lifecycle_conflict',
+            reason:
+              'The Contact Point was already ended at a different effective time',
+          });
+        }
+        yield* transaction
+          .update(partyContactPoints)
+          .set({
+            ...endAudit,
+            isCurrent: isFutureEnd,
+            preferred: isFutureEnd ? row.preferred : false,
+            revision: row.revision + 1,
+            state: isFutureEnd ? 'ACTIVE' : 'ENDED',
+            validTo: effectiveEnd,
+          })
+          .where(
+            and(
+              eq(partyContactPoints.tenantId, scope.tenantId),
+              eq(partyContactPoints.contactPointId, row.contactPointId)
+            )
+          )
+          .pipe(Effect.mapError(unavailable));
+        if (row.contactPointType === 'ADDRESS') {
+          const purposes = yield* loadPurposes(
+            transaction,
+            scope.tenantId,
+            row.contactPointId
+          );
+          if (
+            purposes.some(
               (purpose) =>
                 purpose.isCurrent &&
-                (purpose.validTo === null || toEpochMillis(purpose.validTo) > effectiveEndMillis),
-            );
-            yield* Effect.forEach(
-              purposesToEnd,
-              (purpose) =>
-                transaction
-                  .update(partyContactPointPurposes)
-                  .set({
-                    ...endAudit,
-                    isCurrent: isFutureEnd,
-                    preferred: isFutureEnd ? purpose.preferred : false,
-                    revision: purpose.revision + 1,
-                    state: isFutureEnd ? 'ACTIVE' : 'ENDED',
-                    validTo: effectiveEnd,
-                  })
-                  .where(
-                    and(
-                      eq(partyContactPointPurposes.tenantId, scope.tenantId),
-                      eq(
-                        partyContactPointPurposes.contactPointPurposeId,
-                        purpose.contactPointPurposeId,
-                      ),
-                    ),
-                  )
-                  .pipe(Effect.mapError(unavailable)),
-              { concurrency: 1, discard: true },
-            );
+                effectiveEndMillis < toEpochMillis(purpose.validFrom)
+            )
+          ) {
+            return yield* new PartyContactPointCorrectionRequired({
+              code: 'party_contact_point_correction_required',
+              reason:
+                'The Contact Point end predates a current ADDRESS purpose',
+            });
           }
-          return yield* Effect.void;
-        },
-      ),
-    }),
+          const purposesToEnd = purposes.filter(
+            (purpose) =>
+              purpose.isCurrent &&
+              (purpose.validTo === null ||
+                toEpochMillis(purpose.validTo) > effectiveEndMillis)
+          );
+          yield* Effect.forEach(
+            purposesToEnd,
+            (purpose) =>
+              transaction
+                .update(partyContactPointPurposes)
+                .set({
+                  ...endAudit,
+                  isCurrent: isFutureEnd,
+                  preferred: isFutureEnd ? purpose.preferred : false,
+                  revision: purpose.revision + 1,
+                  state: isFutureEnd ? 'ACTIVE' : 'ENDED',
+                  validTo: effectiveEnd,
+                })
+                .where(
+                  and(
+                    eq(partyContactPointPurposes.tenantId, scope.tenantId),
+                    eq(
+                      partyContactPointPurposes.contactPointPurposeId,
+                      purpose.contactPointPurposeId
+                    )
+                  )
+                )
+                .pipe(Effect.mapError(unavailable)),
+            { concurrency: 1, discard: true }
+          );
+        }
+        return yield* Effect.void;
+      }),
+    })
   );
   if (unchanged !== undefined) {
     return unchanged;
   }
-  const [updated] = yield* lockContactPoint(transaction, scope.tenantId, row.contactPointId);
+  const [updated] = yield* lockContactPoint(
+    transaction,
+    scope.tenantId,
+    row.contactPointId
+  );
   if (updated === undefined) {
     return yield* unavailable();
   }
-  return { changed: true, contactPoint: yield* loadDto(transaction, updated, now, aliases) };
+  return {
+    changed: true,
+    contactPoint: yield* loadDto(transaction, updated, now, aliases),
+  };
 });
 
 export const listPartyContactPointRecords = Effect.fn(
-  'PartyContactPointPersistenceService.listPartyContactPointRecords',
+  'PartyContactPointPersistenceService.listPartyContactPointRecords'
 )(function* listContactPoints(
   transaction: PartyScopedTransaction,
   scope: OperationalScope,
@@ -1580,7 +1800,7 @@ export const listPartyContactPointRecords = Effect.fn(
     readonly partyId: string;
     readonly type?: 'ADDRESS' | 'EMAIL' | 'PHONE';
   },
-  aliases: AliasOperations = transactionAliasService(transaction),
+  aliases: AliasOperations = transactionAliasService(transaction)
 ) {
   const resolution = yield* aliases
     .resolvePartyAlias(scope.tenantId, input.partyId)
@@ -1592,25 +1812,31 @@ export const listPartyContactPointRecords = Effect.fn(
       and(
         eq(partyContactPoints.tenantId, scope.tenantId),
         eq(partyContactPoints.partyId, resolution.canonicalPartyId),
-        input.type === undefined ? undefined : eq(partyContactPoints.contactPointType, input.type),
-      ),
+        input.type === undefined
+          ? undefined
+          : eq(partyContactPoints.contactPointType, input.type)
+      )
     )
     .orderBy(asc(partyContactPoints.recordedAt))
     .pipe(Effect.mapError(unavailable));
   const now = yield* DateTime.nowAsDate;
-  const dtos = yield* Effect.forEach(rows, (row) => loadDto(transaction, row, now, aliases), {
-    concurrency: 1,
-  });
+  const dtos = yield* Effect.forEach(
+    rows,
+    (row) => loadDto(transaction, row, now, aliases),
+    {
+      concurrency: 1,
+    }
+  );
   return input.includeHistorical ? dtos : dtos.filter(({ current }) => current);
 });
 
 export const findPartyContactPointRecord = Effect.fn(
-  'PartyContactPointPersistenceService.findPartyContactPointRecord',
+  'PartyContactPointPersistenceService.findPartyContactPointRecord'
 )(function* findContactPoint(
   transaction: PartyScopedTransaction,
   scope: OperationalScope,
   contactPointId: string,
-  aliases: AliasOperations = transactionAliasService(transaction),
+  aliases: AliasOperations = transactionAliasService(transaction)
 ) {
   const [row] = yield* transaction
     .select()
@@ -1618,8 +1844,8 @@ export const findPartyContactPointRecord = Effect.fn(
     .where(
       and(
         eq(partyContactPoints.tenantId, scope.tenantId),
-        eq(partyContactPoints.contactPointId, contactPointId),
-      ),
+        eq(partyContactPoints.contactPointId, contactPointId)
+      )
     )
     .limit(1)
     .pipe(Effect.mapError(unavailable));

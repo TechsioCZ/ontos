@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import { Schema } from 'effect';
+
 import * as duplicateCase from '../../shared/resources/duplicate-candidate-case.ts';
 import * as correction from '../../shared/resources/party-correction.ts';
 import * as matchDecision from '../../shared/resources/party-match-decision.ts';
@@ -44,11 +46,19 @@ for (const { descriptor, makeRef, schema, slug } of resources) {
       tenantId,
     });
     assert.equal(Schema.is(schema)(reference), true);
-    for (const other of resources.filter((resource) => resource.slug !== slug)) {
-      assert.equal(Schema.is(schema)(other.makeRef(tenantId, 'resource-1')), false);
+    for (const other of resources.filter(
+      (resource) => resource.slug !== slug
+    )) {
+      assert.equal(
+        Schema.is(schema)(other.makeRef(tenantId, 'resource-1')),
+        false
+      );
     }
     assert.equal(Schema.is(schema)({ ...reference, resourceId: '' }), false);
-    assert.equal(Schema.is(schema)({ ...reference, tenantId: 'not-a-uuid' }), false);
+    assert.equal(
+      Schema.is(schema)({ ...reference, tenantId: 'not-a-uuid' }),
+      false
+    );
     assert.equal(descriptor.key, reference.resourceType);
     assert.equal(descriptor.owningModuleId, reference.moduleId);
     assert.equal(descriptor.description, `${descriptor.label} resource.`);

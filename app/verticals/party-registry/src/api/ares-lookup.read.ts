@@ -8,6 +8,7 @@ import {
 } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
+
 import {
   AresLookupRequestSchema,
   AresLookupResponseSchema,
@@ -38,10 +39,12 @@ type AresLookupHandlerError =
 
 const withCause = <MappedError extends AresLookupHandlerError>(
   mappedError: MappedError,
-  cause: AresSubjectError,
+  cause: AresSubjectError
 ) => Object.defineProperty(mappedError, 'cause', { value: cause });
 
-const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLookupHandlerError> =>
+const mapAresFailure = (
+  error: AresSubjectError
+): Effect.Effect<never, AresLookupHandlerError> =>
   Match.value(error).pipe(
     Match.tags({
       AresSubjectDenied: (cause) =>
@@ -51,18 +54,19 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
               code: 'read_handler_unavailable',
               reason: 'ARES lookup is temporarily unavailable',
             }),
-            cause,
-          ),
+            cause
+          )
         ),
       AresSubjectInvalidIco: (cause) =>
         Effect.fail(
           withCause(
             new ReadHandlerExecutionError({
               code: 'read_handler_execution_failed',
-              reason: 'ARES lookup could not produce a supported evidence response',
+              reason:
+                'ARES lookup could not produce a supported evidence response',
             }),
-            cause,
-          ),
+            cause
+          )
         ),
       AresSubjectNotFound: (cause) =>
         Effect.fail(
@@ -71,18 +75,19 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
               code: 'read_handler_not_found',
               reason: 'ARES has no economic subject for this IČO',
             }),
-            cause,
-          ),
+            cause
+          )
         ),
       AresSubjectResponseInvalid: (cause) =>
         Effect.fail(
           withCause(
             new ReadHandlerExecutionError({
               code: 'read_handler_execution_failed',
-              reason: 'ARES lookup could not produce a supported evidence response',
+              reason:
+                'ARES lookup could not produce a supported evidence response',
             }),
-            cause,
-          ),
+            cause
+          )
         ),
       AresSubjectThrottled: (cause) =>
         Effect.fail(
@@ -91,8 +96,8 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
               code: 'read_handler_unavailable',
               reason: 'ARES lookup is temporarily unavailable',
             }),
-            cause,
-          ),
+            cause
+          )
         ),
       AresSubjectTimeout: (cause) =>
         Effect.fail(
@@ -101,8 +106,8 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
               code: 'read_handler_unavailable',
               reason: 'ARES lookup is temporarily unavailable',
             }),
-            cause,
-          ),
+            cause
+          )
         ),
       AresSubjectUnavailable: (cause) =>
         Effect.fail(
@@ -111,11 +116,11 @@ const mapAresFailure = (error: AresSubjectError): Effect.Effect<never, AresLooku
               code: 'read_handler_unavailable',
               reason: 'ARES lookup is temporarily unavailable',
             }),
-            cause,
-          ),
+            cause
+          )
         ),
     }),
-    Match.exhaustive,
+    Match.exhaustive
   );
 
 export const aresLookupRead = defineRead(
@@ -144,8 +149,11 @@ export const aresLookupRead = defineRead(
       .pipe(
         Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
         // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
-        Effect.catch(mapAresFailure),
+        Effect.catch(mapAresFailure)
       ),
-  () => AresSubjectService.pipe(Effect.map((service) => ({ lookup: service.subject }))),
-  () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+  () =>
+    AresSubjectService.pipe(
+      Effect.map((service) => ({ lookup: service.subject }))
+    ),
+  () => ({ kind: 'tenant', permission: 'read_party_identity' })
 );

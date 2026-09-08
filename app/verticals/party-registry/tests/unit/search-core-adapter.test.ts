@@ -1,9 +1,11 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+
 import { CoreSearchProjectionHitSchema } from '@app/core-runtime';
 import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { Effect, Schema } from 'effect';
+
 import { makePartySearchProjectionGateway } from '../../src/search/parties.provider.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -28,30 +30,34 @@ const partyAliasHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
   ref: partyRef('survivor'),
   title: 'ACME',
 });
-const counterpartyHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
-  archived: false,
-  facets: [],
-  matchedSubjectRef: partyRef('absorbed'),
-  metadata: [],
-  ref: counterpartyRef('cp-1'),
-  selectedLegalEntityId: legalEntityId,
-  subjectRef: partyRef('survivor'),
-  temporalFacets: [
-    {
-      key: 'current-role',
-      validFrom: '2026-01-01T00:00:00.000Z',
-      validTo: '2027-01-01T00:00:00.000Z',
-      value: 'CUSTOMER',
-    },
-    {
-      key: 'ignored-business-facet',
-      validFrom: '2026-01-01T00:00:00.000Z',
-      value: 'IGNORED',
-    },
-  ],
-  title: 'ACME',
-});
-const wrongResourceHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
+const counterpartyHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)(
+  {
+    archived: false,
+    facets: [],
+    matchedSubjectRef: partyRef('absorbed'),
+    metadata: [],
+    ref: counterpartyRef('cp-1'),
+    selectedLegalEntityId: legalEntityId,
+    subjectRef: partyRef('survivor'),
+    temporalFacets: [
+      {
+        key: 'current-role',
+        validFrom: '2026-01-01T00:00:00.000Z',
+        validTo: '2027-01-01T00:00:00.000Z',
+        value: 'CUSTOMER',
+      },
+      {
+        key: 'ignored-business-facet',
+        validFrom: '2026-01-01T00:00:00.000Z',
+        value: 'IGNORED',
+      },
+    ],
+    title: 'ACME',
+  }
+);
+const wrongResourceHit = Schema.decodeUnknownSync(
+  CoreSearchProjectionHitSchema
+)({
   archived: false,
   facets: [],
   metadata: [],
@@ -71,7 +77,11 @@ test('Party adapter queries only the Core-owned Party projection and maps alias 
       };
 
       const gateway = makePartySearchProjectionGateway(core);
-      const hits = yield* gateway.searchParties({ includeArchived: true, query: 'ACME', tenantId });
+      const hits = yield* gateway.searchParties({
+        includeArchived: true,
+        query: 'ACME',
+        tenantId,
+      });
 
       assert.deepEqual(calls, [
         {
@@ -90,7 +100,7 @@ test('Party adapter queries only the Core-owned Party projection and maps alias 
           title: 'ACME',
         },
       ]);
-    }),
+    })
   ));
 
 test('Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods', () =>
@@ -105,7 +115,9 @@ test('Counterparty adapter uses trusted Legal Entity, effective time, role facet
       };
       const effectiveAt = '2026-09-03T12:00:00.000Z';
 
-      const hits = yield* makePartySearchProjectionGateway(core).searchCounterparties({
+      const hits = yield* makePartySearchProjectionGateway(
+        core
+      ).searchCounterparties({
         effectiveAt,
         includeArchived: false,
         legalEntityId,
@@ -143,7 +155,7 @@ test('Counterparty adapter uses trusted Legal Entity, effective time, role facet
           ],
         },
       ]);
-    }),
+    })
   ));
 
 test('Party adapter fails closed when a generic projection returns the wrong resource contract', () =>
@@ -158,8 +170,8 @@ test('Party adapter fails closed when a generic projection returns the wrong res
           includeArchived: false,
           query: 'Wrong',
           tenantId,
-        }),
+        })
       );
       assert.equal(failure._tag, 'Failure');
-    }),
+    })
   ));

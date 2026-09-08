@@ -1,4 +1,5 @@
 import path from 'node:path';
+
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { defineConfig, devices } from '@playwright/test';
 import { Config, Result, Schema } from 'effect';
@@ -8,7 +9,11 @@ const nodeProcess = process.getBuiltinModule('node:process');
 const nodeUtilities = process.getBuiltinModule('node:util');
 const fileConfig = nodeFileSystem.existsSync(APP_ENV_PATH)
   ? Result.getOrThrow(
-      Result.try(() => nodeUtilities.parseEnv(nodeFileSystem.readFileSync(APP_ENV_PATH, 'utf-8'))),
+      Result.try(() =>
+        nodeUtilities.parseEnv(
+          nodeFileSystem.readFileSync(APP_ENV_PATH, 'utf-8')
+        )
+      )
     )
   : {};
 const configValues = { ...fileConfig, ...nodeProcess.env };
@@ -16,12 +21,15 @@ const playwrightConfigSchema = Schema.Struct({
   CI: Schema.optionalKey(Config.Boolean),
   SHELL_SUPER_APP_PORT: Schema.optionalKey(
     Schema.NumberFromString.pipe(
-      Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 })),
-    ),
+      Schema.check(
+        Schema.isInt(),
+        Schema.isBetween({ maximum: 65_535, minimum: 1 })
+      )
+    )
   ),
 });
 const playwrightConfig = Result.getOrThrow(
-  Schema.decodeUnknownResult(playwrightConfigSchema)(configValues),
+  Schema.decodeUnknownResult(playwrightConfigSchema)(configValues)
 );
 const port = playwrightConfig.SHELL_SUPER_APP_PORT ?? 3020;
 const continuousIntegration = playwrightConfig.CI ?? false;

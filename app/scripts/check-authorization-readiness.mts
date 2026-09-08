@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /// <reference types="node" />
 import { createHash } from 'node:crypto';
-import { loadCoreNodeServices } from './shared/core-node-services.mts';
+
 import {
   Clock,
   Config,
@@ -16,17 +16,20 @@ import {
   Schema,
 } from 'effect';
 import { Argument, Command } from 'effect/unstable/cli';
+
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
+import { loadCoreNodeServices } from './shared/core-node-services.mts';
 
 export const AuthorizationEnvironmentSchema = Schema.Literals([
   'development',
   'production',
   'stage',
 ]);
-export type AuthorizationEnvironment = typeof AuthorizationEnvironmentSchema.Type;
+export type AuthorizationEnvironment =
+  typeof AuthorizationEnvironmentSchema.Type;
 export const CredentialSchema = Schema.Literals(['api_key', 'session']);
 export type Credential = typeof CredentialSchema.Type;
 
@@ -113,7 +116,8 @@ const AuthorizationReadinessEvidenceSchema = Schema.Struct({
   workerOwnershipVersion: Schema.String,
 });
 
-export type AuthorizationReadinessEvidence = typeof AuthorizationReadinessEvidenceSchema.Encoded;
+export type AuthorizationReadinessEvidence =
+  typeof AuthorizationReadinessEvidenceSchema.Encoded;
 
 type AuthorizationHashEvidence =
   | AuthorizationImpactReport
@@ -122,14 +126,17 @@ type AuthorizationHashEvidence =
 
 export class AuthorizationReadinessError extends Schema.TaggedError<AuthorizationReadinessError>()(
   'AuthorizationReadinessError',
-  { reason: Schema.String },
+  { reason: Schema.String }
 ) {
   override get message(): string {
     return this.reason;
   }
 }
 
-const sameList = (left: readonly string[], right: readonly string[]): boolean => {
+const sameList = (
+  left: readonly string[],
+  right: readonly string[]
+): boolean => {
   const leftValues = new Set(left);
   const rightValues = new Set(right);
   if (leftValues.size !== rightValues.size) {
@@ -142,31 +149,48 @@ const sameList = (left: readonly string[], right: readonly string[]): boolean =>
   }
   return true;
 };
-const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
+const sha256 = (value: string): string =>
+  createHash('sha256').update(value).digest('hex');
 const AuthorizationEvidenceJsonSchema = Schema.fromJsonString(Schema.Unknown);
-const FormattedAuthorizationEvidenceJsonSchema = Schema.fromJsonString(Schema.Unknown, {
-  space: 2,
-});
-const encodeAuthorizationEvidence = (value: AuthorizationHashEvidence): string =>
-  Result.getOrThrow(Schema.encodeResult(AuthorizationEvidenceJsonSchema)(value));
-const encodeFormattedAuthorizationEvidence = (value: AuthorizationReadinessEvidence): string =>
-  Result.getOrThrow(Schema.encodeResult(FormattedAuthorizationEvidenceJsonSchema)(value));
-export const hashAuthorizationEvidence = (value: AuthorizationHashEvidence): string =>
-  sha256(encodeAuthorizationEvidence(value));
+const FormattedAuthorizationEvidenceJsonSchema = Schema.fromJsonString(
+  Schema.Unknown,
+  {
+    space: 2,
+  }
+);
+const encodeAuthorizationEvidence = (
+  value: AuthorizationHashEvidence
+): string =>
+  Result.getOrThrow(
+    Schema.encodeResult(AuthorizationEvidenceJsonSchema)(value)
+  );
+const encodeFormattedAuthorizationEvidence = (
+  value: AuthorizationReadinessEvidence
+): string =>
+  Result.getOrThrow(
+    Schema.encodeResult(FormattedAuthorizationEvidenceJsonSchema)(value)
+  );
+export const hashAuthorizationEvidence = (
+  value: AuthorizationHashEvidence
+): string => sha256(encodeAuthorizationEvidence(value));
 const validHash = (value: string): boolean => /^[a-f0-9]{64}$/u.test(value);
-const validRevision = (value: string): boolean => /^[a-zA-Z0-9._-]{1,100}$/u.test(value);
+const validRevision = (value: string): boolean =>
+  /^[a-zA-Z0-9._-]{1,100}$/u.test(value);
 
 const fail = (message: string): never =>
   Option.getOrThrowWith(
     Option.none(),
-    () => new AuthorizationReadinessError({ reason: `authorization readiness failed: ${message}` }),
+    () =>
+      new AuthorizationReadinessError({
+        reason: `authorization readiness failed: ${message}`,
+      })
   );
 
 const requiredEntrypoints = (inventory: ProtectedEntrypointInventory) => {
   const actions = inventory.entries
     .filter(
       ({ authorization, surface }) =>
-        surface === 'action' && authorization.kind === 'action_execution',
+        surface === 'action' && authorization.kind === 'action_execution'
     )
     .map(({ entrypointKey }) => entrypointKey);
   const contextPermissions = inventory.entries
@@ -175,7 +199,7 @@ const requiredEntrypoints = (inventory: ProtectedEntrypointInventory) => {
   const workers = inventory.entries
     .filter(
       ({ authorization, surface }) =>
-        surface === 'worker' && authorization.kind === 'owner_local_background',
+        surface === 'worker' && authorization.kind === 'owner_local_background'
     )
     .map(({ entrypointKey }) => entrypointKey);
   const activeModules = inventory.entries
@@ -183,7 +207,7 @@ const requiredEntrypoints = (inventory: ProtectedEntrypointInventory) => {
       ({ authorization, owner, surface }) =>
         owner !== 'shell-super-app' &&
         surface !== 'capability_issuance' &&
-        authorization.kind !== 'public',
+        authorization.kind !== 'public'
     )
     .map(({ entrypointKey }) => entrypointKey);
   return { actions, activeModules, contextPermissions, workers };
@@ -208,7 +232,9 @@ const validateFixedContext = (input: AuthorizationReadinessInput): void => {
   }
 };
 
-const validateEvidenceFreshness = (input: AuthorizationReadinessInput): void => {
+const validateEvidenceFreshness = (
+  input: AuthorizationReadinessInput
+): void => {
   const { impact, inventory, negativeSmoke, observation } = input;
   if (
     impact.schemaVersion !== 1 ||
@@ -220,7 +246,9 @@ const validateEvidenceFreshness = (input: AuthorizationReadinessInput): void => 
     negativeSmoke.inventoryHash !== inventory.inventoryHash ||
     negativeSmoke.sourceRevision !== inventory.sourceRevision
   ) {
-    fail('inventory, impact, observation, or smoke evidence is stale or unresolved');
+    fail(
+      'inventory, impact, observation, or smoke evidence is stale or unresolved'
+    );
   }
 };
 
@@ -240,7 +268,9 @@ const validateEvidenceIdentity = (input: AuthorizationReadinessInput): void => {
     fail('build or evidence identity is malformed');
   }
   validateAuthorizationRolloutContract(input.rollout, {
-    entrypointKeys: new Set(inventory.entries.map(({ entrypointKey }) => entrypointKey)),
+    entrypointKeys: new Set(
+      inventory.entries.map(({ entrypointKey }) => entrypointKey)
+    ),
     inventoryHash: inventory.inventoryHash,
     nowEpochMs: input.nowEpochMs,
   });
@@ -253,17 +283,25 @@ const timestampMillis = (value: string): number =>
     onSome: DateTime.toEpochMillis,
   });
 
-const validateObservationWindow = (input: AuthorizationReadinessInput): void => {
-  const observationStarted = timestampMillis(input.impact.observation.startedAt);
+const validateObservationWindow = (
+  input: AuthorizationReadinessInput
+): void => {
+  const observationStarted = timestampMillis(
+    input.impact.observation.startedAt
+  );
   const observationEnded = timestampMillis(input.impact.observation.endedAt);
   const rolloutStarted = timestampMillis(input.rollout.activatedAt);
   const rolloutEnded = timestampMillis(input.rollout.expiresAt);
   if (
-    ![observationStarted, observationEnded, rolloutStarted, rolloutEnded].every(Number.isFinite) ||
+    ![observationStarted, observationEnded, rolloutStarted, rolloutEnded].every(
+      Number.isFinite
+    ) ||
     observationStarted < rolloutStarted ||
     observationEnded > rolloutEnded ||
     observationEnded - observationStarted <
-      Duration.toMillis(Duration.seconds(input.context.minimumObservationSeconds))
+      Duration.toMillis(
+        Duration.seconds(input.context.minimumObservationSeconds)
+      )
   ) {
     fail('compatibility observation is outside the approved bounds');
   }
@@ -283,22 +321,32 @@ const validateObservedVersions = (input: AuthorizationReadinessInput): void => {
   }
 };
 
-const validateEntrypointCoverage = (input: AuthorizationReadinessInput): void => {
+const validateEntrypointCoverage = (
+  input: AuthorizationReadinessInput
+): void => {
   const required = requiredEntrypoints(input.inventory);
   const { observation } = input;
   if (
     !sameList(observation.verifiedActionEntrypoints, required.actions) ||
-    !sameList(observation.verifiedContextPermissionEntrypoints, required.contextPermissions) ||
+    !sameList(
+      observation.verifiedContextPermissionEntrypoints,
+      required.contextPermissions
+    ) ||
     !sameList(observation.verifiedWorkerEntrypoints, required.workers) ||
-    !sameList(observation.verifiedActiveModuleEntrypoints, required.activeModules)
+    !sameList(
+      observation.verifiedActiveModuleEntrypoints,
+      required.activeModules
+    )
   ) {
     fail(
-      'required relationships, route permissions, module state, or worker ownership are incomplete',
+      'required relationships, route permissions, module state, or worker ownership are incomplete'
     );
   }
 };
 
-const validateGatewayAndSmokeEvidence = (input: AuthorizationReadinessInput): void => {
+const validateGatewayAndSmokeEvidence = (
+  input: AuthorizationReadinessInput
+): void => {
   const { context, negativeSmoke, observation } = input;
   let issuer: URL;
   try {
@@ -313,10 +361,13 @@ const validateGatewayAndSmokeEvidence = (input: AuthorizationReadinessInput): vo
     fail('gateway issuer or audience topology is incorrect');
   }
   const requiredSmoke = context.negativeSmokeScenarios.flatMap((scenario) =>
-    (['api_key', 'session'] as const).map((credential) => `${credential}:${scenario}:denied`),
+    (['api_key', 'session'] as const).map(
+      (credential) => `${credential}:${scenario}:denied`
+    )
   );
   const observedSmoke = negativeSmoke.scenarios.map(
-    ({ credential, outcome, scenario }) => `${credential}:${scenario}:${outcome}`,
+    ({ credential, outcome, scenario }) =>
+      `${credential}:${scenario}:${outcome}`
   );
   if (!sameList(observedSmoke, requiredSmoke)) {
     fail('negative authorization smoke evidence is incomplete');
@@ -324,7 +375,7 @@ const validateGatewayAndSmokeEvidence = (input: AuthorizationReadinessInput): vo
 };
 
 export const checkAuthorizationReadiness = (
-  input: AuthorizationReadinessInput,
+  input: AuthorizationReadinessInput
 ): AuthorizationReadinessEvidence => {
   validateFixedContext(input);
   validateEvidenceIdentity(input);
@@ -363,13 +414,19 @@ const ProtectedEntrypointSurfaceSchema = Schema.Literals([
 const InventoryAuthorizationSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal('public') }),
   Schema.Struct({ kind: Schema.Literal('authenticated_principal') }),
-  Schema.Struct({ kind: Schema.Literal('context_permission'), permission: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal('context_permission'),
+    permission: Schema.String,
+  }),
   Schema.Struct({
     kind: Schema.Literal('action_execution'),
     provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
   }),
   Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
-  Schema.Struct({ credential: CredentialSchema, kind: Schema.Literal('capability_issuance') }),
+  Schema.Struct({
+    credential: CredentialSchema,
+    kind: Schema.Literal('capability_issuance'),
+  }),
 ]);
 
 const ProtectedEntrypointInventorySchema = Schema.Struct({
@@ -380,7 +437,7 @@ const ProtectedEntrypointInventorySchema = Schema.Struct({
       entrypointKey: EntrypointKeySchema,
       owner: Schema.String,
       surface: ProtectedEntrypointSurfaceSchema,
-    }),
+    })
   ),
   inventoryHash: Schema.String,
   schemaVersion: Schema.Literal(1),
@@ -411,7 +468,7 @@ const AuthorizationImpactReportSchema = Schema.Struct({
         'public',
       ]),
       surface: ProtectedEntrypointSurfaceSchema,
-    }),
+    })
   ),
   inventoryHash: Schema.String,
   observation: Schema.Struct({
@@ -466,7 +523,7 @@ const AuthorizationNegativeSmokeEvidenceSchema = Schema.Struct({
       credential: CredentialSchema,
       outcome: Schema.Literal('denied'),
       scenario: Schema.String,
-    }),
+    })
   ),
   schemaVersion: Schema.Literal(1),
   sourceRevision: Schema.String,
@@ -487,18 +544,27 @@ const readJson = <S extends Schema.Top>(schema: S, file: string) =>
   Effect.gen(function* readJsonEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const source = yield* fileSystem.readFileString(file);
-    const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), {
-      onExcessProperty: 'error',
-    })(source);
+    const decoded = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(schema),
+      {
+        onExcessProperty: 'error',
+      }
+    )(source);
     return yield* Schema.encodeEffect(schema)(decoded);
   }).pipe(
     Effect.mapError(
       () =>
-        new AuthorizationReadinessError({ reason: `authorization evidence is invalid: ${file}` }),
-    ),
+        new AuthorizationReadinessError({
+          reason: `authorization evidence is invalid: ${file}`,
+        })
+    )
   );
 
-const insideWorkspace = (pathService: Path.Path, root: string, relativeFile: string): string => {
+const insideWorkspace = (
+  pathService: Path.Path,
+  root: string,
+  relativeFile: string
+): string => {
   const target = pathService.resolve(root, relativeFile);
   const relative = pathService.relative(root, target);
   if (
@@ -514,76 +580,103 @@ const insideWorkspace = (pathService: Path.Path, root: string, relativeFile: str
 const authorizationReadinessCommand = Command.make(
   'authorization-readiness',
   {
-    environment: Argument.choice('environment', ['development', 'production', 'stage']),
+    environment: Argument.choice('environment', [
+      'development',
+      'production',
+      'stage',
+    ]),
   },
   ({ environment }) =>
     Effect.gen(function* authorizationReadinessProgram() {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
-      const defaultRoot = yield* pathService.fromFileUrl(new URL('..', import.meta.url));
-      const root = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
-        Config.withDefault(defaultRoot),
+      const defaultRoot = yield* pathService.fromFileUrl(
+        new URL('..', import.meta.url)
       );
-      const reportDirectory = pathService.join(root, '.codex/reports/authorization');
+      const root = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+        Config.withDefault(defaultRoot)
+      );
+      const reportDirectory = pathService.join(
+        root,
+        '.codex/reports/authorization'
+      );
       const contextPath = pathService.join(
         root,
         'topology/authorization-contexts',
-        `${environment}.json`,
+        `${environment}.json`
       );
-      const context = yield* readJson(FixedAuthorizationContextSchema, contextPath).pipe(
+      const context = yield* readJson(
+        FixedAuthorizationContextSchema,
+        contextPath
+      ).pipe(
         Effect.mapError(
           () =>
             new AuthorizationReadinessError({
               reason: `no approved fixed ${environment} deployment context exists`,
-            }),
-        ),
+            })
+        )
       );
-      if (context.environment !== environment || context.approvalStatus !== 'approved') {
+      if (
+        context.environment !== environment ||
+        context.approvalStatus !== 'approved'
+      ) {
         yield* new AuthorizationReadinessError({
           reason: `no approved fixed ${environment} deployment context exists`,
         });
       }
-      const [inventory, impact, observation, negativeSmoke, rollout] = yield* Effect.all(
-        [
-          readJson(
-            ProtectedEntrypointInventorySchema,
-            pathService.join(reportDirectory, 'protected-entrypoints.json'),
-          ),
-          readJson(
-            AuthorizationImpactReportSchema,
-            pathService.join(reportDirectory, 'fail-closed-impact.json'),
-          ),
-          readJson(
-            AuthorizationReadinessObservationSchema,
-            pathService.join(reportDirectory, `fixed-context-observation.${environment}.json`),
-          ),
-          readJson(
-            AuthorizationNegativeSmokeEvidenceSchema,
-            pathService.join(reportDirectory, `negative-smoke.${environment}.json`),
-          ),
-          readJson(
-            AuthorizationRolloutContractSchema,
-            pathService.join(root, 'topology/authorization-rollout.json'),
-          ),
-        ],
-        { concurrency: 'unbounded' },
-      );
-      const [contextSource, spiceDbSchemaSource, replayMigrationSource] = yield* Effect.all(
-        [
-          fileSystem.readFileString(contextPath),
-          fileSystem.readFileString(insideWorkspace(pathService, root, context.spiceDbSchemaPath)),
-          fileSystem.readFileString(
-            insideWorkspace(pathService, root, context.replayMigrationPath),
-          ),
-        ],
-        { concurrency: 'unbounded' },
-      );
+      const [inventory, impact, observation, negativeSmoke, rollout] =
+        yield* Effect.all(
+          [
+            readJson(
+              ProtectedEntrypointInventorySchema,
+              pathService.join(reportDirectory, 'protected-entrypoints.json')
+            ),
+            readJson(
+              AuthorizationImpactReportSchema,
+              pathService.join(reportDirectory, 'fail-closed-impact.json')
+            ),
+            readJson(
+              AuthorizationReadinessObservationSchema,
+              pathService.join(
+                reportDirectory,
+                `fixed-context-observation.${environment}.json`
+              )
+            ),
+            readJson(
+              AuthorizationNegativeSmokeEvidenceSchema,
+              pathService.join(
+                reportDirectory,
+                `negative-smoke.${environment}.json`
+              )
+            ),
+            readJson(
+              AuthorizationRolloutContractSchema,
+              pathService.join(root, 'topology/authorization-rollout.json')
+            ),
+          ],
+          { concurrency: 'unbounded' }
+        );
+      const [contextSource, spiceDbSchemaSource, replayMigrationSource] =
+        yield* Effect.all(
+          [
+            fileSystem.readFileString(contextPath),
+            fileSystem.readFileString(
+              insideWorkspace(pathService, root, context.spiceDbSchemaPath)
+            ),
+            fileSystem.readFileString(
+              insideWorkspace(pathService, root, context.replayMigrationPath)
+            ),
+          ],
+          { concurrency: 'unbounded' }
+        );
       const nowEpochMs = yield* Clock.currentTimeMillis;
       const evidence = yield* Effect.try({
         catch: (error) =>
           Schema.is(AuthorizationReadinessError)(error)
             ? error
-            : new AuthorizationReadinessError({ reason: 'authorization evidence is invalid' }),
+            : new AuthorizationReadinessError({
+                reason: 'authorization evidence is invalid',
+              }),
         try: () =>
           checkAuthorizationReadiness({
             context,
@@ -604,19 +697,22 @@ const authorizationReadinessCommand = Command.make(
       yield* fileSystem.makeDirectory(reportDirectory, { recursive: true });
       yield* fileSystem.writeFileString(
         outputPath,
-        `${encodeFormattedAuthorizationEvidence(evidence)}\n`,
+        `${encodeFormattedAuthorizationEvidence(evidence)}\n`
       );
-      yield* Console.log(`${outputPath} ${hashAuthorizationEvidence(evidence)}`);
-    }),
+      yield* Console.log(
+        `${outputPath} ${hashAuthorizationEvidence(evidence)}`
+      );
+    })
 );
 
 const [, invokedModule] = process.argv;
-const isMain = invokedModule !== undefined && import.meta.url.endsWith(invokedModule);
+const isMain =
+  invokedModule !== undefined && import.meta.url.endsWith(invokedModule);
 if (isMain) {
   const NodeServices = loadCoreNodeServices();
   await Effect.runPromise(
     Command.run(authorizationReadinessCommand, { version: '1.0.0' }).pipe(
-      Effect.provide(NodeServices.layer),
-    ),
+      Effect.provide(NodeServices.layer)
+    )
   );
 }

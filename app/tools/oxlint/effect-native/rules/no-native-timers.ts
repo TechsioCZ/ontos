@@ -58,10 +58,12 @@
  * Report-only: no fixer, no suggestion. Existing violations are the intended output.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
-import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
+import {
+  collectEffectBindings,
+  effectMember,
+} from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
 
@@ -79,7 +81,12 @@ const DEFAULT_TIMER_GLOBALS: readonly string[] = [
 ];
 
 /** Objects that hand out the same global timers under a member access. */
-const DEFAULT_GLOBAL_OBJECTS: readonly string[] = ['globalThis', 'window', 'global', 'self'];
+const DEFAULT_GLOBAL_OBJECTS: readonly string[] = [
+  'globalThis',
+  'window',
+  'global',
+  'self',
+];
 
 /** Node timer modules; importing any of them is already the anti-pattern. */
 const DEFAULT_TIMER_MODULES: readonly string[] = [
@@ -106,9 +113,17 @@ const DEFAULT_EFFECT_TIME_MEMBERS: readonly string[] = [
   'retryOrElse',
 ];
 
-const DEFAULT_CLOCK_MEMBERS: readonly string[] = ['currentTimeMillis', 'currentTimeNanos', 'sleep'];
+const DEFAULT_CLOCK_MEMBERS: readonly string[] = [
+  'currentTimeMillis',
+  'currentTimeNanos',
+  'sleep',
+];
 
-const DEFAULT_DATE_TIME_MEMBERS: readonly string[] = ['now', 'unsafeNow', 'nowUnsafe'];
+const DEFAULT_DATE_TIME_MEMBERS: readonly string[] = [
+  'now',
+  'unsafeNow',
+  'nowUnsafe',
+];
 
 /** Identifier names that prove the file drives virtual time. */
 const DEFAULT_TEST_CLOCK_INDICATORS: readonly string[] = ['TestClock'];
@@ -171,10 +186,19 @@ function readOptions(raw: RuleOptions | undefined): Required<RuleOptions> {
     timerGlobals: withDefault(value.timerGlobals, DEFAULT_TIMER_GLOBALS),
     globalObjects: withDefault(value.globalObjects, DEFAULT_GLOBAL_OBJECTS),
     timerModules: withDefault(value.timerModules, DEFAULT_TIMER_MODULES),
-    effectTimeMembers: withDefault(value.effectTimeMembers, DEFAULT_EFFECT_TIME_MEMBERS),
+    effectTimeMembers: withDefault(
+      value.effectTimeMembers,
+      DEFAULT_EFFECT_TIME_MEMBERS
+    ),
     clockMembers: withDefault(value.clockMembers, DEFAULT_CLOCK_MEMBERS),
-    dateTimeMembers: withDefault(value.dateTimeMembers, DEFAULT_DATE_TIME_MEMBERS),
-    testClockIndicators: withDefault(value.testClockIndicators, DEFAULT_TEST_CLOCK_INDICATORS),
+    dateTimeMembers: withDefault(
+      value.dateTimeMembers,
+      DEFAULT_DATE_TIME_MEMBERS
+    ),
+    testClockIndicators: withDefault(
+      value.testClockIndicators,
+      DEFAULT_TEST_CLOCK_INDICATORS
+    ),
   };
 }
 
@@ -186,7 +210,8 @@ interface Site {
 /** Static string key of a member/property node, or `null` when it is dynamic. */
 function staticKey(node: AnyNode, computed: boolean): string | null {
   if (!computed && node.type === 'Identifier') return node.name;
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'Literal' && typeof node.value === 'string')
+    return node.value;
   if (node.type === 'TemplateLiteral' && node.expressions.length === 0)
     return node.quasis[0]?.value.cooked ?? null;
   return null;
@@ -223,8 +248,15 @@ function resolve(context: Context, node: AnyNode, name: string): Resolution {
     const variable = scope.set.get(name);
     if (variable !== undefined) {
       if (variable.defs.length === 0) return 'global';
-      if (variable.defs.some((definition) => definition.type === 'ImportBinding')) return 'import';
-      if (variable.defs.every((definition) => definition.type === 'ImplicitGlobalVariable'))
+      if (
+        variable.defs.some((definition) => definition.type === 'ImportBinding')
+      )
+        return 'import';
+      if (
+        variable.defs.every(
+          (definition) => definition.type === 'ImplicitGlobalVariable'
+        )
+      )
         return 'global';
       return 'shadowed';
     }
@@ -233,7 +265,10 @@ function resolve(context: Context, node: AnyNode, name: string): Resolution {
   return 'global';
 }
 
-function isIncludedFile(filename: string, options: Required<RuleOptions>): boolean {
+function isIncludedFile(
+  filename: string,
+  options: Required<RuleOptions>
+): boolean {
   if (!matchesAny(filename, options.includePaths)) return false;
   if (matchesAny(filename, options.ignore)) return false;
   if (matchesAny(filename, options.adapterFiles)) return false;
@@ -298,7 +333,8 @@ export const rule = defineRule({
           },
           includeScripts: {
             type: 'boolean',
-            description: 'Apply the rule to scripts/** (default: false — B3 owns scripts).',
+            description:
+              'Apply the rule to scripts/** (default: false — B3 owns scripts).',
           },
           requireTestClockInTests: {
             type: 'boolean',
@@ -431,7 +467,10 @@ export const rule = defineRule({
 
     /** local name → imported timer member, or `*` for a namespace import. */
     const timerBindings = new Map<string, string>();
-    let bindings: EffectBindings = { namespaces: new Map(), importsEffect: false };
+    let bindings: EffectBindings = {
+      namespaces: new Map(),
+      importsEffect: false,
+    };
     let hasTestClock = false;
     let hasMockTimers = false;
     const testingNamespaces = new Set<string>();
@@ -444,16 +483,22 @@ export const rule = defineRule({
 
     /** Printed source, collapsed to one line and clipped so diagnostics stay readable. */
     const printed = (node: AnyNode): string => {
-      const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
+      const text = context.sourceCode
+        .getText(node)
+        .replace(/\s+/gu, ' ')
+        .trim();
       return text.length > 60 ? `${text.slice(0, 57)}...` : text;
     };
 
     /** `Effect.sleep` / `E["sleep"]` / `Schedule?.spaced` → the effect namespace + member. */
     function timeMemberOf(
-      node: ESTree.MemberExpression,
+      node: ESTree.MemberExpression
     ): { namespace: string; member: string } | null {
       const object = unwrap(node.object);
-      if (object.type !== 'Identifier' || resolve(context, object, object.name) !== 'import')
+      if (
+        object.type !== 'Identifier' ||
+        resolve(context, object, object.name) !== 'import'
+      )
         return null;
       const namespace = bindings.namespaces.get(object.name);
       if (namespace === undefined) return null;
@@ -474,9 +519,15 @@ export const rule = defineRule({
       return testClockIndicators.has(imported);
     }
 
-    function collectClockEvidence(source: string, values: ESTree.ImportDeclaration['specifiers']) {
+    function collectClockEvidence(
+      source: string,
+      values: ESTree.ImportDeclaration['specifiers']
+    ) {
       for (const specifier of values) {
-        if (specifier.type === 'ImportNamespaceSpecifier' && source === 'effect/testing')
+        if (
+          specifier.type === 'ImportNamespaceSpecifier' &&
+          source === 'effect/testing'
+        )
           testingNamespaces.add(specifier.local.name);
         if (specifier.type !== 'ImportSpecifier') continue;
         const imported =
@@ -484,7 +535,8 @@ export const rule = defineRule({
             ? specifier.imported.name
             : specifier.imported.value;
         if (isClockImport(source, imported)) hasTestClock = true;
-        if (source === 'node:test' && imported === 'mock') nodeTestMocks.add(specifier.local.name);
+        if (source === 'node:test' && imported === 'mock')
+          nodeTestMocks.add(specifier.local.name);
       }
     }
 
@@ -507,7 +559,10 @@ export const rule = defineRule({
       }
     }
 
-    function collectTimeImports(node: ESTree.ImportDeclaration, source: string) {
+    function collectTimeImports(
+      node: ESTree.ImportDeclaration,
+      source: string
+    ) {
       if (!checkEffectTime) return;
       const submodule = SUBMODULE_SOURCE.exec(source)?.[1];
       if (submodule === undefined) return;
@@ -525,22 +580,31 @@ export const rule = defineRule({
 
     function collectIdentifierCall(
       node: ESTree.CallExpression,
-      callee: Extract<AnyNode, { type: 'Identifier' }>,
+      callee: Extract<AnyNode, { type: 'Identifier' }>
     ) {
       const name = callee.name;
       const resolution = resolve(context, callee, name);
       if (resolution === 'import') {
-        if (timerBindings.has(name)) bindingSites.push({ node: callee, callee: name });
+        if (timerBindings.has(name))
+          bindingSites.push({ node: callee, callee: name });
         return;
       }
-      if (resolution !== 'global' || name !== 'require' || node.arguments[0] === undefined) return;
+      if (
+        resolution !== 'global' ||
+        name !== 'require' ||
+        node.arguments[0] === undefined
+      )
+        return;
       const source = staticKey(node.arguments[0], true);
-      if (source !== null && timerModules.has(source)) importSites.push({ node, callee: source });
+      if (source !== null && timerModules.has(source))
+        importSites.push({ node, callee: source });
     }
 
     function enablesMockTimers(object: AnyNode, member: string): boolean {
-      if (member !== 'enable' || object.type !== 'MemberExpression') return false;
-      if (staticKey(object.property, object.computed) !== 'timers') return false;
+      if (member !== 'enable' || object.type !== 'MemberExpression')
+        return false;
+      if (staticKey(object.property, object.computed) !== 'timers')
+        return false;
       const root = unwrap(object.object);
       return (
         root.type === 'Identifier' &&
@@ -575,13 +639,20 @@ export const rule = defineRule({
         bindings = collectEffectBindings(node);
       },
       Identifier(node) {
-        if (!timerGlobals.has(node.name) || resolve(context, node, node.name) !== 'global') return;
+        if (
+          !timerGlobals.has(node.name) ||
+          resolve(context, node, node.name) !== 'global'
+        )
+          return;
         let parent: ESTree.Node | null = node.parent;
         while (parent !== null && parent !== undefined) {
           if (
-            ['TSTypeQuery', 'TSTypeReference', 'TSQualifiedName', 'TSTypeAnnotation'].includes(
-              parent.type,
-            )
+            [
+              'TSTypeQuery',
+              'TSTypeReference',
+              'TSQualifiedName',
+              'TSTypeAnnotation',
+            ].includes(parent.type)
           )
             return;
           parent = parent.parent;
@@ -589,13 +660,16 @@ export const rule = defineRule({
         // Scope references exclude declarations, labels and noncomputed keys; type queries above
         // also have scope references but must not be treated as runtime captures.
         const scope = context.sourceCode.getScope(node);
-        if (scope.references.some((reference) => reference.identifier === node)) {
+        if (
+          scope.references.some((reference) => reference.identifier === node)
+        ) {
           nativeSites.push({ node, callee: node.name });
         }
       },
       ImportExpression(node) {
         const source = staticKey(node.source, true);
-        if (source !== null && timerModules.has(source)) importSites.push({ node, callee: source });
+        if (source !== null && timerModules.has(source))
+          importSites.push({ node, callee: source });
       },
       ExportNamedDeclaration(node) {
         if (node.exportKind === 'type' || node.source === null) return;
@@ -605,7 +679,8 @@ export const rule = defineRule({
         )
           return;
         const source = node.source.value;
-        if (timerModules.has(source)) importSites.push({ node, callee: source });
+        if (timerModules.has(source))
+          importSites.push({ node, callee: source });
       },
       ExportAllDeclaration(node) {
         if (node.exportKind !== 'type' && timerModules.has(node.source.value))
@@ -616,7 +691,9 @@ export const rule = defineRule({
         if (node.importKind === 'type') return;
         const source = node.source.value;
         const values = node.specifiers.filter(
-          (specifier) => specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type',
+          (specifier) =>
+            specifier.type !== 'ImportSpecifier' ||
+            specifier.importKind !== 'type'
         );
         if (node.specifiers.length > 0 && values.length === 0) return;
         collectClockEvidence(source, values);
@@ -637,15 +714,20 @@ export const rule = defineRule({
         if (callee.type !== 'MemberExpression') return;
         const member = staticKey(callee.property, callee.computed);
         if (member === null) return;
-        if (enablesMockTimers(unwrap(callee.object), member)) hasMockTimers = true;
+        if (enablesMockTimers(unwrap(callee.object), member))
+          hasMockTimers = true;
         const { root } = memberRoot(callee.object);
         if (root.type !== 'Identifier') return;
-        if (timerBindings.has(root.name) && resolve(context, root, root.name) === 'import')
+        if (
+          timerBindings.has(root.name) &&
+          resolve(context, root, root.name) === 'import'
+        )
           bindingSites.push({ node: callee, callee: printed(callee) });
       },
 
       MemberExpression(node) {
-        if (isGlobalTimerMember(node)) nativeSites.push({ node, callee: printed(node) });
+        if (isGlobalTimerMember(node))
+          nativeSites.push({ node, callee: printed(node) });
         if (isTestClockMember(node)) hasTestClock = true;
         if (!checkEffectTime) return;
         const resolved = timeMemberOf(node);

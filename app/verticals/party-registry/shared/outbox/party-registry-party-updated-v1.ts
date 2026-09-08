@@ -2,6 +2,7 @@
 // @ontos-outbox-producer party.registry
 // @ontos-outbox-topic party.registry.party-updated.v1
 import { Schema } from 'effect';
+
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const OutboxPayloadSchema = Schema.Struct({

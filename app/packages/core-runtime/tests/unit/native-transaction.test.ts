@@ -1,14 +1,17 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 // @effect-diagnostics asyncFunction:off -- Node's test callback is the Effect execution boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
 import { Cause, Context, Deferred, Effect, Exit, Fiber } from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+
 import { makeTestDatabase } from '../support/database.ts';
 import { runEffectTestPromise } from '../support/effect-runtime.ts';
 
 const harness = (
-  settle: (statement: string) => Effect.Effect<void, SqlError> = () => Effect.void,
+  settle: (statement: string) => Effect.Effect<void, SqlError> = () =>
+    Effect.void
 ) => {
   const events: string[] = [];
   const executor = makeTestDatabase((statement) =>
@@ -16,14 +19,14 @@ const harness = (
       events.push(statement);
       yield* settle(statement);
       return [];
-    }),
+    })
   );
   return { events, executor };
 };
 
 test('native transactions preserve caller services and execute the body once', async () => {
   class Service extends Context.Service<Service, { readonly value: object }>()(
-    '@app/core-runtime/tests/unit/native-transaction.test/Service',
+    '@app/core-runtime/tests/unit/native-transaction.test/Service'
   ) {}
   const service = { value: {} };
   const h = harness();
@@ -34,7 +37,7 @@ test('native transactions preserve caller services and execute the body once', a
         calls += 1;
         return Service.pipe(Effect.map((current) => current.value));
       })
-      .pipe(Effect.provideService(Service, service)),
+      .pipe(Effect.provideService(Service, service))
   );
   assert.equal(value, service.value);
   assert.equal(calls, 1);
@@ -51,8 +54,8 @@ test('native isolation configuration precedes transaction queries', async () => 
           isolationLevel: 'repeatable read',
         });
         yield* transaction.execute(sql`select 1`, 'objects');
-      }),
-    ),
+      })
+    )
   );
   assert.deepEqual(h.events, [
     'BEGIN',
@@ -69,7 +72,7 @@ for (const [name, cause] of [
   test(`native ${name} rolls back with the original cause`, async () => {
     const h = harness();
     const exit = await runEffectTestPromise(
-      Effect.exit(h.executor.transaction(() => Effect.failCause(cause))),
+      Effect.exit(h.executor.transaction(() => Effect.failCause(cause)))
     );
     assert.ok(Exit.isFailure(exit));
     assert.deepEqual(exit.cause, cause);
@@ -84,8 +87,8 @@ test('a synchronous body construction throw rolls back', async () => {
     Effect.exit(
       h.executor.transaction((): Effect.Effect<never> => {
         throw defect;
-      }),
-    ),
+      })
+    )
   );
   assert.ok(Exit.isFailure(exit));
   assert.deepEqual(exit.cause, Cause.die(defect));
@@ -97,17 +100,21 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
     const failure = new SqlError({
       reason: new ConnectionError({ cause: new Error(`${phase} failed`) }),
     });
-    const h = harness((statement) => (statement === phase ? Effect.fail(failure) : Effect.void));
+    const h = harness((statement) =>
+      statement === phase ? Effect.fail(failure) : Effect.void
+    );
     const exit = await runEffectTestPromise(
       Effect.exit(
         h.executor.transaction(() =>
-          phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('body failure'),
-        ),
-      ),
+          phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('body failure')
+        )
+      )
     );
     assert.ok(Exit.isFailure(exit));
     assert.ok(
-      exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure),
+      exit.cause.reasons.some(
+        (reason) => Cause.isDieReason(reason) && reason.defect === failure
+      )
     );
     assert.deepEqual(h.events, ['BEGIN', phase]);
   });
@@ -127,9 +134,9 @@ test(
         const h = harness((statement) =>
           statement === 'ROLLBACK'
             ? Deferred.succeed(rollingBack, null).pipe(
-                Effect.andThen(Deferred.await(releaseRollback)),
+                Effect.andThen(Deferred.await(releaseRollback))
               )
-            : Effect.void,
+            : Effect.void
         );
         const fiber = yield* h.executor
           .transaction(() =>
@@ -137,10 +144,10 @@ test(
               Effect.andThen(Effect.never),
               Effect.ensuring(
                 Deferred.succeed(finalizing, null).pipe(
-                  Effect.andThen(Deferred.await(releaseFinalizer)),
-                ),
-              ),
-            ),
+                  Effect.andThen(Deferred.await(releaseFinalizer))
+                )
+              )
+            )
           )
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
@@ -154,12 +161,12 @@ test(
         yield* Deferred.succeed(releaseRollback, null);
         yield* Fiber.join(interrupt);
         return { events: h.events, exit: yield* Fiber.await(fiber) };
-      }),
+      })
     );
     assert.ok(Exit.isFailure(result.exit));
     assert.equal(Cause.hasInterrupts(result.exit.cause), true);
     assert.deepEqual(result.events, ['BEGIN', 'ROLLBACK']);
-  },
+  }
 );
 
 for (const phase of ['COMMIT', 'ROLLBACK']) {
@@ -178,29 +185,35 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
             statement === phase
               ? Deferred.succeed(started, null).pipe(
                   Effect.andThen(Deferred.await(release)),
-                  Effect.andThen(Effect.fail(failure)),
+                  Effect.andThen(Effect.fail(failure))
                 )
-              : Effect.void,
+              : Effect.void
           );
           const fiber = yield* h.executor
             .transaction(() =>
-              phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('domain failure'),
+              phase === 'COMMIT'
+                ? Effect.succeed(42)
+                : Effect.fail('domain failure')
             )
             .pipe(Effect.forkChild);
           yield* Deferred.await(started);
-          const interrupt = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+          const interrupt = yield* Fiber.interrupt(fiber).pipe(
+            Effect.forkChild
+          );
           yield* Effect.yieldNow;
           assert.equal(fiber.pollUnsafe(), undefined);
           yield* Deferred.succeed(release, null);
           yield* Fiber.join(interrupt);
           return yield* Fiber.await(fiber);
-        }),
+        })
       );
       assert.ok(Exit.isFailure(exit));
       // Native settlement defects take precedence over pending interruption.
       assert.ok(
-        exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure),
+        exit.cause.reasons.some(
+          (reason) => Cause.isDieReason(reason) && reason.defect === failure
+        )
       );
-    },
+    }
   );
 }

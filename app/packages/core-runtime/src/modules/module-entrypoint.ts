@@ -1,4 +1,5 @@
 import { Match, Result, Schema } from 'effect';
+
 import { EntrypointAuthorizationSchema } from '../authorization/entrypoint-classification.ts';
 import type { EntrypointAuthorization } from '../authorization/entrypoint-classification.ts';
 
@@ -19,17 +20,29 @@ export const MODULE_ENTRYPOINT_ACCESSES = [
 ] as const;
 export const MODULE_ENTRYPOINT_SCOPES = ['tenant', 'system'] as const;
 
-export const ModuleEntrypointRoleSchema = Schema.Literals(MODULE_ENTRYPOINT_ROLES);
-export const ModuleEntrypointAccessSchema = Schema.Literals(MODULE_ENTRYPOINT_ACCESSES);
-export const ModuleEntrypointScopeSchema = Schema.Literals(MODULE_ENTRYPOINT_SCOPES);
-export type ModuleEntrypointRole = Schema.Schema.Type<typeof ModuleEntrypointRoleSchema>;
-export type ModuleEntrypointAccess = Schema.Schema.Type<typeof ModuleEntrypointAccessSchema>;
-export type ModuleEntrypointScope = Schema.Schema.Type<typeof ModuleEntrypointScopeSchema>;
+export const ModuleEntrypointRoleSchema = Schema.Literals(
+  MODULE_ENTRYPOINT_ROLES
+);
+export const ModuleEntrypointAccessSchema = Schema.Literals(
+  MODULE_ENTRYPOINT_ACCESSES
+);
+export const ModuleEntrypointScopeSchema = Schema.Literals(
+  MODULE_ENTRYPOINT_SCOPES
+);
+export type ModuleEntrypointRole = Schema.Schema.Type<
+  typeof ModuleEntrypointRoleSchema
+>;
+export type ModuleEntrypointAccess = Schema.Schema.Type<
+  typeof ModuleEntrypointAccessSchema
+>;
+export type ModuleEntrypointScope = Schema.Schema.Type<
+  typeof ModuleEntrypointScopeSchema
+>;
 
 const stableKeySchema = Schema.String.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)
 ).pipe(Schema.brand('StableKey'));
 
 export const ModuleEntrypointSchema = Schema.Struct({
@@ -41,13 +54,14 @@ export const ModuleEntrypointSchema = Schema.Struct({
   scope: ModuleEntrypointScopeSchema,
 });
 
-export type EntrypointAccessForRole<Role extends ModuleEntrypointRole> = Role extends 'action'
-  ? 'write'
-  : Role extends 'worker'
-    ? 'background'
-    : Role extends 'api' | 'report'
-      ? 'historical_read' | 'read' | 'write'
-      : 'historical_read' | 'read';
+export type EntrypointAccessForRole<Role extends ModuleEntrypointRole> =
+  Role extends 'action'
+    ? 'write'
+    : Role extends 'worker'
+      ? 'background'
+      : Role extends 'api' | 'report'
+        ? 'historical_read' | 'read' | 'write'
+        : 'historical_read' | 'read';
 
 export interface ModuleEntrypointDescriptor<
   Role extends ModuleEntrypointRole = ModuleEntrypointRole,
@@ -75,27 +89,31 @@ export type SystemModuleEntrypoint<
   ModuleKey extends string = string,
 > = ModuleEntrypointDescriptor<Role, Access, ModuleKey, 'system'>;
 
-const roleAllowsAccess = (role: ModuleEntrypointRole, access: ModuleEntrypointAccess): boolean =>
+const roleAllowsAccess = (
+  role: ModuleEntrypointRole,
+  access: ModuleEntrypointAccess
+): boolean =>
   Match.value(role).pipe(
     Match.when('action', () => access === 'write'),
     Match.when('worker', () => access === 'background'),
     Match.whenOr(
       'api',
       'report',
-      () => access === 'read' || access === 'historical_read' || access === 'write',
+      () =>
+        access === 'read' || access === 'historical_read' || access === 'write'
     ),
     Match.whenOr(
       'page',
       'public_component',
       'search',
-      () => access === 'read' || access === 'historical_read',
+      () => access === 'read' || access === 'historical_read'
     ),
-    Match.exhaustive,
+    Match.exhaustive
   );
 
 const ModuleEntrypointInvariantError = Schema.TaggedError<Error>()(
   'ModuleEntrypointInvariantError',
-  { message: Schema.String },
+  { message: Schema.String }
 );
 
 const failModuleEntrypointInvariant = (message: string): never => {
@@ -104,7 +122,7 @@ const failModuleEntrypointInvariant = (message: string): never => {
 
 const roleAllowsAuthorization = (
   role: ModuleEntrypointRole,
-  authorization: EntrypointAuthorization,
+  authorization: EntrypointAuthorization
 ): boolean => {
   if (role === 'action') {
     return authorization.kind === 'action_execution';
@@ -127,22 +145,35 @@ const defineEntrypoint = <
   const ModuleKey extends string,
   const Scope extends ModuleEntrypointScope,
 >(
-  input: Omit<ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope>, 'scope'>,
-  scope: Scope,
+  input: Omit<
+    ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope>,
+    'scope'
+  >,
+  scope: Scope
 ): ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope> => {
-  const descriptor: ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope> = {
-    ...input,
-    scope,
-  };
+  const descriptor: ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope> =
+    {
+      ...input,
+      scope,
+    };
   const validatedDescriptor = Result.getOrThrow(
-    Schema.decodeUnknownResult(ModuleEntrypointSchema, { onExcessProperty: 'error' })(descriptor),
+    Schema.decodeUnknownResult(ModuleEntrypointSchema, {
+      onExcessProperty: 'error',
+    })(descriptor)
   );
   if (!roleAllowsAccess(validatedDescriptor.role, validatedDescriptor.access)) {
-    return failModuleEntrypointInvariant('Module entrypoint role and access are inconsistent');
-  }
-  if (!roleAllowsAuthorization(validatedDescriptor.role, validatedDescriptor.authorization)) {
     return failModuleEntrypointInvariant(
-      'Module entrypoint role and authorization are inconsistent',
+      'Module entrypoint role and access are inconsistent'
+    );
+  }
+  if (
+    !roleAllowsAuthorization(
+      validatedDescriptor.role,
+      validatedDescriptor.authorization
+    )
+  ) {
+    return failModuleEntrypointInvariant(
+      'Module entrypoint role and authorization are inconsistent'
     );
   }
   return Object.freeze({
@@ -151,19 +182,25 @@ const defineEntrypoint = <
   });
 };
 
-export const decodeTenantModuleEntrypoint = <Input>(input: Input): TenantModuleEntrypoint => {
+export const decodeTenantModuleEntrypoint = <Input>(
+  input: Input
+): TenantModuleEntrypoint => {
   const descriptor = Result.getOrThrow(
-    Schema.decodeUnknownResult(ModuleEntrypointSchema, { onExcessProperty: 'error' })({
+    Schema.decodeUnknownResult(ModuleEntrypointSchema, {
+      onExcessProperty: 'error',
+    })({
       ...input,
       scope: 'tenant',
-    }),
+    })
   );
   if (
     descriptor.scope !== 'tenant' ||
     !roleAllowsAccess(descriptor.role, descriptor.access) ||
     !roleAllowsAuthorization(descriptor.role, descriptor.authorization)
   ) {
-    return failModuleEntrypointInvariant('Module entrypoint role and access are inconsistent');
+    return failModuleEntrypointInvariant(
+      'Module entrypoint role and access are inconsistent'
+    );
   }
   return Object.freeze({
     access: descriptor.access,
@@ -180,13 +217,15 @@ export const defineTenantModuleEntrypoint = <
   const Access extends EntrypointAccessForRole<Role>,
   const ModuleKey extends string,
 >(
-  input: Omit<TenantModuleEntrypoint<Role, Access, ModuleKey>, 'scope'>,
-): TenantModuleEntrypoint<Role, Access, ModuleKey> => defineEntrypoint(input, 'tenant');
+  input: Omit<TenantModuleEntrypoint<Role, Access, ModuleKey>, 'scope'>
+): TenantModuleEntrypoint<Role, Access, ModuleKey> =>
+  defineEntrypoint(input, 'tenant');
 
 export const defineSystemModuleEntrypoint = <
   const Role extends ModuleEntrypointRole,
   const Access extends EntrypointAccessForRole<Role>,
   const ModuleKey extends string,
 >(
-  input: Omit<SystemModuleEntrypoint<Role, Access, ModuleKey>, 'scope'>,
-): SystemModuleEntrypoint<Role, Access, ModuleKey> => defineEntrypoint(input, 'system');
+  input: Omit<SystemModuleEntrypoint<Role, Access, ModuleKey>, 'scope'>
+): SystemModuleEntrypoint<Role, Access, ModuleKey> =>
+  defineEntrypoint(input, 'system');

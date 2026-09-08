@@ -28,32 +28,34 @@ class SearchProviderAccessScaffoldError extends Schema.TaggedError<SearchProvide
   {
     cause: Schema.optionalKey(Schema.Unknown),
     message: Schema.String,
-  },
+  }
 ) {}
 
 const { scaffoldError, trySync } = createScaffoldErrorTools(
   SearchProviderAccessScaffoldError,
   Schema.is(SearchProviderAccessScaffoldError),
-  'search provider access update failed',
+  'search provider access update failed'
 );
 
 const replaceOwnedLine = (
   content: string,
   pattern: RegExp,
   replacement: string,
-  description: string,
+  description: string
 ): Effect.Effect<string, SearchProviderAccessScaffoldError> =>
   Effect.gen(function* replaceOwnedLineEffect() {
     const matches = [...content.matchAll(pattern)];
     if (matches.length !== 1) {
       return yield* scaffoldError(
-        `expected exactly one generated ${description}; found ${matches.length}`,
+        `expected exactly one generated ${description}; found ${matches.length}`
       );
     }
     return content.replace(pattern, replacement);
   });
 
-const requestedPermissionTarget = (config: SearchProviderAccessScaffoldConfig) =>
+const requestedPermissionTarget = (
+  config: SearchProviderAccessScaffoldConfig
+) =>
   config.accessFiltering === 'tenant_scope'
     ? `() => ({ kind: 'tenant', permission: '${config.tenantPermission}' }),`
     : `() => ({ kind: 'legal_entity', permission: 'read_counterparty' }),`;
@@ -61,31 +63,31 @@ const requestedPermissionTarget = (config: SearchProviderAccessScaffoldConfig) =
 const patchProvider = (
   content: string,
   moduleId: string,
-  config: SearchProviderAccessScaffoldConfig,
+  config: SearchProviderAccessScaffoldConfig
 ): Effect.Effect<string, SearchProviderAccessScaffoldError> =>
   Effect.gen(function* patchProviderEffect() {
     if (!content.startsWith(generatedHeader)) {
       return yield* scaffoldError(
-        'search provider access updates require a Codesmith-owned provider',
+        'search provider access updates require a Codesmith-owned provider'
       );
     }
     let next = yield* replaceOwnedLine(
       content,
       /^ {4}legalEntityScope: '(?:required|optional)',$/gmu,
       `    legalEntityScope: '${config.legalEntityScope}',`,
-      'legalEntityScope line',
+      'legalEntityScope line'
     );
     next = yield* replaceOwnedLine(
       next,
       /^ {4}permissionTarget: '(?:module|tenant|legal_entity)',$/gmu,
       `    permissionTarget: '${config.accessFiltering === 'tenant_scope' ? 'tenant' : 'legal_entity'}',`,
-      'permissionTarget line',
+      'permissionTarget line'
     );
     return yield* replaceOwnedLine(
       next,
       /^ {2}\(\) => \(\{ kind: '(?:module|tenant|legal_entity)'(?:, moduleId: '[^']+'|, permission: '[^']+') \}\),$/gmu,
       `  ${requestedPermissionTarget(config)}`,
-      `${moduleId} permission target resolver`,
+      `${moduleId} permission target resolver`
     );
   });
 
@@ -96,35 +98,47 @@ const requestField = (filter: 'includeArchived' | 'role'): string =>
 
 const patchContract = (
   content: string,
-  config: SearchProviderAccessScaffoldConfig,
+  config: SearchProviderAccessScaffoldConfig
 ): Effect.Effect<string, SearchProviderAccessScaffoldError> =>
   Effect.gen(function* patchContractEffect() {
     if (!content.startsWith(generatedHeader)) {
       return yield* scaffoldError(
-        'search provider access updates require a Codesmith-owned server contract',
+        'search provider access updates require a Codesmith-owned server contract'
       );
     }
     const type = toPascalCase(config.name);
     const start = `export const ${type}ProviderRequestSchema = Schema.Struct({\n`;
     const startIndex = content.indexOf(start);
     if (startIndex === -1 || content.includes(start, startIndex + 1)) {
-      return yield* scaffoldError('expected exactly one generated provider request schema');
+      return yield* scaffoldError(
+        'expected exactly one generated provider request schema'
+      );
     }
     const fieldsStart = startIndex + start.length;
     const fieldsEnd = content.indexOf('});', fieldsStart);
     if (fieldsEnd === -1) {
-      return yield* scaffoldError('generated provider request schema is incomplete');
+      return yield* scaffoldError(
+        'generated provider request schema is incomplete'
+      );
     }
     const fields = content.slice(fieldsStart, fieldsEnd);
     if (!/^ {2}query: .+,$/mu.test(fields)) {
-      return yield* scaffoldError('generated provider request schema must retain its query field');
+      return yield* scaffoldError(
+        'generated provider request schema must retain its query field'
+      );
     }
-    const knownFields = [...fields.matchAll(/^ {2}(?<field>[A-Za-z][A-Za-z0-9]*):/gmu)].map(
-      ([, field]) => field,
-    );
+    const knownFields = [
+      ...fields.matchAll(/^ {2}(?<field>[A-Za-z][A-Za-z0-9]*):/gmu),
+    ].map(([, field]) => field);
     const expectedFields = new Set(['query', ...config.requestFilters]);
-    if (knownFields.some((field) => field === undefined || !expectedFields.has(field))) {
-      return yield* scaffoldError('provider request schema contains an unowned request filter');
+    if (
+      knownFields.some(
+        (field) => field === undefined || !expectedFields.has(field)
+      )
+    ) {
+      return yield* scaffoldError(
+        'provider request schema contains an unowned request filter'
+      );
     }
     let nextFields = fields;
     for (const filter of config.requestFilters) {
@@ -138,7 +152,7 @@ const patchContract = (
 const patchManifest = (
   content: string,
   moduleId: string,
-  config: SearchProviderAccessScaffoldConfig,
+  config: SearchProviderAccessScaffoldConfig
 ): Effect.Effect<string, SearchProviderAccessScaffoldError> =>
   Effect.gen(function* patchManifestEffect() {
     const key = `${moduleId}.${config.name}`;
@@ -150,14 +164,19 @@ const patchManifest = (
       content.includes(MODULE_MANIFEST_SEARCH_SLOT_START, start + 1) ||
       content.includes(MODULE_MANIFEST_SEARCH_SLOT_END, end + 1)
     ) {
-      return yield* scaffoldError('generated search descriptor slot is missing or duplicated');
+      return yield* scaffoldError(
+        'generated search descriptor slot is missing or duplicated'
+      );
     }
-    const slot = content.slice(start + MODULE_MANIFEST_SEARCH_SLOT_START.length, end);
+    const slot = content.slice(
+      start + MODULE_MANIFEST_SEARCH_SLOT_START.length,
+      end
+    );
     const escapedKey = key.replaceAll('.', String.raw`\.`);
     const escapedModuleId = moduleId.replaceAll('.', String.raw`\.`);
     const pattern = new RegExp(
       `\\{\\s*accessFiltering: '(?:resource_permission|tenant_scope)',\\s*key: '${escapedKey}',\\s*owningModuleId: '${escapedModuleId}',(?:\\s*requestFilters: \\[[^\\]]*\\],)?\\s*resourceType: '([^']+)'(?:,\\s*tenantPermission: '[^']+')?,?\\s*\\},`,
-      'gmu',
+      'gmu'
     );
     const matches = [...slot.matchAll(pattern)];
     const [match] = matches;
@@ -167,9 +186,13 @@ const patchManifest = (
       resourceType === undefined ||
       !resourceType.startsWith(`${moduleId}.`)
     ) {
-      return yield* scaffoldError(`expected exactly one generated search descriptor for ${key}`);
+      return yield* scaffoldError(
+        `expected exactly one generated search descriptor for ${key}`
+      );
     }
-    const requestFilterValues = config.requestFilters.map((filter) => `'${filter}'`).join(', ');
+    const requestFilterValues = config.requestFilters
+      .map((filter) => `'${filter}'`)
+      .join(', ');
     const requestFilters = `[${requestFilterValues}]`;
     const tenantPermission =
       config.tenantPermission === undefined
@@ -179,31 +202,43 @@ const patchManifest = (
     return `${content.slice(0, start + MODULE_MANIFEST_SEARCH_SLOT_START.length)}${slot.replace(pattern, replacement)}${content.slice(end)}`;
   });
 
-const hasConsistentAccessScope = (config: SearchProviderAccessScaffoldConfig): boolean =>
-  (config.accessFiltering === 'tenant_scope') === (config.tenantPermission !== undefined) &&
-  (config.accessFiltering !== 'tenant_scope' || config.legalEntityScope === 'optional') &&
-  (config.accessFiltering !== 'resource_permission' || config.legalEntityScope === 'required');
+const hasConsistentAccessScope = (
+  config: SearchProviderAccessScaffoldConfig
+): boolean =>
+  (config.accessFiltering === 'tenant_scope') ===
+    (config.tenantPermission !== undefined) &&
+  (config.accessFiltering !== 'tenant_scope' ||
+    config.legalEntityScope === 'optional') &&
+  (config.accessFiltering !== 'resource_permission' ||
+    config.legalEntityScope === 'required');
 
-const hasValidAccessFlags = (config: SearchProviderAccessScaffoldConfig): boolean =>
+const hasValidAccessFlags = (
+  config: SearchProviderAccessScaffoldConfig
+): boolean =>
   ['tenant_scope', 'resource_permission'].includes(config.accessFiltering) &&
   ['optional', 'required'].includes(config.legalEntityScope) &&
-  (config.tenantPermission === undefined || config.tenantPermission === 'read_party_identity') &&
-  config.requestFilters.every((filter) => ['includeArchived', 'role'].includes(filter)) &&
+  (config.tenantPermission === undefined ||
+    config.tenantPermission === 'read_party_identity') &&
+  config.requestFilters.every((filter) =>
+    ['includeArchived', 'role'].includes(filter)
+  ) &&
   new Set(config.requestFilters).size === config.requestFilters.length;
 
 const validateConfig = (
-  config: SearchProviderAccessScaffoldConfig,
+  config: SearchProviderAccessScaffoldConfig
 ): Effect.Effect<void, SearchProviderAccessScaffoldError> =>
   Effect.gen(function* validateConfigEffect() {
     yield* trySync(() => requireCanonicalSlug(config.name, 'search provider'));
     if (!hasValidAccessFlags(config) || !hasConsistentAccessScope(config)) {
-      yield* scaffoldError('search provider access flags are internally inconsistent');
+      yield* scaffoldError(
+        'search provider access flags are internally inconsistent'
+      );
     }
   });
 
 export const planSearchProviderAccessScaffold = (
   workspaceRoot: string,
-  config: SearchProviderAccessScaffoldConfig,
+  config: SearchProviderAccessScaffoldConfig
 ): Effect.Effect<
   ScaffoldPlan<SearchProviderAccessScaffoldResult>,
   ScaffoldFailure | SearchProviderAccessScaffoldError,
@@ -211,15 +246,32 @@ export const planSearchProviderAccessScaffold = (
 > =>
   Effect.gen(function* planSearchProviderAccessScaffoldEffect() {
     yield* validateConfig(config);
-    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
+    const vertical = yield* discoverOntosModuleEffect(
+      workspaceRoot,
+      config.vertical
+    );
     const providerPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, 'src', 'search', `${config.name}.provider.ts`),
+      resolveContainedPath(
+        vertical.directory,
+        'src',
+        'search',
+        `${config.name}.provider.ts`
+      )
     );
     const contractPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, 'shared', 'apis', `${config.name}-search.ts`),
+      resolveContainedPath(
+        vertical.directory,
+        'shared',
+        'apis',
+        `${config.name}-search.ts`
+      )
     );
     const serverPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, 'api', `${config.name}-search-server.ts`),
+      resolveContainedPath(
+        vertical.directory,
+        'api',
+        `${config.name}-search-server.ts`
+      )
     );
     const fileSystem = yield* FileSystem.FileSystem;
     const readGeneratedFile = (filePath: string) =>
@@ -227,8 +279,11 @@ export const planSearchProviderAccessScaffold = (
         .readFileString(filePath)
         .pipe(
           Effect.mapError((cause) =>
-            scaffoldError(`failed to read generated search provider file ${filePath}`, cause),
-          ),
+            scaffoldError(
+              `failed to read generated search provider file ${filePath}`,
+              cause
+            )
+          )
         );
     const [provider, contract, server] = yield* Effect.all([
       readGeneratedFile(providerPath),
@@ -239,22 +294,34 @@ export const planSearchProviderAccessScaffold = (
     if (
       !server.startsWith(generatedHeader) ||
       !server.includes(
-        `import { ${expectedRead} } from '../src/search/${config.name}.provider.ts';`,
+        `import { ${expectedRead} } from '../src/search/${config.name}.provider.ts';`
       ) ||
       !server.includes(`registration: ${expectedRead},`)
     ) {
       return yield* scaffoldError(
-        'generated search server no longer owns the expected provider registration',
+        'generated search server no longer owns the expected provider registration'
       );
     }
     const mutations: Mutation[] = [];
-    const nextProvider = yield* patchProvider(provider, vertical.moduleId, config);
+    const nextProvider = yield* patchProvider(
+      provider,
+      vertical.moduleId,
+      config
+    );
     const nextContract = yield* patchContract(contract, config);
-    const nextManifest = yield* patchManifest(vertical.manifestContent, vertical.moduleId, config);
+    const nextManifest = yield* patchManifest(
+      vertical.manifestContent,
+      vertical.moduleId,
+      config
+    );
     for (const mutation of [
       updateMutation(providerPath, provider, nextProvider),
       updateMutation(contractPath, contract, nextContract),
-      updateMutation(vertical.manifestPath, vertical.manifestContent, nextManifest),
+      updateMutation(
+        vertical.manifestPath,
+        vertical.manifestContent,
+        nextManifest
+      ),
     ]) {
       if (mutation !== undefined) {
         mutations.push(mutation);

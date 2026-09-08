@@ -24,7 +24,7 @@ process.once('SIGTERM', () => process.exit(143));
 /** Own only this fresh child directory; never remove a caller's temporary root. */
 export function withTemporaryWorkspace<T>(
   run: (directory: string) => T,
-  root = process.env.EFFECT_NATIVE_TEST_TMPDIR ?? tmpdir(),
+  root = process.env.EFFECT_NATIVE_TEST_TMPDIR ?? tmpdir()
 ): T {
   const directory = mkdtempSync(join(root, 'effect-policy-'));
   owned.add(directory);
@@ -38,7 +38,7 @@ export function withTemporaryWorkspace<T>(
       throw new AggregateError(
         [error, cleanupError],
         `Fixture run failed and workspace remains: ${directory}`,
-        { cause: error },
+        { cause: error }
       );
     }
     throw error;

@@ -4,7 +4,12 @@ import {
   makeRetryableProblemDetailsSchema,
 } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+} from 'effect/unstable/httpapi';
+
 import { ActionInvocationIdSchema } from '../domain/correction-contracts.ts';
 import { PartyMatchDecisionRecordSchema } from '../domain/matching-contracts.ts';
 import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.ts';
@@ -14,46 +19,44 @@ export const PartyMatchDecisionRequestSchema = Schema.Struct({
   decisionRef: Schema.optionalKey(PartyMatchDecisionRefSchema),
 }).check(
   Schema.makeFilter((input) =>
-    (input.actionInvocationId === undefined) === (input.decisionRef === undefined)
+    (input.actionInvocationId === undefined) ===
+    (input.decisionRef === undefined)
       ? 'exactly one decision identity is required'
-      : undefined,
-  ),
+      : undefined
+  )
 );
-export type PartyMatchDecisionRequest = typeof PartyMatchDecisionRequestSchema.Type;
+export type PartyMatchDecisionRequest =
+  typeof PartyMatchDecisionRequestSchema.Type;
 export const PartyMatchDecisionResponseSchema = PartyMatchDecisionRecordSchema;
-export type PartyMatchDecisionResponse = typeof PartyMatchDecisionResponseSchema.Type;
+export type PartyMatchDecisionResponse =
+  typeof PartyMatchDecisionResponseSchema.Type;
 
-export const PartyMatchDecisionAuthenticationProblemSchema = makeProblemDetailsSchema(
-  'PartyMatchDecisionAuthenticationProblem',
-  401,
-);
+export const PartyMatchDecisionAuthenticationProblemSchema =
+  makeProblemDetailsSchema('PartyMatchDecisionAuthenticationProblem', 401);
 export const PartyMatchDecisionInvalidProblemSchema = makeProblemDetailsSchema(
   'PartyMatchDecisionInvalidProblem',
-  400,
+  400
 );
-export const PartyMatchDecisionUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'PartyMatchDecisionUnavailableProblem',
-  503,
-);
-export const PartyMatchDecisionForbiddenProblemSchema = makeProblemDetailsSchema(
-  'PartyMatchDecisionForbiddenProblem',
-  403,
-);
+export const PartyMatchDecisionUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema(
+    'PartyMatchDecisionUnavailableProblem',
+    503
+  );
+export const PartyMatchDecisionForbiddenProblemSchema =
+  makeProblemDetailsSchema('PartyMatchDecisionForbiddenProblem', 403);
 export const PartyMatchDecisionNotFoundProblemSchema = makeProblemDetailsSchema(
   'PartyMatchDecisionNotFoundProblem',
-  404,
+  404
 );
 export const PartyMatchDecisionPolicyProblemSchema = makeProblemDetailsSchema(
   'PartyMatchDecisionPolicyProblem',
-  422,
+  422
 );
-export const PartyMatchDecisionPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'PartyMatchDecisionPolicyConflictProblem',
-  409,
-);
+export const PartyMatchDecisionPolicyConflictProblemSchema =
+  makeProblemDetailsSchema('PartyMatchDecisionPolicyConflictProblem', 409);
 export const PartyMatchDecisionInternalProblemSchema = makeProblemDetailsSchema(
   'PartyMatchDecisionInternalProblem',
-  500,
+  500
 );
 
 export const PartyMatchDecisionApi = HttpApi.make('PartyMatchDecisionApi').add(
@@ -74,6 +77,6 @@ export const PartyMatchDecisionApi = HttpApi.make('PartyMatchDecisionApi').add(
       payload: PartyMatchDecisionRequestSchema,
       query: {},
       success: PartyMatchDecisionResponseSchema,
-    }),
-  ),
+    })
+  )
 );

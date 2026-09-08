@@ -3,7 +3,11 @@ import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
 import react from 'ultracite/oxlint/react';
 
-const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
+const selectedJsPlugins = selectJsPlugins([
+  'github',
+  'sonarjs',
+  'react-doctor',
+]);
 const jsPlugins = {
   ...selectedJsPlugins,
   // Load GitHub's published rule-only entrypoint, not its ESLint configuration aggregator.
@@ -11,7 +15,7 @@ const jsPlugins = {
   jsPlugins: selectedJsPlugins.jsPlugins.map((plugin) =>
     plugin.name === 'github'
       ? { ...plugin, specifier: 'eslint-plugin-github/lib/plugin.js' }
-      : plugin,
+      : plugin
   ),
 };
 
@@ -39,7 +43,9 @@ const antiSlopEffectRules = {
 
 // Effect-native architecture rules derived from docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md.
 // Each rule cites the audit finding it enforces; see tools/oxlint/effect-native/README.md.
-const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
+const effectNativeRules: NonNullable<
+  Parameters<typeof defineConfig>[0]['rules']
+> = {
   'effect-native/no-ad-hoc-argv-in-scripts': 'error',
   'effect-native/no-ambient-date': 'error',
   'effect-native/no-ambient-process-env': 'error',
@@ -51,7 +57,9 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-dotenv-loading': 'error',
   'effect-native/no-driver-failure-inspection': [
     'error',
-    { decoderPaths: ['packages/core-runtime/src/database/postgres-failure.ts'] },
+    {
+      decoderPaths: ['packages/core-runtime/src/database/postgres-failure.ts'],
+    },
   ],
   'effect-native/no-duplicate-literal-vocabulary': 'error',
   // These factories compose a scoped pool, its native SQL client, and Drizzle once.
@@ -194,7 +202,10 @@ export default defineConfig({
       name: 'anti-slop-effect',
       specifier: './tools/oxlint/anti-slop/effect/index.ts',
     },
-    { name: 'effect-native', specifier: './tools/oxlint/effect-native/index.ts' },
+    {
+      name: 'effect-native',
+      specifier: './tools/oxlint/effect-native/index.ts',
+    },
   ],
   options: {
     denyWarnings: true,
@@ -300,8 +311,16 @@ export default defineConfig({
           'error',
           {
             allowForKnownSafeCalls: [
-              { from: 'package', name: ['it', 'test'], package: '@playwright/test' },
-              { from: 'package', name: ['it', 'test'], package: '@rstest/core' },
+              {
+                from: 'package',
+                name: ['it', 'test'],
+                package: '@playwright/test',
+              },
+              {
+                from: 'package',
+                name: ['it', 'test'],
+                package: '@rstest/core',
+              },
               { from: 'package', name: ['it', 'test'], package: 'node:test' },
             ],
           },
@@ -411,7 +430,10 @@ export default defineConfig({
     },
     {
       // React component names are intentionally PascalCase, contrary to SonarJS's function-name default.
-      files: ['**/*.tsx', 'apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts'],
+      files: [
+        '**/*.tsx',
+        'apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts',
+      ],
       rules: {
         'sonarjs/function-name': 'off',
       },
@@ -447,7 +469,10 @@ export default defineConfig({
     {
       // Dynamic Modern.js cache paths contain `.js-${appId}` but are filesystem paths,
       // not CSS class names; the GitHub rule cannot distinguish those string domains.
-      files: ['apps/shell-super-app/modern.config.ts', 'verticals/party-registry/modern.config.ts'],
+      files: [
+        'apps/shell-super-app/modern.config.ts',
+        'verticals/party-registry/modern.config.ts',
+      ],
       rules: {
         'github/js-class-name': 'off',
       },
@@ -455,7 +480,9 @@ export default defineConfig({
     {
       // React Doctor currently emits its internal computed-property lowering TODO for this
       // typed form-error update; the code is valid and the dedicated compiler rules stay active.
-      files: ['verticals/party-registry/src/features/customers/customer-form.tsx'],
+      files: [
+        'verticals/party-registry/src/features/customers/customer-form.tsx',
+      ],
       rules: {
         'react/todo': 'off',
       },
@@ -743,7 +770,9 @@ export default defineConfig({
     {
       // This Proxy preserves the real Drizzle executor type while replacing two methods in a live
       // integration fixture. Reflect.get is required to preserve the original receiver.
-      files: ['verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts'],
+      files: [
+        'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts',
+      ],
       rules: {
         'anti-slop/no-reflect-get': 'off',
       },
@@ -834,7 +863,10 @@ export default defineConfig({
     'import/export': 'error',
     'import/no-namespace': ['error', { ignore: ['effect/*'] }],
     'no-console': 'error',
-    'perfectionist/sort-enums': ['error', { partitionByComment: true, sortByValue: 'always' }],
+    'perfectionist/sort-enums': [
+      'error',
+      { partitionByComment: true, sortByValue: 'always' },
+    ],
     'perfectionist/sort-heritage-clauses': 'error',
     'perfectionist/sort-interfaces': 'error',
     'perfectionist/sort-jsx-props': 'error',
@@ -853,9 +885,15 @@ export default defineConfig({
     'sonarjs/no-nested-conditional': 'off',
     'sonarjs/no-redundant-jump': 'off',
     'sonarjs/no-unused-vars': 'off',
-    'typescript/no-require-imports': ['error', { allow: [String.raw`/package\.json$`] }],
+    'typescript/no-require-imports': [
+      'error',
+      { allow: [String.raw`/package\.json$`] },
+    ],
     // Terse void callbacks are idiomatic for framework and test APIs; confusing assignments remain errors.
-    'typescript/no-confusing-void-expression': ['error', { ignoreArrowShorthand: true }],
+    'typescript/no-confusing-void-expression': [
+      'error',
+      { ignoreArrowShorthand: true },
+    ],
     // Single-use generics preserve inferred return predicates and object value types throughout Effect APIs.
     'typescript/no-unnecessary-type-parameters': 'off',
     // Annotating rejected-promise callbacks as unknown bypasses OntOS's named-error boundary policy.

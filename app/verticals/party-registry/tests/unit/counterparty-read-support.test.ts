@@ -1,8 +1,10 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+
 import { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
 import { resolveCounterpartyRead } from '../../src/api/counterparty-read-support.ts';
 
@@ -25,12 +27,15 @@ test('cross-tenant counterparty reads never resolve the persistence service', ()
           calls += 1;
           return Effect.succeed({ _tag: 'not_found' } as const);
         },
-        reason,
+        reason
       ).pipe(Effect.flip);
       assert.equal(calls, 0);
       assert.ok(Schema.is(ReadHandlerNotFound)(failure));
-      assert.equal(failure.reason, 'The Counterparty does not exist in the trusted Tenant');
-    }),
+      assert.equal(
+        failure.reason,
+        'The Counterparty does not exist in the trusted Tenant'
+      );
+    })
   ));
 
 test('counterparty lookup preserves found values and authorized-context absence', () =>
@@ -44,18 +49,21 @@ test('counterparty lookup preserves found values and authorized-context absence'
           assert.equal(id, ref.resourceId);
           return Effect.succeed({ _tag: 'found', value } as const);
         },
-        reason,
+        reason
       );
       assert.equal(found, value);
       const missing = yield* resolveCounterpartyRead<never>(
         ref,
         ref.tenantId,
         () => Effect.succeed({ _tag: 'not_found' } as const),
-        reason,
+        reason
       ).pipe(Effect.flip);
       assert.ok(Schema.is(ReadHandlerNotFound)(missing));
-      assert.equal(missing.reason, 'The Counterparty does not exist in the authorized context');
-    }),
+      assert.equal(
+        missing.reason,
+        'The Counterparty does not exist in the authorized context'
+      );
+    })
   ));
 
 test('counterparty failures preserve the per-read reason and nonenumerable cause', () =>
@@ -65,16 +73,20 @@ test('counterparty failures preserve the per-read reason and nonenumerable cause
         code: 'counterparty_persistence_unavailable',
         reason: 'database unavailable',
       });
-      const historyReason = 'Counterparty Role history is temporarily unavailable';
+      const historyReason =
+        'Counterparty Role history is temporarily unavailable';
       const failure = yield* resolveCounterpartyRead<never>(
         ref,
         ref.tenantId,
         () => Effect.fail(cause),
-        historyReason,
+        historyReason
       ).pipe(Effect.flip);
       assert.ok(Schema.is(ReadHandlerUnavailable)(failure));
       assert.equal(failure.reason, historyReason);
       assert.equal(failure.cause, cause);
-      assert.equal(Object.getOwnPropertyDescriptor(failure, 'cause')?.enumerable, false);
-    }),
+      assert.equal(
+        Object.getOwnPropertyDescriptor(failure, 'cause')?.enumerable,
+        false
+      );
+    })
   ));

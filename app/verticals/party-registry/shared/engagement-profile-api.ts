@@ -1,3 +1,5 @@
+import { createMicroVerticalOperationContext } from '@app/shared-contracts';
+import type { MicroVerticalOperationContext } from '@app/shared-contracts';
 import {
   makeProblemDetailsSchema,
   makeRetryableProblemDetailsSchema,
@@ -9,8 +11,7 @@ import {
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-import { createMicroVerticalOperationContext } from '@app/shared-contracts';
-import type { MicroVerticalOperationContext } from '@app/shared-contracts';
+
 import {
   AttachOrganizationEngagementPayloadSchema,
   AttachPersonEngagementPayloadSchema,
@@ -26,25 +27,25 @@ export * from './apis/person-engagement-profile.ts';
 
 export const ContactsMutationHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))
   ),
 });
 
 export const ContactsInvalidRequestProblemSchema = makeProblemDetailsSchema(
   'ContactsInvalidRequestProblem',
-  400,
+  400
 );
 export const ContactsAuthenticationProblemSchema = makeProblemDetailsSchema(
   'ContactsAuthenticationProblem',
-  401,
+  401
 );
 export const ContactsForbiddenProblemSchema = makeProblemDetailsSchema(
   'ContactsForbiddenProblem',
-  403,
+  403
 );
 export const ContactsNotFoundProblemSchema = makeProblemDetailsSchema(
   'ContactsNotFoundProblem',
-  404,
+  404
 );
 export const ContactsConflictProblemSchema = makeProblemDetailsSchema(
   'ContactsConflictProblem',
@@ -59,19 +60,15 @@ export const ContactsConflictProblemSchema = makeProblemDetailsSchema(
       'contacts_party_archived',
       'contacts_party_type_mismatch',
     ]),
-  },
+  }
 );
-export const ContactsPreconditionRequiredProblemSchema = makeProblemDetailsSchema(
-  'ContactsPreconditionRequiredProblem',
-  428,
-);
-export const ContactsUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'ContactsUnavailableProblem',
-  503,
-);
+export const ContactsPreconditionRequiredProblemSchema =
+  makeProblemDetailsSchema('ContactsPreconditionRequiredProblem', 428);
+export const ContactsUnavailableProblemSchema =
+  makeRetryableProblemDetailsSchema('ContactsUnavailableProblem', 503);
 export const ContactsInternalProblemSchema = makeProblemDetailsSchema(
   'ContactsInternalProblem',
-  500,
+  500
 );
 
 export type ContactsProblem =
@@ -93,39 +90,56 @@ const mutationErrors = [
   ContactsUnavailableProblemSchema,
   ContactsInternalProblemSchema,
 ] as const;
-const lifecycleErrors = [...mutationErrors, ContactsNotFoundProblemSchema] as const;
+const lifecycleErrors = [
+  ...mutationErrors,
+  ContactsNotFoundProblemSchema,
+] as const;
 
 export const organizationEngagementMutationApi = HttpApi.make(
-  'OrganizationEngagementMutationApi',
+  'OrganizationEngagementMutationApi'
 ).add(
   HttpApiGroup.make('organizationEngagementMutations')
     .add(
-      HttpApiEndpoint.post('attach', '/contacts/engagement/organizations/attach', {
-        error: mutationErrors,
-        headers: ContactsMutationHeadersSchema,
-        payload: AttachOrganizationEngagementPayloadSchema,
-        success: OrganizationEngagementProfileSchema,
-      }),
+      HttpApiEndpoint.post(
+        'attach',
+        '/contacts/engagement/organizations/attach',
+        {
+          error: mutationErrors,
+          headers: ContactsMutationHeadersSchema,
+          payload: AttachOrganizationEngagementPayloadSchema,
+          success: OrganizationEngagementProfileSchema,
+        }
+      )
     )
     .add(
-      HttpApiEndpoint.post('archive', '/contacts/engagement/organizations/archive', {
-        error: lifecycleErrors,
-        headers: ContactsMutationHeadersSchema,
-        payload: OrganizationEngagementLifecyclePayloadSchema,
-        success: OrganizationEngagementProfileSchema,
-      }),
+      HttpApiEndpoint.post(
+        'archive',
+        '/contacts/engagement/organizations/archive',
+        {
+          error: lifecycleErrors,
+          headers: ContactsMutationHeadersSchema,
+          payload: OrganizationEngagementLifecyclePayloadSchema,
+          success: OrganizationEngagementProfileSchema,
+        }
+      )
     )
     .add(
-      HttpApiEndpoint.post('unarchive', '/contacts/engagement/organizations/unarchive', {
-        error: lifecycleErrors,
-        headers: ContactsMutationHeadersSchema,
-        payload: OrganizationEngagementLifecyclePayloadSchema,
-        success: OrganizationEngagementProfileSchema,
-      }),
-    ),
+      HttpApiEndpoint.post(
+        'unarchive',
+        '/contacts/engagement/organizations/unarchive',
+        {
+          error: lifecycleErrors,
+          headers: ContactsMutationHeadersSchema,
+          payload: OrganizationEngagementLifecyclePayloadSchema,
+          success: OrganizationEngagementProfileSchema,
+        }
+      )
+    )
 );
 
-export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutationApi').add(
+export const personEngagementMutationApi = HttpApi.make(
+  'PersonEngagementMutationApi'
+).add(
   HttpApiGroup.make('personEngagementMutations')
     .add(
       HttpApiEndpoint.post('attach', '/contacts/engagement/people/attach', {
@@ -133,7 +147,7 @@ export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutatio
         headers: ContactsMutationHeadersSchema,
         payload: AttachPersonEngagementPayloadSchema,
         success: PersonEngagementProfileSchema,
-      }),
+      })
     )
     .add(
       HttpApiEndpoint.post('archive', '/contacts/engagement/people/archive', {
@@ -141,21 +155,25 @@ export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutatio
         headers: ContactsMutationHeadersSchema,
         payload: PersonEngagementLifecyclePayloadSchema,
         success: PersonEngagementProfileSchema,
-      }),
+      })
     )
     .add(
-      HttpApiEndpoint.post('unarchive', '/contacts/engagement/people/unarchive', {
-        error: lifecycleErrors,
-        headers: ContactsMutationHeadersSchema,
-        payload: PersonEngagementLifecyclePayloadSchema,
-        success: PersonEngagementProfileSchema,
-      }),
-    ),
+      HttpApiEndpoint.post(
+        'unarchive',
+        '/contacts/engagement/people/unarchive',
+        {
+          error: lifecycleErrors,
+          headers: ContactsMutationHeadersSchema,
+          payload: PersonEngagementLifecyclePayloadSchema,
+          success: PersonEngagementProfileSchema,
+        }
+      )
+    )
 );
 
 const operation = <const Method extends string, const RoutePath extends string>(
   method: Method,
-  routePath: RoutePath,
+  routePath: RoutePath
 ) =>
   createMicroVerticalOperationContext({
     method,
@@ -164,15 +182,36 @@ const operation = <const Method extends string, const RoutePath extends string>(
   });
 
 export const engagementProfileOperationContexts = {
-  archiveOrganizationEngagement: operation('POST', '/contacts/engagement/organizations/archive'),
-  archivePersonEngagement: operation('POST', '/contacts/engagement/people/archive'),
-  attachOrganizationEngagement: operation('POST', '/contacts/engagement/organizations/attach'),
-  attachPersonEngagement: operation('POST', '/contacts/engagement/people/attach'),
-  organizationEngagementProfile: operation('POST', '/reads/organization-engagement-profile'),
-  personEngagementProfile: operation('POST', '/reads/person-engagement-profile'),
+  archiveOrganizationEngagement: operation(
+    'POST',
+    '/contacts/engagement/organizations/archive'
+  ),
+  archivePersonEngagement: operation(
+    'POST',
+    '/contacts/engagement/people/archive'
+  ),
+  attachOrganizationEngagement: operation(
+    'POST',
+    '/contacts/engagement/organizations/attach'
+  ),
+  attachPersonEngagement: operation(
+    'POST',
+    '/contacts/engagement/people/attach'
+  ),
+  organizationEngagementProfile: operation(
+    'POST',
+    '/reads/organization-engagement-profile'
+  ),
+  personEngagementProfile: operation(
+    'POST',
+    '/reads/person-engagement-profile'
+  ),
   unarchiveOrganizationEngagement: operation(
     'POST',
-    '/contacts/engagement/organizations/unarchive',
+    '/contacts/engagement/organizations/unarchive'
   ),
-  unarchivePersonEngagement: operation('POST', '/contacts/engagement/people/unarchive'),
+  unarchivePersonEngagement: operation(
+    'POST',
+    '/contacts/engagement/people/unarchive'
+  ),
 } satisfies Record<string, MicroVerticalOperationContext>;

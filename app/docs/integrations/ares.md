@@ -2,15 +2,11 @@
 
 Research verified: 2026-09-01
 
-> [!IMPORTANT]
-> This document owns the ARES provider protocol, normalized evidence, and adapter resilience. Party
-> identity, matching, correction, and canonical writes follow
-> [Party Registry](../architecture/PARTY_REGISTRY.md). ARES never writes Party state directly.
+> [!IMPORTANT] This document owns the ARES provider protocol, normalized evidence, and adapter resilience. Party identity, matching, correction, and canonical writes follow [Party Registry](../architecture/PARTY_REGISTRY.md). ARES never writes Party state directly.
 
 ## Ownership
 
-ARES is an External Evidence Provider. It can supply observations about a Czech economic subject,
-but it is not the System of Record for an OntOS Party.
+ARES is an External Evidence Provider. It can supply observations about a Czech economic subject, but it is not the System of Record for an OntOS Party.
 
 The `party.registry` MicroVertical owns:
 
@@ -27,9 +23,7 @@ The owner-local Direct Provider Adapter owns:
 - provider error mapping and diagnostics;
 - translation into the bounded provider-neutral evidence envelope.
 
-Connector Registry owns a provider-issued record correlation when OntOS must retain one. ARES
-record identifiers are not Party Official Identifiers merely because they are stable at the
-provider.
+Connector Registry owns a provider-issued record correlation when OntOS must retain one. ARES record identifiers are not Party Official Identifiers merely because they are stable at the provider.
 
 ## Supported V1 route
 
@@ -40,9 +34,7 @@ GET https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/{ico}
 Accept: application/json
 ```
 
-The public provider contract is documented by the
-[official OpenAPI document](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs) and
-[Swagger UI](https://ares.gov.cz/swagger-ui/).
+The public provider contract is documented by the [official OpenAPI document](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs) and [Swagger UI](https://ares.gov.cz/swagger-ui/).
 
 Input rules:
 
@@ -50,8 +42,7 @@ Input rules:
 2. require exactly eight decimal digits;
 3. preserve leading zeroes;
 4. do not guess or pad shorter input;
-5. never accept Tenant, Principal, Legal Entity, Party, or authorization identity from the lookup
-   payload.
+5. never accept Tenant, Principal, Legal Entity, Party, or authorization identity from the lookup payload.
 
 The browser calls a generated governed Read. Only the private server-side adapter calls ARES.
 
@@ -78,9 +69,7 @@ AresSubjectEvidence {
 }
 ```
 
-The exact Effect Schemas belong to the owning MicroVertical. They must reject unknown unbounded
-payload retention and preserve enough source metadata to explain when and from where each
-observation was obtained.
+The exact Effect Schemas belong to the owning MicroVertical. They must reject unknown unbounded payload retention and preserve enough source metadata to explain when and from where each observation was obtained.
 
 Provider fields commonly used by the consolidated subject route include:
 
@@ -99,8 +88,7 @@ primarniZdroj
 icoId
 ```
 
-Their presence in the provider response does not authorize Party Registry to apply them. The Party
-contract owns the allowlist and fact-specific authority policy.
+Their presence in the provider response does not authorize Party Registry to apply them. The Party contract owns the allowlist and fact-specific authority policy.
 
 ## Read outcomes
 
@@ -118,12 +106,9 @@ PROVIDER_TIMEOUT
 PROVIDER_RESPONSE_INVALID
 ```
 
-`NOT_FOUND` is a valid provider result. Timeout, denial, throttling, transport failure, response
-decode failure, and unavailable provider are failures and must never be interpreted as `NOT_FOUND`
-or `NO_MATCH`.
+`NOT_FOUND` is a valid provider result. Timeout, denial, throttling, transport failure, response decode failure, and unavailable provider are failures and must never be interpreted as `NOT_FOUND` or `NO_MATCH`.
 
-The BFF maps expected failures exhaustively to the repository's typed Problem Details contract. It
-does not expose raw provider bodies, secrets, stack traces, or internal URLs.
+The BFF maps expected failures exhaustively to the repository's typed Problem Details contract. It does not expose raw provider bodies, secrets, stack traces, or internal URLs.
 
 ## Adapter resilience
 
@@ -136,18 +121,12 @@ The Direct Provider Adapter must:
 - cache only successful immutable evidence envelopes for a bounded period;
 - expose observation and cache age to the caller;
 - never cache validation, denial, not-found, decode, or transport failures as successful evidence;
-- respect the current
-  [official operating conditions](https://ares.gov.cz/stranky/podminky-provozu);
-- keep authentication and CORS assumptions private to the adapter so provider changes do not alter
-  Party contracts.
+- respect the current [official operating conditions](https://ares.gov.cz/stranky/podminky-provozu);
+- keep authentication and CORS assumptions private to the adapter so provider changes do not alter Party contracts.
 
-A cache changes transport cost, not fact authority. Cached evidence remains external evidence with
-its original `observedAt` and must pass the same Party policy as a fresh response.
+A cache changes transport cost, not fact authority. Cached evidence remains external evidence with its original `observedAt` and must pass the same Party policy as a fresh response.
 
-The implemented adapter uses a three-second timeout covering response headers and body decoding,
-at most two bounded exponential retries, a five-minute successful-result cache capped at 256
-entries, same-IČO request coalescing, and four concurrent provider requests. These implementation
-settings do not change the dated external research above.
+The implemented adapter uses a three-second timeout covering response headers and body decoding, at most two bounded exponential retries, a five-minute successful-result cache capped at 256 entries, same-IČO request coalescing, and four concurrent provider requests. These implementation settings do not change the dated external research above.
 
 ## Canonical apply boundary
 
@@ -169,27 +148,16 @@ Examples:
 - a valid accepted IČO uses the standard Official Identifier Add Action;
 - a previously unknown accepted business name uses Party enrichment;
 - an accepted registered address uses the standard Contact Point Action;
-- a conflict with a current authoritative assertion produces confirmation, ambiguity, or Party
-  Correction work;
+- a conflict with a current authoritative assertion produces confirmation, ambiguity, or Party Correction work;
 - no provider response performs Party Merge.
 
-V1 may prefill an explicit user-confirmed Party flow. Unattended bulk apply, automatic correction,
-automatic merge, and whole-response overwrite remain excluded until their fact-specific policies and
-behavioral conflict tests exist.
+V1 may prefill an explicit user-confirmed Party flow. Unattended bulk apply, automatic correction, automatic merge, and whole-response overwrite remain excluded until their fact-specific policies and behavioral conflict tests exist.
 
-The implemented coordinator refreshes governed canonical state before applying selected facts.
-Each accepted fact records bounded observation and decision evidence separately from the trusted
-accepting Principal. Independent stable Action idempotency keys support explicit partial outcomes
-and recovery: a retry skips already-satisfied facts and continues missing facts rather than
-overwriting current assertions. There is no ARES-specific mutation Action or cross-module shared
-transaction.
+The implemented coordinator refreshes governed canonical state before applying selected facts. Each accepted fact records bounded observation and decision evidence separately from the trusted accepting Principal. Independent stable Action idempotency keys support explicit partial outcomes and recovery: a retry skips already-satisfied facts and continues missing facts rather than overwriting current assertions. There is no ARES-specific mutation Action or cross-module shared transaction.
 
 ## Optional provider research
 
-ARES also exposes source-specific public-register and trade-licensing routes and code-list routes.
-They are not part of the V1 Party lookup contract. Add one only when a concrete owning business fact
-requires it, then preserve its source-specific meaning and history rather than flattening it into the
-consolidated subject response.
+ARES also exposes source-specific public-register and trade-licensing routes and code-list routes. They are not part of the V1 Party lookup contract. Add one only when a concrete owning business fact requires it, then preserve its source-specific meaning and history rather than flattening it into the consolidated subject response.
 
 Useful official references:
 

@@ -1,5 +1,9 @@
 import type { ESTree } from '@oxlint/plugins';
-import { collectEffectBindings, type EffectBindings } from './effect-imports.ts';
+
+import {
+  collectEffectBindings,
+  type EffectBindings,
+} from './effect-imports.ts';
 import { matchesGlobs } from './paths.ts';
 
 export function importedName(specifier: ESTree.ImportSpecifier): string {
@@ -19,19 +23,19 @@ export interface ImportPolicy {
 export function importDeclarations(
   program: ESTree.Program,
   accepts: (source: string) => boolean,
-  policy: ImportPolicy = {},
+  policy: ImportPolicy = {}
 ): ESTree.ImportDeclaration[] {
   return program.body.filter(
     (statement): statement is ESTree.ImportDeclaration =>
       statement.type === 'ImportDeclaration' &&
       !(policy.valueOnly && statement.importKind === 'type') &&
-      accepts(statement.source.value),
+      accepts(statement.source.value)
   );
 }
 
 function allowedSpecifier(
   specifier: ESTree.ImportDeclaration['specifiers'][number],
-  policy: ImportPolicy,
+  policy: ImportPolicy
 ): boolean {
   if (policy.excludedLocals?.has(specifier.local.name)) return false;
   return !(
@@ -45,12 +49,15 @@ function allowedSpecifier(
 export function collectRootNamespaces(
   program: ESTree.Program,
   accepts: (source: string) => boolean = (source) => source === 'effect',
-  policy: ImportPolicy = {},
+  policy: ImportPolicy = {}
 ): Set<string> {
   const locals = new Set<string>();
   for (const declaration of importDeclarations(program, accepts, policy)) {
     for (const specifier of declaration.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier' && allowedSpecifier(specifier, policy))
+      if (
+        specifier.type === 'ImportNamespaceSpecifier' &&
+        allowedSpecifier(specifier, policy)
+      )
         locals.add(specifier.local.name);
     }
   }
@@ -62,12 +69,16 @@ export function collectNamedImports(
   program: ESTree.Program,
   accepts: (source: string) => boolean,
   members?: ReadonlySet<string>,
-  policy: ImportPolicy = {},
+  policy: ImportPolicy = {}
 ): Map<string, string> {
   const locals = new Map<string, string>();
   for (const declaration of importDeclarations(program, accepts, policy)) {
     for (const specifier of declaration.specifiers) {
-      if (specifier.type !== 'ImportSpecifier' || !allowedSpecifier(specifier, policy)) continue;
+      if (
+        specifier.type !== 'ImportSpecifier' ||
+        !allowedSpecifier(specifier, policy)
+      )
+        continue;
       const name = importedName(specifier);
       if (!members || members.has(name)) locals.set(specifier.local.name, name);
     }
@@ -82,7 +93,9 @@ export interface NamespaceMember {
 
 /** Returns the trailing Effect submodule identifier, including unstable nested submodules. */
 function effectSubmodule(source: string): string | null {
-  return /^effect\/(?:.*\/)?([A-Za-z][A-Za-z0-9_]*)$/u.exec(source)?.[1] ?? null;
+  return (
+    /^effect\/(?:.*\/)?([A-Za-z][A-Za-z0-9_]*)$/u.exec(source)?.[1] ?? null
+  );
 }
 
 function addDirectMembers(
@@ -90,12 +103,17 @@ function addDirectMembers(
   declaration: ESTree.ImportDeclaration,
   namespace: string,
   members: ReadonlySet<string> | undefined,
-  policy: ImportPolicy,
+  policy: ImportPolicy
 ): void {
   for (const specifier of declaration.specifiers) {
-    if (specifier.type !== 'ImportSpecifier' || !allowedSpecifier(specifier, policy)) continue;
+    if (
+      specifier.type !== 'ImportSpecifier' ||
+      !allowedSpecifier(specifier, policy)
+    )
+      continue;
     const member = importedName(specifier);
-    if (!members || members.has(member)) locals.set(specifier.local.name, { namespace, member });
+    if (!members || members.has(member))
+      locals.set(specifier.local.name, { namespace, member });
   }
 }
 
@@ -106,7 +124,7 @@ export function collectDirectMemberImports(
   program: ESTree.Program,
   byNamespace?: ReadonlyMap<string, ReadonlySet<string>>,
   policy: ImportPolicy = {},
-  resolveNamespace = effectSubmodule,
+  resolveNamespace = effectSubmodule
 ): Map<string, NamespaceMember> {
   const locals = new Map<string, NamespaceMember>();
   for (const declaration of importDeclarations(program, () => true, policy)) {
@@ -141,28 +159,37 @@ export function collectNamespaceLocals(
   bindings: EffectBindings,
   watched: ReadonlySet<string>,
   reexportModules: readonly string[],
-  policy: ImportPolicy = {},
+  policy: ImportPolicy = {}
 ): { namespaced: Map<string, string>; barrel: Set<string> } {
   const namespaced = new Map(
-    [...bindings.namespaces].filter(([, namespace]) => watched.has(namespace)),
+    [...bindings.namespaces].filter(([, namespace]) => watched.has(namespace))
   );
-  const accepts = (source: string) => source === 'effect' || matchesGlobs(source, reexportModules);
-  for (const [local, name] of collectNamedImports(program, accepts, watched, policy))
+  const accepts = (source: string) =>
+    source === 'effect' || matchesGlobs(source, reexportModules);
+  for (const [local, name] of collectNamedImports(
+    program,
+    accepts,
+    watched,
+    policy
+  ))
     namespaced.set(local, name);
-  return { namespaced, barrel: collectRootNamespaces(program, accepts, policy) };
+  return {
+    namespaced,
+    barrel: collectRootNamespaces(program, accepts, policy),
+  };
 }
 
 /** Generator-family exact barrels add only named Effect exports; retains original type-import policy. */
 export function bindingsWithExtraModules(
   program: ESTree.Program,
-  modules: readonly string[],
+  modules: readonly string[]
 ): EffectBindings {
   const base = collectEffectBindings(program);
   if (modules.length === 0) return base;
   const extra = collectNamedImports(
     program,
     (source) => modules.includes(source),
-    new Set(['Effect']),
+    new Set(['Effect'])
   );
   return {
     namespaces: new Map([...base.namespaces, ...extra]),
@@ -177,18 +204,26 @@ export function collectSchemaLocals(
   program: ESTree.Program,
   bindings: EffectBindings,
   reexportModules: readonly string[] = [],
-  policy: ImportPolicy = {},
+  policy: ImportPolicy = {}
 ): { schema: Set<string>; barrel: Set<string>; direct: Map<string, string> } {
-  const isSchema = (source: string) => /^effect\/(?:.*\/)?Schema$/u.test(source);
+  const isSchema = (source: string) =>
+    /^effect\/(?:.*\/)?Schema$/u.test(source);
   const isRoot = (source: string) =>
-    !isSchema(source) && (source === 'effect' || matchesGlobs(source, reexportModules));
+    !isSchema(source) &&
+    (source === 'effect' || matchesGlobs(source, reexportModules));
   const schema = new Set(
     [...bindings.namespaces]
       .filter(([, namespace]) => namespace === 'Schema')
-      .map(([local]) => local),
+      .map(([local]) => local)
   );
-  for (const local of collectRootNamespaces(program, isSchema, policy)) schema.add(local);
-  for (const local of collectNamedImports(program, isRoot, new Set(['Schema']), policy).keys())
+  for (const local of collectRootNamespaces(program, isSchema, policy))
+    schema.add(local);
+  for (const local of collectNamedImports(
+    program,
+    isRoot,
+    new Set(['Schema']),
+    policy
+  ).keys())
     schema.add(local);
   return {
     schema,

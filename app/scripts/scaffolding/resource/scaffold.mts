@@ -23,9 +23,15 @@ import {
   tryScaffold,
   updateMutation,
 } from '../shared.mts';
-import type { OntosVerticalMetadata, ResourceScaffoldConfig } from '../shared.mts';
+import type {
+  OntosVerticalMetadata,
+  ResourceScaffoldConfig,
+} from '../shared.mts';
 
-const renderResource = (vertical: OntosVerticalMetadata, resource: string): string => {
+const renderResource = (
+  vertical: OntosVerticalMetadata,
+  resource: string
+): string => {
   const type = toPascalCase(resource);
   const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
   const resourceType = `${vertical.moduleId}.${resource}`;
@@ -65,77 +71,110 @@ export const ${descriptor} = {
 const isResourceDescriptor = (candidate: string): boolean =>
   /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
 
-const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planResourceScaffold(
-  workspaceRoot: string,
-  config: ResourceScaffoldConfig,
-) {
-  const resource = yield* tryScaffold('resource name is invalid', () =>
-    requireCanonicalSlug(config.resource, 'resource'),
-  );
-  const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
-  const resourcePath = yield* tryScaffold('failed to resolve resource path', () =>
-    resolveContainedPath(vertical.directory, 'shared', 'resources', `${resource}.ts`),
-  );
-  const resourceMutation = yield* createMutationEffect(
-    resourcePath,
-    renderResource(vertical, resource),
-  );
-
-  const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
-  const ownerImport = `import { ${descriptor} } from './shared/resources/${resource}.ts';`;
-  const nextManifest = yield* tryScaffold('failed to patch resource manifest', () =>
-    insertSortedSlot(
-      insertSortedSlot(
-        vertical.manifestContent,
-        MODULE_MANIFEST_IMPORT_SLOT_START,
-        MODULE_MANIFEST_IMPORT_SLOT_END,
-        [ownerImport],
-        isModuleManifestImport,
-      ),
-      MODULE_MANIFEST_RESOURCE_SLOT_START,
-      MODULE_MANIFEST_RESOURCE_SLOT_END,
-      [`${descriptor},`],
-      isResourceDescriptor,
-    ),
-  );
-  const manifestMutation = updateMutation(
-    vertical.manifestPath,
-    vertical.manifestContent,
-    nextManifest,
-  );
-  if (manifestMutation === undefined) {
-    return yield* scaffoldFailure('Resource manifest patch unexpectedly made no change');
-  }
-
-  const exportsValue = yield* tryScaffold('failed to read resource package exports', () =>
-    asJsonObject(vertical.packageJson['exports'], `vertical ${vertical.slug} package exports`),
-  );
-  const contractExport = `./resources/${resource}`;
-  if (exportsValue[contractExport] !== undefined) {
-    return yield* scaffoldFailure(`resource contract export ${contractExport} already exists`);
-  }
-  const packageMutation = yield* tryScaffold('failed to patch resource package export', () => {
-    const patchedExports = Object.fromEntries(
-      Object.entries({
-        ...exportsValue,
-        [contractExport]: `./shared/resources/${resource}.ts`,
-      }).toSorted(([left], [right]) => left.localeCompare(right)),
+const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(
+  function* planResourceScaffold(
+    workspaceRoot: string,
+    config: ResourceScaffoldConfig
+  ) {
+    const resource = yield* tryScaffold('resource name is invalid', () =>
+      requireCanonicalSlug(config.resource, 'resource')
     );
-    return updateMutation(
-      vertical.packagePath,
-      vertical.packageContent,
-      patchJsonObjectProperty(vertical.packageContent, [], 'exports', patchedExports),
+    const vertical = yield* discoverOntosModuleEffect(
+      workspaceRoot,
+      config.vertical
     );
-  });
-  if (packageMutation === undefined) {
-    return yield* scaffoldFailure('Resource package export patch unexpectedly made no change');
-  }
+    const resourcePath = yield* tryScaffold(
+      'failed to resolve resource path',
+      () =>
+        resolveContainedPath(
+          vertical.directory,
+          'shared',
+          'resources',
+          `${resource}.ts`
+        )
+    );
+    const resourceMutation = yield* createMutationEffect(
+      resourcePath,
+      renderResource(vertical, resource)
+    );
 
-  const mutations = [resourceMutation, manifestMutation, packageMutation];
-  yield* tryScaffold('resource mutation paths are invalid', () =>
-    ensureUniqueMutationPaths(mutations),
-  );
-  return { mutations, result: { resourcePath } };
-});
+    const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
+    const ownerImport = `import { ${descriptor} } from './shared/resources/${resource}.ts';`;
+    const nextManifest = yield* tryScaffold(
+      'failed to patch resource manifest',
+      () =>
+        insertSortedSlot(
+          insertSortedSlot(
+            vertical.manifestContent,
+            MODULE_MANIFEST_IMPORT_SLOT_START,
+            MODULE_MANIFEST_IMPORT_SLOT_END,
+            [ownerImport],
+            isModuleManifestImport
+          ),
+          MODULE_MANIFEST_RESOURCE_SLOT_START,
+          MODULE_MANIFEST_RESOURCE_SLOT_END,
+          [`${descriptor},`],
+          isResourceDescriptor
+        )
+    );
+    const manifestMutation = updateMutation(
+      vertical.manifestPath,
+      vertical.manifestContent,
+      nextManifest
+    );
+    if (manifestMutation === undefined) {
+      return yield* scaffoldFailure(
+        'Resource manifest patch unexpectedly made no change'
+      );
+    }
+
+    const exportsValue = yield* tryScaffold(
+      'failed to read resource package exports',
+      () =>
+        asJsonObject(
+          vertical.packageJson['exports'],
+          `vertical ${vertical.slug} package exports`
+        )
+    );
+    const contractExport = `./resources/${resource}`;
+    if (exportsValue[contractExport] !== undefined) {
+      return yield* scaffoldFailure(
+        `resource contract export ${contractExport} already exists`
+      );
+    }
+    const packageMutation = yield* tryScaffold(
+      'failed to patch resource package export',
+      () => {
+        const patchedExports = Object.fromEntries(
+          Object.entries({
+            ...exportsValue,
+            [contractExport]: `./shared/resources/${resource}.ts`,
+          }).toSorted(([left], [right]) => left.localeCompare(right))
+        );
+        return updateMutation(
+          vertical.packagePath,
+          vertical.packageContent,
+          patchJsonObjectProperty(
+            vertical.packageContent,
+            [],
+            'exports',
+            patchedExports
+          )
+        );
+      }
+    );
+    if (packageMutation === undefined) {
+      return yield* scaffoldFailure(
+        'Resource package export patch unexpectedly made no change'
+      );
+    }
+
+    const mutations = [resourceMutation, manifestMutation, packageMutation];
+    yield* tryScaffold('resource mutation paths are invalid', () =>
+      ensureUniqueMutationPaths(mutations)
+    );
+    return { mutations, result: { resourcePath } };
+  }
+);
 
 export default createCodesmithGenerator(planResourceScaffold);
