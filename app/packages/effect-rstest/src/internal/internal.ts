@@ -6,6 +6,7 @@
 import * as Cause from 'effect/Cause';
 import * as Duration from 'effect/Duration';
 import * as Effect from 'effect/Effect';
+import * as Equal from 'effect/Equal';
 import * as Exit from 'effect/Exit';
 import * as Fiber from 'effect/Fiber';
 import { flow, pipe } from 'effect/Function';
@@ -51,7 +52,9 @@ const TestEnv = Layer.mergeAll(TestConsole.layer, TestClock.layer());
 
 /** @internal */
 export const addEqualityTesters = () => {
-  Rs.expect.addEqualityTesters([]);
+  Rs.expect.addEqualityTesters([
+    (a, b) => (Equal.isEqual(a) && Equal.isEqual(b) ? Equal.equals(a, b) : undefined),
+  ]);
 };
 
 /** @internal */
@@ -170,7 +173,7 @@ export const prop: EffectRstest.Vitest.Methods['prop'] = (name, arbitraries, sel
   if (Array.isArray(arbitraries)) {
     const arbs = arbitraries.map((arbitrary) => {
       if (Schema.isSchema(arbitrary)) {
-        throw new Error('Schemas are not supported yet');
+        return Schema.toArbitrary(arbitrary)(fc);
       }
       return arbitrary;
     });
@@ -192,10 +195,7 @@ export const prop: EffectRstest.Vitest.Methods['prop'] = (name, arbitraries, sel
     Object.keys(arbitraries).reduce(
       function (result, key) {
         const arb: any = arbitraries[key];
-        if (Schema.isSchema(arb)) {
-          throw new Error('Schemas are not supported yet');
-        }
-        Rec.assignProperty(result, key, arb);
+        Rec.assignProperty(result, key, Schema.isSchema(arb) ? Schema.toArbitrary(arb)(fc) : arb);
         return result;
       },
       {} as Record<string, fc.Arbitrary<any>>,
