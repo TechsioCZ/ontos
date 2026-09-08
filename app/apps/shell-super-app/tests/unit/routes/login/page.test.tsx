@@ -15,6 +15,7 @@ const { navigateMock, runBrowserEffectMock, signInMock } = rstest.hoisted(() => 
 }));
 
 beforeEach(() => {
+  navigateMock.mockImplementation(() => Promise.resolve());
   runBrowserEffectMock.mockImplementation(runBrowserEffect);
   signInMock.mockReturnValue(
     Effect.succeed({
@@ -241,7 +242,28 @@ it.effect('submits valid values through the Shell authentication client and navi
         );
         expect(runBrowserEffectMock).toHaveBeenCalledTimes(1);
         expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(screen.queryByText('shell.login.error.internal')).toBeNull();
         expect(screen.queryByText('Login details are incomplete')).toBeNull();
+      }),
+    );
+  }),
+);
+
+it.effect('reports navigation failure and restores the login form after authentication', () =>
+  Effect.gen(function* reportsNavigationFailure() {
+    navigateMock.mockRejectedValueOnce('Navigation failed');
+    const user = userEvent.setup();
+    renderLogin();
+    yield* Effect.promise(() => user.type(getLogin(), 'admin'));
+    yield* Effect.promise(() => user.type(getPassword(), 'secret'));
+    yield* Effect.promise(() => user.click(getSubmit()));
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(document.activeElement).toBe(getLogin());
       }),
     );
   }),
