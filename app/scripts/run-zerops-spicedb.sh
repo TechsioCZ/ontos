@@ -10,7 +10,7 @@ docker run --rm --network=host \
 schema_count="$(
   docker run --rm --network=host \
     -e SPICEDB_DATASTORE_CONN_URI \
-    postgres:17-alpine sh -c \
+    postgres:18.6-alpine sh -c \
     'psql "$SPICEDB_DATASTORE_CONN_URI" --no-psqlrc --tuples-only --no-align --command "select count(*) from namespace_config"'
 )"
 
