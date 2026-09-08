@@ -188,7 +188,7 @@ it.live(
         source,
       );
       const [, worker] = source.split("setup: 'party-registry-worker'");
-      expect(worker).toMatch(/DATABASE_URL: \$\{party-registry_DATABASE_URL\}/u);
+      expect(worker).toMatch(/DATABASE_URL: \$\{partyregistry_DATABASE_URL\}/u);
       expect(worker).toMatch(/OUTBOX_WORKER_HEALTH_PORT: '4102'/u);
       expect(worker).toMatch(/cd app\/\.zerops\/runtime\/party-registry-worker/u);
       expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
