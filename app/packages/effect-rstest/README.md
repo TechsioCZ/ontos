@@ -2,7 +2,7 @@
 
 Vendored community port of `@effect/vitest` to Rstest by ScriptedAlchemy, commit `79abbf6`. Source: https://github.com/ScriptedAlchemy/effect-rstest. MIT licensed; the original copyright and permission notice are preserved in [LICENSE](./LICENSE).
 
-Workspace exports use TypeScript source; local changes adapt imports and repository diagnostics.
+Workspace exports use TypeScript source. Local corrections cover Rstest lifecycle integration, schema-backed property tests, and Effect semantic equality, alongside import and diagnostic adaptations.
 
 ## Usage
 
@@ -27,6 +27,25 @@ it.effect('reads an Effect value', () =>
   }),
 );
 ```
+
+### Properties and equality
+
+`it.prop` accepts FastCheck arbitraries and Effect schemas in either tuples or records. Use
+`it.effect.prop` when the property itself returns an Effect.
+
+```ts
+import { addEqualityTesters, expect, it } from '@app/effect-rstest';
+import { Schema } from 'effect';
+
+addEqualityTesters();
+
+it.prop('generates schema values', [Schema.String], ([value]) => {
+  expect(typeof value).toBe('string');
+});
+```
+
+`addEqualityTesters` enables Effect's `Equal.equals` for values implementing its equality protocol.
+Ordinary objects and asymmetric matchers retain Rstest's native equality behavior.
 
 ### Shared layers
 
