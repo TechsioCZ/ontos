@@ -2,7 +2,7 @@
 import { expect, it } from '@app/effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer, Exit, Schema, flow, Predicate } from 'effect';
+import { Context, Effect, Layer, Exit, Schema, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
@@ -110,9 +110,6 @@ const withDatabase = <Value, Error, Requirements>(
   );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-
-const promiseEffect = <Value>(promise: PromiseLike<Value>): Effect.Effect<Value> =>
-  Effect.promise(flow(() => promise));
 
 const relationshipActionKeys = new Set<string>();
 
@@ -240,7 +237,7 @@ const PermissionFixture = Layer.effect(
     );
 
     const prepare = Effect.gen(function* preparePermissionFixture() {
-      yield* promiseEffect(
+      yield* Effect.promise(() =>
         adminClient.promises.writeSchema(
           v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA }),
         ),
@@ -324,7 +321,7 @@ const PermissionFixture = Layer.effect(
         }),
       );
 
-      yield* promiseEffect(
+      yield* Effect.promise(() =>
         adminClient.promises.writeRelationships(
           v1.WriteRelationshipsRequest.create({
             updates: [
@@ -364,7 +361,7 @@ const PermissionFixture = Layer.effect(
       const relationshipCleanupExit = yield* Effect.exit(
         Effect.all(
           [...relationshipActionKeys].map((actionKey) =>
-            promiseEffect(
+            Effect.promise(() =>
               adminClient.promises.deleteRelationships(
                 v1.DeleteRelationshipsRequest.create({
                   relationshipFilter: v1.RelationshipFilter.create({
@@ -380,7 +377,7 @@ const PermissionFixture = Layer.effect(
           Effect.andThen(
             Effect.all(
               [tenantId, otherTenantId].map((membershipTenantId) =>
-                promiseEffect(
+                Effect.promise(() =>
                   adminClient.promises.deleteRelationships(
                     v1.DeleteRelationshipsRequest.create({
                       relationshipFilter: v1.RelationshipFilter.create({
@@ -738,7 +735,7 @@ const testProgram5 = () =>
         const key = `denial-${stage}`;
         const actionKey = `${actionPrefix}.${stage}`;
         const moduleStateKey = `${actionPrefix}.state.${stage}`;
-        yield* promiseEffect(
+        yield* Effect.promise(() =>
           adminClient.promises.writeRelationships(
             v1.WriteRelationshipsRequest.create({
               updates: [

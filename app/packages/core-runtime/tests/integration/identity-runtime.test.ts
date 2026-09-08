@@ -81,9 +81,6 @@ const relationship = (
     }),
   });
 
-const promiseEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.promise(() => operation());
-
 it.live(
   'runs identity mutations and tenant-isolated administration through live Action and Read runtimes',
   () =>
@@ -202,11 +199,8 @@ it.live(
             }),
           ),
         });
-        yield* promiseEffect(
-          spiceDbClient.promises.writeRelationships.bind(
-            spiceDbClient.promises,
-            initialRelationshipsRequest,
-          ),
+        yield* Effect.promise(() =>
+          spiceDbClient.promises.writeRelationships(initialRelationshipsRequest),
         );
         yield* admin.insert(tenants).values([
           {
@@ -478,11 +472,8 @@ it.live(
             }),
           ),
         });
-        yield* promiseEffect(
-          spiceDbClient.promises.writeRelationships.bind(
-            spiceDbClient.promises,
-            systemRelationshipsRequest,
-          ),
+        yield* Effect.promise(() =>
+          spiceDbClient.promises.writeRelationships(systemRelationshipsRequest),
         );
         const systemCreated = yield* runIdentityAction(
           actionRuntime.runAction({
@@ -546,11 +537,8 @@ it.live(
             }),
           ],
         });
-        yield* promiseEffect(
-          spiceDbClient.promises.writeRelationships.bind(
-            spiceDbClient.promises,
-            removeSupportRelationshipRequest,
-          ),
+        yield* Effect.promise(() =>
+          spiceDbClient.promises.writeRelationships(removeSupportRelationshipRequest),
         );
         yield* admin
           .update(principalAuthBindings)
@@ -642,9 +630,7 @@ it.live(
             }),
           ),
         });
-        return promiseEffect(
-          spiceDbClient.promises.writeRelationships.bind(spiceDbClient.promises, request),
-        );
+        return Effect.promise(() => spiceDbClient.promises.writeRelationships(request));
       });
       const release = cleanup.pipe(
         Effect.ensuring(cleanupRelationships.pipe(Effect.orDie)),

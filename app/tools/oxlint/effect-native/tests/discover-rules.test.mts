@@ -16,14 +16,9 @@ it.effect('rule discovery loads the selected production rule and rejects unknown
     const rules = yield* Effect.tryPromise(() => discoverRules(['no-native-timers']));
     expect(Object.keys(rules)).toEqual(['no-native-timers']);
     expect(Predicate.isFunction(rules['no-native-timers']?.create)).toBe(true);
-    const error = yield* Effect.flip(
-      Effect.tryPromise({
-        catch: (cause) => cause,
-        try: () => discoverRules(['not-a-rule']),
-      }),
-    );
+    const error = yield* Effect.flip(Effect.tryPromise(() => discoverRules(['not-a-rule'])));
     const message: unknown = expect.stringMatching(/Unknown fixture rule: not-a-rule/u);
-    expect(error).toMatchObject({ message });
+    expect(error.cause).toMatchObject({ message });
   }),
 );
 

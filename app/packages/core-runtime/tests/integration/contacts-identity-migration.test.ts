@@ -53,7 +53,6 @@ const tableColumns = {
 
 type MigrationColumn = (typeof tableColumns)[keyof typeof tableColumns][number];
 
-const databaseEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const columnDefinitions = (columns: readonly MigrationColumn[]): string =>
@@ -65,7 +64,7 @@ const loadTableResult = (
   table: string,
   columns: readonly MigrationColumn[],
 ) =>
-  databaseEffect(
+  Effect.tryPromise(() =>
     pool.query<MigrationFixtureRow>(`select * from ${quotedSchema}."${table}" order by record_id`),
   ).pipe(Effect.map((result) => ({ columns, result, table })));
 
@@ -81,13 +80,13 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
   const fileSystem = yield* FileSystem.FileSystem;
   const pool = yield* Effect.acquireRelease(
     Effect.sync(() => new Pool({ connectionString: configuration.admin.connectionString, max: 1 })),
-    (resource) => databaseEffect(resource.end()).pipe(Effect.orDie),
+    (resource) => Effect.tryPromise(() => resource.end()).pipe(Effect.orDie),
   );
   const schema = `core_contacts_identity_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
   const quotedSchema = `"${schema}"`;
   yield* Effect.gen(function* exerciseContactsIdentityMigration() {
-    yield* databaseEffect(pool.query(`create schema ${quotedSchema}`));
-    yield* databaseEffect(
+    yield* Effect.tryPromise(() => pool.query(`create schema ${quotedSchema}`));
+    yield* Effect.tryPromise(() =>
       pool.query(
         `create table ${quotedSchema}.tenant_module_states (
         record_id text primary key,
@@ -100,7 +99,7 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       ),
     );
     yield* runSequentially(Object.entries(tableColumns), ([table, columns]) =>
-      databaseEffect(
+      Effect.tryPromise(() =>
         pool.query(
           `create table ${quotedSchema}."${table}" (
             record_id text primary key,
@@ -113,7 +112,7 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
     const recordedAt = '2026-01-02T03:04:05.678Z';
     const payload = { freeText: 'crm.core must remain untouched inside arbitrary JSON' };
     const encodedPayload = encodeJson(payload);
-    yield* databaseEffect(
+    yield* Effect.tryPromise(() =>
       pool.query(
         `insert into ${quotedSchema}.tenant_module_states
         (record_id, tenant_id, module_key, payload, recorded_at)
@@ -139,7 +138,7 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       const unrelatedPlaceholders = names
         .map((_, index) => `$${index + names.length + 1}`)
         .join(', ');
-      return databaseEffect(
+      return Effect.tryPromise(() =>
         pool.query(
           `insert into ${quotedSchema}."${table}" (${quotedNames})
            values (${placeholders}), (${unrelatedPlaceholders})`,
@@ -167,10 +166,10 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       .map((statement) => statement.trim())
       .filter((statement) => statement.length > 0);
     yield* runSequentially([...statements, ...statements], (statement) =>
-      databaseEffect(pool.query(statement)),
+      Effect.tryPromise(() => pool.query(statement)),
     );
 
-    const stateResult = yield* databaseEffect(
+    const stateResult = yield* Effect.tryPromise(() =>
       pool.query<{
         module_key: string;
         payload: typeof payload;
@@ -213,8 +212,8 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       expect(migrated.payload).toEqual(payload);
     }
 
-    yield* databaseEffect(pool.query(`truncate ${quotedSchema}.tenant_module_states`));
-    yield* databaseEffect(
+    yield* Effect.tryPromise(() => pool.query(`truncate ${quotedSchema}.tenant_module_states`));
+    yield* Effect.tryPromise(() =>
       pool.query(
         `insert into ${quotedSchema}.tenant_module_states
         (record_id, tenant_id, module_key, payload, recorded_at)
@@ -223,9 +222,11 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
         [legacyModule, contactsModule],
       ),
     );
-    const collisionError = yield* Effect.flip(databaseEffect(pool.query(statements[0] ?? '')));
+    const collisionError = yield* Effect.flip(
+      Effect.tryPromise(() => pool.query(statements[0] ?? '')),
+    );
     expect(String(collisionError.cause)).toMatch(/would collide/u);
-    const collisionRows = yield* databaseEffect(
+    const collisionRows = yield* Effect.tryPromise(() =>
       pool.query<{ module_key: string }>(
         `select module_key from ${quotedSchema}.tenant_module_states order by module_key`,
       ),
@@ -233,9 +234,9 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
     expect(collisionRows.rows.map((row) => row.module_key)).toEqual([contactsModule, legacyModule]);
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        databaseEffect(pool.query(`drop schema if exists ${quotedSchema} cascade`)),
-      ).pipe(Effect.orDie),
+      Effect.tryPromise(() => pool.query(`drop schema if exists ${quotedSchema} cascade`)).pipe(
+        Effect.orDie,
+      ),
     ),
   );
 }).pipe(Effect.scoped);
