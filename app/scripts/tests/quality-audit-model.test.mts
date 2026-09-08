@@ -33,6 +33,9 @@ const toolsPattern = 'tools/**/*.{ts,mts}';
 const sourcePattern = 'src/**/*.{ts,mts}';
 const knipManifestFile = 'node_modules/knip/package.json';
 const indexFile = 'src/index.ts';
+const rstestConfigFile = 'rstest.config.ts';
+const auditConsumersFile = '.audit/consumers.mts';
+const rstestEnvironmentReason = 'Rstest testEnvironment consumer';
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const Names = Schema.Array(Schema.Struct({ name: Schema.String }));
 const ReportSchema = Schema.Struct({
@@ -467,7 +470,7 @@ it.live(
         `require.resolve('target', { paths: [${JSON.stringify(path.join(root, owner, 'index.js'))}] });`,
       ].join('\n'),
     );
-    const consumerPath = path.join(root, '.audit/consumers.mts');
+    const consumerPath = path.join(root, auditConsumersFile);
     const build = () =>
       Effect.gen(function* testEffect9() {
         return yield* buildKnipModel(
@@ -540,7 +543,7 @@ it.live(
     const policyTest = `${lintDirectory}/tests/repository-policy.test.mts`;
     const helperTest = `${lintDirectory}/tests/shared-helpers.test.mts`;
     const loadedFiles = [
-      'rstest.config.ts',
+      rstestConfigFile,
       `${lintDirectory}/repository-policy.config.ts`,
       `${lintDirectory}/tests/shared-helpers-probe.ts`,
     ];
@@ -565,13 +568,13 @@ it.live(
     write(root, 'tsconfig.json', '{"include":["src"]}');
     const typeTest = 'src/contract.type-test.ts';
     write(root, typeTest, 'export const unusedTypeTestNeighbor = 1;');
-    const consumerPath = path.join(root, '.audit/consumers.mts');
+    const consumerPath = path.join(root, auditConsumersFile);
     const base = {
       workspaces: {
         '.': {
           entry: [policyTest, helperTest],
           node: false,
-          project: ['rstest.config.ts', 'src/*.ts', toolsPattern],
+          project: [rstestConfigFile, 'src/*.ts', toolsPattern],
           rstest: { config: [] },
         },
       },
@@ -652,5 +655,114 @@ it.live(
         (fact) => loadedFiles.includes(fact.target) || fact.target === typeTest,
       ),
     ).toBe(false);
+  }),
+);
+
+it.live(
+  'Rstest environments follow only exported static projects and retain source provenance',
+  Effect.fn(function* testProjectEnvironments() {
+    const root = yield* fixture();
+    const configFile = rstestConfigFile;
+    write(
+      root,
+      configFile,
+      [
+        "const environment = 'happy-dom' as const;",
+        'const browser = { testEnvironment: environment };',
+        'const alias = browser;',
+        'const cycle = cycle;',
+        "const unrelated = { testEnvironment: 'unrelated-environment' };",
+        "function shadow() { const environment = 'shadow-environment'; return environment; }",
+        'const projects = [alias, { testEnvironment: `jsdom` }, browser,',
+        "  { testEnvironment: 'node' }, { testEnvironment: choose() }, cycle,",
+        "  { metadata: unrelated }, 'external.config.ts', ...dynamicProjects];",
+        "export default { testEnvironment: 'node', projects, metadata: unrelated };",
+      ].join('\n'),
+    );
+    const model = yield* buildKnipModel(root, { entry: [configFile] }).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    const environments = model.evidence.filter((fact) => fact.reason === rstestEnvironmentReason);
+    expect(environments.map((fact) => fact.target)).toEqual(['happy-dom', 'jsdom', 'happy-dom']);
+    expect(environments[0]).toEqual(
+      expect.objectContaining({
+        kind: 'dependency',
+        line: 2,
+        source: configFile,
+        workspace: '.',
+      }),
+    );
+    expect(environments[1]?.line).toBe(7);
+    for (const projects of ['choose()', 'cycle']) {
+      write(
+        root,
+        configFile,
+        `const cycle = cycle; export default { testEnvironment: 'happy-dom', projects: ${projects} };`,
+      );
+      const dynamic = yield* buildKnipModel(root, { entry: [configFile] }).pipe(
+        Effect.provide(NodeServices.layer),
+      );
+      expect(
+        dynamic.evidence
+          .filter((fact) => fact.reason === rstestEnvironmentReason)
+          .map((fact) => fact.target),
+      ).toEqual(['happy-dom']);
+    }
+  }),
+);
+
+it.live(
+  'pinned Knip consumes project environment evidence without hiding an unused dependency',
+  Effect.fn(function* testPinnedProjectEnvironment() {
+    const root = yield* fixture();
+    write(
+      root,
+      packageFile,
+      yield* stringify({
+        dependencies: { 'happy-dom': '20.8.3', jose: '6.2.5' },
+        name: 'project-environment-controls',
+        private: true,
+        type: 'module',
+      }),
+    );
+    write(
+      root,
+      rstestConfigFile,
+      "export default { projects: [{ testEnvironment: 'happy-dom' }] };",
+    );
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(
+      root,
+      {
+        entry: [rstestConfigFile],
+        node: false,
+        project: [rstestConfigFile],
+        rstest: { config: [] },
+      },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    expect(
+      model.evidence.some(
+        (fact) => fact.reason === rstestEnvironmentReason && fact.target === 'happy-dom',
+      ),
+    ).toBe(true);
+    for (const [consumerSource, expectedUnused] of [
+      [model.consumerSource, false],
+      ['', true],
+    ] as const) {
+      const run = yield* runPinnedKnip(root, consumerPath, { ...model, consumerSource }).pipe(
+        Effect.provide(NodeServices.layer),
+      );
+      expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
+      expect(run.stderr).toBe('');
+      const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(
+        run.stdout,
+      );
+      const dependencies = report.issues.flatMap((issue) =>
+        issue.dependencies.map((item) => item.name),
+      );
+      expect(dependencies.includes('happy-dom')).toBe(expectedUnused);
+      expect(dependencies).toContain('jose');
+    }
   }),
 );

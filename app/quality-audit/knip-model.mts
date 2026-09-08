@@ -191,6 +191,39 @@ const objectValue = (object: ObjectExpression | undefined, name: string): Node |
   return property?.type === 'Property' ? property.value : undefined;
 };
 
+const rstestEnvironmentEvidence = (facts: SourceFacts, workspace: string): KnipModelEvidence[] => {
+  if (!/rstest\.config\.[cm]?[jt]s$/u.test(facts.file)) {
+    return [];
+  }
+  const config = exportedObject(facts);
+  const projects = unwrap(objectValue(config, 'projects'), facts.variables);
+  const configurations = [config];
+  if (projects?.type === 'ArrayExpression') {
+    for (const element of projects.elements) {
+      const project = unwrap(element ?? undefined, facts.variables);
+      if (project?.type === 'ObjectExpression') {
+        configurations.push(project);
+      }
+    }
+  }
+  return configurations.flatMap((object) => {
+    const environment = objectValue(object, 'testEnvironment');
+    const target = staticString(environment, facts.variables);
+    return target === undefined || target === 'node'
+      ? []
+      : [
+          evidenceAt(
+            facts,
+            workspace,
+            'dependency',
+            target,
+            environment?.start ?? 0,
+            'Rstest testEnvironment consumer',
+          ),
+        ];
+  });
+};
+
 const exportLeaves = (value: typeof ExportsSchema.Type | undefined): string[] => {
   if (isString(value)) {
     return [value];
@@ -737,17 +770,7 @@ const sourceEvidence = (
     NewExpression: recordUrl,
     ObjectExpression: recordLintPlugin,
   }).visit(facts.program);
-  if (/rstest\.config\.[cm]?[jt]s$/u.test(facts.file)) {
-    const target = staticString(
-      objectValue(exportedObject(facts), 'testEnvironment'),
-      facts.variables,
-    );
-    if (target !== undefined && target !== 'node') {
-      result.push(
-        evidenceAt(facts, workspace, 'dependency', target, 0, 'Rstest testEnvironment consumer'),
-      );
-    }
-  }
+  result.push(...rstestEnvironmentEvidence(facts, workspace));
   if (facts.file === 'scripts/quality-audit.mts') {
     const recordAuditStep = (node: ObjectExpression) => {
       const tool = staticString(objectValue(node, 'tool'), facts.variables);
