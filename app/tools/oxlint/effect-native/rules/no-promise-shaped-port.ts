@@ -350,7 +350,7 @@ export const rule = defineRule({
             let factory = unwrap(registration.callee);
             while (factory?.type === 'CallExpression') factory = unwrap(factory.callee);
             if (
-              /^@app\/effect-rstest:(?:\*\.)?(?:(?:it|test)\.)?layer$/u.test(
+              /^@app\/effect-rstest:(?:\*\.)?(?:describeWrapped|(?:(?:it|test)\.)?layer)$/u.test(
                 imported(factory, seen) ?? '',
               )
             )
