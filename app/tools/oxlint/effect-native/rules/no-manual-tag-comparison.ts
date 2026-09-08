@@ -288,6 +288,7 @@ function destructuredMethod(
 interface AssertionCall {
   readonly method: string;
   readonly subject: ESTree.CallExpression | null;
+  readonly expectedWrapper?: boolean;
 }
 
 /** Node assertions allow strict/default namespace prefixes but never an expect subject. */
@@ -301,6 +302,16 @@ function nodeAssertion(
   return members.length === 1 && method !== undefined ? { method, subject: null } : null;
 }
 
+/** Static expect helpers are expected values, never subject-bearing assertions. */
+function staticAssertion(members: string[]): AssertionCall | null {
+  const method = members[1];
+  if (members.length !== 2 || method === undefined) return null;
+  if (members[0] === 'assert') return { method, subject: null };
+  return members[0] === 'expect' && EXPECTED_WRAPPERS.has(method)
+    ? { method, subject: null, expectedWrapper: true }
+    : null;
+}
+
 /** Match the supported assertion APIs only after proving the import's lexical identity. */
 function importedAssertion(
   source: string,
@@ -310,12 +321,7 @@ function importedAssertion(
   if (/^(?:node:)?assert(?:\/strict)?$/u.test(source)) return nodeAssertion(members, subject);
   if (!['@rstest/core', 'effect-rstest', 'vitest', '@jest/globals', 'expect'].includes(source))
     return null;
-  if (subject === null) {
-    const method = members[1];
-    return members.length === 2 && members[0] === 'assert' && method !== undefined
-      ? { method, subject: null }
-      : null;
-  }
+  if (subject === null) return staticAssertion(members);
   if (members.shift() !== 'expect') return null;
   const method = members.pop();
   if (
@@ -343,13 +349,14 @@ function assertionImport(
       statement.specifiers.some((entry) => entry === specifier),
   );
   if (declaration?.type !== 'ImportDeclaration') return null;
+  const path = [...members];
   if (specifier.type === 'ImportSpecifier')
     members.unshift(
       specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value,
     );
   const source = declaration.source.value;
   if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect') members.unshift('expect');
-  return importedAssertion(source, members, subject);
+  return stableAssertion(context, expression, path, importedAssertion(source, members, subject));
 }
 
 function assertionAlias(
@@ -361,6 +368,109 @@ function assertionAlias(
   if (destructured === null) return constInitialiser(context, expression);
   members.unshift(destructured.method);
   return destructured.source;
+}
+
+/** Writes through a receiver alias invalidate only the corresponding helper path. */
+function assertionPathWrite(node: ESTree.Node): boolean {
+  const parent = node.parent;
+  switch (parent?.type) {
+    case 'AssignmentExpression':
+      return parent.left === node;
+    case 'UpdateExpression':
+      return parent.argument === node;
+    case 'UnaryExpression':
+      return parent.operator === 'delete' && parent.argument === node;
+    default:
+      return false;
+  }
+}
+
+function assertionAliasTarget(
+  context: Context,
+  pattern: ESTree.Node,
+  members: readonly string[],
+): { node: ESTree.Node; members: readonly string[] } | null {
+  if (pattern.type === 'Identifier')
+    return immutableDeclarator(context, pattern) === null ? null : { node: pattern, members };
+  if (pattern.type !== 'ObjectPattern') return null;
+  const property = pattern.properties.find(
+    (entry) => entry.type === 'Property' && assertionPropertyName(context, entry) === members[0],
+  );
+  return property?.type === 'Property'
+    ? assertionAliasTarget(context, property.value, members.slice(1))
+    : null;
+}
+
+function assertionMemberTail(
+  node: ESTree.Node,
+  members: readonly string[],
+): readonly string[] | null {
+  const parent = node.parent;
+  if (members.length === 0 || parent?.type !== 'MemberExpression' || parent.object !== node)
+    return null;
+  const member = memberPropertyName(parent);
+  return member === null || member === members[0] ? members.slice(1) : null;
+}
+
+function assertionReferenceWrite(
+  context: Context,
+  node: ESTree.Node,
+  members: readonly string[],
+  seen: Map<Variable, Set<string>>,
+): boolean {
+  let current = node;
+  for (let depth = 0; depth < MAX_DEPTH; depth += 1) {
+    if (assertionPathWrite(current)) return true;
+    const parent = current.parent;
+    if (parent === null) return false;
+    if (unwrap(parent) === current) {
+      current = parent;
+      continue;
+    }
+    if (parent.type === 'VariableDeclarator' && parent.init === current) {
+      const alias = assertionAliasTarget(context, parent.id, members);
+      return alias !== null && assertionBindingWrite(context, alias.node, alias.members, seen);
+    }
+    const tail = assertionMemberTail(current, members);
+    if (tail === null) return false;
+    members = tail;
+    current = parent;
+  }
+  return true;
+}
+
+/** Follow local receiver aliases too, so `alias.objectContaining = fake` is not trusted. */
+function assertionBindingWrite(
+  context: Context,
+  node: ESTree.Node,
+  members: readonly string[],
+  seen = new Map<Variable, Set<string>>(),
+): boolean {
+  if (node.type !== 'Identifier') return false;
+  const variable = resolveVariable(context, node.name, node);
+  if (variable === null) return false;
+  const path = members.join('.');
+  const paths = seen.get(variable) ?? new Set<string>();
+  if (paths.has(path)) return false;
+  if (seen.size >= MAX_DEPTH) return true;
+  seen.set(variable, paths.add(path));
+  return variable.references.some(
+    (reference) =>
+      (reference.isWrite() && !reference.init) ||
+      assertionReferenceWrite(context, reference.identifier, members, seen),
+  );
+}
+
+/** Apply mutation checks only to the newly recognized expected-value helpers. */
+function stableAssertion(
+  context: Context,
+  expression: ESTree.Node,
+  members: readonly string[],
+  assertion: AssertionCall | null,
+): AssertionCall | null {
+  return assertion?.expectedWrapper === true && assertionBindingWrite(context, expression, members)
+    ? null
+    : assertion;
 }
 
 /** Resolve assertion imports through lexical bindings, aliases, and matcher modifiers. */
@@ -823,22 +933,55 @@ const OBJECT_ASSERTION_METHODS = new Set([
   'notDeepStrictEqual',
 ]);
 
-/** Preserve the bounded immutable shape walk, including cycles and depth-limit behavior. */
-function expectedShapeTag(context: Context, expected: ESTree.Node): ESTree.Node | null {
-  let shape = unwrap(expected);
-  const seen = new Set<ESTree.Node>();
-  for (let depth = 0; depth < MAX_DEPTH && !seen.has(shape); depth += 1) {
-    seen.add(shape);
-    const initialiser = constInitialiser(context, shape);
-    if (initialiser === null) break;
-    shape = unwrap(initialiser);
-  }
-  if (shape.type !== 'ObjectExpression') return null;
+const EXPECTED_WRAPPERS = new Set(['objectContaining', 'arrayContaining']);
+
+type ExpectedShapeVisits = readonly [Set<ESTree.Node>, Set<ESTree.Node>];
+
+/** An object's payload is not another discriminant: inspect only its own `_tag`. */
+function expectedObjectTags(context: Context, shape: ESTree.Node): readonly ESTree.Node[] {
+  if (shape.type !== 'ObjectExpression') return [];
   const tag = shape.properties.find(
     (property) =>
       property.type === 'Property' && assertionPropertyName(context, property) === TAG_PROPERTY,
   );
-  return tag?.type === 'Property' ? tag.value : null;
+  return tag?.type === 'Property' ? [tag.value] : [];
+}
+
+/** Only a proven arrayContaining opens an array's contained expected shapes. */
+function expectedContainedTags(
+  context: Context,
+  shape: ESTree.Node,
+  depth: number,
+  seen: ExpectedShapeVisits,
+): readonly ESTree.Node[] {
+  if (shape.type !== 'ArrayExpression') return [];
+  return shape.elements.flatMap((element) =>
+    element === null ? [] : expectedShapeTags(context, element, false, depth + 1, seen),
+  );
+}
+
+/** Bounded immutable aliases and framework wrappers; never walk arbitrary payload properties. */
+function expectedShapeTags(
+  context: Context,
+  expected: ESTree.Node,
+  contained = false,
+  depth = 0,
+  seen: ExpectedShapeVisits = [new Set(), new Set()],
+): readonly ESTree.Node[] {
+  const shape = unwrap(expected);
+  const visited = seen[contained ? 1 : 0];
+  if (depth > MAX_DEPTH || visited.has(shape)) return [];
+  visited.add(shape);
+  const initialiser = constInitialiser(context, shape);
+  if (initialiser !== null)
+    return expectedShapeTags(context, initialiser, contained, depth + 1, seen);
+  if (contained) return expectedContainedTags(context, shape, depth, seen);
+  if (shape.type !== 'CallExpression') return expectedObjectTags(context, shape);
+  const wrapper = assertionCall(context, shape);
+  const argument = firstArgument(shape);
+  return wrapper?.expectedWrapper === true && argument !== null
+    ? expectedShapeTags(context, argument, wrapper.method === 'arrayContaining', depth + 1, seen)
+    : [];
 }
 
 /** Resolve callable aliases without applying object-shape depth limits to the original walk. */
@@ -1205,9 +1348,8 @@ export const rule = defineRule({
       if (!OBJECT_ASSERTION_METHODS.has(assertion.method)) return false;
       const expected = node.arguments[assertion.subject === null ? 1 : 0];
       if (expected === undefined || expected.type === 'SpreadElement') return false;
-      const tag = expectedShapeTag(context, expected);
-      if (tag === null) return false;
-      if (exemptStaticTag(tag)) return false;
+      const tags = expectedShapeTags(context, expected);
+      if (!tags.some((tag) => !exemptStaticTag(tag))) return false;
       if (suppressed(node)) return false;
       reportAssertion(
         node,

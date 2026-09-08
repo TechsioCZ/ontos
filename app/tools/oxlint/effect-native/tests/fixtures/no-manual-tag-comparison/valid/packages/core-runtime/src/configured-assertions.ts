@@ -9,3 +9,6 @@ switch (value._tag) {
   case 'Legacy': break;
   default: break;
 }
+
+expect(value).toEqual(expect.objectContaining({ _tag: 'Legacy' }));
+expect(value).toEqual(expect.arrayContaining([{ _tag: 'Legacy' }, { _tag: 'Failure' }]));

@@ -1,0 +1,37 @@
+// expect-count: 19
+import { expect } from 'effect-rstest';
+import { expect as check } from '@rstest/core';
+import * as testing from 'vitest';
+import jestExpect from 'expect';
+import { expect as jestCheck } from '@jest/globals';
+declare const error: unknown;
+declare const tag: string;
+expect(error).toEqual(expect.objectContaining({ _tag: 'Missing' }));
+check(error).not.toMatchObject(check.objectContaining({ ['_tag']: 'Missing' }));
+testing.expect(error).toStrictEqual(testing.expect.objectContaining({ _tag: tag }));
+jestExpect(error).toEqual(jestExpect.objectContaining({ _tag: 'Missing' }));
+jestCheck(error).toEqual(jestCheck.objectContaining({ _tag: 'Missing' }));
+const alias = expect;
+alias(error).toEqual(alias.objectContaining({ _tag: 'Missing' }));
+const contains = expect.objectContaining;
+expect(error).toEqual(contains({ _tag: 'Missing' }));
+const { objectContaining: shape } = expect;
+expect(error).toEqual(shape({ _tag: 'Missing' }));
+const { expect: namespaceExpect } = testing;
+expect(error).toEqual(namespaceExpect.objectContaining({ _tag: 'Missing' }));
+const { ['arrayContaining']: items } = alias;
+expect(error).toEqual(items([{ _tag: 'Missing' }]));
+expect(error).toEqual(expect.arrayContaining([expect.objectContaining({ _tag: 'Missing' })]));
+expect(error).toEqual(expect.arrayContaining([expect.arrayContaining([{ _tag: 'Missing' }])]));
+const expected = { _tag: 'Missing' };
+const wrapped = shape(expected);
+expect(error).toEqual(wrapped);
+const shapes = [{ _tag: 'Failure' }, { _tag: 'Missing' }];
+expect(error).toEqual(items(shapes));
+expect(error).toEqual(items([{ _tag: 'Missing' }, { _tag: 'Other' }]));
+const outer = expect.objectContaining(expect.objectContaining(expected));
+expect(error).toEqual(outer);
+expect(error).rejects.toEqual(expect.objectContaining(expected));
+expect([error]).toContainEqual(expect.objectContaining(expected));
+
+expect(error).toEqual(items([items(expected), shape(expected)]));
