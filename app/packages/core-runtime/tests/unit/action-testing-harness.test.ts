@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';

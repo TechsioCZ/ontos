@@ -1,7 +1,7 @@
 // expect-count: 22
 import assert, { strictEqual as equal } from 'node:assert/strict';
 import { assert as rstestAssert, expect, expect as check } from '@rstest/core';
-import { assert as effectAssert } from '@app/effect-rstest';
+import { assert as effectAssert } from 'effect-rstest';
 import * as testing from '@rstest/core';
 import * as assertions from 'node:assert/strict';
 import { strict as strictAssert } from 'node:assert';

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Result, Schema, Struct } from 'effect';
 import { PartyCommandConflictProblemSchema } from '../../shared/command-api.ts';
 import { FetchHttpClient } from 'effect/unstable/http';

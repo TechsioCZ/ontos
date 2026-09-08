@@ -1,4 +1,4 @@
-import { afterEach, expect, rstest, test } from '@app/effect-rstest';
+import { afterEach, expect, rstest, test } from 'effect-rstest';
 import { cleanup, render, screen } from '@testing-library/react';
 import csCatalog from '../../locales/cs/party-registry.json';
 import enCatalog from '../../locales/en/party-registry.json';

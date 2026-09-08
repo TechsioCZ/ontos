@@ -1,6 +1,6 @@
 // expect-count: 10
-import { beforeAll, it, test } from '@app/effect-rstest';
-import * as runner from '@app/effect-rstest';
+import { beforeAll, it, test } from 'effect-rstest';
+import * as runner from 'effect-rstest';
 import { beforeAll as fakeHook } from './owned-runner';
 
 const fakeSetup = async () => { await initialize(); };

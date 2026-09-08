@@ -388,9 +388,7 @@ function assertionCall(
       const method = members[0];
       return members.length === 1 && method !== undefined ? { method, subject: null } : null;
     }
-    if (
-      !['@rstest/core', '@app/effect-rstest', 'vitest', '@jest/globals', 'expect'].includes(source)
-    )
+    if (!['@rstest/core', 'effect-rstest', 'vitest', '@jest/globals', 'expect'].includes(source))
       return null;
     if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect')
       members.unshift('expect');

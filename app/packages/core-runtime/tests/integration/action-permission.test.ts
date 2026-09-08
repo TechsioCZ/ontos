@@ -1,5 +1,5 @@
 // oxlint-disable-next-line max-classes-per-file -- Effect requires class declarations for both the typed error and fixture service; remove when this fixture no longer needs its client service.
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Exit, Schema, Predicate } from 'effect';

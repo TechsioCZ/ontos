@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import {
   AuthenticationUnavailableProblemSchema,

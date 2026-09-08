@@ -1,4 +1,4 @@
-import { expect, test } from '@app/effect-rstest';
+import { expect, test } from 'effect-rstest';
 import { getColumns } from 'drizzle-orm';
 import {
   AUTH_SCHEMA_NAME,

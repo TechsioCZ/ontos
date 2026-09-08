@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit, Option, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';

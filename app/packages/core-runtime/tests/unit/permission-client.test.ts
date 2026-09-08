@@ -1,4 +1,4 @@
-import { expect, it, rstest } from '@app/effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { Cause, Effect, Fiber, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { v1 } from '@authzed/authzed-node';
 import { Effect } from 'effect';

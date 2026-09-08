@@ -1,5 +1,5 @@
 import { Cause, Effect } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { NodeServices } from '@effect/platform-node';
 

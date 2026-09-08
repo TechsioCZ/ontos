@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Predicate } from 'effect';

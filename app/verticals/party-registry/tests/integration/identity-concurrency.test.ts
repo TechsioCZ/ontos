@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';

@@ -361,11 +361,11 @@ export const rule = defineRule({
             let factory = unwrap(registration.callee);
             while (factory?.type === 'CallExpression') factory = unwrap(factory.callee);
             if (
-              /^@app\/effect-rstest:(?:\*\.)?(?:describeWrapped|(?:(?:it|test)\.)?layer)$/u.test(
+              /^effect-rstest:(?:\*\.)?(?:describeWrapped|(?:(?:it|test)\.)?layer)$/u.test(
                 imported(factory, seen) ?? '',
               )
             )
-              return '@app/effect-rstest:it';
+              return 'effect-rstest:it';
           }
         }
         if (
@@ -478,7 +478,7 @@ export const rule = defineRule({
         const assertion = unwrap(node.object);
         if (
           assertion?.type === 'CallExpression' &&
-          /^(?:@app\/effect-rstest|@rstest\/core):(?:\*\.)?expect$/u.test(
+          /^(?:effect-rstest|@rstest\/core):(?:\*\.)?expect$/u.test(
             imported(assertion.callee) ?? '',
           )
         )
@@ -528,7 +528,7 @@ export const rule = defineRule({
       let callee = call.callee;
       // Parameterized registrations, e.g. test.each(rows)(name, callback).
       while (callee.type === 'CallExpression') callee = callee.callee;
-      return /^(?:@app\/effect-rstest|@rstest\/core|vitest|node:test):(?:\*\.)?(?:test|it)(?:\.|$)/u.test(
+      return /^(?:effect-rstest|@rstest\/core|vitest|node:test):(?:\*\.)?(?:test|it)(?:\.|$)/u.test(
         imported(callee) ?? '',
       );
     };
@@ -542,7 +542,7 @@ export const rule = defineRule({
         if (
           call.type === 'CallExpression' &&
           call.arguments.includes(current) &&
-          /^(?:node:test:(?:test|it|before|after|beforeEach|afterEach|\*)(?:\.|$)|(?:@playwright\/test|@rstest\/core|vitest):(?:test|it|beforeAll|afterAll|beforeEach|afterEach|rstest\.mock)(?:\.|$)|@app\/effect-rstest:(?:\*\.)?(?:beforeAll|afterAll|beforeEach|afterEach)$)/u.test(
+          /^(?:node:test:(?:test|it|before|after|beforeEach|afterEach|\*)(?:\.|$)|(?:@playwright\/test|@rstest\/core|vitest):(?:test|it|beforeAll|afterAll|beforeEach|afterEach|rstest\.mock)(?:\.|$)|effect-rstest:(?:\*\.)?(?:beforeAll|afterAll|beforeEach|afterEach)$)/u.test(
             imported(call.callee) ?? '',
           )
         )

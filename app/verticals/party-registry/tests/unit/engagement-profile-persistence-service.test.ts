@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 /* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
 import { DateTime, Effect, Predicate } from 'effect';
 import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';

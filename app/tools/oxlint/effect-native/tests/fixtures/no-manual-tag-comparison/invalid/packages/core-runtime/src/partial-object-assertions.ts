@@ -1,5 +1,5 @@
 // expect-count: 4
-import { expect } from '@app/effect-rstest';
+import { expect } from 'effect-rstest';
 declare const error: unknown;
 declare const tag: string;
 expect(error).toMatchObject({ _tag: 'ModuleStateDeniedError' });

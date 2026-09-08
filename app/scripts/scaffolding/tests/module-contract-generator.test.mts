@@ -1,5 +1,5 @@
 import { Cause, Effect, Schema } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';

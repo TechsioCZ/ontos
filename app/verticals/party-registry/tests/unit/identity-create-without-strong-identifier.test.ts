@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { DateTime } from 'effect';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import type {

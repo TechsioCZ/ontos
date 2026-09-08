@@ -37,8 +37,8 @@
  *
  * ## What is deliberately allowed
  *
- * - The runner implementation in `packages/effect-rstest/src/**` is outside test-file scope and
- *   owns the Effect.run* boundary. Test support and harness directories have no exemption.
+ * - The external `effect-rstest` runner owns the Effect.run* boundary.
+ *   Test support and harness directories have no exemption.
  * - D-tier Promise adapters forced by the framework: Playwright / e2e specs (`ignorePaths`).
  * - Type-only imports and type-only specifiers (`import type { runPromise } from "effect/Effect"`,
  *   `import { type runSync } …`): erased before runtime, so they cannot open a fiber.
@@ -208,28 +208,28 @@ export const rule = defineRule({
     docs: {
       description:
         'Audit B2 + A1: tests must not call Effect.run* directly. Route every test program through the ' +
-        'repository-owned @app/effect-rstest it.effect/it.layer harness (effect/testing, TestClock, scoped Layer, ' +
+        'upstream effect-rstest it.effect/it.layer harness (effect/testing, TestClock, scoped Layer, ' +
         'ConfigProvider.fromMap) instead of building an ad hoc runtime per assertion.',
     },
     messages: {
       effectRunInTest:
-        'Do not call Effect.{{member}} in a test. Run through the shared @app/effect-rstest it.effect/it.layer harness ' +
+        'Do not call Effect.{{member}} in a test. Run through the shared effect-rstest it.effect/it.layer harness ' +
         '(effect/testing, TestClock, scoped Layer, ConfigProvider.fromMap) so services, time and ' +
         'configuration are substitutable.',
       effectRunReferenceInTest:
         'Do not hand Effect.{{member}} around in a test (point-free, mock factory or destructured ' +
-        'reference). Expose the effect and let the shared @app/effect-rstest it.effect/it.layer harness run it with ' +
+        'reference). Expose the effect and let the shared effect-rstest it.effect/it.layer harness run it with ' +
         'effect/testing, TestClock, a scoped Layer and ConfigProvider.fromMap.',
       effectRunImportInTest:
-        'Do not import "{{member}}" from effect/Effect into a test. Import the shared @app/effect-rstest it.effect/it.layer ' +
+        'Do not import "{{member}}" from effect/Effect into a test. Import the shared effect-rstest it.effect/it.layer ' +
         'harness instead, so services, time and configuration stay substitutable.',
       effectRunReexportInTest:
         'Do not re-export "{{member}}" from effect/Effect out of a test module. A re-export hands every ' +
-        'importing test an ad hoc root fiber; export the shared @app/effect-rstest it.effect/it.layer harness ' +
+        'importing test an ad hoc root fiber; export the shared effect-rstest it.effect/it.layer harness ' +
         '(effect/testing, TestClock, scoped Layer, ConfigProvider.fromMap) instead.',
       effectRunDynamicImportInTest:
         'Do not reach Effect.{{member}} through `await import("effect/Effect")` in a test. Import the ' +
-        'shared @app/effect-rstest it.effect/it.layer harness so services, time and configuration stay substitutable.',
+        'shared effect-rstest it.effect/it.layer harness so services, time and configuration stay substitutable.',
     },
     schema: [
       {

@@ -1,4 +1,4 @@
-import { expect, it, rstest } from '@app/effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 import { Schema } from 'effect';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';

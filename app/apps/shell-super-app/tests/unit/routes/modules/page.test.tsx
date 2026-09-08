@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';

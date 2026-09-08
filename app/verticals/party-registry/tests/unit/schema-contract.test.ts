@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Filesystem migration contract verifies actual checked-in SQL files; expires: 2026-12-31.
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
 
 import { readdir, readFile } from 'node:fs/promises';

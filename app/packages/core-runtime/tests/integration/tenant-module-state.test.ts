@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 
 import { and, asc, eq, inArray } from 'drizzle-orm';

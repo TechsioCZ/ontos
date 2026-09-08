@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Cause, Option, Schema, Predicate } from 'effect';
 import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';

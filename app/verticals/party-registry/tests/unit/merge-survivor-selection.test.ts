@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Match, Predicate, Struct, Schema } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import type {

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { CORE_SEARCH_INGESTION_REGISTRATIONS } from '@app/core-runtime';
 import { outboxWorkers } from '../../src/workers/index.ts';
 

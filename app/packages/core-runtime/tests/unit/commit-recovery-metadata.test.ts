@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 /* oxlint-disable sonarjs/no-undefined-assignment -- Existing compatibility boundary; expires: 2026-12-31. */
 

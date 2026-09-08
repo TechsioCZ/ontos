@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { decideAuthorizationRollout } from '../../src/authorization/rollout-decision.ts';
 import type { AuthorizationWouldDenyEvent } from '../../src/authorization/rollout-decision.ts';
 

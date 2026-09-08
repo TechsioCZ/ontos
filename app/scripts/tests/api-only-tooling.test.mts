@@ -1,6 +1,6 @@
 import type { defineEffectBff } from '@modern-js/plugin-bff/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
-import { afterEach, expect, it, rs } from '@app/effect-rstest';
+import { afterEach, expect, it, rs } from 'effect-rstest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';

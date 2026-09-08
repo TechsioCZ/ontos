@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { expect, test } from '@app/effect-rstest';
+import { expect, test } from 'effect-rstest';
 import { Schema } from 'effect';
 
 const workspaceRoot = new URL('../../../../', import.meta.url);

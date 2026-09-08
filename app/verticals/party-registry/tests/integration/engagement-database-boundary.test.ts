@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 
 import { eq, inArray, sql } from 'drizzle-orm';

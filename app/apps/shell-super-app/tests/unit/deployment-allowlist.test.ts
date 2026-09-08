@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import { createModuleDeploymentAllowlistBuildInput } from '../../module-deployment-allowlist.config.ts';
 

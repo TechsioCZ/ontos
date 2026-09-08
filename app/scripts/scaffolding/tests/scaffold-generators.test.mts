@@ -1,6 +1,6 @@
 import { Cause, Clock, ConfigProvider, Predicate, Redacted } from 'effect';
 import type { Scope } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 
 import { spawnSync } from 'node:child_process';

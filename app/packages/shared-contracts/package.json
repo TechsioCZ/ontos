@@ -23,7 +23,7 @@
   "devDependencies": {
     "@effect/tsgo": "0.19.0",
     "@types/node": "20.19.43",
-    "@app/effect-rstest": "workspace:*",
-    "@rstest/core": "0.11.10"
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc",
+    "@rstest/core": "0.11.11"
   }
 }

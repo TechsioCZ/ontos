@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, DateTime, Option, Schema } from 'effect';
 import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
 import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';

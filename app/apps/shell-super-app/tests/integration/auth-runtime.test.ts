@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';

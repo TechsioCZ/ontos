@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import type { ProtectedEntrypointInventory } from '../authorization/protected-entrypoint-inventory.mts';
 import {

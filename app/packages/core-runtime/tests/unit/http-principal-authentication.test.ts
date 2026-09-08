@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned HTTP application entrypoint; expires: 2026-12-31.
 import { NodeHttpServer } from '@effect/platform-node';
 import { Effect, Match, Redacted, Schema, Predicate } from 'effect';

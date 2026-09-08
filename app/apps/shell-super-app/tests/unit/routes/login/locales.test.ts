@@ -1,4 +1,4 @@
-import { expect, test } from '@app/effect-rstest';
+import { expect, test } from 'effect-rstest';
 import cs from '../../../../locales/cs/shell.json';
 import en from '../../../../locales/en/shell.json';
 import { ultramodernRouteMetadata } from '../../../../src/routes/ultramodern-route-metadata';

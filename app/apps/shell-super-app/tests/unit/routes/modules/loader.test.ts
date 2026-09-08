@@ -1,4 +1,4 @@
-import { beforeEach, expect, rstest, it } from '@app/effect-rstest';
+import { beforeEach, expect, rstest, it } from 'effect-rstest';
 import { Cause, ConfigProvider, Deferred, Effect, Fiber } from 'effect';
 import { TestClock } from 'effect/testing';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { Predicate } from 'effect';
 import runtime from '../../src/modern.runtime.ts';

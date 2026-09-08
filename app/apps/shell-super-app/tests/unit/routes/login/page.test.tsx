@@ -1,7 +1,7 @@
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
-import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { Effect, Redacted } from 'effect';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

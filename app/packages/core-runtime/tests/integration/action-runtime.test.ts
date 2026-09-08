@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { and, eq } from 'drizzle-orm';
 import { Cause, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';

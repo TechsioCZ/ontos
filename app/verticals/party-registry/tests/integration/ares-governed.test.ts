@@ -1,4 +1,4 @@
-import { assert, expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';

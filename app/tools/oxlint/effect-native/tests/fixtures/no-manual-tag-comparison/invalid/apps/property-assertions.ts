@@ -1,5 +1,5 @@
 // expect-count: 16
-import { expect } from '@app/effect-rstest';
+import { expect } from 'effect-rstest';
 import * as rstest from '@rstest/core';
 import { expect as check } from 'vitest';
 import jestExpect from 'expect';

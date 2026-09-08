@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { Effect, Function as Fn, Schema, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';

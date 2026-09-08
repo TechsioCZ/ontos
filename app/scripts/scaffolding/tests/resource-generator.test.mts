@@ -1,5 +1,5 @@
 import { Cause, Effect, Fiber, FileSystem, Schema } from 'effect';
-import { afterEach, expect, it, rs } from '@app/effect-rstest';
+import { afterEach, expect, it, rs } from 'effect-rstest';
 
 import { CodeSmith, GeneratorCore } from '@modern-js/codesmith';
 import { applyMutationPlanEffect } from '../shared.mts';

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import {

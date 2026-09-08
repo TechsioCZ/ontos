@@ -1,4 +1,4 @@
-import { assert, expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';

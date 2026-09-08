@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { ConfigProvider, Effect, Layer, Predicate } from 'effect';
 import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
 import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from '../../src/outbox/health.ts';

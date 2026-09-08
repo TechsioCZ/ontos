@@ -1,7 +1,7 @@
 import { Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
-import { it } from "@app/effect-rstest";
+import { it } from "effect-rstest";
 
 declare const ContactsLayer: Layer.Layer<never>;
 declare const resolve: (id: string) => Effect.Effect<string>;

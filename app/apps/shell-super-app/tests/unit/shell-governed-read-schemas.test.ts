@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@app/effect-rstest';
+import { describe, expect, test } from 'effect-rstest';
 import { Schema } from 'effect';
 import {
   GovernedResolvedModuleTargetSchema,

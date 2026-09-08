@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Deferred, Effect, Exit, Fiber, Schema } from 'effect';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 

@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Source-only contract checks require reading TypeScript files; remove-when: manifests are importable without TSX loaders.
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { readFile } from 'node:fs/promises';
 import { Effect, Match, Schema, Struct, Predicate } from 'effect';
 import {

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { Effect, Match, Option, Predicate } from 'effect';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';

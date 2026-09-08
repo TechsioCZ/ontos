@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { validateShellContributions } from '../../src/modules/shell-contribution.ts';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
 import {

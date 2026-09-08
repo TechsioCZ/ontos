@@ -1,5 +1,5 @@
-import { beforeAll, afterAll as teardown, beforeEach, afterEach } from '@app/effect-rstest';
-import * as runner from '@app/effect-rstest';
+import { beforeAll, afterAll as teardown, beforeEach, afterEach } from 'effect-rstest';
+import * as runner from 'effect-rstest';
 
 const setup = async () => { await initialize(); };
 beforeAll(setup);

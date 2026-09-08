@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import {
   decodeActionPayload,

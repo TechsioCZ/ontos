@@ -1,5 +1,5 @@
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';

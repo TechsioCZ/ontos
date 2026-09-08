@@ -5069,7 +5069,6 @@ const assertTsConfigReferenceGraph = () => {
     SHARED_VALIDATOR_STRING_047,
     ...fullStackVerticals.map((vertical) => vertical.path),
     ...additionalShellPaths,
-    'packages/effect-rstest',
   ].map((referencePath) => ({ path: referencePath }));
   const expectedShellReferences = [
     SHARED_VALIDATOR_STRING_092,

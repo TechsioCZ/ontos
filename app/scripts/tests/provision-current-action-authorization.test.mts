@@ -1,6 +1,6 @@
 import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
 
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';

@@ -1,5 +1,5 @@
-import { describeWrapped, describeWrapped as describeSuite } from '@app/effect-rstest';
-import * as suite from '@app/effect-rstest';
+import { describeWrapped, describeWrapped as describeSuite } from 'effect-rstest';
+import * as suite from 'effect-rstest';
 import { Effect, Layer } from 'effect';
 
 describeWrapped('suite', (it) => {

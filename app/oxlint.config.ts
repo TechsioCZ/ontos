@@ -169,8 +169,6 @@ export default defineConfig({
     'dist',
     'node_modules',
     'repos/**',
-    // vendored port of @effect/vitest; kept diffable against upstream
-    'packages/effect-rstest/src/**',
     '.modern',
     '.modernjs',
     '**/modern-tanstack/**',
