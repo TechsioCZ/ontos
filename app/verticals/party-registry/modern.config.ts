@@ -217,10 +217,6 @@ export default defineConfig(
           cacheDigest: [appId, buildTarget],
           cacheDirectory: buildCacheDirectory,
         },
-        rsdoctor: {
-          disableClientServer: true,
-          enabled: getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
-        },
       },
       plugins: [
         appTools(),

@@ -1,21 +1,27 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Exit, Match } from 'effect';
+
 import {
+  CoreSearchProjectionStore,
   createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
-import type { CoreSearchProjectionDocument, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import type {
+  CoreSearchProjectionDocument,
+  OutboxWorkerHandlerContext,
+} from '@app/core-runtime';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { Effect, Exit, Match } from 'effect';
+
+import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
+import { normalizeCounterpartySearchHits } from '../../shared/domain/search-semantics.ts';
+import { makePartySearchProjectionGateway } from '../../src/search/parties.provider.ts';
 import {
   buildPartySearchDocuments,
   makePartySearchProjector,
 } from '../../src/services/party-search-projection.service.ts';
 import type { PartySearchSourceSnapshot } from '../../src/services/party-search-projection.service.ts';
-import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
-import { makePartySearchProjectionGateway } from '../../src/search/parties.provider.ts';
-import { normalizeCounterpartySearchHits } from '../../shared/domain/search-semantics.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyRef = {
@@ -73,13 +79,15 @@ test('post-commit projection makes only active permission-safe identity evidence
     Effect.gen(function* testScenario() {
       const documents = yield* buildPartySearchDocuments(snapshot);
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       yield* Effect.forEach((document: CoreSearchProjectionDocument) =>
         store.apply({
           document,
           kind: 'upsert',
-        }),
+        })
       )(documents);
-      const search = createCoreSearchQueryRuntime(store);
       const query = (value: string) =>
         search.search({
           effectiveAt: '2026-09-03T00:00:00.000Z',
@@ -96,9 +104,15 @@ test('post-commit projection makes only active permission-safe identity evidence
       assert.deepEqual(yield* query('private@example.test'), []);
       assert.deepEqual(yield* query('+420123456789'), []);
       assert.deepEqual(publicHits, [
-        { archived: false, facets: [], metadata: [], ref: partyRef, title: 'ACME' },
+        {
+          archived: false,
+          facets: [],
+          metadata: [],
+          ref: partyRef,
+          title: 'ACME',
+        },
       ]);
-    }),
+    })
   ));
 test('aliases collapse to canonical identity and only alias-only evidence labels the match', () =>
   runEffectTestPromise(
@@ -106,6 +120,9 @@ test('aliases collapse to canonical identity and only alias-only evidence labels
       const [party] = snapshot.parties;
       assert.ok(party);
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       const documents = yield* buildPartySearchDocuments({
         ...snapshot,
         parties: [
@@ -128,10 +145,10 @@ test('aliases collapse to canonical identity and only alias-only evidence labels
         store.apply({
           document,
           kind: 'upsert',
-        }),
+        })
       )(documents);
       const query = (value: string) =>
-        createCoreSearchQueryRuntime(store).search({
+        search.search({
           includeArchived: false,
           moduleId: 'party.registry',
           query: value,
@@ -144,7 +161,7 @@ test('aliases collapse to canonical identity and only alias-only evidence labels
       assert.equal(alias[0]?.matchedRef?.resourceId, 'absorbed');
       const canonicalHits = yield* query('ACME');
       assert.equal(canonicalHits[0]?.matchedRef, undefined);
-    }),
+    })
   ));
 const context: OutboxWorkerHandlerContext = {
   attemptNumber: 1,
@@ -162,20 +179,23 @@ test('snapshot-generation replay is idempotent, archive/unarchive refreshes and 
   runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       let current = snapshot;
       const projector = makePartySearchProjector(
         {
           load: () => Effect.succeed(current),
         },
         makeCoreSearchIngestion(store),
-        store,
+        store
       );
       const deliver = () =>
         projector.project(context, {
           partyId: partyRef.resourceId,
         });
       const query = (includeArchived = false) =>
-        createCoreSearchQueryRuntime(store).search({
+        search.search({
           includeArchived,
           moduleId: 'party.registry',
           query: 'ACME',
@@ -215,7 +235,7 @@ test('snapshot-generation replay is idempotent, archive/unarchive refreshes and 
       current = snapshot;
       yield* deliver();
       assert.deepEqual(yield* query(true), []);
-    }),
+    })
   ));
 test('future-ended contact disappears at its period boundary without another lifecycle message', () =>
   runEffectTestPromise(
@@ -223,6 +243,9 @@ test('future-ended contact disappears at its period boundary without another lif
       const [party] = snapshot.parties;
       assert.ok(party);
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       const documents = yield* buildPartySearchDocuments({
         ...snapshot,
         parties: [
@@ -245,10 +268,10 @@ test('future-ended contact disappears at its period boundary without another lif
         store.apply({
           document,
           kind: 'upsert',
-        }),
+        })
       )(documents);
       const query = (effectiveAt: string) =>
-        createCoreSearchQueryRuntime(store).search({
+        search.search({
           effectiveAt,
           includeArchived: false,
           moduleId: 'party.registry',
@@ -259,7 +282,7 @@ test('future-ended contact disappears at its period boundary without another lif
       const currentHits = yield* query('2026-09-03T00:00:00.000Z');
       assert.equal(currentHits.length, 1);
       assert.deepEqual(yield* query('2026-09-04T00:00:00.000Z'), []);
-    }),
+    })
   ));
 test('Counterparty identity survives aliases, current-role expiry and canonical-party collisions', () =>
   runEffectTestPromise(
@@ -272,6 +295,9 @@ test('Counterparty identity survives aliases, current-role expiry and canonical-
         resourceId: 'absorbed',
       };
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       const documents = yield* buildPartySearchDocuments({
         ...snapshot,
         counterparties: ['cp-1', 'cp-2'].map((resourceId) => ({
@@ -310,9 +336,9 @@ test('Counterparty identity survives aliases, current-role expiry and canonical-
         store.apply({
           document,
           kind: 'upsert',
-        }),
+        })
       )(documents);
-      const gateway = makePartySearchProjectionGateway(createCoreSearchQueryRuntime(store));
+      const gateway = makePartySearchProjectionGateway(search);
       const input = {
         effectiveAt: '2026-09-03T00:00:00.000Z',
         includeArchived: false,
@@ -325,31 +351,37 @@ test('Counterparty identity survives aliases, current-role expiry and canonical-
       assert.equal(hits.length, 2);
       assert.deepEqual(
         hits.map((hit) => hit.counterpartyRef.resourceId),
-        ['cp-1', 'cp-2'],
+        ['cp-1', 'cp-2']
       );
       const normalized = normalizeCounterpartySearchHits(input, hits);
       const normalizedItems = Match.value(normalized).pipe(
         Match.tag('SearchResults', ({ items }) => items),
         Match.tag('SearchProjectionViolation', ({ reason }) =>
-          assert.fail(`Expected normalized search results: ${reason}`),
+          assert.fail(`Expected normalized search results: ${reason}`)
         ),
-        Match.exhaustive,
+        Match.exhaustive
       );
-      assert.equal(normalizedItems[0]?.collision?.kind, 'CANONICAL_PARTY_COUNTERPARTY_COLLISION');
+      assert.equal(
+        normalizedItems[0]?.collision?.kind,
+        'CANONICAL_PARTY_COUNTERPARTY_COLLISION'
+      );
       assert.equal(normalizedItems[0]?.party.matchedViaAlias, true);
       assert.deepEqual(
         yield* gateway.searchCounterparties({
           ...input,
           effectiveAt: '2026-10-01T00:00:00.000Z',
         }),
-        [],
+        []
       );
-    }),
+    })
   ));
 test('shared public contact returns multiple Parties without uniqueness or matching authority', () =>
   runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       const [party] = snapshot.parties;
       assert.ok(party);
       const documents = yield* buildPartySearchDocuments({
@@ -369,9 +401,9 @@ test('shared public contact returns multiple Parties without uniqueness or match
         store.apply({
           document,
           kind: 'upsert',
-        }),
+        })
       )(documents);
-      const hits = yield* createCoreSearchQueryRuntime(store).search({
+      const hits = yield* search.search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'public@example.test',
@@ -380,21 +412,24 @@ test('shared public contact returns multiple Parties without uniqueness or match
       });
       assert.deepEqual(
         hits.map((hit) => hit.ref.resourceId),
-        ['party-1', 'party-2'],
+        ['party-1', 'party-2']
       );
-    }),
+    })
   ));
 test('rebuild reconciles omitted documents and preserves tombstones against stale lifecycle delivery', () =>
   runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       let current = snapshot;
       const projector = makePartySearchProjector(
         {
           load: () => Effect.succeed(current),
         },
         makeCoreSearchIngestion(store),
-        store,
+        store
       );
       yield* projector.project(context, {
         partyId: 'party-1',
@@ -415,21 +450,24 @@ test('rebuild reconciles omitted documents and preserves tombstones against stal
         partyId: 'party-1',
       });
       assert.deepEqual(
-        yield* createCoreSearchQueryRuntime(store).search({
+        yield* search.search({
           includeArchived: true,
           moduleId: 'party.registry',
           query: 'ACME',
           resourceType: 'party.registry.party',
           tenantId,
         }),
-        [],
+        []
       );
-    }),
+    })
   ));
 test('source failure is sanitized and leaves previously searchable state intact for retry', () =>
   runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       let fail = false;
       const projector = makePartySearchProjector(
         {
@@ -439,12 +477,12 @@ test('source failure is sanitized and leaves previously searchable state intact 
                   new PartySearchProjectionUnavailable({
                     code: 'party_search_projection_unavailable',
                     reason: 'Projection temporarily unavailable',
-                  }),
+                  })
                 )
               : Effect.succeed(snapshot),
         },
         makeCoreSearchIngestion(store),
-        store,
+        store
       );
       yield* projector.project(context, {
         partyId: 'party-1',
@@ -453,9 +491,9 @@ test('source failure is sanitized and leaves previously searchable state intact 
       const failure = yield* Effect.exit(
         projector.project(context, {
           partyId: 'party-1',
-        }),
+        })
       );
-      const priorHits = yield* createCoreSearchQueryRuntime(store).search({
+      const priorHits = yield* search.search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'ACME',
@@ -464,7 +502,7 @@ test('source failure is sanitized and leaves previously searchable state intact 
       });
       assert.equal(failure._tag, 'Failure');
       assert.equal(priorHits.length, 1);
-    }),
+    })
   ));
 test('zero-length cancelled periods are never searchable and do not poison projection delivery', () =>
   runEffectTestPromise(
@@ -508,20 +546,25 @@ test('zero-length cancelled periods are never searchable and do not poison proje
               ],
             },
           ],
-        }),
+        })
       );
       assert.ok(Exit.isSuccess(result));
       assert.deepEqual(
-        result.value[0]?.temporalSearchableText?.filter((entry) => entry.value === 'cancelled'),
-        [],
+        result.value[0]?.temporalSearchableText?.filter(
+          (entry) => entry.value === 'cancelled'
+        ),
+        []
       );
       assert.deepEqual(result.value[1]?.temporalFacets, []);
-    }),
+    })
   ));
 test('projection generation is independent of an out-of-order business event sequence', () =>
   runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       const projector = makePartySearchProjector(
         {
           load: () =>
@@ -531,7 +574,7 @@ test('projection generation is independent of an out-of-order business event seq
             }),
         },
         makeCoreSearchIngestion(store),
-        store,
+        store
       );
       yield* projector.project(
         {
@@ -540,9 +583,9 @@ test('projection generation is independent of an out-of-order business event seq
         },
         {
           partyId: 'party-1',
-        },
+        }
       );
-      const hits = yield* createCoreSearchQueryRuntime(store).search({
+      const hits = yield* search.search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'ACME',
@@ -550,7 +593,7 @@ test('projection generation is independent of an out-of-order business event seq
         tenantId,
       });
       assert.equal(hits.length, 1);
-    }),
+    })
   ));
 test('correction and identifier/contact changes replace obsolete evidence instead of accumulating history', () =>
   runEffectTestPromise(
@@ -558,13 +601,16 @@ test('correction and identifier/contact changes replace obsolete evidence instea
       const [party] = snapshot.parties;
       assert.ok(party);
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       let current = snapshot;
       const projector = makePartySearchProjector(
         {
           load: () => Effect.succeed(current),
         },
         makeCoreSearchIngestion(store),
-        store,
+        store
       );
       yield* projector.project(context, {
         partyId: 'party-1',
@@ -591,7 +637,7 @@ test('correction and identifier/contact changes replace obsolete evidence instea
         partyId: 'party-1',
       });
       const query = (value: string) =>
-        createCoreSearchQueryRuntime(store).search({
+        search.search({
           includeArchived: false,
           moduleId: 'party.registry',
           query: value,
@@ -603,12 +649,15 @@ test('correction and identifier/contact changes replace obsolete evidence instea
       assert.deepEqual(yield* query('public@example.test'), []);
       const corrected = yield* query('Corrected Company');
       assert.equal(corrected.length, 1);
-    }),
+    })
   ));
 test('a complete empty rebuild also rejects delayed evidence for a never-before-indexed Party', () =>
   runEffectTestPromise(
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
+      const search = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       let current: PartySearchSourceSnapshot = {
         ...snapshot,
         parties: [],
@@ -619,7 +668,7 @@ test('a complete empty rebuild also rejects delayed evidence for a never-before-
           load: () => Effect.succeed(current),
         },
         makeCoreSearchIngestion(store),
-        store,
+        store
       );
       yield* projector.project(context, {
         rebuild: true,
@@ -628,7 +677,7 @@ test('a complete empty rebuild also rejects delayed evidence for a never-before-
       yield* projector.project(context, {
         partyId: 'party-1',
       });
-      const hits = yield* createCoreSearchQueryRuntime(store).search({
+      const hits = yield* search.search({
         includeArchived: true,
         moduleId: 'party.registry',
         query: 'ACME',
@@ -636,5 +685,5 @@ test('a complete empty rebuild also rejects delayed evidence for a never-before-
         tenantId,
       });
       assert.deepEqual(hits, []);
-    }),
+    })
   ));

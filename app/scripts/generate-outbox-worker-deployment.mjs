@@ -155,9 +155,6 @@ const command = Command.make(
   runCommand
 );
 
-/** @type {ImportMeta & { main?: boolean }} */
-const moduleMetadata = import.meta;
-
-if (moduleMetadata.main === true) {
+if (import.meta.main) {
   void nodeRuntime.runPromise(Command.run(command, { version: '1.0.0' }));
 }

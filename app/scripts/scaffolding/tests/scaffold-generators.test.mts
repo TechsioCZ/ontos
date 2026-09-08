@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,7 +30,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-edge';
 import { Clock, ConfigProvider, Predicate, Redacted } from 'effect';
-import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
+import {
+  SignJWT,
+  exportJWK,
+  generateKeyPair,
+  generateSecret,
+  importJWK,
+} from 'jose';
 import type { JWK } from 'jose';
 
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
@@ -85,40 +100,49 @@ const test = (name: string, handler: () => void | Promise<void>): void => {
 
 class FirstScaffoldTestError extends Schema.TaggedError<FirstScaffoldTestError>()(
   'FirstScaffoldTestError',
-  { cause: Schema.optionalKey(Schema.Unknown), message: Schema.String },
+  { cause: Schema.optionalKey(Schema.Unknown), message: Schema.String }
 ) {}
 
 const firstScaffoldErrors = createScaffoldErrorTools(
   FirstScaffoldTestError,
   Schema.is(FirstScaffoldTestError),
-  'first update failed',
+  'first update failed'
 );
 const secondScaffoldErrors = createScaffoldErrorTools(
   ScaffoldFailure,
   Schema.is(ScaffoldFailure),
-  'second update failed',
+  'second update failed'
 );
 
 test('scaffold error tools preserve success and own failure identity', async () => {
   const value = { unchanged: true };
-  assert.equal(await runEffectTestPromise(firstScaffoldErrors.trySync(() => value)), value);
+  assert.equal(
+    await runEffectTestPromise(firstScaffoldErrors.trySync(() => value)),
+    value
+  );
   const own = firstScaffoldErrors.scaffoldError('own failure');
   const failure = await runEffectTestPromise(
     firstScaffoldErrors
       .trySync(() => {
         throw own;
       })
-      .pipe(Effect.flip),
+      .pipe(Effect.flip)
   );
   assert.equal(failure, own);
 });
 
 test('scaffold error tools omit undefined causes and retain defined causes', () => {
-  assert.equal(Object.hasOwn(firstScaffoldErrors.scaffoldError('absent'), 'cause'), false);
+  assert.equal(
+    Object.hasOwn(firstScaffoldErrors.scaffoldError('absent'), 'cause'),
+    false
+  );
   const absentCause = firstScaffoldErrors.scaffoldError('absent').cause;
   assert.equal(
-    Object.hasOwn(firstScaffoldErrors.scaffoldError('undefined', absentCause), 'cause'),
-    false,
+    Object.hasOwn(
+      firstScaffoldErrors.scaffoldError('undefined', absentCause),
+      'cause'
+    ),
+    false
   );
   for (const cause of [null, false, 0, '', { detail: 'retained' }]) {
     const failure = firstScaffoldErrors.scaffoldError('defined', cause);
@@ -135,7 +159,11 @@ test('scaffold error tools normalize foreign errors without accepting another ow
   emptyMessageError.message = '';
   await runEffectTestPromise(
     Effect.gen(function* foreignScaffoldErrors() {
-      for (const cause of [new Error('foreign error'), emptyMessageError, foreign]) {
+      for (const cause of [
+        new Error('foreign error'),
+        emptyMessageError,
+        foreign,
+      ]) {
         const failure = yield* firstScaffoldErrors
           .trySync(() => {
             throw cause;
@@ -147,7 +175,7 @@ test('scaffold error tools normalize foreign errors without accepting another ow
         assert.equal(failure.message, cause.message);
         assert.equal(failure.cause, cause);
       }
-    }),
+    })
   );
 });
 
@@ -166,10 +194,10 @@ for (const [index, cause] of [
       return iterator.throw(cause);
     };
     const first = await runEffectTestPromise(
-      firstScaffoldErrors.trySync(operation).pipe(Effect.flip),
+      firstScaffoldErrors.trySync(operation).pipe(Effect.flip)
     );
     const second = await runEffectTestPromise(
-      secondScaffoldErrors.trySync(operation).pipe(Effect.flip),
+      secondScaffoldErrors.trySync(operation).pipe(Effect.flip)
     );
     assert.equal(first.message, 'first update failed');
     assert.equal(second.message, 'second update failed');
@@ -208,8 +236,11 @@ interface GeneratedPrincipalModule {
       readonly currentTimeSeconds: Effect.Effect<number>;
       readonly environment: GeneratedPrincipalEnvironment;
       readonly redemption: { readonly consume: () => Effect.Effect<void> };
-    },
-  ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
+    }
+  ) => Effect.Effect<
+    TrustedPrincipalContext,
+    { readonly _tag: GeneratedPrincipalErrorTag }
+  >;
 }
 
 interface GeneratedActionHttpRunnerModule {
@@ -218,10 +249,12 @@ interface GeneratedActionHttpRunnerModule {
 
 interface GeneratedOperationGatewayModule {
   readonly makeOperationGateway: (
-    acquire: (payload: { readonly audience: string }) => Effect.Effect<{ readonly token: string }>,
+    acquire: (payload: {
+      readonly audience: string;
+    }) => Effect.Effect<{ readonly token: string }>
   ) => {
     readonly invoke: <Success>(
-      attempt: (authorization: string) => Effect.Effect<Success>,
+      attempt: (authorization: string) => Effect.Effect<Success>
     ) => Effect.Effect<Success>;
   };
 }
@@ -230,23 +263,26 @@ const GeneratedPrincipalModuleSchema = Schema.Struct({
   ActionPrincipalVerifierLive: Schema.declare<
     GeneratedPrincipalModule['ActionPrincipalVerifierLive']
   >((value): value is GeneratedPrincipalModule['ActionPrincipalVerifierLive'] =>
-    Predicate.isObject(value),
+    Predicate.isObject(value)
   ),
-  verifyActionPrincipal: Schema.declare<GeneratedPrincipalModule['verifyActionPrincipal']>(
-    (value): value is GeneratedPrincipalModule['verifyActionPrincipal'] =>
-      Predicate.isFunction(value),
+  verifyActionPrincipal: Schema.declare<
+    GeneratedPrincipalModule['verifyActionPrincipal']
+  >((value): value is GeneratedPrincipalModule['verifyActionPrincipal'] =>
+    Predicate.isFunction(value)
   ),
 });
 const GeneratedActionHttpRunnerModuleSchema = Schema.Struct({
-  bindActionHttpRunner: Schema.declare<GeneratedActionHttpRunnerModule['bindActionHttpRunner']>(
-    (value): value is GeneratedActionHttpRunnerModule['bindActionHttpRunner'] =>
-      Predicate.isFunction(value),
+  bindActionHttpRunner: Schema.declare<
+    GeneratedActionHttpRunnerModule['bindActionHttpRunner']
+  >((value): value is GeneratedActionHttpRunnerModule['bindActionHttpRunner'] =>
+    Predicate.isFunction(value)
   ),
 });
 const GeneratedOperationGatewayModuleSchema = Schema.Struct({
-  makeOperationGateway: Schema.declare<GeneratedOperationGatewayModule['makeOperationGateway']>(
-    (value): value is GeneratedOperationGatewayModule['makeOperationGateway'] =>
-      Predicate.isFunction(value),
+  makeOperationGateway: Schema.declare<
+    GeneratedOperationGatewayModule['makeOperationGateway']
+  >((value): value is GeneratedOperationGatewayModule['makeOperationGateway'] =>
+    Predicate.isFunction(value)
   ),
 });
 
@@ -262,7 +298,7 @@ const EsbuildMetafileSchema = Schema.Struct({
     Schema.String,
     Schema.Struct({
       bytes: Schema.Number,
-    }),
+    })
   ),
 });
 const RetryableProblemSchema = Schema.Struct({
@@ -279,25 +315,29 @@ const asProblemDetails = HttpApiSchema.asJson({
 });
 const ActionAuthenticationProblemSchema = Schema.TaggedStruct(
   'ActionAuthenticationProblem',
-  problemFields,
+  problemFields
 ).pipe(asProblemDetails, HttpApiSchema.status(401));
 const ActionVerificationUnavailableProblemSchema = Schema.TaggedStruct(
   'ActionVerificationUnavailableProblem',
-  { ...problemFields, retryable: Schema.Literal(true) },
+  { ...problemFields, retryable: Schema.Literal(true) }
 ).pipe(asProblemDetails, HttpApiSchema.status(503));
 type EndpointProblem =
   | typeof ActionAuthenticationProblemSchema.Type
   | typeof ActionVerificationUnavailableProblemSchema.Type;
-const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
-  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
+const bearerChallenge = HttpEffect.appendPreResponseHandler(
+  (_request, response) =>
+    Effect.succeed(
+      HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')
+    )
 );
-const actionAuthenticationProblem = (): typeof ActionAuthenticationProblemSchema.Type => ({
-  _tag: 'ActionAuthenticationProblem',
-  detail: 'A valid Bearer assertion is required.',
-  status: 401,
-  title: 'Action authentication required',
-  type: 'https://ontos.dev/problems/action-authentication-required',
-});
+const actionAuthenticationProblem =
+  (): typeof ActionAuthenticationProblemSchema.Type => ({
+    _tag: 'ActionAuthenticationProblem',
+    detail: 'A valid Bearer assertion is required.',
+    status: 401,
+    title: 'Action authentication required',
+    type: 'https://ontos.dev/problems/action-authentication-required',
+  });
 const actionVerificationUnavailableProblem =
   (): typeof ActionVerificationUnavailableProblemSchema.Type => ({
     _tag: 'ActionVerificationUnavailableProblem',
@@ -308,7 +348,9 @@ const actionVerificationUnavailableProblem =
     type: 'https://ontos.dev/problems/action-verification-unavailable',
   });
 const failActionAuthentication = () =>
-  bearerChallenge.pipe(Effect.andThen(Effect.fail<EndpointProblem>(actionAuthenticationProblem())));
+  bearerChallenge.pipe(
+    Effect.andThen(Effect.fail<EndpointProblem>(actionAuthenticationProblem()))
+  );
 const failActionVerificationUnavailable = () =>
   Effect.fail<EndpointProblem>(actionVerificationUnavailableProblem());
 const generatedPrincipalErrorHandlers = {
@@ -350,7 +392,7 @@ const generatedBindingAction = defineAction(
     resultSchema: GeneratedBindingResultSchema,
     schemaVersion: '1',
   },
-  () => Effect.succeed({ accepted: true as const }),
+  () => Effect.succeed({ accepted: true as const })
 );
 const FixtureTsconfigSchema = Schema.Struct({
   references: Schema.Array(Schema.Struct({ path: Schema.String })),
@@ -358,7 +400,10 @@ const FixtureTsconfigSchema = Schema.Struct({
 const InventoryLocaleSchema = Schema.Struct({
   inventory: Schema.Struct({
     existing: Schema.optional(Schema.String),
-    pages: Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
+    pages: Schema.Record(
+      Schema.String,
+      Schema.Record(Schema.String, Schema.String)
+    ),
   }),
 });
 
@@ -381,7 +426,8 @@ const workspaceVersion = 'workspace:*';
 const fixtureGatewayJti = '60000000-0000-4000-8000-000000000001';
 const actionInvokeUrl = 'https://inventory.example.test/actions/invoke';
 const generatedOutboxContractPath = './shared/outbox/orders-created.ts';
-const workerStartScript = 'node --experimental-strip-types ./src/worker-host/main.ts';
+const workerStartScript =
+  'node --experimental-strip-types ./src/worker-host/main.ts';
 const workerRegistryEntry = 'ordersCreatedProjectorWorker,';
 const pagePlaceholder = 'This page is ready for implementation.';
 const purchasingOrdersUrl = '/purchasing/orders';
@@ -426,39 +472,58 @@ const fixtureName = {
 } as const;
 const rootPackageFile = 'package.json';
 const coreRuntimeIndexFile = 'packages/core-runtime/src/index.ts';
-const coreActionCatalogFile = 'packages/core-runtime/src/modules/actions/catalog.ts';
+const coreActionCatalogFile =
+  'packages/core-runtime/src/modules/actions/catalog.ts';
 const shellSentinelFile = 'apps/shell-super-app/src/sentinel.ts';
-const shellVerticalClientsFile = 'apps/shell-super-app/src/api/vertical-clients.ts';
+const shellVerticalClientsFile =
+  'apps/shell-super-app/src/api/vertical-clients.ts';
 const inventoryManifestFile = 'verticals/inventory-stock/vertical.manifest.ts';
-const inventoryRegistrationFile = 'verticals/inventory-stock/vertical.registration.ts';
-const inventoryFederationConfigFile = 'verticals/inventory-stock/module-federation.config.ts';
+const inventoryRegistrationFile =
+  'verticals/inventory-stock/vertical.registration.ts';
+const inventoryFederationConfigFile =
+  'verticals/inventory-stock/module-federation.config.ts';
 const inventorySearchProviderFile =
   'verticals/inventory-stock/src/search/inventory-items.provider.ts';
 const inventorySearchContractFile =
   'verticals/inventory-stock/shared/apis/inventory-items-search.ts';
-const inventoryModuleApiContractFile = 'verticals/inventory-stock/shared/apis/resource-detail.ts';
-const inventoryModuleApiReadFile = 'verticals/inventory-stock/src/api/resource-detail.read.ts';
-const inventoryModuleApiClientFile = 'verticals/inventory-stock/src/api/resource-detail-client.ts';
-const inventoryModuleApiServerFile = 'verticals/inventory-stock/api/resource-detail-read-server.ts';
+const inventoryModuleApiContractFile =
+  'verticals/inventory-stock/shared/apis/resource-detail.ts';
+const inventoryModuleApiReadFile =
+  'verticals/inventory-stock/src/api/resource-detail.read.ts';
+const inventoryModuleApiClientFile =
+  'verticals/inventory-stock/src/api/resource-detail-client.ts';
+const inventoryModuleApiServerFile =
+  'verticals/inventory-stock/api/resource-detail-read-server.ts';
 const inventorySearchClientFile =
   'verticals/inventory-stock/src/api/inventory-items-search-client.ts';
-const inventorySearchServerFile = 'verticals/inventory-stock/api/inventory-items-search-server.ts';
+const inventorySearchServerFile =
+  'verticals/inventory-stock/api/inventory-items-search-server.ts';
 const inventoryReportProviderFile =
   'verticals/inventory-stock/src/reports/stock-levels.provider.ts';
-const inventoryReportContractFile = 'verticals/inventory-stock/shared/apis/stock-levels-report.ts';
-const inventoryReportClientFile = 'verticals/inventory-stock/src/api/stock-levels-report-client.ts';
-const inventoryReportServerFile = 'verticals/inventory-stock/api/stock-levels-report-server.ts';
-const inventoryActionPrincipalFile = 'verticals/inventory-stock/api/auth/action-principal.ts';
-const inventoryActionHttpRunnerFile = 'verticals/inventory-stock/api/action-http-runner.ts';
-const inventoryActionGatewayFile = 'verticals/inventory-stock/src/api/action-gateway.ts';
+const inventoryReportContractFile =
+  'verticals/inventory-stock/shared/apis/stock-levels-report.ts';
+const inventoryReportClientFile =
+  'verticals/inventory-stock/src/api/stock-levels-report-client.ts';
+const inventoryReportServerFile =
+  'verticals/inventory-stock/api/stock-levels-report-server.ts';
+const inventoryActionPrincipalFile =
+  'verticals/inventory-stock/api/auth/action-principal.ts';
+const inventoryActionHttpRunnerFile =
+  'verticals/inventory-stock/api/action-http-runner.ts';
+const inventoryActionGatewayFile =
+  'verticals/inventory-stock/src/api/action-gateway.ts';
 const inventoryPackageFile = 'verticals/inventory-stock/package.json';
-const inventoryActionFile = 'verticals/inventory-stock/src/actions/create-order.action.ts';
-const inventoryOutboxContractFile = 'verticals/inventory-stock/shared/outbox/orders-created.ts';
+const inventoryActionFile =
+  'verticals/inventory-stock/src/actions/create-order.action.ts';
+const inventoryOutboxContractFile =
+  'verticals/inventory-stock/shared/outbox/orders-created.ts';
 const billingApiIndexFile = 'verticals/billing/api/index.ts';
 const billingWorkersIndexFile = 'verticals/billing/src/workers/index.ts';
 const inventoryTsconfigFile = 'verticals/inventory-stock/tsconfig.json';
-const inventoryEnglishLocaleFile = 'verticals/inventory-stock/locales/en/inventory.json';
-const inventoryOrdersRouteFile = 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
+const inventoryEnglishLocaleFile =
+  'verticals/inventory-stock/locales/en/inventory.json';
+const inventoryOrdersRouteFile =
+  'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
 const effectNodeModulePath = 'node_modules/effect';
 const pluginBffNodeModulePath = 'node_modules/@modern-js/plugin-bff';
 
@@ -494,7 +559,8 @@ const contactsVertical: FixtureVertical = {
   slug: 'contacts',
 };
 
-const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
+const json = (value: JsonValue): string =>
+  `${JSON.stringify(value, null, 2)}\n`;
 const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
@@ -506,7 +572,7 @@ const oxfmtPath = path.join(appRoot, 'node_modules', '.bin', 'oxfmt');
 const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
 
 const makeGatewayKey = async (
-  kid: string,
+  kid: string
 ): Promise<{
   configuration: GatewayIssuerConfigValue;
   publicJwk: JWK;
@@ -537,18 +603,21 @@ const makeGatewayKey = async (
 const writeFixtureFile = async (
   root: string,
   relativePath: string,
-  content: string,
+  content: string
 ): Promise<void> => {
   const filePath = path.join(root, relativePath);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, content, 'utf-8');
 };
 
-const createVertical = async (root: string, vertical: FixtureVertical): Promise<void> => {
+const createVertical = async (
+  root: string,
+  vertical: FixtureVertical
+): Promise<void> => {
   await writeFixtureFile(
     root,
     `verticals/${vertical.slug}/module-federation.config.ts`,
-    'export default { exposes: {} };\n',
+    'export default { exposes: {} };\n'
   );
   await writeFixtureFile(
     root,
@@ -557,7 +626,7 @@ const createVertical = async (root: string, vertical: FixtureVertical): Promise<
       compilerOptions: { composite: true },
       include: ['src', 'shared'],
       references: [],
-    }),
+    })
   );
   await writeFixtureFile(
     root,
@@ -578,13 +647,14 @@ const createVertical = async (root: string, vertical: FixtureVertical): Promise<
       name: `@app/${vertical.slug}`,
       private: true,
       scripts: {
-        build: 'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
+        build:
+          'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
         'cloudflare:build':
           'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
         existing: preservedFixtureValue,
       },
       version: '0.1.0',
-    }),
+    })
   );
   await writeFixtureFile(
     root,
@@ -601,7 +671,7 @@ const layer = HttpApiBuilder.layer(fixtureApi).pipe(
 ) satisfies EffectRuntimeLayer;
 
 export default defineEffectBff({ api: fixtureApi, layer });
-`,
+`
   );
   await writeFixtureFile(
     root,
@@ -616,7 +686,7 @@ export const fixtureApi = HttpApi.make('FixtureApi').add(
     }),
   ),
 );
-`,
+`
   );
   await Promise.all(
     ['cs', 'en'].map(
@@ -628,14 +698,16 @@ export const fixtureApi = HttpApi.make('FixtureApi').add(
             [vertical.namespace]: {
               existing: `${locale}-preserved`,
             },
-          }),
-        ),
-    ),
+          })
+        )
+    )
   );
   const resourcesName = `${vertical.slug
     .split('-')
     .map((segment, index) =>
-      index === 0 ? segment : `${segment[0]?.toUpperCase() ?? ''}${segment.slice(1)}`,
+      index === 0
+        ? segment
+        : `${segment[0]?.toUpperCase() ?? ''}${segment.slice(1)}`
     )
     .join('')}I18nResources`;
   await writeFixtureFile(
@@ -665,22 +737,26 @@ export const ${resourcesName} = {
   cs: { ${vertical.namespace}: flattenLocaleResource(csResource) },
   en: { ${vertical.namespace}: flattenLocaleResource(enResource) },
 } as const;
-`,
+`
   );
   await writeFixtureFile(
     root,
     `verticals/${vertical.slug}/src/routes/ultramodern-route-head.tsx`,
-    'export const UltramodernRouteHead = () => null;\n',
+    'export const UltramodernRouteHead = () => null;\n'
   );
 };
 
 const createFixture = async (): Promise<Fixture> => {
   const root = await mkdtemp(path.join(tmpdir(), 'ontos-scaffolding-'));
-  await writeFixtureFile(root, rootPackageFile, json({ name: 'fixture', private: true }));
+  await writeFixtureFile(
+    root,
+    rootPackageFile,
+    json({ name: 'fixture', private: true })
+  );
   await writeFixtureFile(
     root,
     coreRuntimeIndexFile,
-    `export const existingCoreSurface = true;\n\n// <generated-core-action-exports>\n// </generated-core-action-exports>\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
+    `export const existingCoreSurface = true;\n\n// <generated-core-action-exports>\n// </generated-core-action-exports>\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`
   );
   await writeFixtureFile(
     root,
@@ -694,9 +770,13 @@ export const coreActionCatalog = [
   // <generated-core-action-catalog-values>
   // </generated-core-action-catalog-values>
 ];
-`,
+`
   );
-  await writeFixtureFile(root, shellSentinelFile, 'export const shell = true;\n');
+  await writeFixtureFile(
+    root,
+    shellSentinelFile,
+    'export const shell = true;\n'
+  );
   await writeFixtureFile(
     root,
     shellVerticalClientsFile,
@@ -704,7 +784,7 @@ export const coreActionCatalog = [
   // @ontos-codegen-start shell-page-clients
   // @ontos-codegen-end shell-page-clients
 ] as const;
-`,
+`
   );
   await createVertical(root, inventoryVertical);
   await createVertical(root, billingVertical);
@@ -715,20 +795,23 @@ export const coreActionCatalog = [
     topologyFile,
     json({
       schemaVersion: 1,
-      verticals: [inventoryVertical, billingVertical, hrVertical, contactsVertical].map(
-        (vertical) => ({
-          domain: vertical.namespace,
-          id: vertical.appId,
-          kind: 'vertical',
-          moduleFederation: {
-            name: vertical.mfBoundaryId,
-            role: 'remote',
-          },
-          package: `@app/${vertical.slug}`,
-          path: `verticals/${vertical.slug}`,
-        }),
-      ),
-    }),
+      verticals: [
+        inventoryVertical,
+        billingVertical,
+        hrVertical,
+        contactsVertical,
+      ].map((vertical) => ({
+        domain: vertical.namespace,
+        id: vertical.appId,
+        kind: 'vertical',
+        moduleFederation: {
+          name: vertical.mfBoundaryId,
+          role: 'remote',
+        },
+        package: `@app/${vertical.slug}`,
+        path: `verticals/${vertical.slug}`,
+      })),
+    })
   );
   await Promise.all(
     [inventoryVertical, billingVertical, hrVertical, contactsVertical].map(
@@ -738,14 +821,16 @@ export const coreActionCatalog = [
           [scaffoldFlag.vertical, vertical.slug, '--module', vertical.moduleId],
           {
             workspaceRoot: root,
-          },
-        ),
-    ),
+          }
+        )
+    )
   );
   return { root };
 };
 
-const withFixture = async (run: (fixture: Fixture) => Promise<void>): Promise<void> => {
+const withFixture = async (
+  run: (fixture: Fixture) => Promise<void>
+): Promise<void> => {
   const fixture = await createFixture();
   try {
     await run(fixture);
@@ -754,7 +839,9 @@ const withFixture = async (run: (fixture: Fixture) => Promise<void>): Promise<vo
   }
 };
 
-const snapshotTree = async (root: string): Promise<Readonly<Record<string, string>>> => {
+const snapshotTree = async (
+  root: string
+): Promise<Readonly<Record<string, string>>> => {
   const snapshot: Record<string, string> = {};
   const visit = async (directory: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -766,17 +853,22 @@ const snapshotTree = async (root: string): Promise<Readonly<Record<string, strin
           if (entry.isDirectory()) {
             await visit(entryPath);
           } else if (entry.isFile()) {
-            snapshot[path.relative(root, entryPath)] = await readFile(entryPath, 'utf-8');
+            snapshot[path.relative(root, entryPath)] = await readFile(
+              entryPath,
+              'utf-8'
+            );
           }
-        }),
+        })
     );
   };
   await visit(root);
   return snapshot;
 };
 
-const readFixtureFile = async (root: string, relativePath: string): Promise<string> =>
-  await readFile(path.join(root, relativePath), 'utf-8');
+const readFixtureFile = async (
+  root: string,
+  relativePath: string
+): Promise<string> => await readFile(path.join(root, relativePath), 'utf-8');
 
 const contextPermissionCommands = new Set<ScaffoldCommand>([
   scaffoldCommand.microverticalPage,
@@ -790,7 +882,7 @@ const run = async (
   fixture: Fixture,
   command: ScaffoldCommand,
   scaffoldArguments: readonly string[],
-  routeRefresh?: (appId: string) => void,
+  routeRefresh?: (appId: string) => void
 ) =>
   await runScaffold(
     command,
@@ -813,7 +905,11 @@ const run = async (
             'tenant_membership_default',
           ];
         } else if (command === scaffoldCommand.outboxWorker) {
-          flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
+          flags = [
+            ...flags,
+            scaffoldFlag.authorization,
+            'owner_local_background',
+          ];
         } else if (contextPermissionCommands.has(command)) {
           flags = [
             ...flags,
@@ -829,7 +925,7 @@ const run = async (
     {
       routeRefresh: ({ appId }) => routeRefresh?.(appId),
       workspaceRoot: fixture.root,
-    },
+    }
   );
 
 /**
@@ -840,14 +936,16 @@ const assertScaffoldRefused = async (
   fixture: Fixture,
   command: ScaffoldCommand,
   commandArguments: readonly string[],
-  expected: RegExp,
+  expected: RegExp
 ): Promise<void> => {
   const before = await snapshotTree(fixture.root);
   await assert.rejects(run(fixture, command, commandArguments), expected);
   assert.deepEqual(await snapshotTree(fixture.root), before);
 };
 
-const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => {
+const addInventoryItemResourceType = async (
+  fixture: Fixture
+): Promise<void> => {
   const manifestPath = path.join(fixture.root, inventoryManifestFile);
   const manifest = await readFile(manifestPath, 'utf-8');
   await writeFile(
@@ -868,9 +966,9 @@ const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => 
         label: 'Inventory item',
         owningModuleId: 'inventory.stock',
       },
-    ],`,
+    ],`
     ),
-    'utf-8',
+    'utf-8'
   );
 };
 
@@ -899,25 +997,31 @@ test('documents every command and treats --help as a write-free operation', asyn
       });
       assert.deepEqual(result, { help: getHelpText(command), kind: 'help' });
       assert.match(result.help, new RegExp(`scaffold:${command}`, 'u'));
-    }),
+    })
   );
   assert.match(getHelpText('action'), /--vertical <vertical>/u);
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
   assert.match(getHelpText(scaffoldCommand.microverticalPage), /--url <url>/u);
-  assert.match(getHelpText(scaffoldCommand.microverticalPage), /defaults to \/<vertical>\/<page>/u);
-  assert.match(getHelpText(scaffoldCommand.microverticalPage), /:parameter/u);
-  assert.match(getHelpText(scaffoldCommand.microverticalPage), /\/contacts\/customers\/:id\/edit/u);
   assert.match(
-    getHelpText(scaffoldCommand.externalHttpAdapter),
-    /scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>/u,
+    getHelpText(scaffoldCommand.microverticalPage),
+    /defaults to \/<vertical>\/<page>/u
+  );
+  assert.match(getHelpText(scaffoldCommand.microverticalPage), /:parameter/u);
+  assert.match(
+    getHelpText(scaffoldCommand.microverticalPage),
+    /\/contacts\/customers\/:id\/edit/u
   );
   assert.match(
     getHelpText(scaffoldCommand.externalHttpAdapter),
-    /--vertical contacts --provider ares --operation subject/u,
+    /scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>/u
+  );
+  assert.match(
+    getHelpText(scaffoldCommand.externalHttpAdapter),
+    /--vertical contacts --provider ares --operation subject/u
   );
   assert.match(
     getHelpText(scaffoldCommand.searchProviderAccess),
-    /--tenant-permission read_party_identity/u,
+    /--tenant-permission read_party_identity/u
   );
 });
 
@@ -957,12 +1061,18 @@ test('search-provider access updates only generated access metadata and fails at
     ]);
     assert.match(
       manifest,
-      /accessFiltering: 'tenant_scope'.*requestFilters: \['includeArchived'\].*tenantPermission: 'read_party_identity'/u,
+      /accessFiltering: 'tenant_scope'.*requestFilters: \['includeArchived'\].*tenantPermission: 'read_party_identity'/u
     );
     assert.match(provider, /legalEntityScope: 'optional'/u);
     assert.match(provider, /permissionTarget: 'tenant'/u);
-    assert.match(provider, /kind: 'tenant', permission: 'read_party_identity'/u);
-    assert.match(contract, /includeArchived: Schema\.optionalKey\(Schema\.Boolean\)/u);
+    assert.match(
+      provider,
+      /kind: 'tenant', permission: 'read_party_identity'/u
+    );
+    assert.match(
+      contract,
+      /includeArchived: Schema\.optionalKey\(Schema\.Boolean\)/u
+    );
 
     const beforeProviderRerun = await snapshotTree(fixture.root);
     await run(fixture, scaffoldCommand.searchProvider, [
@@ -978,7 +1088,7 @@ test('search-provider access updates only generated access metadata and fails at
     const providerPath = path.join(fixture.root, inventorySearchProviderFile);
     await writeFile(
       providerPath,
-      `${provider}\n// Owner-customized searchable semantics remain untouched.\n`,
+      `${provider}\n// Owner-customized searchable semantics remain untouched.\n`
     );
     const beforeIdempotentUpdate = await snapshotTree(fixture.root);
     await run(fixture, scaffoldCommand.searchProviderAccess, [
@@ -998,7 +1108,7 @@ test('search-provider access updates only generated access metadata and fails at
     assert.deepEqual(await snapshotTree(fixture.root), beforeIdempotentUpdate);
     await writeFile(
       providerPath,
-      provider.replace('// @generated by OntOS Codesmith ', '// custom '),
+      provider.replace('// @generated by OntOS Codesmith ', '// custom ')
     );
     await assertScaffoldRefused(
       fixture,
@@ -1015,7 +1125,7 @@ test('search-provider access updates only generated access metadata and fails at
         scaffoldFlag.requestFilters,
         'includeArchived,role',
       ],
-      /Codesmith-owned provider/u,
+      /Codesmith-owned provider/u
     );
   });
 });
@@ -1036,11 +1146,14 @@ test('generated API owner slots sort property keys before suffix variants', asyn
     ]);
     const sources = await Promise.all(
       [inventoryManifestFile, inventoryRegistrationFile].map(
-        async (owner) => await readFixtureFile(fixture.root, owner),
-      ),
+        async (owner) => await readFixtureFile(fixture.root, owner)
+      )
     );
     for (const source of sources) {
-      assert.ok(source.indexOf("'party-match':") < source.indexOf("'party-match-decision':"));
+      assert.ok(
+        source.indexOf("'party-match':") <
+          source.indexOf("'party-match-decision':")
+      );
     }
   });
 });
@@ -1079,17 +1192,17 @@ test('generated read clients fetch mounted owner URLs and support separately dep
     await symlink(
       path.join(appRoot, sharedContractsPackagePath),
       path.join(fixture.root, sharedContractsNodeModulePath),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, effectNodeModulePath),
       path.join(fixture.root, effectNodeModulePath),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, pluginBffNodeModulePath),
       path.join(fixture.root, pluginBffNodeModulePath),
-      'dir',
+      'dir'
     );
     const result = spawnSync(
       process.execPath,
@@ -1201,9 +1314,10 @@ test('generated read clients fetch mounted owner URLs and support separately dep
       console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gatewayAttempts, gatewayUnavailable }));
     `,
       ],
-      { cwd: fixture.root, encoding: 'utf-8' },
+      { cwd: fixture.root, encoding: 'utf-8' }
     );
-    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
     const proof = Schema.decodeUnknownSync(
       Schema.fromJsonString(
         Schema.Struct({
@@ -1211,8 +1325,8 @@ test('generated read clients fetch mounted owner URLs and support separately dep
           endpointRequestsAfterGatewayFailure: Schema.Number,
           gatewayAttempts: Schema.Number,
           gatewayUnavailable: Schema.Boolean,
-        }),
-      ),
+        })
+      )
     )(result.stdout);
     assert.deepEqual(
       proof.calls,
@@ -1231,7 +1345,7 @@ test('generated read clients fetch mounted owner URLs and support separately dep
         correlationId: 'correlation-proof',
         method: 'POST',
         url,
-      })),
+      }))
     );
     assert.equal(proof.gatewayAttempts, 4);
     assert.equal(proof.gatewayUnavailable, true);
@@ -1262,15 +1376,18 @@ test('all live Party read and search transports match actual scaffold output', a
     ]);
     const owner = path.join(appRoot, 'verticals/party-registry');
     const ownerFiles = await readdir(path.join(owner, 'api'));
-    const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
+    const serverNames = ownerFiles.filter((name) =>
+      /-(?:read|search)-server\.ts$/u.test(name)
+    );
     assert.equal(serverNames.length, 18);
     await Promise.all(
       serverNames.map(async (serverName) => {
         const search = serverName.endsWith('-search-server.ts');
         const suffix = search ? 'search' : 'read';
         const name = serverName.slice(0, -`-${suffix}-server.ts`.length);
-        const camel = name.replaceAll(/-(?<letter>[a-z])/gu, (_, letter: string) =>
-          letter.toUpperCase(),
+        const camel = name.replaceAll(
+          /-(?<letter>[a-z])/gu,
+          (_, letter: string) => letter.toUpperCase()
         );
         const pascal = `${camel.charAt(0).toUpperCase()}${camel.slice(1)}`;
         const fixtureNameValue = search ? 'inventory-items' : 'resource-detail';
@@ -1283,50 +1400,71 @@ test('all live Party read and search transports match actual scaffold output', a
               .replaceAll(`/${name}`, `/${fixtureNameValue}`)
               .replaceAll(pascal, fixturePascal)
               .replaceAll(camel, fixtureCamel)
-              .replaceAll(`${fixturePascal}SearchClientOptions`, `${fixturePascal}ClientOptions`)
+              .replaceAll(
+                `${fixturePascal}SearchClientOptions`,
+                `${fixturePascal}ClientOptions`
+              )
               .replaceAll('partyRegistryApi', 'fixtureApi')
-              .replaceAll('/party-registry-api', '/inventory-stock-api'),
+              .replaceAll('/party-registry-api', '/inventory-stock-api')
           );
         const expectedServer = await readFixtureFile(
           fixture.root,
-          `verticals/inventory-stock/api/${fixtureNameValue}-${suffix}-server.ts`,
+          `verticals/inventory-stock/api/${fixtureNameValue}-${suffix}-server.ts`
         );
         const expectedClient = await readFixtureFile(
           fixture.root,
-          `verticals/inventory-stock/src/api/${fixtureNameValue}${search ? '-search' : ''}-client.ts`,
+          `verticals/inventory-stock/src/api/${fixtureNameValue}${search ? '-search' : ''}-client.ts`
         );
         assert.equal(
-          normalize(await readFile(path.join(owner, 'api', serverName), 'utf-8')),
+          normalize(
+            await readFile(path.join(owner, 'api', serverName), 'utf-8')
+          ),
           compactGovernedSource(expectedServer),
-          serverName,
+          serverName
         );
         assert.equal(
-          normalize(await readFile(path.join(owner, 'src/api', clientName), 'utf-8')),
+          normalize(
+            await readFile(path.join(owner, 'src/api', clientName), 'utf-8')
+          ),
           compactGovernedSource(expectedClient),
-          clientName,
+          clientName
         );
-      }),
+      })
     );
-    const sharedApi = await readFixtureFile(fixture.root, inventorySharedApiFile);
+    const sharedApi = await readFixtureFile(
+      fixture.root,
+      inventorySharedApiFile
+    );
     assert.doesNotMatch(sharedApi, /governedHttpApi/u);
   });
 });
 
 test('the migrated Party governed API slot accepts future generated additions', async () => {
-  const source = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
+  const source = await readFile(
+    path.join(appRoot, partyGovernedContractPath),
+    'utf-8'
+  );
   const next = insertSortedSlot(
     source,
     GOVERNED_HTTP_API_ADDITION_SLOT_START,
     GOVERNED_HTTP_API_ADDITION_SLOT_END,
     ['.addHttpApi(FutureReadApi)'],
-    (candidate) => candidate.startsWith('.addHttpApi(') && candidate.endsWith(')'),
+    (candidate) =>
+      candidate.startsWith('.addHttpApi(') && candidate.endsWith(')')
   );
   assert.match(next, /\.addHttpApi\(FutureReadApi\)/u);
 });
 
-const requiredGeneratedSlot = (source: string, start: string, end: string): string => {
+const requiredGeneratedSlot = (
+  source: string,
+  start: string,
+  end: string
+): string => {
   const slot = new RegExp(`${start}[\\s\\S]*?${end}`, 'u').exec(source)?.[0];
-  assert.ok(slot !== undefined, `expected the generated slot between ${start} and ${end}`);
+  assert.ok(
+    slot !== undefined,
+    `expected the generated slot between ${start} and ${end}`
+  );
   return slot;
 };
 
@@ -1338,19 +1476,24 @@ const assertRelocatedSlotRefused = async (
   fixture: Fixture,
   file: string,
   validSource: string,
-  [slotStart, slotEnd]: readonly [string, string],
+  [slotStart, slotEnd]: readonly [string, string]
 ): Promise<void> => {
   const slot = requiredGeneratedSlot(validSource, slotStart, slotEnd);
   await writeFile(
     file,
     `${validSource.replace(slot, '')}\nconst relocatedSlot = String.raw\`${slot}\`;\n`,
-    'utf-8',
+    'utf-8'
   );
   await assertScaffoldRefused(
     fixture,
     scaffoldCommand.moduleApi,
-    [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
-    /composition slots are not bound/u,
+    [
+      scaffoldFlag.vertical,
+      inventorySlug,
+      '--name',
+      fixtureName.resourceDetail,
+    ],
+    /composition slots are not bound/u
   );
   await writeFile(file, validSource, 'utf-8');
 };
@@ -1363,11 +1506,11 @@ const assertGovernedReadClients = (clients: readonly string[]): void => {
     assert.match(client, /WithAuthorization/u);
     assert.match(
       client,
-      /credential,\s+defaultApiPrefix: '\/inventory-stock-api',\s+requestCorrelation,/u,
+      /credential,\s+defaultApiPrefix: '\/inventory-stock-api',\s+requestCorrelation,/u
     );
     assert.doesNotMatch(
       client,
-      /makeEffectHttpApiClient|Context\.Reference|HttpClientRequest|HttpClient\.mapRequest/u,
+      /makeEffectHttpApiClient|Context\.Reference|HttpClientRequest|HttpClient\.mapRequest/u
     );
   }
 };
@@ -1376,44 +1519,67 @@ const assertGovernedReadProviders = (providers: readonly string[]): void => {
     assert.match(provider, /defineRead\(/u);
     assert.match(provider, /legalEntityScope: 'required'/u);
     assert.match(provider, /permissionTarget: 'module'/u);
-    assert.doesNotMatch(provider, /CoreDatabase|ScopedTransactionExecutor|from 'pg'/u);
+    assert.doesNotMatch(
+      provider,
+      /CoreDatabase|ScopedTransactionExecutor|from 'pg'/u
+    );
   }
 };
 const assertGovernedReadServers = (servers: readonly string[]): void => {
   for (const server of servers) {
     assert.match(server, /makeGovernedReadHttpHandler\(\{/u);
-    assert.match(server, /authenticatePrincipal: authenticateOperationPrincipal/u);
+    assert.match(
+      server,
+      /authenticatePrincipal: authenticateOperationPrincipal/u
+    );
     assert.match(server, /registration: \w+Read/u);
-    assert.doesNotMatch(server, /ReadRuntime|Match\.tags|catchTags|bearerChallenge/u);
-    assert.doesNotMatch(server, /tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
+    assert.doesNotMatch(
+      server,
+      /ReadRuntime|Match\.tags|catchTags|bearerChallenge/u
+    );
+    assert.doesNotMatch(
+      server,
+      /tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u
+    );
   }
 };
-const assertComposedGovernedReads = (composedApi: string, composedHandlers: string): void => {
+const assertComposedGovernedReads = (
+  composedApi: string,
+  composedHandlers: string
+): void => {
   for (const [contract, layer] of [
     ['InventoryItemsSearchApi', 'inventoryItemsReadApiLive'],
     ['ResourceDetailApi', 'resourceDetailReadApiLive'],
     ['StockLevelsReportApi', 'stockLevelsReadApiLive'],
   ] as const) {
     assert.match(composedApi, new RegExp(`import \\{ ${contract} \\}`, 'u'));
-    assert.match(composedApi, new RegExp(`\\.addHttpApi\\(${contract}\\)`, 'u'));
+    assert.match(
+      composedApi,
+      new RegExp(`\\.addHttpApi\\(${contract}\\)`, 'u')
+    );
     assert.match(composedHandlers, new RegExp(`import \\{ ${layer} \\}`, 'u'));
     assert.match(
       composedHandlers,
       new RegExp(
         `${layer}\\.pipe\\([\\s\\S]*?GovernedReadLayer\\.provide\\(governedReadRuntimeLive\\)`,
-        'u',
-      ),
+        'u'
+      )
     );
   }
 };
-const assertGovernedProblemDetailsContracts = (contracts: readonly string[]): void => {
+const assertGovernedProblemDetailsContracts = (
+  contracts: readonly string[]
+): void => {
   for (const contract of contracts) {
     assert.match(
       contract,
-      /import \{\s*makeProblemDetailsSchema,\s*makeRetryableProblemDetailsSchema,?\s*\} from '@app\/shared-contracts\/problem-details';/u,
+      /import \{\s*makeProblemDetailsSchema,\s*makeRetryableProblemDetailsSchema,?\s*\} from '@app\/shared-contracts\/problem-details';/u
     );
     assert.match(contract, /makeProblemDetailsSchema\([^)]*,\s*409,?\s*\)/u);
-    assert.match(contract, /makeRetryableProblemDetailsSchema\([^)]*,\s*503,?\s*\)/u);
+    assert.match(
+      contract,
+      /makeRetryableProblemDetailsSchema\([^)]*,\s*503,?\s*\)/u
+    );
     assert.doesNotMatch(contract, /application\/problem\+json|HttpApiSchema/u);
   }
 };
@@ -1477,55 +1643,112 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       readFixtureFile(fixture.root, inventoryRegistrationFile),
       readFixtureFile(fixture.root, inventoryFederationConfigFile),
     ]);
-    assert.match(nextManifest, /inventory\.stock\.component\.inventory-summary/u);
+    assert.match(
+      nextManifest,
+      /inventory\.stock\.component\.inventory-summary/u
+    );
     assert.match(nextManifest, /inventory\.stock\.search\.inventory-items/u);
     assert.match(nextManifest, /inventory\.stock\.report\.stock-levels/u);
-    assert.match(registration, /import\('\.\/src\/api\/resource-detail-client\.ts'\)/u);
-    assert.match(registration, /import\('\.\/src\/api\/inventory-items-search-client\.ts'\)/u);
-    assert.match(registration, /import\('\.\/src\/api\/stock-levels-report-client\.ts'\)/u);
+    assert.match(
+      registration,
+      /import\('\.\/src\/api\/resource-detail-client\.ts'\)/u
+    );
+    assert.match(
+      registration,
+      /import\('\.\/src\/api\/inventory-items-search-client\.ts'\)/u
+    );
+    assert.match(
+      registration,
+      /import\('\.\/src\/api\/stock-levels-report-client\.ts'\)/u
+    );
     assert.match(federation, /\.\/InventoryAlerts/u);
     assert.match(federation, /\.\/InventorySummary/u);
     assert.doesNotMatch(nextManifest, /import\('/u);
     const searchClient = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/api/inventory-items-search-client.ts',
+      'verticals/inventory-stock/src/api/inventory-items-search-client.ts'
     );
-    const reportClient = await readFixtureFile(fixture.root, inventoryReportClientFile);
+    const reportClient = await readFixtureFile(
+      fixture.root,
+      inventoryReportClientFile
+    );
     assert.match(searchClient, /export interface InventoryItemsClientOptions/u);
-    assert.doesNotMatch(searchClient, /export interface InventoryItemsSearchClientOptions/u);
+    assert.doesNotMatch(
+      searchClient,
+      /export interface InventoryItemsSearchClientOptions/u
+    );
     assert.match(reportClient, /export interface StockLevelsClientOptions/u);
-    assert.doesNotMatch(reportClient, /export interface StockLevelsReportClientOptions/u);
-    const moduleApiClient = await readFixtureFile(fixture.root, inventoryModuleApiClientFile);
-    const moduleApiContract = await readFixtureFile(fixture.root, inventoryModuleApiContractFile);
+    assert.doesNotMatch(
+      reportClient,
+      /export interface StockLevelsReportClientOptions/u
+    );
+    const moduleApiClient = await readFixtureFile(
+      fixture.root,
+      inventoryModuleApiClientFile
+    );
+    const moduleApiContract = await readFixtureFile(
+      fixture.root,
+      inventoryModuleApiContractFile
+    );
     const secondModuleApiContract = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/shared/apis/resource-history.ts',
+      'verticals/inventory-stock/shared/apis/resource-history.ts'
     );
     const secondModuleApiClient = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/api/resource-history-client.ts',
+      'verticals/inventory-stock/src/api/resource-history-client.ts'
     );
-    const searchProvider = await readFixtureFile(fixture.root, inventorySearchProviderFile);
-    const reportProvider = await readFixtureFile(fixture.root, inventoryReportProviderFile);
-    const moduleApiRead = await readFixtureFile(fixture.root, inventoryModuleApiReadFile);
-    const searchServer = await readFixtureFile(fixture.root, inventorySearchServerFile);
-    const reportServer = await readFixtureFile(fixture.root, inventoryReportServerFile);
-    const moduleApiServer = await readFixtureFile(fixture.root, inventoryModuleApiServerFile);
-    const operationBoundary = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
-    const composedApi = await readFixtureFile(fixture.root, inventorySharedApiFile);
-    const composedHandlers = await readFixtureFile(fixture.root, inventoryHandlerRootFile);
+    const searchProvider = await readFixtureFile(
+      fixture.root,
+      inventorySearchProviderFile
+    );
+    const reportProvider = await readFixtureFile(
+      fixture.root,
+      inventoryReportProviderFile
+    );
+    const moduleApiRead = await readFixtureFile(
+      fixture.root,
+      inventoryModuleApiReadFile
+    );
+    const searchServer = await readFixtureFile(
+      fixture.root,
+      inventorySearchServerFile
+    );
+    const reportServer = await readFixtureFile(
+      fixture.root,
+      inventoryReportServerFile
+    );
+    const moduleApiServer = await readFixtureFile(
+      fixture.root,
+      inventoryModuleApiServerFile
+    );
+    const operationBoundary = await readFixtureFile(
+      fixture.root,
+      inventoryActionPrincipalFile
+    );
+    const composedApi = await readFixtureFile(
+      fixture.root,
+      inventorySharedApiFile
+    );
+    const composedHandlers = await readFixtureFile(
+      fixture.root,
+      inventoryHandlerRootFile
+    );
     assert.match(searchClient, /api: InventoryItemsSearchApi,/u);
     assert.match(reportClient, /api: StockLevelsReportApi,/u);
     assert.match(
       moduleApiContract,
-      /headers: \{\},\s+params: \{\},\s+payload: ResourceDetailRequestSchema,\s+query: \{\}/u,
+      /headers: \{\},\s+params: \{\},\s+payload: ResourceDetailRequestSchema,\s+query: \{\}/u
     );
     assert.match(
       moduleApiClient,
-      /client\.resourceDetail\.execute\(\{\s+headers: \{\},\s+params: \{\},\s+payload,\s+query: \{\},?\s+\}\)/u,
+      /client\.resourceDetail\.execute\(\{\s+headers: \{\},\s+params: \{\},\s+payload,\s+query: \{\},?\s+\}\)/u
     );
     assert.match(moduleApiContract, /HttpApiGroup\.make\('resourceDetail'\)/u);
-    assert.match(secondModuleApiContract, /HttpApiGroup\.make\('resourceHistory'\)/u);
+    assert.match(
+      secondModuleApiContract,
+      /HttpApiGroup\.make\('resourceHistory'\)/u
+    );
     assert.match(secondModuleApiClient, /client\.resourceHistory\.execute\(/u);
     assertGovernedReadClients([moduleApiClient, searchClient, reportClient]);
     assert.doesNotMatch(searchClient, /\.provider\.ts|import\(/u);
@@ -1535,51 +1758,67 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     assert.match(moduleApiRead, /defineRead\(/u);
     assert.match(moduleApiRead, /legalEntityScope: 'required'/u);
     assertGovernedReadServers([moduleApiServer, searchServer, reportServer]);
-    assert.match(operationBoundary, /export const authenticateOperationPrincipal/u);
+    assert.match(
+      operationBoundary,
+      /export const authenticateOperationPrincipal/u
+    );
     assertComposedGovernedReads(composedApi, composedHandlers);
-    const searchContract = await readFixtureFile(fixture.root, inventorySearchContractFile);
+    const searchContract = await readFixtureFile(
+      fixture.root,
+      inventorySearchContractFile
+    );
     const reportContract = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
+      'verticals/inventory-stock/shared/apis/stock-levels-report.ts'
     );
-    assertGovernedProblemDetailsContracts([moduleApiContract, searchContract, reportContract]);
+    assertGovernedProblemDetailsContracts([
+      moduleApiContract,
+      searchContract,
+      reportContract,
+    ]);
     assert.match(
       searchContract,
-      /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
+      /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u
     );
     assert.doesNotMatch(searchContract, /tenantId|legalEntityId|principalId/u);
     assert.match(searchContract, /PolicyConflictProblem/u);
     assert.match(
       searchContract,
-      /makeProblemDetailsSchema\(\s*'InventoryItemsProviderPolicyConflictProblem',\s*409,?\s*\)/u,
+      /makeProblemDetailsSchema\(\s*'InventoryItemsProviderPolicyConflictProblem',\s*409,?\s*\)/u
     );
-    assert.match(searchContract, /HttpApiGroup\.make\('inventoryItemsSearch'\)/u);
+    assert.match(
+      searchContract,
+      /HttpApiGroup\.make\('inventoryItemsSearch'\)/u
+    );
 
     await mkdir(path.join(fixture.root, 'node_modules', '@app'), {
       recursive: true,
     });
-    await mkdir(path.dirname(path.join(fixture.root, pluginBffNodeModulePath)), {
-      recursive: true,
-    });
+    await mkdir(
+      path.dirname(path.join(fixture.root, pluginBffNodeModulePath)),
+      {
+        recursive: true,
+      }
+    );
     await symlink(
       path.join(appRoot, 'packages/core-runtime'),
       path.join(fixture.root, 'node_modules/@app/core-runtime'),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, sharedContractsPackagePath),
       path.join(fixture.root, sharedContractsNodeModulePath),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, effectNodeModulePath),
       path.join(fixture.root, effectNodeModulePath),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, pluginBffNodeModulePath),
       path.join(fixture.root, pluginBffNodeModulePath),
-      'dir',
+      'dir'
     );
     await writeFixtureFile(
       fixture.root,
@@ -1599,7 +1838,7 @@ export const authenticateOperationPrincipal = (authorization, problems) =>
   Redacted.value(authorization) === 'Bearer proof'
     ? Effect.succeed(principal)
     : Effect.fail(problems.authentication());
-`,
+`
     );
     await writeFixtureFile(
       fixture.root,
@@ -1701,7 +1940,7 @@ try {
   await generatedServer.dispose();
   await server.dispose();
 }
-`,
+`
     );
     const execution = spawnSync(
       process.execPath,
@@ -1710,10 +1949,12 @@ try {
         cwd: fixture.root,
         encoding: 'utf-8',
         env: {
-          DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
-          DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
+          DATABASE_ADMIN_URL:
+            'postgresql://ontos_admin:admin@localhost:5433/ontos',
+          DATABASE_URL:
+            'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
         },
-      },
+      }
     );
     assert.equal(execution.status, 0, execution.stderr);
     const expectedGeneratedPrincipal = {
@@ -1722,7 +1963,9 @@ try {
       principalId: '00000000-0000-4000-8000-000000000001',
       tenantId: '00000000-0000-4000-8000-000000000002',
     };
-    const expectedGeneratedTransport = { correlationId: 'generated-correlation' };
+    const expectedGeneratedTransport = {
+      correlationId: 'generated-correlation',
+    };
     const lastGeneratedLine = execution.stdout.trim().split('\n').at(-1);
     assert.ok(lastGeneratedLine !== undefined);
     assert.deepEqual(JSON.parse(lastGeneratedLine), {
@@ -1765,11 +2008,18 @@ try {
 
     // Restore the generated contract after the execution-only authentication stub. Reruns
     // must validate the real owned boundary, not silently accept handwritten fixture code.
-    await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, operationBoundary);
-    const packageJson = decodeFixturePackage(
-      await readFixtureFile(fixture.root, inventoryPackageFile),
+    await writeFixtureFile(
+      fixture.root,
+      inventoryActionPrincipalFile,
+      operationBoundary
     );
-    assert.equal(packageJson.dependencies['@app/shared-contracts'], workspaceVersion);
+    const packageJson = decodeFixturePackage(
+      await readFixtureFile(fixture.root, inventoryPackageFile)
+    );
+    assert.equal(
+      packageJson.dependencies['@app/shared-contracts'],
+      workspaceVersion
+    );
 
     // Owner contracts, reads, and clients remain adaptable; thin HTTP adapters stay generator-owned.
     const adaptedGeneratedArtifacts = [
@@ -1781,7 +2031,10 @@ try {
         inventoryModuleApiReadFile,
         'export const resourceDetailOwnerProjection = (value: string) => value;',
       ],
-      [inventoryModuleApiClientFile, '// Owner-maintained client documentation.'],
+      [
+        inventoryModuleApiClientFile,
+        '// Owner-maintained client documentation.',
+      ],
       [
         inventorySearchProviderFile,
         'export const inventoryItemsOwnerRanking = (score: number) => score;',
@@ -1790,7 +2043,10 @@ try {
         inventorySearchContractFile,
         'export const InventoryItemsOwnerFilterSchema = Schema.Struct({ tag: Schema.String });',
       ],
-      [inventorySearchClientFile, '// Owner-maintained search client documentation.'],
+      [
+        inventorySearchClientFile,
+        '// Owner-maintained search client documentation.',
+      ],
       [
         inventoryReportProviderFile,
         'export const stockLevelsOwnerProjection = (column: string) => column;',
@@ -1799,16 +2055,26 @@ try {
         inventoryReportContractFile,
         'export const StockLevelsOwnerColumnSchema = Schema.Struct({ column: Schema.String });',
       ],
-      [inventoryReportClientFile, '// Owner-maintained report client documentation.'],
+      [
+        inventoryReportClientFile,
+        '// Owner-maintained report client documentation.',
+      ],
     ] as const;
     await Promise.all(
       adaptedGeneratedArtifacts.map(async ([relativePath, ownerAddition]) => {
         const generated = await readFixtureFile(fixture.root, relativePath);
-        await writeFixtureFile(fixture.root, relativePath, `${generated}\n${ownerAddition}\n`);
-      }),
+        await writeFixtureFile(
+          fixture.root,
+          relativePath,
+          `${generated}\n${ownerAddition}\n`
+        );
+      })
     );
 
-    const adaptedManifest = await readFixtureFile(fixture.root, inventoryManifestFile);
+    const adaptedManifest = await readFixtureFile(
+      fixture.root,
+      inventoryManifestFile
+    );
     assert.match(adaptedManifest, /dimensions: \[\]/u);
     assert.match(adaptedManifest, /label: 'Stock Levels'/u);
     await writeFixtureFile(
@@ -1816,7 +2082,7 @@ try {
       inventoryManifestFile,
       adaptedManifest
         .replace('dimensions: []', "dimensions: ['warehouse']")
-        .replace("label: 'Stock Levels'", "label: 'Warehouse stock'"),
+        .replace("label: 'Stock Levels'", "label: 'Warehouse stock'")
     );
 
     const beforeRepeat = await snapshotTree(fixture.root);
@@ -1850,7 +2116,7 @@ try {
         '--name',
         'inventory-summary',
       ]),
-      /refusing to overwrite/u,
+      /refusing to overwrite/u
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
     for (const generated of [
@@ -1884,11 +2150,19 @@ try {
       ]);
       // eslint-disable-next-line no-await-in-loop
       assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
-      const serverPath = path.join(fixture.root, 'verticals/inventory-stock/api', generated.server);
+      const serverPath = path.join(
+        fixture.root,
+        'verticals/inventory-stock/api',
+        generated.server
+      );
       // eslint-disable-next-line no-await-in-loop
       const ownedServer = await readFile(serverPath, 'utf-8');
       // eslint-disable-next-line no-await-in-loop
-      await writeFile(serverPath, `${ownedServer}// owner customization\n`, 'utf-8');
+      await writeFile(
+        serverPath,
+        `${ownedServer}// owner customization\n`,
+        'utf-8'
+      );
       // eslint-disable-next-line no-await-in-loop
       await assert.rejects(
         run(fixture, generated.command, [
@@ -1898,7 +2172,7 @@ try {
           generated.name,
           ...(generated.resource ? [scaffoldFlag.resource, 'item'] : []),
         ]),
-        /refusing to overwrite/u,
+        /refusing to overwrite/u
       );
       // eslint-disable-next-line no-await-in-loop
       await writeFile(serverPath, ownedServer, 'utf-8');
@@ -1909,15 +2183,20 @@ try {
       sharedApiPath,
       validSharedApi.replace(
         '// </generated-governed-http-api-additions>',
-        'ownerCustomLayer()\n  // </generated-governed-http-api-additions>',
+        'ownerCustomLayer()\n  // </generated-governed-http-api-additions>'
       ),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.moduleApi,
-      [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
-      /composition slots are not bound|unsupported developer content/u,
+      [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ],
+      /composition slots are not bound|unsupported developer content/u
     );
     await writeFile(sharedApiPath, validSharedApi, 'utf-8');
 
@@ -1928,20 +2207,20 @@ try {
 
     const registrationPath = path.join(
       fixture.root,
-      'verticals/inventory-stock/vertical.registration.ts',
+      'verticals/inventory-stock/vertical.registration.ts'
     );
     const validRegistration = await readFile(registrationPath, 'utf-8');
     const resourceDetailRegistration =
       "      'resource-detail': () => import('./src/api/resource-detail-client.ts'),\n";
     const wrongCategoryRegistration = validRegistration.replace(
       '// </generated-module-registration-search>',
-      `${resourceDetailRegistration}      // </generated-module-registration-search>`,
+      `${resourceDetailRegistration}      // </generated-module-registration-search>`
     );
     for (const invalidRegistration of [
       wrongCategoryRegistration,
       wrongCategoryRegistration.replace(
         /^\s*'resource-detail': \(\) => import\('\.\/src\/api\/resource-detail-client\.ts'\),\n/mu,
-        '',
+        ''
       ),
     ]) {
       // eslint-disable-next-line no-await-in-loop
@@ -1950,8 +2229,13 @@ try {
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.moduleApi,
-        [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
-        /wrong contribution category/u,
+        [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ],
+        /wrong contribution category/u
       );
     }
     await writeFile(registrationPath, validRegistration, 'utf-8');
@@ -1962,21 +2246,31 @@ try {
       handlerRootPath,
       validHandlerRoot.replace(
         /resourceDetailReadApiLive\.pipe\(\s*GovernedReadLayer\.provide\(governedReadRuntimeLive\),?\s*\),/u,
-        'resourceDetailReadApiLive.pipe(\n    GovernedReadLayer.provide(governedReadRuntimeLive),\n    GovernedReadLayer.provide(ownerCustomizedRuntime),\n  ),',
+        'resourceDetailReadApiLive.pipe(\n    GovernedReadLayer.provide(governedReadRuntimeLive),\n    GovernedReadLayer.provide(ownerCustomizedRuntime),\n  ),'
       ),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.moduleApi,
-      [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
-      /contains drift/u,
+      [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ],
+      /contains drift/u
     );
     await writeFile(handlerRootPath, validHandlerRoot, 'utf-8');
-    await assertRelocatedSlotRefused(fixture, handlerRootPath, validHandlerRoot, [
-      GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
-      GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
-    ]);
+    await assertRelocatedSlotRefused(
+      fixture,
+      handlerRootPath,
+      validHandlerRoot,
+      [
+        GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+        GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+      ]
+    );
     await assert.rejects(
       run(fixture, scaffoldCommand.moduleApi, [
         scaffoldFlag.vertical,
@@ -1984,12 +2278,12 @@ try {
         '--name',
         '../unsafe',
       ]),
-      /lower-kebab-case/u,
+      /lower-kebab-case/u
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
     const billingFederationPath = path.join(
       fixture.root,
-      'verticals/billing/module-federation.config.ts',
+      'verticals/billing/module-federation.config.ts'
     );
     await writeFile(
       billingFederationPath,
@@ -2003,7 +2297,7 @@ export default {
 };
 void ignored;
 `,
-      'utf-8',
+      'utf-8'
     );
     await run(fixture, scaffoldCommand.publicComponent, [
       scaffoldFlag.vertical,
@@ -2011,7 +2305,10 @@ void ignored;
       '--name',
       'billing-summary',
     ]);
-    const commentSafeFederation = await readFile(billingFederationPath, 'utf-8');
+    const commentSafeFederation = await readFile(
+      billingFederationPath,
+      'utf-8'
+    );
     assert.match(commentSafeFederation, /\/exposes: \\\{\\\}\/u/u);
     assert.match(commentSafeFederation, /\.\/BillingSummary/u);
     await writeFile(billingFederationPath, 'export default {};\n', 'utf-8');
@@ -2019,7 +2316,7 @@ void ignored;
       fixture,
       scaffoldCommand.publicComponent,
       [scaffoldFlag.vertical, 'billing', '--name', 'billing-details'],
-      /exposes object is missing/u,
+      /exposes object is missing/u
     );
   });
 });
@@ -2033,81 +2330,115 @@ test('governed contribution reruns cannot be spoofed by comments or corrupt owne
       fixtureName.resourceDetail,
     ] as const;
     await run(fixture, scaffoldCommand.moduleApi, scaffoldArguments);
-    const apiContract = await readFixtureFile(fixture.root, inventoryModuleApiContractFile);
+    const apiContract = await readFixtureFile(
+      fixture.root,
+      inventoryModuleApiContractFile
+    );
     const assertInvalidApiContractRerunRejected = async (
-      invalidApiContract: string,
+      invalidApiContract: string
     ): Promise<void> => {
-      await writeFixtureFile(fixture.root, inventoryModuleApiContractFile, invalidApiContract);
+      await writeFixtureFile(
+        fixture.root,
+        inventoryModuleApiContractFile,
+        invalidApiContract
+      );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.moduleApi,
         scaffoldArguments,
-        /refusing to overwrite existing business file/u,
+        /refusing to overwrite existing business file/u
       );
     };
     await assertInvalidApiContractRerunRejected(
-      apiContract.replace('/reads/resource-detail', '/reads/wrong'),
+      apiContract.replace('/reads/resource-detail', '/reads/wrong')
     );
     await assertInvalidApiContractRerunRejected(
       apiContract.replace(
         "HttpApiEndpoint.post('execute', '/reads/resource-detail', {",
-        "HttpApiEndpoint.post('wrong', '/reads/resource-detail', {",
-      ),
+        "HttpApiEndpoint.post('wrong', '/reads/resource-detail', {"
+      )
     );
     await assertInvalidApiContractRerunRejected(
       apiContract.replace(
         /\.add\(\n {2}HttpApiGroup\.make\('resourceDetail'\)\.add\([\s\S]*?\n {2}\),\n\);\n$/u,
-        ".add(HttpApiGroup.make('resourceDetail'));\n",
-      ),
+        ".add(HttpApiGroup.make('resourceDetail'));\n"
+      )
     );
-    await writeFixtureFile(fixture.root, inventoryModuleApiContractFile, apiContract);
+    await writeFixtureFile(
+      fixture.root,
+      inventoryModuleApiContractFile,
+      apiContract
+    );
     const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
-    const ownerImport = "import { ResourceDetailApi } from './shared/apis/resource-detail.ts';";
+    const ownerImport =
+      "import { ResourceDetailApi } from './shared/apis/resource-detail.ts';";
     await writeFixtureFile(
       fixture.root,
       inventoryManifestFile,
-      `${manifest.replace(ownerImport, '')}\n/* ${ownerImport} */\n`,
+      `${manifest.replace(ownerImport, '')}\n/* ${ownerImport} */\n`
     );
     await run(fixture, scaffoldCommand.moduleApi, scaffoldArguments);
-    const repairedManifest = await readFixtureFile(fixture.root, inventoryManifestFile);
-    assert.equal(repairedManifest.split(/\r?\n/u).filter((line) => line === ownerImport).length, 1);
+    const repairedManifest = await readFixtureFile(
+      fixture.root,
+      inventoryManifestFile
+    );
+    assert.equal(
+      repairedManifest.split(/\r?\n/u).filter((line) => line === ownerImport)
+        .length,
+      1
+    );
 
-    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
-    const entry = "'resource-detail': () => import('./src/api/resource-detail-client.ts'),";
+    const registration = await readFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile
+    );
+    const entry =
+      "'resource-detail': () => import('./src/api/resource-detail-client.ts'),";
     const corrupted = registration.replace(entry, `${entry}\n${entry}`);
     await writeFixtureFile(fixture.root, inventoryRegistrationFile, corrupted);
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.moduleApi,
       scaffoldArguments,
-      /generated export already exists|generated owner slot/u,
+      /generated export already exists|generated owner slot/u
     );
 
-    await writeFixtureFile(fixture.root, inventoryRegistrationFile, registration);
     await writeFixtureFile(
       fixture.root,
       inventoryRegistrationFile,
-      registration.replace(entry, "'resource-detail': () => import('./src/api/evil-client.ts'),"),
+      registration
+    );
+    await writeFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile,
+      registration.replace(
+        entry,
+        "'resource-detail': () => import('./src/api/evil-client.ts'),"
+      )
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.moduleApi,
       scaffoldArguments,
-      /generated owner slot contains mismatched identity/u,
+      /generated owner slot contains mismatched identity/u
     );
 
     const wrongSlotRegistration = registration
       .replace(`${entry}\n`, '')
       .replace(
         '    // </generated-module-registration-search>',
-        `    ${entry}\n    // </generated-module-registration-search>`,
+        `    ${entry}\n    // </generated-module-registration-search>`
       );
-    await writeFixtureFile(fixture.root, inventoryRegistrationFile, wrongSlotRegistration);
+    await writeFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile,
+      wrongSlotRegistration
+    );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.moduleApi,
       scaffoldArguments,
-      /generated owner slot contains mismatched identity/u,
+      /generated owner slot contains mismatched identity/u
     );
 
     await writeFixtureFile(
@@ -2115,11 +2446,14 @@ test('governed contribution reruns cannot be spoofed by comments or corrupt owne
       inventoryRegistrationFile,
       registration.replace(
         entry,
-        "'unrelated': () => import('./src/api/unrelated-client.ts') /* 'resource-detail': spoof */,",
-      ),
+        "'unrelated': () => import('./src/api/unrelated-client.ts') /* 'resource-detail': spoof */,"
+      )
     );
     await run(fixture, scaffoldCommand.moduleApi, scaffoldArguments);
-    const commentSafeRegistration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    const commentSafeRegistration = await readFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile
+    );
     assert.equal(commentSafeRegistration.split(entry).length - 1, 1);
 
     await writeFixtureFile(
@@ -2127,14 +2461,14 @@ test('governed contribution reruns cannot be spoofed by comments or corrupt owne
       inventoryManifestFile,
       repairedManifest.replace(
         ownerImport,
-        "import { ResourceDetailApi } from './shared/apis/evil.ts';",
-      ),
+        "import { ResourceDetailApi } from './shared/apis/evil.ts';"
+      )
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.moduleApi,
       scaffoldArguments,
-      /generated owner import binding conflicts/u,
+      /generated owner import binding conflicts/u
     );
   });
 });
@@ -2144,7 +2478,7 @@ test('adapted governed artifacts require executable owner identity instead of co
     const assertSpoofsRejected = async (
       spoofs: readonly (readonly [string, string])[],
       command: Parameters<typeof run>[1],
-      commandArguments: readonly string[],
+      commandArguments: readonly string[]
     ): Promise<void> => {
       const [spoof, ...remaining] = spoofs;
       if (spoof === undefined) {
@@ -2156,13 +2490,13 @@ test('adapted governed artifacts require executable owner identity instead of co
       await writeFixtureFile(
         fixture.root,
         file,
-        `${current.replace(identity, removedIdentity)}\n/* ${identity} */\nconst identitySpoof = ${JSON.stringify(identity)};\n`,
+        `${current.replace(identity, removedIdentity)}\n/* ${identity} */\nconst identitySpoof = ${JSON.stringify(identity)};\n`
       );
       await assertScaffoldRefused(
         fixture,
         command,
         commandArguments,
-        /refusing to overwrite existing business file/u,
+        /refusing to overwrite existing business file/u
       );
       await writeFixtureFile(fixture.root, file, current);
       await assertSpoofsRejected(remaining, command, commandArguments);
@@ -2180,17 +2514,24 @@ test('adapted governed artifacts require executable owner identity instead of co
         inventoryModuleApiContractFile,
         "export const ResourceDetailApi = HttpApi.make('ResourceDetailApi')",
       ],
-      [inventoryModuleApiReadFile, 'export const resourceDetailRead = defineRead('],
+      [
+        inventoryModuleApiReadFile,
+        'export const resourceDetailRead = defineRead(',
+      ],
       [
         inventoryModuleApiServerFile,
         'export const resourceDetailReadApiLive = HttpApiBuilder.group(',
       ],
     ] as const;
-    await assertSpoofsRejected(moduleSpoofs, scaffoldCommand.moduleApi, moduleArguments);
+    await assertSpoofsRejected(
+      moduleSpoofs,
+      scaffoldCommand.moduleApi,
+      moduleArguments
+    );
 
     const assertAdaptationRejected = async (
       file: string,
-      adapt: (source: string) => string,
+      adapt: (source: string) => string
     ): Promise<void> => {
       const current = await readFixtureFile(fixture.root, file);
       await writeFixtureFile(fixture.root, file, adapt(current));
@@ -2198,7 +2539,7 @@ test('adapted governed artifacts require executable owner identity instead of co
         fixture,
         scaffoldCommand.moduleApi,
         moduleArguments,
-        /refusing to overwrite existing business file/u,
+        /refusing to overwrite existing business file/u
       );
       await writeFixtureFile(fixture.root, file, current);
     };
@@ -2207,32 +2548,32 @@ test('adapted governed artifacts require executable owner identity instead of co
       (source) =>
         `${source.replace(
           "export const ResourceDetailApi = HttpApi.make('ResourceDetailApi')",
-          "namespace Decoy { export const ResourceDetailApi = HttpApi.make('ResourceDetailApi')",
-        )}\n}`,
+          "namespace Decoy { export const ResourceDetailApi = HttpApi.make('ResourceDetailApi')"
+        )}\n}`
     );
     await assertAdaptationRejected(inventoryActionGatewayFile, (source) =>
       source.replace(
         'export const operationGateway = makeOperationGateway();',
-        "namespace Decoy { export const operationGateway = makeOperationGateway(); }\nconst spoof = 'export const operationGateway = actionGateway';",
-      ),
+        "namespace Decoy { export const operationGateway = makeOperationGateway(); }\nconst spoof = 'export const operationGateway = actionGateway';"
+      )
     );
     await assertAdaptationRejected(
       inventoryModuleApiServerFile,
       (source) =>
         `${source.replace(
           'authenticatePrincipal: authenticateOperationPrincipal',
-          'authenticatePrincipal: unverifiedPrincipal',
-        )}\nconst unverifiedPrincipal = authenticateOperationPrincipal;`,
+          'authenticatePrincipal: unverifiedPrincipal'
+        )}\nconst unverifiedPrincipal = authenticateOperationPrincipal;`
     );
     await assertAdaptationRejected(
       inventoryModuleApiServerFile,
       (source) =>
-        `${source.replace('registration: resourceDetailRead', 'registration: otherRead')}\nvoid ReadRuntime;`,
+        `${source.replace('registration: resourceDetailRead', 'registration: otherRead')}\nvoid ReadRuntime;`
     );
     await assertAdaptationRejected(
       inventoryModuleApiServerFile,
       (source) =>
-        `${source.replace('makeGovernedReadHttpHandler({', 'unsafeReadHandler({')}\nconst spoof = '.runRead({';`,
+        `${source.replace('makeGovernedReadHttpHandler({', 'unsafeReadHandler({')}\nconst spoof = '.runRead({';`
     );
 
     const searchArguments = [
@@ -2245,14 +2586,24 @@ test('adapted governed artifacts require executable owner identity instead of co
     ] as const;
     await run(fixture, scaffoldCommand.searchProvider, searchArguments);
     const providerSpoofs = [
-      [inventorySearchProviderFile, 'export const inventoryItemsRead = defineRead('],
+      [
+        inventorySearchProviderFile,
+        'export const inventoryItemsRead = defineRead(',
+      ],
       [
         inventorySearchContractFile,
         "export const InventoryItemsSearchApi = HttpApi.make('InventoryItemsSearchApi')",
       ],
-      [inventorySearchServerFile, 'export const inventoryItemsReadApiLive = HttpApiBuilder.group('],
+      [
+        inventorySearchServerFile,
+        'export const inventoryItemsReadApiLive = HttpApiBuilder.group(',
+      ],
     ] as const;
-    await assertSpoofsRejected(providerSpoofs, scaffoldCommand.searchProvider, searchArguments);
+    await assertSpoofsRejected(
+      providerSpoofs,
+      scaffoldCommand.searchProvider,
+      searchArguments
+    );
   });
 });
 
@@ -2263,7 +2614,9 @@ test('governed client generation rejects an incompatible shared runtime dependen
       inventorySlug,
     ]);
     const packagePath = path.join(fixture.root, inventoryPackageFile);
-    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
+    const packageJson = decodeFixturePackage(
+      await readFile(packagePath, 'utf-8')
+    );
     await writeFile(
       packagePath,
       json({
@@ -2273,13 +2626,18 @@ test('governed client generation rejects an incompatible shared runtime dependen
           '@app/shared-contracts': '^1.0.0',
         },
       }),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.moduleApi,
-      [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
-      /incompatible @app\/shared-contracts dependency/u,
+      [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--name',
+        fixtureName.resourceDetail,
+      ],
+      /incompatible @app\/shared-contracts dependency/u
     );
   });
 });
@@ -2299,9 +2657,15 @@ test('governed client generation restores its missing owner-local operation gate
       fixtureName.resourceDetail,
     ]);
 
-    const gateway = await readFixtureFile(fixture.root, inventoryActionGatewayFile);
+    const gateway = await readFixtureFile(
+      fixture.root,
+      inventoryActionGatewayFile
+    );
     assert.match(gateway, /@ontos-action-boundary-owner inventory-stock/u);
-    assert.match(gateway, /export const operationGateway = makeOperationGateway\(\)/u);
+    assert.match(
+      gateway,
+      /export const operationGateway = makeOperationGateway\(\)/u
+    );
   });
 });
 
@@ -2313,13 +2677,15 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
       './workers': './src/workers/index.ts',
     },
   };
-  assert.deepEqual(publishedOutboxContractExports(producerPackage), ['./outbox/orders-created']);
+  assert.deepEqual(publishedOutboxContractExports(producerPackage), [
+    './outbox/orders-created',
+  ]);
   assert.doesNotThrow(() =>
     assertPublishedOutboxDependencyUsage({
       dependencyPackageJson: producerPackage,
       dependencyPackageName: inventoryPackageName,
       moduleSpecifiers: ['@app/inventory-stock/outbox/orders-created'],
-    }),
+    })
   );
   assert.throws(
     () =>
@@ -2328,7 +2694,7 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
         dependencyPackageName: inventoryPackageName,
         moduleSpecifiers: ['@app/inventory-stock/workers'],
       }),
-    /not a published schema-only Outbox contract subpath/u,
+    /not a published schema-only Outbox contract subpath/u
   );
   assert.throws(
     () =>
@@ -2337,7 +2703,7 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
         dependencyPackageName: inventoryPackageName,
         moduleSpecifiers: [inventoryPackageName],
       }),
-    /not a published schema-only Outbox contract dependency/u,
+    /not a published schema-only Outbox contract dependency/u
   );
 });
 
@@ -2357,13 +2723,21 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
           '--provisioning',
           'tenant_membership_default',
         ],
-        { workspaceRoot: fixture.root },
+        { workspaceRoot: fixture.root }
       ),
-      /missing required flag --legal-entity-scope/u,
+      /missing required flag --legal-entity-scope/u
     );
     assert.deepEqual(await snapshotTree(fixture.root), before);
-    const invalidCalls: readonly [ScaffoldCommand, readonly string[], RegExp][] = [
-      ['action', [scaffoldFlag.vertical, inventorySlug], /missing required flag --action/u],
+    const invalidCalls: readonly [
+      ScaffoldCommand,
+      readonly string[],
+      RegExp,
+    ][] = [
+      [
+        'action',
+        [scaffoldFlag.vertical, inventorySlug],
+        /missing required flag --action/u,
+      ],
       [
         'action',
         [
@@ -2378,15 +2752,33 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
       ],
       [
         'action',
-        [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action, '--unknown', 'x'],
+        [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          fixtureName.action,
+          '--unknown',
+          'x',
+        ],
         /unknown flag --unknown/u,
       ],
       [
         'action',
-        [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action, '--action', 'again'],
+        [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--action',
+          fixtureName.action,
+          '--action',
+          'again',
+        ],
         /only once/u,
       ],
-      ['action', [scaffoldFlag.vertical, '', '--action', fixtureName.action], /non-empty value/u],
+      [
+        'action',
+        [scaffoldFlag.vertical, '', '--action', fixtureName.action],
+        /non-empty value/u,
+      ],
       [
         'action',
         [scaffoldFlag.vertical, '../billing', '--action', fixtureName.action],
@@ -2394,7 +2786,12 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
       ],
       [
         'action',
-        [scaffoldFlag.vertical, '/absolute/billing', '--action', fixtureName.action],
+        [
+          scaffoldFlag.vertical,
+          '/absolute/billing',
+          '--action',
+          fixtureName.action,
+        ],
         /lower-kebab-case/u,
       ],
       [
@@ -2411,20 +2808,45 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
         ],
         /mutually exclusive/u,
       ],
-      ['action', ['--scope', 'core', '--action', fixtureName.action], /--module is required/u],
       [
         'action',
-        ['--scope', 'other', '--module', fixtureName.actionModule, '--action', fixtureName.action],
+        ['--scope', 'core', '--action', fixtureName.action],
+        /--module is required/u,
+      ],
+      [
+        'action',
+        [
+          '--scope',
+          'other',
+          '--module',
+          fixtureName.actionModule,
+          '--action',
+          fixtureName.action,
+        ],
         /--scope core is required/u,
       ],
       [
         'action',
-        ['--scope', 'core', '--module', 'billing.modules', '--action', fixtureName.action],
+        [
+          '--scope',
+          'core',
+          '--module',
+          'billing.modules',
+          '--action',
+          fixtureName.action,
+        ],
         /stable lowercase core/u,
       ],
       [
         'action',
-        ['--scope', 'core', '--module', 'core.../modules', '--action', fixtureName.action],
+        [
+          '--scope',
+          'core',
+          '--module',
+          'core.../modules',
+          '--action',
+          fixtureName.action,
+        ],
         /stable lowercase core/u,
       ],
       [
@@ -2444,11 +2866,26 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
       ],
       [
         'policy',
-        ['--scope', 'global', '--policy', fixtureName.policy, scaffoldFlag.vertical, inventorySlug],
+        [
+          '--scope',
+          'global',
+          '--policy',
+          fixtureName.policy,
+          scaffoldFlag.vertical,
+          inventorySlug,
+        ],
         /forbidden/u,
       ],
-      ['policy', ['--scope', 'microvertical', '--policy', fixtureName.policy], /required/u],
-      ['policy', ['--scope', 'other', '--policy', fixtureName.policy], /global or microvertical/u],
+      [
+        'policy',
+        ['--scope', 'microvertical', '--policy', fixtureName.policy],
+        /required/u,
+      ],
+      [
+        'policy',
+        ['--scope', 'other', '--policy', fixtureName.policy],
+        /global or microvertical/u,
+      ],
       [
         scaffoldCommand.outboxMessage,
         [
@@ -2478,9 +2915,12 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
     ];
     await Promise.all(
       invalidCalls.map(async ([command, generatorArguments, expected]) => {
-        await assert.rejects(run(fixture, command, generatorArguments), expected);
+        await assert.rejects(
+          run(fixture, command, generatorArguments),
+          expected
+        );
         assert.deepEqual(await snapshotTree(fixture.root), before);
-      }),
+      })
     );
   });
 });
@@ -2489,17 +2929,27 @@ test('generates one immutable Action identity boundary and exact direct dependen
   await withFixture(async (fixture) => {
     const shellBefore = await readFixtureFile(fixture.root, shellSentinelFile);
     const topologyBefore = await readFixtureFile(fixture.root, topologyFile);
-    const result = await run(fixture, scaffoldCommand.microverticalActionBoundary, [
-      scaffoldFlag.vertical,
-      inventorySlug,
-    ]);
+    const result = await run(
+      fixture,
+      scaffoldCommand.microverticalActionBoundary,
+      [scaffoldFlag.vertical, inventorySlug]
+    );
     assert.equal(result.kind, 'generated');
-    const server = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
-    const actionHttpRunner = await readFixtureFile(fixture.root, inventoryActionHttpRunnerFile);
-    const client = await readFixtureFile(fixture.root, inventoryActionGatewayFile);
+    const server = await readFixtureFile(
+      fixture.root,
+      inventoryActionPrincipalFile
+    );
+    const actionHttpRunner = await readFixtureFile(
+      fixture.root,
+      inventoryActionHttpRunnerFile
+    );
+    const client = await readFixtureFile(
+      fixture.root,
+      inventoryActionGatewayFile
+    );
     const redemption = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/api/auth/gateway-assertion-redemption.ts',
+      'verticals/inventory-stock/api/auth/gateway-assertion-redemption.ts'
     );
     for (const source of [server, client]) {
       assert.match(source, /@ontos-action-boundary-owner inventory-stock/u);
@@ -2507,32 +2957,47 @@ test('generates one immutable Action identity boundary and exact direct dependen
       assert.match(source, /ACTION_GATEWAY_AUDIENCE = 'inventory-stock'/u);
     }
     assert.match(server, /@app\/gateway-principal-verifier\/server/u);
-    assert.match(server, /bindGatewayPrincipalVerifier\(ACTION_GATEWAY_AUDIENCE\)/u);
+    assert.match(
+      server,
+      /bindGatewayPrincipalVerifier\(ACTION_GATEWAY_AUDIENCE\)/u
+    );
     assert.doesNotMatch(
       server,
-      /createLocalJWKSet|decodeProtectedHeader|jwtVerify|PublicVerificationKeySchema/u,
+      /createLocalJWKSet|decodeProtectedHeader|jwtVerify|PublicVerificationKeySchema/u
     );
     assert.match(client, /makeOperationGateway as makeSharedOperationGateway/u);
-    assert.match(client, /makeSharedOperationGateway\(ACTION_GATEWAY_AUDIENCE, acquire\)/u);
-    assert.match(client, /export const operationGateway = makeOperationGateway\(\)/u);
-    assert.doesNotMatch(
+    assert.match(
       client,
-      /ActionGatewayIssuer|ActionGatewayAttempt|makeActionGateway|\bactionGateway\b/u,
+      /makeSharedOperationGateway\(ACTION_GATEWAY_AUDIENCE, acquire\)/u
     );
-    assert.doesNotMatch(client, /Effect\.flatMap|Bearer \$\{|acquire\(\{ audience/u);
+    assert.match(
+      client,
+      /export const operationGateway = makeOperationGateway\(\)/u
+    );
     assert.doesNotMatch(
       client,
-      /api\/auth\/action-principal|gateway-assertion-redemption|GatewayContextProtectedHeader|verticals\//u,
+      /ActionGatewayIssuer|ActionGatewayAttempt|makeActionGateway|\bactionGateway\b/u
+    );
+    assert.doesNotMatch(
+      client,
+      /Effect\.flatMap|Bearer \$\{|acquire\(\{ audience/u
+    );
+    assert.doesNotMatch(
+      client,
+      /api\/auth\/action-principal|gateway-assertion-redemption|GatewayContextProtectedHeader|verticals\//u
     );
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
     assert.match(server, /verifyAndRedeem/u);
     assert.match(actionHttpRunner, /bindGovernedActionHttp/u);
     assert.match(actionHttpRunner, /bindActionHttpRunner/u);
     assert.match(actionHttpRunner, /authenticateOperationPrincipal/u);
-    assert.doesNotMatch(actionHttpRunner, /ActionRuntime|ActionCoreError|HttpApiEndpoint/u);
+    assert.doesNotMatch(
+      actionHttpRunner,
+      /ActionRuntime|ActionCoreError|HttpApiEndpoint/u
+    );
     assert.match(redemption, /GatewayAssertionRedemptionUnavailableError/u);
     const packageJson = decodeFixturePackage(
-      await readFixtureFile(fixture.root, inventoryPackageFile),
+      await readFixtureFile(fixture.root, inventoryPackageFile)
     );
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': workspaceVersion,
@@ -2542,8 +3007,14 @@ test('generates one immutable Action identity boundary and exact direct dependen
       zeta: '1.0.0',
     });
     assert.equal(packageJson.scripts['existing'], preservedFixtureValue);
-    assert.equal(await readFixtureFile(fixture.root, shellSentinelFile), shellBefore);
-    assert.equal(await readFixtureFile(fixture.root, topologyFile), topologyBefore);
+    assert.equal(
+      await readFixtureFile(fixture.root, shellSentinelFile),
+      shellBefore
+    );
+    assert.equal(
+      await readFixtureFile(fixture.root, topologyFile),
+      topologyBefore
+    );
   });
 });
 
@@ -2566,13 +3037,13 @@ test('Action identity boundary preflight refuses unsafe writes', async () => {
       inventoryActionPrincipalFile,
       `// Owner-authored identity adapter
 export const ownerCode = true;
-`,
+`
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.microverticalActionBoundary,
       [scaffoldFlag.vertical, inventorySlug],
-      /refusing to overwrite existing business file/u,
+      /refusing to overwrite existing business file/u
     );
   });
 });
@@ -2584,10 +3055,13 @@ test('governed generators reject legacy principal boundaries before writing file
       scaffoldFlag.vertical,
       inventorySlug,
     ]);
-    const generated = await readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+    const generated = await readFixtureFile(
+      fixture.root,
+      inventoryActionPrincipalFile
+    );
     const legacy = generated.replace(
       /const verifyOperationPrincipal =[\s\S]*$/u,
-      'export const verifyOperationPrincipal = verifyActionPrincipal;\n',
+      'export const verifyOperationPrincipal = verifyActionPrincipal;\n'
     );
     assert.doesNotMatch(legacy, /export const authenticateOperationPrincipal/u);
     await writeFixtureFile(fixture.root, inventoryActionPrincipalFile, legacy);
@@ -2599,16 +3073,23 @@ test('governed generators reject legacy principal boundaries before writing file
         scaffoldCommand.searchProvider,
         ['--name', fixtureName.inventoryItems, scaffoldFlag.resource, 'item'],
       ],
-      ['report', ['--name', fixtureName.stockLevels, scaffoldFlag.resource, 'item']],
+      [
+        'report',
+        ['--name', fixtureName.stockLevels, scaffoldFlag.resource, 'item'],
+      ],
     ];
     await Promise.all(
       calls.map(async ([command, args]) => {
         await assert.rejects(
-          run(fixture, command, [scaffoldFlag.vertical, inventorySlug, ...args]),
-          /incompatible generated Action boundary:.*export authenticateOperationPrincipal.*provide ActionPrincipalVerifierLive|refusing to overwrite existing business file: operation boundary/u,
+          run(fixture, command, [
+            scaffoldFlag.vertical,
+            inventorySlug,
+            ...args,
+          ]),
+          /incompatible generated Action boundary:.*export authenticateOperationPrincipal.*provide ActionPrincipalVerifierLive|refusing to overwrite existing business file: operation boundary/u
         );
         assert.deepEqual(await snapshotTree(fixture.root), before);
-      }),
+      })
     );
   });
 });
@@ -2631,7 +3112,10 @@ test('governed generation preserves compatible owner principal adaptations', asy
       '--name',
       fixtureName.resourceDetail,
     ]);
-    assert.equal(await readFixtureFile(fixture.root, inventoryActionPrincipalFile), adapted);
+    assert.equal(
+      await readFixtureFile(fixture.root, inventoryActionPrincipalFile),
+      adapted
+    );
   });
 });
 
@@ -2651,27 +3135,27 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     await symlink(
       path.join(appRoot, 'packages/core-runtime'),
       path.join(fixture.root, 'node_modules/@app/core-runtime'),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, sharedContractsPackagePath),
       path.join(fixture.root, sharedContractsNodeModulePath),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, 'packages/gateway-principal-verifier'),
       path.join(fixture.root, 'node_modules/@app/gateway-principal-verifier'),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, 'packages/core-runtime/node_modules/effect'),
       path.join(fixture.root, effectNodeModulePath),
-      'dir',
+      'dir'
     );
     await symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
       path.join(fixture.root, 'node_modules/jose'),
-      'dir',
+      'dir'
     );
     const edgeBundleDirectory = path.join(fixture.root, 'edge-bundle');
     await mkdir(edgeBundleDirectory, { recursive: true });
@@ -2686,38 +3170,67 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         `--outfile=${path.join(edgeBundleDirectory, 'action-principal.mjs')}`,
         '--platform=browser',
       ],
-      { encoding: 'utf-8' },
+      { encoding: 'utf-8' }
     );
     const edgeBundleErrorMessage = edgeBundle.error?.message;
     let edgeBundleFailureMessage = 'edge bundle command did not start';
     if (edgeBundle.stderr.length > 0) {
       edgeBundleFailureMessage = edgeBundle.stderr;
-    } else if (edgeBundleErrorMessage !== undefined && edgeBundleErrorMessage.length > 0) {
+    } else if (
+      edgeBundleErrorMessage !== undefined &&
+      edgeBundleErrorMessage.length > 0
+    ) {
       edgeBundleFailureMessage = edgeBundleErrorMessage;
     }
     assert.equal(edgeBundle.status, 0, edgeBundleFailureMessage);
     const edgeInputs = Object.keys(
       Schema.decodeUnknownSync(EsbuildMetafileSchema)(
-        JSON.parse(await readFile(edgeMetafile, 'utf-8')),
-      ).inputs,
+        JSON.parse(await readFile(edgeMetafile, 'utf-8'))
+      ).inputs
     ).join('\n');
-    assert.match(edgeInputs, /core-runtime\/src\/auth\/gateway-assertion-redemption\.ts/u);
-    assert.doesNotMatch(edgeInputs, /core-runtime\/src\/db|node:(?:crypto|path)|\/pg\//u);
-    const generatedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
-      await import(pathToFileURL(path.join(fixture.root, inventoryActionPrincipalFile)).href),
+    assert.match(
+      edgeInputs,
+      /core-runtime\/src\/auth\/gateway-assertion-redemption\.ts/u
     );
-    const billingGeneratedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
+    assert.doesNotMatch(
+      edgeInputs,
+      /core-runtime\/src\/db|node:(?:crypto|path)|\/pg\//u
+    );
+    const generatedModule = Schema.decodeUnknownSync(
+      GeneratedPrincipalModuleSchema
+    )(
       await import(
-        pathToFileURL(path.join(fixture.root, 'verticals/billing/api/auth/action-principal.ts'))
+        pathToFileURL(path.join(fixture.root, inventoryActionPrincipalFile))
           .href
-      ),
+      )
     );
-    const generatedClientModule = Schema.decodeUnknownSync(GeneratedOperationGatewayModuleSchema)(
-      await import(pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href),
+    const billingGeneratedModule = Schema.decodeUnknownSync(
+      GeneratedPrincipalModuleSchema
+    )(
+      await import(
+        pathToFileURL(
+          path.join(
+            fixture.root,
+            'verticals/billing/api/auth/action-principal.ts'
+          )
+        ).href
+      )
+    );
+    const generatedClientModule = Schema.decodeUnknownSync(
+      GeneratedOperationGatewayModuleSchema
+    )(
+      await import(
+        pathToFileURL(path.join(fixture.root, inventoryActionGatewayFile)).href
+      )
     );
     const generatedActionHttpRunnerModule = Schema.decodeUnknownSync(
-      GeneratedActionHttpRunnerModuleSchema,
-    )(await import(pathToFileURL(path.join(fixture.root, inventoryActionHttpRunnerFile)).href));
+      GeneratedActionHttpRunnerModuleSchema
+    )(
+      await import(
+        pathToFileURL(path.join(fixture.root, inventoryActionHttpRunnerFile))
+          .href
+      )
+    );
     const current = await makeGatewayKey('current');
     const retiring = await makeGatewayKey('retiring');
     const principal = {
@@ -2730,7 +3243,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     const issue = async (
       configuration: GatewayIssuerConfigValue,
       issuedAt: number,
-      audience = inventorySlug,
+      audience = inventorySlug
     ) =>
       await runEffectTestPromise(
         issueGatewayContextAssertion({ audience, principal }).pipe(
@@ -2740,9 +3253,9 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
               generateJti: Effect.succeed(fixtureGatewayJti),
               loadAudiences: Effect.succeed(new Set([audience])),
               loadConfig: Effect.succeed(configuration),
-            }),
-          ),
-        ),
+            })
+          )
+        )
       );
     const environment = {
       ONTOS_GATEWAY_ISSUER: fixtureGatewayIssuer,
@@ -2751,53 +3264,73 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       }),
     };
     const currentAssertion = await issue(current.configuration, 1_700_000_000);
-    const billingAssertion = await issue(current.configuration, 1_700_000_000, 'billing');
-    const retiringAssertion = await issue(retiring.configuration, 1_700_000_000);
+    const billingAssertion = await issue(
+      current.configuration,
+      1_700_000_000,
+      'billing'
+    );
+    const retiringAssertion = await issue(
+      retiring.configuration,
+      1_700_000_000
+    );
     const testRedemption = { consume: () => Effect.void };
-    const verify = async (token: string, override = environment, now = 1_700_000_001) =>
+    const verify = async (
+      token: string,
+      override = environment,
+      now = 1_700_000_001
+    ) =>
       await runEffectTestPromise(
         generatedModule.verifyActionPrincipal(`Bearer ${token}`, {
           currentTimeSeconds: Effect.succeed(now),
           environment: override,
           redemption: testRedemption,
-        }),
+        })
       );
 
     assert.deepEqual(await verify(currentAssertion.token), principal);
     assert.deepEqual(
       await runEffectTestPromise(
-        billingGeneratedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-          currentTimeSeconds: Effect.succeed(1_700_000_001),
-          environment,
-          redemption: testRedemption,
-        }),
+        billingGeneratedModule.verifyActionPrincipal(
+          `Bearer ${billingAssertion.token}`,
+          {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }
+        )
       ),
-      principal,
+      principal
     );
     await assert.rejects(
       runEffectTestPromise(
-        generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-          currentTimeSeconds: Effect.succeed(1_700_000_001),
-          environment,
-          redemption: testRedemption,
-        }),
+        generatedModule.verifyActionPrincipal(
+          `Bearer ${billingAssertion.token}`,
+          {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }
+        )
       ),
-      isGeneratedPrincipalError('ActionPrincipalScopeError'),
+      isGeneratedPrincipalError('ActionPrincipalScopeError')
     );
     await assert.rejects(
       runEffectTestPromise(
-        billingGeneratedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-          currentTimeSeconds: Effect.succeed(1_700_000_001),
-          environment,
-          redemption: testRedemption,
-        }),
+        billingGeneratedModule.verifyActionPrincipal(
+          `Bearer ${currentAssertion.token}`,
+          {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }
+        )
       ),
-      isGeneratedPrincipalError('ActionPrincipalScopeError'),
+      isGeneratedPrincipalError('ActionPrincipalScopeError')
     );
     assert.deepEqual(await verify(retiringAssertion.token), principal);
     await assert.rejects(
       verify('not-a-jwt'),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
     await Promise.all(
       [
@@ -2814,16 +3347,16 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
               ...environment,
               ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify(jwks),
             }),
-            isGeneratedPrincipalError('ActionPrincipalConfigurationError'),
-          ),
-      ),
+            isGeneratedPrincipalError('ActionPrincipalConfigurationError')
+          )
+      )
     );
     await assert.rejects(
       verify(currentAssertion.token, {
         ...environment,
         ONTOS_GATEWAY_ISSUER: 'file:///not-an-http-issuer',
       }),
-      isGeneratedPrincipalError('ActionPrincipalConfigurationError'),
+      isGeneratedPrincipalError('ActionPrincipalConfigurationError')
     );
     await assert.rejects(
       verify(
@@ -2834,45 +3367,55 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
             keys: [current.publicJwk],
           }),
         },
-        1_700_000_000 + GATEWAY_ASSERTION_TTL_SECONDS + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS + 1,
+        1_700_000_000 +
+          GATEWAY_ASSERTION_TTL_SECONDS +
+          GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS +
+          1
       ),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
-    const wrongAudience = await issue(current.configuration, 1_700_000_000, 'billing');
+    const wrongAudience = await issue(
+      current.configuration,
+      1_700_000_000,
+      'billing'
+    );
     await assert.rejects(
       verify(wrongAudience.token),
-      isGeneratedPrincipalError('ActionPrincipalScopeError'),
+      isGeneratedPrincipalError('ActionPrincipalScopeError')
     );
     const wrongIssuer = await issue(
       { ...current.configuration, issuer: 'https://other.example.test' },
-      1_700_000_000,
+      1_700_000_000
     );
     await assert.rejects(
       verify(wrongIssuer.token),
-      isGeneratedPrincipalError('ActionPrincipalScopeError'),
+      isGeneratedPrincipalError('ActionPrincipalScopeError')
     );
     const unknownKid = await issue(
       {
         ...current.configuration,
         privateJwk: { ...current.configuration.privateJwk, kid: 'unknown' },
       },
-      1_700_000_000,
+      1_700_000_000
     );
     await assert.rejects(
       verify(unknownKid.token),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
     const expired = await issue(current.configuration, 1_699_999_000);
     await assert.rejects(
       verify(expired.token),
-      isGeneratedPrincipalError('ActionPrincipalExpiredError'),
+      isGeneratedPrincipalError('ActionPrincipalExpiredError')
     );
     const future = await issue(current.configuration, 1_700_000_032);
     await assert.rejects(
       verify(future.token),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
-    const signingKey = await importJWK(current.configuration.privateJwk, 'EdDSA');
+    const signingKey = await importJWK(
+      current.configuration.privateJwk,
+      'EdDSA'
+    );
     const mismatchedSubject = await new SignJWT({ principal, ver: 1 })
       .setProtectedHeader({ alg: 'EdDSA', kid: 'current', typ: 'JWT' })
       .setIssuer(fixtureGatewayIssuer)
@@ -2884,7 +3427,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       .sign(signingKey);
     await assert.rejects(
       verify(mismatchedSubject),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
     const invalidContext = await new SignJWT({
       principal: { ...principal, principalId: 'not-a-uuid' },
@@ -2900,7 +3443,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       .sign(signingKey);
     await assert.rejects(
       verify(invalidContext),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
     const hmacToken = await new SignJWT({ principal, ver: 1 })
       .setProtectedHeader({ alg: 'HS256', kid: 'current', typ: 'JWT' })
@@ -2913,14 +3456,14 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       .sign(await generateSecret('HS256'));
     await assert.rejects(
       verify(hmacToken),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
     const tokenParts = currentAssertion.token.split('.');
     const encodedPayload = tokenParts[1] ?? '';
     const tampered = `${tokenParts[0]}.${encodedPayload.startsWith('a') ? 'b' : 'a'}${encodedPayload.slice(1)}.${tokenParts[2]}`;
     await assert.rejects(
       verify(tampered),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -2928,9 +3471,9 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment,
           redemption: testRedemption,
-        }),
+        })
       ),
-      isGeneratedPrincipalError('ActionPrincipalMissingError'),
+      isGeneratedPrincipalError('ActionPrincipalMissingError')
     );
     await assert.rejects(
       runEffectTestPromise(
@@ -2938,74 +3481,96 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment,
           redemption: testRedemption,
-        }),
+        })
       ),
-      isGeneratedPrincipalError('ActionPrincipalInvalidError'),
+      isGeneratedPrincipalError('ActionPrincipalInvalidError')
     );
     await assert.rejects(
       runEffectTestPromise(
-        generatedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-          currentTimeSeconds: Effect.succeed(1_700_000_001),
-          environment: {},
-          redemption: testRedemption,
-        }),
+        generatedModule.verifyActionPrincipal(
+          `Bearer ${currentAssertion.token}`,
+          {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment: {},
+            redemption: testRedemption,
+          }
+        )
       ),
-      isGeneratedPrincipalError('ActionPrincipalConfigurationError'),
+      isGeneratedPrincipalError('ActionPrincipalConfigurationError')
     );
     let acquisitions = 0;
     const authorizations: string[] = [];
     const idempotencyKey = 'caller-owned-idempotency-key';
-    const operationGateway = generatedClientModule.makeOperationGateway(({ audience }) => {
-      acquisitions += 1;
-      assert.equal(audience, inventorySlug);
-      return Effect.succeed({ token: `attempt-${acquisitions}` });
-    });
+    const operationGateway = generatedClientModule.makeOperationGateway(
+      ({ audience }) => {
+        acquisitions += 1;
+        assert.equal(audience, inventorySlug);
+        return Effect.succeed({ token: `attempt-${acquisitions}` });
+      }
+    );
     const attempt = (authorization: string) => {
       authorizations.push(authorization);
       return Effect.succeed(idempotencyKey);
     };
-    assert.equal(await runEffectTestPromise(operationGateway.invoke(attempt)), idempotencyKey);
-    assert.equal(await runEffectTestPromise(operationGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(
+      await runEffectTestPromise(operationGateway.invoke(attempt)),
+      idempotencyKey
+    );
+    assert.equal(
+      await runEffectTestPromise(operationGateway.invoke(attempt)),
+      idempotencyKey
+    );
     assert.deepEqual(authorizations, ['Bearer attempt-1', 'Bearer attempt-2']);
 
     const actionApi = HttpApi.make('generatedActionIdentityFixture').add(
       HttpApiGroup.make('action').add(
         HttpApiEndpoint.post('invoke', '/actions/invoke', {
-          error: [ActionAuthenticationProblemSchema, ActionVerificationUnavailableProblemSchema],
+          error: [
+            ActionAuthenticationProblemSchema,
+            ActionVerificationUnavailableProblemSchema,
+          ],
           success: TrustedPrincipalContextSchema,
-        }),
-      ),
+        })
+      )
     );
     let actionReached = false;
     let endpointEnvironment: GeneratedPrincipalEnvironment = environment;
     const markActionReached = Effect.sync(() => {
       actionReached = true;
     });
-    const actionGroupLive = HttpApiBuilder.group(actionApi, 'action', (handlers) =>
-      handlers.handle('invoke', ({ request }) =>
-        generatedModule
-          .verifyActionPrincipal(request.headers['authorization'], {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment: endpointEnvironment,
-            redemption: testRedemption,
-          })
-          .pipe(Effect.tap(markActionReached), Effect.catchTags(generatedPrincipalErrorHandlers)),
-      ),
+    const actionGroupLive = HttpApiBuilder.group(
+      actionApi,
+      'action',
+      (handlers) =>
+        handlers.handle('invoke', ({ request }) =>
+          generatedModule
+            .verifyActionPrincipal(request.headers['authorization'], {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment: endpointEnvironment,
+              redemption: testRedemption,
+            })
+            .pipe(
+              Effect.tap(markActionReached),
+              Effect.catchTags(generatedPrincipalErrorHandlers)
+            )
+        )
     );
     const actionRuntime = defineEffectBff({
       api: actionApi,
-      layer: HttpApiBuilder.layer(actionApi).pipe(Layer.provide(actionGroupLive)),
+      layer: HttpApiBuilder.layer(actionApi).pipe(
+        Layer.provide(actionGroupLive)
+      ),
     });
     const actionHandler = actionRuntime.createHandler();
     try {
       const missingResponse = await actionHandler.handler(
-        new Request(actionInvokeUrl, { method: 'POST' }),
+        new Request(actionInvokeUrl, { method: 'POST' })
       );
       assert.equal(missingResponse.status, 401);
       assert.equal(missingResponse.headers.get('www-authenticate'), 'Bearer');
       assert.match(
         missingResponse.headers.get('content-type') ?? '',
-        /application\/problem\+json/u,
+        /application\/problem\+json/u
       );
       assert.equal(actionReached, false);
 
@@ -3014,13 +3579,14 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         new Request(actionInvokeUrl, {
           headers: { authorization: `Bearer ${currentAssertion.token}` },
           method: 'POST',
-        }),
+        })
       );
       assert.equal(unavailableResponse.status, 503);
       assert.equal(
-        Schema.decodeUnknownSync(RetryableProblemSchema)(await unavailableResponse.json())
-          .retryable,
-        true,
+        Schema.decodeUnknownSync(RetryableProblemSchema)(
+          await unavailableResponse.json()
+        ).retryable,
+        true
       );
       assert.equal(actionReached, false);
 
@@ -3029,7 +3595,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         new Request(actionInvokeUrl, {
           headers: { authorization: `Bearer ${currentAssertion.token}` },
           method: 'POST',
-        }),
+        })
       );
       assert.equal(successResponse.status, 200);
       assert.deepEqual(await successResponse.json(), principal);
@@ -3038,18 +3604,24 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       await actionHandler.dispose();
     }
 
-    const generatedBindingApi = HttpApi.make('generatedActionRunnerFixture').add(
+    const generatedBindingApi = HttpApi.make(
+      'generatedActionRunnerFixture'
+    ).add(
       HttpApiGroup.make('action').add(
         HttpApiEndpoint.post('invoke', '/actions/generated-runner', {
-          error: [ActionAuthenticationProblemSchema, ActionVerificationUnavailableProblemSchema],
+          error: [
+            ActionAuthenticationProblemSchema,
+            ActionVerificationUnavailableProblemSchema,
+          ],
           success: GeneratedBindingResultSchema,
-        }),
-      ),
+        })
+      )
     );
-    const runGeneratedActionHttp = generatedActionHttpRunnerModule.bindActionHttpRunner({
-      authentication: actionAuthenticationProblem,
-      unavailable: actionVerificationUnavailableProblem,
-    });
+    const runGeneratedActionHttp =
+      generatedActionHttpRunnerModule.bindActionHttpRunner({
+        authentication: actionAuthenticationProblem,
+        unavailable: actionVerificationUnavailableProblem,
+      });
     const harness = makeActionTestHarness({
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
@@ -3073,24 +3645,30 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
               authorization: Redacted.make(request.headers['authorization']),
               'x-correlation-id': request.headers['x-correlation-id'],
             },
-          }),
-        ),
+          })
+        )
     ).pipe(
       Layer.provide(generatedModule.ActionPrincipalVerifierLive),
-      Layer.provide(Layer.succeed(GatewayAssertionRedemptionService, testRedemption)),
-      Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
-      Layer.provide(harness.layer),
+      Layer.provide(
+        Layer.succeed(GatewayAssertionRedemptionService, testRedemption)
+      ),
+      Layer.provide(
+        ConfigProvider.layer(ConfigProvider.fromUnknown(environment))
+      ),
+      Layer.provide(harness.layer)
     );
     const generatedBindingRuntime = defineEffectBff({
       api: generatedBindingApi,
       layer: HttpApiBuilder.layer(generatedBindingApi).pipe(
         Layer.provide(generatedBindingGroupLive),
-        Layer.provideMerge(harness.layer),
+        Layer.provideMerge(harness.layer)
       ),
     });
     const generatedBindingHandler = generatedBindingRuntime.createHandler();
     try {
-      const liveIssuedAt = Math.floor((await runEffectTestPromise(Clock.currentTimeMillis)) / 1000);
+      const liveIssuedAt = Math.floor(
+        (await runEffectTestPromise(Clock.currentTimeMillis)) / 1000
+      );
       const liveAssertion = await issue(current.configuration, liveIssuedAt);
       const generatedBindingResponse = await generatedBindingHandler.handler(
         new Request('https://inventory.example.test/actions/generated-runner', {
@@ -3099,18 +3677,18 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
             'x-correlation-id': 'generated-runner-correlation',
           },
           method: 'POST',
-        }),
+        })
       );
-      const generatedBindingBody = Schema.decodeUnknownSync(GeneratedBindingResultSchema)(
-        await generatedBindingResponse.json(),
-      );
+      const generatedBindingBody = Schema.decodeUnknownSync(
+        GeneratedBindingResultSchema
+      )(await generatedBindingResponse.json());
       assert.equal(
         generatedBindingResponse.status,
         200,
         JSON.stringify({
           body: generatedBindingBody,
           snapshot: harness.snapshot(),
-        }),
+        })
       );
       assert.deepEqual(generatedBindingBody, { accepted: true });
       assert.equal(harness.snapshot().invocations.length, 1);
@@ -3131,7 +3709,7 @@ test('generates one self-contained typed fail-closed Action and preserves packag
     ]);
     const action = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/actions/create-order2.action.ts',
+      'verticals/inventory-stock/src/actions/create-order2.action.ts'
     );
     assert.equal(
       action,
@@ -3193,10 +3771,10 @@ export const createOrder2Action = defineAction(
 
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>
-`,
+`
     );
     const packageJson = decodeFixturePackage(
-      await readFixtureFile(fixture.root, inventoryPackageFile),
+      await readFixtureFile(fixture.root, inventoryPackageFile)
     );
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': workspaceVersion,
@@ -3207,7 +3785,7 @@ export const createOrder2Action = defineAction(
       fixture,
       'action',
       [scaffoldFlag.vertical, inventorySlug, '--action', 'create-order2'],
-      /refusing to overwrite/u,
+      /refusing to overwrite/u
     );
   });
 });
@@ -3222,7 +3800,7 @@ test('generates an owner-local Action service without overwriting business logic
     ]);
     const service = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/services/inventory-persistence.service.ts',
+      'verticals/inventory-stock/src/services/inventory-persistence.service.ts'
     );
     assert.equal(
       service,
@@ -3230,13 +3808,18 @@ test('generates an owner-local Action service without overwriting business logic
 import { Effect } from 'effect';
 
 export const inventoryPersistenceService = () => Effect.succeed({});
-`,
+`
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.actionService,
-      [scaffoldFlag.vertical, inventorySlug, '--service', 'inventory-persistence'],
-      /refusing to overwrite/u,
+      [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--service',
+        'inventory-persistence',
+      ],
+      /refusing to overwrite/u
     );
   });
 });
@@ -3254,7 +3837,7 @@ test('generates exactly one private owner-local external HTTP adapter', async ()
     ]);
     const adapterPath = path.join(
       fixture.root,
-      'verticals/contacts/src/integrations/ares/ares-subject.service.ts',
+      'verticals/contacts/src/integrations/ares/ares-subject.service.ts'
     );
     assert.deepEqual(result, {
       kind: 'generated',
@@ -3267,7 +3850,7 @@ test('generates exactly one private owner-local external HTTP adapter', async ()
     ]);
     assert.deepEqual(
       [...changedPaths],
-      ['verticals/contacts/src/integrations/ares/ares-subject.service.ts'],
+      ['verticals/contacts/src/integrations/ares/ares-subject.service.ts']
     );
     assert.equal(
       after['verticals/contacts/src/integrations/ares/ares-subject.service.ts'],
@@ -3308,14 +3891,17 @@ const makeAresSubjectService = Effect.gen(function* () {
 });
 
 export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresSubjectService);
-`,
+`
     );
-    const source = after['verticals/contacts/src/integrations/ares/ares-subject.service.ts'] ?? '';
+    const source =
+      after[
+        'verticals/contacts/src/integrations/ares/ares-subject.service.ts'
+      ] ?? '';
     assert.match(source, /HttpClient\.HttpClient/u);
     assert.match(source, /Layer\.effect/u);
     assert.doesNotMatch(
       source,
-      /fetch\(|httpClient\.(?:execute|get|head|post|patch|put|del|options)\(|https?:\/\//u,
+      /fetch\(|httpClient\.(?:execute|get|head|post|patch|put|del|options)\(|https?:\/\//u
     );
 
     await assertScaffoldRefused(
@@ -3329,7 +3915,7 @@ export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresS
         scaffoldFlag.operation,
         'subject',
       ],
-      /refusing to overwrite/u,
+      /refusing to overwrite/u
     );
   });
 });
@@ -3462,7 +4048,7 @@ test('rejects unsafe external HTTP adapter command input without writing', async
       const [generatorArguments, expected] = invalidCall;
       await assert.rejects(
         run(fixture, scaffoldCommand.externalHttpAdapter, generatorArguments),
-        expected,
+        expected
       );
       assert.deepEqual(await snapshotTree(fixture.root), before);
       await assertInvalidCall(index + 1);
@@ -3473,15 +4059,18 @@ test('rejects unsafe external HTTP adapter command input without writing', async
 
 test('external HTTP adapter planner rejects malformed OntOS ownership atomically', async () => {
   await withFixture(async (fixture) => {
-    const manifestPath = path.join(fixture.root, 'verticals/contacts/vertical.manifest.ts');
+    const manifestPath = path.join(
+      fixture.root,
+      'verticals/contacts/vertical.manifest.ts'
+    );
     const manifest = await readFile(manifestPath, 'utf-8');
     await writeFile(
       manifestPath,
       manifest.replace(
         '// @generated by OntOS Codesmith Module Contract v1',
-        '// developer-owned manifest',
+        '// developer-owned manifest'
       ),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
@@ -3494,7 +4083,7 @@ test('external HTTP adapter planner rejects malformed OntOS ownership atomically
         scaffoldFlag.operation,
         'subject',
       ],
-      /is not a generated module owner/u,
+      /is not a generated module owner/u
     );
   });
 
@@ -3502,7 +4091,7 @@ test('external HTTP adapter planner rejects malformed OntOS ownership atomically
     await writeFixtureFile(
       fixture.root,
       'verticals/contacts/src/integrations',
-      'planner fixture blocks the required directory\n',
+      'planner fixture blocks the required directory\n'
     );
     await assertScaffoldRefused(
       fixture,
@@ -3515,7 +4104,7 @@ test('external HTTP adapter planner rejects malformed OntOS ownership atomically
         scaffoldFlag.operation,
         'subject',
       ],
-      /ENOTDIR|not a directory/u,
+      /ENOTDIR|not a directory/u
     );
   });
 });
@@ -3529,15 +4118,15 @@ test('Action generation rejects unrelated imports in its governed owner slots', 
       manifest.replace(
         '// <generated-module-manifest-imports>',
         `// <generated-module-manifest-imports>
-import { fakeRead } from './src/api/fake.read.ts';`,
+import { fakeRead } from './src/api/fake.read.ts';`
       ),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       'action',
       [scaffoldFlag.vertical, inventorySlug, '--action', 'create-order3'],
-      /generated owner slot contains unsupported developer content/u,
+      /generated owner slot contains unsupported developer content/u
     );
   });
 });
@@ -3563,7 +4152,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
 
     const action = await readFixtureFile(
       fixture.root,
-      'packages/core-runtime/src/modules/actions/account-change.action.ts',
+      'packages/core-runtime/src/modules/actions/account-change.action.ts'
     );
     assert.match(action, /@ontos-action-owner core\.modules/u);
     assert.match(action, /actionKey: 'core\.modules\.account-change'/u);
@@ -3583,25 +4172,39 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
     assert.ok(coreIndex.indexOf(accountExport) < coreIndex.indexOf(zExport));
     assert.match(coreIndex, /export const existingCoreSurface = true/u);
 
-    const coreCatalog = await readFixtureFile(fixture.root, coreActionCatalogFile);
-    const accountImport = "import { accountChangeAction } from './account-change.action.ts';";
-    const zImport = "import { zLastChangeAction } from './z-last-change.action.ts';";
+    const coreCatalog = await readFixtureFile(
+      fixture.root,
+      coreActionCatalogFile
+    );
+    const accountImport =
+      "import { accountChangeAction } from './account-change.action.ts';";
+    const zImport =
+      "import { zLastChangeAction } from './z-last-change.action.ts';";
     assert.ok(coreCatalog.includes(accountImport));
     assert.ok(coreCatalog.includes(zImport));
     assert.ok(coreCatalog.includes('accountChangeAction.descriptor,'));
     assert.ok(coreCatalog.includes('zLastChangeAction.descriptor,'));
-    assert.ok(coreCatalog.indexOf(accountImport) < coreCatalog.indexOf(zImport));
+    assert.ok(
+      coreCatalog.indexOf(accountImport) < coreCatalog.indexOf(zImport)
+    );
     assert.ok(
       coreCatalog.indexOf('accountChangeAction.descriptor,') <
-        coreCatalog.indexOf('zLastChangeAction.descriptor,'),
+        coreCatalog.indexOf('zLastChangeAction.descriptor,')
     );
     assert.match(coreCatalog, /export const existingCatalogSurface = true/u);
 
     await assertScaffoldRefused(
       fixture,
       'action',
-      ['--scope', 'core', '--module', fixtureName.actionModule, '--action', 'account-change'],
-      /refusing to overwrite/u,
+      [
+        '--scope',
+        'core',
+        '--module',
+        fixtureName.actionModule,
+        '--action',
+        'account-change',
+      ],
+      /refusing to overwrite/u
     );
   });
 
@@ -3610,13 +4213,20 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
     await writeFile(
       indexPath,
       `export const existingCoreSurface = true;\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       'action',
-      ['--scope', 'core', '--module', fixtureName.actionModule, '--action', fixtureName.action],
-      /generated owner file does not contain one valid/u,
+      [
+        '--scope',
+        'core',
+        '--module',
+        fixtureName.actionModule,
+        '--action',
+        fixtureName.action,
+      ],
+      /generated owner file does not contain one valid/u
     );
   });
 
@@ -3627,15 +4237,22 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       indexPath,
       index.replace(
         '// <generated-core-action-exports>\n',
-        '// <generated-core-action-exports>\nexport const developerOwned = true;\n',
+        '// <generated-core-action-exports>\nexport const developerOwned = true;\n'
       ),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       'action',
-      ['--scope', 'core', '--module', fixtureName.actionModule, '--action', fixtureName.action],
-      /unsupported developer content/u,
+      [
+        '--scope',
+        'core',
+        '--module',
+        fixtureName.actionModule,
+        '--action',
+        fixtureName.action,
+      ],
+      /unsupported developer content/u
     );
   });
 
@@ -3646,15 +4263,22 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       catalogPath,
       catalog.replace(
         '// <generated-core-action-catalog-values>\n',
-        '// <generated-core-action-catalog-values>\n  developerOwned.descriptor,\n',
+        '// <generated-core-action-catalog-values>\n  developerOwned.descriptor,\n'
       ),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       'action',
-      ['--scope', 'core', '--module', fixtureName.actionModule, '--action', fixtureName.action],
-      /unsupported developer content/u,
+      [
+        '--scope',
+        'core',
+        '--module',
+        fixtureName.actionModule,
+        '--action',
+        fixtureName.action,
+      ],
+      /unsupported developer content/u
     );
   });
 });
@@ -3662,28 +4286,35 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
 test('preflights the Action dependency patch before creating a file', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
-    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
+    const packageJson = decodeFixturePackage(
+      await readFile(packagePath, 'utf-8')
+    );
     await writeFile(
       packagePath,
       json({
         ...packageJson,
         dependencies: { '@app/core-runtime': '^1.0.0', zeta: '1.0.0' },
       }),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       'action',
       [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action],
-      /incompatible/u,
+      /incompatible/u
     );
   });
 });
 
 test('rejects Action generation when a vertical app identity is duplicated', async () => {
   await withFixture(async (fixture) => {
-    const billingPackagePath = path.join(fixture.root, 'verticals/billing/package.json');
-    const billingPackage = decodeFixturePackage(await readFile(billingPackagePath, 'utf-8'));
+    const billingPackagePath = path.join(
+      fixture.root,
+      'verticals/billing/package.json'
+    );
+    const billingPackage = decodeFixturePackage(
+      await readFile(billingPackagePath, 'utf-8')
+    );
     await writeFile(
       billingPackagePath,
       json({
@@ -3693,13 +4324,13 @@ test('rejects Action generation when a vertical app identity is duplicated', asy
           appId: inventoryVertical.appId,
         },
       }),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       'action',
       [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action],
-      /duplicate generated appId inventory-stock/u,
+      /duplicate generated appId inventory-stock/u
     );
   });
 });
@@ -3707,20 +4338,22 @@ test('rejects Action generation when a vertical app identity is duplicated', asy
 test('rejects Action generation when the target identity is absent from topology', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
-    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
+    const packageJson = decodeFixturePackage(
+      await readFile(packagePath, 'utf-8')
+    );
     await writeFile(
       packagePath,
       json({
         ...packageJson,
         modernjs: { ...packageJson.modernjs, appId: 'inventory-shadow' },
       }),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       'action',
       [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action],
-      /must have exactly one matching generated topology entry/u,
+      /must have exactly one matching generated topology entry/u
     );
   });
 });
@@ -3728,8 +4361,13 @@ test('rejects Action generation when the target identity is absent from topology
 test('preserves owner JSON document style while patching the Core dependency', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
-    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
-    const styledPackage = JSON.stringify(packageJson, null, 4).replaceAll('\n', '\r\n');
+    const packageJson = decodeFixturePackage(
+      await readFile(packagePath, 'utf-8')
+    );
+    const styledPackage = JSON.stringify(packageJson, null, 4).replaceAll(
+      '\n',
+      '\r\n'
+    );
     await writeFile(packagePath, styledPackage, 'utf-8');
 
     await run(fixture, 'action', [
@@ -3760,7 +4398,7 @@ test('generates Action-owned Outbox Messages and sorts only the owned export slo
     await writeFile(
       actionPath,
       `${generatedAction}\nexport const developerOwned = true;\n`,
-      'utf-8',
+      'utf-8'
     );
     await run(fixture, scaffoldCommand.outboxMessage, [
       scaffoldFlag.vertical,
@@ -3780,7 +4418,7 @@ test('generates Action-owned Outbox Messages and sorts only the owned export slo
     ]);
     const message = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/actions/create-order.orders-created.outbox-message.ts',
+      'verticals/inventory-stock/src/actions/create-order.orders-created.outbox-message.ts'
     );
     assert.equal(
       message,
@@ -3804,7 +4442,7 @@ export const createCreateOrderOrdersCreatedOutboxMessage = (
   producerModuleKey: CreateOrderOrdersCreatedOutboxProducerModuleKey,
   topic: CreateOrderOrdersCreatedOutboxTopic,
 });
-`,
+`
     );
     assert.equal(
       await readFixtureFile(fixture.root, inventoryOutboxContractFile),
@@ -3820,12 +4458,15 @@ export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
 export const outboxTopic = 'orders.created' as const;
 export const outboxProducerModuleKey = 'inventory.stock' as const;
-`,
+`
     );
     const producerPackage = decodeFixturePackage(
-      await readFixtureFile(fixture.root, inventoryPackageFile),
+      await readFixtureFile(fixture.root, inventoryPackageFile)
     );
-    assert.equal(producerPackage.exports['./outbox/orders-created'], generatedOutboxContractPath);
+    assert.equal(
+      producerPackage.exports['./outbox/orders-created'],
+      generatedOutboxContractPath
+    );
     const action = await readFile(actionPath, 'utf-8');
     const createdExport =
       "export { CreateOrderOrdersCreatedOutboxPayloadSchema } from './create-order.orders-created.outbox-message.ts';";
@@ -3835,7 +4476,7 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
     assert.match(action, /export const developerOwned = true;/u);
     assert.doesNotMatch(
       message,
-      /addDomainEvent|addOutboxMessage|subjectResource|transport|worker/u,
+      /addDomainEvent|addOutboxMessage|subjectResource|transport|worker/u
     );
 
     await run(fixture, scaffoldCommand.outboxMessage, [
@@ -3857,7 +4498,7 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
         '--topic',
         'events.foo1-bar',
       ],
-      /Outbox identifier CreateOrderEventsFoo1BarOutbox already exists/u,
+      /Outbox identifier CreateOrderEventsFoo1BarOutbox already exists/u
     );
   });
 });
@@ -3875,13 +4516,13 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
         '--topic',
         fixtureName.ordersCreated,
       ],
-      /requires the generated Action/u,
+      /requires the generated Action/u
     );
 
     await writeFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/actions/handwritten.action.ts',
-      `// <generated-outbox-message-exports>\n// </generated-outbox-message-exports>\n`,
+      `// <generated-outbox-message-exports>\n// </generated-outbox-message-exports>\n`
     );
     await assertScaffoldRefused(
       fixture,
@@ -3894,7 +4535,7 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
         '--topic',
         fixtureName.ordersCreated,
       ],
-      /only the matching generated Action/u,
+      /only the matching generated Action/u
     );
 
     await run(fixture, 'action', [
@@ -3904,11 +4545,14 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
       fixtureName.action,
     ]);
     const governedActionPath = inventoryActionFile;
-    const governedAction = await readFixtureFile(fixture.root, governedActionPath);
+    const governedAction = await readFixtureFile(
+      fixture.root,
+      governedActionPath
+    );
     await writeFixtureFile(
       fixture.root,
       governedActionPath,
-      governedAction.replace("      access: 'write',", "      access: 'read',"),
+      governedAction.replace("      access: 'write',", "      access: 'read',")
     );
     await assertScaffoldRefused(
       fixture,
@@ -3921,7 +4565,7 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
         '--topic',
         fixtureName.ordersCreated,
       ],
-      /matching generated Action with its governed write entrypoint/u,
+      /matching generated Action with its governed write entrypoint/u
     );
     await writeFixtureFile(fixture.root, governedActionPath, governedAction);
     await run(fixture, scaffoldCommand.outboxMessage, [
@@ -3944,17 +4588,20 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
             '--topic',
             topic,
           ]),
-          /already exists/u,
+          /already exists/u
         );
         assert.deepEqual(await snapshotTree(fixture.root), beforeCollision);
-      }),
+      })
     );
   });
 });
 
 test('generates isolated Outbox Workers from published contracts and composes a stable registry', async () => {
   await withFixture(async (fixture) => {
-    const billingApiBefore = await readFixtureFile(fixture.root, billingApiIndexFile);
+    const billingApiBefore = await readFixtureFile(
+      fixture.root,
+      billingApiIndexFile
+    );
     await run(fixture, 'action', [
       scaffoldFlag.vertical,
       inventorySlug,
@@ -3971,8 +4618,8 @@ test('generates isolated Outbox Workers from published contracts and composes a 
     ]);
     const producerBefore = Object.fromEntries(
       Object.entries(await snapshotTree(fixture.root)).filter(([file]) =>
-        file.startsWith('verticals/inventory-stock/'),
-      ),
+        file.startsWith('verticals/inventory-stock/')
+      )
     );
 
     await run(fixture, scaffoldCommand.outboxWorker, [
@@ -3987,7 +4634,7 @@ test('generates isolated Outbox Workers from published contracts and composes a 
     ]);
     const worker = await readFixtureFile(
       fixture.root,
-      'verticals/billing/src/workers/orders-created-logger.worker.ts',
+      'verticals/billing/src/workers/orders-created-logger.worker.ts'
     );
     assert.equal(
       worker,
@@ -4044,7 +4691,7 @@ export const ordersCreatedLoggerWorker = defineOutboxWorker(
   },
   handleOrdersCreatedLogger,
 );
-`,
+`
     );
     assert.equal(
       await readFixtureFile(fixture.root, billingWorkersIndexFile),
@@ -4059,10 +4706,13 @@ export const outboxWorkers = Object.freeze([
   ordersCreatedLoggerWorker,
   // </generated-outbox-worker-registrations>
 ]) satisfies readonly AnyOutboxWorkerRegistration[];
-`,
+`
     );
     assert.equal(
-      await readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/layer.ts'),
+      await readFixtureFile(
+        fixture.root,
+        'verticals/billing/src/worker-host/layer.ts'
+      ),
       `// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
@@ -4079,19 +4729,25 @@ export const outboxWorkerLayer = Layer.merge(
   OutboxWorkerInfrastructureLive,
   outboxWorkerHandlerLayer,
 );
-`,
+`
     );
     assert.equal(
-      await readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/main.ts'),
+      await readFixtureFile(
+        fixture.root,
+        'verticals/billing/src/worker-host/main.ts'
+      ),
       `// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { startBillingOutboxWorker } from '../../scripts/outbox-worker.ts';
 
 startBillingOutboxWorker();
-`,
+`
     );
     assert.equal(
-      await readFixtureFile(fixture.root, 'verticals/billing/scripts/outbox-worker.ts'),
+      await readFixtureFile(
+        fixture.root,
+        'verticals/billing/scripts/outbox-worker.ts'
+      ),
       `// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
@@ -4122,25 +4778,38 @@ export const startBillingOutboxWorker = (): void =>
     registrations: outboxWorkers,
     subscriptions: outboxSubscriptions,
   });
-`,
+`
     );
-    assert.equal(await readFixtureFile(fixture.root, billingApiIndexFile), billingApiBefore);
+    assert.equal(
+      await readFixtureFile(fixture.root, billingApiIndexFile),
+      billingApiBefore
+    );
     const consumerPackage = decodeFixturePackage(
-      await readFixtureFile(fixture.root, 'verticals/billing/package.json'),
+      await readFixtureFile(fixture.root, 'verticals/billing/package.json')
     );
-    assert.equal(consumerPackage.dependencies['@app/core-runtime'], workspaceVersion);
-    assert.equal(consumerPackage.dependencies[inventoryPackageName], workspaceVersion);
+    assert.equal(
+      consumerPackage.dependencies['@app/core-runtime'],
+      workspaceVersion
+    );
+    assert.equal(
+      consumerPackage.dependencies[inventoryPackageName],
+      workspaceVersion
+    );
     assert.equal(consumerPackage.exports['./workers'], undefined);
     assert.equal(consumerPackage.scripts['dev:worker'], workerStartScript);
     assert.equal(consumerPackage.scripts['worker:start'], workerStartScript);
     const consumerTsconfig = Schema.decodeUnknownSync(FixtureTsconfigSchema)(
-      JSON.parse(await readFixtureFile(fixture.root, 'verticals/billing/tsconfig.json')),
+      JSON.parse(
+        await readFixtureFile(fixture.root, 'verticals/billing/tsconfig.json')
+      )
     );
-    assert.deepEqual(consumerTsconfig.references, [{ path: '../inventory-stock' }]);
+    assert.deepEqual(consumerTsconfig.references, [
+      { path: '../inventory-stock' },
+    ]);
     const producerAfter = Object.fromEntries(
       Object.entries(await snapshotTree(fixture.root)).filter(([file]) =>
-        file.startsWith('verticals/inventory-stock/'),
-      ),
+        file.startsWith('verticals/inventory-stock/')
+      )
     );
     assert.deepEqual(producerAfter, producerBefore);
 
@@ -4162,10 +4831,13 @@ export const startBillingOutboxWorker = (): void =>
       '--topic',
       fixtureName.ordersShipped,
     ]);
-    const registry = await readFixtureFile(fixture.root, billingWorkersIndexFile);
+    const registry = await readFixtureFile(
+      fixture.root,
+      billingWorkersIndexFile
+    );
     assert.ok(
       registry.indexOf('ordersCreatedLoggerWorker') <
-        registry.indexOf('ordersShippedProjectorWorker'),
+        registry.indexOf('ordersShippedProjectorWorker')
     );
     await assertScaffoldRefused(
       fixture,
@@ -4180,7 +4852,7 @@ export const startBillingOutboxWorker = (): void =>
         '--topic',
         fixtureName.ordersCreated,
       ],
-      /refusing to overwrite/u,
+      /refusing to overwrite/u
     );
   });
 });
@@ -4201,8 +4873,14 @@ test('generates self-consuming Outbox Workers without circular project or packag
       '--topic',
       fixtureName.ordersCreated,
     ]);
-    const manifestBefore = await readFixtureFile(fixture.root, inventoryManifestFile);
-    const tsconfigBefore = await readFixtureFile(fixture.root, inventoryTsconfigFile);
+    const manifestBefore = await readFixtureFile(
+      fixture.root,
+      inventoryManifestFile
+    );
+    const tsconfigBefore = await readFixtureFile(
+      fixture.root,
+      inventoryTsconfigFile
+    );
     const args = [
       scaffoldFlag.vertical,
       inventorySlug,
@@ -4216,42 +4894,61 @@ test('generates self-consuming Outbox Workers without circular project or packag
     await run(fixture, scaffoldCommand.outboxWorker, args);
     const worker = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/workers/orders-created-projector.worker.ts',
+      'verticals/inventory-stock/src/workers/orders-created-projector.worker.ts'
     );
     assert.ok(worker.includes('// @ontos-outbox-worker-owner inventory.stock'));
-    assert.ok(worker.includes('// @ontos-outbox-worker-producer inventory.stock'));
-    assert.ok(worker.includes("from '@app/inventory-stock/outbox/orders-created'"));
+    assert.ok(
+      worker.includes('// @ontos-outbox-worker-producer inventory.stock')
+    );
+    assert.ok(
+      worker.includes("from '@app/inventory-stock/outbox/orders-created'")
+    );
     const registry = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/workers/index.ts',
+      'verticals/inventory-stock/src/workers/index.ts'
     );
     const hostLayer = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/worker-host/layer.ts',
+      'verticals/inventory-stock/src/worker-host/layer.ts'
     );
     const hostMain = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/worker-host/main.ts',
+      'verticals/inventory-stock/src/worker-host/main.ts'
     );
     const hostScript = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/scripts/outbox-worker.ts',
+      'verticals/inventory-stock/scripts/outbox-worker.ts'
     );
     assert.ok(registry.includes(workerRegistryEntry));
     assert.ok(hostLayer.includes('OutboxWorkerInfrastructureLive'));
     assert.ok(hostMain.includes('startInventoryStockOutboxWorker();'));
     assert.ok(hostScript.includes('startOutboxWorkerProcess({'));
-    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    const registration = await readFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile
+    );
     assert.ok(registration.includes('createOrderAction,'));
     assert.ok(registration.includes(workerRegistryEntry));
-    assert.equal(await readFixtureFile(fixture.root, inventoryManifestFile), manifestBefore);
-    assert.equal(await readFixtureFile(fixture.root, inventoryTsconfigFile), tsconfigBefore);
-    const ownerPackage = decodeFixturePackage(
-      await readFixtureFile(fixture.root, inventoryPackageFile),
+    assert.equal(
+      await readFixtureFile(fixture.root, inventoryManifestFile),
+      manifestBefore
     );
-    assert.equal(ownerPackage.dependencies['@app/core-runtime'], workspaceVersion);
+    assert.equal(
+      await readFixtureFile(fixture.root, inventoryTsconfigFile),
+      tsconfigBefore
+    );
+    const ownerPackage = decodeFixturePackage(
+      await readFixtureFile(fixture.root, inventoryPackageFile)
+    );
+    assert.equal(
+      ownerPackage.dependencies['@app/core-runtime'],
+      workspaceVersion
+    );
     assert.equal(ownerPackage.dependencies[inventoryPackageName], undefined);
-    assert.equal(ownerPackage.exports['./outbox/orders-created'], generatedOutboxContractPath);
+    assert.equal(
+      ownerPackage.exports['./outbox/orders-created'],
+      generatedOutboxContractPath
+    );
     for (const script of ['dev:worker', 'worker:start']) {
       assert.equal(ownerPackage.scripts[script], workerStartScript);
     }
@@ -4259,7 +4956,7 @@ test('generates self-consuming Outbox Workers without circular project or packag
       fixture,
       scaffoldCommand.outboxWorker,
       args,
-      /refusing to overwrite/u,
+      /refusing to overwrite/u
     );
     await run(fixture, 'action', [
       scaffoldFlag.vertical,
@@ -4267,13 +4964,16 @@ test('generates self-consuming Outbox Workers without circular project or packag
       '--action',
       'request-rebuild',
     ]);
-    const registrationAfterAction = await readFixtureFile(fixture.root, inventoryRegistrationFile);
+    const registrationAfterAction = await readFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile
+    );
     assert.ok(registrationAfterAction.includes('requestRebuildAction,'));
     assert.ok(registrationAfterAction.includes(workerRegistryEntry));
     await writeFixtureFile(
       fixture.root,
       inventoryTsconfigFile,
-      JSON.stringify({ references: [{ path: '../inventory-stock' }] }),
+      JSON.stringify({ references: [{ path: '../inventory-stock' }] })
     );
     await assertScaffoldRefused(
       fixture,
@@ -4288,7 +4988,7 @@ test('generates self-consuming Outbox Workers without circular project or packag
         '--topic',
         fixtureName.ordersCreated,
       ],
-      /circular self project reference/u,
+      /circular self project reference/u
     );
   });
 });
@@ -4308,7 +5008,7 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
         '--topic',
         'orders.missing',
       ],
-      /published producer Outbox contract is missing/u,
+      /published producer Outbox contract is missing/u
     );
 
     await run(fixture, 'action', [
@@ -4331,9 +5031,9 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
       contractPath,
       validContract.replace(
         '// @ontos-outbox-producer inventory.stock',
-        '// @ontos-outbox-producer billing',
+        '// @ontos-outbox-producer billing'
       ),
-      'utf-8',
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
@@ -4348,15 +5048,25 @@ test('refuses unpublished or malformed Outbox contracts without partial consumer
         '--topic',
         fixtureName.ordersCreated,
       ],
-      /owner\/topic\/schema mismatch/u,
+      /owner\/topic\/schema mismatch/u
     );
   });
 });
 
 test('generates fail-closed global and owner-local Policies with narrow exports', async () => {
   await withFixture(async (fixture) => {
-    await run(fixture, 'policy', ['--scope', 'global', '--policy', fixtureName.policy]);
-    await run(fixture, 'policy', ['--scope', 'global', '--policy', 'account-open']);
+    await run(fixture, 'policy', [
+      '--scope',
+      'global',
+      '--policy',
+      fixtureName.policy,
+    ]);
+    await run(fixture, 'policy', [
+      '--scope',
+      'global',
+      '--policy',
+      'account-open',
+    ]);
     await run(fixture, 'policy', [
       '--scope',
       'microvertical',
@@ -4369,7 +5079,7 @@ test('generates fail-closed global and owner-local Policies with narrow exports'
     assert.equal(
       await readFixtureFile(
         fixture.root,
-        'packages/core-runtime/src/policies/tenant-active.policy.ts',
+        'packages/core-runtime/src/policies/tenant-active.policy.ts'
       ),
       `import { Effect } from 'effect';
 import { defineGlobalPolicy, denyPolicy } from '../actions/policy.ts';
@@ -4381,12 +5091,12 @@ export const tenantActivePolicy = defineGlobalPolicy<unknown>({
     ),
   policyKey: 'global.tenant-active.v1',
 });
-`,
+`
     );
     assert.equal(
       await readFixtureFile(
         fixture.root,
-        'verticals/inventory-stock/src/policies/stock-available.policy.ts',
+        'verticals/inventory-stock/src/policies/stock-available.policy.ts'
       ),
       `import { Effect } from 'effect';
 import { defineMicroverticalPolicy, denyPolicy } from '@app/core-runtime';
@@ -4399,7 +5109,7 @@ export const stockAvailablePolicy = defineMicroverticalPolicy<unknown, 'inventor
   owningModuleKey: 'inventory.stock',
   policyKey: 'inventory.stock.stock-available.v1',
 });
-`,
+`
     );
     const coreIndex = await readFixtureFile(fixture.root, coreRuntimeIndexFile);
     assert.equal(
@@ -4413,28 +5123,33 @@ export const stockAvailablePolicy = defineMicroverticalPolicy<unknown, 'inventor
 export { accountOpenPolicy } from './policies/account-open.policy.ts';
 export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
 // </generated-global-policy-exports>
-`,
+`
     );
     assert.doesNotMatch(coreIndex, /stockAvailablePolicy/u);
     assert.equal(
-      decodeFixturePackage(await readFixtureFile(fixture.root, inventoryPackageFile)).dependencies[
-        '@app/core-runtime'
-      ],
-      workspaceVersion,
+      decodeFixturePackage(
+        await readFixtureFile(fixture.root, inventoryPackageFile)
+      ).dependencies['@app/core-runtime'],
+      workspaceVersion
     );
     await assertScaffoldRefused(
       fixture,
       'policy',
       ['--scope', 'global', '--policy', fixtureName.policy],
-      /refusing to overwrite/u,
+      /refusing to overwrite/u
     );
 
-    await run(fixture, 'policy', ['--scope', 'global', '--policy', 'foo-1-bar']);
+    await run(fixture, 'policy', [
+      '--scope',
+      'global',
+      '--policy',
+      'foo-1-bar',
+    ]);
     await assertScaffoldRefused(
       fixture,
       'policy',
       ['--scope', 'global', '--policy', 'foo1-bar'],
-      /Policy identifier foo1BarPolicy already exists/u,
+      /Policy identifier foo1BarPolicy already exists/u
     );
   });
 });
@@ -4442,25 +5157,33 @@ export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
 test('generates a title-only authenticated page at the default MicroVertical URL', async () => {
   await withFixture(async (fixture) => {
     const shellBefore = await readFixtureFile(fixture.root, shellSentinelFile);
-    const englishLocalePath = path.join(fixture.root, inventoryEnglishLocaleFile);
+    const englishLocalePath = path.join(
+      fixture.root,
+      inventoryEnglishLocaleFile
+    );
     await writeFile(
       englishLocalePath,
       '{\r\n    "inventory": {"existing":"en-preserved"}\r\n}',
-      'utf-8',
+      'utf-8'
     );
     const refreshes: string[] = [];
     await run(
       fixture,
       scaffoldCommand.microverticalPage,
-      [scaffoldFlag.vertical, inventorySlug, '--page', fixtureName.purchaseOrdersPage],
+      [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        fixtureName.purchaseOrdersPage,
+      ],
       (appId) => {
         refreshes.push(appId);
-      },
+      }
     );
     assert.deepEqual(refreshes, [inventorySlug, shellAppId]);
     const page = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
+      'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx'
     );
     assert.equal(
       page,
@@ -4490,56 +5213,65 @@ export const PurchaseOrdersPage = () => {
 };
 
 export default PurchaseOrdersPage;
-`,
+`
     );
     const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
-    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
-    const federation = await readFixtureFile(fixture.root, inventoryFederationConfigFile);
+    const registration = await readFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile
+    );
+    const federation = await readFixtureFile(
+      fixture.root,
+      inventoryFederationConfigFile
+    );
     const federatedPage = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/federation/page-purchase-orders.tsx',
+      'verticals/inventory-stock/src/federation/page-purchase-orders.tsx'
     );
-    const shellClients = await readFixtureFile(fixture.root, shellVerticalClientsFile);
+    const shellClients = await readFixtureFile(
+      fixture.root,
+      shellVerticalClientsFile
+    );
     assert.match(manifest, /inventory\.stock\.navigation\.purchase-orders/u);
     assert.match(manifest, /inventory\.stock\.page\.purchase-orders/u);
     assert.match(manifest, /routePath: '\/inventory-stock\/purchase-orders'/u);
     assert.match(registration, /page-purchase-orders/u);
     assert.match(
       federation,
-      /'\.\/PagePurchaseOrders': '\.\/src\/federation\/page-purchase-orders\.tsx'/u,
+      /'\.\/PagePurchaseOrders': '\.\/src\/federation\/page-purchase-orders\.tsx'/u
     );
     assert.match(federatedPage, /<FederatedI18nBoundary/u);
     assert.match(federatedPage, /resources=\{inventoryStockI18nResources\}/u);
     assert.match(
       shellClients,
-      /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('inventoryStock\/PagePurchaseOrders'\)/u,
+      /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('inventoryStock\/PagePurchaseOrders'\)/u
     );
     assert.equal(
       await readFixtureFile(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
+        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx'
       ),
       `export { default } from '../../modules/[moduleId]/page.tsx';
-`,
+`
     );
     assert.match(
       await readFixtureFile(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.data.ts',
+        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.data.ts'
       ),
-      /entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u,
+      /entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u
     );
     assert.match(
       await readFixtureFile(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
+        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts'
       ),
-      /canonicalPath: '\/inventory-stock\/purchase-orders'/u,
+      /canonicalPath: '\/inventory-stock\/purchase-orders'/u
     );
     assert.equal(
       await readFixtureFile(
         fixture.root,
-        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
+        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts'
       ),
       `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 
@@ -4570,15 +5302,21 @@ const routeMeta = {
 
 export default routeMeta;
 export { routeMeta };
-`,
+`
     );
     const englishContent = await readFile(englishLocalePath, 'utf-8');
     const english = decodeInventoryLocale(englishContent);
     const czech = decodeInventoryLocale(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/cs/inventory.json'),
+      await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/locales/cs/inventory.json'
+      )
     );
     assert.equal(english.inventory.existing, 'en-preserved');
-    assert.match(englishContent, /"inventory": \{"existing":"en-preserved", "pages":/u);
+    assert.match(
+      englishContent,
+      /"inventory": \{"existing":"en-preserved", "pages":/u
+    );
     assert.doesNotMatch(englishContent, /(?<!\r)\n/u);
     assert.equal(englishContent.endsWith('\r\n'), false);
     assert.deepEqual(english.inventory.pages['purchaseOrders'], {
@@ -4589,8 +5327,14 @@ export { routeMeta };
       description: 'Tato stránka je připravena k implementaci.',
       title: 'Nová stránka',
     });
-    assert.equal(await readFixtureFile(fixture.root, shellSentinelFile), shellBefore);
-    assert.doesNotMatch(page, /fetch\(|useState|useEffect|<style|\.css'|\.description|\.empty/u);
+    assert.equal(
+      await readFixtureFile(fixture.root, shellSentinelFile),
+      shellBefore
+    );
+    assert.doesNotMatch(
+      page,
+      /fetch\(|useState|useEffect|<style|\.css'|\.description|\.empty/u
+    );
   });
 });
 
@@ -4602,10 +5346,15 @@ test('allows a two-letter MicroVertical slug in a derived default page URL', asy
       '--page',
       'people',
     ]);
-    await stat(path.join(fixture.root, 'verticals/hr/src/routes/[lang]/hr/people/page.tsx'));
+    await stat(
+      path.join(
+        fixture.root,
+        'verticals/hr/src/routes/[lang]/hr/people/page.tsx'
+      )
+    );
     assert.match(
       await readFixtureFile(fixture.root, 'verticals/hr/vertical.manifest.ts'),
-      /routePath: '\/hr\/people'/u,
+      /routePath: '\/hr\/people'/u
     );
   });
 });
@@ -4627,9 +5376,9 @@ test('renders a newly generated federated page with English and Czech owner reso
           await symlink(
             path.join(appRoot, 'apps', shellAppId, 'node_modules', packageName),
             path.join(fixture.root, 'node_modules', packageName),
-            'dir',
-          ),
-      ),
+            'dir'
+          )
+      )
     );
     await writeFixtureFile(
       fixture.root,
@@ -4638,7 +5387,7 @@ test('renders a newly generated federated page with English and Czech owner reso
         exports: { './runtime': './runtime.tsx' },
         name: '@modern-js/plugin-i18n',
         type: 'module',
-      }),
+      })
     );
     await writeFixtureFile(
       fixture.root,
@@ -4671,7 +5420,7 @@ export const useModernI18n = () => {
       key,
   };
 };
-`,
+`
     );
     const runnerPath = path.join(fixture.root, 'render-generated-page.tsx');
     await writeFile(
@@ -4681,7 +5430,7 @@ import Page from './verticals/inventory-stock/src/federation/page-customers.tsx'
 
 process.stdout.write(renderToStaticMarkup(<Page />));
 `,
-      'utf-8',
+      'utf-8'
     );
     const bundlePath = path.join(fixture.root, 'render-generated-page.cjs');
     const bundle = spawnSync(
@@ -4694,9 +5443,10 @@ process.stdout.write(renderToStaticMarkup(<Page />));
         '--platform=node',
         `--outfile=${bundlePath}`,
       ],
-      { cwd: fixture.root, encoding: 'utf-8' },
+      { cwd: fixture.root, encoding: 'utf-8' }
     );
-    assert.equal(bundle.status, 0, bundle.stderr || bundle.error?.message);
+    assert.ifError(bundle.error);
+    assert.equal(bundle.status, 0, bundle.stderr);
     const renderLanguage = (language: 'cs' | 'en') =>
       spawnSync(process.execPath, [bundlePath], {
         cwd: fixture.root,
@@ -4723,14 +5473,18 @@ test('adds further pages after generated owner files have been formatted', async
       await Promise.all(
         formattedOwnerPaths.map(async (relativePath) => {
           const filePath = path.join(fixture.root, relativePath);
-          const formatted = spawnSync(oxfmtPath, [`--stdin-filepath=${relativePath}`], {
-            cwd: appRoot,
-            encoding: 'utf-8',
-            input: await readFile(filePath, 'utf-8'),
-          });
+          const formatted = spawnSync(
+            oxfmtPath,
+            [`--stdin-filepath=${relativePath}`],
+            {
+              cwd: appRoot,
+              encoding: 'utf-8',
+              input: await readFile(filePath, 'utf-8'),
+            }
+          );
           assert.equal(formatted.status, 0, formatted.stderr);
           await writeFile(filePath, formatted.stdout, 'utf-8');
-        }),
+        })
       );
     };
 
@@ -4758,20 +5512,34 @@ test('adds further pages after generated owner files have been formatted', async
     ]);
 
     const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
-    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
-    const shellClients = await readFixtureFile(fixture.root, shellVerticalClientsFile);
+    const registration = await readFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile
+    );
+    const shellClients = await readFixtureFile(
+      fixture.root,
+      shellVerticalClientsFile
+    );
     await Promise.all(
-      ['customer-notes', 'customers', fixtureName.purchaseOrdersPage].map(async (page) => {
-        assert.match(manifest, new RegExp(`inventory\\.stock\\.page\\.${page}`, 'u'));
-        assert.match(registration, new RegExp(`'page-${page}'`, 'u'));
-        assert.match(shellClients, new RegExp(`inventory\\.stock\\.page-${page}`, 'u'));
-        await stat(
-          path.join(
-            fixture.root,
-            `verticals/inventory-stock/src/routes/[lang]/inventory-stock/${page}/page.tsx`,
-          ),
-        );
-      }),
+      ['customer-notes', 'customers', fixtureName.purchaseOrdersPage].map(
+        async (page) => {
+          assert.match(
+            manifest,
+            new RegExp(`inventory\\.stock\\.page\\.${page}`, 'u')
+          );
+          assert.match(registration, new RegExp(`'page-${page}'`, 'u'));
+          assert.match(
+            shellClients,
+            new RegExp(`inventory\\.stock\\.page-${page}`, 'u')
+          );
+          await stat(
+            path.join(
+              fixture.root,
+              `verticals/inventory-stock/src/routes/[lang]/inventory-stock/${page}/page.tsx`
+            )
+          );
+        }
+      )
     );
   });
 });
@@ -4788,7 +5556,7 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
     ]);
     const page = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/routes/[lang]/purchasing/orders/page.tsx',
+      'verticals/inventory-stock/src/routes/[lang]/purchasing/orders/page.tsx'
     );
     assert.match(page, /from '\.\.\/\.\.\/\.\.\/ultramodern-route-head'/u);
     const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
@@ -4796,9 +5564,9 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
     assert.match(
       await readFixtureFile(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/purchasing/orders/page.data.ts',
+        'apps/shell-super-app/src/routes/[lang]/purchasing/orders/page.data.ts'
       ),
-      /entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u,
+      /entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u
     );
     const beforeRerun = await snapshotTree(fixture.root);
     await run(fixture, scaffoldCommand.microverticalPage, [
@@ -4819,7 +5587,7 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
         '--url',
         '/different/orders',
       ]),
-      /already exists at another URL/u,
+      /already exists at another URL/u
     );
     await assert.rejects(
       run(fixture, scaffoldCommand.microverticalPage, [
@@ -4830,7 +5598,7 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
         '--url',
         purchasingOrdersUrl,
       ]),
-      /already exists|collides/u,
+      /already exists|collides/u
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
   });
@@ -4847,7 +5615,7 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
     await stat(path.join(fixture.root, inventoryOrdersRouteFile));
     assert.match(
       await readFixtureFile(fixture.root, inventoryManifestFile),
-      /routePath: '\/orders'/u,
+      /routePath: '\/orders'/u
     );
   });
 
@@ -4868,11 +5636,18 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
           await assertScaffoldRefused(
             fixture,
             scaffoldCommand.microverticalPage,
-            [scaffoldFlag.vertical, inventorySlug, '--page', 'orders', '--url', url],
-            /--url/u,
+            [
+              scaffoldFlag.vertical,
+              inventorySlug,
+              '--page',
+              'orders',
+              '--url',
+              url,
+            ],
+            /--url/u
           );
-        }),
-    ),
+        })
+    )
   );
 });
 
@@ -4889,7 +5664,7 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
     additionalData: ({ stats }) => ({ exposes: stats.exposes }),
   },
 };
-`,
+`
     );
     const generatorArguments = [
       scaffoldFlag.vertical,
@@ -4901,55 +5676,102 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
     ];
     await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
 
-    const ownerRoute = 'verticals/inventory-stock/src/routes/[lang]/contacts/customers/[id]/edit';
-    const shellRoute = 'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/edit';
+    const ownerRoute =
+      'verticals/inventory-stock/src/routes/[lang]/contacts/customers/[id]/edit';
+    const shellRoute =
+      'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/edit';
     const page = await readFixtureFile(fixture.root, `${ownerRoute}/page.tsx`);
-    const ownerMetadata = await readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
-    const shellLoader = await readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
-    const shellMetadata = await readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
+    const ownerMetadata = await readFixtureFile(
+      fixture.root,
+      `${ownerRoute}/route.meta.ts`
+    );
+    const shellLoader = await readFixtureFile(
+      fixture.root,
+      `${shellRoute}/page.data.ts`
+    );
+    const shellMetadata = await readFixtureFile(
+      fixture.root,
+      `${shellRoute}/route.meta.ts`
+    );
     const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
-    const registration = await readFixtureFile(fixture.root, inventoryRegistrationFile);
-    const federation = await readFixtureFile(fixture.root, inventoryFederationConfigFile);
+    const registration = await readFixtureFile(
+      fixture.root,
+      inventoryRegistrationFile
+    );
+    const federation = await readFixtureFile(
+      fixture.root,
+      inventoryFederationConfigFile
+    );
     const federatedPage = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/federation/page-customer-edit.tsx',
+      'verticals/inventory-stock/src/federation/page-customer-edit.tsx'
     );
-    const shellClients = await readFixtureFile(fixture.root, shellVerticalClientsFile);
+    const shellClients = await readFixtureFile(
+      fixture.root,
+      shellVerticalClientsFile
+    );
 
-    assert.match(page, /export const CustomerEditPageRouteParams = Schema\.Struct/u);
     assert.match(
       page,
-      /id: Schema\.String\.pipe\(Schema\.brand\('CustomerEditPageIdRouteParameter'\)\)/u,
+      /export const CustomerEditPageRouteParams = Schema\.Struct/u
     );
     assert.match(
       page,
-      /export type CustomerEditPageRouteParams = typeof CustomerEditPageRouteParams\.Type/u,
+      /id: Schema\.String\.pipe\(Schema\.brand\('CustomerEditPageIdRouteParameter'\)\)/u
     );
-    assert.match(page, /Schema\.toStandardSchemaV1\(\s*CustomerEditPageRouteParams,?\s*\)/u);
+    assert.match(
+      page,
+      /export type CustomerEditPageRouteParams = typeof CustomerEditPageRouteParams\.Type/u
+    );
+    assert.match(
+      page,
+      /Schema\.toStandardSchemaV1\(\s*CustomerEditPageRouteParams,?\s*\)/u
+    );
     assert.match(page, /CustomerEditPage = \(\{ routeParams \}/u);
     assert.match(page, /void routeParams;/u);
-    assert.match(ownerMetadata, /canonicalPath: '\/contacts\/customers\/:id\/edit'/u);
+    assert.match(
+      ownerMetadata,
+      /canonicalPath: '\/contacts\/customers\/:id\/edit'/u
+    );
     assert.match(ownerMetadata, /en: '\/contacts\/customers\/:id\/edit'/u);
-    assert.match(shellMetadata, /canonicalPath: '\/contacts\/customers\/:id\/edit'/u);
+    assert.match(
+      shellMetadata,
+      /canonicalPath: '\/contacts\/customers\/:id\/edit'/u
+    );
     assert.match(manifest, /routePath: '\/contacts\/customers\/:id\/edit'/u);
     assert.match(manifest, /inventory\.stock\.page\.customer-edit/u);
-    assert.doesNotMatch(manifest, /inventory\.stock\.navigation\.customer-edit/u);
+    assert.doesNotMatch(
+      manifest,
+      /inventory\.stock\.navigation\.customer-edit/u
+    );
     assert.match(registration, /'page-customer-edit'/u);
     assert.match(federation, /'\.\/PageCustomerEdit'/u);
     assert.match(federatedPage, /type CustomerEditPageRouteParams/u);
     assert.doesNotMatch(federatedPage, /Schema\.Struct/u);
-    assert.match(federatedPage, /<CustomerEditPage routeParams=\{routeParams\} \/>/u);
+    assert.match(
+      federatedPage,
+      /<CustomerEditPage routeParams=\{routeParams\} \/>/u
+    );
     assert.match(shellClients, /inventory\.stock\.page-customer-edit/u);
     assert.match(shellLoader, /selectRouteParams/u);
-    assert.match(shellLoader, /const routeParameterNames = \['id'\] as const;/u);
-    assert.match(shellLoader, /routeParams: selectRouteParams\(params, routeParameterNames\)/u);
     assert.match(
-      await readFixtureFile(fixture.root, inventoryEnglishLocaleFile),
-      /"customerEdit"/u,
+      shellLoader,
+      /const routeParameterNames = \['id'\] as const;/u
     );
     assert.match(
-      await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/cs/inventory.json'),
-      /"customerEdit"/u,
+      shellLoader,
+      /routeParams: selectRouteParams\(params, routeParameterNames\)/u
+    );
+    assert.match(
+      await readFixtureFile(fixture.root, inventoryEnglishLocaleFile),
+      /"customerEdit"/u
+    );
+    assert.match(
+      await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/locales/cs/inventory.json'
+      ),
+      /"customerEdit"/u
     );
 
     const afterFirstRun = await snapshotTree(fixture.root);
@@ -4977,38 +5799,65 @@ test('generates the Contacts Contact-detail two-parameter page atomically and sa
     await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
 
     const page = await readFixtureFile(fixture.root, `${ownerRoute}/page.tsx`);
-    const ownerMetadata = await readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
-    const shellLoader = await readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
-    const shellMetadata = await readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
+    const ownerMetadata = await readFixtureFile(
+      fixture.root,
+      `${ownerRoute}/route.meta.ts`
+    );
+    const shellLoader = await readFixtureFile(
+      fixture.root,
+      `${shellRoute}/page.data.ts`
+    );
+    const shellMetadata = await readFixtureFile(
+      fixture.root,
+      `${shellRoute}/route.meta.ts`
+    );
     const manifest = await readFixtureFile(fixture.root, inventoryManifestFile);
 
-    assert.match(page, /export const ContactDetailPageRouteParams = Schema\.Struct/u);
     assert.match(
       page,
-      /id: Schema\.String\.pipe\(Schema\.brand\('ContactDetailPageIdRouteParameter'\)\)/u,
+      /export const ContactDetailPageRouteParams = Schema\.Struct/u
     );
     assert.match(
       page,
-      /contactId: Schema\.String\.pipe\(Schema\.brand\('ContactDetailPageContactIdRouteParameter'\)\)/u,
+      /id: Schema\.String\.pipe\(Schema\.brand\('ContactDetailPageIdRouteParameter'\)\)/u
     );
     assert.match(
       page,
-      /export type ContactDetailPageRouteParams = typeof ContactDetailPageRouteParams\.Type/u,
+      /contactId: Schema\.String\.pipe\(Schema\.brand\('ContactDetailPageContactIdRouteParameter'\)\)/u
     );
-    assert.match(page, /Schema\.toStandardSchemaV1\(\s*ContactDetailPageRouteParams,?\s*\)/u);
+    assert.match(
+      page,
+      /export type ContactDetailPageRouteParams = typeof ContactDetailPageRouteParams\.Type/u
+    );
+    assert.match(
+      page,
+      /Schema\.toStandardSchemaV1\(\s*ContactDetailPageRouteParams,?\s*\)/u
+    );
     assert.match(
       ownerMetadata,
-      /canonicalPath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u,
+      /canonicalPath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u
     );
     assert.match(
       shellMetadata,
-      /canonicalPath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u,
+      /canonicalPath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u
     );
-    assert.match(manifest, /routePath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u);
+    assert.match(
+      manifest,
+      /routePath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u
+    );
     assert.match(manifest, /inventory\.stock\.page\.contact-detail/u);
-    assert.doesNotMatch(manifest, /inventory\.stock\.navigation\.contact-detail/u);
-    assert.match(shellLoader, /const routeParameterNames = \['id', 'contactId'\] as const;/u);
-    assert.match(shellLoader, /routeParams: selectRouteParams\(params, routeParameterNames\)/u);
+    assert.doesNotMatch(
+      manifest,
+      /inventory\.stock\.navigation\.contact-detail/u
+    );
+    assert.match(
+      shellLoader,
+      /const routeParameterNames = \['id', 'contactId'\] as const;/u
+    );
+    assert.match(
+      shellLoader,
+      /routeParams: selectRouteParams\(params, routeParameterNames\)/u
+    );
     await stat(path.join(fixture.root, ownerRoute));
     await stat(path.join(fixture.root, shellRoute));
 
@@ -5021,13 +5870,13 @@ test('generates the Contacts Contact-detail two-parameter page atomically and sa
     await writeFixtureFile(
       fixture.root,
       'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/page.tsx',
-      'export default function DeveloperOwnedPage() { return null; }\n',
+      'export default function DeveloperOwnedPage() { return null; }\n'
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.microverticalPage,
       generatorArguments,
-      /refusing to overwrite|already exists/u,
+      /refusing to overwrite|already exists/u
     );
   });
 });
@@ -5058,10 +5907,10 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
               '--url',
               url,
             ],
-            /--url/u,
+            /--url/u
           );
-        }),
-    ),
+        })
+    )
   );
 
   await Promise.all([
@@ -5085,7 +5934,7 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
           '--url',
           '/inventory/customers/:customerId',
         ],
-        /routing collision|already registered|collides/u,
+        /routing collision|already registered|collides/u
       );
     }),
     withFixture(async (fixture) => {
@@ -5100,25 +5949,25 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
       await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
       const pagePath = path.join(
         fixture.root,
-        'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
+        'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx'
       );
       await writeFile(
         pagePath,
         `${await readFile(pagePath, 'utf-8')}\n// developer edit\n`,
-        'utf-8',
+        'utf-8'
       );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
         generatorArguments,
-        /collides/u,
+        /collides/u
       );
     }),
     withFixture(async (fixture) => {
       await writeFixtureFile(
         fixture.root,
         'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
-        'export default function PartialPage() { return null; }\n',
+        'export default function PartialPage() { return null; }\n'
       );
       await assertScaffoldRefused(
         fixture,
@@ -5131,7 +5980,7 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
           '--url',
           customerEditUrl,
         ],
-        /collides with nested content/u,
+        /collides with nested content/u
       );
     }),
     withFixture(async (fixture) => {
@@ -5154,7 +6003,7 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
           '--url',
           customerDetailUrl,
         ],
-        /static route segment|collides/u,
+        /static route segment|collides/u
       );
     }),
     withFixture(async (fixture) => {
@@ -5169,9 +6018,9 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
       await rm(
         path.join(
           fixture.root,
-          'apps/shell-super-app/src/routes/[lang]/shared/customers/[id]/edit',
+          'apps/shell-super-app/src/routes/[lang]/shared/customers/[id]/edit'
         ),
-        { recursive: true },
+        { recursive: true }
       );
       await assertScaffoldRefused(
         fixture,
@@ -5184,7 +6033,7 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
           '--url',
           '/shared/customers/:id/edit',
         ],
-        /already registered by billing/u,
+        /already registered by billing/u
       );
     }),
   ]);
@@ -5203,7 +6052,7 @@ test('extends an existing dynamic route branch without reclassifying an existing
     await writeFixtureFile(
       fixture.root,
       'apps/shell-super-app/src/routes/[lang]/inventory/customers/new/page.tsx',
-      'export default function ExistingStaticSibling() { return null; }\n',
+      'export default function ExistingStaticSibling() { return null; }\n'
     );
 
     await run(fixture, scaffoldCommand.microverticalPage, [
@@ -5218,8 +6067,8 @@ test('extends an existing dynamic route branch without reclassifying an existing
     await stat(
       path.join(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
-      ),
+        'apps/shell-super-app/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx'
+      )
     );
   });
 });
@@ -5230,7 +6079,7 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
       await writeFixtureFile(
         fixture.root,
         'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.tsx',
-        'export default function ModulePage() { return null; }\n',
+        'export default function ModulePage() { return null; }\n'
       );
       await assertScaffoldRefused(
         fixture,
@@ -5243,20 +6092,27 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
           '--url',
           '/modules/customers',
         ],
-        /collides with dynamic route segment \[moduleId\]/u,
+        /collides with dynamic route segment \[moduleId\]/u
       );
     }),
     withFixture(async (fixture) => {
       await writeFixtureFile(
         fixture.root,
         'apps/shell-super-app/src/routes/[lang]/login/page.tsx',
-        'export default function LoginPage() { return null; }\n',
+        'export default function LoginPage() { return null; }\n'
       );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
-        [scaffoldFlag.vertical, inventorySlug, '--page', 'customers', '--url', '/login/customers'],
-        /reserved route prefix \/login/u,
+        [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--page',
+          'customers',
+          '--url',
+          '/login/customers',
+        ],
+        /reserved route prefix \/login/u
       );
     }),
     withFixture(async (fixture) => {
@@ -5268,9 +6124,15 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
         '--url',
         '/shared/customers',
       ]);
-      await rm(path.join(fixture.root, 'apps/shell-super-app/src/routes/[lang]/shared/customers'), {
-        recursive: true,
-      });
+      await rm(
+        path.join(
+          fixture.root,
+          'apps/shell-super-app/src/routes/[lang]/shared/customers'
+        ),
+        {
+          recursive: true,
+        }
+      );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
@@ -5282,7 +6144,7 @@ test('rejects reserved, dynamic, and cross-owner page URLs before writing', asyn
           '--url',
           '/shared/customers',
         ],
-        /already registered by billing/u,
+        /already registered by billing/u
       );
     }),
   ]);
@@ -5305,8 +6167,8 @@ test('uses exact page identities and rejects edited generated wiring', async () 
     await stat(
       path.join(
         fixture.root,
-        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/order/page.tsx',
-      ),
+        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/order/page.tsx'
+      )
     );
   });
 
@@ -5326,31 +6188,55 @@ test('uses exact page identities and rejects edited generated wiring', async () 
         manifestPath,
         manifest
           .replaceAll("'page-orders'", '"page-orders"')
-          .replaceAll("'inventory.stock.page.orders'", '"inventory.stock.page.orders"'),
-        'utf-8',
+          .replaceAll(
+            "'inventory.stock.page.orders'",
+            '"inventory.stock.page.orders"'
+          ),
+        'utf-8'
       );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
-        [scaffoldFlag.vertical, inventorySlug, '--page', 'orders', '--url', '/second/orders'],
-        /page identity inventory\.stock\.page\.orders already exists/u,
+        [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--page',
+          'orders',
+          '--url',
+          '/second/orders',
+        ],
+        /page identity inventory\.stock\.page\.orders already exists/u
       );
     }),
     withFixture(async (fixture) => {
-      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      const generatorArguments = [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        'orders',
+      ];
       await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
       const manifestPath = path.join(fixture.root, inventoryManifestFile);
       const manifest = await readFile(manifestPath, 'utf-8');
-      await writeFile(manifestPath, manifest.replace('order: 100', 'order: 101'), 'utf-8');
+      await writeFile(
+        manifestPath,
+        manifest.replace('order: 100', 'order: 101'),
+        'utf-8'
+      );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
         generatorArguments,
-        /already exists|collides/u,
+        /already exists|collides/u
       );
     }),
     withFixture(async (fixture) => {
-      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      const generatorArguments = [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        'orders',
+      ];
       await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
       const manifestPath = path.join(fixture.root, inventoryManifestFile);
       const manifest = await readFile(manifestPath, 'utf-8');
@@ -5359,50 +6245,63 @@ test('uses exact page identities and rejects edited generated wiring', async () 
         manifest.replace(
           '// </generated-module-shell-navigation>',
           `{ contributionKey : "inventory.stock.navigation.orders", entrypoint: { access: 'read', entrypointKey: 'inventory.stock.page.orders', moduleKey: 'inventory.stock', role: 'page', scope: 'tenant' }, groupKey: 'shell.navigation.modules', order: 101, pageKey: 'inventory.stock.page.orders' },
-        // </generated-module-shell-navigation>`,
+        // </generated-module-shell-navigation>`
         ),
-        'utf-8',
+        'utf-8'
       );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
         generatorArguments,
-        /already exists|collides/u,
+        /already exists|collides/u
       );
     }),
     withFixture(async (fixture) => {
-      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      const generatorArguments = [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        'orders',
+      ];
       await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
-      const federationPath = path.join(fixture.root, inventoryFederationConfigFile);
+      const federationPath = path.join(
+        fixture.root,
+        inventoryFederationConfigFile
+      );
       const federation = await readFile(federationPath, 'utf-8');
       await writeFile(
         federationPath,
         federation.replace(
           "'./src/federation/page-orders.tsx'",
-          "'./src/federation/page-other.tsx'",
+          "'./src/federation/page-other.tsx'"
         ),
-        'utf-8',
+        'utf-8'
       );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
         generatorArguments,
-        /already exists|collides/u,
+        /already exists|collides/u
       );
     }),
     withFixture(async (fixture) => {
-      const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+      const generatorArguments = [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        'orders',
+      ];
       await run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
       await writeFixtureFile(
         fixture.root,
         'apps/shell-super-app/src/routes/[lang]/inventory-stock/orders/developer-note.ts',
-        'export const developerNote = true;\n',
+        'export const developerNote = true;\n'
       );
       await assertScaffoldRefused(
         fixture,
         scaffoldCommand.microverticalPage,
         generatorArguments,
-        /already exists|collides/u,
+        /already exists|collides/u
       );
     }),
   ]);
@@ -5458,7 +6357,7 @@ export const OrdersPage = () => {
 };
 
 export default OrdersPage;
-`,
+`
     );
     await writeFixtureFile(
       fixture.root,
@@ -5471,15 +6370,17 @@ interface ShellPageLoaderArguments {
 
 export const loader = ({ request }: ShellPageLoaderArguments) =>
   loadModuleTarget({ params: { moduleId: 'inventory.stock' }, request });
-`,
+`
     );
     await Promise.all(
       ['cs', 'en'].map(async (locale) => {
         const localePath = path.join(
           fixture.root,
-          `verticals/inventory-stock/locales/${locale}/inventory.json`,
+          `verticals/inventory-stock/locales/${locale}/inventory.json`
         );
-        const catalog = decodeInventoryLocale(await readFile(localePath, 'utf-8'));
+        const catalog = decodeInventoryLocale(
+          await readFile(localePath, 'utf-8')
+        );
         const ordersPage =
           locale === 'cs'
             ? {
@@ -5500,14 +6401,14 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
           },
         });
         await writeFile(localePath, json(nextCatalog), 'utf-8');
-      }),
+      })
     );
 
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.microverticalPage,
       generatorArguments,
-      /page route already exists or collides/u,
+      /page route already exists or collides/u
     );
   });
 });
@@ -5515,7 +6416,9 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
 test('rejects page generation when an owning locale has no truthful starter translation', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, inventoryPackageFile);
-    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
+    const packageJson = decodeFixturePackage(
+      await readFile(packagePath, 'utf-8')
+    );
     await writeFile(
       packagePath,
       json({
@@ -5525,18 +6428,23 @@ test('rejects page generation when an owning locale has no truthful starter tran
           './locales/de': './locales/de/inventory.json',
         },
       }),
-      'utf-8',
+      'utf-8'
     );
     await writeFixtureFile(
       fixture.root,
       'verticals/inventory-stock/locales/de/inventory.json',
-      json({ inventory: { existing: 'de-preserved' } }),
+      json({ inventory: { existing: 'de-preserved' } })
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.microverticalPage,
-      [scaffoldFlag.vertical, inventorySlug, '--page', fixtureName.purchaseOrdersPage],
-      /no starter translation for locale de/u,
+      [
+        scaffoldFlag.vertical,
+        inventorySlug,
+        '--page',
+        fixtureName.purchaseOrdersPage,
+      ],
+      /no starter translation for locale de/u
     );
   });
 });
@@ -5544,13 +6452,16 @@ test('rejects page generation when an owning locale has no truthful starter tran
 test('page prerequisite and nested-route failures are preflighted, while refresh failure is safely rerunnable', async () => {
   await withFixture(async (fixture) => {
     await rm(
-      path.join(fixture.root, 'verticals/inventory-stock/src/routes/ultramodern-route-head.tsx'),
+      path.join(
+        fixture.root,
+        'verticals/inventory-stock/src/routes/ultramodern-route-head.tsx'
+      )
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.microverticalPage,
       [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
-      /UltramodernRouteHead is missing/u,
+      /UltramodernRouteHead is missing/u
     );
   });
 
@@ -5558,13 +6469,13 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
     await writeFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/nested.ts',
-      'export {};\n',
+      'export {};\n'
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.microverticalPage,
       [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
-      /collides with nested content/u,
+      /collides with nested content/u
     );
   });
 
@@ -5587,15 +6498,15 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
             throw new Error('route refresh fixture failure');
           },
           workspaceRoot: fixture.root,
-        },
+        }
       ),
-      /route refresh fixture failure/u,
+      /route refresh fixture failure/u
     );
     await stat(
       path.join(
         fixture.root,
-        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
-      ),
+        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx'
+      )
     );
     const afterRefreshFailure = await snapshotTree(fixture.root);
     const refreshes: string[] = [];
@@ -5605,14 +6516,16 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
       [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
       (appId) => {
         refreshes.push(appId);
-      },
+      }
     );
     assert.deepEqual(refreshes, [inventorySlug, shellAppId]);
     assert.deepEqual(await snapshotTree(fixture.root), afterRefreshFailure);
   });
 });
 
-const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<string, string>>> => {
+const runCombinedScenario = async (
+  fixture: Fixture
+): Promise<Readonly<Record<string, string>>> => {
   await addInventoryItemResourceType(fixture);
   await run(fixture, scaffoldCommand.microverticalActionBoundary, [
     scaffoldFlag.vertical,
@@ -5648,7 +6561,12 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
     '--topic',
     fixtureName.ordersCreated,
   ]);
-  await run(fixture, 'policy', ['--scope', 'global', '--policy', fixtureName.policy]);
+  await run(fixture, 'policy', [
+    '--scope',
+    'global',
+    '--policy',
+    fixtureName.policy,
+  ]);
   await run(fixture, 'policy', [
     '--scope',
     'microvertical',
@@ -5683,7 +6601,7 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
     fixture,
     scaffoldCommand.microverticalPage,
     [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
-    (appId) => assert.ok([inventorySlug, shellAppId].includes(appId)),
+    (appId) => assert.ok([inventorySlug, shellAppId].includes(appId))
   );
   await run(fixture, scaffoldCommand.microverticalPage, [
     scaffoldFlag.vertical,
@@ -5702,8 +6620,8 @@ test('all generators compose deterministically without crossing owner boundaries
   try {
     const billingBefore = Object.fromEntries(
       Object.entries(await snapshotTree(first.root)).filter(([file]) =>
-        file.startsWith('verticals/billing/'),
-      ),
+        file.startsWith('verticals/billing/')
+      )
     );
     const shellBefore = await readFixtureFile(first.root, shellSentinelFile);
     const topologyBefore = await readFixtureFile(first.root, topologyFile);
@@ -5711,13 +6629,24 @@ test('all generators compose deterministically without crossing owner boundaries
     const secondTree = await runCombinedScenario(second);
     assert.deepEqual(firstTree, secondTree);
     const billingAfter = Object.fromEntries(
-      Object.entries(firstTree).filter(([file]) => file.startsWith('verticals/billing/')),
+      Object.entries(firstTree).filter(([file]) =>
+        file.startsWith('verticals/billing/')
+      )
     );
     assert.deepEqual(billingAfter, billingBefore);
-    assert.equal(await readFixtureFile(first.root, shellSentinelFile), shellBefore);
-    assert.equal(await readFixtureFile(first.root, topologyFile), topologyBefore);
+    assert.equal(
+      await readFixtureFile(first.root, shellSentinelFile),
+      shellBefore
+    );
+    assert.equal(
+      await readFixtureFile(first.root, topologyFile),
+      topologyBefore
+    );
     const combinedSource = Object.values(firstTree).join('\n');
-    assert.doesNotMatch(combinedSource, /from ['"]\.\.\/\.\.\/billing|fetch\(/u);
+    assert.doesNotMatch(
+      combinedSource,
+      /from ['"]\.\.\/\.\.\/billing|fetch\(/u
+    );
   } finally {
     await rm(first.root, { force: true, recursive: true });
     await rm(second.root, { force: true, recursive: true });
@@ -5774,14 +6703,22 @@ test('every generated TypeScript file is already formatter-stable', async () => 
     await Promise.all(
       generatedFiles.map(async (relativePath) => {
         const source = await readFixtureFile(fixture.root, relativePath);
-        const formatted = spawnSync(oxfmtPath, [`--stdin-filepath=${relativePath}`], {
-          cwd: appRoot,
-          encoding: 'utf-8',
-          input: source,
-        });
+        const formatted = spawnSync(
+          oxfmtPath,
+          [`--stdin-filepath=${relativePath}`],
+          {
+            cwd: appRoot,
+            encoding: 'utf-8',
+            input: source,
+          }
+        );
         assert.equal(formatted.status, 0, formatted.stderr);
-        assert.equal(formatted.stdout, source, `${relativePath} must be formatter-stable`);
-      }),
+        assert.equal(
+          formatted.stdout,
+          source,
+          `${relativePath} must be formatter-stable`
+        );
+      })
     );
   });
 });
@@ -5799,16 +6736,28 @@ test('all generated files typecheck against the real workspace contracts', async
       '--topic',
       fixtureName.ordersCreated,
     ]);
-    await mkdir(path.join(fixture.root, 'node_modules', '@authzed'), { recursive: true });
-    await mkdir(path.join(fixture.root, 'node_modules', '@effect'), { recursive: true });
-    await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), { recursive: true });
-    await mkdir(path.join(fixture.root, 'node_modules', '@types'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'node_modules', '@authzed'), {
+      recursive: true,
+    });
+    await mkdir(path.join(fixture.root, 'node_modules', '@effect'), {
+      recursive: true,
+    });
+    await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), {
+      recursive: true,
+    });
+    await mkdir(path.join(fixture.root, 'node_modules', '@types'), {
+      recursive: true,
+    });
     // Every generated-runtime dependency is linked from the real workspace so the fixture
     // typechecks and runs against the same modules the shipped verticals resolve.
     await Promise.all(
       (
         [
-          ['packages/core-runtime/node_modules/effect', effectNodeModulePath, 'dir'],
+          [
+            'packages/core-runtime/node_modules/effect',
+            effectNodeModulePath,
+            'dir',
+          ],
           [
             'packages/core-runtime/node_modules/@effect/sql-pg',
             'node_modules/@effect/sql-pg',
@@ -5819,9 +6768,21 @@ test('all generated files typecheck against the real workspace contracts', async
             'node_modules/@effect/platform-node',
             'dir',
           ],
-          ['apps/shell-super-app/node_modules/jose', 'node_modules/jose', 'dir'],
-          ['packages/core-runtime/node_modules/drizzle-orm', 'node_modules/drizzle-orm', 'dir'],
-          ['packages/core-runtime/node_modules/dotenv', 'node_modules/dotenv', 'dir'],
+          [
+            'apps/shell-super-app/node_modules/jose',
+            'node_modules/jose',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/node_modules/drizzle-orm',
+            'node_modules/drizzle-orm',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/node_modules/dotenv',
+            'node_modules/dotenv',
+            'dir',
+          ],
           ['packages/core-runtime/node_modules/pg', 'node_modules/pg', 'dir'],
           [
             'packages/core-runtime/node_modules/@authzed/authzed-node',
@@ -5838,16 +6799,52 @@ test('all generated files typecheck against the real workspace contracts', async
             pluginBffNodeModulePath,
             'dir',
           ],
-          ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
-          ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
+          [
+            'apps/shell-super-app/node_modules/@types/react',
+            'node_modules/@types/react',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/node_modules/@types/pg',
+            'node_modules/@types/pg',
+            'dir',
+          ],
           ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
-          ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
-          ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
-          ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
-          ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
-          ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],
-          ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
-          ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
+          [
+            'packages/core-runtime/src/actions',
+            'packages/core-runtime/src/actions',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/src/db',
+            'packages/core-runtime/src/db',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/src/operations',
+            'packages/core-runtime/src/operations',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/src/database',
+            'packages/core-runtime/src/database',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/src/environment',
+            'packages/core-runtime/src/environment',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/src/permissions',
+            'packages/core-runtime/src/permissions',
+            'dir',
+          ],
+          [
+            'packages/core-runtime/src/auth',
+            'packages/core-runtime/src/auth',
+            'dir',
+          ],
           [
             'packages/core-runtime/src/authorization',
             'packages/core-runtime/src/authorization',
@@ -5861,8 +6858,12 @@ test('all generated files typecheck against the real workspace contracts', async
         ] as const
       ).map(
         async ([source, target, kind]) =>
-          await symlink(path.join(appRoot, source), path.join(fixture.root, target), kind),
-      ),
+          await symlink(
+            path.join(appRoot, source),
+            path.join(fixture.root, target),
+            kind
+          )
+      )
     );
     await Promise.all(
       [
@@ -5877,10 +6878,14 @@ test('all generated files typecheck against the real workspace contracts', async
         async (moduleFile) =>
           await symlink(
             path.join(appRoot, 'packages/core-runtime/src/modules', moduleFile),
-            path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
-            'file',
-          ),
-      ),
+            path.join(
+              fixture.root,
+              'packages/core-runtime/src/modules',
+              moduleFile
+            ),
+            'file'
+          )
+      )
     );
     const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
     await writeFile(
@@ -5895,39 +6900,76 @@ test('all generated files typecheck against the real workspace contracts', async
           paths: {
             '@app/core-runtime': [path.join(appRoot, coreRuntimeIndexFile)],
             '@app/core-runtime/actions/principal-context': [
-              path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
+              path.join(
+                appRoot,
+                'packages/core-runtime/src/actions/principal-context.ts'
+              ),
             ],
             '@app/core-runtime/actions/runtime-wiring': [
-              path.join(appRoot, 'packages/core-runtime/src/actions/runtime-wiring.ts'),
+              path.join(
+                appRoot,
+                'packages/core-runtime/src/actions/runtime-wiring.ts'
+              ),
             ],
             '@app/core-runtime/auth/gateway-assertion-redemption': [
-              path.join(appRoot, 'packages/core-runtime/src/auth/gateway-assertion-redemption.ts'),
+              path.join(
+                appRoot,
+                'packages/core-runtime/src/auth/gateway-assertion-redemption.ts'
+              ),
             ],
             '@app/core-runtime/http/action-runner': [
-              path.join(appRoot, 'packages/core-runtime/src/http/http-instrumentation-seam.ts'),
+              path.join(
+                appRoot,
+                'packages/core-runtime/src/http/http-instrumentation-seam.ts'
+              ),
             ],
             '@app/core-runtime/http/governed-read': [
-              path.join(appRoot, 'packages/core-runtime/src/http/governed-read.ts'),
+              path.join(
+                appRoot,
+                'packages/core-runtime/src/http/governed-read.ts'
+              ),
             ],
             '@app/core-runtime/http/principal-authentication': [
-              path.join(appRoot, 'packages/core-runtime/src/http/principal-authentication.ts'),
+              path.join(
+                appRoot,
+                'packages/core-runtime/src/http/principal-authentication.ts'
+              ),
             ],
             '@app/core-runtime/outbox/worker': [
-              path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
+              path.join(
+                appRoot,
+                'packages/core-runtime/src/outbox/worker-entrypoint.ts'
+              ),
             ],
             '@app/gateway-principal-verifier/server': [
-              path.join(appRoot, 'packages/gateway-principal-verifier/src/server.ts'),
+              path.join(
+                appRoot,
+                'packages/gateway-principal-verifier/src/server.ts'
+              ),
             ],
-            '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
-            '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
+            '@app/inventory-stock/outbox/*': [
+              './verticals/inventory-stock/shared/outbox/*.ts',
+            ],
+            '@app/shared-contracts': [
+              path.join(appRoot, 'packages/shared-contracts/src/index.ts'),
+            ],
             '@app/shared-contracts/client-runtime': [
-              path.join(appRoot, 'packages/shared-contracts/src/client-runtime.ts'),
+              path.join(
+                appRoot,
+                'packages/shared-contracts/src/client-runtime.ts'
+              ),
             ],
             '@app/shared-contracts/problem-details': [
-              path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
+              path.join(
+                appRoot,
+                'packages/shared-contracts/src/problem-details.ts'
+              ),
             ],
             '@app/shared-contracts/server/effect-bff-runtime': [
-              path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
+              path.join(
+                appRoot,
+                'packages/shared-contracts/src/effect-bff-runtime.ts'
+              ),
             ],
           },
           resolveJsonModule: true,
@@ -5958,7 +7000,7 @@ test('all generated files typecheck against the real workspace contracts', async
           'verticals/inventory-stock/src/reports/**/*.ts',
         ],
       }),
-      'utf-8',
+      'utf-8'
     );
 
     const result = spawnSync(tscPath, ['-p', fixtureTsconfig], {
@@ -5986,24 +7028,25 @@ ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
     readGeneratedSlotEntries(
       source,
       GOVERNED_HTTP_API_ADDITION_SLOT_START,
-      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END
     ),
-    [nestedEntry, neighborEntry],
+    [nestedEntry, neighborEntry]
   );
   const next = insertSortedSlot(
     source,
     GOVERNED_HTTP_API_ADDITION_SLOT_START,
     GOVERNED_HTTP_API_ADDITION_SLOT_END,
     [addedEntry],
-    (entry) => entry === nestedEntry || entry === neighborEntry || entry === addedEntry,
+    (entry) =>
+      entry === nestedEntry || entry === neighborEntry || entry === addedEntry
   );
   assert.deepEqual(
     readGeneratedSlotEntries(
       next,
       GOVERNED_HTTP_API_ADDITION_SLOT_START,
-      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END
     ),
-    [nestedEntry, neighborEntry, addedEntry],
+    [nestedEntry, neighborEntry, addedEntry]
   );
 });
 
@@ -6022,15 +7065,16 @@ ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
       readGeneratedSlotEntries(
         source,
         GOVERNED_HTTP_API_ADDITION_SLOT_START,
-        GOVERNED_HTTP_API_ADDITION_SLOT_END,
+        GOVERNED_HTTP_API_ADDITION_SLOT_END
       ),
-      [protectedEntry, '.addHttpApi(SecondApi)'],
+      [protectedEntry, '.addHttpApi(SecondApi)']
     );
   });
 }
 
 test('generated fluent slots preserve terminated statements and reset tail boundaries', () => {
-  const statement = '.addHttpApi(StatementApi)\n.addHttpApi(StatementNeighbor);';
+  const statement =
+    '.addHttpApi(StatementApi)\n.addHttpApi(StatementNeighbor);';
   const tailEntries = ['.addHttpApi(TailApi)', '.addHttpApi(TailNeighbor)'];
   const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
 ${statement}
@@ -6040,14 +7084,17 @@ ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
     readGeneratedSlotEntries(
       source,
       GOVERNED_HTTP_API_ADDITION_SLOT_START,
-      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END
     ),
-    [statement, ...tailEntries],
+    [statement, ...tailEntries]
   );
 });
 
 test('generated fluent slots preserve nonfluent multiline statement continuations', () => {
-  const entries = ['const api = FirstApi\n  .addGroup(FirstGroup);', 'SecondApi,'];
+  const entries = [
+    'const api = FirstApi\n  .addGroup(FirstGroup);',
+    'SecondApi,',
+  ];
   const source = `${GOVERNED_HTTP_API_ADDITION_SLOT_START}
 ${entries.join('\n')}
 ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
@@ -6055,9 +7102,9 @@ ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
     readGeneratedSlotEntries(
       source,
       GOVERNED_HTTP_API_ADDITION_SLOT_START,
-      GOVERNED_HTTP_API_ADDITION_SLOT_END,
+      GOVERNED_HTTP_API_ADDITION_SLOT_END
     ),
-    entries,
+    entries
   );
 });
 
@@ -6078,9 +7125,9 @@ ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`;
         readGeneratedSlotEntries(
           source,
           GOVERNED_HTTP_API_ADDITION_SLOT_START,
-          GOVERNED_HTTP_API_ADDITION_SLOT_END,
+          GOVERNED_HTTP_API_ADDITION_SLOT_END
         ),
-      /generated owner slot contains unsupported developer content/u,
+      /generated owner slot contains unsupported developer content/u
     );
   });
 }
@@ -6097,27 +7144,37 @@ test('generated fluent slots preserve multiline call entries', () => {
     GOVERNED_HTTP_API_ADDITION_SLOT_START,
     GOVERNED_HTTP_API_ADDITION_SLOT_END,
     ['.addHttpApi(ThirdApi)'],
-    (entry) => entry.startsWith('.addHttpApi(') && entry.endsWith(')'),
+    (entry) => entry.startsWith('.addHttpApi(') && entry.endsWith(')')
   );
   const entries = readGeneratedSlotEntries(
     next,
     GOVERNED_HTTP_API_ADDITION_SLOT_START,
-    GOVERNED_HTTP_API_ADDITION_SLOT_END,
+    GOVERNED_HTTP_API_ADDITION_SLOT_END
   );
   assert.equal(entries.length, 3);
   assert.match(entries[0] ?? '', /FirstApi/u);
 });
 
 for (const [start, end] of [
-  [GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END],
-  [GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START, GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END],
+  [
+    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+    GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
+  ],
+  [
+    GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+    GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+  ],
 ] as const) {
   test(`governed generation accepts the independent support slot without ${start}`, async () => {
     await withFixture(async (fixture) => {
       const rootPath = path.join(fixture.root, inventoryHandlerRootFile);
       const source = await readFile(rootPath, 'utf-8');
       assert.ok(source.includes(start));
-      await writeFile(rootPath, source.replace(start, '').replace(end, ''), 'utf-8');
+      await writeFile(
+        rootPath,
+        source.replace(start, '').replace(end, ''),
+        'utf-8'
+      );
       await run(fixture, scaffoldCommand.moduleApi, [
         scaffoldFlag.vertical,
         inventorySlug,
@@ -6140,23 +7197,29 @@ test('Action identity boundary rejects an owned file without the authentication 
     const source = await readFile(serverPath, 'utf-8');
     await writeFile(
       serverPath,
-      source.replaceAll('authenticateOperationPrincipal', 'removedAuthenticationAdapter'),
-      'utf-8',
+      source.replaceAll(
+        'authenticateOperationPrincipal',
+        'removedAuthenticationAdapter'
+      ),
+      'utf-8'
     );
     await assertScaffoldRefused(
       fixture,
       scaffoldCommand.microverticalActionBoundary,
       [scaffoldFlag.vertical, inventorySlug],
-      /refusing|owned|boundary/u,
+      /refusing|owned|boundary/u
     );
   });
 });
 
 test('typed injected governed runtime stays bound to the exported owner composition', async () => {
-  const shared = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
+  const shared = await readFile(
+    path.join(appRoot, partyGovernedContractPath),
+    'utf-8'
+  );
   const handler = await readFile(
     path.join(appRoot, 'verticals/party-registry/api/index.ts'),
-    'utf-8',
+    'utf-8'
   );
   assert.equal(hasValidGovernedHttpCompositionRoot(shared, handler), true);
   assert.equal(
@@ -6164,52 +7227,67 @@ test('typed injected governed runtime stays bound to the exported owner composit
       shared,
       handler.replace(
         'readRuntime: Layer.Layer<ReadRuntime,',
-        'readRuntime: Layer.Layer<UnrelatedRuntime,',
-      ),
+        'readRuntime: Layer.Layer<UnrelatedRuntime,'
+      )
     ),
-    false,
+    false
   );
   assert.equal(
     hasValidGovernedHttpCompositionRoot(
       shared,
-      handler.replace('handlers: resolvedApiHandlersLive', 'handlers: Layer.empty'),
+      handler.replace(
+        'handlers: resolvedApiHandlersLive',
+        'handlers: Layer.empty'
+      )
     ),
-    false,
+    false
   );
   assert.equal(
     hasValidGovernedHttpCompositionRoot(
       shared,
-      handler.replace('api: partyRegistryApi,', 'api: unrelatedApi,'),
+      handler.replace('api: partyRegistryApi,', 'api: unrelatedApi,')
     ),
-    false,
+    false
   );
   assert.equal(
     hasValidGovernedHttpCompositionRoot(
       shared,
-      handler.replace('export default apiRuntime;', 'export default unrelatedRuntime;'),
+      handler.replace(
+        'export default apiRuntime;',
+        'export default unrelatedRuntime;'
+      )
     ),
-    false,
+    false
   );
 });
 
 test('assembled governed runtime rejects disconnected handler pipelines and counterfeit assemblers', async () => {
-  const shared = await readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8');
+  const shared = await readFile(
+    path.join(appRoot, partyGovernedContractPath),
+    'utf-8'
+  );
   const handler = await readFile(
     path.join(appRoot, 'verticals/party-registry/api/index.ts'),
-    'utf-8',
+    'utf-8'
   );
   for (const [before, after] of [
     [
       'const resolvedApiHandlersLive = apiHandlersLive.pipe(',
       'const resolvedApiHandlersLive = unrelatedHandlers.pipe(',
     ],
-    ["'@app/shared-contracts/server/effect-bff-runtime'", "'./counterfeit-assembler.ts'"],
+    [
+      "'@app/shared-contracts/server/effect-bff-runtime'",
+      "'./counterfeit-assembler.ts'",
+    ],
     ['handlers: resolvedApiHandlersLive,', 'handlers: unrelatedHandlers,'],
   ] as const) {
     assert.ok(handler.includes(before));
     assert.equal(
-      hasValidGovernedHttpCompositionRoot(shared, handler.replace(before, after)),
-      false,
+      hasValidGovernedHttpCompositionRoot(
+        shared,
+        handler.replace(before, after)
+      ),
+      false
     );
   }
 });

@@ -1,0 +1,20 @@
+diff --git a/dist/unstable/cli/Param.d.ts b/dist/unstable/cli/Param.d.ts
+--- a/dist/unstable/cli/Param.d.ts
++++ b/dist/unstable/cli/Param.d.ts
+@@ -2310,5 +2310,16 @@
+      */
+     <Kind extends ParamKind, A, B>(self: Param<Kind, A>, orElse: LazyArg<Param<Kind, B>>): Param<Kind, Result.Result<A, B>>;
+ };
++/**
++ * Gets param metadata by traversing the structure.
++ *
++ * @internal
++ */
++export declare const getParamMetadata: <Kind extends ParamKind, A>(param: Param<Kind, A>) => {
++    readonly isOptional: boolean;
++    readonly isVariadic: boolean;
++    readonly variadicMin: Option.Option<number>;
++    readonly variadicMax: Option.Option<number>;
++};
+ export {};
+ //# sourceMappingURL=Param.d.ts.map

@@ -1,17 +1,26 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DateTime, Effect, Option, Schema } from 'effect';
+
 import {
+  CoreSearchProjectionStore,
   makeCoreSearchIngestion,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
-import type { OutboxMessage, OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { updatePartyOfficialIdentifierAction } from '../../src/actions/update-party-official-identifier.action.ts';
+import type {
+  OutboxMessage,
+  OutboxWorkerHandlerContext,
+} from '@app/core-runtime';
+import {
+  bindActionTestServices,
+  makeActionTestHarness,
+} from '@app/core-runtime/testing/actions';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { DateTime, Effect, Option, Schema } from 'effect';
+
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 import { resolveDuplicateCandidateMatchAction } from '../../src/actions/resolve-duplicate-candidate-match.action.ts';
+import { updatePartyOfficialIdentifierAction } from '../../src/actions/update-party-official-identifier.action.ts';
 import {
   makePartySearchProjector,
   PartySearchProjector,
@@ -107,13 +116,16 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
         }),
     },
     makeCoreSearchIngestion(store),
-    store,
+    store
   );
   const replaceIdentifiers = (values: readonly PartySearchSourceValue[]) =>
     Effect.sync(() => {
       canonical = {
         ...canonical,
-        parties: canonical.parties.map((party) => ({ ...party, identifiers: values })),
+        parties: canonical.parties.map((party) => ({
+          ...party,
+          identifiers: values,
+        })),
         projectionVersion: '2',
       };
     });
@@ -121,20 +133,23 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
     Effect.gen(function* deliverIdentifierMessage() {
       if (message.topic === 'party.registry.official-identifier-added.v1') {
         const { descriptor } = projectOfficialIdentifierAddedToSearchWorker;
-        const payload = yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)(
-          message.payloadJson,
-        );
+        const payload = yield* Schema.decodeUnknownEffect(
+          descriptor.payloadSchema
+        )(message.payloadJson);
         yield* handleProjectOfficialIdentifierAddedToSearch(payload, {
           ...baseContext,
           topic: message.topic,
           workerKey: descriptor.workerKey,
         }).pipe(Effect.provideService(PartySearchProjector, projector));
       } else {
-        assert.equal(message.topic, 'party.registry.official-identifier-updated.v1');
-        const { descriptor } = projectOfficialIdentifierUpdatedToSearchWorker;
-        const payload = yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)(
-          message.payloadJson,
+        assert.equal(
+          message.topic,
+          'party.registry.official-identifier-updated.v1'
         );
+        const { descriptor } = projectOfficialIdentifierUpdatedToSearchWorker;
+        const payload = yield* Schema.decodeUnknownEffect(
+          descriptor.payloadSchema
+        )(message.payloadJson);
         yield* handleProjectOfficialIdentifierUpdatedToSearch(payload, {
           ...baseContext,
           topic: message.topic,
@@ -145,14 +160,17 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
   return {
     deliver,
     query: () =>
-      createCoreSearchQueryRuntime(store).search({
-        effectiveAt: '2026-09-03T00:00:00.000Z',
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query: identifier.value,
-        resourceType: 'party.registry.party',
-        tenantId,
-      }),
+      Effect.gen(function* queryIdentifiers() {
+        const search = yield* createCoreSearchQueryRuntime;
+        return yield* search.search({
+          effectiveAt: '2026-09-03T00:00:00.000Z',
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: identifier.value,
+          resourceType: 'party.registry.party',
+          tenantId,
+        });
+      }).pipe(Effect.provideService(CoreSearchProjectionStore, store)),
     replaceIdentifiers,
     seed: projector.project(baseContext, { partyId: partyRef.resourceId }),
   };
@@ -160,30 +178,39 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
 
 const assertIdentifierOutbox = (
   harness: ReturnType<typeof makeActionTestHarness>,
-  eventType: string,
+  eventType: string
 ) => {
   const [commit] = harness.snapshot().committed;
   assert.ok(commit);
   assert.equal(commit.evidence.outboxMessages.length, 1);
   const [outbox] = commit.evidence.outboxMessages;
   assert.ok(outbox);
-  assert.equal(commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType, eventType);
-  assert.deepEqual(outbox.message.payloadJson, { officialIdentifierRef, partyRef });
+  assert.equal(
+    commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType,
+    eventType
+  );
+  assert.deepEqual(outbox.message.payloadJson, {
+    officialIdentifierRef,
+    partyRef,
+  });
   return outbox;
 };
 
 const assertAttachedIdentifierDelivery = (
   harness: ReturnType<typeof makeActionTestHarness>,
-  search: ReturnType<typeof makeSearchFixture>,
+  search: ReturnType<typeof makeSearchFixture>
 ) =>
   Effect.gen(function* verifyCommittedIdentifierDelivery() {
-    const outbox = assertIdentifierOutbox(harness, 'party.registry.official-identifier-added.v1');
+    const outbox = assertIdentifierOutbox(
+      harness,
+      'party.registry.official-identifier-added.v1'
+    );
     assert.deepEqual(yield* search.query(), []);
     yield* search.deliver(outbox.message);
     const hits = yield* search.query();
     assert.deepEqual(
       hits.map((hit) => hit.ref),
-      [partyRef],
+      [partyRef]
     );
     yield* search.deliver(outbox.message);
     assert.deepEqual(yield* search.query(), hits);
@@ -205,7 +232,7 @@ test('CreateParty MATCHED_EXISTING publishes an attached identifier and indexes 
                   decisionRef,
                   outcome: 'MATCHED_EXISTING' as const,
                   partyRef,
-                }),
+                })
               ),
           }),
         ],
@@ -217,7 +244,11 @@ test('CreateParty MATCHED_EXISTING publishes an attached identifier and indexes 
             displayName: 'Acme',
             evidenceRefs: ['evidence:confirmed-tax-registration'],
             officialIdentifiers: [
-              { identifierType: 'CZ_DIC', value: identifier.value, verification: 'VERIFIED' },
+              {
+                identifierType: 'CZ_DIC',
+                value: identifier.value,
+                verification: 'VERIFIED',
+              },
             ],
             partyType: 'ORGANIZATION',
             provenance: { method: 'DOCUMENT_REVIEW', source: 'USER_ASSERTION' },
@@ -226,11 +257,18 @@ test('CreateParty MATCHED_EXISTING publishes an attached identifier and indexes 
         },
         principal,
         registration: createPartyAction,
-        transport: { correlationId: 'identifier-sync', idempotencyKey: 'match-identifier-1' },
+        transport: {
+          correlationId: 'identifier-sync',
+          idempotencyKey: 'match-identifier-1',
+        },
       });
-      assert.deepEqual(result, { decisionRef, outcome: 'MATCHED_EXISTING', partyRef });
+      assert.deepEqual(result, {
+        decisionRef,
+        outcome: 'MATCHED_EXISTING',
+        partyRef,
+      });
       yield* assertAttachedIdentifierDelivery(harness, search);
-    }),
+    })
   ));
 
 test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it after delivery only', () =>
@@ -251,7 +289,7 @@ test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it af
                   lifecycleState: 'RESOLVED' as const,
                   outcome: 'MATCH_EXISTING' as const,
                   partyRef,
-                }),
+                })
               ),
           }),
         ],
@@ -279,7 +317,7 @@ test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it af
         partyRef,
       });
       yield* assertAttachedIdentifierDelivery(harness, search);
-    }),
+    })
   ));
 
 test('END_VALIDITY refreshes search only after its committed identifier message and remains replay-safe', () =>
@@ -301,19 +339,23 @@ test('END_VALIDITY refreshes search only after its committed identifier message 
         services: [
           bindActionTestServices(updatePartyOfficialIdentifierAction, {
             update: () =>
-              search.replaceIdentifiers([{ ...identifier, state: 'ENDED', validTo }]).pipe(
-                Effect.as({
-                  after,
-                  before,
-                  result: {
-                    officialIdentifierRef,
-                    partyRef,
-                    state: 'ENDED',
-                    validTo: Option.some(DateTime.makeUnsafe(validTo)),
-                    verification: 'VERIFIED',
-                  },
-                }),
-              ),
+              search
+                .replaceIdentifiers([
+                  { ...identifier, state: 'ENDED', validTo },
+                ])
+                .pipe(
+                  Effect.as({
+                    after,
+                    before,
+                    result: {
+                      officialIdentifierRef,
+                      partyRef,
+                      state: 'ENDED',
+                      validTo: Option.some(DateTime.makeUnsafe(validTo)),
+                      verification: 'VERIFIED',
+                    },
+                  })
+                ),
           }),
         ],
         tenantPermission: 'allowed',
@@ -327,16 +369,19 @@ test('END_VALIDITY refreshes search only after its committed identifier message 
         },
         principal,
         registration: updatePartyOfficialIdentifierAction,
-        transport: { correlationId: 'identifier-sync', idempotencyKey: 'end-identifier-1' },
+        transport: {
+          correlationId: 'identifier-sync',
+          idempotencyKey: 'end-identifier-1',
+        },
       });
       const outbox = assertIdentifierOutbox(
         harness,
-        'party.registry.official-identifier-updated.v1',
+        'party.registry.official-identifier-updated.v1'
       );
       assert.equal((yield* search.query()).length, 1);
       yield* search.deliver(outbox.message);
       assert.deepEqual(yield* search.query(), []);
       yield* search.deliver(outbox.message);
       assert.deepEqual(yield* search.query(), []);
-    }),
+    })
   ));
