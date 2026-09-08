@@ -331,6 +331,11 @@ export const rule = defineRule({
         const key = staticMemberKey(node);
         return left && key !== null ? `${left}.${key}` : null;
       }
+      // Playwright's extend factory preserves test identity, unlike arbitrary factories.
+      if (node.type === 'CallExpression')
+        return imported(node.callee, seen) === '@playwright/test:test.extend'
+          ? '@playwright/test:test'
+          : null;
       if (node.type !== 'Identifier') return null;
       const variable = variableFor(node, node.name);
       for (const def of variable?.defs ?? []) {
