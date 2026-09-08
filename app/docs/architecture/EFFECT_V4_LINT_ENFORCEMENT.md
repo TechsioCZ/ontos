@@ -153,7 +153,7 @@ Follow each rule link for its exact detection policy, defaults, exemptions, and 
   architecture work beyond the local structural/document and schema detectors.
 - A8 template checks are lexical: arbitrary generated/dynamically assembled source and real
   scaffold quality still need generator tests and emitted-project gates.
-- B2 uses the certified `@app/effect-rstest` harness (`it.effect`/`it.live`/`it.layer`),
+- B2 uses the upstream `effect-rstest` harness (`it.effect`/`it.live`/`it.layer`),
   enforced by the `no-effect-run-in-tests` and restricted-imports gates.
 
 ## Audit exceptions preserved

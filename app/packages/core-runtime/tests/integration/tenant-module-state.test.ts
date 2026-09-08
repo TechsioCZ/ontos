@@ -1,4 +1,6 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
+import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
@@ -39,88 +41,29 @@ const tenantIds = [tenantOne, tenantTwo] as const;
 
 type DatabaseService = Parameters<typeof makeActionRuntime>[0];
 
-const installedContract = (moduleId: string): OntosModuleDeploymentContract => ({
-  deployment: { appId: 'test-module', buildMarker: 'test-build' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: [
-        'inactive',
-        'active',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ],
-    },
-    module: {
-      description: 'Integration test module',
-      displayName: 'Integration test module',
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
-
-const noInstalledContracts: readonly OntosModuleDeploymentContract[] = Object.freeze([]);
-
-const installedCatalog: InstalledModuleCatalog = Object.freeze({
-  contracts: noInstalledContracts,
-  deploymentAppIds: Object.freeze([]),
-  deploymentStatuses: Object.freeze([]),
-  getByDeploymentAppId: (appId: string) =>
-    noInstalledContracts.find(({ deployment }) => deployment.appId === appId),
-  getByModuleId: (moduleId: string) => installedContract(moduleId),
-  moduleIds: Object.freeze([]),
-  outboxSubscriptions: Object.freeze([]),
-});
-
-const catalogFrom = (
-  ...contracts: readonly OntosModuleDeploymentContract[]
-): InstalledModuleCatalog => {
-  const byModuleId = new Map(contracts.map((item) => [item.manifest.module.id, item]));
-  return Object.freeze({
-    contracts: Object.freeze([...contracts]),
-    deploymentAppIds: Object.freeze(contracts.map(({ deployment }) => deployment.appId)),
-    deploymentStatuses: Object.freeze(
-      contracts.map((contract) => ({
-        appId: contract.deployment.appId,
-        moduleId: contract.manifest.module.id,
-        status: 'available' as const,
-      })),
-    ),
-    getByDeploymentAppId: (appId: string) =>
-      contracts.find(({ deployment }) => deployment.appId === appId),
-    getByModuleId: (moduleId: string) => byModuleId.get(moduleId),
-    moduleIds: Object.freeze(contracts.map(({ manifest }) => manifest.module.id)),
-    outboxSubscriptions: Object.freeze([]),
+const installedContract = (moduleId: string): OntosModuleDeploymentContract =>
+  makeModuleContractFixture({
+    appId: 'test-module',
+    buildMarker: 'test-build',
+    description: 'Integration test module',
+    displayName: 'Integration test module',
+    moduleId,
+    supportedStates: [
+      'inactive',
+      'active',
+      'read_only',
+      'suspended',
+      'quarantined',
+      'deprecated',
+      'archived',
+    ],
   });
-};
+
+// State-transition tests deliberately accept arbitrary module IDs without discovery.
+const installedCatalog: InstalledModuleCatalog = Object.freeze({
+  ...catalogFrom(),
+  getByModuleId: installedContract,
+});
 
 const withDatabase = <Value, Error>(
   operation: (
@@ -142,24 +85,19 @@ const withDatabase = <Value, Error>(
 
 const cleanup = withDatabase((database) =>
   Effect.gen(function* cleanTenantModuleStateFixtures() {
-    yield* database.executor
-      .delete(dataAccessEvents)
-      .where(inArray(dataAccessEvents.tenantId, tenantIds));
-    yield* database.executor.delete(auditEvents).where(inArray(auditEvents.tenantId, tenantIds));
-    yield* database.executor
-      .delete(tenantModuleStateChanges)
-      .where(inArray(tenantModuleStateChanges.tenantId, tenantIds));
-    yield* database.executor
-      .delete(tenantModuleStates)
-      .where(inArray(tenantModuleStates.tenantId, tenantIds));
-    yield* database.executor
-      .delete(actionInvocations)
-      .where(inArray(actionInvocations.tenantId, tenantIds));
-    yield* database.executor
-      .delete(principalAuthBindings)
-      .where(inArray(principalAuthBindings.tenantId, tenantIds));
-    yield* database.executor.delete(principals).where(inArray(principals.tenantId, tenantIds));
-    yield* database.executor.delete(tenants).where(inArray(tenants.tenantId, tenantIds));
+    // Keep dependent evidence ahead of its referenced identity rows.
+    for (const table of [
+      dataAccessEvents,
+      auditEvents,
+      tenantModuleStateChanges,
+      tenantModuleStates,
+      actionInvocations,
+      principalAuthBindings,
+      principals,
+      tenants,
+    ]) {
+      yield* database.executor.delete(table).where(inArray(table.tenantId, tenantIds));
+    }
   }),
 );
 

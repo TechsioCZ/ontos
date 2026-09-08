@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A2** — "Make Schema the sole authority for contracts and domain models" — and
  * **B5** — "Adopt Effect's ADTs and temporal model consistently"
@@ -79,15 +80,23 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { globToRegExp, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+
+import {
+  memberName as staticMemberName,
+  unwrapNode,
+  skipWrappers,
+  keyName,
+} from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
+import { isSchemaConstructorArgument as isConstructorArgument } from '../shared/schema-constructor.ts';
+import { stringArray, stringOption, safeRegExp } from '../shared/options.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
-
-/** Fixture files mirror repo paths under `tests/fixtures/<rule>/{valid,invalid}/`; strip that prefix. */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: string[] = [];
@@ -227,82 +236,30 @@ interface RuleOptions {
   readonly schemaModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function stringOption(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.length > 0 ? value : fallback;
-}
-
-/** Like `stringOption`, but an explicit `""` disables the pattern instead of restoring the default. */
-function patternOption(value: unknown, fallback: string): string {
-  return typeof value === 'string' ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
-    ignoreKeyPattern: patternOption(record.ignoreKeyPattern, DEFAULT_IGNORE_KEY_PATTERN),
+    ignoreKeyPattern: stringOption(record.ignoreKeyPattern, DEFAULT_IGNORE_KEY_PATTERN),
     ignoreTests: record.ignoreTests === true,
-    ignoreTypePattern: patternOption(record.ignoreTypePattern, DEFAULT_IGNORE_TYPE_PATTERN),
+    ignoreTypePattern: stringOption(record.ignoreTypePattern, DEFAULT_IGNORE_TYPE_PATTERN),
     include: stringArray(record.include, DEFAULT_INCLUDE),
     includeTypeMembers: record.includeTypeMembers !== false,
     schemaModules: stringArray(record.schemaModules, DEFAULT_SCHEMA_MODULES),
-    temporalKeyPattern: stringOption(record.temporalKeyPattern, DEFAULT_TEMPORAL_KEY_PATTERN),
+    temporalKeyPattern: stringOption(
+      record.temporalKeyPattern,
+      DEFAULT_TEMPORAL_KEY_PATTERN,
+      false,
+    ),
   };
 }
 
-function safeRegExp(source: string, fallback: string): RegExp {
-  try {
-    return new RegExp(source, 'u');
-  } catch {
-    return new RegExp(fallback, 'u');
-  }
-}
-
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-/** Non-computed `.Struct`, or computed `["Struct"]` / `` [`Struct`] ``. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0) {
-    const quasi = property.quasis[0];
-    return quasi === undefined ? null : (quasi.value.cooked ?? quasi.value.raw);
-  }
-  return null;
+  return staticMemberName(node, { templates: true, rawTemplates: true });
 }
 
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (let guard = 0; guard < 16; guard += 1) {
-    if (!UNWRAPPABLE.has(current.type)) return current;
-    const inner = (current as { expression?: ESTree.Node }).expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: UNWRAPPABLE, maxDepth: 16 });
 }
 
 interface SchemaLocals {
@@ -334,39 +291,32 @@ function collectSchemaLocals(
     if (namespace === SCHEMA_NAMESPACE) schema.add(local);
     if (namespace === 'pipe') pipe.add(local);
   }
+  const collectSpecifier = (
+    specifier: ESTree.ImportDeclaration['specifiers'][number],
+    isSchemaSubmodule: boolean,
+  ): void => {
+    if (specifier.type === 'ImportNamespaceSpecifier') {
+      (isSchemaSubmodule ? schema : barrel).add(specifier.local.name);
+      return;
+    }
+    if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return;
+    const imported = importedName(specifier);
+    if (imported === SCHEMA_NAMESPACE) schema.add(specifier.local.name);
+    else if (imported === 'pipe') pipe.add(specifier.local.name);
+    else if (isSchemaSubmodule) members.set(specifier.local.name, imported);
+  };
   const modulePatterns = schemaModules.map((glob) => globToRegExp(glob));
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
-    const source = statement.source.value;
-    if (!modulePatterns.some((pattern) => pattern.test(source))) continue;
-    const isSchemaSubmodule = SCHEMA_SUBMODULE.test(source);
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') {
-        // `import * as Schema from "effect/Schema"` is the namespace; anything else is a barrel.
-        if (isSchemaSubmodule) schema.add(specifier.local.name);
-        else barrel.add(specifier.local.name);
-        continue;
-      }
-      if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
-      const imported = importedName(specifier);
-      if (imported === SCHEMA_NAMESPACE) schema.add(specifier.local.name);
-      else if (imported === 'pipe') pipe.add(specifier.local.name);
-      // `import { Struct, String as SchemaString } from "effect/Schema"` is the same API as the
-      // namespace form; without this the whole rule is one import statement away from silent.
-      else if (isSchemaSubmodule) members.set(specifier.local.name, imported);
-    }
+    if (!modulePatterns.some((pattern) => pattern.test(statement.source.value))) continue;
+    for (const specifier of statement.specifiers)
+      collectSpecifier(specifier, SCHEMA_SUBMODULE.test(statement.source.value));
   }
   return { barrel, members, pipe, schema };
 }
 
 function lookupVariable(context: Context, identifier: ESTree.Node, name: string): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+  return resolveVariable(context, name, identifier);
 }
 
 /** `Schema.DateTimeUtc` for a timestamp key, an explicit date-only codec for a calendar key. */
@@ -493,6 +443,10 @@ export const rule = defineRule({
         if (!locals.schema.has(object.name)) return null;
         return resolvesToImport(object, object.name) ? member : null;
       }
+      return barrelSchemaMember(object, member);
+    };
+
+    const barrelSchemaMember = (object: ESTree.Node, member: string): string | null => {
       if (object.type !== 'MemberExpression') return null;
       if (memberName(object) !== SCHEMA_NAMESPACE) return null;
       const root = unwrap(object.object);
@@ -546,19 +500,34 @@ export const rule = defineRule({
         return member !== null && STRING_ROOTS.has(member);
       }
 
-      if (expression.type === 'Identifier') {
-        // `import { String as SchemaString } from "effect/Schema"` — the same leaf, no namespace.
-        const imported = locals.members.get(expression.name);
-        if (imported !== undefined && resolvesToImport(expression, expression.name)) {
-          return STRING_ROOTS.has(imported);
-        }
-        const declarator = localDeclarator(expression, expression.name);
-        if (declarator === null || seen.has(declarator.start)) return false;
-        seen.add(declarator.start);
-        if (reportedCodecDeclarators.has(declarator.start)) trace.viaReportedCodec = true;
-        return isStringRooted(declarator.init, seen, depth + 1, trace);
-      }
+      if (expression.type === 'Identifier') return stringIdentifier(expression, seen, depth, trace);
+      return stringCall(expression, seen, depth, trace);
+    };
 
+    const stringIdentifier = (
+      expression: Extract<ESTree.Node, { type: 'Identifier' }>,
+      seen: Set<number>,
+      depth: number,
+      trace: StringRootTrace,
+    ): boolean => {
+      // `import { String as SchemaString } from "effect/Schema"` — the same leaf, no namespace.
+      const imported = locals.members.get(expression.name);
+      if (imported !== undefined && resolvesToImport(expression, expression.name)) {
+        return STRING_ROOTS.has(imported);
+      }
+      const declarator = localDeclarator(expression, expression.name);
+      if (declarator === null || seen.has(declarator.start)) return false;
+      seen.add(declarator.start);
+      if (reportedCodecDeclarators.has(declarator.start)) trace.viaReportedCodec = true;
+      return isStringRooted(declarator.init, seen, depth + 1, trace);
+    };
+
+    const stringCall = (
+      expression: ESTree.Node,
+      seen: Set<number>,
+      depth: number,
+      trace: StringRootTrace,
+    ): boolean => {
       if (expression.type !== 'CallExpression') return false;
       const callee = unwrap(expression.callee);
 
@@ -571,27 +540,43 @@ export const rule = defineRule({
         return isStringRooted(first, seen, depth + 1, trace);
       }
 
-      // `inner.check(...)` / `inner.annotate(...)` / `inner.pipe(...)` / `inner.brand('X')`.
-      if (callee.type === 'MemberExpression') {
-        const method = memberName(callee);
-        if (method === null || !TRANSPARENT_METHODS.has(method)) return false;
-        if (method === 'pipe')
-          return stringPipeline(callee.object, expression.arguments, seen, depth, trace);
-        return isStringRooted(callee.object, seen, depth + 1, trace);
-      }
+      if (callee.type === 'MemberExpression')
+        return stringMethod(callee, expression.arguments, seen, depth, trace);
 
+      return importedStringPipeline(callee, expression.arguments, seen, depth, trace);
+    };
+    const importedStringPipeline = (
+      callee: ESTree.Node,
+      args: readonly ESTree.Node[],
+      seen: Set<number>,
+      depth: number,
+      trace: StringRootTrace,
+    ): boolean => {
       // `pipe(Schema.String, Schema.brand('X'))`.
       if (
         callee.type === 'Identifier' &&
         locals.pipe.has(callee.name) &&
         resolvesToImport(callee, callee.name)
       ) {
-        const first = expression.arguments[0];
+        const first = args[0];
         if (first === undefined || first.type === 'SpreadElement') return false;
-        return stringPipeline(first, expression.arguments.slice(1), seen, depth, trace);
+        return stringPipeline(first, args.slice(1), seen, depth, trace);
       }
 
       return false;
+    };
+
+    const stringMethod = (
+      callee: ESTree.MemberExpression,
+      args: readonly ESTree.Node[],
+      seen: Set<number>,
+      depth: number,
+      trace: StringRootTrace,
+    ): boolean => {
+      const method = memberName(callee);
+      if (method === null || !TRANSPARENT_METHODS.has(method)) return false;
+      if (method === 'pipe') return stringPipeline(callee.object, args, seen, depth, trace);
+      return isStringRooted(callee.object, seen, depth + 1, trace);
     };
 
     /** Composition can change decoded types; never assume an arbitrary pipe step preserves strings. */
@@ -621,20 +606,8 @@ export const rule = defineRule({
     };
 
     /** Is `node` an argument of a `Schema.Struct` / `Schema.TaggedError<E>()('T', ...)` style call? */
-    const isSchemaConstructorArgument = (node: ESTree.Node): boolean => {
-      const parent = node.parent;
-      if (parent === null || parent === undefined) return false;
-      if (parent.type !== 'CallExpression') return false;
-      if (!parent.arguments.some((argument) => argument === node)) return false;
-      let callee: ESTree.Node = unwrap(parent.callee);
-      for (let guard = 0; guard < 8; guard += 1) {
-        const member = schemaRef(callee);
-        if (member !== null) return FIELD_BAG_CONSTRUCTORS.has(member);
-        if (callee.type !== 'CallExpression') return false;
-        callee = unwrap(callee.callee);
-      }
-      return false;
-    };
+    const isSchemaConstructorArgument = (node: ESTree.Node): boolean =>
+      isConstructorArgument(node, schemaRef, FIELD_BAG_CONSTRUCTORS, unwrap);
 
     /** The object literal an identifier resolves to: `const auditColumns = { ... }`. */
     const declaredObject = (node: ESTree.Node): ESTree.ObjectExpression | null => {
@@ -662,14 +635,7 @@ export const rule = defineRule({
         queue.push(object);
       };
       for (const object of objects) {
-        let current: ESTree.Node = object;
-        while (
-          current.parent !== null &&
-          current.parent !== undefined &&
-          UNWRAPPABLE.has(current.parent.type)
-        ) {
-          current = current.parent;
-        }
+        const current = skipWrappers(object, UNWRAPPABLE).node;
         if (isSchemaConstructorArgument(current)) enqueue(object);
       }
       for (const identifier of bagIdentifiers) enqueue(declaredObject(identifier));
@@ -686,19 +652,11 @@ export const rule = defineRule({
       return bags;
     };
 
-    const propertyKey = (property: ESTree.ObjectProperty): string | null => {
-      const key = property.key;
-      if (!property.computed && key.type === 'Identifier') return key.name;
-      if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-      return null;
-    };
+    const propertyKey = (property: ESTree.ObjectProperty): string | null =>
+      keyName(property.key, property.computed, { templates: false });
 
-    const signatureKey = (signature: ESTree.TSPropertySignature): string | null => {
-      const key = signature.key;
-      if (!signature.computed && key.type === 'Identifier') return key.name;
-      if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-      return null;
-    };
+    const signatureKey = (signature: ESTree.TSPropertySignature): string | null =>
+      keyName(signature.key, signature.computed, { templates: false });
 
     const unwrapType = (node: ESTree.Node): ESTree.Node => {
       let current = node;
@@ -721,47 +679,44 @@ export const rule = defineRule({
       const type = unwrapType(node);
       if (type.type === 'TSStringKeyword') return true;
 
-      if (type.type === 'TSTypeReference') {
-        const name = type.typeName;
-        if (name.type !== 'Identifier' || seen.has(name.name)) return false;
-        const variable = lookupVariable(context, name, name.name);
-        const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-        const alias =
-          definition?.node.type === 'TSTypeAliasDeclaration' &&
-          definition.node.typeParameters == null
-            ? definition.node.typeAnnotation
-            : undefined;
-        if (alias === undefined) return false;
-        seen.add(name.name);
-        return isPlainStringType(alias, seen, depth + 1);
-      }
-
-      if (type.type === 'TSUnionType') {
-        let sawString = false;
-        for (const member of type.types) {
-          if (isPlainStringType(member, seen, depth + 1)) {
-            sawString = true;
-            continue;
-          }
-          if (!NULLISH_KEYWORDS.has(unwrapType(member).type)) return false;
-        }
-        return sawString;
-      }
-
-      if (type.type === 'TSIntersectionType') {
-        let sawString = false;
-        for (const member of type.types) {
-          if (isPlainStringType(member, seen, depth + 1)) {
-            sawString = true;
-            continue;
-          }
-          // Only an object-shaped brand carrier may accompany the string.
-          if (unwrapType(member).type !== 'TSTypeLiteral') return false;
-        }
-        return sawString;
-      }
-
+      if (type.type === 'TSTypeReference') return stringTypeAlias(type, seen, depth);
+      if (type.type === 'TSUnionType')
+        return stringTypeMembers(type.types, seen, depth, NULLISH_KEYWORDS);
+      if (type.type === 'TSIntersectionType')
+        return stringTypeMembers(type.types, seen, depth, new Set(['TSTypeLiteral']));
       return false;
+    };
+
+    const stringTypeAlias = (
+      type: ESTree.TSTypeReference,
+      seen: Set<string>,
+      depth: number,
+    ): boolean => {
+      const name = type.typeName;
+      if (name.type !== 'Identifier' || seen.has(name.name)) return false;
+      const variable = lookupVariable(context, name, name.name);
+      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      if (
+        definition?.node.type !== 'TSTypeAliasDeclaration' ||
+        definition.node.typeParameters != null
+      )
+        return false;
+      seen.add(name.name);
+      return isPlainStringType(definition.node.typeAnnotation, seen, depth + 1);
+    };
+
+    const stringTypeMembers = (
+      members: readonly ESTree.Node[],
+      seen: Set<string>,
+      depth: number,
+      allowed: ReadonlySet<string>,
+    ): boolean => {
+      let sawString = false;
+      for (const member of members) {
+        if (isPlainStringType(member, seen, depth + 1)) sawString = true;
+        else if (!allowed.has(unwrapType(member).type)) return false;
+      }
+      return sawString;
     };
 
     /** The interface / type-alias / class name that owns a type member, for `ignoreTypePattern`. */
@@ -770,16 +725,16 @@ export const rule = defineRule({
       for (let guard = 0; guard < 8; guard += 1) {
         if (current === null || current === undefined) return null;
         if (
-          current.type === 'TSInterfaceDeclaration' ||
-          current.type === 'TSTypeAliasDeclaration'
+          [
+            'TSInterfaceDeclaration',
+            'TSTypeAliasDeclaration',
+            'ClassDeclaration',
+            'ClassExpression',
+            'VariableDeclarator',
+          ].includes(current.type)
         ) {
-          return current.id.type === 'Identifier' ? current.id.name : null;
-        }
-        if (current.type === 'ClassDeclaration' || current.type === 'ClassExpression') {
-          return current.id?.type === 'Identifier' ? current.id.name : null;
-        }
-        if (current.type === 'VariableDeclarator') {
-          return current.id.type === 'Identifier' ? current.id.name : null;
+          const id = (current as { id?: ESTree.Node | null }).id;
+          return id?.type === 'Identifier' ? id.name : null;
         }
         current = current.parent;
       }
@@ -827,38 +782,53 @@ export const rule = defineRule({
     const regexSource = (node: ESTree.Node, depth: number): string | null => {
       if (depth > 8) return null;
       const expression = unwrap(node);
-      if (expression.type === 'Literal') {
-        const regex = (expression as { regex?: { pattern: string } }).regex;
-        if (regex !== undefined) return regex.pattern;
-        return typeof expression.value === 'string' ? expression.value : null;
-      }
+      if (expression.type === 'Literal') return literalRegexSource(expression);
       if (expression.type === 'NewExpression') {
         const first = expression.arguments[0];
         if (first === undefined || first.type === 'SpreadElement') return null;
         return regexSource(first, depth + 1);
       }
       // `` `^${YEAR}-\\d{2}$` `` and `'^\\d{4}' + '-\\d{2}'` are the same regex, spelled out.
-      if (expression.type === 'TemplateLiteral') {
-        let text = '';
-        for (const [index, quasi] of expression.quasis.entries()) {
-          text += quasi.value.cooked ?? quasi.value.raw;
-          const placeholder = expression.expressions[index];
-          if (placeholder !== undefined) text += regexSource(placeholder, depth + 1) ?? '';
-        }
-        return text;
-      }
-      if (expression.type === 'BinaryExpression' && expression.operator === '+') {
-        const left = regexSource(expression.left, depth + 1);
-        const right = regexSource(expression.right, depth + 1);
-        if (left === null && right === null) return null;
-        return `${left ?? ''}${right ?? ''}`;
-      }
+      if (expression.type === 'TemplateLiteral') return templateRegexSource(expression, depth);
+      if (expression.type === 'BinaryExpression' && expression.operator === '+')
+        return concatenatedRegexSource(expression, depth);
+      return identifierRegexSource(expression, depth);
+    };
+
+    const identifierRegexSource = (expression: ESTree.Node, depth: number): string | null => {
       if (expression.type === 'Identifier') {
         const declarator = localDeclarator(expression, expression.name);
         if (declarator === null || declarator.init === null) return null;
         return regexSource(declarator.init, depth + 1);
       }
       return null;
+    };
+
+    const literalRegexSource = (
+      expression: Extract<ESTree.Node, { type: 'Literal' }>,
+    ): string | null => {
+      const regex = (expression as { regex?: { pattern: string } }).regex;
+      if (regex !== undefined) return regex.pattern;
+      return typeof expression.value === 'string' ? expression.value : null;
+    };
+
+    const templateRegexSource = (expression: ESTree.TemplateLiteral, depth: number): string => {
+      let text = '';
+      for (const [index, quasi] of expression.quasis.entries()) {
+        text += quasi.value.cooked ?? quasi.value.raw;
+        const placeholder = expression.expressions[index];
+        if (placeholder !== undefined) text += regexSource(placeholder, depth + 1) ?? '';
+      }
+      return text;
+    };
+
+    const concatenatedRegexSource = (
+      expression: ESTree.BinaryExpression,
+      depth: number,
+    ): string | null => {
+      const left = regexSource(expression.left, depth + 1);
+      const right = regexSource(expression.right, depth + 1);
+      return left === null && right === null ? null : `${left ?? ''}${right ?? ''}`;
     };
 
     /** `Schema.isPattern` / `Schema.pattern` / a directly-imported `isPattern`. */
@@ -879,6 +849,13 @@ export const rule = defineRule({
       return null;
     };
 
+    const isTransparentCall = (call: ESTree.CallExpression): boolean => {
+      const callee = unwrap(call.callee);
+      return (
+        callee.type === 'MemberExpression' && TRANSPARENT_METHODS.has(memberName(callee) ?? '')
+      );
+    };
+
     /** Walk out of `Schema.isPattern(...)` to the `.check(...)` / `.pipe(...)` that owns it. */
     const enclosingCheck = (node: ESTree.CallExpression): ESTree.Node => {
       let current: ESTree.Node = node;
@@ -886,17 +863,131 @@ export const rule = defineRule({
         const parent: ESTree.Node | null | undefined = current.parent;
         if (parent === null || parent === undefined) return node;
         if (parent.type === 'CallExpression') {
-          const callee = unwrap(parent.callee);
-          if (callee.type === 'MemberExpression') {
-            const method = memberName(callee);
-            if (method !== null && TRANSPARENT_METHODS.has(method)) return parent;
-          }
-          return node;
+          return isTransparentCall(parent) ? parent : node;
         }
         if (!UNWRAPPABLE.has(parent.type) && parent.type !== 'SpreadElement') return node;
         current = parent;
       }
       return node;
+    };
+
+    const reports: Array<{
+      readonly node: ESTree.Node;
+      readonly messageId:
+        | 'stringTemporalField'
+        | 'handRolledTemporalCodec'
+        | 'stringTemporalMember';
+      readonly data: Record<string, string>;
+      readonly start: number;
+    }> = [];
+    /** Spans of hand-rolled temporal codecs already reported — consumers are not re-reported. */
+    const codecSpans: Array<{ start: number; end: number }> = [];
+
+    const outerCodecResult = (target: ESTree.Node): ESTree.Node => {
+      let result = target;
+      for (let depth = 0; depth < 12; depth += 1) {
+        const next = outerCodecStep(result);
+        if (next === null) break;
+        result = next;
+      }
+      return result;
+    };
+    const outerCodecStep = (result: ESTree.Node): ESTree.Node | null => {
+      const parent = result.parent;
+      if (
+        parent?.type === 'MemberExpression' &&
+        parent.object === result &&
+        parent.parent?.type === 'CallExpression' &&
+        TRANSPARENT_METHODS.has(memberName(parent) ?? '')
+      )
+        return parent.parent;
+      return enclosingPipe(result, parent);
+    };
+    const enclosingPipe = (
+      result: ESTree.Node,
+      parent: ESTree.Node | null | undefined,
+    ): ESTree.Node | null => {
+      if (
+        parent?.type === 'CallExpression' &&
+        parent.arguments.some((argument) => argument === result) &&
+        parent.callee.type === 'MemberExpression' &&
+        memberName(parent.callee) === 'pipe'
+      )
+        return parent;
+      return null;
+    };
+    const reportCodec = (call: ESTree.CallExpression): void => {
+      const first = call.arguments[0];
+      if (first === undefined || first.type === 'SpreadElement') return;
+      const raw = regexSource(first, 0);
+      if (raw === null) return;
+      const source = normaliseRegexSource(raw);
+      const isCalendarDate = CALENDAR_DATE_SOURCE.test(source);
+      const isIsoTime = ISO_TIME_SOURCE.test(source);
+      if (!isCalendarDate && !isIsoTime) return;
+      const target = enclosingCheck(call);
+      const result = outerCodecResult(target);
+      if (result !== target && !isStringRooted(result, new Set(), 0, { viaReportedCodec: false }))
+        return;
+      codecSpans.push({ end: target.end, start: target.start });
+      const owner = enclosingDeclarator(target);
+      if (owner !== null) reportedCodecDeclarators.add(owner.start);
+      reports.push({
+        data: { kind: isIsoTime ? 'timestamp' : 'calendar date' },
+        messageId: 'handRolledTemporalCodec',
+        node: target,
+        start: target.start,
+      });
+    };
+    const containsReportedCodec = (node: ESTree.Node): boolean =>
+      codecSpans.some((span) => span.start >= node.start && span.end <= node.end);
+    const reportField = (property: ESTree.ObjectExpression['properties'][number]): void => {
+      if (property.type !== 'Property') return;
+      if (property.kind !== 'init' || property.method) return;
+      const key = propertyKey(property);
+      if (key === null || !isTemporalKey(key)) return;
+      // A value that is, or resolves to, an in-file codec this rule already reports is the
+      // same defect; fixing the shared codec fixes every field that references it.
+      if (containsReportedCodec(property)) return;
+      const trace: StringRootTrace = { viaReportedCodec: false };
+      if (!isStringRooted(property.value, new Set(), 0, trace)) return;
+      if (trace.viaReportedCodec) return;
+      reports.push({
+        data: { key, replacement: replacementFor(key) },
+        messageId: 'stringTemporalField',
+        node: property,
+        start: property.start,
+      });
+    };
+    const isDisplayMember = (owner: ESTree.Node, key: string): boolean => {
+      const typeName = enclosingTypeName(owner);
+      if (ignoreType !== null && typeName !== null && ignoreType.test(typeName)) return true;
+      return hasProjectionSibling(key, siblingKeys(owner)) || isParameterTypeLiteral(owner);
+    };
+    const reportTypeMember = (signature: ESTree.TSPropertySignature): void => {
+      const owner = signature.parent;
+      if (owner == null) return;
+      if (owner.type !== 'TSInterfaceBody' && owner.type !== 'TSTypeLiteral') return;
+      const key = signatureKey(signature);
+      if (key === null || !isTemporalKey(key)) return;
+      // An i18n label bag (`CustomerDetailCopy`) keyed by field name holds translated
+      // column headings, not values; no temporal codec can model "Created".
+      if (isDisplayMember(owner, key)) return;
+      const annotation = signature.typeAnnotation;
+      if (annotation == null) return;
+      if (!isPlainStringType(annotation.typeAnnotation, new Set(), 0)) return;
+      reports.push({
+        data: { key, replacement: replacementFor(key) },
+        messageId: 'stringTemporalMember',
+        node: signature,
+        start: signature.start,
+      });
+    };
+    const reportFields = (): void => {
+      const fieldBags = collectFieldBags();
+      for (const object of objects) {
+        if (fieldBags.has(object.start)) object.properties.forEach(reportField);
+      }
     };
 
     return {
@@ -926,127 +1017,15 @@ export const rule = defineRule({
         typeMembers.push(node);
       },
       'Program:exit'() {
-        const reports: Array<{
-          readonly node: ESTree.Node;
-          readonly messageId:
-            | 'stringTemporalField'
-            | 'handRolledTemporalCodec'
-            | 'stringTemporalMember';
-          readonly data: Record<string, string>;
-          readonly start: number;
-        }> = [];
-        /** Spans of hand-rolled temporal codecs already reported — consumers are not re-reported. */
-        const codecSpans: Array<{ start: number; end: number }> = [];
-
+        reports.length = 0;
+        codecSpans.length = 0;
         const hasSchema =
           locals.schema.size > 0 || locals.barrel.size > 0 || locals.members.size > 0;
-
-        // Lane 2: hand-rolled temporal string codecs (`Schema.String.check(Schema.isPattern(...))`).
         if (hasSchema) {
-          for (const call of patternCalls) {
-            const first = call.arguments[0];
-            if (first === undefined || first.type === 'SpreadElement') continue;
-            const raw = regexSource(first, 0);
-            if (raw === null) continue;
-            const source = normaliseRegexSource(raw);
-            const isCalendarDate = CALENDAR_DATE_SOURCE.test(source);
-            const isIsoTime = ISO_TIME_SOURCE.test(source);
-            if (!isCalendarDate && !isIsoTime) continue;
-            const target = enclosingCheck(call);
-            let result = target;
-            for (let depth = 0; depth < 12; depth += 1) {
-              const parent = result.parent;
-              if (
-                parent?.type === 'MemberExpression' &&
-                parent.object === result &&
-                parent.parent?.type === 'CallExpression' &&
-                TRANSPARENT_METHODS.has(memberName(parent) ?? '')
-              ) {
-                result = parent.parent;
-              } else if (
-                parent?.type === 'CallExpression' &&
-                parent.arguments.some((argument) => argument === result) &&
-                parent.callee.type === 'MemberExpression' &&
-                memberName(parent.callee) === 'pipe'
-              ) {
-                result = parent;
-              } else break;
-            }
-            if (
-              result !== target &&
-              !isStringRooted(result, new Set(), 0, { viaReportedCodec: false })
-            )
-              continue;
-            codecSpans.push({ end: target.end, start: target.start });
-            const owner = enclosingDeclarator(target);
-            if (owner !== null) reportedCodecDeclarators.add(owner.start);
-            reports.push({
-              data: { kind: isIsoTime ? 'timestamp' : 'calendar date' },
-              messageId: 'handRolledTemporalCodec',
-              node: target,
-              start: target.start,
-            });
-          }
+          patternCalls.forEach(reportCodec);
+          reportFields();
         }
-
-        /** Does `node`'s own subtree contain a hand-rolled codec this rule already reported? */
-        const containsReportedCodec = (node: ESTree.Node): boolean =>
-          codecSpans.some((span) => span.start >= node.start && span.end <= node.end);
-
-        // Lane 1: temporal fields inside Schema field bags.
-        if (hasSchema) {
-          const fieldBags = collectFieldBags();
-          for (const object of objects) {
-            if (!fieldBags.has(object.start)) continue;
-            for (const property of object.properties) {
-              if (property.type !== 'Property') continue;
-              if (property.kind !== 'init' || property.method) continue;
-              const key = propertyKey(property);
-              if (key === null || !isTemporalKey(key)) continue;
-              // A value that is, or resolves to, an in-file codec this rule already reports is the
-              // same defect; fixing the shared codec fixes every field that references it.
-              if (containsReportedCodec(property)) continue;
-              const trace: StringRootTrace = { viaReportedCodec: false };
-              if (!isStringRooted(property.value, new Set(), 0, trace)) continue;
-              if (trace.viaReportedCodec) continue;
-              reports.push({
-                data: { key, replacement: replacementFor(key) },
-                messageId: 'stringTemporalField',
-                node: property,
-                start: property.start,
-              });
-            }
-          }
-        }
-
-        // Lane 3: `readonly createdAt: string` DTO members (no `effect` import required).
-        if (options.includeTypeMembers) {
-          for (const signature of typeMembers) {
-            const owner = signature.parent;
-            if (owner === null || owner === undefined) continue;
-            if (owner.type !== 'TSInterfaceBody' && owner.type !== 'TSTypeLiteral') continue;
-            const key = signatureKey(signature);
-            if (key === null || !isTemporalKey(key)) continue;
-            // An i18n label bag (`CustomerDetailCopy`) keyed by field name holds translated
-            // column headings, not values; no temporal codec can model "Created".
-            const typeName = enclosingTypeName(owner);
-            if (ignoreType !== null && typeName !== null && ignoreType.test(typeName)) continue;
-            // A rendered projection beside its machine value (`createdAt` + `createdAtIso`).
-            if (hasProjectionSibling(key, siblingKeys(owner))) continue;
-            // A parameter annotation consumes a contract declared elsewhere.
-            if (isParameterTypeLiteral(owner)) continue;
-            const annotation = signature.typeAnnotation;
-            if (annotation === null || annotation === undefined) continue;
-            if (!isPlainStringType(annotation.typeAnnotation, new Set(), 0)) continue;
-            reports.push({
-              data: { key, replacement: replacementFor(key) },
-              messageId: 'stringTemporalMember',
-              node: signature,
-              start: signature.start,
-            });
-          }
-        }
-
+        if (options.includeTypeMembers) typeMembers.forEach(reportTypeMember);
         reports.sort((left, right) => left.start - right.start);
         for (const report of reports) {
           context.report({ data: report.data, messageId: report.messageId, node: report.node });

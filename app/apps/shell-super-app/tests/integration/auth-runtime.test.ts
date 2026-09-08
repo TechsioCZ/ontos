@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { expect, it } from 'effect-rstest';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -91,6 +92,46 @@ const authenticationContextLayer = Layer.mergeAll(
 );
 const cookieHeader = (setCookieHeaders: readonly string[]) =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');
+const headerValue = (headers: Headers, name: string): string => headers.get(name) ?? '';
+const optionalText = (value: string | undefined): string => value ?? '';
+/** A revoked or missing binding must fail closed on the next session resolution. */
+const assertSessionForbidden = Effect.fnUntraced(function* assertSessionForbidden(
+  resolution: Effect.Effect<unknown, unknown>,
+) {
+  const failure = yield* Effect.flip(resolution);
+  expect(Predicate.isTagged(failure, 'OntosIdentityForbiddenError')).toBe(true);
+});
+/** Verify the issued assertion while retaining each caller's principal expectations. */
+const verifiedGatewayAssertion = Effect.fnUntraced(function* verifiedGatewayAssertion(
+  assertionResponse: Response,
+  publicKey: Parameters<typeof jwtVerify>[1],
+) {
+  const assertion = yield* Schema.decodeUnknownEffect(TokenResponseSchema)(
+    yield* Effect.tryPromise(() => assertionResponse.json()),
+  );
+  const verified = yield* Effect.tryPromise(() =>
+    jwtVerify(assertion.token, publicKey, {
+      algorithms: ['EdDSA'],
+      audience: 'inventory-stock',
+      currentDate: new Date(1_700_000_001_000),
+      issuer: 'https://shell.example.test',
+    }),
+  );
+  return {
+    principal: yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
+      verified.payload['principal'],
+    ),
+    token: assertion.token,
+  };
+});
+const assertOptionalField = <Value extends object, Key extends keyof Value>(
+  value: Value | null | undefined,
+  key: Key,
+  expected: string | null,
+): void => {
+  expect(value?.[key]).toBe(expected);
+};
+
 const installedCatalog = (moduleIds: readonly string[]): InstalledModuleCatalog =>
   Object.freeze({
     contracts: Object.freeze([]),
@@ -228,9 +269,11 @@ it.live(
       mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-')),
     );
     const cleanup = Effect.fnUntraced(function* runIntegration2() {
-      yield* coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
-      yield* coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
-      yield* coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
+      yield* purgeFixtureRows([
+        coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+      ]);
       const existingUsers = yield* authDatabase
         .select({ id: user.id })
         .from(user)
@@ -238,30 +281,32 @@ it.live(
       yield* Effect.all(
         existingUsers.map(
           Effect.fnUntraced(function* runIntegration3(existingUser) {
-            yield* coreDatabase
-              .delete(principalAuthBindings)
-              .where(eq(principalAuthBindings.providerSubjectId, existingUser.id));
-            yield* authDatabase.delete(session).where(eq(session.userId, existingUser.id));
-            yield* authDatabase.delete(account).where(eq(account.userId, existingUser.id));
-            yield* authDatabase.delete(user).where(eq(user.id, existingUser.id));
+            yield* purgeFixtureRows([
+              coreDatabase
+                .delete(principalAuthBindings)
+                .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
+              authDatabase.delete(session).where(eq(session.userId, existingUser.id)),
+              authDatabase.delete(account).where(eq(account.userId, existingUser.id)),
+              authDatabase.delete(user).where(eq(user.id, existingUser.id)),
+            ]);
           }),
         ),
       );
-      yield* coreDatabase
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.principalId, principalId));
-      yield* coreDatabase
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, tenantId));
-      yield* coreDatabase
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, foreignTenantId));
-      yield* coreDatabase.delete(principals).where(eq(principals.principalId, principalId));
-      yield* coreDatabase
-        .delete(legalEntities)
-        .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId));
-      yield* coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
-      yield* coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId));
+      yield* purgeFixtureRows([
+        coreDatabase
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.principalId, principalId)),
+        coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+        coreDatabase
+          .delete(tenantModuleStates)
+          .where(eq(tenantModuleStates.tenantId, foreignTenantId)),
+        coreDatabase.delete(principals).where(eq(principals.principalId, principalId)),
+        coreDatabase
+          .delete(legalEntities)
+          .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
+        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+        coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
+      ]);
     });
     yield* Effect.acquireRelease(
       Effect.void,
@@ -360,7 +405,7 @@ it.live(
       ),
     );
     expect(anonymousGatewayResponse.status).toBe(401);
-    expect(anonymousGatewayResponse.headers.get('www-authenticate') ?? '').toMatch(/^Bearer/u);
+    expect(headerValue(anonymousGatewayResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
     const anonymousModulesResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/composition`, {
@@ -369,7 +414,7 @@ it.live(
       ),
     );
     expect(anonymousModulesResponse.status).toBe(401);
-    expect(anonymousModulesResponse.headers.get('www-authenticate') ?? '').toMatch(/^Bearer/u);
+    expect(headerValue(anonymousModulesResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
     const anonymousPageResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/module-target`, {
@@ -383,7 +428,7 @@ it.live(
       ),
     );
     expect(anonymousPageResponse.status).toBe(401);
-    expect(anonymousPageResponse.headers.get('www-authenticate') ?? '').toMatch(/^Bearer/u);
+    expect(headerValue(anonymousPageResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
     const signInResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/sign-in`, {
@@ -410,7 +455,7 @@ it.live(
         body: JSON.stringify({ entrypointKey, moduleId: 'testing.pages' }),
         headers: new Headers({
           'content-type': 'application/json',
-          cookie: authenticatedHeaders.get('cookie') ?? '',
+          cookie: headerValue(authenticatedHeaders, 'cookie'),
           origin: configuration.baseUrl,
         }),
         method: 'POST',
@@ -418,7 +463,7 @@ it.live(
     const current = yield* authentication
       .currentSession(authenticatedHeaders)
       .pipe(Effect.provide(authenticationContextLayer));
-    expect(current.identity?.tenantId).toBe(tenantId);
+    assertOptionalField(current.identity, 'tenantId', tenantId);
     expect(current.identity).not.toBe(undefined);
     const pageRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
@@ -540,7 +585,7 @@ it.live(
           body: JSON.stringify({ name: 'must-not-be-created' }),
           headers: {
             'content-type': 'application/json',
-            cookie: authenticatedHeaders.get('cookie') ?? '',
+            cookie: headerValue(authenticatedHeaders, 'cookie'),
             origin: configuration.baseUrl,
           },
           method: 'POST',
@@ -592,7 +637,7 @@ it.live(
           body: JSON.stringify({ displayName: 'Denied managed identity', kind: 'service' }),
           headers: {
             'content-type': 'application/json',
-            cookie: authenticatedHeaders.get('cookie') ?? '',
+            cookie: headerValue(authenticatedHeaders, 'cookie'),
             'idempotency-key': 'denied-managed-identity',
             origin: configuration.baseUrl,
           },
@@ -609,7 +654,7 @@ it.live(
       .from(actionInvocations)
       .where(eq(actionInvocations.idempotencyKey, 'denied-managed-identity'))
       .limit(1);
-    expect(deniedIdentityInvocation?.status).toBe('rejected');
+    assertOptionalField(deniedIdentityInvocation, 'status', 'rejected');
     if (deniedIdentityInvocation === undefined) {
       throw new Error('The denied identity Action did not persist its invocation');
     }
@@ -795,7 +840,7 @@ it.live(
       ),
     );
     expect(unavailableGatewayResponse.status).toBe(503);
-    expect(unavailableGatewayResponse.headers.get('content-type') ?? '').toMatch(
+    expect(headerValue(unavailableGatewayResponse.headers, 'content-type')).toMatch(
       /application\/problem\+json/u,
     );
     expect(
@@ -817,11 +862,11 @@ it.live(
         privateJwk: {
           alg: 'EdDSA',
           crv: 'Ed25519',
-          d: privateJwk.d ?? '',
+          d: optionalText(privateJwk.d),
           kid: 'integration-current',
           kty: 'OKP',
           use: 'sig',
-          x: privateJwk.x ?? '',
+          x: optionalText(privateJwk.x),
         },
       }),
     };
@@ -851,22 +896,12 @@ it.live(
       assertionResponse.status,
       yield* Effect.tryPromise(() => assertionResponse.clone().text()),
     ).toBe(200);
-    const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(
-      yield* Effect.tryPromise(() => assertionResponse.json()),
-    );
-    const verifiedAssertion = yield* Effect.tryPromise(() =>
-      jwtVerify(assertion.token, pair.publicKey, {
-        algorithms: ['EdDSA'],
-        audience: 'inventory-stock',
-        currentDate: new Date(1_700_000_001_000),
-        issuer: 'https://shell.example.test',
-      }),
-    );
-    const verifiedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      verifiedAssertion.payload['principal'],
+    const { principal: verifiedPrincipal, token: assertionToken } = yield* verifiedGatewayAssertion(
+      assertionResponse,
+      pair.publicKey,
     );
     expect(verifiedPrincipal.authBindingId).toBe(fixtureAuthBindingId);
-    expect(verifiedPrincipal.authContextRef ?? '').toMatch(/^better-auth-session:/u);
+    expect(optionalText(verifiedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);
     expect(verifiedPrincipal.authMethod).toBe('session');
     expect(verifiedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(verifiedPrincipal.principalId).toBe(principalId);
@@ -937,7 +972,7 @@ it.live(
     )(generatedVerifier.verifyActionPrincipal);
     expect(Predicate.isFunction(verifyActionPrincipal)).toBe(true);
     const generatedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      yield* verifyActionPrincipal(`Bearer ${assertion.token}`, {
+      yield* verifyActionPrincipal(`Bearer ${assertionToken}`, {
         currentTimeSeconds: Effect.succeed(1_700_000_001),
         environment: {
           ONTOS_GATEWAY_ISSUER: 'https://shell.example.test',
@@ -956,7 +991,7 @@ it.live(
       }),
     );
     expect(generatedPrincipal.authBindingId).toBe(fixtureAuthBindingId);
-    expect(generatedPrincipal.authContextRef ?? '').toMatch(/^better-auth-session:/u);
+    expect(optionalText(generatedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);
     expect(generatedPrincipal.authMethod).toBe('session');
     expect(generatedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(generatedPrincipal.principalId).toBe(principalId);
@@ -1002,7 +1037,9 @@ it.live(
       ),
     );
     expect(defectResponse.status).toBe(500);
-    expect(defectResponse.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
+    expect(headerValue(defectResponse.headers, 'content-type')).toMatch(
+      /application\/problem\+json/u,
+    );
     const defectProblem = Schema.decodeUnknownSync(DefectProblemSchema)(
       yield* Effect.tryPromise(() => defectResponse.json()),
     );
@@ -1011,17 +1048,16 @@ it.live(
     const stillAuthenticated = yield* authentication
       .currentSession(authenticatedHeaders)
       .pipe(Effect.provide(authenticationContextLayer));
-    expect(stillAuthenticated.identity?.principalId).toBe(principalId);
+    assertOptionalField(stillAuthenticated.identity, 'principalId', principalId);
     yield* coreDatabase
       .update(principalAuthBindings)
       .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
       .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
-    const revoked = yield* Effect.flip(
+    yield* assertSessionForbidden(
       authentication
         .currentSession(authenticatedHeaders)
         .pipe(Effect.provide(authenticationContextLayer)),
     );
-    expect(Predicate.isTagged(revoked, 'OntosIdentityForbiddenError')).toBe(true);
     const forbiddenModulesResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/shell/composition`, {
@@ -1030,7 +1066,7 @@ it.live(
       ),
     );
     expect(forbiddenModulesResponse.status).toBe(401);
-    expect(forbiddenModulesResponse.headers.get('www-authenticate') ?? '').toMatch(/^Bearer/u);
+    expect(headerValue(forbiddenModulesResponse.headers, 'www-authenticate')).toMatch(/^Bearer/u);
     expect(yield* Effect.tryPromise(() => forbiddenModulesResponse.text())).not.toMatch(
       /30000000|40000000/u,
     );
@@ -1143,36 +1179,39 @@ it.live(
       makeTenantModuleStateService({ executor: coreDatabase }),
     );
     const handlers: AuthenticationRuntimeHandler[] = [];
+    const fixtureTenants = [firstTenantId, secondTenantId];
+    // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
       yield* coreDatabase
         .delete(dataAccessEvents)
-        .where(inArray(dataAccessEvents.tenantId, [firstTenantId, secondTenantId]));
+        .where(inArray(dataAccessEvents.tenantId, fixtureTenants));
       const existingUsers = yield* authDatabase
         .select({ id: user.id })
         .from(user)
         .where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
-        yield* coreDatabase
-          .delete(principalAuthBindings)
-          .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds));
-        yield* authDatabase.delete(session).where(inArray(session.userId, existingUserIds));
-        yield* authDatabase.delete(account).where(inArray(account.userId, existingUserIds));
-        yield* authDatabase.delete(user).where(inArray(user.id, existingUserIds));
+        yield* purgeFixtureRows([
+          coreDatabase
+            .delete(principalAuthBindings)
+            .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds)),
+          authDatabase.delete(session).where(inArray(session.userId, existingUserIds)),
+          authDatabase.delete(account).where(inArray(account.userId, existingUserIds)),
+          authDatabase.delete(user).where(inArray(user.id, existingUserIds)),
+        ]);
       }
-      yield* coreDatabase
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, firstTenantId));
-      yield* coreDatabase
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, secondTenantId));
-      yield* coreDatabase.delete(principals).where(eq(principals.principalId, firstPrincipalId));
-      yield* coreDatabase.delete(principals).where(eq(principals.principalId, secondPrincipalId));
-      yield* coreDatabase
-        .delete(legalEntities)
-        .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId]));
-      yield* coreDatabase.delete(tenants).where(eq(tenants.tenantId, firstTenantId));
-      yield* coreDatabase.delete(tenants).where(eq(tenants.tenantId, secondTenantId));
+      yield* purgeFixtureRows([
+        coreDatabase
+          .delete(tenantModuleStates)
+          .where(inArray(tenantModuleStates.tenantId, fixtureTenants)),
+        coreDatabase
+          .delete(principals)
+          .where(inArray(principals.principalId, [firstPrincipalId, secondPrincipalId])),
+        coreDatabase
+          .delete(legalEntities)
+          .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId])),
+        coreDatabase.delete(tenants).where(inArray(tenants.tenantId, fixtureTenants)),
+      ]);
     });
     yield* Effect.acquireRelease(
       Effect.void,
@@ -1281,11 +1320,26 @@ it.live(
       cookie: authenticatedCookie,
       origin: configuration.baseUrl,
     });
-    const initialSessions = yield* authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
-    expect(initialSessions[0]?.activeTenantId).toBe(firstTenantId);
+    // Tenant switching varies only the target and optional correlation header.
+    const tenantSwitchRequest = (target: string, extraHeaders: Record<string, string> = {}) =>
+      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+        body: JSON.stringify({ tenantId: target }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedCookie,
+          origin: configuration.baseUrl,
+          ...extraHeaders,
+        }),
+        method: 'POST',
+      });
+    const readActiveTenantIds = () =>
+      authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId));
+
+    const initialSessions = yield* readActiveTenantIds();
+    assertOptionalField(initialSessions[0], 'activeTenantId', firstTenantId);
     const pair = yield* Effect.tryPromise(() =>
       generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
     );
@@ -1301,11 +1355,11 @@ it.live(
           privateJwk: {
             alg: 'EdDSA',
             crv: 'Ed25519',
-            d: privateJwk.d ?? '',
+            d: optionalText(privateJwk.d),
             kid: 'multi-tenant-current',
             kty: 'OKP',
             use: 'sig',
-            x: privateJwk.x ?? '',
+            x: optionalText(privateJwk.x),
           },
         }),
       }),
@@ -1323,7 +1377,9 @@ it.live(
       ),
     );
     expect(anonymousAvailableResponse.status).toBe(401);
-    expect(anonymousAvailableResponse.headers.get('www-authenticate') ?? '').toMatch(/^Bearer /u);
+    expect(headerValue(anonymousAvailableResponse.headers, 'www-authenticate')).toMatch(
+      /^Bearer /u,
+    );
     const availableResponse = yield* Effect.tryPromise(() =>
       runtime.handler(
         new Request(`${configuration.baseUrl}/auth/tenants`, { headers: authenticatedHeaders }),
@@ -1355,47 +1411,21 @@ it.live(
       unavailableDeployments: [],
     });
     const forbiddenResponse = yield* Effect.tryPromise(() =>
-      runtime.handler(
-        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-          body: JSON.stringify({ tenantId: '31000000-0000-4000-8000-000000000099' }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: authenticatedCookie,
-            origin: configuration.baseUrl,
-          }),
-          method: 'POST',
-        }),
-      ),
+      runtime.handler(tenantSwitchRequest('31000000-0000-4000-8000-000000000099')),
     );
     expect(forbiddenResponse.status).toBe(403);
-    const sessionsAfterForbiddenSwitch = yield* authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
-    expect(sessionsAfterForbiddenSwitch[0]?.activeTenantId).toBe(firstTenantId);
+    const sessionsAfterForbiddenSwitch = yield* readActiveTenantIds();
+    assertOptionalField(sessionsAfterForbiddenSwitch[0], 'activeTenantId', firstTenantId);
     yield* coreDatabase
       .update(principals)
       .set({ status: 'disabled' })
       .where(eq(principals.principalId, secondPrincipalId));
     const inactiveTargetResponse = yield* Effect.tryPromise(() =>
-      runtime.handler(
-        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-          body: JSON.stringify({ tenantId: secondTenantId }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: authenticatedCookie,
-            origin: configuration.baseUrl,
-          }),
-          method: 'POST',
-        }),
-      ),
+      runtime.handler(tenantSwitchRequest(secondTenantId)),
     );
     expect(inactiveTargetResponse.status).toBe(403);
-    const sessionsAfterInactiveSwitch = yield* authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
-    expect(sessionsAfterInactiveSwitch[0]?.activeTenantId).toBe(firstTenantId);
+    const sessionsAfterInactiveSwitch = yield* readActiveTenantIds();
+    assertOptionalField(sessionsAfterInactiveSwitch[0], 'activeTenantId', firstTenantId);
     yield* coreDatabase
       .update(principals)
       .set({ status: 'active' })
@@ -1425,24 +1455,11 @@ it.live(
     ).createHandler();
     handlers.push(resolverUnavailableRuntime);
     const resolverUnavailableResponse = yield* Effect.tryPromise(() =>
-      resolverUnavailableRuntime.handler(
-        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-          body: JSON.stringify({ tenantId: secondTenantId }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: authenticatedCookie,
-            origin: configuration.baseUrl,
-          }),
-          method: 'POST',
-        }),
-      ),
+      resolverUnavailableRuntime.handler(tenantSwitchRequest(secondTenantId)),
     );
     expect(resolverUnavailableResponse.status).toBe(503);
-    const sessionsAfterResolverFailure = yield* authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
-    expect(sessionsAfterResolverFailure[0]?.activeTenantId).toBe(firstTenantId);
+    const sessionsAfterResolverFailure = yield* readActiveTenantIds();
+    assertOptionalField(sessionsAfterResolverFailure[0], 'activeTenantId', firstTenantId);
     // Drizzle has no query-builder failure injection. This temporary trigger raises PostgreSQL's
     // connection-failure class for the fixed test tenant through the real Better Auth adapter path.
     yield* adminAuthDatabase.execute(
@@ -1486,43 +1503,20 @@ it.live(
           }, Effect.orDie),
         );
         const persistenceUnavailableResponse = yield* Effect.tryPromise(() =>
-          runtime.handler(
-            new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-              body: JSON.stringify({ tenantId: secondTenantId }),
-              headers: new Headers({
-                'content-type': 'application/json',
-                cookie: authenticatedCookie,
-                origin: configuration.baseUrl,
-              }),
-              method: 'POST',
-            }),
-          ),
+          runtime.handler(tenantSwitchRequest(secondTenantId)),
         );
         expect(persistenceUnavailableResponse.status).toBe(503);
-        const sessionsAfterPersistenceFailure = yield* authDatabase
-          .select({ activeTenantId: session.activeTenantId })
-          .from(session)
-          .where(eq(session.userId, betterAuthUserId));
-        expect(sessionsAfterPersistenceFailure[0]?.activeTenantId).toBe(firstTenantId);
+        const sessionsAfterPersistenceFailure = yield* readActiveTenantIds();
+        assertOptionalField(sessionsAfterPersistenceFailure[0], 'activeTenantId', firstTenantId);
       }),
     );
     const sessionsBeforeSwitch = yield* authDatabase
       .select({ activeLegalEntityId: session.activeLegalEntityId })
       .from(session)
       .where(eq(session.userId, betterAuthUserId));
-    expect(sessionsBeforeSwitch[0]?.activeLegalEntityId).toBe(firstLegalEntityId);
+    assertOptionalField(sessionsBeforeSwitch[0], 'activeLegalEntityId', firstLegalEntityId);
     const switchResponse = yield* Effect.tryPromise(() =>
-      runtime.handler(
-        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-          body: JSON.stringify({ tenantId: secondTenantId }),
-          headers: new Headers({
-            'content-type': 'application/json',
-            cookie: authenticatedCookie,
-            origin: configuration.baseUrl,
-          }),
-          method: 'POST',
-        }),
-      ),
+      runtime.handler(tenantSwitchRequest(secondTenantId)),
     );
     expect(switchResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => switchResponse.json())).toEqual({
@@ -1535,12 +1529,12 @@ it.live(
       })
       .from(session)
       .where(eq(session.userId, betterAuthUserId));
-    expect(sessionsAfterSwitch[0]?.activeTenantId).toBe(secondTenantId);
-    expect(sessionsAfterSwitch[0]?.activeLegalEntityId).toBe(null);
+    assertOptionalField(sessionsAfterSwitch[0], 'activeTenantId', secondTenantId);
+    assertOptionalField(sessionsAfterSwitch[0], 'activeLegalEntityId', null);
     const currentSessionAfterSwitch = yield* authentication
       .currentSession(authenticatedHeaders)
       .pipe(Effect.provide(multiAuthenticationContextLayer));
-    expect(currentSessionAfterSwitch.identity?.principalId).toBe(secondPrincipalId);
+    assertOptionalField(currentSessionAfterSwitch.identity, 'principalId', secondPrincipalId);
     const idempotentSwitch = yield* authentication
       .switchTenant(secondTenantId, authenticatedHeaders)
       .pipe(Effect.provide(multiAuthenticationContextLayer));
@@ -1570,22 +1564,12 @@ it.live(
         }),
       ),
     );
-    const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(
-      yield* Effect.tryPromise(() => assertionResponse.json()),
-    );
-    const verified = yield* Effect.tryPromise(() =>
-      jwtVerify(assertion.token, pair.publicKey, {
-        algorithms: ['EdDSA'],
-        audience: 'inventory-stock',
-        currentDate: new Date(1_700_000_001_000),
-        issuer: 'https://shell.example.test',
-      }),
-    );
-    const verifiedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      verified.payload['principal'],
+    const { principal: verifiedPrincipal } = yield* verifiedGatewayAssertion(
+      assertionResponse,
+      pair.publicKey,
     );
     expect(verifiedPrincipal.authBindingId).toBe(secondAuthBindingId);
-    expect(verifiedPrincipal.authContextRef ?? '').toMatch(/^better-auth-session:/u);
+    expect(optionalText(verifiedPrincipal.authContextRef)).toMatch(/^better-auth-session:/u);
     expect(verifiedPrincipal.authMethod).toBe('session');
     expect(verifiedPrincipal.legalEntityId).toBe(secondLegalEntityId);
     expect(verifiedPrincipal.principalId).toBe(secondPrincipalId);
@@ -1634,15 +1618,8 @@ it.live(
         );
         const unexpectedSwitchResponse = yield* Effect.tryPromise(() =>
           runtime.handler(
-            new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
-              body: JSON.stringify({ tenantId: firstTenantId }),
-              headers: new Headers({
-                'content-type': 'application/json',
-                cookie: authenticatedCookie,
-                origin: configuration.baseUrl,
-                'x-correlation-id': 'unexpected-switch-persistence-test',
-              }),
-              method: 'POST',
+            tenantSwitchRequest(firstTenantId, {
+              'x-correlation-id': 'unexpected-switch-persistence-test',
             }),
           ),
         );
@@ -1650,11 +1627,12 @@ it.live(
         expect(yield* Effect.tryPromise(() => unexpectedSwitchResponse.text())).not.toMatch(
           /secret auth persistence defect|P0001/u,
         );
-        const sessionsAfterUnexpectedSwitchFailure = yield* authDatabase
-          .select({ activeTenantId: session.activeTenantId })
-          .from(session)
-          .where(eq(session.userId, betterAuthUserId));
-        expect(sessionsAfterUnexpectedSwitchFailure[0]?.activeTenantId).toBe(secondTenantId);
+        const sessionsAfterUnexpectedSwitchFailure = yield* readActiveTenantIds();
+        assertOptionalField(
+          sessionsAfterUnexpectedSwitchFailure[0],
+          'activeTenantId',
+          secondTenantId,
+        );
         yield* authDatabase
           .update(session)
           .set({ activeTenantId: null })
@@ -1674,22 +1652,16 @@ it.live(
         expect(yield* Effect.tryPromise(() => unexpectedLegacyUpgradeResponse.text())).not.toMatch(
           /secret auth persistence defect|P0001/u,
         );
-        const sessionsAfterUnexpectedLegacyUpgrade = yield* authDatabase
-          .select({ activeTenantId: session.activeTenantId })
-          .from(session)
-          .where(eq(session.userId, betterAuthUserId));
-        expect(sessionsAfterUnexpectedLegacyUpgrade[0]?.activeTenantId).toBe(null);
+        const sessionsAfterUnexpectedLegacyUpgrade = yield* readActiveTenantIds();
+        assertOptionalField(sessionsAfterUnexpectedLegacyUpgrade[0], 'activeTenantId', null);
       }),
     );
     const upgradedSession = yield* authentication
       .currentSession(authenticatedHeaders)
       .pipe(Effect.provide(multiAuthenticationContextLayer));
-    expect(upgradedSession.identity?.tenantId).toBe(firstTenantId);
-    const upgradedSessionRows = yield* authDatabase
-      .select({ activeTenantId: session.activeTenantId })
-      .from(session)
-      .where(eq(session.userId, betterAuthUserId));
-    expect(upgradedSessionRows[0]?.activeTenantId).toBe(firstTenantId);
+    assertOptionalField(upgradedSession.identity, 'tenantId', firstTenantId);
+    const upgradedSessionRows = yield* readActiveTenantIds();
+    assertOptionalField(upgradedSessionRows[0], 'activeTenantId', firstTenantId);
     yield* authentication
       .switchTenant(secondTenantId, authenticatedHeaders)
       .pipe(Effect.provide(multiAuthenticationContextLayer));
@@ -1697,12 +1669,11 @@ it.live(
       .update(principalAuthBindings)
       .set({ revokedAt: new Date('2026-09-01T00:00:00.000Z'), status: 'revoked' })
       .where(eq(principalAuthBindings.tenantId, secondTenantId));
-    const revokedSession = yield* Effect.flip(
+    yield* assertSessionForbidden(
       authentication
         .currentSession(authenticatedHeaders)
         .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-    expect(Predicate.isTagged(revokedSession, 'OntosIdentityForbiddenError')).toBe(true);
     yield* coreDatabase
       .update(principalAuthBindings)
       .set({ revokedAt: null, status: 'active' })
@@ -1710,20 +1681,19 @@ it.live(
     const restoredSession = yield* authentication
       .currentSession(authenticatedHeaders)
       .pipe(Effect.provide(multiAuthenticationContextLayer));
-    expect(restoredSession.identity?.tenantId).toBe(secondTenantId);
+    assertOptionalField(restoredSession.identity, 'tenantId', secondTenantId);
     // Production evidence retains referenced bindings. Clear only this fixture's evidence so the
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
-    yield* coreDatabase
-      .delete(dataAccessEvents)
-      .where(eq(dataAccessEvents.tenantId, secondTenantId));
-    yield* coreDatabase
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.tenantId, secondTenantId));
-    const sessionWithRemovedBinding = yield* Effect.flip(
+    yield* purgeFixtureRows([
+      coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
+      coreDatabase
+        .delete(principalAuthBindings)
+        .where(eq(principalAuthBindings.tenantId, secondTenantId)),
+    ]);
+    yield* assertSessionForbidden(
       authentication
         .currentSession(authenticatedHeaders)
         .pipe(Effect.provide(multiAuthenticationContextLayer)),
     );
-    expect(Predicate.isTagged(sessionWithRemovedBinding, 'OntosIdentityForbiddenError')).toBe(true);
   }),
 );

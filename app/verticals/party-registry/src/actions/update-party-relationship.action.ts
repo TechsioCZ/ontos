@@ -6,18 +6,13 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import {
   ChangePartyRelationshipResultSchema,
-  PartyRelationshipLifecycleEventPayloadSchema,
   PartyRelationshipLifecycleEventPayloadJsonSchema,
   UpdateRelationshipAuditEvidenceSchema,
   UpdateRelationshipAuditEvidenceJsonSchema,
   PartyRelationshipMutationErrorSchema,
   UpdatePartyRelationshipPayloadSchema,
 } from '../../shared/domain/relationship-contract.ts';
-import type {
-  ChangePartyRelationshipResult as Result,
-  PartyRelationshipLifecycleEventPayload,
-  UpdatePartyRelationshipPayload as Payload,
-} from '../../shared/domain/relationship-contract.ts';
+import type { UpdatePartyRelationshipPayload as Payload } from '../../shared/domain/relationship-contract.ts';
 import { updatePartyRelationshipRecord } from '../services/party-relationship-persistence.service.ts';
 import type {
   RelationshipChangeResult,
@@ -25,21 +20,7 @@ import type {
 } from '../services/party-relationship-persistence.service.ts';
 import { createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
 
-export type UpdatePartyRelationshipPayload = Payload;
-export const UpdatePartyRelationshipResultSchema = ChangePartyRelationshipResultSchema;
-export type UpdatePartyRelationshipResult = Result;
-
-const eventPayload = (
-  result: RelationshipChangeResult,
-): PartyRelationshipLifecycleEventPayload => ({
-  fromPartyRef: result.relationship.from.canonicalPartyRef,
-  relationshipRef: result.relationship.relationshipRef,
-  relationshipType: result.relationship.relationshipType,
-  revision: result.relationship.revision,
-  toPartyRef: result.relationship.to.canonicalPartyRef,
-  validFrom: result.relationship.validFrom,
-  validTo: result.relationship.validTo,
-});
+import { encodeRelationshipEventPayload } from './relationship-event-payload.ts';
 
 interface Services {
   readonly update: (
@@ -88,9 +69,7 @@ const handleUpdatePartyRelationship = Effect.fn(
       relationshipRef: payload.relationshipRef,
     }).pipe(Effect.orDie);
     yield* context.recordAuditEvidence(auditEvidence);
-    const payloadJson = yield* Schema.encodeEffect(PartyRelationshipLifecycleEventPayloadSchema)(
-      eventPayload(result),
-    ).pipe(Effect.orDie);
+    const payloadJson = yield* encodeRelationshipEventPayload(result.relationship);
     const domainEvent = yield* context.addDomainEvent({
       eventType: 'party.registry.relationship-updated.v1',
       payloadJson,
@@ -132,7 +111,7 @@ export const updatePartyRelationshipAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: UpdatePartyRelationshipPayloadSchema,
     policies: [],
-    resultSchema: UpdatePartyRelationshipResultSchema,
+    resultSchema: ChangePartyRelationshipResultSchema,
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_relationships',
   },
@@ -149,11 +128,3 @@ export const updatePartyRelationshipAction = defineAction(
         ),
     }),
 );
-
-// <generated-outbox-message-exports>
-export { createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxPayloadSchema } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxProducerModuleKey } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxTopic } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-export type { UpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxPayload } from './update-party-relationship.party-registry-relationship-updated-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

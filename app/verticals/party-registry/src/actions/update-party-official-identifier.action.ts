@@ -48,14 +48,8 @@ import type {
 } from '../../shared/actions/update-party-official-identifier.ts';
 import { createUpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxMessage } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
 
-export {
-  UpdatePartyOfficialIdentifierPayloadSchema,
-  UpdatePartyOfficialIdentifierResultSchema,
-} from '../../shared/actions/update-party-official-identifier.ts';
-export type {
-  UpdatePartyOfficialIdentifierPayload,
-  UpdatePartyOfficialIdentifierResult,
-} from '../../shared/actions/update-party-official-identifier.ts';
+export { UpdatePartyOfficialIdentifierPayloadSchema } from '../../shared/actions/update-party-official-identifier.ts';
+export type { UpdatePartyOfficialIdentifierPayload } from '../../shared/actions/update-party-official-identifier.ts';
 
 const PartyOfficialIdentifierNotFoundContract = Schema.TaggedStruct(
   'PartyOfficialIdentifierNotFound',
@@ -64,12 +58,10 @@ const PartyOfficialIdentifierNotFoundContract = Schema.TaggedStruct(
     reason: Schema.String,
   },
 );
-export const PartyOfficialIdentifierNotFound = Schema.TaggedError<
+const PartyOfficialIdentifierNotFound = Schema.TaggedError<
   typeof PartyOfficialIdentifierNotFoundContract.Type
 >()('PartyOfficialIdentifierNotFound', PartyOfficialIdentifierNotFoundContract.fields);
-export type PartyOfficialIdentifierNotFoundError = InstanceType<
-  typeof PartyOfficialIdentifierNotFound
->;
+type PartyOfficialIdentifierNotFoundError = InstanceType<typeof PartyOfficialIdentifierNotFound>;
 
 const PartyOfficialIdentifierUpdateConflictContract = Schema.TaggedStruct(
   'PartyOfficialIdentifierUpdateConflict',
@@ -78,10 +70,10 @@ const PartyOfficialIdentifierUpdateConflictContract = Schema.TaggedStruct(
     reason: Schema.String,
   },
 );
-export const PartyOfficialIdentifierUpdateConflict = Schema.TaggedError<
+const PartyOfficialIdentifierUpdateConflict = Schema.TaggedError<
   typeof PartyOfficialIdentifierUpdateConflictContract.Type
 >()('PartyOfficialIdentifierUpdateConflict', PartyOfficialIdentifierUpdateConflictContract.fields);
-export type PartyOfficialIdentifierUpdateConflictError = InstanceType<
+type PartyOfficialIdentifierUpdateConflictError = InstanceType<
   typeof PartyOfficialIdentifierUpdateConflict
 >;
 
@@ -288,11 +280,3 @@ export const updatePartyOfficialIdentifierAction = defineAction(
       }),
     } satisfies Services),
 );
-
-// <generated-outbox-message-exports>
-export { createUpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxMessage } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
-export { UpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxPayloadSchema } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
-export { UpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxProducerModuleKey } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
-export { UpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxTopic } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
-export type { UpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdatedV1OutboxPayload } from './update-party-official-identifier.party-registry-official-identifier-updated-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

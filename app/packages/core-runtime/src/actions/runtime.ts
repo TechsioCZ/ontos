@@ -72,6 +72,16 @@ import {
   logActionTransactionFailureCause,
 } from './repository.ts';
 
+const requireIdempotencyKey = (idempotency: string, transport: ActionTransportMetadata) =>
+  idempotency === 'required' && transport.idempotencyKey === undefined
+    ? Effect.fail(
+        new ActionIdempotencyKeyRequired({
+          code: 'action_idempotency_key_required',
+          reason: 'This Action requires an idempotency key',
+        }),
+      )
+    : Effect.void;
+
 const withOptionalProperty = <
   Base extends object,
   Key extends PropertyKey,
@@ -143,7 +153,7 @@ const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('ActionInvocationId'),
 );
 
-export const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
+const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
   invocationId: ActionInvocationIdSchema,
 });
 
@@ -580,15 +590,7 @@ export const makeActionRuntime = (
       );
       notifyStage('module_state_gate');
 
-      if (
-        input.registration.descriptor.idempotency === 'required' &&
-        transport.idempotencyKey === undefined
-      ) {
-        return yield* new ActionIdempotencyKeyRequired({
-          code: 'action_idempotency_key_required',
-          reason: 'This Action requires an idempotency key',
-        });
-      }
+      yield* requireIdempotencyKey(input.registration.descriptor.idempotency, transport);
 
       const tenantPermission = isTrustedSupportRecoveryPrincipalContext(
         principal,

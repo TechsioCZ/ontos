@@ -22,24 +22,21 @@ const EndedByPrincipalIdSchema = TrimmedTextSchema.pipe(
 export const ContactPointTimestampSchema = IsoTimestampSchema;
 
 export const ContactPointTypeSchema = Schema.Literals(['EMAIL', 'PHONE', 'ADDRESS']);
-export type ContactPointType = typeof ContactPointTypeSchema.Type;
 
-export const AddressPurposeSchema = Schema.Literals([
+const AddressPurposeSchema = Schema.Literals([
   'REGISTERED',
   'BILLING',
   'DELIVERY',
   'CORRESPONDENCE',
 ]);
-export type AddressPurpose = typeof AddressPurposeSchema.Type;
 
-export const ContactPointLifecycleStateSchema = Schema.Literals([
+const ContactPointLifecycleStateSchema = Schema.Literals([
   'ACTIVE',
   'ENDED',
   'SUPERSEDED',
   'RETRACTED',
   'DISPUTED',
 ]);
-export type ContactPointLifecycleState = typeof ContactPointLifecycleStateSchema.Type;
 
 export const ContactPointPrivacyClassificationSchema = Schema.Literals([
   'PUBLIC',
@@ -48,12 +45,7 @@ export const ContactPointPrivacyClassificationSchema = Schema.Literals([
 ]);
 export type ContactPointPrivacyClassification = typeof ContactPointPrivacyClassificationSchema.Type;
 
-export const ContactPointVerificationStateSchema = Schema.Literals([
-  'UNVERIFIED',
-  'VERIFIED',
-  'REJECTED',
-]);
-export type ContactPointVerificationState = typeof ContactPointVerificationStateSchema.Type;
+const ContactPointVerificationStateSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
 
 export const ContactPointProvenanceSchema = Schema.Struct({
   authoritative: Schema.Boolean,
@@ -100,7 +92,6 @@ export const EmailContactPointInputSchema = Schema.Struct({
   type: Schema.Literal('EMAIL'),
   value: EmailValueSchema,
 });
-export type EmailContactPointInput = typeof EmailContactPointInputSchema.Type;
 
 const PhoneValueSchema = Schema.Trim.check(
   Schema.isMinLength(3),
@@ -131,9 +122,8 @@ export const PhoneContactPointInputSchema = Schema.Union([
     value: PhoneValueSchema.check(Schema.isPattern(/^[0-9(]/u)),
   }),
 ]);
-export type PhoneContactPointInput = typeof PhoneContactPointInputSchema.Type;
 
-export const StructuredAddressSchema = Schema.Struct({
+const StructuredAddressSchema = Schema.Struct({
   addressLine1: OptionalTrimmedTextSchema,
   addressLine2: OptionalTrimmedTextSchema,
   city: OptionalTrimmedTextSchema,
@@ -174,7 +164,6 @@ export const AddressContactPointInputSchema = Schema.Struct({
   ),
   type: Schema.Literal('ADDRESS'),
 });
-export type AddressContactPointInput = typeof AddressContactPointInputSchema.Type;
 
 export const ContactPointInputSchema = Schema.Union([
   EmailContactPointInputSchema,
@@ -195,15 +184,14 @@ export const ContactPointEndSchema = Schema.Struct({
   reason: TrimmedTextSchema,
   recordedAt: ContactPointTimestampSchema,
 });
-export type ContactPointEnd = typeof ContactPointEndSchema.Type;
 
-export const EmailContactPointValueSchema = Schema.Struct({
+const EmailContactPointValueSchema = Schema.Struct({
   displayValue: EmailValueSchema,
   lookupValue: EmailValueSchema,
   preferred: Schema.Boolean,
   type: Schema.Literal('EMAIL'),
 });
-export const PhoneContactPointValueSchema = Schema.Struct({
+const PhoneContactPointValueSchema = Schema.Struct({
   countryCode: Schema.Union([CountryCodeSchema, Schema.Null]),
   displayValue: PhoneValueSchema,
   extension: Schema.Union([TrimmedTextSchema, Schema.Null]),
@@ -236,12 +224,11 @@ export const AddressContactPointValueSchema = Schema.Struct({
   ),
   type: Schema.Literal('ADDRESS'),
 });
-export const ContactPointValueSchema = Schema.Union([
+const ContactPointValueSchema = Schema.Union([
   EmailContactPointValueSchema,
   PhoneContactPointValueSchema,
   AddressContactPointValueSchema,
 ]);
-export type ContactPointValue = typeof ContactPointValueSchema.Type;
 
 export const PartyContactPointSchema = Schema.Struct({
   contactPointRef: PartyContactPointRefSchema,
@@ -298,15 +285,11 @@ export const normalizeEmail = (rawValue: string): NormalizedChannel => {
 
 const digitsOnly = (value: string): string => value.replaceAll(/[^0-9]/gu, '');
 
-export const normalizePhone = (
-  rawValue: string,
-  rawCountryCode?: string,
-  rawExtension?: string,
-): NormalizedPhone => {
-  const displayValue = rawValue.trim();
-  const countryCode = rawCountryCode?.trim().toUpperCase();
-  const digits = digitsOnly(displayValue);
-  const extension = rawExtension?.trim() ?? null;
+const assertPhoneParts = (
+  displayValue: string,
+  countryCode: string | undefined,
+  extension: string | null,
+): void => {
   if (countryCode !== undefined && !/^[A-Z]{2}$/u.test(countryCode)) {
     return invalidContactPoint('PHONE country context must be a two-letter country code');
   }
@@ -316,6 +299,18 @@ export const normalizePhone = (
   if (!/^\+?[()0-9 .-]+$/u.test(displayValue)) {
     return invalidContactPoint('PHONE contains unsupported characters');
   }
+};
+
+export const normalizePhone = (
+  rawValue: string,
+  rawCountryCode?: string,
+  rawExtension?: string,
+): NormalizedPhone => {
+  const displayValue = rawValue.trim();
+  const countryCode = rawCountryCode?.trim().toUpperCase();
+  const digits = digitsOnly(displayValue);
+  const extension = rawExtension?.trim() ?? null;
+  assertPhoneParts(displayValue, countryCode, extension);
   if (displayValue.startsWith('+')) {
     if (!/^[1-9][0-9]{6,14}$/u.test(digits)) {
       return invalidContactPoint(
@@ -428,6 +423,28 @@ export const normalizedAddressKey = (address: StructuredAddress): string => {
     .join('|');
 };
 
+const assertAddressPurposeAssignment = (
+  assignment: AddressPurposeAssignment,
+  provenance: ContactPointProvenance,
+): void => {
+  if (assignment.purpose === 'REGISTERED') {
+    if (
+      assignment.registryContext === undefined ||
+      assignment.registryContext.registryKey === 'GENERAL' ||
+      !/^[A-Za-z]{2}$/u.test(assignment.registryContext.jurisdiction) ||
+      assignment.registryContext.jurisdiction.toUpperCase() === 'ZZ' ||
+      !provenance.authoritative ||
+      provenance.evidenceReference === undefined
+    ) {
+      return invalidContactPoint(
+        'REGISTERED requires an explicit registry context and authoritative provenance',
+      );
+    }
+  } else if (assignment.registryContext !== undefined) {
+    return invalidContactPoint('Registry context belongs only to REGISTERED purpose');
+  }
+};
+
 export const assertAddressPurposeRules = (
   assignments: readonly AddressPurposeAssignment[],
   provenance: ContactPointProvenance,
@@ -437,21 +454,6 @@ export const assertAddressPurposeRules = (
     return invalidContactPoint('ADDRESS purposes must be unique on one Contact Point');
   }
   for (const assignment of assignments) {
-    if (assignment.purpose === 'REGISTERED') {
-      if (
-        assignment.registryContext === undefined ||
-        assignment.registryContext.registryKey === 'GENERAL' ||
-        !/^[A-Za-z]{2}$/u.test(assignment.registryContext.jurisdiction) ||
-        assignment.registryContext.jurisdiction.toUpperCase() === 'ZZ' ||
-        !provenance.authoritative ||
-        provenance.evidenceReference === undefined
-      ) {
-        return invalidContactPoint(
-          'REGISTERED requires an explicit registry context and authoritative provenance',
-        );
-      }
-    } else if (assignment.registryContext !== undefined) {
-      return invalidContactPoint('Registry context belongs only to REGISTERED purpose');
-    }
+    assertAddressPurposeAssignment(assignment, provenance);
   }
 };

@@ -18,7 +18,6 @@ export { PartyRelationshipNotFound } from './not-found.ts';
 export { PartyRelationshipOverlapConflict } from './overlap-conflict.ts';
 export { PartyRelationshipPersistenceUnavailable } from './persistence-unavailable.ts';
 export { PartyRelationshipRevisionConflict } from './revision-conflict.ts';
-export { PartyRelationshipTypeUnsupported } from './type-unsupported.ts';
 
 export const PartyRelationshipMutationErrorSchema = Schema.Union([
   PartyAliasWriteRejected,

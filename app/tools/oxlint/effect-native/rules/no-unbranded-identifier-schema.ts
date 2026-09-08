@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A2** — "Make Schema the sole authority for contracts and domain models"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A2 measures **zero branded identifiers** and
@@ -67,17 +68,22 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { matchesGlobs } from '../shared/paths.ts';
+import {
+  isSchemaRuleInScope,
+  isSchemaConstructorArgument as isConstructorArgument,
+} from '../shared/schema-rule-support.ts';
+import { stringArray, stringOption, safeRegExp } from '../shared/options.ts';
+import { memberName, keyName, skipWrappers, unwrapNode } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
-
-/** Fixture files mirror repo paths under `tests/fixtures/<rule>/{valid,invalid}/`; strip that prefix. */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: string[] = [];
@@ -177,28 +183,15 @@ interface RuleOptions {
   readonly ignoreTests: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function stringOption(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.length > 0 ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     brandHelpers: stringArray(record.brandHelpers, DEFAULT_BRAND_HELPERS),
-    identifierKeyPattern: stringOption(record.identifierKeyPattern, DEFAULT_KEY_PATTERN),
+    identifierKeyPattern: stringOption(record.identifierKeyPattern, DEFAULT_KEY_PATTERN, false),
     identifierSchemaNamePattern: stringOption(
       record.identifierSchemaNamePattern,
       DEFAULT_SCHEMA_NAME_PATTERN,
+      false,
     ),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     ignoreTests: record.ignoreTests === true,
@@ -207,45 +200,8 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-function safeRegExp(source: string, fallback: string): RegExp {
-  try {
-    return new RegExp(source, 'u');
-  } catch {
-    return new RegExp(fallback, 'u');
-  }
-}
-
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-/** Non-computed `.Struct`, or computed `["Struct"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  return null;
-}
-
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (let guard = 0; guard < 16; guard += 1) {
-    if (!UNWRAPPABLE.has(current.type)) return current;
-    const inner = (current as { expression?: ESTree.Node }).expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: UNWRAPPABLE, maxDepth: 16 });
 }
 
 /** A local that stands for one `Schema.<member>` rather than for the `Schema` namespace. */
@@ -278,58 +234,32 @@ function collectSchemaLocals(
   bindings: EffectBindings,
   reexportModules: readonly string[],
 ): SchemaLocals {
+  const isReexport = (source: string): boolean => matchesGlobs(source, reexportModules);
   const schema = new Set<string>();
-  const barrel = new Set<string>();
-  const brandDirect = new Set<string>();
   const pipe = new Set<string>();
-  const members = new Map<string, MemberBinding>();
   for (const [local, namespace] of bindings.namespaces) {
     if (namespace === SCHEMA_NAMESPACE) schema.add(local);
     if (namespace === 'pipe') pipe.add(local);
   }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    const isReexport = matchesGlobs(source, reexportModules);
-    if (source === EFFECT_ROOT_MODULE || isReexport) {
-      for (const specifier of statement.specifiers) {
-        if (specifier.type === 'ImportNamespaceSpecifier') barrel.add(specifier.local.name);
-      }
-    }
-    if (isReexport) {
-      for (const specifier of statement.specifiers) {
-        if (specifier.type !== 'ImportSpecifier') continue;
-        const imported = importedName(specifier);
-        if (imported === SCHEMA_NAMESPACE) schema.add(specifier.local.name);
-        if (imported === 'pipe') pipe.add(specifier.local.name);
-        // A barrel also re-exports plain values; only names that really are Schema members count.
-        if (KNOWN_SCHEMA_MEMBERS.has(imported)) {
-          members.set(specifier.local.name, { declarator: null, member: imported });
-        }
-      }
-    }
-    // `import { Struct, String as SchemaString } from "effect/Schema"` — the members themselves.
-    // The root `effect` barrel is deliberately excluded: its `Struct` is `effect/Struct`, not a Schema.
-    if (EFFECT_SCHEMA_MODULE.test(source)) {
-      for (const specifier of statement.specifiers) {
-        if (specifier.type !== 'ImportSpecifier') continue;
-        const imported = importedName(specifier);
-        if (BRAND_MEMBERS.has(imported)) brandDirect.add(specifier.local.name);
-        members.set(specifier.local.name, { declarator: null, member: imported });
-      }
-    }
+  const barrel = collectRootNamespaces(
+    program,
+    (source) => source === EFFECT_ROOT_MODULE || isReexport(source),
+  );
+  const reexports = collectNamedImports(program, isReexport);
+  for (const [local, member] of reexports) {
+    if (member === SCHEMA_NAMESPACE) schema.add(local);
+    if (member === 'pipe') pipe.add(local);
   }
+  const direct = collectNamedImports(program, (source) => EFFECT_SCHEMA_MODULE.test(source));
+  const members = new Map<string, MemberBinding>();
+  for (const [local, member] of reexports) {
+    if (KNOWN_SCHEMA_MEMBERS.has(member)) members.set(local, { declarator: null, member });
+  }
+  for (const [local, member] of direct) members.set(local, { declarator: null, member });
+  const brandDirect = new Set(
+    [...direct].filter(([, member]) => BRAND_MEMBERS.has(member)).map(([local]) => local),
+  );
   return { barrel, brandDirect, members, pipe, schema };
-}
-
-function lookupVariable(context: Context, identifier: ESTree.Node, name: string): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
 }
 
 /** Capitalised brand suggestion: `tenantId` → `TenantId`, `ContactsIcoSchema` → `ContactsIco`. */
@@ -387,10 +317,7 @@ export const rule = defineRule({
   },
   create(context) {
     const options = readOptions(context);
-    const path = scopePath(context.filename);
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (!matchesGlobs(path, options.include)) return {};
-    if (options.ignoreTests && isTestFile(path)) return {};
+    if (!isSchemaRuleInScope(context.filename, options)) return {};
 
     const keyPattern = safeRegExp(options.identifierKeyPattern, DEFAULT_KEY_PATTERN);
     const schemaNamePattern = safeRegExp(
@@ -416,14 +343,14 @@ export const rule = defineRule({
 
     /** `true` when the namespace identifier still resolves to its `effect` import (no local shadow). */
     const resolvesToImport = (node: ESTree.Node, name: string): boolean => {
-      const variable = lookupVariable(context, node, name);
+      const variable = resolveVariable(context, name, node);
       if (variable === null || variable.defs.length === 0) return true;
       return variable.defs.some((definition) => definition.type === 'ImportBinding');
     };
 
     /** The in-file `const` declarator an identifier resolves to, or `null` for imports/params/globals. */
     const localDeclarator = (node: ESTree.Node, name: string): ESTree.VariableDeclarator | null => {
-      const variable = lookupVariable(context, node, name);
+      const variable = resolveVariable(context, name, node);
       if (variable === null || variable.defs.length !== 1) return null;
       const definition = variable.defs[0];
       if (definition === undefined || definition.type !== 'Variable') return null;
@@ -449,91 +376,82 @@ export const rule = defineRule({
       return declarator !== null && declarator.start === binding.declarator ? binding.member : null;
     };
 
-    /** `Schema.Struct` / `S.Struct` / `Effect.Schema.Struct` / `Schema["Struct"]` / bare `Struct` → `"Struct"`. */
+    const isImportedLocal = (node: ESTree.Node, names: ReadonlySet<string>): boolean =>
+      node.type === 'Identifier' && names.has(node.name) && resolvesToImport(node, node.name);
+
+    const isSchemaSource = (node: ESTree.Node): boolean => {
+      const source = unwrap(node);
+      if (source.type === 'Identifier') return isImportedLocal(source, locals.schema);
+      if (source.type !== 'MemberExpression' || memberName(source) !== SCHEMA_NAMESPACE)
+        return false;
+      return isImportedLocal(unwrap(source.object), locals.barrel);
+    };
+
     const schemaMember = (node: ESTree.Node): string | null => {
       if (node.type === 'Identifier') return memberOfIdentifier(node, node.name);
-      if (node.type !== 'MemberExpression') return null;
-      const member = memberName(node);
-      if (member === null) return null;
-      const object = unwrap(node.object);
-      if (object.type === 'Identifier') {
-        if (!locals.schema.has(object.name)) return null;
-        return resolvesToImport(object, object.name) ? member : null;
-      }
-      if (object.type !== 'MemberExpression') return null;
-      if (memberName(object) !== SCHEMA_NAMESPACE) return null;
-      const root = unwrap(object.object);
-      if (root.type !== 'Identifier') return null;
-      if (!locals.barrel.has(root.name)) return null;
-      return resolvesToImport(root, root.name) ? member : null;
+      if (node.type !== 'MemberExpression' || !isSchemaSource(node.object)) return null;
+      return memberName(node);
     };
 
-    /** `Schema.brand('X')`, bare `Schema.brand`, `import { brand }`, or a configured helper. */
+    const isBrandIdentifier = (node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
+      if (isImportedLocal(node, locals.brandDirect)) return true;
+      if (options.brandHelpers.includes(node.name)) return true;
+      const member = memberOfIdentifier(node, node.name);
+      return member !== null && BRAND_MEMBERS.has(member);
+    };
+
     const isBrandExpression = (node: ESTree.Node): boolean => {
       const expression = unwrap(node);
-      if (expression.type === 'CallExpression') {
-        const callee = unwrap(expression.callee);
-        if (callee.type === 'Identifier' && options.brandHelpers.includes(callee.name)) return true;
-        return isBrandExpression(callee);
-      }
-      if (expression.type === 'Identifier') {
-        if (
-          locals.brandDirect.has(expression.name) &&
-          resolvesToImport(expression, expression.name)
-        )
-          return true;
-        if (options.brandHelpers.includes(expression.name)) return true;
-        const member = memberOfIdentifier(expression, expression.name);
-        return member !== null && BRAND_MEMBERS.has(member);
-      }
-      if (expression.type === 'MemberExpression') {
-        const member = memberName(expression);
-        if (member === null) return false;
-        if (BRAND_MEMBERS.has(member) && schemaMember(expression) !== null) return true;
-        return options.brandHelpers.includes(member);
-      }
-      return false;
+      if (expression.type === 'CallExpression') return isBrandExpression(expression.callee);
+      if (expression.type === 'Identifier') return isBrandIdentifier(expression);
+      if (expression.type !== 'MemberExpression') return false;
+      const member = memberName(expression);
+      if (member === null) return false;
+      return (
+        (BRAND_MEMBERS.has(member) && schemaMember(expression) !== null) ||
+        options.brandHelpers.includes(member)
+      );
     };
 
-    /**
-     * `const { Struct, String: Str } = Schema` / `const { Struct } = Effect.Schema` — namespace
-     * destructuring binds the same members a named import would, so record them the same way.
-     */
+    const recordDestructuredProperty = (
+      declarator: ESTree.VariableDeclarator,
+      property: ESTree.ObjectPattern['properties'][number],
+    ): void => {
+      if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier')
+        return;
+      const member = keyName(property.key);
+      if (member === null) return;
+      const members = destructuredMembers.get(declarator.start) ?? new Map<string, string>();
+      members.set(property.value.name, member);
+      destructuredMembers.set(declarator.start, members);
+    };
+
     const collectDestructuredMembers = (): void => {
       for (const declarator of declarators) {
-        if (declarator.id.type !== 'ObjectPattern') continue;
-        const init =
-          declarator.init === null || declarator.init === undefined
-            ? null
-            : unwrap(declarator.init);
-        if (init === null) continue;
-        let isSchemaSource = false;
-        if (init.type === 'Identifier') {
-          isSchemaSource = locals.schema.has(init.name) && resolvesToImport(init, init.name);
-        } else if (init.type === 'MemberExpression' && memberName(init) === SCHEMA_NAMESPACE) {
-          const root = unwrap(init.object);
-          isSchemaSource =
-            root.type === 'Identifier' &&
-            locals.barrel.has(root.name) &&
-            resolvesToImport(root, root.name);
-        }
-        if (!isSchemaSource) continue;
-        for (const property of declarator.id.properties) {
-          if (property.type !== 'Property' || property.computed) continue;
-          const key = property.key;
-          const member =
-            key.type === 'Identifier'
-              ? key.name
-              : key.type === 'Literal' && typeof key.value === 'string'
-                ? key.value
-                : null;
-          if (member === null || property.value.type !== 'Identifier') continue;
-          const members = destructuredMembers.get(declarator.start) ?? new Map<string, string>();
-          members.set(property.value.name, member);
-          destructuredMembers.set(declarator.start, members);
-        }
+        if (declarator.id.type !== 'ObjectPattern' || declarator.init == null) continue;
+        if (!isSchemaSource(declarator.init)) continue;
+        for (const property of declarator.id.properties)
+          recordDestructuredProperty(declarator, property);
       }
     };
+
+    const identityResult = (body: ESTree.Node): ESTree.Node | null => {
+      if (body.type !== 'BlockStatement') return body;
+      if (body.body.length !== 1 || body.body[0]?.type !== 'ReturnStatement') return null;
+      return body.body[0].argument;
+    };
+
+    const isIdentityFunction = (step: ESTree.Node): boolean => {
+      if (step.type !== 'ArrowFunctionExpression' && step.type !== 'FunctionExpression')
+        return false;
+      if (step.body === null || step.params.length !== 1 || step.params[0]?.type !== 'Identifier')
+        return false;
+      const returned = identityResult(step.body);
+      return returned?.type === 'Identifier' && returned.name === step.params[0].name;
+    };
+
+    const isTransparentMember = (member: string): boolean =>
+      TRANSPARENT_WRAPPERS.has(member) || (TRANSPARENT_METHODS.has(member) && member !== 'pipe');
 
     /** A pipe step must visibly preserve the string schema; arbitrary transforms may decode it
      * to a branded or non-string target. Do not infer their output from the encoded input. */
@@ -542,9 +460,7 @@ export const rule = defineRule({
       const step = unwrap(node);
       const member = schemaMember(step.type === 'CallExpression' ? unwrap(step.callee) : step);
       if (member !== null) {
-        return (
-          TRANSPARENT_WRAPPERS.has(member) || (TRANSPARENT_METHODS.has(member) && member !== 'pipe')
-        );
+        return isTransparentMember(member);
       }
       if (step.type === 'Identifier') {
         const declaration = localDeclarator(step, step.name);
@@ -555,18 +471,7 @@ export const rule = defineRule({
           return false;
         return declaration.init !== null && isTransparentStep(declaration.init, depth + 1);
       }
-      // The one helper whose result is syntactically known: `(schema) => schema`.
-      if (step.type !== 'ArrowFunctionExpression' && step.type !== 'FunctionExpression')
-        return false;
-      if (step.body === null) return false;
-      if (step.params.length !== 1 || step.params[0]?.type !== 'Identifier') return false;
-      const returned =
-        step.body.type === 'BlockStatement'
-          ? step.body.body.length === 1 && step.body.body[0]?.type === 'ReturnStatement'
-            ? step.body.body[0].argument
-            : null
-          : step.body;
-      return returned?.type === 'Identifier' && returned.name === step.params[0].name;
+      return isIdentityFunction(step);
     };
 
     /**
@@ -597,67 +502,72 @@ export const rule = defineRule({
       }
 
       if (expression.type !== 'CallExpression') return false;
-      const callee = unwrap(expression.callee);
+      return isStringRootedCall(expression, seen, depth);
+    };
 
-      // `pipe(Schema.String, Schema.brand('X'))` — checked before member resolution so that a
-      // `pipe` binding can never be mistaken for a Schema combinator of the same name.
+    const firstArgumentRooted = (
+      expression: ESTree.CallExpression,
+      seen: Set<number>,
+      depth: number,
+    ): boolean => {
+      const first = expression.arguments[0];
+      return (
+        first !== undefined &&
+        first.type !== 'SpreadElement' &&
+        isStringRooted(first, seen, depth + 1)
+      );
+    };
+
+    const isStringRootedMethod = (
+      expression: ESTree.CallExpression,
+      callee: ESTree.MemberExpression,
+      seen: Set<number>,
+      depth: number,
+    ): boolean => {
+      const method = memberName(callee);
+      if (method === null || BRAND_MEMBERS.has(method) || !TRANSPARENT_METHODS.has(method))
+        return false;
+      if (expression.arguments.some((argument) => isBrandExpression(argument))) return false;
       if (
-        callee.type === 'Identifier' &&
-        locals.pipe.has(callee.name) &&
-        resolvesToImport(callee, callee.name)
-      ) {
+        method === 'pipe' &&
+        !expression.arguments.every((argument) => isTransparentStep(argument))
+      )
+        return false;
+      return isStringRooted(callee.object, seen, depth + 1);
+    };
+
+    const isStringRootedCall = (
+      expression: ESTree.CallExpression,
+      seen: Set<number>,
+      depth: number,
+    ): boolean => {
+      const callee = unwrap(expression.callee);
+      if (isImportedLocal(callee, locals.pipe)) {
         if (expression.arguments.some((argument) => isBrandExpression(argument))) return false;
         if (!expression.arguments.slice(1).every((argument) => isTransparentStep(argument)))
           return false;
-        const first = expression.arguments[0];
-        if (first === undefined || first.type === 'SpreadElement') return false;
-        return isStringRooted(first, seen, depth + 1);
+        return firstArgumentRooted(expression, seen, depth);
       }
-
-      // `Schema.NullOr(inner)`, `Schema.optionalKey(inner)`, `Schema.Array(inner)`, bare `NullOr(inner)`, ...
       const wrapper = schemaMember(callee);
       if (wrapper !== null) {
-        if (BRAND_MEMBERS.has(wrapper)) return false;
-        if (!TRANSPARENT_WRAPPERS.has(wrapper)) return false;
-        const first = expression.arguments[0];
-        if (first === undefined || first.type === 'SpreadElement') return false;
-        return isStringRooted(first, seen, depth + 1);
+        return (
+          !BRAND_MEMBERS.has(wrapper) &&
+          TRANSPARENT_WRAPPERS.has(wrapper) &&
+          firstArgumentRooted(expression, seen, depth)
+        );
       }
-
-      // `inner.check(...)` / `inner.annotate(...)` / `inner.pipe(Schema.brand('X'))` / `inner.brand('X')`.
-      if (callee.type === 'MemberExpression') {
-        const method = memberName(callee);
-        if (method === null) return false;
-        if (BRAND_MEMBERS.has(method)) return false;
-        if (!TRANSPARENT_METHODS.has(method)) return false;
-        if (expression.arguments.some((argument) => isBrandExpression(argument))) return false;
-        if (
-          method === 'pipe' &&
-          !expression.arguments.every((argument) => isTransparentStep(argument))
-        )
-          return false;
-        return isStringRooted(callee.object, seen, depth + 1);
-      }
-
-      return false;
+      return (
+        callee.type === 'MemberExpression' && isStringRootedMethod(expression, callee, seen, depth)
+      );
     };
 
     /** Is `node` an argument of a `Schema.Struct` / `Schema.TaggedError<E>()('T', ...)` style call? */
-    const isSchemaConstructorArgument = (node: ESTree.Node): boolean => {
-      const parent = node.parent;
-      if (parent === null || parent === undefined) return false;
-      if (parent.type !== 'CallExpression') return false;
-      if (!parent.arguments.some((argument) => argument === node)) return false;
-      // Walk the callee chain: `Schema.TaggedError<E>()` is a CallExpression callee.
-      let callee: ESTree.Node = unwrap(parent.callee);
-      for (let guard = 0; guard < 8; guard += 1) {
-        const member = schemaMember(callee);
-        if (member !== null) return FIELD_BAG_CONSTRUCTORS.has(member);
-        if (callee.type !== 'CallExpression') return false;
-        callee = unwrap(callee.callee);
-      }
-      return false;
-    };
+    const isSchemaConstructorArgument = (node: ESTree.Node): boolean =>
+      isConstructorArgument(node, {
+        constructors: FIELD_BAG_CONSTRUCTORS,
+        resolveMember: schemaMember,
+        unwrap,
+      });
 
     /**
      * A `const someFields = { ... }` object that this file later hands to a Schema constructor —
@@ -665,15 +575,7 @@ export const rule = defineRule({
      * (`Schema.TaggedError<E>()('T', errorFields)`).
      */
     const isSpreadFieldBag = (node: ESTree.Node): boolean => {
-      let current: ESTree.Node = node;
-      // `{ ... } as const` keeps the declarator one level up.
-      while (
-        current.parent !== null &&
-        current.parent !== undefined &&
-        UNWRAPPABLE.has(current.parent.type)
-      ) {
-        current = current.parent;
-      }
+      const { node: current } = skipWrappers(node, UNWRAPPABLE);
       const parent = current.parent;
       if (parent === null || parent === undefined) return false;
       if (parent.type !== 'VariableDeclarator' || parent.init !== current) return false;
@@ -684,22 +586,73 @@ export const rule = defineRule({
     };
 
     const isFieldBag = (node: ESTree.ObjectExpression): boolean => {
-      let current: ESTree.Node = node;
-      while (
-        current.parent !== null &&
-        current.parent !== undefined &&
-        UNWRAPPABLE.has(current.parent.type)
-      ) {
-        current = current.parent;
-      }
+      const { node: current } = skipWrappers(node, UNWRAPPABLE);
       return isSchemaConstructorArgument(current) || isSpreadFieldBag(node);
     };
 
     const propertyKey = (property: ESTree.ObjectProperty): string | null => {
-      const key = property.key;
-      if (!property.computed && key.type === 'Identifier') return key.name;
-      if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-      return null;
+      return keyName(property.key, property.computed);
+    };
+
+    const isModuleDeclarator = (declarator: ESTree.VariableDeclarator): boolean => {
+      const declaration = declarator.parent;
+      if (declaration?.type !== 'VariableDeclaration') return false;
+      const owner = declaration.parent;
+      return owner?.type === 'Program' || owner?.type === 'ExportNamedDeclaration';
+    };
+
+    const reportedDeclarators = new Set<number>();
+    const reports: Array<{
+      readonly node: ESTree.Node;
+      readonly messageId: 'unbrandedField' | 'unbrandedSchema';
+      readonly data: Record<string, string>;
+      readonly start: number;
+    }> = [];
+
+    const reportDeclarator = (declarator: ESTree.VariableDeclarator): void => {
+      if (declarator.id.type !== 'Identifier') return;
+      if (!isModuleDeclarator(declarator)) return;
+      const name = declarator.id.name;
+      if (!schemaNamePattern.test(name)) return;
+      if (!isStringRooted(declarator.init, new Set(), 0)) return;
+      reportedDeclarators.add(declarator.start);
+      reports.push({
+        data: { brand: brandName(name), name },
+        messageId: 'unbrandedSchema',
+        node: declarator.id,
+        start: declarator.start,
+      });
+    };
+
+    const reportProperty = (property: ESTree.ObjectExpression['properties'][number]): void => {
+      if (property.type !== 'Property') return;
+      if (property.kind !== 'init' || property.method) return;
+      const key = propertyKey(property);
+      if (key === null || !keyPattern.test(key)) return;
+      const value = unwrap(property.value);
+      // A value that resolves to an in-file declarator this rule already reports is the
+      // same defect: fixing the shared schema fixes the field. Report the source only.
+      if (value.type === 'Identifier') {
+        const declarator = localDeclarator(value, value.name);
+        if (declarator !== null && reportedDeclarators.has(declarator.start)) return;
+      }
+      if (!isStringRooted(property.value, new Set(), 0)) return;
+      reports.push({
+        data: { brand: brandName(key), key },
+        messageId: 'unbrandedField',
+        node: property,
+        start: property.start,
+      });
+    };
+
+    const collectBagIdentifiers = (): void => {
+      for (const call of calls) {
+        for (const argument of call.arguments) {
+          const value = unwrap(argument);
+          if (value.type === 'Identifier' && isSchemaConstructorArgument(argument))
+            bagIdentifierNames.add(value.name);
+        }
+      }
     };
 
     return {
@@ -724,71 +677,11 @@ export const rule = defineRule({
         if (locals.schema.size === 0 && locals.barrel.size === 0 && locals.members.size === 0)
           return;
         collectDestructuredMembers();
-
-        // A field bag handed to a constructor by name: `Schema.TaggedError<E>()('T', errorFields)`.
-        for (const call of calls) {
-          for (const argument of call.arguments) {
-            const value = unwrap(argument);
-            if (value.type !== 'Identifier') continue;
-            if (isSchemaConstructorArgument(argument)) bagIdentifierNames.add(value.name);
-          }
-        }
-
-        // Pass 1: shared identifier schemas (`const TenantIdSchema = Schema.String...`).
-        const reportedDeclarators = new Set<number>();
-        const reports: Array<{
-          readonly node: ESTree.Node;
-          readonly messageId: 'unbrandedField' | 'unbrandedSchema';
-          readonly data: Record<string, string>;
-          readonly start: number;
-        }> = [];
-
-        for (const declarator of declarators) {
-          if (declarator.id.type !== 'Identifier') continue;
-          const declaration = declarator.parent;
-          if (declaration === null || declaration === undefined) continue;
-          if (declaration.type !== 'VariableDeclaration') continue;
-          const owner = declaration.parent;
-          const moduleLevel =
-            owner !== null &&
-            owner !== undefined &&
-            (owner.type === 'Program' || owner.type === 'ExportNamedDeclaration');
-          if (!moduleLevel) continue;
-          const name = declarator.id.name;
-          if (!schemaNamePattern.test(name)) continue;
-          if (!isStringRooted(declarator.init, new Set(), 0)) continue;
-          reportedDeclarators.add(declarator.start);
-          reports.push({
-            data: { brand: brandName(name), name },
-            messageId: 'unbrandedSchema',
-            node: declarator.id,
-            start: declarator.start,
-          });
-        }
-
-        // Pass 2: identifier fields inside Schema field bags.
+        collectBagIdentifiers();
+        for (const declarator of declarators) reportDeclarator(declarator);
         for (const object of objects) {
           if (!isFieldBag(object)) continue;
-          for (const property of object.properties) {
-            if (property.type !== 'Property') continue;
-            if (property.kind !== 'init' || property.method) continue;
-            const key = propertyKey(property);
-            if (key === null || !keyPattern.test(key)) continue;
-            const value = unwrap(property.value);
-            // A value that resolves to an in-file declarator this rule already reports is the
-            // same defect: fixing the shared schema fixes the field. Report the source only.
-            if (value.type === 'Identifier') {
-              const declarator = localDeclarator(value, value.name);
-              if (declarator !== null && reportedDeclarators.has(declarator.start)) continue;
-            }
-            if (!isStringRooted(property.value, new Set(), 0)) continue;
-            reports.push({
-              data: { brand: brandName(key), key },
-              messageId: 'unbrandedField',
-              node: property,
-              start: property.start,
-            });
-          }
+          for (const property of object.properties) reportProperty(property);
         }
 
         reports.sort((left, right) => left.start - right.start);

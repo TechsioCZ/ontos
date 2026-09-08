@@ -4,7 +4,6 @@ import {
   AddressPurposeTargetSchema,
   ContactPointProvenanceSchema,
   ContactPointTimestampSchema,
-  PartyContactPointSchema,
 } from '../domain/contact-point.ts';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 
@@ -22,5 +21,4 @@ export const EndContactPointPayloadSchema = Schema.Struct({
 });
 export type EndContactPointPayload = typeof EndContactPointPayloadSchema.Type;
 
-export const EndContactPointResultSchema = PartyContactPointSchema;
-export type EndContactPointResult = typeof EndContactPointResultSchema.Type;
+export { PartyContactPointSchema as EndContactPointResultSchema } from '../domain/contact-point.ts';

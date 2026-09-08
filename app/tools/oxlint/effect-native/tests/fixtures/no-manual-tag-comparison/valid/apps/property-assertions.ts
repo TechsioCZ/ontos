@@ -1,4 +1,4 @@
-import { expect } from '@app/effect-rstest';
+import { expect } from 'effect-rstest';
 import { expect as foreignExpect } from 'foreign-assertions';
 import * as assert from 'node:assert';
 declare const error: unknown;

@@ -196,21 +196,26 @@ export const discoverCurrentActions = (
         ),
       { concurrency: 'unbounded' },
     );
-    const verticalActions: ActionAuthorizationProvisioningAction[] = [];
-    for (const { contract, id } of contracts) {
-      if (
-        contract.deployment.appId !== id ||
-        contract.manifest.publicSurface.actions.length === 0
-      ) {
-        return yield* discoveryFailure();
-      }
-      for (const { actionKey, entrypoint } of contract.manifest.publicSurface.actions) {
-        if (entrypoint?.authorization.kind !== 'action_execution') {
+    const collectVerticalActions = Effect.gen(function* collectVerticalActionsEffect() {
+      const verticalActions: ActionAuthorizationProvisioningAction[] = [];
+      for (const { contract, id } of contracts) {
+        if (
+          contract.deployment.appId !== id ||
+          contract.manifest.publicSurface.actions.length === 0
+        ) {
           return yield* discoveryFailure();
         }
-        verticalActions.push({ actionKey, provisioning: entrypoint.authorization.provisioning });
+        for (const { actionKey, entrypoint } of contract.manifest.publicSurface.actions) {
+          if (entrypoint?.authorization.kind !== 'action_execution') {
+            return yield* discoveryFailure();
+          }
+          verticalActions.push({ actionKey, provisioning: entrypoint.authorization.provisioning });
+        }
       }
-    }
+
+      return { verticalActions };
+    });
+    const { verticalActions } = yield* collectVerticalActions;
     const coreActions: ActionAuthorizationProvisioningAction[] = [];
     for (const { actionKey, entrypoint } of coreActionCatalog) {
       if (entrypoint.authorization.kind !== 'action_execution') {

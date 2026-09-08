@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, DateTime, Option, Schema, Predicate, Struct } from 'effect';
 import {
   ContactPersonOfRelationshipType,

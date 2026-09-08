@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 import nodePath from 'node:path';
-import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
   Clock,
   Console,
   Effect,
   FileSystem,
-  Layer,
   Order,
   Path,
   Result,
@@ -15,6 +13,7 @@ import {
   Stream,
 } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
+import { runQualityCli } from './quality-cli-lifecycle.mts';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import {
   buildKnipModel,
@@ -37,7 +36,7 @@ const SOURCE_GROUPS = {
 } as const;
 const ToolSchema = Schema.Literals(['all', 'knip', 'jscpd', 'fallow']);
 type AuditTool = typeof ToolSchema.Type;
-const CountSchema = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const CountSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 const ScopeSchema = Schema.Struct({
   exclude: Schema.Array(Schema.String),
   patterns: Schema.Array(Schema.String),
@@ -304,7 +303,8 @@ const evaluateKnip = Effect.fn('qualityAudit.evaluateKnip')(function* evaluateKn
   const validated = yield* validateKnip('knip', report);
   const modeledUsages = yield* calibrateKnip(report, directory);
   const nativeFindingCounts = validated.coverage.findingCounts;
-  const unlisted = (nativeFindingCounts.unlisted ?? 0) - modeledUsages;
+  const { unlisted: nativeUnlisted = 0 } = nativeFindingCounts;
+  const unlisted = nativeUnlisted - modeledUsages;
   if (unlisted < 0) {
     return yield* failure('Knip modeled usages exceed raw unlisted count');
   }
@@ -526,7 +526,7 @@ const readSourceProvenance = Effect.fn('qualityAudit.readSourceProvenance')(
         : 'unavailable (no Git HEAD)',
       sourceState: Result.match(status, {
         onFailure: () => 'unavailable',
-        onSuccess: (output) => (output.trim() ? 'modified' : 'clean'),
+        onSuccess: (output) => (output.trim().length > 0 ? 'modified' : 'clean'),
       }),
       workingTreeChanges: Result.isSuccess(status)
         ? status.success.trimEnd().split('\n').filter(Boolean)
@@ -580,9 +580,15 @@ const snapshotConfiguration = Effect.fn('qualityAudit.snapshotConfiguration')(
         target,
       );
       const relativeOutput = path.relative(root, path.dirname(directory));
+      const outputIsInsideRoot =
+        relativeOutput !== '..' &&
+        !relativeOutput.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativeOutput);
       yield* writeJson(target, {
         ...config,
-        ignorePatterns: [...ignores.ignorePatterns, `${relativeOutput}/**`],
+        ignorePatterns: outputIsInsideRoot
+          ? [...ignores.ignorePatterns, `${relativeOutput}/**`]
+          : ignores.ignorePatterns,
       });
     }
     return configs;
@@ -611,7 +617,7 @@ const reconcileFallowCoverage = Effect.fn('qualityAudit.reconcileFallowCoverage'
     const fallow = results.find(
       (result) => result.name === FALLOW_FILES && result.status === 'reported',
     );
-    if (fallow) {
+    if (fallow !== undefined) {
       const report = yield* decodeReport(
         FallowFilesSchema,
         yield* fs.readFileString(path.join(fallow.directory, 'report.json')),
@@ -635,12 +641,13 @@ const reconcileFallowCoverage = Effect.fn('qualityAudit.reconcileFallowCoverage'
         ]
           .filter(Boolean)
           .join('; ');
-        yield* failure(diagnostic);
+        return yield* failure(diagnostic);
       }
       if (Result.isFailure(counts)) {
-        yield* counts.failure;
+        return yield* counts.failure;
       }
     }
+    return yield* Effect.void;
   },
 );
 
@@ -660,7 +667,7 @@ const reconcileCoverage = Effect.fn('qualityAudit.reconcileCoverage')(
     });
     const expectedWorkspaces = ['.', ...expectedManifests.map((file) => path.dirname(file))];
     const knip = results.find((result) => result.name === 'knip' && result.status === 'reported');
-    if (knip) {
+    if (knip !== undefined) {
       const observed = (knip.coverage.workspaces ?? []).map(
         (workspace) => path.relative(canonicalRoot, workspace) || '.',
       );
@@ -668,12 +675,12 @@ const reconcileCoverage = Effect.fn('qualityAudit.reconcileCoverage')(
         observed.length !== expectedWorkspaces.length ||
         expectedWorkspaces.some((workspace) => !observed.includes(workspace))
       ) {
-        yield* failure(
+        return yield* failure(
           `Knip workspace coverage mismatch: expected ${expectedWorkspaces.join(', ')}, observed ${observed.join(', ')}`,
         );
       }
     }
-    yield* reconcileFallowCoverage(directory, files, results, expectedWorkspaces);
+    return yield* reconcileFallowCoverage(directory, files, results, expectedWorkspaces);
   },
 );
 
@@ -743,7 +750,7 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
     verifiedVersion: Result.isSuccess(execution) ? execution.success.verifiedVersion : '',
   });
   const evaluated = yield* Effect.gen(function* evaluateAnalyzer() {
-    if (executionError) {
+    if (executionError.length > 0) {
       return yield* failure(executionError);
     }
     if (exitCode !== 0) {
@@ -751,7 +758,7 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
     }
     const stderr = yield* fs.readFileString(stderrPath);
     if (
-      stderr.trim() &&
+      stderr.trim().length > 0 &&
       !(step.name === 'jscpd' && stderr.trim() === `Using config from ${step.args[1]}`)
     ) {
       return yield* failure(
@@ -1018,10 +1025,11 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(
         (result) => Console.error(`${result.name}: ${result.diagnostic}`),
         { concurrency: 1 },
       );
-      yield* failure(
+      return yield* failure(
         'Quality audit analysis failed; diagnostics preserved in summary and raw artifacts',
       );
     }
+    return yield* Effect.void;
   },
 );
 
@@ -1040,12 +1048,5 @@ const cli = Command.make(
 );
 
 if (Schema.is(Schema.Struct({ main: Schema.Literal(true) }))(import.meta)) {
-  const mainLayer = Layer.effectDiscard(
-    Command.run(cli, { version: '1.0.0' }).pipe(
-      Effect.tapError((issue) => Console.error(String(issue))),
-    ),
-  ).pipe(Layer.provide(NodeServices.layer));
-  NodeRuntime.runMain(Effect.scoped(Layer.build(mainLayer)).pipe(Effect.asVoid), {
-    disableErrorReporting: true,
-  });
+  runQualityCli(Command.run(cli, { version: '1.0.0' }));
 }

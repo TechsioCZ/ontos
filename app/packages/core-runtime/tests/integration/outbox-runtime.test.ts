@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
+import { expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema, pipe } from 'effect';
@@ -141,18 +142,44 @@ const cleanupTenant = (database: CoreDatabaseExecutor, tenantId: string) =>
     yield* database
       .delete(outboxDeliveries)
       .where(inArray(outboxDeliveries.outboxMessageId, messageIds));
-    yield* database.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
-    yield* database.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
-    yield* database.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
-    yield* database.delete(tenants).where(eq(tenants.tenantId, tenantId));
+    yield* purgeFixtureRows([
+      database.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+      database.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
+      database.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
+      database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+    ]);
   });
+/** Each test owns the database and tenant until its scoped finalizers complete. */
+const tenantFixture = Effect.gen(function* tenantFixture() {
+  const configuration = yield* loadDatabaseConfig();
+  const { executor: database } = yield* makeCoreDatabase(configuration);
+  const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
+    cleanupTenant(database, id).pipe(Effect.orDie),
+  );
+  return { database, tenantId };
+});
+
+/** Seed and match one worker against a clock advanced beyond its pending rows. */
+const matchedWorker = Effect.fn(function* matchedWorker(
+  database: CoreDatabaseExecutor,
+  tenantId: string,
+  workerKey: string,
+  options: Parameters<typeof makeWorker>[1] & { readonly messages?: number } = {},
+) {
+  yield* activateConsumer(database, tenantId);
+  const messages = yield* Effect.forEach(Array.from({ length: options.messages ?? 1 }), () =>
+    insertMessage(database, tenantId),
+  );
+  const registration = makeWorker(workerKey, options);
+  const repository = makeOutboxRepository(database);
+  const now = advanceDate(yield* DateTime.nowAsDate, 1000);
+  yield* repository.matchUnmatched([subscriptionOf(registration)], now);
+  return { messages, now, registration, repository };
+});
+
 it.live('matches zero, one, or multiple exact workers once without historical backfill', () =>
   Effect.gen(function* matchesZeroOneOrMultiple() {
-    const configuration = yield* loadDatabaseConfig();
-    const { executor: database } = yield* makeCoreDatabase(configuration);
-    const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
-      cleanupTenant(database, id).pipe(Effect.orDie),
-    );
+    const { database, tenantId } = yield* tenantFixture;
     yield* insertMessage(database, tenantId);
     yield* insertMessage(database, tenantId, 'producer.unmatched');
     const repository = makeOutboxRepository(database);
@@ -161,7 +188,10 @@ it.live('matches zero, one, or multiple exact workers once without historical ba
       workers.map(subscriptionOf),
       dateAt('2026-08-03T10:00:00Z'),
     );
-    expect(firstMatch.deliveriesCreated).toBe(2);
+    expect(
+      firstMatch.deliveriesCreated,
+      `Initial matcher batch processed ${firstMatch.messagesMatched} unmatched messages`,
+    ).toBe(2);
     expect(firstMatch.messagesMatched >= 2).toBe(true);
     const repeatMatch = yield* repository.matchUnmatched(
       workers.map(subscriptionOf),
@@ -195,11 +225,7 @@ it.live('matches zero, one, or multiple exact workers once without historical ba
 );
 it.live('matches the complete subscription catalog before owner-local processes claim work', () =>
   Effect.gen(function* matchesTheCompleteSubscriptionCatalog() {
-    const configuration = yield* loadDatabaseConfig();
-    const { executor: database } = yield* makeCoreDatabase(configuration);
-    const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
-      cleanupTenant(database, id).pipe(Effect.orDie),
-    );
+    const { database, tenantId } = yield* tenantFixture;
     yield* activateConsumer(database, tenantId);
     yield* database.insert(tenantModuleStates).values({
       moduleKey: 'reporting',
@@ -214,7 +240,10 @@ it.live('matches the complete subscription catalog before owner-local processes 
     const repository = makeOutboxRepository(database);
     const subscriptions = [consumerWorker, reportingWorker].map(subscriptionOf);
     const matched = yield* repository.matchUnmatched(subscriptions, dateAt('2026-08-03T10:00:00Z'));
-    expect(matched.deliveriesCreated).toBe(2);
+    expect(
+      matched.deliveriesCreated,
+      `Catalog matcher batch processed ${matched.messagesMatched} unmatched messages`,
+    ).toBe(2);
     const claimAt = yield* DateTime.nowAsDate;
     const consumerClaim = Option.getOrNull(
       yield* repository.claimNext([consumerWorker], 'consumer-process', claimAt),
@@ -230,18 +259,18 @@ it.live(
   'gates claims on every non-active consumer state and permits one concurrent live claim',
   () =>
     Effect.gen(function* gatesClaimsOnEveryNonactive() {
-      const configuration = yield* loadDatabaseConfig();
-      const { executor: database } = yield* makeCoreDatabase(configuration);
-      const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
-        cleanupTenant(database, id).pipe(Effect.orDie),
-      );
+      const { database, tenantId } = yield* tenantFixture;
       yield* insertMessage(database, tenantId);
       const registration = makeWorker('consumer.module-gated');
       const repository = makeOutboxRepository(database);
-      yield* repository.matchUnmatched(
+      const matched = yield* repository.matchUnmatched(
         [subscriptionOf(registration)],
         dateAt('2026-08-03T11:00:00Z'),
       );
+      expect(
+        matched.deliveriesCreated,
+        `Module-gated matcher batch processed ${matched.messagesMatched} unmatched messages`,
+      ).toBe(1);
       const claimAt = advanceDate(yield* DateTime.nowAsDate, 1000);
       expect(
         Option.getOrNull(yield* repository.claimNext([registration], 'runtime-a', claimAt)),
@@ -306,17 +335,12 @@ it.live(
   'reclaims only expired leases, abandons the old attempt, and rejects stale finalization',
   () =>
     Effect.gen(function* reclaimsOnlyExpiredLeasesAbandons() {
-      const configuration = yield* loadDatabaseConfig();
-      const { executor: database } = yield* makeCoreDatabase(configuration);
-      const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
-        cleanupTenant(database, id).pipe(Effect.orDie),
-      );
-      yield* activateConsumer(database, tenantId);
-      yield* insertMessage(database, tenantId);
-      const registration = makeWorker('consumer.lease-proof');
-      const repository = makeOutboxRepository(database);
-      const started = advanceDate(yield* DateTime.nowAsDate, 1000);
-      yield* repository.matchUnmatched([subscriptionOf(registration)], started);
+      const { database, tenantId } = yield* tenantFixture;
+      const {
+        now: started,
+        registration,
+        repository,
+      } = yield* matchedWorker(database, tenantId, 'consumer.lease-proof');
       const first = Option.getOrThrow(
         yield* repository.claimNext([registration], 'runtime-a', started),
       );
@@ -349,17 +373,12 @@ it.live(
 );
 it.live('finishes an abandoned final attempt before dead-lettering its expired delivery', () =>
   Effect.gen(function* finishesAnAbandonedFinalAttempt() {
-    const configuration = yield* loadDatabaseConfig();
-    const { executor: database } = yield* makeCoreDatabase(configuration);
-    const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
-      cleanupTenant(database, id).pipe(Effect.orDie),
-    );
-    yield* activateConsumer(database, tenantId);
-    yield* insertMessage(database, tenantId);
-    const registration = makeWorker('consumer.final-lease', { maxAttempts: 1 });
-    const repository = makeOutboxRepository(database);
-    const started = advanceDate(yield* DateTime.nowAsDate, 1000);
-    yield* repository.matchUnmatched([subscriptionOf(registration)], started);
+    const { database, tenantId } = yield* tenantFixture;
+    const {
+      now: started,
+      registration,
+      repository,
+    } = yield* matchedWorker(database, tenantId, 'consumer.final-lease', { maxAttempts: 1 });
     const claim = Option.getOrThrow(
       yield* repository.claimNext([registration], 'runtime-a', started),
     );
@@ -388,18 +407,15 @@ it.live('finishes an abandoned final attempt before dead-lettering its expired d
 );
 it.live('finalizes success atomically and advances only through contiguous done deliveries', () =>
   Effect.gen(function* finalizesSuccessAtomicallyAndAdvances() {
-    const configuration = yield* loadDatabaseConfig();
-    const { executor: database } = yield* makeCoreDatabase(configuration);
-    const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
-      cleanupTenant(database, id).pipe(Effect.orDie),
+    const { database, tenantId } = yield* tenantFixture;
+    const { messages, now, registration, repository } = yield* matchedWorker(
+      database,
+      tenantId,
+      'consumer.checkpoint-proof',
+      { messages: 2 },
     );
-    yield* activateConsumer(database, tenantId);
-    const firstMessage = yield* insertMessage(database, tenantId);
-    const secondMessage = yield* insertMessage(database, tenantId);
-    const registration = makeWorker('consumer.checkpoint-proof');
-    const repository = makeOutboxRepository(database);
-    const now = advanceDate(yield* DateTime.nowAsDate, 1000);
-    yield* repository.matchUnmatched([subscriptionOf(registration)], now);
+    const firstMessage = Option.getOrThrow(Option.fromNullishOr(messages[0]));
+    const secondMessage = Option.getOrThrow(Option.fromNullishOr(messages[1]));
     const first = Option.getOrThrow(yield* repository.claimNext([registration], 'runtime-a', now));
     const second = Option.getOrThrow(yield* repository.claimNext([registration], 'runtime-b', now));
     expect(first).toBeDefined();
@@ -444,17 +460,13 @@ it.live(
   'schedules bounded retry, dead-letters exhaustion, stores safe errors, and never checkpoints failure',
   () =>
     Effect.gen(function* schedulesBoundedRetryDeadlettersExhaustion() {
-      const configuration = yield* loadDatabaseConfig();
-      const { executor: database } = yield* makeCoreDatabase(configuration);
-      const tenantId = yield* Effect.acquireRelease(insertTenant(database), (id) =>
-        cleanupTenant(database, id).pipe(Effect.orDie),
+      const { database, tenantId } = yield* tenantFixture;
+      const { now, registration, repository } = yield* matchedWorker(
+        database,
+        tenantId,
+        'consumer.retry-proof',
+        { maxAttempts: 2 },
       );
-      yield* activateConsumer(database, tenantId);
-      yield* insertMessage(database, tenantId);
-      const registration = makeWorker('consumer.retry-proof', { maxAttempts: 2 });
-      const repository = makeOutboxRepository(database);
-      const now = advanceDate(yield* DateTime.nowAsDate, 1000);
-      yield* repository.matchUnmatched([subscriptionOf(registration)], now);
       const first = Option.getOrThrow(
         yield* repository.claimNext([registration], 'runtime-a', now),
       );

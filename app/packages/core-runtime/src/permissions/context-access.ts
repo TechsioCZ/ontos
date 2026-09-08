@@ -13,7 +13,7 @@ import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 
-export const ContextAccessDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
+const ContextAccessDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 export type ContextAccessDecision = typeof ContextAccessDecisionSchema.Type;
 
 export const TENANT_PERMISSION_KEYS = [
@@ -156,15 +156,19 @@ const makeRequestItem = (item: BatchItem, principalId: string) =>
     subject: principalReference(principalId),
   });
 
+const sameObjectReference = (
+  expected: v1.ObjectReference | undefined,
+  actual: v1.ObjectReference | undefined,
+): boolean =>
+  actual?.objectId === expected?.objectId && actual?.objectType === expected?.objectType;
+
 const sameRequest = (
   expected: v1.CheckBulkPermissionsRequestItem,
   actual: v1.CheckBulkPermissionsRequestItem | undefined,
 ): boolean =>
   actual?.permission === expected.permission &&
-  actual.resource?.objectId === expected.resource?.objectId &&
-  actual.resource?.objectType === expected.resource?.objectType &&
-  actual.subject?.object?.objectId === expected.subject?.object?.objectId &&
-  actual.subject?.object?.objectType === expected.subject?.object?.objectType;
+  sameObjectReference(expected.resource, actual.resource) &&
+  sameObjectReference(expected.subject?.object, actual.subject?.object);
 
 export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
   const checkBatch = (

@@ -1,4 +1,5 @@
-import { DateTime, Option, Schema, SchemaGetter } from 'effect';
+import { Schema } from 'effect';
+import { CanonicalUtcTimestampJsonSchema } from './canonical-utc-timestamp.ts';
 import { CounterpartyRefSchema, PartyRefSchema } from '../party-registry-references.ts';
 import { OrganizationEngagementProfileRefSchema } from '../resources/organization-engagement-profile.ts';
 import { PersonEngagementProfileRefSchema } from '../resources/person-engagement-profile.ts';
@@ -12,28 +13,12 @@ export { EngagementProfilePersistenceUnavailable } from './engagement-profile-er
 export { PartyRegistryReferenceUnavailable } from './engagement-profile-errors/party-registry-reference-unavailable.ts';
 
 export const EngagementIsoTimestampSchema = Schema.DateTimeUtcFromString;
-const EngagementIsoTimestampJsonSchema = Schema.String.check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u),
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    const canonicalInput = value.length === 20 ? value.replace(/Z$/u, '.000Z') : value;
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === canonicalInput
-      ? undefined
-      : 'invalid UTC calendar timestamp';
-  }),
-).pipe(
-  Schema.decode({
-    decode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
-    encode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
-  }),
-);
-
 const commonFields = {
-  archivedAt: Schema.toEncoded(Schema.OptionFromNullOr(EngagementIsoTimestampJsonSchema)),
+  archivedAt: Schema.toEncoded(Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)),
   counterpartyRef: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyRefSchema)),
-  createdAt: EngagementIsoTimestampJsonSchema,
+  createdAt: CanonicalUtcTimestampJsonSchema,
   partyRef: PartyRefSchema,
-  updatedAt: EngagementIsoTimestampJsonSchema,
+  updatedAt: CanonicalUtcTimestampJsonSchema,
 } as const;
 
 export const OrganizationEngagementProfileSchema = Schema.Struct({

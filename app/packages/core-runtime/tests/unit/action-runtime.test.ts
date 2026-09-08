@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import {
   Cause,
   DateTime,
@@ -42,11 +42,7 @@ import {
   makeActionRepository,
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
-import {
-  ACTION_RUNTIME_STAGES,
-  ActionCommitOpenSchema,
-  makeActionRuntime,
-} from '../../src/actions/runtime.ts';
+import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
@@ -252,6 +248,22 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
 
   let installedTenantId: string = principal.tenantId;
   let installedLegalEntityId: string = principal.legalEntityId;
+  const commitTransaction = () =>
+    Effect.gen(function* commitTransactionEffect() {
+      const defaultCommitCodes = { 'commit-definite': '40001', uncertain: '08007' };
+      const defaultCode =
+        options.transactionMode === 'uncertain' || options.transactionMode === 'commit-definite'
+          ? defaultCommitCodes[options.transactionMode]
+          : undefined;
+      const code = options.commitFailureCode ?? defaultCode;
+      if (code !== undefined) {
+        return yield* new SqlError({ reason: new ConnectionError({ cause: { code } }) });
+      }
+      if (options.commit !== undefined) {
+        return yield* options.commit;
+      }
+      return [];
+    });
   const query = Effect.fn(function* executeQuery(statement: string, values: readonly unknown[]) {
     const text = statement.toLowerCase();
     if (text.includes('set_config')) {
@@ -270,18 +282,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
     }
     if (text === 'commit') {
-      const defaultCommitCodes = { 'commit-definite': '40001', uncertain: '08007' };
-      const defaultCode =
-        options.transactionMode === 'uncertain' || options.transactionMode === 'commit-definite'
-          ? defaultCommitCodes[options.transactionMode]
-          : undefined;
-      const code = options.commitFailureCode ?? defaultCode;
-      if (code !== undefined) {
-        return yield* new SqlError({ reason: new ConnectionError({ cause: { code } }) });
-      }
-      if (options.commit !== undefined) {
-        return yield* options.commit;
-      }
+      return yield* commitTransaction();
     }
     if (text.includes('current_setting')) {
       return [{ legal_entity_id: installedLegalEntityId, tenant_id: installedTenantId }];
@@ -415,7 +416,11 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     counts: () => ({ createCount, lockCount, transactionCount, transitionCount }),
     finalized,
     flushed,
-    gateCounts: () => ({ handlerResolutionCount, moduleStateReadCount, moduleStateRecheckCount }),
+    gateCounts: () => ({
+      handlerResolutionCount,
+      moduleStateReadCount,
+      moduleStateRecheckCount,
+    }),
     legalEntityChecks,
     permissionChecks,
     permissionCounts: () => ({ permissionCheckCount, rejectionCount }),
@@ -656,7 +661,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.temporal.change',
           moduleKey: 'core.shell',
           role: 'action',
@@ -900,7 +908,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'inventory.stock.reserve-locked',
           moduleKey: 'inventory.stock',
           role: 'action',
@@ -986,7 +997,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'core.identity.tenant-authorized',
           moduleKey: 'core.identity',
           role: 'action',
@@ -1117,7 +1131,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'core.identity.rotate-managed-key',
           moduleKey: 'core.identity',
           role: 'action',
@@ -1174,14 +1191,20 @@ it.effect(
     let policyCalls = 0;
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counterparty.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counterparty.read.v1',
+        },
         actionKey: 'party.registry.create-counterparty',
         auditProfile: 'sensitive',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'party.registry.create-counterparty',
           moduleKey: 'party.registry',
           role: 'action',
@@ -1288,14 +1311,20 @@ it.effect(
     let policyCalls = 0;
     const action = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counterparty.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'counterparty.read.v1',
+        },
         actionKey: 'party.registry.end-counterparty-role',
         auditProfile: 'sensitive',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'party.registry.end-counterparty-role',
           moduleKey: 'party.registry',
           role: 'action',
@@ -1415,7 +1444,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.denied',
           moduleKey: 'core.shell',
           role: 'action',
@@ -1529,7 +1561,10 @@ it.effect(
 it.effect(
   'does not claim permission denial when terminal evidence persistence rolls back',
   Effect.fn(function* testProgram20() {
-    const harness = yield* makeHarness({ permissionDecision: 'denied', rejectionFailure: true });
+    const harness = yield* makeHarness({
+      permissionDecision: 'denied',
+      rejectionFailure: true,
+    });
     const failure = yield* Effect.flip(
       harness.runtime.runAction({
         payload: { amount: 1 },
@@ -1582,7 +1617,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'inventory.stock.policy-allowed',
           moduleKey: 'inventory.stock',
           role: 'action',
@@ -1661,7 +1699,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.policy-denied',
           moduleKey: 'core.shell',
           role: 'action',
@@ -1744,7 +1785,10 @@ it.effect(
         });
         const action = defineAction(
           {
-            accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+            accessEvidencePolicy: {
+              captureMode: 'metadata_only',
+              policyKey: 'counter.read.v1',
+            },
             actionKey: `shell.counter.policy-failure-${index}`,
             auditProfile: 'standard',
             domainErrorSchema: Schema.Never,
@@ -1815,7 +1859,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.policy-persistence-failure',
           moduleKey: 'core.shell',
           role: 'action',
@@ -1897,7 +1944,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.fresh-policy',
           moduleKey: 'core.shell',
           role: 'action',
@@ -2020,7 +2070,10 @@ it.effect(
         },
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.reject',
           moduleKey: 'core.shell',
           role: 'action',
@@ -2076,7 +2129,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.defect',
           moduleKey: 'core.shell',
           role: 'action',
@@ -2110,7 +2166,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.invalid-result',
           moduleKey: 'core.shell',
           role: 'action',
@@ -2177,7 +2236,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'shell.counter.undeclared-error',
           moduleKey: 'core.shell',
           role: 'action',
@@ -2392,7 +2454,7 @@ it.effect(
       unavailable.runtime.resolveActionCommit({ invocationId, principal }),
     );
 
-    expect(Schema.is(ActionCommitOpenSchema)(openResolution)).toBe(true);
+    expect(Predicate.isTagged(openResolution, 'ActionCommitOpen')).toBe(true);
     expect(Struct.omit(openResolution, ['_tag'])).toEqual({
       invocationId,
     });
@@ -2447,7 +2509,10 @@ it.effect(
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'inventory.stock.reserve',
           moduleKey: 'inventory.stock',
           role: 'action',

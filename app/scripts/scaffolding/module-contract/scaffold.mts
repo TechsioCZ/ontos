@@ -1,4 +1,5 @@
-import { Array as EffectArray, Effect, FileSystem, Option, Predicate, Schema } from 'effect';
+import { topLevelSeparators } from '../../boundary-source-structure.mts';
+import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
@@ -75,6 +76,7 @@ import {
   toCamelCase,
   toTitle,
   updateMutation,
+  createScaffoldErrorTools,
 } from '../shared.mts';
 import type {
   JsonValue,
@@ -105,30 +107,8 @@ export const governedHttpApi = HttpApi.make('${toCamelCase(vertical.slug)}Govern
   .pipe(identity);
 `;
 
-const topLevelStatementEnd = (structure: string, start: number): number => {
-  let roundDepth = 0;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-  for (let index = start; index < structure.length; index += 1) {
-    const character = structure[index];
-    if (character === '(') {
-      roundDepth += 1;
-    } else if (character === ')') {
-      roundDepth -= 1;
-    } else if (character === '[') {
-      squareDepth += 1;
-    } else if (character === ']') {
-      squareDepth -= 1;
-    } else if (character === '{') {
-      curlyDepth += 1;
-    } else if (character === '}') {
-      curlyDepth -= 1;
-    } else if (character === ';' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
-      return index;
-    }
-  }
-  return -1;
-};
+const topLevelStatementEnd = (structure: string, start: number): number =>
+  topLevelSeparators(structure, ';', start)[0] ?? -1;
 
 const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadata): string => {
   if (
@@ -269,20 +249,11 @@ class ModuleContractScaffoldError extends Schema.TaggedError<ModuleContractScaff
   },
 ) {}
 
-const scaffoldError = (message: string, cause?: unknown): ModuleContractScaffoldError =>
-  new ModuleContractScaffoldError(cause === undefined ? { message } : { cause, message });
-
-const trySync = <Value,>(operation: () => Value) =>
-  Effect.try({
-    catch: (cause) =>
-      Schema.is(ModuleContractScaffoldError)(cause)
-        ? cause
-        : scaffoldError(
-            Predicate.isError(cause) ? cause.message : 'module contract update failed',
-            cause,
-          ),
-    try: operation,
-  });
+const { scaffoldError, trySync } = createScaffoldErrorTools(
+  ModuleContractScaffoldError,
+  Schema.is(ModuleContractScaffoldError),
+  'module contract update failed',
+);
 
 const readModuleOwner = (
   fileSystem: FileSystem.FileSystem,
@@ -615,7 +586,7 @@ const patchTsconfig = (
     );
   });
 
-export const planModuleContractScaffold = (
+const planModuleContractScaffold = (
   workspaceRoot: string,
   config: ModuleContractScaffoldConfig,
 ): Effect.Effect<

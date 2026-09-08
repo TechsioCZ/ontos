@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { expect, it } from 'effect-rstest';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { Context, Effect, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';
@@ -171,22 +172,26 @@ it.live.each([
         const ids = [originalUserId, targetUserId, secondAdministratorUserId].filter(
           (id) => id.length > 0,
         );
-        yield* authDatabase
-          .delete(supportImpersonationRecovery)
-          .where(eq(supportImpersonationRecovery.tenantId, tenantId));
-        yield* authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids));
-        yield* authDatabase.delete(session).where(inArray(session.userId, ids));
-        yield* authDatabase.delete(account).where(inArray(account.userId, ids));
-        yield* authDatabase.delete(user).where(inArray(user.id, ids));
+        yield* purgeFixtureRows([
+          authDatabase
+            .delete(supportImpersonationRecovery)
+            .where(eq(supportImpersonationRecovery.tenantId, tenantId)),
+          authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids)),
+          authDatabase.delete(session).where(inArray(session.userId, ids)),
+          authDatabase.delete(account).where(inArray(account.userId, ids)),
+          authDatabase.delete(user).where(inArray(user.id, ids)),
+        ]);
       }
-      yield* coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
-      yield* coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
-      yield* coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
-      yield* coreDatabase
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.tenantId, tenantId));
-      yield* coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId));
-      yield* coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      yield* purgeFixtureRows([
+        coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+        coreDatabase
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.tenantId, tenantId)),
+        coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
+        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+      ]);
     });
     yield* Effect.acquireRelease(
       Effect.void,

@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
+import { makeModuleContractFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,45 +42,8 @@ const topology = JSON.stringify({ verticals: [{ id: 'party-registry' }, { id: 'i
 
 const moduleContract = (
   moduleId: string,
-): Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>> => ({
-  deployment: { appId: 'test-module', buildMarker: 'test-build' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: ['inactive', 'active'],
-    },
-    module: {
-      description: `${moduleId} module`,
-      displayName: moduleId,
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
+): Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>> =>
+  makeModuleContractFixture({ appId: 'test-module', buildMarker: 'test-build', moduleId });
 
 it.effect('accepts only a development configuration with local service endpoints', () =>
   Effect.gen(function* testEffect1() {

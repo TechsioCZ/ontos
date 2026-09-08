@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Schema, Predicate } from 'effect';
 import {
   ACTION_CORE_ERROR_TAGS,

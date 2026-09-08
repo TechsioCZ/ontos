@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
@@ -124,12 +124,13 @@ it.effect(
         [tenantId, partyId],
         [tenantId, partyId, 'ACTIVE', true],
       ]);
-      expect(queries[0] ?? '').toMatch(/"tenant_id" = \$1/u);
-      expect(queries[0] ?? '').toMatch(/"party_id" = \$2/u);
-      expect(queries[0] ?? '').not.toMatch(/provenance|principal|invocation|verification/u);
-      expect(queries[1] ?? '').not.toMatch(/external_evidence/u);
-      expect(queries[1] ?? '').toMatch(/"state" = \$3/u);
-      expect(queries[1] ?? '').toMatch(/"is_current" = \$4/u);
+      const [historyQuery = '', currentQuery = ''] = queries;
+      expect(historyQuery).toMatch(/"tenant_id" = \$1/u);
+      expect(historyQuery).toMatch(/"party_id" = \$2/u);
+      expect(historyQuery).not.toMatch(/provenance|principal|invocation|verification/u);
+      expect(currentQuery).not.toMatch(/external_evidence/u);
+      expect(currentQuery).toMatch(/"state" = \$3/u);
+      expect(currentQuery).toMatch(/"is_current" = \$4/u);
       const detail = yield* readPartyDetailFromServices(
         partyRef,
         tenantId,

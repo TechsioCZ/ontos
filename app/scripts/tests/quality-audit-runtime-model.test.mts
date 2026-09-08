@@ -1,7 +1,7 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -22,6 +22,7 @@ const emptyLayout = 'export default function Layout() { return null; }';
 const compilerConfig = 'tsconfig.base.json';
 const pluginName = '@effect/language-service';
 const compilerOptionKind = 'compiler-option';
+const tsgoName = '@effect/tsgo';
 const tsgoReadme = 'node_modules/@effect/tsgo/README.md';
 const tsgoPackage = 'node_modules/@effect/tsgo/package.json';
 const compilerDocumentation =
@@ -127,7 +128,7 @@ it.live(
       cssUsed,
       launchedFile,
       resetFile,
-      '@effect/tsgo',
+      tsgoName,
       pluginName,
       readinessConfig,
     ]) {
@@ -328,6 +329,62 @@ it.live(
     ).toBe(true);
     for (const name of ['unusedLauncherExport', 'unusedResetExport', 'unusedConfigExport']) {
       expect(exports.has(name), name).toBe(true);
+    }
+  }),
+);
+
+it.live(
+  'shared framework runner retains compiler/readiness evidence without accepting unused neighbors',
+  Effect.fn(function* mergedScenario1() {
+    const root = yield* fixture();
+    const runnerFile = 'scripts/shared/ultramodern-command.mts';
+    try {
+      const runner = readFileSync(
+        new URL('../shared/ultramodern-command.mts', import.meta.url),
+        'utf-8',
+      );
+      write(root, runnerFile, runner);
+      for (const command of ['typecheck', 'performance-readiness']) {
+        write(
+          root,
+          `scripts/ultramodern-${command}.mts`,
+          readFileSync(new URL(`../ultramodern-${command}.mts`, import.meta.url), 'utf-8'),
+        );
+      }
+      const modeled = yield* facts(root);
+      for (const target of [tsgoName, pluginName, readinessConfig, `${readinessConfig}#default`]) {
+        expect(
+          modeled.some((fact) => fact.target === target),
+          target,
+        ).toBeTruthy();
+      }
+      write(
+        root,
+        runnerFile,
+        runner.replace(
+          'ChildProcess.make(launch.executable, launch.args,',
+          'ChildProcess.make("unrelated", [],',
+        ),
+      );
+      const disconnected = yield* facts(root);
+      expect(!disconnected.some((fact) => fact.target === tsgoName)).toBeTruthy();
+      expect(!disconnected.some((fact) => fact.target === readinessConfig)).toBeTruthy();
+      write(root, runnerFile, runner);
+      write(
+        root,
+        'scripts/ultramodern-typecheck.mts',
+        "import { runUltramodernScript } from './shared/unrelated.mts'; runUltramodernScript({ command: 'typecheck' });",
+      );
+      write(
+        root,
+        'scripts/ultramodern-performance-readiness.mts',
+        "import { runUltramodernScript } from './shared/ultramodern-command.mts'; runUltramodernScript({ command: 'unrelated' });",
+      );
+      const neighbors = yield* facts(root);
+      expect(!neighbors.some((fact) => fact.target === tsgoName)).toBeTruthy();
+      expect(!neighbors.some((fact) => fact.target === readinessConfig)).toBeTruthy();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
     }
   }),
 );

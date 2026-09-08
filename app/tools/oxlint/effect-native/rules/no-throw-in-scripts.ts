@@ -77,24 +77,14 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import {
-  globToRegExp,
-  isScriptFile,
-  isTestFile,
-  matchesAny,
-  normalisePath,
-} from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets the fixtures exercise the real production defaults instead of forcing
- * the fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { globToRegExp, scriptScope, inScriptScope } from '../shared/paths.ts';
+import { parentOf, unwrapNode as unwrap, memberName as staticMemberName } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { provenance } from '../shared/provenance.ts';
 
 /** Native error globals. A `throw new X(...)` against one of these is the B3 "manual throw". */
 const NATIVE_ERROR_NAMES = new Set([
@@ -107,20 +97,6 @@ const NATIVE_ERROR_NAMES = new Set([
   'URIError',
   'AggregateError',
   'DOMException',
-]);
-
-/** `Effect.try` / `Effect.tryPromise` — the only combinators `allowInsideEffectTry` covers. */
-const EFFECT_TRY_MEMBERS = new Set(['try', 'tryPromise']);
-
-/** Wrappers that do not change the value of an expression. */
-const TRANSPARENT_TYPES = new Set([
-  'ParenthesizedExpression',
-  'TSAsExpression',
-  'TSSatisfiesExpression',
-  'TSNonNullExpression',
-  'TSInstantiationExpression',
-  'TSTypeAssertion',
-  'ChainExpression',
 ]);
 
 type AnyNode = ESTree.Node;
@@ -154,36 +130,6 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real script paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** Strip `(...)`, `as`, `satisfies`, `!`, `<T>` and `a?.b` wrappers from an expression. */
-function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  while (TRANSPARENT_TYPES.has(current.type)) {
-    const inner = (current as { expression?: AnyNode }).expression;
-    if (inner === undefined || inner === null) return current;
-    current = inner;
-  }
-  return current;
-}
-
-function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(from);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
 /** `throw error;` where `error` is bound by a `catch (error)` / `catch ({ cause })` clause. */
 function isCatchBinding(context: Context, node: AnyNode): boolean {
   if (node.type !== 'Identifier') return false;
@@ -209,17 +155,8 @@ function nativeErrorName(context: Context, node: AnyNode): string | null {
     : null;
 }
 
-function staticMemberName(node: ESTree.MemberExpression): string | null {
-  const property = node.property as AnyNode;
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
-  if (property.type !== 'Literal') return null;
-  const value = (property as { value?: unknown }).value;
-  return typeof value === 'string' ? value : null;
-}
-
 /** `Effect.try` / `Effect.tryPromise` where `Effect` really comes from `effect` / `effect/*`. */
-function isEffectTryCallee(node: AnyNode, bindings: EffectBindings, context: Context): boolean {
+function isEffectTryCallee(node: AnyNode, context: Context): boolean {
   return ['Effect.try', 'Effect.tryPromise'].includes(provenance(context, node) ?? '');
 }
 
@@ -227,7 +164,7 @@ function isEffectTryCallee(node: AnyNode, bindings: EffectBindings, context: Con
  * `true` when the throw sits lexically inside the arguments of `Effect.try(...)` /
  * `Effect.tryPromise(...)` — both the positional callback and the `{ try: … , catch: … }` form.
  */
-function isInsideEffectTry(node: AnyNode, bindings: EffectBindings, context: Context): boolean {
+function isInsideEffectTry(node: AnyNode, context: Context): boolean {
   let child: AnyNode = node;
   let parent = parentOf(child);
   while (parent !== null) {
@@ -235,7 +172,7 @@ function isInsideEffectTry(node: AnyNode, bindings: EffectBindings, context: Con
       const call = parent as ESTree.CallExpression;
       if (
         (call.arguments as readonly AnyNode[]).includes(child) &&
-        isEffectTryCallee(call.callee as AnyNode, bindings, context)
+        isEffectTryCallee(call.callee as AnyNode, context)
       ) {
         return true;
       }
@@ -246,27 +183,21 @@ function isInsideEffectTry(node: AnyNode, bindings: EffectBindings, context: Con
   return false;
 }
 
+function describeInvocation(input: AnyNode, construct: boolean): string {
+  const callee = unwrap(input);
+  const prefix = construct ? 'new ' : '';
+  if (callee.type === 'Identifier') return `${prefix}${callee.name}(...)`;
+  if (callee.type === 'MemberExpression') {
+    const name = staticMemberName(callee);
+    if (name !== null) return `${prefix}...${name}(...)`;
+  }
+  return construct ? 'new ...(...)' : 'a call result';
+}
+
 /** A short, human-readable rendering of the thrown expression for the diagnostic text. */
 function describeThrown(node: AnyNode): string {
-  if (node.type === 'NewExpression') {
-    const callee = unwrap((node as ESTree.NewExpression).callee as AnyNode);
-    if (callee.type === 'Identifier')
-      return `new ${(callee as ESTree.IdentifierReference).name}(...)`;
-    if (callee.type === 'MemberExpression') {
-      const name = staticMemberName(callee as ESTree.MemberExpression);
-      if (name !== null) return `new ...${name}(...)`;
-    }
-    return 'new ...(...)';
-  }
-  if (node.type === 'CallExpression') {
-    const callee = unwrap((node as ESTree.CallExpression).callee as AnyNode);
-    if (callee.type === 'Identifier') return `${(callee as ESTree.IdentifierReference).name}(...)`;
-    if (callee.type === 'MemberExpression') {
-      const name = staticMemberName(callee as ESTree.MemberExpression);
-      if (name !== null) return `...${name}(...)`;
-    }
-    return 'a call result';
-  }
+  if (node.type === 'NewExpression') return describeInvocation(node.callee, true);
+  if (node.type === 'CallExpression') return describeInvocation(node.callee, false);
   if (node.type === 'Identifier') return (node as ESTree.IdentifierReference).name;
   if (node.type === 'MemberExpression') {
     const name = staticMemberName(node as ESTree.MemberExpression);
@@ -338,7 +269,7 @@ export const rule = defineRule({
           options.allowInsideEffectTry &&
           bindings !== null &&
           bindings.importsEffect &&
-          isInsideEffectTry(statement, bindings, context)
+          isInsideEffectTry(statement, context)
         ) {
           return;
         }
@@ -358,213 +289,3 @@ export const rule = defineRule({
     };
   },
 });
-
-/** Bounded, lexical provenance only; no type checker or interprocedural/data-flow inference. */
-type Syntax = ESTree.Node & Record<string, any>;
-function syntax(node: unknown): Syntax | null {
-  let n = node as Syntax | null;
-  while (
-    n &&
-    [
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TSTypeAssertion',
-      'TSInstantiationExpression',
-      'ParenthesizedExpression',
-      'ChainExpression',
-      'AwaitExpression',
-    ].includes(n.type)
-  )
-    n = n.expression ?? n.argument;
-  return n;
-}
-function lexicalVariable(context: Context, node: Syntax): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  while (scope) {
-    const v = scope.set.get(node.name);
-    if (v) return v;
-    scope = scope.upper;
-  }
-  return null;
-}
-function literalText(node: unknown): string | null {
-  const n = syntax(node);
-  if (n?.type === 'Literal' && typeof n.value === 'string') return n.value;
-  if (n?.type === 'TemplateLiteral' && n.expressions.length === 0)
-    return n.quasis[0]?.value.cooked ?? null;
-  return null;
-}
-function propertyText(node: unknown): string | null {
-  const n = node as Syntax;
-  const key = syntax(n.property ?? n.key);
-  return !n.computed && key?.type === 'Identifier' ? key.name : literalText(key);
-}
-function moduleIdentity(source: string): string {
-  if (/^(?:node:)?(?:process|console|util|module)$/.test(source))
-    return source.replace(/^node:/, '');
-  if (source === 'effect/Effect') return 'Effect';
-  if (source === 'effect/ManagedRuntime') return 'ManagedRuntime';
-  return source;
-}
-function bindingPath(pattern: Syntax, name: string): string[] | null {
-  if (pattern.type === 'Identifier') return pattern.name === name ? [] : null;
-  if (pattern.type === 'AssignmentPattern') return bindingPath(pattern.left, name);
-  if (pattern.type !== 'ObjectPattern') return null;
-  for (const p of pattern.properties) {
-    if (p.type !== 'Property') continue;
-    const key = propertyText(p),
-      tail = bindingPath(p.value, name);
-    if (key !== null && tail !== null) return [key, ...tail];
-  }
-  return null;
-}
-function provenance(context: Context, node: unknown, seen = new Set<Variable>()): string | null {
-  const n = syntax(node);
-  if (!n) return null;
-  if (n.type === 'Identifier') {
-    const v = lexicalVariable(context, n);
-    if (!v || v.defs.length === 0)
-      return [
-        'process',
-        'console',
-        'Bun',
-        'globalThis',
-        'global',
-        'window',
-        'self',
-        'require',
-        'Array',
-        'Set',
-      ].includes(n.name)
-        ? n.name
-        : null;
-    if (seen.has(v) || v.defs.length !== 1) return null;
-    const next = new Set(seen);
-    next.add(v);
-    const def = v.defs[0] as any;
-    if (def.type === 'ImportBinding') {
-      const spec = def.node as Syntax;
-      const decl = (def.parent ?? spec.parent) as Syntax;
-      if (decl.importKind === 'type' || spec.importKind === 'type') return null;
-      const source = literalText(decl.source);
-      if (!source) return null;
-      const base = moduleIdentity(source);
-      if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-        return base;
-      const name = spec.imported?.name ?? spec.imported?.value;
-      if (name === 'default') return base;
-      if (base === 'effect') return name;
-      return `${base}.${name}`;
-    }
-    if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
-    // A declaration is not a reaching-definition analysis: reassigned aliases are unknown.
-    if (v.references.some((r: any) => r.init !== true && r.isWrite())) return null;
-    const d = def.node as Syntax;
-    const base = provenance(context, d.init, next),
-      path = bindingPath(d.id, n.name);
-    return base !== null && path !== null ? [base, ...path].join('.') : null;
-  }
-  if (n.type === 'MemberExpression') {
-    const base = provenance(context, n.object, seen),
-      key = propertyText(n);
-    if (base === null || key === null) return null;
-    if (
-      ['globalThis', 'global', 'window', 'self'].includes(base) &&
-      ['process', 'console', 'Bun'].includes(key)
-    )
-      return key;
-    if (['process', 'console', 'util', 'module'].includes(base) && key === 'default') return base;
-    if (base === 'effect') return key;
-    return `${base}.${key}`;
-  }
-  if (n.type === 'ImportExpression') {
-    const text = literalText(n.source);
-    return text === null ? null : moduleIdentity(text);
-  }
-  if (n.type === 'CallExpression') {
-    const callee = provenance(context, n.callee, seen);
-    if (callee === 'require') {
-      const text = literalText(n.arguments[0]);
-      return text === null ? null : moduleIdentity(text);
-    }
-    if (callee === 'module.createRequire') return 'require';
-    if (callee === 'ManagedRuntime.make') return 'Runtime';
-  }
-  return null;
-}
-/** Only value references, never property names, bindings or TS-only identifiers. */
-function valueReference(context: Context, node: unknown): boolean {
-  const n = node as Syntax,
-    p = n.parent as Syntax | undefined;
-  if (!p) return false;
-  if (p.type.startsWith('Import') || p.type === 'ExportSpecifier') return false;
-  if (p.type === 'MemberExpression' && p.property === n && !p.computed) return false;
-  if (
-    [
-      'Property',
-      'PropertyDefinition',
-      'MethodDefinition',
-      'TSPropertySignature',
-      'TSMethodSignature',
-    ].includes(p.type) &&
-    p.key === n &&
-    !p.computed &&
-    !(p.shorthand && p.value === n)
-  )
-    return false;
-  if (['LabeledStatement', 'BreakStatement', 'ContinueStatement'].includes(p.type)) return false;
-  let child: Syntax = n;
-  let parent: Syntax | null = p;
-  while (parent) {
-    if (
-      parent.type.startsWith('TS') &&
-      !(
-        [
-          'TSAsExpression',
-          'TSSatisfiesExpression',
-          'TSNonNullExpression',
-          'TSTypeAssertion',
-          'TSInstantiationExpression',
-        ].includes(parent.type) && parent.expression === child
-      )
-    )
-      return false;
-    if (
-      parent.type.endsWith('Statement') ||
-      parent.type.endsWith('Declaration') ||
-      parent.type.includes('Function')
-    )
-      break;
-    child = parent;
-    parent = parent.parent as Syntax | null;
-  }
-  const v = lexicalVariable(context, n);
-  return (
-    !v ||
-    v.references.some(
-      (r: any) =>
-        r.identifier === n &&
-        r.isRead() &&
-        (typeof r.isValueReference !== 'function' || r.isValueReference()),
-    )
-  );
-}
-/** Strip fixture scaffolding first; do not renormalise a relative script path around inner markers. */
-function scriptScope(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture = unified.match(
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u,
-  );
-  if (fixture) return fixture[1];
-  if (!unified.startsWith('/') && !/^[A-Za-z]:\//u.test(unified))
-    return unified.replace(/^\.\//, '');
-  const match = unified.match(/(?:^|\/)((?:apps|packages|verticals|scripts|tools)\/.*)$/u);
-  return match?.[1] ?? unified;
-}
-function inScriptScope(path: string): boolean {
-  return (
-    /(?:^|\/)scripts\//u.test(path) &&
-    !/(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u.test(path)
-  );
-}

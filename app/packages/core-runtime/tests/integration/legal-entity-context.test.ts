@@ -1,12 +1,11 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { eq } from 'drizzle-orm';
 import { Effect, Predicate } from 'effect';
-import { Pool } from 'pg';
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { coreRelations, legalEntities, tenants } from '../../src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { legalEntities, tenants } from '../../src/db/schema.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
 
 const tenantOne = '11000000-0000-4000-8000-000000000001';
 const tenantTwo = '11000000-0000-4000-8000-000000000002';
@@ -18,11 +17,7 @@ const foreign = '21000000-0000-4000-8000-000000000004';
 it.live('lists and validates only active legal entities inside the exact tenant', () =>
   Effect.gen(function* legalEntityContextIntegration() {
     const configuration = yield* loadDatabaseConfig();
-    const pool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (resource) => Effect.promise(() => resource.end()).pipe(Effect.orDie),
-    );
-    const database = yield* makeTestDatabaseFromPool(pool, coreRelations);
+    const { executor: database } = yield* makeCoreDatabase(configuration);
     const context = makeLegalEntityContext({ executor: database });
     const cleanup = Effect.gen(function* cleanLegalEntityContextFixtures() {
       yield* database.delete(legalEntities).where(eq(legalEntities.tenantId, tenantOne));

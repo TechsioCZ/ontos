@@ -1,4 +1,4 @@
-import { afterEach, expect, it, rstest, test } from '@app/effect-rstest';
+import { afterEach, expect, it, rstest, test } from 'effect-rstest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Menu as ActualMenu } from '@techsio/ui-kit/molecules/menu' with { rstest: 'importActual' };
@@ -46,7 +46,11 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.brand': 'OntOS',
         'shell.dashboard.header.label': 'Dashboard header',
         'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
+        'shell.dashboard.legalEntity.failed': 'Legal entity switching failed. Try again.',
+        'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
         'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
+        'shell.dashboard.legalEntity.unavailable':
+          'Legal entity choices are temporarily unavailable.',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
@@ -480,3 +484,104 @@ test('associates failed tenant feedback and keeps multiple choices operable', ()
   expect(trigger.getAttribute('aria-invalid')).toBe('true');
   expect(screen.getByText('Tenant switching failed. Try again.')).toBeTruthy();
 });
+
+test('names the legal-entity selector by its own label and keeps a sole choice operable', () => {
+  const { rerender } = render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={homeTitle}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+
+  const legalEntity = screen.getByRole('combobox', { name: 'Current legal entity' });
+  expect(legalEntity.hasAttribute('aria-label')).toBe(false);
+  expect(legalEntity.hasAttribute('aria-describedby')).toBe(false);
+  expect(legalEntity.hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-label')).toBe(
+    'Current tenant',
+  );
+  expect(screen.queryByText('Select a legal entity')).toBeNull();
+
+  const { currentLegalEntityId: _selectedLegalEntityId, ...unselectedLegalEntityProps } =
+    tenantProps;
+  rerender(
+    <AuthenticatedDashboardLayout
+      {...unselectedLegalEntityProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={homeTitle}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByText('Select a legal entity')).toBeTruthy();
+});
+
+interface LegalEntitySelectorStateCase {
+  readonly disabled: boolean;
+  readonly name: string;
+  readonly overrides: Partial<
+    Pick<
+      ComponentProps<typeof AuthenticatedDashboardLayout>,
+      'legalEntityState' | 'legalEntitySwitchFailed' | 'legalEntitySwitchPending'
+    >
+  >;
+  readonly statusText: string;
+}
+
+const legalEntitySelectorStateCases: LegalEntitySelectorStateCase[] = [
+  {
+    disabled: true,
+    name: 'the legal entities are unavailable',
+    overrides: { legalEntityState: 'unavailable' },
+    statusText: 'Legal entity choices are temporarily unavailable.',
+  },
+  {
+    disabled: true,
+    name: 'a legal-entity switch is pending',
+    overrides: { legalEntitySwitchPending: true },
+    statusText: 'Switching legal entity…',
+  },
+  {
+    disabled: false,
+    name: 'a legal-entity switch failed',
+    overrides: { legalEntitySwitchFailed: true },
+    statusText: 'Legal entity switching failed. Try again.',
+  },
+];
+
+test.each(legalEntitySelectorStateCases)(
+  'associates legal-entity feedback with its own selector when $name',
+  ({ disabled, overrides, statusText }) => {
+    render(
+      <AuthenticatedDashboardLayout
+        {...tenantProps}
+        {...overrides}
+        identity={identity}
+        logoutPending={false}
+        navigation={navigation}
+        onLogout={noopLogout}
+        title={homeTitle}
+      >
+        Content
+      </AuthenticatedDashboardLayout>,
+    );
+
+    const legalEntity = screen.getByRole('combobox', { name: 'Current legal entity' });
+    expect(legalEntity.hasAttribute('disabled')).toBe(disabled);
+    expect(legalEntity.getAttribute('aria-describedby')).toBe('legal-entity-switch-status');
+    expect(screen.getByText(statusText)).toBeTruthy();
+    expect(
+      screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-describedby'),
+    ).toBeNull();
+  },
+);

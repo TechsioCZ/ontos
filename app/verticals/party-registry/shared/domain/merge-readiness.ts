@@ -5,7 +5,7 @@ const MergeReadinessOwnerKeySchema = Schema.String.check(Schema.isMinLength(1)).
   Schema.brand('MergeReadinessOwnerKey'),
 );
 
-export const MergeReadinessBlockerCodeSchema = Schema.Literals([
+const MergeReadinessBlockerCodeSchema = Schema.Literals([
   'PRODUCTION_MERGE_DISABLED',
   'PREPARED_STATE_UNAVAILABLE',
   'AUTHORITATIVE_IDENTITY_CONFLICT',
@@ -24,9 +24,8 @@ export const MergeReadinessBlockerCodeSchema = Schema.Literals([
   'RELATIONSHIP_SELF_REFERENCE',
   'STRONG_IDENTIFIER_CONFLICT',
 ]);
-export type MergeReadinessBlockerCode = typeof MergeReadinessBlockerCodeSchema.Type;
 
-export const MergeReadinessBlockerSchema = Schema.Struct({
+const MergeReadinessBlockerSchema = Schema.Struct({
   code: MergeReadinessBlockerCodeSchema,
   detail: Schema.String.check(Schema.isMinLength(1)),
   ownerKey: Schema.toEncoded(MergeReadinessOwnerKeySchema),

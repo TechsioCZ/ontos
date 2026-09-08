@@ -153,9 +153,6 @@ interface LegalEntityContextRecordReader<Result extends LegalEntityContextRecord
   readonly load: (tenantId: string, legalEntityId?: string) => Result;
 }
 
-export type LegalEntityContextRepositoryService =
-  LegalEntityContextRecordReader<LegalEntityContextRecordLoadResult>;
-
 const attachCause = <Failure extends object, FailureCause>(
   failure: Failure,
   cause?: FailureCause,
@@ -201,7 +198,7 @@ const legalEntityContextRepositoryFromDatabase = (database: {
       ),
 });
 
-export const legalEntityContextFromRepository = <Result extends LegalEntityContextRecordLoadResult>(
+const legalEntityContextFromRepository = <Result extends LegalEntityContextRecordLoadResult>(
   repository: LegalEntityContextRecordReader<Result>,
 ): LegalEntityContextService => {
   const loadRecords = (

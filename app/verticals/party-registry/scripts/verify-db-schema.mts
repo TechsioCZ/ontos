@@ -53,6 +53,20 @@ const expectedColumns = PARTY_TABLES.flatMap((table) => {
   return config.columns.map((column) => `${config.name}.${column.name}`);
 }).toSorted();
 
+const ownerPrivilegesMismatch = (owner: OwnerInfrastructureRow): boolean =>
+  owner.runtime_create || !owner.runtime_usage || owner.role_super || owner.role_bypass_rls;
+
+const ownerConstraintsMismatch = (owner: OwnerInfrastructureRow): boolean =>
+  owner.journal_count !== 1 ||
+  owner.foreign_key_count !== 41 ||
+  owner.external_foreign_key_count !== 0 ||
+  owner.relationship_exclusion_count !== 1 ||
+  owner.counterparty_role_exclusion_count !== 1 ||
+  owner.correction_trigger_count !== 1;
+
+const ownerInfrastructureMismatch = (owner: OwnerInfrastructureRow | undefined): boolean =>
+  owner === undefined || ownerPrivilegesMismatch(owner) || ownerConstraintsMismatch(owner);
+
 const verification = Effect.gen(function* verifyPartyDatabase() {
   const connections = yield* loadDatabaseConnectionPair();
   const database = yield* PartyDatabase;
@@ -254,19 +268,7 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
       ),
     );
   const [owner] = infrastructure;
-  if (
-    owner === undefined ||
-    owner.runtime_create ||
-    !owner.runtime_usage ||
-    owner.role_super ||
-    owner.role_bypass_rls ||
-    owner.journal_count !== 1 ||
-    owner.foreign_key_count !== 41 ||
-    owner.external_foreign_key_count !== 0 ||
-    owner.relationship_exclusion_count !== 1 ||
-    owner.counterparty_role_exclusion_count !== 1 ||
-    owner.correction_trigger_count !== 1
-  ) {
+  if (ownerInfrastructureMismatch(owner)) {
     return yield* new PartyDatabaseVerificationError({
       reason:
         'Party Registry owner infrastructure does not match its journal, owner-local FK, exclusion, append-only, or least-privilege contract',

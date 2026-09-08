@@ -14,21 +14,14 @@ import {
 import type { RequestSearchRebuildPayload } from '../../shared/actions/request-search-rebuild.ts';
 import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 
-export {
-  RequestSearchRebuildPayloadSchema,
-  RequestSearchRebuildResultSchema,
-} from '../../shared/actions/request-search-rebuild.ts';
-export type {
-  RequestSearchRebuildPayload,
-  RequestSearchRebuildResult,
-} from '../../shared/actions/request-search-rebuild.ts';
+export type { RequestSearchRebuildPayload } from '../../shared/actions/request-search-rebuild.ts';
 
 const domainEvents = {
   'party.registry.search-rebuild-requested.v1': OutboxPayloadSchema,
 } as const;
 
 /** Queues committed intent only; projection I/O belongs to the post-commit Worker. */
-export const handleRequestSearchRebuild = Effect.fn(
+const handleRequestSearchRebuild = Effect.fn(
   'RequestSearchRebuildAction.handleRequestSearchRebuild',
 )(function* requestSearchRebuild(
   _payload: RequestSearchRebuildPayload,
@@ -79,11 +72,3 @@ export const requestSearchRebuildAction = defineAction(
   },
   handleRequestSearchRebuild,
 );
-
-// <generated-outbox-message-exports>
-export { createRequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxMessage } from './request-search-rebuild.party-registry-search-rebuild-requested-v1.outbox-message.ts';
-export { RequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxPayloadSchema } from './request-search-rebuild.party-registry-search-rebuild-requested-v1.outbox-message.ts';
-export { RequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxProducerModuleKey } from './request-search-rebuild.party-registry-search-rebuild-requested-v1.outbox-message.ts';
-export { RequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxTopic } from './request-search-rebuild.party-registry-search-rebuild-requested-v1.outbox-message.ts';
-export type { RequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxPayload } from './request-search-rebuild.party-registry-search-rebuild-requested-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

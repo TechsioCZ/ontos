@@ -21,7 +21,7 @@ import { Effect } from 'effect';
 export const ${toCamelCase(service)}Service = () => Effect.succeed({});
 `;
 
-export const planActionServiceScaffold = Effect.fn('ActionServiceScaffold.plan')(
+const planActionServiceScaffold = Effect.fn('ActionServiceScaffold.plan')(
   function* planActionServiceScaffold(workspaceRoot: string, config: ActionServiceScaffoldConfig) {
     const service = yield* tryScaffold('service name is invalid', () =>
       requireCanonicalSlug(config.service, 'service'),

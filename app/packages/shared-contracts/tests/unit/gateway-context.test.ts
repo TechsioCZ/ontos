@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { Effect, Schema, SchemaAST, Struct } from 'effect';
 import {

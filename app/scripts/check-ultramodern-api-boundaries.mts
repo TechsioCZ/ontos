@@ -373,27 +373,8 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     assert(yield* exists(shellClient), `${shellClient} must aggregate vertical API clients.`);
   }
 
-  /* oxlint-disable complexity -- The owner API surface gate intentionally keeps all fail-closed assertions together. expires: 2026-12-31. */
-  const assertApiSurface = (appPath: string) =>
-    Effect.gen(function* assertApiSurfaceEffect() {
-      const apiEntry = `${appPath}/api/index.ts`;
-      const backendEffectExpose = `${appPath}/api/effect-api.ts`;
-      const sharedApi = `${appPath}/shared/api.ts`;
-      const srcApiDirectory = `${appPath}/src/api`;
-      const modernConfig = `${appPath}/modern.config.ts`;
-      const packageJsonPath = `${appPath}/package.json`;
-
-      assert(yield* exists(apiEntry), `${apiEntry} is required.`);
-      assert(yield* exists(sharedApi), `${sharedApi} is required.`);
-      assert(yield* exists(srcApiDirectory), `${srcApiDirectory} is required.`);
-
-      if (yield* exists(srcApiDirectory)) {
-        const clientFiles = (yield* listFiles(srcApiDirectory)).filter((file) =>
-          file.endsWith('-client.ts'),
-        );
-        assert(clientFiles.length > 0, `${srcApiDirectory} must contain a generated API client.`);
-      }
-
+  const assertApiRuntime = (apiEntry: string) =>
+    Effect.gen(function* assertApiRuntimeEffect() {
       if (yield* exists(apiEntry)) {
         const entry = yield* readText(apiEntry);
         const usesRpcRuntime = usesStrictRpcRuntimeTopology(entry, topologyResolverFor(apiEntry));
@@ -419,6 +400,96 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
           );
         }
       }
+    });
+
+  const assertVerticalBaseline = (appPath: string, sharedApi: string): void => {
+    const apiStem = verticalApiStem(appPath);
+    const vertical = topologyVertical(appPath);
+    const basePath = vertical?.api?.basePath;
+    const apiPrefix = vertical?.api?.bff?.prefix;
+    if (vertical === undefined) {
+      fail(`${sharedApi}: topology must declare this MicroVertical owner.`);
+    } else if (basePath === undefined || basePath.length === 0) {
+      fail(`${sharedApi}: topology must declare api.basePath.`);
+    } else if (apiPrefix === undefined || apiPrefix.length === 0) {
+      fail(`${sharedApi}: topology must declare api.bff.prefix.`);
+    } else {
+      const baselineViolation = microVerticalApiBaselineViolation(
+        apiStem,
+        path.join(workspaceRoot, sharedApi),
+        {
+          additionalPaths: apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
+          apiPrefix,
+          basePath,
+          effectClientPackage: '@modern-js/plugin-bff/effect-client',
+          ownerId: vertical.id,
+          readinessPath: `${basePath}/readiness`,
+          sharedContractsPackage: '@app/shared-contracts',
+        },
+      );
+      assert(
+        baselineViolation === undefined,
+        `${sharedApi}: ${baselineViolation ?? 'invalid MicroVertical API baseline'}.`,
+      );
+    }
+  };
+
+  const assertApiContract = (appPath: string) =>
+    Effect.gen(function* assertApiContractEffect() {
+      const sharedApi = `${appPath}/shared/api.ts`;
+      if (yield* exists(sharedApi)) {
+        const contract = yield* readText(sharedApi);
+        assertContains(
+          sharedApi,
+          contract,
+          /\bHttpApi\.make\b/u,
+          'must declare the HttpApi contract.',
+        );
+        assertContains(
+          sharedApi,
+          contract,
+          /\bHttpApiGroup\.make\b/u,
+          'must declare HttpApi groups.',
+        );
+        assertContains(
+          sharedApi,
+          contract,
+          /\bHttpApiEndpoint\./u,
+          'must declare endpoints through HttpApiEndpoint.',
+        );
+        assertContains(
+          sharedApi,
+          contract,
+          /\bSchema\./u,
+          'must use Schema for request, response and error shapes.',
+        );
+        if (appPath.startsWith('verticals/')) {
+          assertVerticalBaseline(appPath, sharedApi);
+        }
+      }
+    });
+
+  const assertApiSurface = (appPath: string) =>
+    Effect.gen(function* assertApiSurfaceEffect() {
+      const apiEntry = `${appPath}/api/index.ts`;
+      const backendEffectExpose = `${appPath}/api/effect-api.ts`;
+      const sharedApi = `${appPath}/shared/api.ts`;
+      const srcApiDirectory = `${appPath}/src/api`;
+      const modernConfig = `${appPath}/modern.config.ts`;
+      const packageJsonPath = `${appPath}/package.json`;
+
+      assert(yield* exists(apiEntry), `${apiEntry} is required.`);
+      assert(yield* exists(sharedApi), `${sharedApi} is required.`);
+      assert(yield* exists(srcApiDirectory), `${srcApiDirectory} is required.`);
+
+      if (yield* exists(srcApiDirectory)) {
+        const clientFiles = (yield* listFiles(srcApiDirectory)).filter((file) =>
+          file.endsWith('-client.ts'),
+        );
+        assert(clientFiles.length > 0, `${srcApiDirectory} must contain a generated API client.`);
+      }
+
+      yield* assertApiRuntime(apiEntry);
       if (yield* exists(backendEffectExpose)) {
         const backendExpose = yield* readText(backendEffectExpose);
         assertContains(
@@ -457,66 +528,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         );
       }
 
-      if (yield* exists(sharedApi)) {
-        const contract = yield* readText(sharedApi);
-        assertContains(
-          sharedApi,
-          contract,
-          /\bHttpApi\.make\b/u,
-          'must declare the HttpApi contract.',
-        );
-        assertContains(
-          sharedApi,
-          contract,
-          /\bHttpApiGroup\.make\b/u,
-          'must declare HttpApi groups.',
-        );
-        assertContains(
-          sharedApi,
-          contract,
-          /\bHttpApiEndpoint\./u,
-          'must declare endpoints through HttpApiEndpoint.',
-        );
-        assertContains(
-          sharedApi,
-          contract,
-          /\bSchema\./u,
-          'must use Schema for request, response and error shapes.',
-        );
-        if (appPath.startsWith('verticals/')) {
-          const apiStem = verticalApiStem(appPath);
-          const vertical = topologyVertical(appPath);
-          const basePath = vertical?.api?.basePath;
-          const apiPrefix = vertical?.api?.bff?.prefix;
-          if (vertical === undefined) {
-            fail(`${sharedApi}: topology must declare this MicroVertical owner.`);
-          } else if (basePath === undefined || basePath.length === 0) {
-            fail(`${sharedApi}: topology must declare api.basePath.`);
-          } else if (apiPrefix === undefined || apiPrefix.length === 0) {
-            fail(`${sharedApi}: topology must declare api.bff.prefix.`);
-          } else {
-            const baselineViolation = microVerticalApiBaselineViolation(
-              apiStem,
-              path.join(workspaceRoot, sharedApi),
-              {
-                additionalPaths:
-                  apiStem === 'checkout' ? { checkoutCartPath: `${basePath}/cart` } : {},
-                apiPrefix,
-                basePath,
-                effectClientPackage: '@modern-js/plugin-bff/effect-client',
-                ownerId: vertical.id,
-                readinessPath: `${basePath}/readiness`,
-                sharedContractsPackage: '@app/shared-contracts',
-              },
-            );
-            assert(
-              baselineViolation === undefined,
-              `${sharedApi}: ${baselineViolation ?? 'invalid MicroVertical API baseline'}.`,
-            );
-          }
-        }
-      }
-
+      yield* assertApiContract(appPath);
       if (yield* exists(modernConfig)) {
         const config = yield* readText(modernConfig);
         assertContains(
@@ -539,33 +551,35 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         );
       }
 
-      if (yield* exists(packageJsonPath)) {
-        const packageJson = yield* readText(packageJsonPath).pipe(
-          Effect.flatMap(decodePackageJson),
-        );
-        const isPrivateVerticalInfrastructureApi =
-          appPath.startsWith('verticals/') &&
-          (yield* exists(sharedApi)) &&
-          isGeneratedInfrastructureReadinessApi(appPath, yield* readText(sharedApi));
-        if (isPrivateVerticalInfrastructureApi) {
-          assert(
-            packageJson.exports?.['./api'] === undefined &&
-              packageJson.exports?.['./api/client'] === undefined,
-            `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
+      const validateApiPackage = Effect.gen(function* validateApiPackageEffect() {
+        if (yield* exists(packageJsonPath)) {
+          const packageJson = yield* readText(packageJsonPath).pipe(
+            Effect.flatMap(decodePackageJson),
           );
-        } else {
-          assert(
-            packageJson.exports?.['./api'] === './shared/api.ts',
-            `${packageJsonPath}: package must export ./api from shared/api.ts.`,
-          );
-          assert(
-            packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
-            `${packageJsonPath}: package must export ./api/client from src/api/*.`,
-          );
+          const isPrivateVerticalInfrastructureApi =
+            appPath.startsWith('verticals/') &&
+            (yield* exists(sharedApi)) &&
+            isGeneratedInfrastructureReadinessApi(appPath, yield* readText(sharedApi));
+          if (isPrivateVerticalInfrastructureApi) {
+            assert(
+              packageJson.exports?.['./api'] === undefined &&
+                packageJson.exports?.['./api/client'] === undefined,
+              `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
+            );
+          } else {
+            assert(
+              packageJson.exports?.['./api'] === './shared/api.ts',
+              `${packageJsonPath}: package must export ./api from shared/api.ts.`,
+            );
+            assert(
+              packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
+              `${packageJsonPath}: package must export ./api/client from src/api/*.`,
+            );
+          }
         }
-      }
+      });
+      yield* validateApiPackage;
     });
-  /* oxlint-enable complexity */
 
   const inspectApiSurfaces = Effect.gen(function* inspectApiSurfacesEffect() {
     for (const appPath of appDirectories) {
@@ -624,22 +638,25 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       );
     }
 
-    for (const vertical of topology.verticals ?? []) {
-      if (vertical.api?.runtime === 'effect') {
+    const validateTopologyContracts = Effect.sync(() => {
+      for (const vertical of topology.verticals ?? []) {
+        if (vertical.api?.runtime === 'effect') {
+          assert(
+            vertical.api.bff?.strictEffectApproach === true,
+            `${vertical.id} topology must mark strictEffectApproach as true.`,
+          );
+          assert(
+            vertical.api.serverEntry?.endsWith('/api/index.ts') ?? false,
+            `${vertical.id} topology must use api/index.ts as the server entry.`,
+          );
+        }
         assert(
-          vertical.api.bff?.strictEffectApproach === true,
-          `${vertical.id} topology must mark strictEffectApproach as true.`,
-        );
-        assert(
-          vertical.api.serverEntry?.endsWith('/api/index.ts') ?? false,
-          `${vertical.id} topology must use api/index.ts as the server entry.`,
+          isFalsyJson(vertical.api?.effect),
+          `${vertical.id} topology must describe the API directly, not under api.effect.`,
         );
       }
-      assert(
-        isFalsyJson(vertical.api?.effect),
-        `${vertical.id} topology must describe the API directly, not under api.effect.`,
-      );
-    }
+    });
+    yield* validateTopologyContracts;
   });
   yield* inspectWorkspaceContracts;
 

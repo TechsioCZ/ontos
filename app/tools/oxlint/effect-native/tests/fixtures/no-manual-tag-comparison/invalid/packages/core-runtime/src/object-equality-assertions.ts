@@ -1,6 +1,6 @@
 // expect-count: 10
 import assert from 'node:assert/strict';
-import { expect } from '@app/effect-rstest';
+import { expect } from 'effect-rstest';
 declare const error: unknown;
 declare const tag: string;
 expect(error).toEqual({ _tag: 'Missing', reason: 'denied' });

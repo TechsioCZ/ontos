@@ -1,3 +1,4 @@
+import { DelimiterDepth, toCamelCase } from './boundary-source-structure.mts';
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
 
 const REGISTRATION_API_SLOT = [
@@ -29,21 +30,34 @@ const MANIFEST_SHELL_SEARCH_SLOT = [
   '// </generated-module-shell-search>',
 ] as const;
 
-export const toPascalCase = (value: string): string =>
-  value
-    .split('-')
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join('');
-
-const toCamelCase = (value: string): string => {
-  const pascal = toPascalCase(value);
-  return `${pascal.slice(0, 1).toLowerCase()}${pascal.slice(1)}`;
-};
+export { toPascalCase } from './boundary-source-structure.mts';
 
 export interface GovernedClientToken {
   readonly kind: SyntaxKind;
   readonly value: string;
 }
+
+/** Out-of-range lookahead is a nonmatching token, never an invented identifier. */
+const tokenKind = (tokens: readonly GovernedClientToken[], index: number): SyntaxKind | undefined =>
+  tokens[index]?.kind;
+const tokenValue = (tokens: readonly GovernedClientToken[], index: number): string | undefined =>
+  tokens[index]?.value;
+
+const tokenDelimiter = new Map([
+  [SyntaxKind.OpenBraceToken, '{'],
+  [SyntaxKind.CloseBraceToken, '}'],
+  [SyntaxKind.OpenBracketToken, '['],
+  [SyntaxKind.CloseBracketToken, ']'],
+  [SyntaxKind.OpenParenToken, '('],
+  [SyntaxKind.CloseParenToken, ')'],
+]);
+
+const tokenBraceDelta = (kind: SyntaxKind | undefined): number => {
+  if (kind === SyntaxKind.OpenBraceToken) {
+    return 1;
+  }
+  return kind === SyntaxKind.CloseBraceToken ? -1 : 0;
+};
 
 type ExpectedToken = readonly [kind: SyntaxKind, value?: string];
 
@@ -57,6 +71,32 @@ const REGULAR_EXPRESSION_PRECEDERS = new Set([
   SyntaxKind.ReturnKeyword,
 ]);
 
+const scanTemplateDelimiter = (
+  scanner: ReturnType<typeof createScanner>,
+  scannedKind: SyntaxKind,
+  templateExpressionBraceDepths: number[],
+): SyntaxKind => {
+  let kind = scannedKind;
+  const templateDepthIndex = templateExpressionBraceDepths.length - 1;
+  if (kind === SyntaxKind.TemplateHead) {
+    templateExpressionBraceDepths.push(0);
+  } else if (kind === SyntaxKind.OpenBraceToken && templateDepthIndex >= 0) {
+    templateExpressionBraceDepths[templateDepthIndex] =
+      (templateExpressionBraceDepths[templateDepthIndex] ?? 0) + 1;
+  } else if (kind === SyntaxKind.CloseBraceToken && templateDepthIndex >= 0) {
+    const braceDepth = templateExpressionBraceDepths[templateDepthIndex] ?? 0;
+    if (braceDepth === 0) {
+      kind = scanner.reScanTemplateToken(false);
+      if (kind === SyntaxKind.TemplateTail) {
+        templateExpressionBraceDepths.pop();
+      }
+    } else {
+      templateExpressionBraceDepths[templateDepthIndex] = braceDepth - 1;
+    }
+  }
+  return kind;
+};
+
 export const tokenizeGovernedClient = (source: string): readonly GovernedClientToken[] => {
   const scanner = createScanner(true, LanguageVariant.Standard, source);
   const tokens: GovernedClientToken[] = [];
@@ -64,7 +104,6 @@ export const tokenizeGovernedClient = (source: string): readonly GovernedClientT
   let scannedKind = scanner.scan();
   while (scannedKind !== SyntaxKind.EndOfFile) {
     let kind: SyntaxKind = scannedKind;
-    const templateDepthIndex = templateExpressionBraceDepths.length - 1;
     if (
       kind === SyntaxKind.SlashToken &&
       (tokens.length === 0 ||
@@ -72,22 +111,7 @@ export const tokenizeGovernedClient = (source: string): readonly GovernedClientT
     ) {
       kind = scanner.reScanSlashToken();
     }
-    if (kind === SyntaxKind.TemplateHead) {
-      templateExpressionBraceDepths.push(0);
-    } else if (kind === SyntaxKind.OpenBraceToken && templateDepthIndex >= 0) {
-      templateExpressionBraceDepths[templateDepthIndex] =
-        (templateExpressionBraceDepths[templateDepthIndex] ?? 0) + 1;
-    } else if (kind === SyntaxKind.CloseBraceToken && templateDepthIndex >= 0) {
-      const braceDepth = templateExpressionBraceDepths[templateDepthIndex] ?? 0;
-      if (braceDepth === 0) {
-        kind = scanner.reScanTemplateToken(false);
-        if (kind === SyntaxKind.TemplateTail) {
-          templateExpressionBraceDepths.pop();
-        }
-      } else {
-        templateExpressionBraceDepths[templateDepthIndex] = braceDepth - 1;
-      }
-    }
+    kind = scanTemplateDelimiter(scanner, kind, templateExpressionBraceDepths);
     tokens.push({ kind, value: scanner.getTokenValue() });
     scannedKind = scanner.scan();
   }
@@ -102,6 +126,13 @@ const matchesSequence = (
   start: number,
   expected: readonly ExpectedToken[],
 ): boolean => expected.every((token, offset) => matchesToken(tokens[start + offset], token));
+
+const isOptionalTrailingComma = (
+  tokens: readonly GovernedClientToken[],
+  next: number,
+  close: number,
+): boolean =>
+  next === close || (tokenKind(tokens, next) === SyntaxKind.CommaToken && next + 1 === close);
 
 const findSequence = (
   tokens: readonly GovernedClientToken[],
@@ -129,11 +160,7 @@ const findSequenceAtBraceDepth = (
     if (braceDepth === expectedDepth && matchesSequence(tokens, index, expected)) {
       return index;
     }
-    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
+    braceDepth += tokenBraceDelta(tokenKind(tokens, index));
   }
   return undefined;
 };
@@ -149,11 +176,7 @@ const sequenceOccurrencesAtBraceDepth = (
     if (braceDepth === expectedDepth && matchesSequence(tokens, index, expected)) {
       count += 1;
     }
-    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
+    braceDepth += tokenBraceDelta(tokenKind(tokens, index));
   }
   return count;
 };
@@ -181,34 +204,12 @@ const findTopLevelSequence = (
   expected: readonly ExpectedToken[],
   start: number,
   end: number,
-): number | undefined => {
-  let braceDepth = 0;
-  for (let index = start; index < end; index += 1) {
-    if (braceDepth === 0 && matchesSequence(tokens, index, expected)) {
-      return index;
-    }
-    const kind = tokens[index]?.kind;
-    if (kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
-  }
-  return undefined;
-};
+): number | undefined => findSequenceAtBraceDepth(tokens, expected, start, end, 0);
 
 const hasTopLevelSequence = (
   tokens: readonly GovernedClientToken[],
   expected: readonly ExpectedToken[],
 ): boolean => findTopLevelSequence(tokens, expected, 0, tokens.length) !== undefined;
-
-export const hasTopLevelExportedConst = (source: string, name: string): boolean =>
-  hasTopLevelSequence(tokenizeGovernedClient(source), [
-    [SyntaxKind.ExportKeyword],
-    [SyntaxKind.ConstKeyword],
-    [SyntaxKind.Identifier, name],
-    [SyntaxKind.EqualsToken],
-  ]);
 
 const findRootExpressionSequence = (
   tokens: readonly GovernedClientToken[],
@@ -216,32 +217,12 @@ const findRootExpressionSequence = (
   start: number,
   end: number,
 ): number | undefined => {
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenthesisDepth = 0;
+  const depth = new DelimiterDepth();
   for (let index = start; index < end; index += 1) {
-    if (
-      braceDepth === 0 &&
-      bracketDepth === 0 &&
-      parenthesisDepth === 0 &&
-      matchesSequence(tokens, index, expected)
-    ) {
+    if (depth.isTopLevel() && matchesSequence(tokens, index, expected)) {
       return index;
     }
-    const kind = tokens[index]?.kind;
-    if (kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    } else if (kind === SyntaxKind.OpenBracketToken) {
-      bracketDepth += 1;
-    } else if (kind === SyntaxKind.CloseBracketToken) {
-      bracketDepth -= 1;
-    } else if (kind === SyntaxKind.OpenParenToken) {
-      parenthesisDepth += 1;
-    } else if (kind === SyntaxKind.CloseParenToken) {
-      parenthesisDepth -= 1;
-    }
+    depth.update(tokenDelimiter.get(tokenKind(tokens, index) ?? SyntaxKind.Unknown));
   }
   return undefined;
 };
@@ -285,12 +266,26 @@ const findClosingParenthesis = (
   return undefined;
 };
 
-const findObjectPropertyValue = (
+const isNamedObjectProperty = (
+  tokens: readonly GovernedClientToken[],
+  index: number,
+  property: string,
+): boolean => {
+  const token = tokens[index];
+  return (
+    (token?.kind === SyntaxKind.Identifier || token?.kind === SyntaxKind.StringLiteral) &&
+    token.value === property &&
+    tokenKind(tokens, index + 1) === SyntaxKind.ColonToken
+  );
+};
+
+const objectPropertyValuePositions = (
   tokens: readonly GovernedClientToken[],
   openBraceIndex: number,
   closeBraceIndex: number,
   property: string,
-): number | undefined => {
+): readonly number[] => {
+  const positions: number[] = [];
   let depth = 0;
   for (let index = openBraceIndex; index < closeBraceIndex; index += 1) {
     const token = tokens[index];
@@ -298,43 +293,27 @@ const findObjectPropertyValue = (
       depth += 1;
     } else if (token?.kind === SyntaxKind.CloseBraceToken) {
       depth -= 1;
-    } else if (
-      depth === 1 &&
-      (token?.kind === SyntaxKind.Identifier || token?.kind === SyntaxKind.StringLiteral) &&
-      token.value === property &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken
-    ) {
-      return index + 2;
+    } else if (depth === 1 && isNamedObjectProperty(tokens, index, property)) {
+      positions.push(index + 2);
     }
   }
-  return undefined;
+  return positions;
 };
+
+const findObjectPropertyValue = (
+  tokens: readonly GovernedClientToken[],
+  openBraceIndex: number,
+  closeBraceIndex: number,
+  property: string,
+): number | undefined =>
+  objectPropertyValuePositions(tokens, openBraceIndex, closeBraceIndex, property)[0];
 
 const directObjectPropertyOccurrences = (
   tokens: readonly GovernedClientToken[],
   openBraceIndex: number,
   closeBraceIndex: number,
   property: string,
-): number => {
-  let count = 0;
-  let depth = 0;
-  for (let index = openBraceIndex; index < closeBraceIndex; index += 1) {
-    const token = tokens[index];
-    if (token?.kind === SyntaxKind.OpenBraceToken) {
-      depth += 1;
-    } else if (token?.kind === SyntaxKind.CloseBraceToken) {
-      depth -= 1;
-    } else if (
-      depth === 1 &&
-      (token?.kind === SyntaxKind.Identifier || token?.kind === SyntaxKind.StringLiteral) &&
-      token.value === property &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken
-    ) {
-      count += 1;
-    }
-  }
-  return count;
-};
+): number => objectPropertyValuePositions(tokens, openBraceIndex, closeBraceIndex, property).length;
 
 const hasExactObjectPropertyValue = (
   tokens: readonly GovernedClientToken[],
@@ -344,7 +323,7 @@ const hasExactObjectPropertyValue = (
   if (valueStart === undefined || !matchesSequence(tokens, valueStart, expected)) {
     return false;
   }
-  const follower = tokens[valueStart + expected.length]?.kind;
+  const follower = tokenKind(tokens, valueStart + expected.length);
   return follower === SyntaxKind.CommaToken || follower === SyntaxKind.CloseBraceToken;
 };
 
@@ -356,22 +335,17 @@ const directObjectPropertyNames = (
   const properties: string[] = [];
   let depth = 0;
   for (let index = openBraceIndex; index < closeBraceIndex; index += 1) {
-    const token = tokens[index];
-    if (token?.kind === SyntaxKind.OpenBraceToken) {
-      depth += 1;
-    } else if (token?.kind === SyntaxKind.CloseBraceToken) {
-      depth -= 1;
-    } else if (
-      depth === 1 &&
-      (token?.kind === SyntaxKind.DotDotDotToken || token?.kind === SyntaxKind.OpenBracketToken)
-    ) {
+    const kind = tokenKind(tokens, index);
+    depth += tokenBraceDelta(kind);
+    if (depth !== 1) {
+      continue;
+    }
+    if (kind === SyntaxKind.DotDotDotToken || kind === SyntaxKind.OpenBracketToken) {
       return undefined;
-    } else if (
-      depth === 1 &&
-      (token?.kind === SyntaxKind.Identifier || token?.kind === SyntaxKind.StringLiteral) &&
-      tokens[index + 1]?.kind === SyntaxKind.ColonToken
-    ) {
-      properties.push(token.value);
+    }
+    const value = tokenValue(tokens, index);
+    if (value !== undefined && isNamedObjectProperty(tokens, index, value)) {
+      properties.push(value);
     }
   }
   return properties;
@@ -416,7 +390,6 @@ interface GovernedClientExpectation {
 }
 
 const MODULE_API_INVOCATION_KIND = 'module-api';
-const CORRELATION_HEADER = 'x-correlation-id';
 
 export const hasUniqueExactNamedImport = (
   source: string,
@@ -542,7 +515,7 @@ const hasExactGeneratedImports = (
     [
       [SyntaxKind.ImportKeyword],
       [SyntaxKind.OpenBraceToken],
-      [SyntaxKind.Identifier, 'makeEffectBffClient'],
+      [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
       [SyntaxKind.CloseBraceToken],
       [SyntaxKind.FromKeyword],
       [SyntaxKind.StringLiteral, '@app/shared-contracts/client-runtime'],
@@ -630,7 +603,7 @@ const exportedConsts = (tokens: readonly GovernedClientToken[]): readonly Export
         [SyntaxKind.EqualsToken],
       ])
     ) {
-      const name = tokens[index + 2]?.value;
+      const name = tokenValue(tokens, index + 2);
       if (name !== undefined) {
         const nextExport = findSequence(
           tokens,
@@ -645,59 +618,55 @@ const exportedConsts = (tokens: readonly GovernedClientToken[]): readonly Export
   return declarations;
 };
 
+const clientHelperAt = (
+  tokens: readonly GovernedClientToken[],
+  index: number,
+  end: number,
+): GovernedClientHelper | undefined => {
+  if (
+    !matchesSequence(tokens, index, [
+      [SyntaxKind.ConstKeyword],
+      [SyntaxKind.Identifier],
+      [SyntaxKind.EqualsToken],
+      [SyntaxKind.OpenParenToken],
+    ])
+  ) {
+    return undefined;
+  }
+  const name = tokenValue(tokens, index + 1);
+  const parametersClose = findClosingParenthesis(tokens, index + 3, end);
+  if (name === undefined || parametersClose === undefined) {
+    return undefined;
+  }
+  const bodyStart = parametersClose + 2;
+  const bodyClose = findClosingParenthesis(tokens, bodyStart + 1, end);
+  if (bodyClose === undefined || bodyClose + 1 >= end) {
+    return undefined;
+  }
+  return matchesSequence(tokens, parametersClose + 1, [
+    [SyntaxKind.EqualsGreaterThanToken],
+    [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
+    [SyntaxKind.OpenParenToken],
+  ]) && tokenKind(tokens, bodyClose + 1) === SyntaxKind.SemicolonToken
+    ? {
+        declarationStart: index,
+        end: bodyClose + 2,
+        name,
+        parametersEnd: parametersClose,
+        parametersStart: index + 4,
+        start: bodyStart,
+      }
+    : undefined;
+};
+
 const findClientHelper = (
   tokens: readonly GovernedClientToken[],
   authorizedExportStart: number,
 ): GovernedClientHelper | undefined => {
   for (let index = 0; index < authorizedExportStart; index += 1) {
-    if (
-      matchesSequence(tokens, index, [
-        [SyntaxKind.ConstKeyword],
-        [SyntaxKind.Identifier],
-        [SyntaxKind.EqualsToken],
-        [SyntaxKind.OpenParenToken],
-      ])
-    ) {
-      const name = tokens[index + 1]?.value;
-      const parametersClose = findClosingParenthesis(tokens, index + 3, authorizedExportStart);
-      const bodyOpen = parametersClose === undefined ? undefined : parametersClose + 2;
-      const bodyClose = bodyOpen === undefined ? undefined : findClosingBrace(tokens, bodyOpen);
-      const helper =
-        name !== undefined &&
-        parametersClose !== undefined &&
-        bodyOpen !== undefined &&
-        bodyClose !== undefined &&
-        matchesSequence(tokens, parametersClose + 1, [
-          [SyntaxKind.EqualsGreaterThanToken],
-          [SyntaxKind.OpenBraceToken],
-        ]) &&
-        bodyClose + 1 < authorizedExportStart &&
-        tokens[bodyClose + 1]?.kind === SyntaxKind.SemicolonToken
-          ? {
-              declarationStart: index,
-              end: bodyClose + 2,
-              name,
-              parametersEnd: parametersClose,
-              parametersStart: index + 4,
-              start: bodyOpen + 1,
-            }
-          : undefined;
-      if (
-        helper !== undefined &&
-        findTopLevelSequence(
-          tokens,
-          [
-            [SyntaxKind.ConstKeyword],
-            [SyntaxKind.Identifier, 'clientConfig'],
-            [SyntaxKind.EqualsToken],
-            [SyntaxKind.OpenBraceToken],
-          ],
-          helper.start,
-          helper.end,
-        ) !== undefined
-      ) {
-        return helper;
-      }
+    const helper = clientHelperAt(tokens, index, authorizedExportStart);
+    if (helper !== undefined) {
+      return helper;
     }
   }
   return undefined;
@@ -726,16 +695,38 @@ const hasOnlyAllowedModuleStatements = (
     `${operationStem}ClientOptions`,
   ]);
   let optionsInterfaceSeen = false;
-  // eslint-disable-next-line complexity -- This recursive recognizer is the closed top-level client module grammar.
+  const consumeOptionsInterface = (index: number): number | undefined => {
+    const name = tokenValue(tokens, index + 2);
+    if (name === undefined || optionsInterfaceSeen || !allowedOptionsInterfaces.has(name)) {
+      return undefined;
+    }
+    optionsInterfaceSeen = true;
+    const open = findSequence(tokens, [[SyntaxKind.OpenBraceToken]], index + 2);
+    if (open === undefined) {
+      return undefined;
+    }
+    const close = findClosingBrace(tokens, open);
+    if (close === undefined) {
+      return undefined;
+    }
+    return tokenKind(tokens, close + 1) === SyntaxKind.SemicolonToken ? close + 2 : close + 1;
+  };
+  const isAllowedOperation = (index: number): boolean =>
+    matchesSequence(tokens, index, [
+      [SyntaxKind.ExportKeyword],
+      [SyntaxKind.ConstKeyword],
+      [SyntaxKind.Identifier],
+      [SyntaxKind.EqualsToken],
+    ]) && allowedOperations.has(tokenValue(tokens, index + 2) ?? '');
   const acceptsFrom = (index: number): boolean => {
     if (index === tokens.length) {
       return true;
     }
-    if (tokens[index]?.kind === SyntaxKind.ImportKeyword) {
-      const end = findStatementSemicolon(tokens, index);
-      return end !== undefined && acceptsFrom(end + 1);
-    }
-    if (tokens[index]?.kind === SyntaxKind.TypeKeyword) {
+    if (
+      [SyntaxKind.ImportKeyword, SyntaxKind.TypeKeyword].includes(
+        tokenKind(tokens, index) ?? SyntaxKind.Unknown,
+      )
+    ) {
       const end = findStatementSemicolon(tokens, index);
       return end !== undefined && acceptsFrom(end + 1);
     }
@@ -745,34 +736,13 @@ const hasOnlyAllowedModuleStatements = (
       [SyntaxKind.Identifier],
     ]);
     if (isExportedInterface) {
-      const name = tokens[index + 2]?.value;
-      if (name === undefined || optionsInterfaceSeen || !allowedOptionsInterfaces.has(name)) {
-        return false;
-      }
-      optionsInterfaceSeen = true;
-      const openBrace = findSequence(tokens, [[SyntaxKind.OpenBraceToken]], index + 2);
-      const closeBrace = openBrace === undefined ? undefined : findClosingBrace(tokens, openBrace);
-      if (closeBrace === undefined) {
-        return false;
-      }
-      const next =
-        tokens[closeBrace + 1]?.kind === SyntaxKind.SemicolonToken
-          ? closeBrace + 2
-          : closeBrace + 1;
-      return acceptsFrom(next);
+      const next = consumeOptionsInterface(index);
+      return next !== undefined && acceptsFrom(next);
     }
     if (index === helper.declarationStart) {
       return acceptsFrom(helper.end);
     }
-    if (
-      matchesSequence(tokens, index, [
-        [SyntaxKind.ExportKeyword],
-        [SyntaxKind.ConstKeyword],
-        [SyntaxKind.Identifier],
-        [SyntaxKind.EqualsToken],
-      ]) &&
-      allowedOperations.has(tokens[index + 2]?.value ?? '')
-    ) {
+    if (isAllowedOperation(index)) {
       const end = findStatementSemicolon(tokens, index);
       return end !== undefined && acceptsFrom(end + 1);
     }
@@ -781,173 +751,39 @@ const hasOnlyAllowedModuleStatements = (
   return acceptsFrom(0) && optionsInterfaceSeen;
 };
 
-const hasExactTransportHeaders = (
-  tokens: readonly GovernedClientToken[],
-  headersOpen: number,
-  configClose: number,
-): boolean => {
-  const headersClose = findClosingBrace(tokens, headersOpen);
-  if (
-    headersClose === undefined ||
-    headersClose > configClose ||
-    !hasExactProperties(
-      directObjectPropertyNames(tokens, headersOpen, headersClose),
-      new Set(['authorization', CORRELATION_HEADER]),
-    )
-  ) {
-    return false;
-  }
-  const authorizationValue = findObjectPropertyValue(
-    tokens,
-    headersOpen,
-    headersClose,
-    'authorization',
-  );
-  const correlationValue = findObjectPropertyValue(
-    tokens,
-    headersOpen,
-    headersClose,
-    CORRELATION_HEADER,
-  );
-  return (
-    hasExactObjectPropertyValue(tokens, authorizationValue, [
-      [SyntaxKind.Identifier, 'Redacted'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'value'],
-      [SyntaxKind.OpenParenToken],
-      [SyntaxKind.Identifier, 'credential'],
-      [SyntaxKind.CloseParenToken],
-    ]) &&
-    hasExactObjectPropertyValue(tokens, correlationValue, [
-      [SyntaxKind.Identifier, 'requestCorrelation'],
-    ])
-  );
-};
-
-const hasClientConfig = (
+// The imported shared transport owns credential extraction, correlation headers and URL options.
+// Validate its entire invocation, not merely a decoy property or helper name.
+const hasGovernedTransportInvocation = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
   ownerApiValue: string,
   defaultApiPrefix: string,
 ): boolean => {
-  const configDeclaration = findTopLevelSequence(
-    tokens,
-    [
-      [SyntaxKind.ConstKeyword],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.EqualsToken],
-      [SyntaxKind.OpenBraceToken],
-    ],
-    helper.start,
-    helper.end,
-  );
-  if (configDeclaration === undefined) {
-    return false;
-  }
-  const openBrace = configDeclaration + 3;
-  const closeBrace = findClosingBrace(tokens, openBrace);
-  if (
-    closeBrace === undefined ||
-    closeBrace >= helper.end ||
-    configDeclaration !== helper.start ||
-    tokens[closeBrace + 1]?.kind !== SyntaxKind.SemicolonToken ||
-    !hasExactProperties(
-      directObjectPropertyNames(tokens, openBrace, closeBrace),
-      new Set(['api', 'defaultApiPrefix', 'transportHeaders']),
-    )
-  ) {
-    return false;
-  }
-  const apiValue = findObjectPropertyValue(tokens, openBrace, closeBrace, 'api');
-  const prefixValue = findObjectPropertyValue(tokens, openBrace, closeBrace, 'defaultApiPrefix');
-  const headersValue = findObjectPropertyValue(tokens, openBrace, closeBrace, 'transportHeaders');
-  if (
-    apiValue === undefined ||
-    prefixValue === undefined ||
-    headersValue === undefined ||
-    !hasExactObjectPropertyValue(tokens, apiValue, [[SyntaxKind.Identifier, ownerApiValue]]) ||
-    !hasExactObjectPropertyValue(tokens, prefixValue, [
-      [SyntaxKind.StringLiteral, defaultApiPrefix],
-    ]) ||
-    tokens[headersValue]?.kind !== SyntaxKind.OpenBraceToken
-  ) {
-    return false;
-  }
-  const headersClose = findClosingBrace(tokens, headersValue);
+  const expected = [
+    [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
+    [SyntaxKind.OpenParenToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'api'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.Identifier, ownerApiValue],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'credential'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'defaultApiPrefix'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, defaultApiPrefix],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'requestCorrelation'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.CloseBraceToken],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'options'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.CloseParenToken],
+    [SyntaxKind.SemicolonToken],
+  ] satisfies readonly ExpectedToken[];
   return (
-    headersClose !== undefined &&
-    (tokens[headersClose + 1]?.kind === SyntaxKind.CommaToken ||
-      tokens[headersClose + 1]?.kind === SyntaxKind.CloseBraceToken) &&
-    hasExactTransportHeaders(tokens, headersValue, closeBrace)
-  );
-};
-
-const factoryConsumesClientConfig = (
-  tokens: readonly GovernedClientToken[],
-  helper: GovernedClientHelper,
-): boolean => {
-  const factoryReturn = findTopLevelSequence(
-    tokens,
-    [
-      [SyntaxKind.ReturnKeyword],
-      [SyntaxKind.Identifier, 'makeEffectBffClient'],
-      [SyntaxKind.OpenParenToken],
-      [SyntaxKind.Identifier, 'options'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'baseUrl'],
-      [SyntaxKind.EqualsEqualsEqualsToken],
-      [SyntaxKind.UndefinedKeyword],
-      [SyntaxKind.QuestionToken],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.OpenBraceToken],
-      [SyntaxKind.DotDotDotToken],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.Identifier, 'baseUrl'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.Identifier, 'options'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'baseUrl'],
-      [SyntaxKind.CloseBraceToken],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.SemicolonToken],
-      [SyntaxKind.CloseBraceToken],
-      [SyntaxKind.SemicolonToken],
-    ],
-    helper.start,
-    helper.end,
-  );
-  const helperTokens = tokens.slice(helper.start, helper.end);
-  const configDeclaration = findTopLevelSequence(
-    tokens,
-    [
-      [SyntaxKind.ConstKeyword],
-      [SyntaxKind.Identifier, 'clientConfig'],
-      [SyntaxKind.EqualsToken],
-      [SyntaxKind.OpenBraceToken],
-    ],
-    helper.start,
-    helper.end,
-  );
-  const configClose =
-    configDeclaration === undefined ? undefined : findClosingBrace(tokens, configDeclaration + 3);
-  const forbiddenControlFlow = new Set([
-    SyntaxKind.DoKeyword,
-    SyntaxKind.ForKeyword,
-    SyntaxKind.IfKeyword,
-    SyntaxKind.SwitchKeyword,
-    SyntaxKind.ThrowKeyword,
-    SyntaxKind.TryKeyword,
-    SyntaxKind.WhileKeyword,
-  ]);
-  return (
-    factoryReturn !== undefined &&
-    configClose !== undefined &&
-    factoryReturn === configClose + 2 &&
-    helperTokens.filter(({ kind }) => kind === SyntaxKind.ReturnKeyword).length === 1 &&
-    !helperTokens.some(({ kind }) => forbiddenControlFlow.has(kind))
+    helper.end === helper.start + expected.length && matchesSequence(tokens, helper.start, expected)
   );
 };
 
@@ -970,7 +806,7 @@ const parametersBindIdentifier = (
       ({ kind, value }, offset) =>
         kind === SyntaxKind.Identifier &&
         names.has(value) &&
-        bindingFollowers.has(tokens[start + offset + 1]?.kind ?? SyntaxKind.Unknown),
+        bindingFollowers.has(tokenKind(tokens, start + offset + 1) ?? SyntaxKind.Unknown),
     );
 };
 
@@ -993,16 +829,12 @@ const hasTopLevelDeclaration = (
     if (
       braceDepth === 0 &&
       declarationKinds.has(token?.kind ?? SyntaxKind.Unknown) &&
-      tokens[index + 1]?.kind === SyntaxKind.Identifier &&
-      names.has(tokens[index + 1]?.value ?? '')
+      tokenKind(tokens, index + 1) === SyntaxKind.Identifier &&
+      names.has(tokenValue(tokens, index + 1) ?? '')
     ) {
       return true;
     }
-    if (token?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (token?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
+    braceDepth += tokenBraceDelta(token?.kind);
   }
   return false;
 };
@@ -1155,6 +987,115 @@ const generatedOperationDeclarations = (
     : undefined;
 };
 
+const matchingSequenceEnd = (
+  tokens: readonly GovernedClientToken[],
+  start: number,
+  alternatives: readonly (readonly ExpectedToken[])[],
+): number | undefined => {
+  const match = alternatives.find((sequence) => matchesSequence(tokens, start, sequence));
+  return match === undefined ? undefined : start + match.length;
+};
+
+const hasInvocationClosure = (
+  tokens: readonly GovernedClientToken[],
+  start: number | undefined,
+): boolean =>
+  start !== undefined &&
+  [false, true].some((trailingComma) =>
+    matchesSequence(tokens, start, [
+      ...(trailingComma ? [[SyntaxKind.CommaToken] as const] : []),
+      [SyntaxKind.CloseParenToken],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.CloseParenToken],
+      [SyntaxKind.SemicolonToken],
+    ]),
+  );
+
+const generatedInvocationPayloads = (
+  kind: GovernedClientExpectation['invocationKind'],
+): readonly (readonly ExpectedToken[])[] =>
+  kind === MODULE_API_INVOCATION_KIND
+    ? ([false, true] as const).map(
+        (hasTrailingComma) =>
+          [
+            [SyntaxKind.OpenBraceToken],
+            [SyntaxKind.Identifier, 'headers'],
+            [SyntaxKind.ColonToken],
+            [SyntaxKind.OpenBraceToken],
+            [SyntaxKind.CloseBraceToken],
+            [SyntaxKind.CommaToken],
+            [SyntaxKind.Identifier, 'params'],
+            [SyntaxKind.ColonToken],
+            [SyntaxKind.OpenBraceToken],
+            [SyntaxKind.CloseBraceToken],
+            [SyntaxKind.CommaToken],
+            [SyntaxKind.Identifier, 'payload'],
+            [SyntaxKind.CommaToken],
+            [SyntaxKind.Identifier, 'query'],
+            [SyntaxKind.ColonToken],
+            [SyntaxKind.OpenBraceToken],
+            [SyntaxKind.CloseBraceToken],
+            ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+            [SyntaxKind.CloseBraceToken],
+            [SyntaxKind.CloseParenToken],
+          ] satisfies readonly ExpectedToken[],
+      )
+    : ([false, true] as const).map(
+        (hasTrailingComma) =>
+          [
+            [SyntaxKind.OpenBraceToken],
+            [SyntaxKind.Identifier, 'payload'],
+            ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+            [SyntaxKind.CloseBraceToken],
+            [SyntaxKind.CloseParenToken],
+          ] satisfies readonly ExpectedToken[],
+      );
+
+const clientHelperShadowsImports = (
+  tokens: readonly GovernedClientToken[],
+  helper: GovernedClientHelper,
+  expectation: GovernedClientExpectation,
+): boolean => {
+  const requiredHelperImports = new Set([
+    'Effect',
+    'Redacted',
+    'makeGovernedEffectBffClient',
+    expectation.ownerApiValue,
+  ]);
+  return (
+    parametersBindIdentifier(
+      tokens,
+      helper.parametersStart,
+      helper.parametersEnd,
+      requiredHelperImports,
+    ) || hasTopLevelDeclaration(tokens, helper.start, helper.end, requiredHelperImports)
+  );
+};
+
+const operationParametersShadowBindings = (
+  tokens: readonly GovernedClientToken[],
+  helper: GovernedClientHelper,
+  expectation: GovernedClientExpectation,
+  authorized: ExportedConst,
+  authorizedArrow: number,
+  operation: ExportedConst,
+  operationArrow: number,
+): boolean => {
+  const authorizedShadowsBindings = parametersBindIdentifier(
+    tokens,
+    authorized.start,
+    authorizedArrow,
+    new Set([helper.name, 'Effect', 'Redacted']),
+  );
+  const operationShadowsBindings = parametersBindIdentifier(
+    tokens,
+    operation.start,
+    operationArrow,
+    new Set(['operationGateway', expectation.authorizedOperation]),
+  );
+  return authorizedShadowsBindings || operationShadowsBindings;
+};
+
 const exportedOperationsUseClientHelperAndGateway = (
   tokens: readonly GovernedClientToken[],
   helper: GovernedClientHelper,
@@ -1180,43 +1121,7 @@ const exportedOperationsUseClientHelperAndGateway = (
   if (authorizedArrow === undefined || operationArrow === undefined) {
     return false;
   }
-  const invocationPayloads =
-    expectation.invocationKind === MODULE_API_INVOCATION_KIND
-      ? ([false, true] as const).map(
-          (hasTrailingComma) =>
-            [
-              [SyntaxKind.OpenBraceToken],
-              [SyntaxKind.Identifier, 'headers'],
-              [SyntaxKind.ColonToken],
-              [SyntaxKind.OpenBraceToken],
-              [SyntaxKind.CloseBraceToken],
-              [SyntaxKind.CommaToken],
-              [SyntaxKind.Identifier, 'params'],
-              [SyntaxKind.ColonToken],
-              [SyntaxKind.OpenBraceToken],
-              [SyntaxKind.CloseBraceToken],
-              [SyntaxKind.CommaToken],
-              [SyntaxKind.Identifier, 'payload'],
-              [SyntaxKind.CommaToken],
-              [SyntaxKind.Identifier, 'query'],
-              [SyntaxKind.ColonToken],
-              [SyntaxKind.OpenBraceToken],
-              [SyntaxKind.CloseBraceToken],
-              ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-              [SyntaxKind.CloseBraceToken],
-              [SyntaxKind.CloseParenToken],
-            ] satisfies readonly ExpectedToken[],
-        )
-      : ([false, true] as const).map(
-          (hasTrailingComma) =>
-            [
-              [SyntaxKind.OpenBraceToken],
-              [SyntaxKind.Identifier, 'payload'],
-              ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-              [SyntaxKind.CloseBraceToken],
-              [SyntaxKind.CloseParenToken],
-            ] satisfies readonly ExpectedToken[],
-        );
+  const invocationPayloads = generatedInvocationPayloads(expectation.invocationKind);
   const authorizedInvocation = [
     [SyntaxKind.Identifier, helper.name],
     [SyntaxKind.OpenParenToken],
@@ -1250,29 +1155,14 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.OpenParenToken],
   ] satisfies readonly ExpectedToken[];
   const authorizedInvocationEnd = authorizedArrow + 1 + authorizedInvocation.length;
-  const matchingInvocationPayload = invocationPayloads.find((payload) =>
-    matchesSequence(tokens, authorizedInvocationEnd, payload),
+  const authorizedInvocationTail = matchingSequenceEnd(
+    tokens,
+    authorizedInvocationEnd,
+    invocationPayloads,
   );
-  const authorizedInvocationTail =
-    matchingInvocationPayload === undefined
-      ? undefined
-      : authorizedInvocationEnd + matchingInvocationPayload.length;
   const authorizedUsesHelper =
     matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
-    authorizedInvocationTail !== undefined &&
-    (matchesSequence(tokens, authorizedInvocationTail, [
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.SemicolonToken],
-    ]) ||
-      matchesSequence(tokens, authorizedInvocationTail, [
-        [SyntaxKind.CommaToken],
-        [SyntaxKind.CloseParenToken],
-        [SyntaxKind.CommaToken],
-        [SyntaxKind.CloseParenToken],
-        [SyntaxKind.SemicolonToken],
-      ]));
+    hasInvocationClosure(tokens, authorizedInvocationTail);
   const gatewayInvocation = [
     [SyntaxKind.Identifier, 'operationGateway'],
     [SyntaxKind.DotToken],
@@ -1295,43 +1185,16 @@ const exportedOperationsUseClientHelperAndGateway = (
   const gatewayInvocationEnd = operationArrow + 1 + gatewayInvocation.length;
   const operationUsesGateway =
     matchesSequence(tokens, operationArrow + 1, gatewayInvocation) &&
-    (matchesSequence(tokens, gatewayInvocationEnd, [
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.SemicolonToken],
-    ]) ||
-      matchesSequence(tokens, gatewayInvocationEnd, [
-        [SyntaxKind.CommaToken],
-        [SyntaxKind.CloseParenToken],
-        [SyntaxKind.CommaToken],
-        [SyntaxKind.CloseParenToken],
-        [SyntaxKind.SemicolonToken],
-      ]));
-  const requiredHelperImports = new Set([
-    'Effect',
-    'Redacted',
-    'makeEffectBffClient',
-    expectation.ownerApiValue,
-  ]);
-  const helperShadowsImports =
-    parametersBindIdentifier(
-      tokens,
-      helper.parametersStart,
-      helper.parametersEnd,
-      requiredHelperImports,
-    ) || hasTopLevelDeclaration(tokens, helper.start, helper.end, requiredHelperImports);
-  const authorizedShadowsBindings = parametersBindIdentifier(
+    hasInvocationClosure(tokens, gatewayInvocationEnd);
+  const helperShadowsImports = clientHelperShadowsImports(tokens, helper, expectation);
+  const shadowsBindings = operationParametersShadowBindings(
     tokens,
-    authorized.start,
+    helper,
+    expectation,
+    authorized,
     authorizedArrow,
-    new Set([helper.name, 'Effect', 'Redacted']),
-  );
-  const operationShadowsBindings = parametersBindIdentifier(
-    tokens,
-    operation.start,
+    operation,
     operationArrow,
-    new Set(['operationGateway', expectation.authorizedOperation]),
   );
   return (
     hasExactGeneratedOperationParameters(
@@ -1346,8 +1209,7 @@ const exportedOperationsUseClientHelperAndGateway = (
     authorizedUsesHelper &&
     operationUsesGateway &&
     !helperShadowsImports &&
-    !authorizedShadowsBindings &&
-    !operationShadowsBindings
+    !shadowsBindings
   );
 };
 
@@ -1399,7 +1261,8 @@ export const generatedApiGroup = (source: string, ownerApiValue: string): string
     const endpointAdd = group + sequence.length;
     if (
       endpointAdd === outerCallClose ||
-      (tokens[endpointAdd]?.kind === SyntaxKind.CommaToken && endpointAdd + 1 === outerCallClose)
+      (tokenKind(tokens, endpointAdd) === SyntaxKind.CommaToken &&
+        endpointAdd + 1 === outerCallClose)
     ) {
       return true;
     }
@@ -1415,41 +1278,33 @@ export const generatedApiGroup = (source: string, ownerApiValue: string): string
     const endpointAddClose = findClosingParenthesis(tokens, endpointAdd + 2, outerCallClose + 1);
     return (
       endpointAddClose !== undefined &&
-      (endpointAddClose + 1 === outerCallClose ||
-        (tokens[endpointAddClose + 1]?.kind === SyntaxKind.CommaToken &&
-          endpointAddClose + 2 === outerCallClose))
+      isOptionalTrailingComma(tokens, endpointAddClose + 1, outerCallClose)
     );
   };
   const makeOpen = apiDeclaration + 7;
   const makeClose =
-    tokens[makeOpen]?.kind === SyntaxKind.OpenParenToken
+    tokenKind(tokens, makeOpen) === SyntaxKind.OpenParenToken
       ? findClosingParenthesis(tokens, makeOpen, end)
       : undefined;
   const hasExactApiRoot =
     makeClose !== undefined &&
     matchesSequence(tokens, makeOpen + 1, [[SyntaxKind.StringLiteral, ownerApiValue]]) &&
-    (makeOpen + 2 === makeClose ||
-      (tokens[makeOpen + 2]?.kind === SyntaxKind.CommaToken && makeOpen + 3 === makeClose));
-  const group = makeClose === undefined ? undefined : makeClose + 1;
-  return hasExactApiRoot &&
-    group !== undefined &&
-    matchesSequence(tokens, group, sequence) &&
-    isExactGroupArgument(group)
-    ? tokens[group + 7]?.value
+    isOptionalTrailingComma(tokens, makeOpen + 2, makeClose);
+  if (makeClose === undefined) {
+    return undefined;
+  }
+  const group = makeClose + 1;
+  return hasExactApiRoot && matchesSequence(tokens, group, sequence) && isExactGroupArgument(group)
+    ? tokenValue(tokens, group + 7)
     : undefined;
 };
 
-export const hasGeneratedProviderApiContract = (
+const hasGeneratedEndpointContract = (
   source: string,
   ownerApiValue: string,
-  moduleId: string,
-  name: string,
-  kind: 'report' | 'search',
+  groupName: string,
+  endpointPath: string,
 ): boolean => {
-  const groupName = generatedApiGroup(source, ownerApiValue);
-  if (groupName === undefined) {
-    return false;
-  }
   const tokens = tokenizeGovernedClient(source);
   const declaration = findTopLevelSequence(
     tokens,
@@ -1495,19 +1350,35 @@ export const hasGeneratedProviderApiContract = (
     [SyntaxKind.OpenParenToken],
     [SyntaxKind.StringLiteral, 'execute'],
     [SyntaxKind.CommaToken],
-    [SyntaxKind.StringLiteral, `/${moduleId}/${kind === 'report' ? 'reports' : 'search'}/${name}`],
+    [SyntaxKind.StringLiteral, endpointPath],
   ] satisfies readonly ExpectedToken[];
   const endpointOpen = endpoint + 3;
   const endpointClose = matchesSequence(tokens, endpoint, endpointSequence)
-    ? findClosingParenthesis(tokens, endpointOpen, tokens.length)
+    ? findClosingParenthesis(tokens, endpointOpen, declarationEnd)
     : undefined;
-  const groupAddClose = findClosingParenthesis(tokens, groupAddOpen, tokens.length);
+  const groupAddClose = findClosingParenthesis(tokens, groupAddOpen, declarationEnd);
   return (
     endpointClose !== undefined &&
     groupAddClose !== undefined &&
-    (endpointClose + 1 === groupAddClose ||
-      (tokens[endpointClose + 1]?.kind === SyntaxKind.CommaToken &&
-        endpointClose + 2 === groupAddClose))
+    isOptionalTrailingComma(tokens, endpointClose + 1, groupAddClose)
+  );
+};
+export const hasGeneratedProviderApiContract = (
+  source: string,
+  ownerApiValue: string,
+  moduleId: string,
+  name: string,
+  kind: 'report' | 'search',
+): boolean => {
+  const groupName = generatedApiGroup(source, ownerApiValue);
+  return (
+    groupName !== undefined &&
+    hasGeneratedEndpointContract(
+      source,
+      ownerApiValue,
+      groupName,
+      `/${moduleId}/${kind === 'report' ? 'reports' : 'search'}/${name}`,
+    )
   );
 };
 
@@ -1516,76 +1387,18 @@ export const hasGeneratedModuleApiContract = (
   ownerApiValue: string,
   groupName: string,
   stem: string,
-): boolean => {
-  const tokens = tokenizeGovernedClient(source);
-  const declaration = findTopLevelSequence(
-    tokens,
-    [
-      [SyntaxKind.ExportKeyword],
-      [SyntaxKind.ConstKeyword],
-      [SyntaxKind.Identifier, ownerApiValue],
-      [SyntaxKind.EqualsToken],
-    ],
-    0,
-    tokens.length,
-  );
-  const declarationEnd =
-    declaration === undefined ? undefined : findStatementSemicolon(tokens, declaration);
-  if (declaration === undefined || declarationEnd === undefined) {
-    return false;
-  }
-  const groupMake = findSequence(
-    tokens,
-    [
-      [SyntaxKind.Identifier, 'HttpApiGroup'],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'make'],
-      [SyntaxKind.OpenParenToken],
-      [SyntaxKind.StringLiteral, groupName],
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.DotToken],
-      [SyntaxKind.Identifier, 'add'],
-      [SyntaxKind.OpenParenToken],
-    ],
-    declaration,
-    declarationEnd,
-  );
-  if (groupMake === undefined) {
-    return false;
-  }
-  const groupAddOpen = groupMake + 8;
-  const endpoint = groupAddOpen + 1;
-  const endpointOpen = endpoint + 3;
-  const endpointClose = matchesSequence(tokens, endpoint, [
-    [SyntaxKind.Identifier, 'HttpApiEndpoint'],
-    [SyntaxKind.DotToken],
-    [SyntaxKind.Identifier, 'post'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.StringLiteral, 'execute'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.StringLiteral, `/reads/${stem}`],
-  ])
-    ? findClosingParenthesis(tokens, endpointOpen, declarationEnd)
-    : undefined;
-  const groupAddClose = findClosingParenthesis(tokens, groupAddOpen, declarationEnd);
-  return (
-    endpointClose !== undefined &&
-    groupAddClose !== undefined &&
-    (endpointClose + 1 === groupAddClose ||
-      (tokens[endpointClose + 1]?.kind === SyntaxKind.CommaToken &&
-        endpointClose + 2 === groupAddClose))
-  );
-};
+): boolean => hasGeneratedEndpointContract(source, ownerApiValue, groupName, `/reads/${stem}`);
 
-const topLevelExportedCallObject = (
+const topLevelCallObject = (
   tokens: readonly GovernedClientToken[],
   exportedName: string,
   callee: string,
+  requireExport = true,
 ): readonly [open: number, close: number, declarationEnd: number] | undefined => {
   const declaration = findTopLevelSequence(
     tokens,
     [
-      [SyntaxKind.ExportKeyword],
+      ...(requireExport ? ([[SyntaxKind.ExportKeyword]] as const) : []),
       [SyntaxKind.ConstKeyword],
       [SyntaxKind.Identifier, exportedName],
       [SyntaxKind.EqualsToken],
@@ -1596,30 +1409,160 @@ const topLevelExportedCallObject = (
     0,
     tokens.length,
   );
-  const declarationEnd =
-    declaration === undefined
-      ? undefined
-      : findRootExpressionSequence(
-          tokens,
-          [[SyntaxKind.SemicolonToken]],
-          declaration,
-          tokens.length,
-        );
-  const open = declaration === undefined ? undefined : declaration + 6;
-  const close = open === undefined ? undefined : findClosingBrace(tokens, open);
-  const callClose =
-    declaration === undefined || declarationEnd === undefined
-      ? undefined
-      : findClosingParenthesis(tokens, declaration + 5, declarationEnd);
-  return declaration !== undefined &&
-    declarationEnd !== undefined &&
-    open !== undefined &&
-    close !== undefined &&
+  if (declaration === undefined) {
+    return undefined;
+  }
+  const declarationEnd = findStatementSemicolon(tokens, declaration);
+  if (declarationEnd === undefined) {
+    return undefined;
+  }
+  const open = declaration + (requireExport ? 6 : 5);
+  const close = findClosingBrace(tokens, open);
+  const callClose = findClosingParenthesis(tokens, open - 1, declarationEnd);
+  return close !== undefined &&
     close < declarationEnd &&
     callClose !== undefined &&
     callClose + 1 === declarationEnd
     ? [open, close, declarationEnd]
     : undefined;
+};
+
+// This is a source contract, not an executable import from a deployment. Accept only
+// the owner-local factory's complete declaration, including its imported constructors.
+const engagementLifecycleRegistrationContract = `
+import { defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import type { OrganizationEngagementLifecyclePayload, PersonEngagementLifecyclePayload } from '../../shared/domain/engagement-profile.ts';
+import { EngagementLifecycleErrorSchema } from './engagement-lifecycle-handler.ts';
+type EngagementLifecyclePayload = | OrganizationEngagementLifecyclePayload | PersonEngagementLifecyclePayload;
+type EngagementLifecycleActionKey = \`party.registry.\${'archive' | 'unarchive'}-\${'person' | 'organization'}-engagement\`;
+export const engagementLifecycleRegistration = <Payload extends EngagementLifecyclePayload>(actionKey: EngagementLifecycleActionKey) => ({
+  accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: \`\${actionKey}.access.v1\` },
+  actionKey,
+  auditProfile: 'standard',
+  domainErrorSchema: EngagementLifecycleErrorSchema,
+  domainEvents: {},
+  entrypoint: defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    entrypointKey: actionKey,
+    moduleKey: 'party.registry',
+    role: 'action',
+  }),
+  idempotency: 'required',
+  legalEntityScope: 'required',
+  owningModuleKey: 'party.registry',
+  policies: [],
+  resourcePermission: defineActionResourcePermission<Payload>((payload) => ({
+    permission: 'write',
+    resource: {
+      moduleId: payload.profileRef.moduleId,
+      resourceId: payload.profileRef.resourceId,
+      resourceType: payload.profileRef.resourceType,
+    },
+  })),
+  schemaVersion: '1',
+}) as const;
+`;
+
+const withoutTrailingCommas = (tokens: readonly GovernedClientToken[]) =>
+  tokens.filter(
+    (token, index) =>
+      token.kind !== SyntaxKind.CommaToken ||
+      tokenKind(tokens, index - 1) === SyntaxKind.OpenBracketToken ||
+      tokenKind(tokens, index - 1) === SyntaxKind.CommaToken ||
+      ![
+        SyntaxKind.CloseBraceToken,
+        SyntaxKind.CloseParenToken,
+        SyntaxKind.CloseBracketToken,
+      ].includes(tokens[index + 1]?.kind ?? SyntaxKind.Unknown),
+  );
+
+const SOURCE_VALUE_TOKEN_KINDS = new Set([
+  SyntaxKind.Identifier,
+  SyntaxKind.StringLiteral,
+  SyntaxKind.NumericLiteral,
+  SyntaxKind.BigIntLiteral,
+  SyntaxKind.NoSubstitutionTemplateLiteral,
+  SyntaxKind.TemplateHead,
+  SyntaxKind.TemplateMiddle,
+  SyntaxKind.TemplateTail,
+  SyntaxKind.RegularExpressionLiteral,
+]);
+
+const hasExactSourceTokens = (
+  tokens: readonly GovernedClientToken[],
+  expected: string,
+): boolean => {
+  const actualTokens = withoutTrailingCommas(tokens);
+  const expectedTokens = withoutTrailingCommas(tokenizeGovernedClient(expected));
+  return (
+    actualTokens.length === expectedTokens.length &&
+    expectedTokens.every(
+      (token, index) =>
+        actualTokens[index]?.kind === token.kind &&
+        (!SOURCE_VALUE_TOKEN_KINDS.has(token.kind) || actualTokens[index]?.value === token.value),
+    )
+  );
+};
+
+export const hasEngagementLifecycleRegistrationContract = (
+  source: string,
+  registrationSource: string,
+  action: string,
+): boolean => {
+  const identity =
+    /^(?<transition>archive|unarchive)-(?<subject>organization|person)-engagement$/u.exec(
+      action,
+    )?.groups;
+  if (
+    identity === undefined ||
+    !hasExactSourceTokens(
+      tokenizeGovernedClient(registrationSource),
+      engagementLifecycleRegistrationContract,
+    )
+  ) {
+    return false;
+  }
+  const subject = identity.subject === 'organization' ? 'Organization' : 'Person';
+  const exportedName = `${toCamelCase(action)}Action`;
+  const payload = `${subject}EngagementLifecyclePayload`;
+  const result = `${subject}EngagementProfile`;
+  const tokens = tokenizeGovernedClient(source);
+  const declaration = topLevelCallObject(tokens, exportedName, 'defineAction');
+  if (declaration === undefined) {
+    return false;
+  }
+  const [open, close, end] = declaration;
+  return (
+    end + 1 === tokens.length &&
+    hasExactSourceTokens(
+      tokens.slice(0, open),
+      `
+      import { defineAction, OperationContextUnavailable } from '@app/core-runtime';
+      import { Effect } from 'effect';
+      import { ${payload}Schema, ${result}Schema } from '../../shared/domain/engagement-profile.ts';
+      import type { ${payload}, ${result} } from '../../shared/domain/engagement-profile.ts';
+      import { transition${subject}EngagementProfile } from '../services/engagement-profile-persistence.service.ts';
+      import { handleEngagementLifecycle } from './engagement-lifecycle-handler.ts';
+      import { engagementLifecycleRegistration } from './engagement-lifecycle-registration.ts';
+      export const ${exportedName} = defineAction(
+    `,
+    ) &&
+    hasExactSourceTokens(
+      tokens.slice(open, close + 1),
+      `{
+      ...engagementLifecycleRegistration<${payload}>('party.registry.${action}'),
+      payloadSchema: ${payload}Schema,
+      resultSchema: ${result}Schema,
+    }`,
+    ) &&
+    [
+      'defineAction',
+      'engagementLifecycleRegistration',
+      `${payload}Schema`,
+      `${result}Schema`,
+    ].every((binding) => identifierOccurrences(tokens, binding) === 2)
+  );
 };
 
 const objectHasExactString = (
@@ -1634,12 +1577,80 @@ const objectHasExactString = (
     [SyntaxKind.StringLiteral, value],
   ]);
 
+const objectHasExactStrings = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  expected: Readonly<Record<string, string>>,
+): boolean =>
+  Object.entries(expected).every(([property, value]) =>
+    objectHasExactString(tokens, open, close, property, value),
+  );
+
+const objectReferencesEntrypoint = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  entrypoint: string,
+): boolean =>
+  directObjectPropertyOccurrences(tokens, open, close, 'entrypoint') === 1 &&
+  hasExactObjectPropertyValue(tokens, findObjectPropertyValue(tokens, open, close, 'entrypoint'), [
+    [SyntaxKind.Identifier, entrypoint],
+  ]);
+
 export interface GeneratedReadAuthorization {
   readonly kind: 'authenticated_principal' | 'context_permission' | 'public';
   readonly permission?: string;
 }
 
-// eslint-disable-next-line complexity -- This parser rejects every non-canonical authorization object shape.
+const objectStringProperty = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  property: string,
+): string | undefined => {
+  const start = findObjectPropertyValue(tokens, open, close, property);
+  return start !== undefined &&
+    hasExactObjectPropertyValue(tokens, start, [[SyntaxKind.StringLiteral]])
+    ? tokenValue(tokens, start)
+    : undefined;
+};
+
+const authorizationObject = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+): GeneratedReadAuthorization | undefined => {
+  const kind = objectStringProperty(tokens, open, close, 'kind');
+  const properties = directObjectPropertyNames(tokens, open, close);
+  if (kind === 'context_permission') {
+    const permission = objectStringProperty(tokens, open, close, 'permission');
+    return permission !== undefined &&
+      /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(permission) &&
+      hasExactProperties(properties, new Set(['kind', 'permission']))
+      ? { kind, permission }
+      : undefined;
+  }
+  if (kind !== 'authenticated_principal' && kind !== 'public') {
+    return undefined;
+  }
+  return hasExactProperties(properties, new Set(['kind'])) ? { kind } : undefined;
+};
+
+const nestedObjectRange = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  property: string,
+): readonly [number, number] | undefined => {
+  const value = findObjectPropertyValue(tokens, open, close, property);
+  if (value === undefined || tokenKind(tokens, value) !== SyntaxKind.OpenBraceToken) {
+    return undefined;
+  }
+  const end = findClosingBrace(tokens, value);
+  return end === undefined ? undefined : [value, end];
+};
+
 const generatedReadAuthorization = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -1648,53 +1659,10 @@ const generatedReadAuthorization = (
   if (directObjectPropertyOccurrences(tokens, open, close, 'authorization') !== 1) {
     return undefined;
   }
-  const authorizationOpen = findObjectPropertyValue(tokens, open, close, 'authorization');
-  const authorizationClose =
-    authorizationOpen === undefined || tokens[authorizationOpen]?.kind !== SyntaxKind.OpenBraceToken
-      ? undefined
-      : findClosingBrace(tokens, authorizationOpen);
-  if (
-    authorizationOpen === undefined ||
-    authorizationClose === undefined ||
-    !directObjectHasNoSpread(tokens, authorizationOpen, authorizationClose)
-  ) {
-    return undefined;
-  }
-  const kindStart = findObjectPropertyValue(tokens, authorizationOpen, authorizationClose, 'kind');
-  const kind =
-    kindStart !== undefined &&
-    tokens[kindStart]?.kind === SyntaxKind.StringLiteral &&
-    hasExactObjectPropertyValue(tokens, kindStart, [[SyntaxKind.StringLiteral]])
-      ? tokens[kindStart]?.value
-      : undefined;
-  const permissionStart = findObjectPropertyValue(
-    tokens,
-    authorizationOpen,
-    authorizationClose,
-    'permission',
-  );
-  const permission =
-    permissionStart !== undefined &&
-    tokens[permissionStart]?.kind === SyntaxKind.StringLiteral &&
-    hasExactObjectPropertyValue(tokens, permissionStart, [[SyntaxKind.StringLiteral]])
-      ? tokens[permissionStart]?.value
-      : undefined;
-  const properties = directObjectPropertyNames(tokens, authorizationOpen, authorizationClose);
-  if (kind === 'context_permission') {
-    if (permission === undefined) {
-      return undefined;
-    }
-    if (!/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(permission)) {
-      return undefined;
-    }
-    return hasExactProperties(properties, new Set(['kind', 'permission']))
-      ? { kind, permission }
-      : undefined;
-  }
-  if (kind !== 'authenticated_principal' && kind !== 'public') {
-    return undefined;
-  }
-  return hasExactProperties(properties, new Set(['kind'])) ? { kind } : undefined;
+  const range = nestedObjectRange(tokens, open, close, 'authorization');
+  return range !== undefined && directObjectHasNoSpread(tokens, ...range)
+    ? authorizationObject(tokens, ...range)
+    : undefined;
 };
 
 const matchesGeneratedReadAuthorization = (
@@ -1715,12 +1683,13 @@ const hasGeneratedReadContract = (
   const tokens = tokenizeGovernedClient(source);
   const camel = toCamelCase(name);
   const entrypointName = `${camel}Entrypoint`;
-  const entrypoint = topLevelExportedCallObject(
+  const entrypoint = topLevelCallObject(
     tokens,
     entrypointName,
     'defineTenantModuleEntrypoint',
+    false,
   );
-  const read = topLevelExportedCallObject(tokens, `${camel}Read`, 'defineRead');
+  const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
   if (entrypoint === undefined || read === undefined) {
     return false;
   }
@@ -1733,28 +1702,23 @@ const hasGeneratedReadContract = (
       generatedReadAuthorization(tokens, entrypointOpen, entrypointClose),
       authorization,
     ) &&
-    tokens[entrypointClose + 1]?.kind === SyntaxKind.CloseParenToken &&
-    tokens[entrypointClose + 2]?.kind === SyntaxKind.SemicolonToken &&
+    matchesSequence(tokens, entrypointClose + 1, [
+      [SyntaxKind.CloseParenToken],
+      [SyntaxKind.SemicolonToken],
+    ]) &&
     entrypointClose + 2 === entrypointEnd &&
-    objectHasExactString(tokens, entrypointOpen, entrypointClose, 'access', 'read') &&
-    objectHasExactString(
-      tokens,
-      entrypointOpen,
-      entrypointClose,
-      'entrypointKey',
-      `${moduleId}.${role}.${name}`,
-    ) &&
-    objectHasExactString(tokens, entrypointOpen, entrypointClose, 'moduleKey', moduleId) &&
-    objectHasExactString(tokens, entrypointOpen, entrypointClose, 'role', role) &&
-    directObjectPropertyOccurrences(tokens, readOpen, readClose, 'entrypoint') === 1 &&
-    hasExactObjectPropertyValue(
-      tokens,
-      findObjectPropertyValue(tokens, readOpen, readClose, 'entrypoint'),
-      [[SyntaxKind.Identifier, entrypointName]],
-    ) &&
-    objectHasExactString(tokens, readOpen, readClose, 'owningModuleKey', moduleId) &&
-    objectHasExactString(tokens, readOpen, readClose, 'readKey', `${moduleId}.${role}.${name}`) &&
-    objectHasExactString(tokens, readOpen, readClose, 'schemaVersion', '1')
+    objectHasExactStrings(tokens, entrypointOpen, entrypointClose, {
+      access: 'read',
+      entrypointKey: `${moduleId}.${role}.${name}`,
+      moduleKey: moduleId,
+      role,
+    }) &&
+    objectReferencesEntrypoint(tokens, readOpen, readClose, entrypointName) &&
+    objectHasExactStrings(tokens, readOpen, readClose, {
+      owningModuleKey: moduleId,
+      readKey: `${moduleId}.${role}.${name}`,
+      schemaVersion: '1',
+    })
   );
 };
 
@@ -1768,7 +1732,7 @@ export const hasGeneratedProviderReadContract = (
   hasGeneratedReadContract(source, moduleId, name, kind, authorization) &&
   (() => {
     const tokens = tokenizeGovernedClient(source);
-    const read = topLevelExportedCallObject(tokens, `${toCamelCase(name)}Read`, 'defineRead');
+    const read = topLevelCallObject(tokens, `${toCamelCase(name)}Read`, 'defineRead');
     return (
       read !== undefined &&
       objectHasExactString(tokens, read[0], read[1], 'accessKind', kind) &&
@@ -1782,9 +1746,9 @@ const enclosingBraceRange = (
 ): readonly [start: number, end: number] | undefined => {
   const openBraces: number[] = [];
   for (let cursor = 0; cursor <= index; cursor += 1) {
-    if (tokens[cursor]?.kind === SyntaxKind.OpenBraceToken) {
+    if (tokenKind(tokens, cursor) === SyntaxKind.OpenBraceToken) {
       openBraces.push(cursor);
-    } else if (tokens[cursor]?.kind === SyntaxKind.CloseBraceToken) {
+    } else if (tokenKind(tokens, cursor) === SyntaxKind.CloseBraceToken) {
       openBraces.pop();
     }
   }
@@ -1801,10 +1765,11 @@ export const hasMatchingGeneratedProviderAuthorization = (
   kind: 'report' | 'search',
 ): boolean => {
   const providerTokens = tokenizeGovernedClient(providerSource);
-  const entrypoint = topLevelExportedCallObject(
+  const entrypoint = topLevelCallObject(
     providerTokens,
     `${toCamelCase(name)}Entrypoint`,
     'defineTenantModuleEntrypoint',
+    false,
   );
   const shellSlot = generatedSlotSource(
     manifest,
@@ -1827,16 +1792,11 @@ export const hasMatchingGeneratedProviderAuthorization = (
   );
   const contribution =
     identity === undefined ? undefined : enclosingBraceRange(shellTokens, identity);
-  const manifestEntrypointOpen =
+  const manifestEntrypoint =
     contribution === undefined
       ? undefined
-      : findObjectPropertyValue(shellTokens, contribution[0], contribution[1], 'entrypoint');
-  const manifestEntrypointClose =
-    manifestEntrypointOpen === undefined ||
-    shellTokens[manifestEntrypointOpen]?.kind !== SyntaxKind.OpenBraceToken
-      ? undefined
-      : findClosingBrace(shellTokens, manifestEntrypointOpen);
-  if (manifestEntrypointOpen === undefined || manifestEntrypointClose === undefined) {
+      : nestedObjectRange(shellTokens, ...contribution, 'entrypoint');
+  if (manifestEntrypoint === undefined) {
     return false;
   }
   const providerAuthorization = generatedReadAuthorization(
@@ -1844,11 +1804,7 @@ export const hasMatchingGeneratedProviderAuthorization = (
     entrypoint[0],
     entrypoint[1],
   );
-  const manifestAuthorization = generatedReadAuthorization(
-    shellTokens,
-    manifestEntrypointOpen,
-    manifestEntrypointClose,
-  );
+  const manifestAuthorization = generatedReadAuthorization(shellTokens, ...manifestEntrypoint);
   return matchesGeneratedReadAuthorization(providerAuthorization, manifestAuthorization);
 };
 
@@ -1861,12 +1817,13 @@ export const hasGeneratedModuleApiReadContract = (
   const tokens = tokenizeGovernedClient(source);
   const camel = toCamelCase(name);
   const entrypointName = `${camel}Entrypoint`;
-  const entrypoint = topLevelExportedCallObject(
+  const entrypoint = topLevelCallObject(
     tokens,
     entrypointName,
     'defineTenantModuleEntrypoint',
+    false,
   );
-  const read = topLevelExportedCallObject(tokens, `${camel}Read`, 'defineRead');
+  const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
   if (entrypoint === undefined || read === undefined) {
     return false;
   }
@@ -1878,31 +1835,23 @@ export const hasGeneratedModuleApiReadContract = (
       generatedReadAuthorization(tokens, entrypoint[0], entrypoint[1]),
       authorization,
     ) &&
-    (hasExactObjectPropertyValue(tokens, access, [[SyntaxKind.StringLiteral, 'read']]) ||
-      hasExactObjectPropertyValue(tokens, access, [
-        [SyntaxKind.StringLiteral, 'historical_read'],
-      ])) &&
-    objectHasExactString(
-      tokens,
-      entrypoint[0],
-      entrypoint[1],
-      'entrypointKey',
-      `${moduleId}.api.${name}`,
+    ['read', 'historical_read'].some((value) =>
+      hasExactObjectPropertyValue(tokens, access, [[SyntaxKind.StringLiteral, value]]),
     ) &&
-    objectHasExactString(tokens, entrypoint[0], entrypoint[1], 'moduleKey', moduleId) &&
-    objectHasExactString(tokens, entrypoint[0], entrypoint[1], 'role', 'api') &&
-    directObjectPropertyOccurrences(tokens, read[0], read[1], 'entrypoint') === 1 &&
-    hasExactObjectPropertyValue(
-      tokens,
-      findObjectPropertyValue(tokens, read[0], read[1], 'entrypoint'),
-      [[SyntaxKind.Identifier, entrypointName]],
-    ) &&
+    objectHasExactStrings(tokens, entrypoint[0], entrypoint[1], {
+      entrypointKey: `${moduleId}.api.${name}`,
+      moduleKey: moduleId,
+      role: 'api',
+    }) &&
+    objectReferencesEntrypoint(tokens, read[0], read[1], entrypointName) &&
     ['legalEntityScope', 'permissionTarget', 'policies'].every(
       (property) => directObjectPropertyOccurrences(tokens, read[0], read[1], property) === 1,
     ) &&
-    objectHasExactString(tokens, read[0], read[1], 'owningModuleKey', moduleId) &&
-    objectHasExactString(tokens, read[0], read[1], 'readKey', `${moduleId}.api.${name}`) &&
-    objectHasExactString(tokens, read[0], read[1], 'schemaVersion', '1')
+    objectHasExactStrings(tokens, read[0], read[1], {
+      owningModuleKey: moduleId,
+      readKey: `${moduleId}.api.${name}`,
+      schemaVersion: '1',
+    })
   );
 };
 
@@ -1923,15 +1872,21 @@ export const hasGeneratedGovernedClientContract = (
   return (
     helper !== undefined &&
     hasExactGeneratedImports(tokens, expectation) &&
-    hasClientConfig(tokens, helper, expectation.ownerApiValue, expectation.defaultApiPrefix) &&
-    factoryConsumesClientConfig(tokens, helper) &&
+    hasGovernedTransportInvocation(
+      tokens,
+      helper,
+      expectation.ownerApiValue,
+      expectation.defaultApiPrefix,
+    ) &&
     exportedOperationsUseClientHelperAndGateway(tokens, helper, expectation) &&
     hasOnlyAllowedModuleStatements(tokens, helper, expectation) &&
-    identifierOccurrences(tokens, 'makeEffectBffClient') === 2 &&
-    identifierOccurrences(tokens, 'operationGateway') === 2 &&
-    identifierOccurrences(tokens, expectation.ownerApiValue) === 2 &&
-    identifierOccurrences(tokens, 'Effect') === 2 &&
-    identifierOccurrences(tokens, helper.name) === 2 &&
+    [
+      'makeGovernedEffectBffClient',
+      'operationGateway',
+      expectation.ownerApiValue,
+      'Effect',
+      helper.name,
+    ].every((name) => identifierOccurrences(tokens, name) === 2) &&
     !tokens.some(
       ({ value }) => value === 'makeEffectHttpApiClient' || value === 'HttpClientRequest',
     )
@@ -1964,46 +1919,26 @@ const directPropertyKeyOccurrences = (source: string, key: string): number => {
   return count;
 };
 
-// eslint-disable-next-line complexity -- Delimiter balance is required to reject computed or nested slot identities.
 const topLevelCommaSeparatedRanges = (
   tokens: readonly GovernedClientToken[],
 ): readonly (readonly [start: number, end: number])[] | undefined => {
-  const ranges: (readonly [start: number, end: number])[] = [];
+  const ranges: (readonly [number, number])[] = [];
+  const depth = new DelimiterDepth();
   let start = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenthesisDepth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
-    const kind = tokens[index]?.kind;
-    if (kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    } else if (kind === SyntaxKind.OpenBracketToken) {
-      bracketDepth += 1;
-    } else if (kind === SyntaxKind.CloseBracketToken) {
-      bracketDepth -= 1;
-    } else if (kind === SyntaxKind.OpenParenToken) {
-      parenthesisDepth += 1;
-    } else if (kind === SyntaxKind.CloseParenToken) {
-      parenthesisDepth -= 1;
-    }
-    if (braceDepth < 0 || bracketDepth < 0 || parenthesisDepth < 0) {
+    const kind = tokenKind(tokens, index);
+    depth.update(tokenDelimiter.get(kind ?? SyntaxKind.Unknown));
+    if (depth.hasUnmatchedClose()) {
       return undefined;
     }
-    if (
-      kind === SyntaxKind.CommaToken &&
-      braceDepth === 0 &&
-      bracketDepth === 0 &&
-      parenthesisDepth === 0
-    ) {
+    if (kind === SyntaxKind.CommaToken && depth.isTopLevel()) {
       if (start < index) {
         ranges.push([start, index]);
       }
       start = index + 1;
     }
   }
-  if (braceDepth !== 0 || bracketDepth !== 0 || parenthesisDepth !== 0) {
+  if (!depth.isTopLevel()) {
     return undefined;
   }
   if (start < tokens.length) {
@@ -2026,7 +1961,7 @@ const directSlotPropertyNames = (source: string | undefined): readonly string[] 
     const key = tokens[start];
     if (
       (key?.kind !== SyntaxKind.Identifier && key?.kind !== SyntaxKind.StringLiteral) ||
-      tokens[start + 1]?.kind !== SyntaxKind.ColonToken
+      tokenKind(tokens, start + 1) !== SyntaxKind.ColonToken
     ) {
       return undefined;
     }
@@ -2099,21 +2034,84 @@ export const hasGeneratedProviderRegistration = (
   );
 };
 
-// eslint-disable-next-line complexity -- Exact descriptor, contribution, entrypoint, and slot ownership are one contract.
+const hasProviderShellEntrypoint = (
+  tokens: readonly GovernedClientToken[],
+  contribution: readonly [number, number],
+  identity: Readonly<Record<string, string>>,
+): boolean => {
+  const range = nestedObjectRange(tokens, ...contribution, 'entrypoint');
+  return (
+    range !== undefined &&
+    directObjectHasNoSpread(tokens, ...range) &&
+    objectHasExactStrings(tokens, ...range, identity)
+  );
+};
+
+const slotOmitsIdentity = (
+  source: string | undefined,
+  identity: readonly ExpectedToken[],
+): boolean =>
+  source === undefined ||
+  sequenceOccurrencesAtBraceDepth(tokenizeGovernedClient(source), identity, 1) === 0;
+
+const hasOwnedProviderDescriptor = (
+  tokens: readonly GovernedClientToken[],
+  identity: readonly ExpectedToken[],
+  moduleId: string,
+): boolean =>
+  sequenceOccurrencesAtBraceDepth(tokens, identity, 1) === 1 &&
+  hasRelatedSequenceInObject(tokens, identity, [
+    [SyntaxKind.Identifier, 'owningModuleId'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, moduleId],
+  ]);
+
+const hasOwnedProviderShellContribution = (
+  shellTokens: readonly GovernedClientToken[],
+  shellIdentity: readonly ExpectedToken[],
+  shellContribution: readonly [number, number] | undefined,
+  shellContributionKey: string,
+  moduleId: string,
+  kind: 'report' | 'search',
+  descriptorKey: string,
+): boolean =>
+  sequenceOccurrencesAtBraceDepth(shellTokens, shellIdentity, 1) === 1 &&
+  shellContribution !== undefined &&
+  hasProviderShellEntrypoint(shellTokens, shellContribution, {
+    access: 'read',
+    entrypointKey: shellContributionKey,
+    moduleKey: moduleId,
+    role: kind,
+    scope: 'tenant',
+  }) &&
+  hasRelatedSequenceInObject(shellTokens, shellIdentity, [
+    [SyntaxKind.Identifier, kind === 'report' ? 'reportKey' : 'searchKey'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, descriptorKey],
+  ]);
+
 export const hasGeneratedProviderManifest = (
   manifest: string,
   moduleId: string,
   name: string,
   kind: 'report' | 'search',
 ): boolean => {
-  const descriptorSlot = generatedSlotSource(
-    manifest,
-    kind === 'report' ? MANIFEST_REPORT_SLOT : MANIFEST_SEARCH_SLOT,
-  );
-  const shellSlot = generatedSlotSource(
-    manifest,
-    kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
-  );
+  const [descriptorMarkers, shellMarkers, otherDescriptorMarkers, otherShellMarkers] =
+    kind === 'report'
+      ? [
+          MANIFEST_REPORT_SLOT,
+          MANIFEST_SHELL_REPORT_SLOT,
+          MANIFEST_SEARCH_SLOT,
+          MANIFEST_SHELL_SEARCH_SLOT,
+        ]
+      : [
+          MANIFEST_SEARCH_SLOT,
+          MANIFEST_SHELL_SEARCH_SLOT,
+          MANIFEST_REPORT_SLOT,
+          MANIFEST_SHELL_REPORT_SLOT,
+        ];
+  const descriptorSlot = generatedSlotSource(manifest, descriptorMarkers);
+  const shellSlot = generatedSlotSource(manifest, shellMarkers);
   if (descriptorSlot === undefined || shellSlot === undefined) {
     return false;
   }
@@ -2131,14 +2129,8 @@ export const hasGeneratedProviderManifest = (
     [SyntaxKind.ColonToken],
     [SyntaxKind.StringLiteral, shellContributionKey],
   ] satisfies readonly ExpectedToken[];
-  const otherDescriptorSlot = generatedSlotSource(
-    manifest,
-    kind === 'report' ? MANIFEST_SEARCH_SLOT : MANIFEST_REPORT_SLOT,
-  );
-  const otherShellSlot = generatedSlotSource(
-    manifest,
-    kind === 'report' ? MANIFEST_SHELL_SEARCH_SLOT : MANIFEST_SHELL_REPORT_SLOT,
-  );
+  const otherDescriptorSlot = generatedSlotSource(manifest, otherDescriptorMarkers);
+  const otherShellSlot = generatedSlotSource(manifest, otherShellMarkers);
   const shellIdentityIndex = findSequenceAtBraceDepth(
     shellTokens,
     shellIdentity,
@@ -2150,55 +2142,19 @@ export const hasGeneratedProviderManifest = (
     shellIdentityIndex === undefined
       ? undefined
       : enclosingBraceRange(shellTokens, shellIdentityIndex);
-  const entrypointOpen =
-    shellContribution === undefined
-      ? undefined
-      : findObjectPropertyValue(
-          shellTokens,
-          shellContribution[0],
-          shellContribution[1],
-          'entrypoint',
-        );
-  const entrypointClose =
-    entrypointOpen === undefined || shellTokens[entrypointOpen]?.kind !== SyntaxKind.OpenBraceToken
-      ? undefined
-      : findClosingBrace(shellTokens, entrypointOpen);
   return (
-    sequenceOccurrencesAtBraceDepth(descriptorTokens, descriptorIdentity, 1) === 1 &&
-    hasRelatedSequenceInObject(descriptorTokens, descriptorIdentity, [
-      [SyntaxKind.Identifier, 'owningModuleId'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.StringLiteral, moduleId],
-    ]) &&
-    sequenceOccurrencesAtBraceDepth(shellTokens, shellIdentity, 1) === 1 &&
-    entrypointOpen !== undefined &&
-    entrypointClose !== undefined &&
-    directObjectHasNoSpread(shellTokens, entrypointOpen, entrypointClose) &&
-    objectHasExactString(shellTokens, entrypointOpen, entrypointClose, 'access', 'read') &&
-    objectHasExactString(
+    hasOwnedProviderDescriptor(descriptorTokens, descriptorIdentity, moduleId) &&
+    hasOwnedProviderShellContribution(
       shellTokens,
-      entrypointOpen,
-      entrypointClose,
-      'entrypointKey',
+      shellIdentity,
+      shellContribution,
       shellContributionKey,
+      moduleId,
+      kind,
+      descriptorKey,
     ) &&
-    objectHasExactString(shellTokens, entrypointOpen, entrypointClose, 'moduleKey', moduleId) &&
-    objectHasExactString(shellTokens, entrypointOpen, entrypointClose, 'role', kind) &&
-    objectHasExactString(shellTokens, entrypointOpen, entrypointClose, 'scope', 'tenant') &&
-    hasRelatedSequenceInObject(shellTokens, shellIdentity, [
-      [SyntaxKind.Identifier, kind === 'report' ? 'reportKey' : 'searchKey'],
-      [SyntaxKind.ColonToken],
-      [SyntaxKind.StringLiteral, descriptorKey],
-    ]) &&
-    (otherDescriptorSlot === undefined ||
-      sequenceOccurrencesAtBraceDepth(
-        tokenizeGovernedClient(otherDescriptorSlot),
-        descriptorIdentity,
-        1,
-      ) === 0) &&
-    (otherShellSlot === undefined ||
-      sequenceOccurrencesAtBraceDepth(tokenizeGovernedClient(otherShellSlot), shellIdentity, 1) ===
-        0)
+    slotOmitsIdentity(otherDescriptorSlot, descriptorIdentity) &&
+    slotOmitsIdentity(otherShellSlot, shellIdentity)
   );
 };
 
@@ -2230,17 +2186,13 @@ const slotProviderNames = (
         [SyntaxKind.StringLiteral],
       ])
     ) {
-      const value = tokens[index + 2]?.value ?? '';
+      const value = tokenValue(tokens, index + 2) ?? '';
       const name = value.startsWith(prefix) ? value.slice(prefix.length) : '';
       if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name)) {
         names.push(name);
       }
     }
-    if (tokens[index]?.kind === SyntaxKind.OpenBraceToken) {
-      braceDepth += 1;
-    } else if (tokens[index]?.kind === SyntaxKind.CloseBraceToken) {
-      braceDepth -= 1;
-    }
+    braceDepth += tokenBraceDelta(tokenKind(tokens, index));
   }
   return names;
 };
@@ -2410,7 +2362,7 @@ const hasGatewayBindingMutation = (tokens: readonly GovernedClientToken[]): bool
         [SyntaxKind.OpenParenToken],
         [SyntaxKind.Identifier, binding.value],
       ]) ||
-      (tokens[index + 1]?.kind === SyntaxKind.DotToken &&
+      (tokenKind(tokens, index + 1) === SyntaxKind.DotToken &&
         findSequence(
           tokens,
           [[SyntaxKind.EqualsToken]],
@@ -2464,8 +2416,9 @@ export const hasGeneratedOperationGatewayContract = (
     factory !== undefined &&
     factoryEnd !== undefined &&
     hasExactGeneratedGatewayFactory(tokens, factory, factoryEnd) &&
-    hasExclusiveNamedImportFrom(source, 'issueGatewayContext', '@app/shared-contracts') &&
-    hasExclusiveNamedImportFrom(source, 'makeSharedOperationGateway', '@app/shared-contracts') &&
+    ['issueGatewayContext', 'makeSharedOperationGateway'].every((name) =>
+      hasExclusiveNamedImportFrom(source, name, '@app/shared-contracts'),
+    ) &&
     findSequence(
       tokens,
       [
@@ -2492,9 +2445,3 @@ export const hasGeneratedOperationGatewayContract = (
     ])
   );
 };
-
-/**
- * Recognizes the complete semantic seam emitted by the governed module-API generator.
- * File presence alone is intentionally insufficient: every public descriptor must be
- * owner-published, privately registered, authenticated, gated, and contract-derived.
- */

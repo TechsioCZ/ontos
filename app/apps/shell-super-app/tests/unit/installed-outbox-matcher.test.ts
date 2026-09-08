@@ -1,51 +1,11 @@
-import { expect, it } from '@app/effect-rstest';
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
+import { expect, it } from 'effect-rstest';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { matchInstalledOutboxMessagesOnce } from '../../api/modules/installed-outbox-matcher.ts';
 
-const contract = (
-  appId: string,
-  moduleId: string,
-  outboxSubscriptions: readonly object[] = [],
-) => ({
-  deployment: { appId, buildMarker: `${appId}-build` },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: ['inactive', 'active'],
-    },
-    module: {
-      description: `${moduleId} module`,
-      displayName: moduleId,
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions },
-  schemaVersion: '2',
-});
+const contract = (appId: string, moduleId: string, outboxSubscriptions: readonly object[] = []) =>
+  makeModuleContractFixture({ appId, moduleId, outboxSubscriptions });
 
 it.effect('passes a dormant subscription with an absent producer to Core matching', () =>
   Effect.gen(function* verifyCase1() {

@@ -1,4 +1,4 @@
-import type { SupportRecoveryPrincipalContextResolverService } from '@app/core-runtime';
+import { rs } from 'effect-rstest';
 import { Effect } from 'effect';
 import type {
   SupportAuthProvider,
@@ -8,11 +8,6 @@ import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 
 const unconfiguredEffect = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Rejection belongs to the Better Auth SDK fixture API.
-const unconfiguredPromise = async (operation: string) => {
-  throw new Error(`${operation} is not configured in this test`);
-};
-
 const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
   createFixtureUser: () => unconfiguredEffect('createFixtureUser'),
@@ -26,9 +21,15 @@ const authenticationDefaults: AuthenticationServiceContract = {
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {
-  getSession: unconfiguredPromise.bind(undefined, 'getSession'),
-  impersonateUser: unconfiguredPromise.bind(undefined, 'impersonateUser'),
-  stopImpersonating: unconfiguredPromise.bind(undefined, 'stopImpersonating'),
+  getSession: rs
+    .fn<SupportAuthProvider['api']['getSession']>()
+    .mockRejectedValue(new Error('getSession is not configured in this test')),
+  impersonateUser: rs
+    .fn<SupportAuthProvider['api']['impersonateUser']>()
+    .mockRejectedValue(new Error('impersonateUser is not configured in this test')),
+  stopImpersonating: rs
+    .fn<SupportAuthProvider['api']['stopImpersonating']>()
+    .mockRejectedValue(new Error('stopImpersonating is not configured in this test')),
 };
 
 const storeDefaults: SupportImpersonationStore = {
@@ -39,10 +40,6 @@ const storeDefaults: SupportImpersonationStore = {
   loadOriginalSession: () => unconfiguredEffect('loadOriginalSession'),
   loadRecoveries: () => unconfiguredEffect('loadRecoveries'),
   updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
-};
-
-const supportRecoveryDefaults: SupportRecoveryPrincipalContextResolverService = {
-  resolveStoppedImpersonation: () => unconfiguredEffect('resolveStoppedImpersonation'),
 };
 
 export const makeAuthenticationServiceDouble = (
@@ -56,10 +53,3 @@ export const makeSupportAuthProviderDouble = (
 export const makeSupportImpersonationStoreDouble = (
   overrides: Partial<SupportImpersonationStore> = {},
 ): SupportImpersonationStore => ({ ...storeDefaults, ...overrides });
-
-export const makeSupportRecoveryPrincipalDouble = (
-  overrides: Partial<SupportRecoveryPrincipalContextResolverService> = {},
-): SupportRecoveryPrincipalContextResolverService => ({
-  ...supportRecoveryDefaults,
-  ...overrides,
-});

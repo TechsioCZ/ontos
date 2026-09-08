@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { STAGE_CONTEXTS } from '../../src/install/stage-context-bootstrap.ts';
 
 it('defines the exact Techsio and Siampark stage contexts', () => {

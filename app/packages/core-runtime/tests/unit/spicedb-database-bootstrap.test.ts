@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Reads repository fixture files through the Node promise API; expires: 2026-12-31.
 import { Effect } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { readFile } from 'node:fs/promises';
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../src/install/spicedb-database-config.ts';
 import { toModuleAccessObjectId } from '../../src/permissions/context-access.ts';

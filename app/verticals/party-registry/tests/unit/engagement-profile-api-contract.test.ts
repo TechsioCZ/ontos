@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 // @effect-diagnostics nodeBuiltinImport:off -- Source-contract test reads actual module files; expires: 2026-12-31.
 import { readFile } from 'node:fs/promises';
 import { Effect, Option, Schema } from 'effect';

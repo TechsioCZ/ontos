@@ -1,8 +1,10 @@
+import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 // @effect-diagnostics preferSchemaOverJson:off -- Verifies native JSON serialization of errors and schema AST metadata; expires: 2026-12-31.
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
-import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
+import type { OntosModuleDeploymentContract } from '../../src/index.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -25,67 +27,15 @@ import {
 const contract = (
   moduleId: string,
   supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates'],
-): OntosModuleDeploymentContract => ({
-  deployment: { appId: 'unit-module', buildMarker: 'unit-build' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates,
-    },
-    module: {
-      description: 'Unit module',
-      displayName: 'Unit module',
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
-
-const catalog = (
-  ...contracts: readonly OntosModuleDeploymentContract[]
-): InstalledModuleCatalog => {
-  const byModule = new Map(contracts.map((item) => [item.manifest.module.id, item]));
-  return Object.freeze({
-    contracts: Object.freeze([...contracts]),
-    deploymentAppIds: Object.freeze(contracts.map(({ deployment }) => deployment.appId)),
-    deploymentStatuses: Object.freeze(
-      contracts.map((moduleContract) => ({
-        appId: moduleContract.deployment.appId,
-        moduleId: moduleContract.manifest.module.id,
-        status: 'available' as const,
-      })),
-    ),
-    getByDeploymentAppId: (appId: string) =>
-      contracts.find(({ deployment }) => deployment.appId === appId),
-    getByModuleId: (moduleId: string) => byModule.get(moduleId),
-    moduleIds: Object.freeze(contracts.map(({ manifest }) => manifest.module.id)),
-    outboxSubscriptions: Object.freeze([]),
+): OntosModuleDeploymentContract =>
+  makeModuleContractFixture({
+    appId: 'unit-module',
+    buildMarker: 'unit-build',
+    description: 'Unit module',
+    displayName: 'Unit module',
+    moduleId,
+    supportedStates,
   });
-};
 
 it.effect('uses one canonical tenant module state schema', () =>
   Effect.gen(function* testScenario1() {

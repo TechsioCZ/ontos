@@ -331,6 +331,10 @@ const requireReadAuthorization = (
     return { authorization: flags.authorizationMode };
   });
 
+const isActionProvisioning = Schema.is(Schema.Literals(['tenant_membership_default', 'explicit']));
+const isAccessFiltering = Schema.is(Schema.Literals(['resource_permission', 'tenant_scope']));
+const isSearchLegalEntityScope = Schema.is(Schema.Literals(['required', 'optional']));
+
 const commandDefinitions = {
   action: defineCommand({
     flags: [
@@ -375,10 +379,7 @@ Options:
         if (flags.authorizationMode !== 'action_execution') {
           return yield* failScaffolding('--authorization must be action_execution for Actions');
         }
-        if (
-          flags.provisioning !== 'tenant_membership_default' &&
-          flags.provisioning !== 'explicit'
-        ) {
+        if (!isActionProvisioning(flags.provisioning)) {
           return yield* failScaffolding(
             '--provisioning must be tenant_membership_default or explicit',
           );
@@ -824,15 +825,15 @@ Options:
       Effect.gen(function* searchProviderAccessConfigEffect() {
         const { accessFiltering, legalEntityScope, tenantPermission } = flags;
         const filters = (flags.requestFilters ?? '').split(',').filter((value) => value !== '');
-        if (accessFiltering !== 'resource_permission' && accessFiltering !== 'tenant_scope') {
+        if (!isAccessFiltering(accessFiltering)) {
           return yield* failScaffolding(
             '--access-filtering must be resource_permission or tenant_scope',
           );
         }
-        if (legalEntityScope !== 'required' && legalEntityScope !== 'optional') {
+        if (!isSearchLegalEntityScope(legalEntityScope)) {
           return yield* failScaffolding('--legal-entity-scope must be required or optional');
         }
-        if (filters.some((filter) => filter !== 'includeArchived' && filter !== 'role')) {
+        if (!filters.every(isRequestFilter)) {
           return yield* failScaffolding(
             '--request-filters may contain only includeArchived and role',
           );
@@ -860,6 +861,36 @@ export const isScaffoldCommand = Schema.is(ScaffoldCommandSchema);
 
 export const getHelpText = (command: ScaffoldCommand): string => commandDefinitions[command].help;
 
+const isFlagArgument = (flag: string): boolean =>
+  flag.startsWith('--') && flag !== '--' && !flag.includes('=');
+
+const parseFlagPair = (
+  command: ScaffoldCommand,
+  allowed: ReadonlySet<string>,
+  parsed: Map<string, string>,
+  flag: string | undefined,
+  value: string | undefined,
+) =>
+  Effect.gen(function* parseFlagPairEffect() {
+    if (flag === undefined || !isFlagArgument(flag)) {
+      return yield* failScaffolding(
+        `invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`,
+      );
+    }
+    const name = flag.slice(2);
+    if (!allowed.has(name)) {
+      return yield* failScaffolding(`unknown flag --${name} for scaffold:${command}`);
+    }
+    if (parsed.has(name)) {
+      return yield* failScaffolding(`flag --${name} may be supplied only once`);
+    }
+    if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
+      return yield* failScaffolding(`flag --${name} requires one non-empty value`);
+    }
+    parsed.set(name, value);
+    return yield* Effect.void;
+  });
+
 const normalizeForwardedArguments = (argumentsList: readonly string[]): readonly string[] => {
   if (argumentsList[0] === '--') {
     return argumentsList.slice(1);
@@ -878,22 +909,7 @@ const parseFlags = (
     for (let index = 0; index < argumentsList.length; index += 2) {
       const flag = argumentsList[index];
       const value = argumentsList[index + 1];
-      if (flag === undefined || !flag.startsWith('--') || flag === '--' || flag.includes('=')) {
-        return yield* failScaffolding(
-          `invalid argument ${flag ?? '<missing>'}; use separate --flag value pairs`,
-        );
-      }
-      const name = flag.slice(2);
-      if (!allowed.has(name)) {
-        return yield* failScaffolding(`unknown flag --${name} for scaffold:${command}`);
-      }
-      if (parsed.has(name)) {
-        return yield* failScaffolding(`flag --${name} may be supplied only once`);
-      }
-      if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
-        return yield* failScaffolding(`flag --${name} requires one non-empty value`);
-      }
-      parsed.set(name, value);
+      yield* parseFlagPair(command, allowed, parsed, flag, value);
     }
     for (const required of definition.requiredFlags) {
       if (!parsed.has(required)) {
@@ -974,215 +990,45 @@ const cliFlags = {
   worker: optionalTextFlag('worker'),
 } as const;
 
+const cliFlagName = (key: string): string =>
+  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
+
 const toCliArguments = (
   values: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>>,
-): readonly string[] => {
-  const entries: readonly (readonly [string, Option.Option<string> | undefined])[] = [
-    [ACCESS_FILTERING_FLAG, values.accessFiltering],
-    ['action', values.action],
-    ['authorization', values.authorization],
-    ['kind', values.kind],
-    [LEGAL_ENTITY_SCOPE_FLAG, values.legalEntityScope],
-    ['module', values.module],
-    ['name', values.name],
-    ['operation', values.operation],
-    ['page', values.page],
-    ['permission', values.permission],
-    ['policy', values.policy],
-    ['producer', values.producer],
-    ['provider', values.provider],
-    ['provisioning', values.provisioning],
-    [REQUEST_FILTERS_FLAG, values.requestFilters],
-    ['resource', values.resource],
-    ['scope', values.scope],
-    ['service', values.service],
-    [TENANT_PERMISSION_FLAG, values.tenantPermission],
-    ['topic', values.topic],
-    ['url', values.url],
-    ['vertical', values.vertical],
-    ['worker', values.worker],
-  ];
-  return entries.flatMap(([name, value]) =>
-    value !== undefined && Option.isSome(value) ? [`--${name}`, value.value] : [],
+): readonly string[] =>
+  Object.entries(values).flatMap(([key, value]) =>
+    value !== undefined && Option.isSome(value) ? [`--${cliFlagName(key)}`, value.value] : [],
   );
-};
 
 const executeCliCommand =
   (command: ScaffoldCommand) =>
-  (
-    values: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>> & {
-      readonly forwarded: readonly string[];
-    },
-  ) =>
+  ({
+    forwarded,
+    ...values
+  }: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>> & {
+    readonly forwarded: readonly string[];
+  }) =>
     Effect.gen(function* executeCliCommandEffect() {
-      const result = yield* runScaffoldEffect(command, [
-        ...toCliArguments(values),
-        ...values.forwarded,
-      ]);
+      const result = yield* runScaffoldEffect(command, [...toCliArguments(values), ...forwarded]);
       if (result.kind === 'help') {
         yield* Console.log(result.help);
       }
     });
 
-const cliSubcommands = [
+const cliSubcommands = scaffoldCommandValues.map((command) =>
   Command.make(
-    scaffoldCommandValues[0],
+    command,
     {
-      action: cliFlags.action,
-      authorization: cliFlags.authorization,
+      ...Object.fromEntries(
+        Object.entries(cliFlags).filter(([key]) =>
+          commandDefinitions[command].flags.includes(cliFlagName(key)),
+        ),
+      ),
       forwarded: forwardedArguments,
-      legalEntityScope: cliFlags.legalEntityScope,
-      module: cliFlags.module,
-      provisioning: cliFlags.provisioning,
-      scope: cliFlags.scope,
-      vertical: cliFlags.vertical,
     },
-    executeCliCommand(scaffoldCommandValues[0]),
+    executeCliCommand(command),
   ),
-  Command.make(
-    scaffoldCommandValues[1],
-    { forwarded: forwardedArguments, service: cliFlags.service, vertical: cliFlags.vertical },
-    executeCliCommand(scaffoldCommandValues[1]),
-  ),
-  Command.make(
-    scaffoldCommandValues[2],
-    {
-      forwarded: forwardedArguments,
-      operation: cliFlags.operation,
-      provider: cliFlags.provider,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[2]),
-  ),
-  Command.make(
-    scaffoldCommandValues[3],
-    { forwarded: forwardedArguments, vertical: cliFlags.vertical },
-    executeCliCommand(scaffoldCommandValues[3]),
-  ),
-  Command.make(
-    scaffoldCommandValues[4],
-    {
-      authorization: cliFlags.authorization,
-      forwarded: forwardedArguments,
-      page: cliFlags.page,
-      permission: cliFlags.permission,
-      url: cliFlags.url,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[4]),
-  ),
-  Command.make(
-    scaffoldCommandValues[5],
-    { forwarded: forwardedArguments, module: cliFlags.module, vertical: cliFlags.vertical },
-    executeCliCommand(scaffoldCommandValues[5]),
-  ),
-  Command.make(
-    scaffoldCommandValues[6],
-    {
-      authorization: cliFlags.authorization,
-      forwarded: forwardedArguments,
-      name: cliFlags.name,
-      permission: cliFlags.permission,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[6]),
-  ),
-  Command.make(
-    scaffoldCommandValues[7],
-    {
-      action: cliFlags.action,
-      forwarded: forwardedArguments,
-      topic: cliFlags.topic,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[7]),
-  ),
-  Command.make(
-    scaffoldCommandValues[8],
-    {
-      authorization: cliFlags.authorization,
-      forwarded: forwardedArguments,
-      producer: cliFlags.producer,
-      topic: cliFlags.topic,
-      vertical: cliFlags.vertical,
-      worker: cliFlags.worker,
-    },
-    executeCliCommand(scaffoldCommandValues[8]),
-  ),
-  Command.make(
-    scaffoldCommandValues[9],
-    {
-      forwarded: forwardedArguments,
-      policy: cliFlags.policy,
-      scope: cliFlags.scope,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[9]),
-  ),
-  Command.make(
-    scaffoldCommandValues[10],
-    {
-      authorization: cliFlags.authorization,
-      forwarded: forwardedArguments,
-      name: cliFlags.name,
-      permission: cliFlags.permission,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[10]),
-  ),
-  Command.make(
-    scaffoldCommandValues[11],
-    {
-      authorization: cliFlags.authorization,
-      forwarded: forwardedArguments,
-      name: cliFlags.name,
-      permission: cliFlags.permission,
-      resource: cliFlags.resource,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[11]),
-  ),
-  Command.make(
-    scaffoldCommandValues[12],
-    { forwarded: forwardedArguments, resource: cliFlags.resource, vertical: cliFlags.vertical },
-    executeCliCommand(scaffoldCommandValues[12]),
-  ),
-  Command.make(
-    scaffoldCommandValues[13],
-    {
-      forwarded: forwardedArguments,
-      kind: cliFlags.kind,
-      name: cliFlags.name,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[13]),
-  ),
-  Command.make(
-    scaffoldCommandValues[14],
-    {
-      accessFiltering: cliFlags.accessFiltering,
-      forwarded: forwardedArguments,
-      legalEntityScope: cliFlags.legalEntityScope,
-      name: cliFlags.name,
-      requestFilters: cliFlags.requestFilters,
-      tenantPermission: cliFlags.tenantPermission,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[14]),
-  ),
-  Command.make(
-    scaffoldCommandValues[15],
-    {
-      authorization: cliFlags.authorization,
-      forwarded: forwardedArguments,
-      name: cliFlags.name,
-      permission: cliFlags.permission,
-      resource: cliFlags.resource,
-      vertical: cliFlags.vertical,
-    },
-    executeCliCommand(scaffoldCommandValues[15]),
-  ),
-] as const;
+);
 
 const cliRoot = Command.make('scaffold').pipe(Command.withSubcommands(cliSubcommands));
 

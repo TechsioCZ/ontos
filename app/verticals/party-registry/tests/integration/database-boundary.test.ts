@@ -1,11 +1,10 @@
-import { assert, expect, it } from '@app/effect-rstest';
+import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { assert, expect, it } from 'effect-rstest';
 
-import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
-
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
-import { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
@@ -56,73 +55,35 @@ const actionA = 'aa000000-0000-4000-8000-000000000001';
 const principalA = 'ab000000-0000-4000-8000-000000000001';
 const fixtureTenants = [tenantA, tenantB] as const;
 
-const hasPostgreSqlCode =
-  (expected: string) =>
-  (error: Parameters<typeof findPostgresFailure>[0]): boolean =>
-    Option.exists(findPostgresFailure(error), ({ code }) => code === expected);
-
 it.live('enforces Party owner invariants, tenant isolation, and independent fact lifecycles', () =>
   Effect.gen(function* testEffect1() {
-    const connections = yield* loadDatabaseConnectionPair();
-    const adminPool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-      (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+    const { admin, runtime } = yield* openBoundaryDatabases(
+      (pool) => makeTestDatabaseFromPool(pool, partyRelations),
+      1,
     );
-    const runtimePool = yield* Effect.acquireRelease(
-      Effect.sync(
-        () => new Pool({ connectionString: connections.runtime.connectionString, max: 1 }),
-      ),
-      (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-    );
-    const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations);
-    const runtime = yield* makeTestDatabaseFromPool(runtimePool, partyRelations);
 
     const cleanup = () =>
-      Effect.gen(function* testEffect2() {
-        yield* admin
-          .delete(partyCorrections)
-          .where(inArray(partyCorrections.tenantId, fixtureTenants));
-        yield* admin.delete(partyAliases).where(inArray(partyAliases.tenantId, fixtureTenants));
-        yield* admin.delete(partyMerges).where(inArray(partyMerges.tenantId, fixtureTenants));
-        yield* admin
-          .delete(partyMatchDecisions)
-          .where(inArray(partyMatchDecisions.tenantId, fixtureTenants));
-        yield* admin
-          .delete(duplicateCandidateCaseParties)
-          .where(inArray(duplicateCandidateCaseParties.tenantId, fixtureTenants));
-        yield* admin
-          .delete(duplicateCandidateCases)
-          .where(inArray(duplicateCandidateCases.tenantId, fixtureTenants));
-        yield* admin
-          .delete(counterpartyRoleAdminReadModels)
-          .where(inArray(counterpartyRoleAdminReadModels.tenantId, fixtureTenants));
-        yield* admin
-          .delete(counterpartyAdminReadModels)
-          .where(inArray(counterpartyAdminReadModels.tenantId, fixtureTenants));
-        yield* admin
-          .delete(counterpartyRolePeriods)
-          .where(inArray(counterpartyRolePeriods.tenantId, fixtureTenants));
-        yield* admin.delete(counterparties).where(inArray(counterparties.tenantId, fixtureTenants));
-        yield* admin
-          .delete(partyRelationships)
-          .where(inArray(partyRelationships.tenantId, fixtureTenants));
-        yield* admin
-          .delete(partyContactPointPurposes)
-          .where(inArray(partyContactPointPurposes.tenantId, fixtureTenants));
-        yield* admin
-          .delete(partyContactPoints)
-          .where(inArray(partyContactPoints.tenantId, fixtureTenants));
-        yield* admin
-          .delete(partyIdentifierClaims)
-          .where(inArray(partyIdentifierClaims.tenantId, fixtureTenants));
-        yield* admin
-          .delete(partyOfficialIdentifiers)
-          .where(inArray(partyOfficialIdentifiers.tenantId, fixtureTenants));
-        yield* admin
-          .delete(partyFactAssertions)
-          .where(inArray(partyFactAssertions.tenantId, fixtureTenants));
-        yield* admin.delete(parties).where(inArray(parties.tenantId, fixtureTenants));
-      });
+      purgeFixtureRows(
+        [
+          partyCorrections,
+          partyAliases,
+          partyMerges,
+          partyMatchDecisions,
+          duplicateCandidateCaseParties,
+          duplicateCandidateCases,
+          counterpartyRoleAdminReadModels,
+          counterpartyAdminReadModels,
+          counterpartyRolePeriods,
+          counterparties,
+          partyRelationships,
+          partyContactPointPurposes,
+          partyContactPoints,
+          partyIdentifierClaims,
+          partyOfficialIdentifiers,
+          partyFactAssertions,
+          parties,
+        ].map((table) => admin.delete(table).where(inArray(table.tenantId, fixtureTenants))),
+      );
 
     const withTenant = <Value, Failure>(
       tenantId: string,
@@ -440,11 +401,12 @@ it.live('enforces Party owner invariants, tenant isolation, and independent fact
       .select()
       .from(partyContactPoints)
       .where(eq(partyContactPoints.contactPointId, emailA2));
-    expect(scheduledContactEnd?.isCurrent).toBe(true);
-    expect(scheduledContactEnd?.endReason).toBe('Future email retirement scheduled');
-    expect(scheduledContactEnd?.evidenceReference).toBe('evidence:original-contact:1');
-    expect(scheduledContactEnd?.additionalEvidenceRefs).toEqual(['evidence:additional-contact:1']);
-    expect(scheduledContactEnd?.endEvidenceRefs).toEqual([]);
+    assert.ok(scheduledContactEnd);
+    expect(scheduledContactEnd.isCurrent).toBe(true);
+    expect(scheduledContactEnd.endReason).toBe('Future email retirement scheduled');
+    expect(scheduledContactEnd.evidenceReference).toBe('evidence:original-contact:1');
+    expect(scheduledContactEnd.additionalEvidenceRefs).toEqual(['evidence:additional-contact:1']);
+    expect(scheduledContactEnd.endEvidenceRefs).toEqual([]);
     const [scheduledPurposeEnd] = yield* admin
       .select()
       .from(partyContactPointPurposes)

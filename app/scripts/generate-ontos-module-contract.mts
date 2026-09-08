@@ -339,49 +339,63 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
     const topology = yield* Schema.decodeUnknownEffect(ReferenceTopologyTextSchema)(
       topologySource,
     ).pipe(Effect.mapError((cause) => failure('reference topology is invalid', cause)));
-    const appId = packageJson.modernjs?.appId;
-    const topologyEntries = topology.verticals?.filter(
-      (entry) =>
-        entry.id === appId &&
-        entry.package === packageJson.name &&
-        entry.path === `verticals/${vertical}`,
-    );
-    if (appId === undefined || topologyEntries?.length !== 1) {
-      return yield* failure(
-        'vertical package and topology deployment identity do not match exactly',
+    const matchesOwnerModule = () =>
+      packageJson.modernjs?.ontosModule?.moduleId === owner.manifest.module.id &&
+      packageJson.modernjs.ontosModule.schemaVersion ===
+        ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION;
+    const validateDeploymentIdentity = Effect.gen(function* validateDeploymentIdentityEffect() {
+      const appId = packageJson.modernjs?.appId;
+      const topologyEntries = topology.verticals?.filter(
+        (entry) =>
+          entry.id === appId &&
+          entry.package === packageJson.name &&
+          entry.path === `verticals/${vertical}`,
       );
-    }
-    if (
-      packageJson.modernjs?.ontosModule?.moduleId !== owner.manifest.module.id ||
-      packageJson.modernjs.ontosModule.schemaVersion !==
-        ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION
-    ) {
-      return yield* failure('generated package module marker does not match the owner manifest');
-    }
-    const [topologyEntry] = topologyEntries;
-    if (topologyEntry === undefined || topologyEntry.moduleFederation?.name === undefined) {
-      return yield* failure('vertical topology Module Federation boundary is missing');
-    }
-    const moduleFederationName = topologyEntry.moduleFederation.name;
-    const exposes = yield* componentExposes(verticalDirectory);
-    const componentKeys = Object.keys(owner.manifest.publicSurface.components);
-    for (const key of componentKeys) {
-      if (!exposes.has(`./${toPascalCase(key)}`)) {
-        return yield* failure(`public component ${key} has no matching Module Federation exposure`);
+      if (appId === undefined || topologyEntries?.length !== 1) {
+        return yield* failure(
+          'vertical package and topology deployment identity do not match exactly',
+        );
       }
-    }
-    const safeRuntime = extractVerticalRuntimeSafeDescriptors(owner.registration);
-    const manifestActionKeys = sorted(
-      owner.manifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey),
-      (left, right) => left.localeCompare(right),
-    );
-    const runtimeActionKeys = safeRuntime.actions.map(({ actionKey }) => actionKey);
-    if (
-      manifestActionKeys.length !== runtimeActionKeys.length ||
-      manifestActionKeys.some((actionKey, index) => actionKey !== runtimeActionKeys[index])
-    ) {
-      return yield* failure('manifest Actions and private runtime Action descriptors do not match');
-    }
+      if (!matchesOwnerModule()) {
+        return yield* failure('generated package module marker does not match the owner manifest');
+      }
+      const [topologyEntry] = topologyEntries;
+      if (topologyEntry === undefined || topologyEntry.moduleFederation?.name === undefined) {
+        return yield* failure('vertical topology Module Federation boundary is missing');
+      }
+      const moduleFederationName = topologyEntry.moduleFederation.name;
+
+      return { appId, moduleFederationName, topologyEntry };
+    });
+    const { appId, moduleFederationName, topologyEntry } = yield* validateDeploymentIdentity;
+    const exposes = yield* componentExposes(verticalDirectory);
+    const validatePublicDescriptors = Effect.gen(function* validatePublicDescriptorsEffect() {
+      const componentKeys = Object.keys(owner.manifest.publicSurface.components);
+      for (const key of componentKeys) {
+        if (!exposes.has(`./${toPascalCase(key)}`)) {
+          return yield* failure(
+            `public component ${key} has no matching Module Federation exposure`,
+          );
+        }
+      }
+      const safeRuntime = extractVerticalRuntimeSafeDescriptors(owner.registration);
+      const manifestActionKeys = sorted(
+        owner.manifest.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey),
+        (left, right) => left.localeCompare(right),
+      );
+      const runtimeActionKeys = safeRuntime.actions.map(({ actionKey }) => actionKey);
+      if (
+        manifestActionKeys.length !== runtimeActionKeys.length ||
+        manifestActionKeys.some((actionKey, index) => actionKey !== runtimeActionKeys[index])
+      ) {
+        return yield* failure(
+          'manifest Actions and private runtime Action descriptors do not match',
+        );
+      }
+
+      return { componentKeys, safeRuntime };
+    });
+    const { componentKeys, safeRuntime } = yield* validatePublicDescriptors;
     const events = yield* Effect.forEach(
       owner.manifest.publicSurface.events,
       (event) =>

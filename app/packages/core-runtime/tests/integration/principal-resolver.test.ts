@@ -1,12 +1,11 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Predicate } from 'effect';
-import { Pool } from 'pg';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
 
 const tenantOne = '10000000-0000-4000-8000-000000000001';
 const tenantTwo = '10000000-0000-4000-8000-000000000002';
@@ -19,11 +18,7 @@ it.live(
   () =>
     Effect.gen(function* principalResolverIntegration() {
       const configuration = yield* loadDatabaseConfig();
-      const pool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-        (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
-      );
-      const database = yield* makeTestDatabaseFromPool(pool, coreRelations);
+      const { executor: database } = yield* makeCoreDatabase(configuration);
       const resolver = makePrincipalResolver({ executor: database });
       const cleanup = Effect.gen(function* cleanPrincipalResolverFixtures() {
         yield* database

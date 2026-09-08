@@ -4,6 +4,7 @@ import type {
   HttpApi,
   HttpApiGroup,
 } from '@modern-js/plugin-bff/effect-client';
+import { Redacted } from 'effect';
 import { Headers as HttpHeaders, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 const EffectBffOperationContextSchema = Schema.Struct({
@@ -97,4 +98,57 @@ export const makeEffectBffClient = <ApiId extends string, Groups extends HttpApi
       ? Effect.succeed(null)
       : Effect.fromResult(encodeOperationContext(operationContext));
   return operationContextText.pipe(Effect.flatMap(makeClient));
+};
+
+interface GovernedEffectBffClientConfig<
+  ApiId extends string,
+  Groups extends HttpApiGroup.Constraint,
+> {
+  readonly api: HttpApi.HttpApi<ApiId, Groups>;
+  readonly credential: Redacted.Redacted;
+  readonly defaultApiPrefix: string | URL;
+  readonly requestCorrelation: string;
+}
+
+const isGovernedBaseUrl = (value: string): boolean => {
+  const url = URL.parse(value, 'https://relative-owner.invalid');
+  return (
+    value.trim() === value &&
+    !value.includes('\\') &&
+    !value.startsWith('//') &&
+    (value.startsWith('/') || /^https?:\/\//u.test(value)) &&
+    url !== null &&
+    (url.protocol === 'https:' || url.protocol === 'http:') &&
+    url.username === '' &&
+    url.password === ''
+  );
+};
+
+/** Fresh per-invocation transport; credentials remain redacted until HTTP header construction. */
+export const makeGovernedEffectBffClient = <
+  ApiId extends string,
+  Groups extends HttpApiGroup.Constraint,
+>(
+  {
+    api,
+    credential,
+    defaultApiPrefix,
+    requestCorrelation,
+  }: GovernedEffectBffClientConfig<ApiId, Groups>,
+  options: Pick<EffectBffClientOptions, 'baseUrl'>,
+) => {
+  const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
+  const clientConfig = {
+    api,
+    baseUrl,
+    defaultApiPrefix,
+    transportHeaders: {
+      authorization: Redacted.value(credential),
+      'x-correlation-id': requestCorrelation,
+    },
+  };
+  return Schema.decodeUnknownEffect(Schema.Literal(true))(isGovernedBaseUrl(baseUrl)).pipe(
+    Effect.map(() => clientConfig),
+    Effect.flatMap(makeEffectBffClient),
+  );
 };

@@ -53,17 +53,26 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Ranged, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Ranged } from '@oxlint/plugins';
 
-import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings as ImportedEffectBindings } from '../shared/effect-imports.ts';
 type EffectBindings = ImportedEffectBindings & { context: Context };
-import { globToRegExp, isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
+import { globToRegExp, inScriptScope, scriptScope, matchesAny } from '../shared/paths.ts';
+
+import {
+  parentOf,
+  skipWrappers as climbWrappers,
+  unwrapNode,
+  nearestFunction as enclosingFunction,
+  syntax,
+  literalText,
+  propertyText,
+} from '../shared/ast.ts';
+import { provenance } from '../shared/provenance.ts';
+import { stringList, booleanOption } from '../shared/options.ts';
 
 type AnyNode = ESTree.Node;
-
-/** Run adapters that legitimately sit at the executable edge (`Effect.*` or a `ManagedRuntime`). */
-const RUN_ADAPTER = /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?(?:With)?$/u;
 
 /** Wrappers that do not change "is this expression the callee / argument of its parent". */
 const TRANSPARENT_PARENTS = new Set([
@@ -101,64 +110,24 @@ const DEFAULTS: RuleOptions = {
 
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
-  const strings = (value: unknown, fallback: readonly string[]): readonly string[] =>
-    Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-      ? (value as readonly string[])
-      : fallback;
   return {
-    allowPaths: strings(given.allowPaths, DEFAULTS.allowPaths),
-    driverEdgeCallees: strings(given.driverEdgeCallees, DEFAULTS.driverEdgeCallees),
-    reportTopLevelAwait:
-      typeof given.reportTopLevelAwait === 'boolean'
-        ? given.reportTopLevelAwait
-        : DEFAULTS.reportTopLevelAwait,
-    scriptPaths: strings(given.scriptPaths, DEFAULTS.scriptPaths),
+    allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
+    driverEdgeCallees: stringList(given.driverEdgeCallees, DEFAULTS.driverEdgeCallees),
+    reportTopLevelAwait: booleanOption(given.reportTopLevelAwait, DEFAULTS.reportTopLevelAwait),
+    scriptPaths: stringList(given.scriptPaths, DEFAULTS.scriptPaths),
   };
 }
 
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
+function skipWrappers(node: AnyNode) {
+  return climbWrappers(node, TRANSPARENT_PARENTS);
 }
 
-/** Climb through parentheses/type wrappers; returns the outermost equivalent node and its parent. */
-function skipWrappers(node: AnyNode): { readonly node: AnyNode; readonly parent: AnyNode | null } {
-  let current = node;
-  let parent = parentOf(current);
-  while (parent !== null && TRANSPARENT_PARENTS.has(parent.type)) {
-    current = parent;
-    parent = parentOf(current);
-  }
-  return { node: current, parent };
-}
-
-/** Peel wrappers *downwards*, e.g. `(await x)` / `x as Promise<void>` around an expression. */
 function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  while (TRANSPARENT_PARENTS.has(current.type)) {
-    const inner = (current as { expression?: AnyNode }).expression;
-    if (inner === undefined || inner === null) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: TRANSPARENT_PARENTS });
 }
 
 function nearestFunction(node: AnyNode): AnyNode | null {
-  let current = parentOf(node);
-  while (current !== null) {
-    if (FUNCTION_LIKE.has(current.type)) return current;
-    current = parentOf(current);
-  }
-  return null;
-}
-
-/** Static property name of a member expression, including `x["name"]`. */
-function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  const property = syntax(node.property) as AnyNode;
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
-  if (property.type !== 'Literal') return null;
-  const value = (property as { value?: unknown }).value;
-  return typeof value === 'string' ? value : null;
+  return enclosingFunction(node, FUNCTION_LIKE);
 }
 
 /** Static key name of an object property / class member, including `{ ["try"]: … }`. */
@@ -251,65 +220,64 @@ function insideDriverEdge(
  * `Effect.runPromise(main())`, `Effect.runPromiseExit(main())`, `runtime.runPromise(main())`
  * (a captured `ManagedRuntime`, the A1 target) or a `pipe`/`.pipe` chain ending in such a member.
  */
+function isRunAdapter(context: Context, node: unknown): boolean {
+  return /^(?:Effect|Runtime)\.run(?:Promise|Sync|Fork|Callback)(?:Exit)?(?:With)?$/u.test(
+    provenance(context, node) ?? '',
+  );
+}
+
+function isPipeCall(context: Context, callee: unknown): boolean {
+  if (provenance(context, callee) === 'pipe') return true;
+  const member = syntax(callee);
+  return member?.type === 'MemberExpression' && propertyText(member) === 'pipe';
+}
+
 function isRunAdapterExpression(node: AnyNode, context: Context): boolean {
   const expression = syntax(node);
   if (expression?.type !== 'CallExpression') return false;
   const callee = syntax(expression.callee);
-  const identity = provenance(context, callee);
-  if (
-    identity &&
-    /^(?:Effect|Runtime)\.run(?:Promise|Sync|Fork|Callback)(?:Exit)?(?:With)?$/u.test(identity)
-  )
-    return true;
+  if (isRunAdapter(context, callee)) return true;
   if (
     callee?.type === 'MemberExpression' &&
     ['then', 'catch', 'finally'].includes(propertyText(callee) ?? '')
   )
     return isRunAdapterExpression(callee.object, context);
-  const isPipe =
-    identity === 'pipe' || (callee?.type === 'MemberExpression' && propertyText(callee) === 'pipe');
   return (
-    isPipe &&
-    expression.arguments.some((arg: AnyNode) =>
-      /^(?:Effect|Runtime)\.run(?:Promise|Sync|Fork|Callback)(?:Exit)?(?:With)?$/u.test(
-        provenance(context, arg) ?? '',
-      ),
-    )
+    isPipeCall(context, callee) &&
+    expression.arguments.some((arg: AnyNode) => isRunAdapter(context, arg))
   );
+}
+
+const MEMBER_PARENTS = new Set([
+  'Property',
+  'MethodDefinition',
+  'PropertyDefinition',
+  'TSAbstractMethodDefinition',
+]);
+
+function variableFunctionName(fn: AnyNode): Extract<AnyNode, { type: 'Identifier' }> | null {
+  const parent = parentOf(fn);
+  return parent?.type === 'VariableDeclarator' &&
+    parent.init === fn &&
+    parent.id?.type === 'Identifier'
+    ? parent.id
+    : null;
+}
+
+function declaredFunctionName(fn: AnyNode): Extract<AnyNode, { type: 'Identifier' }> | null {
+  const declared = (fn as { id?: AnyNode | null }).id;
+  return declared?.type === 'Identifier' ? declared : null;
 }
 
 /** A tight report anchor: the declared name, the member key, or the `async` keyword itself. */
 function functionAnchor(fn: AnyNode): Ranged {
   const parent = parentOf(fn);
-  if (parent !== null) {
-    const keyed = parent as { key?: AnyNode; value?: AnyNode; id?: AnyNode; init?: AnyNode };
-    if (
-      (parent.type === 'Property' ||
-        parent.type === 'MethodDefinition' ||
-        parent.type === 'PropertyDefinition' ||
-        parent.type === 'TSAbstractMethodDefinition') &&
-      keyed.value === fn &&
-      keyed.key !== undefined &&
-      keyed.key !== null
-    ) {
-      return { range: [...(keyed.key as ESTree.Span).range] };
-    }
-    if (
-      parent.type === 'VariableDeclarator' &&
-      keyed.init === fn &&
-      keyed.id?.type === 'Identifier'
-    ) {
-      return { range: [...(keyed.id as ESTree.Span).range] };
-    }
-  }
-  const declared = (fn as { id?: AnyNode | null }).id;
-  if (declared !== undefined && declared !== null && declared.type === 'Identifier') {
-    return { range: [...(declared as ESTree.Span).range] };
-  }
-  return keywordAnchor(fn, KEYWORD_LENGTH);
+  const memberKey =
+    parent && MEMBER_PARENTS.has(parent.type) && parent.value === fn ? parent.key : null;
+  const anchor = memberKey ?? variableFunctionName(fn) ?? declaredFunctionName(fn);
+  return anchor ? { range: [...(anchor as ESTree.Span).range] } : keywordAnchor(fn, KEYWORD_LENGTH);
 }
 
-/** Anchor a diagnostic on the leading keyword (`async`, `await`, `for`) instead of a whole body. */
 function keywordAnchor(node: AnyNode, length: number): Ranged {
   const span = node as ESTree.Span;
   return { range: [span.start, Math.min(span.start + length, span.end)] };
@@ -318,25 +286,8 @@ function keywordAnchor(node: AnyNode, length: number): Ranged {
 /** A readable name for the reported function, used in the diagnostic text. */
 function functionLabel(fn: AnyNode): string {
   const parent = parentOf(fn);
-  if (parent !== null) {
-    const keyed = parent as { key?: AnyNode; value?: AnyNode; id?: AnyNode; init?: AnyNode };
-    if (keyed.value === fn) {
-      const key = staticKeyName(parent);
-      if (key !== null) return key;
-    }
-    if (
-      parent.type === 'VariableDeclarator' &&
-      keyed.init === fn &&
-      keyed.id?.type === 'Identifier'
-    ) {
-      return (keyed.id as ESTree.IdentifierName).name;
-    }
-  }
-  const declared = (fn as { id?: AnyNode | null }).id;
-  if (declared !== undefined && declared !== null && declared.type === 'Identifier') {
-    return (declared as ESTree.IdentifierName).name;
-  }
-  return 'this callback';
+  const key = parent?.value === fn ? staticKeyName(parent) : null;
+  return key ?? variableFunctionName(fn)?.name ?? declaredFunctionName(fn)?.name ?? 'this callback';
 }
 
 export const rule = defineRule({
@@ -457,213 +408,3 @@ export const rule = defineRule({
     };
   },
 });
-
-/** Bounded, lexical provenance only; no type checker or interprocedural/data-flow inference. */
-type Syntax = ESTree.Node & Record<string, any>;
-function syntax(node: unknown): Syntax | null {
-  let n = node as Syntax | null;
-  while (
-    n &&
-    [
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TSTypeAssertion',
-      'TSInstantiationExpression',
-      'ParenthesizedExpression',
-      'ChainExpression',
-      'AwaitExpression',
-    ].includes(n.type)
-  )
-    n = n.expression ?? n.argument;
-  return n;
-}
-function lexicalVariable(context: Context, node: Syntax): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  while (scope) {
-    const v = scope.set.get(node.name);
-    if (v) return v;
-    scope = scope.upper;
-  }
-  return null;
-}
-function literalText(node: unknown): string | null {
-  const n = syntax(node);
-  if (n?.type === 'Literal' && typeof n.value === 'string') return n.value;
-  if (n?.type === 'TemplateLiteral' && n.expressions.length === 0)
-    return n.quasis[0]?.value.cooked ?? null;
-  return null;
-}
-function propertyText(node: unknown): string | null {
-  const n = node as Syntax;
-  const key = syntax(n.property ?? n.key);
-  return !n.computed && key?.type === 'Identifier' ? key.name : literalText(key);
-}
-function moduleIdentity(source: string): string {
-  if (/^(?:node:)?(?:process|console|util|module)$/.test(source))
-    return source.replace(/^node:/, '');
-  if (source === 'effect/Effect') return 'Effect';
-  if (source === 'effect/ManagedRuntime') return 'ManagedRuntime';
-  return source;
-}
-function bindingPath(pattern: Syntax, name: string): string[] | null {
-  if (pattern.type === 'Identifier') return pattern.name === name ? [] : null;
-  if (pattern.type === 'AssignmentPattern') return bindingPath(pattern.left, name);
-  if (pattern.type !== 'ObjectPattern') return null;
-  for (const p of pattern.properties) {
-    if (p.type !== 'Property') continue;
-    const key = propertyText(p),
-      tail = bindingPath(p.value, name);
-    if (key !== null && tail !== null) return [key, ...tail];
-  }
-  return null;
-}
-function provenance(context: Context, node: unknown, seen = new Set<Variable>()): string | null {
-  const n = syntax(node);
-  if (!n) return null;
-  if (n.type === 'Identifier') {
-    const v = lexicalVariable(context, n);
-    if (!v || v.defs.length === 0)
-      return [
-        'process',
-        'console',
-        'Bun',
-        'globalThis',
-        'global',
-        'window',
-        'self',
-        'require',
-        'Array',
-        'Set',
-      ].includes(n.name)
-        ? n.name
-        : null;
-    if (seen.has(v) || v.defs.length !== 1) return null;
-    const next = new Set(seen);
-    next.add(v);
-    const def = v.defs[0] as any;
-    if (def.type === 'ImportBinding') {
-      const spec = def.node as Syntax;
-      const decl = (def.parent ?? spec.parent) as Syntax;
-      if (decl.importKind === 'type' || spec.importKind === 'type') return null;
-      const source = literalText(decl.source);
-      if (!source) return null;
-      const base = moduleIdentity(source);
-      if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-        return base;
-      const name = spec.imported?.name ?? spec.imported?.value;
-      if (name === 'default') return base;
-      if (base === 'effect') return name;
-      return `${base}.${name}`;
-    }
-    if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
-    // A declaration is not a reaching-definition analysis: reassigned aliases are unknown.
-    if (v.references.some((r: any) => r.init !== true && r.isWrite())) return null;
-    const d = def.node as Syntax;
-    const base = provenance(context, d.init, next),
-      path = bindingPath(d.id, n.name);
-    return base !== null && path !== null ? [base, ...path].join('.') : null;
-  }
-  if (n.type === 'MemberExpression') {
-    const base = provenance(context, n.object, seen),
-      key = propertyText(n);
-    if (base === null || key === null) return null;
-    if (
-      ['globalThis', 'global', 'window', 'self'].includes(base) &&
-      ['process', 'console', 'Bun'].includes(key)
-    )
-      return key;
-    if (['process', 'console', 'util', 'module'].includes(base) && key === 'default') return base;
-    if (base === 'effect') return key;
-    return `${base}.${key}`;
-  }
-  if (n.type === 'ImportExpression') {
-    const text = literalText(n.source);
-    return text === null ? null : moduleIdentity(text);
-  }
-  if (n.type === 'CallExpression') {
-    const callee = provenance(context, n.callee, seen);
-    if (callee === 'require') {
-      const text = literalText(n.arguments[0]);
-      return text === null ? null : moduleIdentity(text);
-    }
-    if (callee === 'module.createRequire') return 'require';
-    if (callee === 'ManagedRuntime.make') return 'Runtime';
-  }
-  return null;
-}
-/** Only value references, never property names, bindings or TS-only identifiers. */
-function valueReference(context: Context, node: unknown): boolean {
-  const n = node as Syntax,
-    p = n.parent as Syntax | undefined;
-  if (!p) return false;
-  if (p.type.startsWith('Import') || p.type === 'ExportSpecifier') return false;
-  if (p.type === 'MemberExpression' && p.property === n && !p.computed) return false;
-  if (
-    [
-      'Property',
-      'PropertyDefinition',
-      'MethodDefinition',
-      'TSPropertySignature',
-      'TSMethodSignature',
-    ].includes(p.type) &&
-    p.key === n &&
-    !p.computed &&
-    !(p.shorthand && p.value === n)
-  )
-    return false;
-  if (['LabeledStatement', 'BreakStatement', 'ContinueStatement'].includes(p.type)) return false;
-  let child: Syntax = n;
-  let parent: Syntax | null = p;
-  while (parent) {
-    if (
-      parent.type.startsWith('TS') &&
-      !(
-        [
-          'TSAsExpression',
-          'TSSatisfiesExpression',
-          'TSNonNullExpression',
-          'TSTypeAssertion',
-          'TSInstantiationExpression',
-        ].includes(parent.type) && parent.expression === child
-      )
-    )
-      return false;
-    if (
-      parent.type.endsWith('Statement') ||
-      parent.type.endsWith('Declaration') ||
-      parent.type.includes('Function')
-    )
-      break;
-    child = parent;
-    parent = parent.parent as Syntax | null;
-  }
-  const v = lexicalVariable(context, n);
-  return (
-    !v ||
-    v.references.some(
-      (r: any) =>
-        r.identifier === n &&
-        r.isRead() &&
-        (typeof r.isValueReference !== 'function' || r.isValueReference()),
-    )
-  );
-}
-/** Strip fixture scaffolding first; do not renormalise a relative script path around inner markers. */
-function scriptScope(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture = unified.match(
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u,
-  );
-  if (fixture) return fixture[1];
-  if (!unified.startsWith('/') && !/^[A-Za-z]:\//u.test(unified))
-    return unified.replace(/^\.\//, '');
-  const match = unified.match(/(?:^|\/)((?:apps|packages|verticals|scripts|tools)\/.*)$/u);
-  return match?.[1] ?? unified;
-}
-function inScriptScope(path: string): boolean {
-  return (
-    /(?:^|\/)scripts\//u.test(path) &&
-    !/(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u.test(path)
-  );
-}

@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-sequential-independent-yields
  *
@@ -76,18 +77,18 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import {
-  collectEffectBindings,
-  effectMember,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/** Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`. */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
-
-const EFFECT_NAMESPACE = 'Effect';
-const EFFECT_ROOT_MODULE = 'effect';
-const EFFECT_EFFECT_MODULE = /^effect\/(?:.*\/)?Effect$/u;
+  asNode as sharedAsNode,
+  childrenOf,
+  memberName as sharedMemberName,
+} from '../shared/ast.ts';
+import { bindingPath, isGenCallee as sharedIsGenCallee } from '../shared/effect-identity.ts';
+import {
+  bindingsWithExtraModules,
+  collectRootNamespaces,
+  collectNamedImports,
+} from '../shared/imports.ts';
+import { booleanOption as boolean, stringArray, safeRegExp } from '../shared/options.ts';
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE: readonly string[] = [
@@ -131,33 +132,10 @@ const WRAPPER_TYPES: ReadonlySet<string> = new Set([
   'TSSatisfiesExpression',
 ]);
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeScripts: boolean;
-  readonly includeFunctionCallees: boolean;
-  readonly orderingCalleePattern: string;
-  readonly genMembers: readonly string[];
-  readonly effectModules: readonly string[];
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+function readOptions(context: Context) {
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -173,14 +151,6 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
 interface AnyNode {
   readonly type: string;
   readonly start: number;
@@ -190,121 +160,43 @@ interface AnyNode {
 }
 
 function asNode(value: unknown): AnyNode | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as { type?: unknown; start?: unknown };
-  if (typeof candidate.type !== 'string' || typeof candidate.start !== 'number') return null;
-  return value as AnyNode;
+  return sharedAsNode(value, true) as AnyNode | null;
 }
-
 function parentOf(node: AnyNode | null): AnyNode | null {
-  return (node?.parent as AnyNode | null | undefined) ?? null;
+  return node?.parent ?? null;
 }
-
-/** Strip parens, `!`, `as`, `satisfies` and optional-chaining wrappers to reach the real expression. */
 function unwrap(value: unknown): AnyNode | null {
   let current = asNode(value);
-  for (let guard = 0; current !== null && guard < 16; guard += 1) {
-    if (!WRAPPER_TYPES.has(current.type)) return current;
-    const inner = asNode(current.expression);
-    if (inner === null) return current;
-    current = inner;
+  for (let depth = 0; depth < 16 && current !== null; depth += 1) {
+    if (!WRAPPER_TYPES.has(current.type)) break;
+    const child = asNode(current.expression);
+    if (child === null) break;
+    current = child;
   }
   return current;
 }
-
-/** Non-computed `.member`, or computed `["member"]`. */
 function memberName(node: AnyNode): string | null {
   const property = asNode(node.property);
   if (property === null) return null;
   if (node.computed !== true)
     return property.type === 'Identifier' ? (property.name as string) : null;
-  if (property.type === 'TemplateLiteral') return staticString(property as unknown as ESTree.Node);
-  if (
-    (property.type === 'Literal' || property.type === 'StringLiteral') &&
-    typeof property.value === 'string'
-  ) {
-    return property.value;
-  }
-  return null;
-}
-
-/** Locals bound by `import * as X from "effect"` — `X.Effect.gen` must still be recognised. */
-function collectRootNamespaces(program: ESTree.Program): ReadonlySet<string> {
-  const locals = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.source.value !== EFFECT_ROOT_MODULE) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') locals.add(specifier.local.name);
-    }
-  }
-  return locals;
-}
-
-/** Locals bound by `import { gen, fn } from "effect/Effect"` — bare `gen(function* ())` must be caught. */
-function collectDirectMemberImports(
-  program: ESTree.Program,
-  members: readonly string[],
-): ReadonlySet<string> {
-  const locals = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (!EFFECT_EFFECT_MODULE.test(statement.source.value)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      if (members.includes(imported)) locals.add(specifier.local.name);
-    }
-  }
-  return locals;
-}
-
-/** Extend `effect` bindings with named `Effect` imports from configured re-export barrels. */
-function bindingsWithExtraModules(
-  program: ESTree.Program,
-  modules: readonly string[],
-): EffectBindings {
-  const base = collectEffectBindings(program);
-  if (modules.length === 0) return base;
-  const namespaces = new Map(base.namespaces);
-  let importsEffect = base.importsEffect;
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (!modules.includes(statement.source.value)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      if (imported !== EFFECT_NAMESPACE) continue;
-      namespaces.set(specifier.local.name, EFFECT_NAMESPACE);
-      importsEffect = true;
-    }
-  }
-  return { importsEffect, namespaces };
+  return sharedMemberName(node, { templates: true, babelStrings: true });
 }
 
 interface GeneratorMatcher {
   readonly context: Context;
   readonly effectModules: readonly string[];
-  readonly bindings: EffectBindings;
-  readonly rootNamespaces: ReadonlySet<string>;
-  readonly directMembers: ReadonlySet<string>;
   readonly genMembers: readonly string[];
 }
 
 /** `Effect.gen` / `E.gen` / `X.Effect.gen` / bare `gen` (direct member import), incl. computed + optional. */
-function isGenCallee(callee: AnyNode | null, matcher: GeneratorMatcher, depth = 0): boolean {
-  if (depth > 8 || callee === null) return false;
-  const target = identityUnwrap(callee as unknown as ESTree.Node);
-  if (target.type === 'CallExpression')
-    return isGenCallee(asNode(target.callee), matcher, depth + 1);
-  const path = bindingPath(matcher.context, target, matcher.effectModules);
-  return path?.length === 2 && path[0] === 'Effect' && matcher.genMembers.includes(path[1] ?? '');
+function isGenCallee(callee: AnyNode | null, matcher: GeneratorMatcher): boolean {
+  return sharedIsGenCallee(
+    matcher.context,
+    callee as ESTree.Node | null,
+    matcher.genMembers,
+    matcher.effectModules,
+  );
 }
 
 /** `true` when `fn` is a generator function handed to `Effect.gen` / `Effect.fn` / `Effect.fnUntraced`. */
@@ -327,72 +219,44 @@ function isEffectGenerator(fn: AnyNode, matcher: GeneratorMatcher): boolean {
 
 type Walker = (node: AnyNode) => boolean;
 
-function childrenOf(
-  node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
-): AnyNode[] {
-  const keys = visitorKeys[node.type];
-  const names = keys ?? Object.keys(node).filter((key) => key !== 'parent' && key !== 'type');
-  const children: AnyNode[] = [];
-  for (const name of names) {
-    const value = node[name];
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        const child = asNode(entry);
-        if (child !== null) children.push(child);
-      }
-      continue;
-    }
-    const child = asNode(value);
-    if (child !== null) children.push(child);
-  }
-  return children;
-}
-
-/** Depth-first walk; `visit` returns `false` to skip the node's children. */
+/** Preserve the generator traversal budget while sharing child enumeration and ordering. */
 function walk(
   node: AnyNode,
   visitorKeys: Readonly<Record<string, readonly string[]>>,
   visit: Walker,
 ): void {
-  const stack: AnyNode[] = [node];
-  let guard = 0;
-  while (stack.length > 0 && guard < 200_000) {
-    guard += 1;
-    const current = stack.pop();
-    if (current === undefined) break;
+  const stack = [node];
+  for (let visited = 0; stack.length > 0 && visited < 200_000; visited += 1) {
+    const current = stack.pop()!;
     if (!visit(current)) continue;
-    const children = childrenOf(current, visitorKeys);
+    const children = childrenOf(current as unknown as ESTree.Node, visitorKeys, true);
     for (let index = children.length - 1; index >= 0; index -= 1) {
-      const child = children[index];
-      if (child !== undefined) stack.push(child);
+      stack.push(children[index] as AnyNode);
     }
   }
 }
 
-/** Peel `x.pipe(a, b)` and `pipe(x, a, b)` down to the piped subject. */
+/** Peel method and imported pipe calls down to their subject. */
+function pipeSubject(
+  current: AnyNode,
+  context: Context,
+  modules: readonly string[],
+): AnyNode | null {
+  if (current.type !== 'CallExpression') return current;
+  const callee = unwrap(current.callee);
+  if (callee === null) return current;
+  if (MEMBER_TYPES.has(callee.type) && memberName(callee) === 'pipe') return unwrap(callee.object);
+  const path = bindingPath(context, callee as unknown as ESTree.Node, modules)?.join('.') ?? '';
+  if (!['pipe', 'Function.pipe'].includes(path)) return current;
+  const first = Array.isArray(current.arguments) ? unwrap(current.arguments[0]) : null;
+  return first ?? current;
+}
 function unwrapPipe(value: unknown, context: Context, modules: readonly string[]): AnyNode | null {
   let current = unwrap(value);
   for (let guard = 0; current !== null && guard < 32; guard += 1) {
-    if (current.type !== 'CallExpression') return current;
-    const callee = unwrap(current.callee);
-    if (callee === null) return current;
-    if (MEMBER_TYPES.has(callee.type) && memberName(callee) === 'pipe') {
-      current = unwrap(callee.object);
-      continue;
-    }
-    if (
-      ['pipe', 'Function.pipe'].includes(
-        bindingPath(context, callee as unknown as ESTree.Node, modules)?.join('.') ?? '',
-      )
-    ) {
-      const args = current.arguments;
-      const first = Array.isArray(args) ? unwrap(args[0]) : null;
-      if (first === null) return current;
-      current = first;
-      continue;
-    }
-    return current;
+    const next = pipeSubject(current, context, modules);
+    if (next === current) return current;
+    current = next;
   }
   return current;
 }
@@ -449,30 +313,7 @@ function collectReferencedNames(
   visitorKeys: Readonly<Record<string, readonly string[]>>,
 ): Set<string> {
   const names = new Set<string>();
-  walk(node, visitorKeys, (current) => {
-    if (current.type === 'Identifier') {
-      names.add(current.name as string);
-      return false;
-    }
-    if (MEMBER_TYPES.has(current.type) && current.computed !== true) {
-      const object = asNode(current.object);
-      if (object !== null)
-        walk(object, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
-      return false;
-    }
-    if (
-      (current.type === 'Property' || current.type === 'ObjectProperty') &&
-      current.computed !== true
-    ) {
-      // `{ tenantId: value }` — the key is a label, the value is a read. Shorthand shares the node.
-      if (current.shorthand === true) return true;
-      const value = asNode(current.value);
-      if (value !== null)
-        walk(value, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
-      return false;
-    }
-    return true;
-  });
+  walk(node, visitorKeys, (current) => collectInto(current, names, visitorKeys));
   return names;
 }
 
@@ -514,118 +355,54 @@ interface Candidate {
   readonly ordering: boolean;
 }
 
-function label(context: Context, node: AnyNode): string {
-  const text = context.sourceCode
-    .getText(node as unknown as ESTree.Node)
-    .replace(/\s+/gu, ' ')
-    .replace(/\s*(\??\.)\s*/gu, '$1')
-    .trim();
-  return text.length > 60 ? `${text.slice(0, 57)}...` : text;
+function inScope(filename: string, options: RuleOptions): boolean {
+  const path = scopePath(filename);
+  if (matchesGlobs(path, options.ignore)) return false;
+  const script = isScriptFile(path) || matchesGlobs(path, DEFAULT_SCRIPT_GLOBS);
+  if (script && !options.includeScripts) return false;
+  if (!matchesGlobs(path, options.include) && !(options.includeScripts && script)) return false;
+  return options.includeTests || !isTestFile(path);
 }
-
-/** Report-only rule: adjacent independent `yield*` reads inside `Effect.gen` (audit B1). */
-// Resolve lexical value bindings, not identifier spellings. Only immutable local aliases are
-// followed; arbitrary object mutation, re-export contents and dynamic keys need type/data-flow analysis.
-function lexicalVariable(context: Context, node: Extract<ESTree.Node, { type: 'Identifier' }>) {
-  let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
-  while (scope !== null) {
-    const variable = scope.set.get(node.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+function singleDeclarator(statement: AnyNode): AnyNode | null {
+  if (statement.type !== 'VariableDeclaration') return null;
+  const declarations = statement.declarations;
+  return Array.isArray(declarations) && declarations.length === 1 ? asNode(declarations[0]) : null;
 }
-function staticString(node: ESTree.Node): string | null {
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? null;
-  return null;
-}
-function identityUnwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (;;) {
-    if (current.type === 'SequenceExpression') {
-      const last = current.expressions.at(-1);
-      if (last === undefined) return current;
-      current = last;
-    } else if (
-      [
-        'ChainExpression',
-        'ParenthesizedExpression',
-        'TSAsExpression',
-        'TSTypeAssertion',
-        'TSNonNullExpression',
-        'TSSatisfiesExpression',
-        'TSInstantiationExpression',
-      ].includes(current.type)
-    ) {
-      current = (current as unknown as { expression: ESTree.Node }).expression;
-    } else return current;
-  }
-}
-function bindingPath(
+const TRANSPARENT_MEMBERS = new Set([
+  'withSpan',
+  'annotateLogs',
+  'timeout',
+  'timeoutOption',
+  'retry',
+]);
+function transparentArguments(
+  subject: AnyNode,
   context: Context,
-  expression: ESTree.Node,
-  extraModules: readonly string[] = [],
-  seen = new Set<unknown>(),
-): readonly string[] | null {
-  const node = identityUnwrap(expression);
-  if (node.type === 'MemberExpression') {
-    const key =
-      !node.computed && node.property.type === 'Identifier'
-        ? node.property.name
-        : staticString(node.property);
-    const root = bindingPath(context, node.object, extraModules, seen);
-    return root !== null && key !== null ? [...root, key] : null;
+  modules: readonly string[],
+): unknown[] | null {
+  const path = bindingPath(context, subject.callee as unknown as ESTree.Node, modules);
+  if (path?.length !== 2 || path[0] !== 'Effect' || !TRANSPARENT_MEMBERS.has(path[1] ?? ''))
+    return null;
+  return Array.isArray(subject.arguments) && subject.arguments.length >= 2
+    ? subject.arguments
+    : null;
+}
+/** Only known data-first wrappers preserve the effect; constructors and callbacks remain opaque. */
+function readSubject(value: unknown, context: Context, modules: readonly string[]): AnyNode | null {
+  let subject = unwrapPipe(value, context, modules);
+  while (subject?.type === 'CallExpression') {
+    const args = transparentArguments(subject, context, modules);
+    if (args === null) break;
+    subject = unwrapPipe(args[0], context, modules);
   }
-  if (node.type !== 'Identifier') return null;
-  const variable = lexicalVariable(context, node);
-  if (variable === null || seen.has(variable)) return null;
-  seen.add(variable);
-  if (variable.defs.length !== 1) return null;
-  const definition = variable.defs[0];
-  if (definition === undefined) return null;
-  if (definition.type === 'ImportBinding') {
-    const specifier = definition.node as
-      | ESTree.ImportSpecifier
-      | ESTree.ImportNamespaceSpecifier
-      | ESTree.ImportDefaultSpecifier;
-    const declaration = definition.parent as ESTree.ImportDeclaration;
-    if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
-    if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
-    const source = declaration.source.value;
-    if (source !== 'effect' && !source.startsWith('effect/') && !extraModules.includes(source))
-      return null;
-    const last = source.split('/').at(-1) ?? '';
-    const base = source.startsWith('effect/') && /^[A-Z]/u.test(last) ? [last] : [];
-    if (specifier.type === 'ImportNamespaceSpecifier') return base;
-    if (specifier.type !== 'ImportSpecifier') return null;
-    const imported =
-      specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
-    return [...base, imported];
-  }
-  if (definition.type !== 'Variable') return null;
-  const declaration = definition.node as ESTree.VariableDeclarator;
-  const parent = definition.parent as ESTree.VariableDeclaration;
-  if (parent?.kind !== 'const' || declaration.init === null) return null;
-  const base = bindingPath(context, declaration.init, extraModules, seen);
-  if (base === null) return null;
-  if (declaration.id.type === 'Identifier') return base;
-  if (declaration.id.type !== 'ObjectPattern') return null;
-  for (const property of declaration.id.properties) {
-    if (
-      property.type === 'RestElement' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== node.name
-    )
-      continue;
-    const key =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : staticString(property.key);
-    return key === null ? null : [...base, key];
-  }
-  return null;
+  return subject;
+}
+function readCallee(subject: AnyNode | null, includeFunctions: boolean): AnyNode | null {
+  if (subject?.type !== 'CallExpression') return null;
+  const callee = unwrap(subject.callee);
+  if (callee === null) return null;
+  if (MEMBER_TYPES.has(callee.type)) return callee;
+  return includeFunctions && callee.type === 'Identifier' ? callee : null;
 }
 
 export const rule = defineRule({
@@ -675,79 +452,36 @@ export const rule = defineRule({
   },
   create(context) {
     const options = readOptions(context);
-    const path = scopePath(context.filename);
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (!options.includeScripts && (isScriptFile(path) || matchesGlobs(path, DEFAULT_SCRIPT_GLOBS)))
-      return {};
-    if (
-      !matchesGlobs(path, options.include) &&
-      !(options.includeScripts && (isScriptFile(path) || matchesGlobs(path, DEFAULT_SCRIPT_GLOBS)))
-    )
-      return {};
-    if (!options.includeTests && isTestFile(path)) return {};
+    if (!inScope(context.filename, options)) return {};
 
     const program = context.sourceCode.ast;
     const rootNamespaces = collectRootNamespaces(program);
-    const directMembers = collectDirectMemberImports(program, options.genMembers);
+    const directMembers = collectNamedImports(
+      program,
+      (source) => /^effect\/(?:.*\/)?Effect$/u.test(source),
+      new Set(options.genMembers),
+    );
     const bindings = bindingsWithExtraModules(program, options.effectModules);
     if (!bindings.importsEffect && rootNamespaces.size === 0 && directMembers.size === 0) return {};
 
     const matcher: GeneratorMatcher = {
       context,
       effectModules: options.effectModules,
-      bindings,
-      directMembers,
       genMembers: options.genMembers,
-      rootNamespaces,
     };
     const visitorKeys = context.sourceCode.visitorKeys;
-    let ordering: RegExp;
-    try {
-      ordering = new RegExp(options.orderingCalleePattern, 'u');
-    } catch {
-      ordering = new RegExp(DEFAULT_ORDERING_PATTERN, 'u');
-    }
+    const ordering = safeRegExp(options.orderingCalleePattern, DEFAULT_ORDERING_PATTERN);
     const analysed = new Set<number>();
 
     /** A single-declarator `const x = yield* <non-effect member call>` statement, or `null`. */
     const candidateOf = (statement: AnyNode): Candidate | null => {
-      if (statement.type !== 'VariableDeclaration') return null;
-      const declarations = statement.declarations;
-      if (!Array.isArray(declarations) || declarations.length !== 1) return null;
-      const declarator = asNode(declarations[0]);
+      const declarator = singleDeclarator(statement);
       if (declarator === null) return null;
       const init = unwrap(declarator.init);
       if (init === null || init.type !== 'YieldExpression' || init.delegate !== true) return null;
-      let subject = unwrapPipe(init.argument, context, options.effectModules);
-      // Only known data-first wrappers preserve the underlying effect. Never peel arbitrary
-      // Effect constructors/callbacks: map/sync may intentionally introduce ordered work.
-      const transparent = new Set([
-        'withSpan',
-        'annotateLogs',
-        'timeout',
-        'timeoutOption',
-        'retry',
-      ]);
-      while (subject?.type === 'CallExpression') {
-        const path = bindingPath(context, subject.callee as ESTree.Node, options.effectModules);
-        if (path?.length !== 2 || path[0] !== 'Effect' || !transparent.has(path[1] ?? '')) break;
-        const args = subject.arguments;
-        if (!Array.isArray(args) || args.length < 2) break;
-        subject = unwrapPipe(args[0], context, options.effectModules);
-      }
-      if (subject === null) return null;
-
-      let calleeNode: AnyNode | null = null;
-      if (subject.type === 'CallExpression') {
-        const callee = unwrap(subject.callee);
-        if (callee === null) return null;
-        if (MEMBER_TYPES.has(callee.type)) calleeNode = callee;
-        else if (options.includeFunctionCallees && callee.type === 'Identifier')
-          calleeNode = callee;
-        else return null;
-      } else {
-        return null;
-      }
+      const subject = readSubject(init.argument, context, options.effectModules);
+      const calleeNode = readCallee(subject, options.includeFunctionCallees);
+      if (calleeNode === null) return null;
       // `Effect.all(...)`, `Schema.decodeUnknown(...)`, … are the target shape, never the anti-pattern.
       if (
         bindingPath(context, calleeNode as unknown as ESTree.Node, options.effectModules) !== null

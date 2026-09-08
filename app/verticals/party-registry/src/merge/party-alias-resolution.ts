@@ -3,13 +3,12 @@ import { PartyRefSchema } from '../../shared/resources/party.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { Match, Schema } from 'effect';
 
-export const AliasResolutionRejectionSchema = Schema.Union([
+const AliasResolutionRejectionSchema = Schema.Union([
   Schema.TaggedStruct('PartyAliasCycleRejected', { aliasPartyRef: PartyRefSchema }),
   Schema.TaggedStruct('PartyAliasSelfReferenceRejected', { aliasPartyRef: PartyRefSchema }),
   Schema.TaggedStruct('PartyAliasCrossTenantRejected', { aliasPartyRef: PartyRefSchema }),
 ]);
-export type AliasResolutionRejection = typeof AliasResolutionRejectionSchema.Type;
-export const CanonicalPartyResolutionSchema = Schema.Union([
+const CanonicalPartyResolutionSchema = Schema.Union([
   AliasResolutionRejectionSchema,
   Schema.TaggedStruct('CanonicalPartyResolved', {
     canonicalPartyRef: PartyRefSchema,

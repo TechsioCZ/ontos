@@ -110,16 +110,11 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
 import { bindingsFor } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { booleanOption as boolean, stringList } from '../shared/options.ts';
+import { keyName, memberName, unwrapNode } from '../shared/ast.ts';
 
 type AnyNode = ESTree.Node;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the production defaults instead of forcing the fixture
- * config to loosen options (`run-on-repo.mts` reuses that same config against the real repository).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 /** Globals through which the ambient error constructors can be reached as a property. */
 const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self', 'frames']);
@@ -174,16 +169,6 @@ const DEFAULTS: RuleOptions = {
   requireEffectImport: false,
 };
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const include = stringList(given.include, DEFAULTS.include);
@@ -198,47 +183,12 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Wrappers that do not change which value an expression evaluates to. */
-const TRANSPARENT_WRAPPERS = new Set([
-  'ParenthesizedExpression',
-  'ChainExpression',
-  'TSAsExpression',
-  'TSSatisfiesExpression',
-  'TSNonNullExpression',
-  'TSInstantiationExpression',
-  'TSTypeAssertion',
-]);
-
 function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  for (let depth = 0; depth < 8; depth += 1) {
-    if (!TRANSPARENT_WRAPPERS.has(current.type)) return current;
-    const inner = (current as { expression?: AnyNode }).expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { maxDepth: 8 });
 }
 
-/** `Error.captureStackTrace` / `Error["captureStackTrace"]` → the string; a dynamic key → `null`. */
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  const property = node.property as AnyNode;
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
-    return property.quasis[0]?.value.cooked ?? null;
-  if (property.type !== 'Literal') return null;
-  const value = (property as { value?: unknown }).value;
-  return typeof value === 'string' ? value : null;
+  return memberName(node, { templates: true });
 }
 
 function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
@@ -360,65 +310,70 @@ export const rule = defineRule({
      * Accepts the bare unshadowed global and the same global reached through a container global
      * (`globalThis.Error`, `window["TypeError"]`), through parens, `as` casts and optional chains.
      */
+    const isContainer = (node: AnyNode): boolean =>
+      node.type === 'Identifier' &&
+      CONTAINER_GLOBALS.has(node.name) &&
+      isUnshadowedGlobal(context, node, node.name);
+
+    const immutableDeclaration = (identifier: Extract<ESTree.Node, { type: 'Identifier' }>) => {
+      const variable = resolveVariable(context, identifier.name, identifier);
+      if (
+        !variable ||
+        variable.defs.length !== 1 ||
+        variable.references.some((reference) => reference.isWrite() && !reference.init)
+      )
+        return null;
+      const declaration = variable.defs[0]!.node;
+      if (
+        declaration?.type !== 'VariableDeclarator' ||
+        !declaration.init ||
+        declaration.parent?.type !== 'VariableDeclaration' ||
+        declaration.parent.kind !== 'const'
+      )
+        return null;
+      return declaration;
+    };
+
+    const destructuredErrorName = (pattern: ESTree.ObjectPattern, name: string): string | null => {
+      for (const property of pattern.properties) {
+        if (
+          property.type !== 'Property' ||
+          property.value.type !== 'Identifier' ||
+          property.value.name !== name
+        )
+          continue;
+        const key = keyName(property.key, property.computed, { templates: true });
+        if (key !== null && constructors.has(key)) return key;
+      }
+      return null;
+    };
+
+    const identifierErrorName = (
+      identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
+      depth: number,
+    ): string | null => {
+      const name = identifier.name;
+      if (constructors.has(name) && isUnshadowedGlobal(context, identifier, name)) return name;
+      const declaration = immutableDeclaration(identifier);
+      if (!declaration?.init) return null;
+      if (declaration.id.type === 'Identifier') return nativeErrorName(declaration.init, depth + 1);
+      if (declaration.id.type !== 'ObjectPattern' || !isContainer(unwrap(declaration.init)))
+        return null;
+      return destructuredErrorName(declaration.id, name);
+    };
+
+    const memberErrorName = (member: ESTree.MemberExpression): string | null => {
+      const name = staticPropertyName(member);
+      if (name === null || !constructors.has(name)) return null;
+      return isContainer(unwrap(member.object)) ? name : null;
+    };
+
     const nativeErrorName = (node: AnyNode, depth = 0): string | null => {
       if (depth > 24) return null;
       const inner = unwrap(node);
-      if (inner.type === 'Identifier') {
-        const name = (inner as ESTree.IdentifierReference).name;
-        if (constructors.has(name) && isUnshadowedGlobal(context, inner, name)) return name;
-        const variable = resolveVariable(context, name, inner);
-        if (
-          !variable ||
-          variable.defs.length !== 1 ||
-          variable.references.some((r) => r.isWrite() && !r.init)
-        )
-          return null;
-        const declaration = variable.defs[0]?.node;
-        if (
-          declaration?.type !== 'VariableDeclarator' ||
-          !declaration.init ||
-          declaration.parent?.type !== 'VariableDeclaration' ||
-          declaration.parent.kind !== 'const'
-        )
-          return null;
-        if (declaration.id.type === 'Identifier')
-          return nativeErrorName(declaration.init, depth + 1);
-        const container = unwrap(declaration.init);
-        if (
-          container.type !== 'Identifier' ||
-          !CONTAINER_GLOBALS.has(container.name) ||
-          !isUnshadowedGlobal(context, container, container.name) ||
-          declaration.id.type !== 'ObjectPattern'
-        )
-          return null;
-        for (const property of declaration.id.properties) {
-          if (
-            property.type !== 'Property' ||
-            property.value.type !== 'Identifier' ||
-            property.value.name !== name
-          )
-            continue;
-          const key =
-            !property.computed && property.key.type === 'Identifier'
-              ? property.key.name
-              : property.key.type === 'Literal'
-                ? property.key.value
-                : property.key.type === 'TemplateLiteral' && property.key.expressions.length === 0
-                  ? property.key.quasis[0]?.value.cooked
-                  : null;
-          if (typeof key === 'string' && constructors.has(key)) return key;
-        }
-        return null;
-      }
-      if (inner.type !== 'MemberExpression') return null;
-      const member = inner as ESTree.MemberExpression;
-      const name = staticPropertyName(member);
-      if (name === null || !constructors.has(name)) return null;
-      const container = unwrap(member.object as AnyNode);
-      if (container.type !== 'Identifier') return null;
-      const containerName = (container as ESTree.IdentifierReference).name;
-      if (!CONTAINER_GLOBALS.has(containerName)) return null;
-      return isUnshadowedGlobal(context, container, containerName) ? name : null;
+      if (inner.type === 'Identifier') return identifierErrorName(inner, depth);
+      if (inner.type === 'MemberExpression') return memberErrorName(inner);
+      return null;
     };
 
     return {

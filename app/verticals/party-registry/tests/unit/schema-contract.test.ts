@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Filesystem migration contract verifies actual checked-in SQL files; expires: 2026-12-31.
-import { expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -294,17 +294,21 @@ it('preserves bounded external observation evidence separately from trusted acto
   }
 });
 
-// eslint-disable-next-line complexity -- One schema-boundary matrix keeps all related family invariants visible.
-it('models typed contact, relationship, and Counterparty lifecycles with owner-local references', () => {
-  const contactChecks = Object.fromEntries(
-    configOf(partyContactPoints).checks.map((candidate) => [
+const checksOf = (table: (typeof configuredTables)[number]) =>
+  Object.fromEntries(
+    configOf(table).checks.map((candidate) => [
       candidate.name,
       dialect.sqlToQuery(candidate.value).sql,
     ]),
   );
-  expect(contactChecks['party_contact_points_shape_ck'] ?? '').toMatch(/EMAIL/u);
-  expect(contactChecks['party_contact_points_shape_ck'] ?? '').toMatch(/PHONE/u);
-  expect(contactChecks['party_contact_points_shape_ck'] ?? '').toMatch(/ADDRESS/u);
+
+const checkSql = (checks: Readonly<Record<string, string>>, name: string) => checks[name] ?? '';
+
+it('models typed contact point lifecycles with owner-local references', () => {
+  const contactChecks = checksOf(partyContactPoints);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /EMAIL/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /PHONE/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /ADDRESS/u);
   for (const column of [
     'display_value',
     'normalization_version',
@@ -324,25 +328,30 @@ it('models typed contact, relationship, and Counterparty lifecycles with owner-l
     'ended_recorded_at',
     'revision',
   ]) {
-    expect(
+    assert.ok(
       configOf(partyContactPoints).columns.some((candidate) => candidate.name === column),
       column,
-    ).toBeTruthy();
+    );
   }
-  expect(contactChecks['party_contact_points_revision_ck'] ?? '').toMatch(/> 0/u);
-  expect(contactChecks['party_contact_points_additional_evidence_ck'] ?? '').toMatch(
+  assert.match(checkSql(contactChecks, 'party_contact_points_revision_ck'), /> 0/u);
+  assert.match(
+    checkSql(contactChecks, 'party_contact_points_additional_evidence_ck'),
     /additional_evidence_refs.*array.*additional_evidence_refs.*32/u,
   );
-  expect(contactChecks['party_contact_points_end_evidence_ck'] ?? '').toMatch(
+  assert.match(
+    checkSql(contactChecks, 'party_contact_points_end_evidence_ck'),
     /valid_to.*end_reason.*end_provenance_source.*end_provenance_method.*end_evidence_refs.*ended_by_action_invocation_id.*ended_by_principal_id.*ended_recorded_at/u,
   );
-  expect(contactChecks['party_contact_points_shape_ck'] ?? '').toMatch(/num_nonnulls/u);
-  expect(contactChecks['party_contact_points_shape_ck'] ?? '').toMatch(/\^\\\+/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /num_nonnulls/u);
+  assert.match(checkSql(contactChecks, 'party_contact_points_shape_ck'), /\^\\\+/u);
   const preferredIndex = configOf(partyContactPoints).indexes.find(
     (candidate) => candidate.config.name === 'party_contact_points_current_preferred_uk',
   );
-  expect(preferredIndex?.config.unique).toBe(true);
-  expect(preferredIndex?.config.where).toBeTruthy();
+  assert.equal(preferredIndex?.config.unique, true);
+  assert.ok(preferredIndex?.config.where);
+});
+
+it('models contact point purpose lifecycles with owner-local references', () => {
   const purposeConfig = configOf(partyContactPointPurposes);
   const purposeChecks = Object.fromEntries(
     purposeConfig.checks.map((candidate) => [
@@ -350,10 +359,10 @@ it('models typed contact, relationship, and Counterparty lifecycles with owner-l
       dialect.sqlToQuery(candidate.value).sql,
     ]),
   );
-  expect(purposeChecks['party_contact_point_purposes_key_ck'] ?? '').toMatch(/REGISTERED/u);
-  expect(purposeChecks['party_contact_point_purposes_key_ck'] ?? '').toMatch(/BILLING/u);
-  expect(purposeChecks['party_contact_point_purposes_key_ck'] ?? '').toMatch(/DELIVERY/u);
-  expect(purposeChecks['party_contact_point_purposes_key_ck'] ?? '').toMatch(/CORRESPONDENCE/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /REGISTERED/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /BILLING/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /DELIVERY/u);
+  assert.match(checkSql(purposeChecks, 'party_contact_point_purposes_key_ck'), /CORRESPONDENCE/u);
   for (const column of [
     'registry_context',
     'jurisdiction',
@@ -371,75 +380,79 @@ it('models typed contact, relationship, and Counterparty lifecycles with owner-l
     'ended_recorded_at',
     'revision',
   ]) {
-    expect(
+    assert.ok(
       purposeConfig.columns.some((candidate) => candidate.name === column),
       column,
-    ).toBeTruthy();
+    );
   }
-  expect(purposeChecks['party_contact_point_purposes_end_evidence_ck'] ?? '').toMatch(
+  assert.match(
+    checkSql(purposeChecks, 'party_contact_point_purposes_end_evidence_ck'),
     /valid_to.*end_reason.*end_provenance_source.*end_provenance_method.*end_evidence_refs.*ended_by_action_invocation_id.*ended_by_principal_id.*ended_recorded_at/u,
   );
-  expect(
+  assert.equal(
     getTableName(
       foreignKey(partyContactPointPurposes, 'party_contact_point_purposes_contact_fk').reference()
         .foreignTable,
     ),
-  ).toBe(getTableName(partyContactPoints));
+    getTableName(partyContactPoints),
+  );
   const preferredPurpose = purposeConfig.indexes.find(
     (candidate) => candidate.config.name === 'party_contact_point_purposes_current_preferred_uk',
   );
-  expect(preferredPurpose?.config.unique).toBe(true);
-  expect(preferredPurpose?.config.where).toBeTruthy();
-  expect(
+  assert.equal(preferredPurpose?.config.unique, true);
+  assert.ok(preferredPurpose?.config.where);
+  assert.ok(
     purposeConfig.indexes.find(
       (candidate) => candidate.config.name === 'party_contact_point_purposes_current_registered_uk',
     )?.config.where,
-  ).toBeTruthy();
-
-  const relationshipChecks = Object.fromEntries(
-    configOf(partyRelationships).checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
   );
-  expect(relationshipChecks['party_relationships_type_ck'] ?? '').toMatch(/CONTACT_PERSON_OF/u);
-  expect(relationshipChecks['party_relationships_type_ck'] ?? '').not.toMatch(
+});
+
+it('models relationship lifecycles with owner-local references', () => {
+  const relationshipChecks = checksOf(partyRelationships);
+  assert.match(checkSql(relationshipChecks, 'party_relationships_type_ck'), /CONTACT_PERSON_OF/u);
+  assert.notMatch(
+    checkSql(relationshipChecks, 'party_relationships_type_ck'),
     /EMPLOYEE_OF|BRANCH_OF|OTHER/u,
   );
-  expect(
+  assert.ok(
     configOf(partyRelationships).columns.some(
       (column) => column.name === 'revision' && column.notNull && column.hasDefault,
     ),
-  ).toBeTruthy();
-  expect(
+  );
+  assert.ok(
     configOf(partyRelationships).columns.some(
       (column) => column.name === 'valid_from' && !column.notNull,
     ),
-  ).toBeTruthy();
-  expect(
+  );
+  assert.ok(
     configOf(partyRelationships).columns.some(
       (column) => column.name === 'assertion_state' && column.notNull && column.hasDefault,
     ),
-  ).toBeTruthy();
-  expect(configOf(partyRelationships).columns.some((column) => column.name === 'is_current')).toBe(
+  );
+  assert.equal(
+    configOf(partyRelationships).columns.some((column) => column.name === 'is_current'),
     false,
   );
-  expect(configOf(partyRelationships).columns.some((column) => column.name === 'state')).toBe(
+  assert.equal(
+    configOf(partyRelationships).columns.some((column) => column.name === 'state'),
     false,
   );
-  expect(relationshipChecks['party_relationships_interval_ck'] ?? '').toMatch(
+  assert.match(
+    checkSql(relationshipChecks, 'party_relationships_interval_ck'),
     /valid_to.*is null.*valid_from.*is null.*valid_to.*>.*valid_from/u,
   );
-  expect(relationshipChecks['party_relationships_assertion_state_ck'] ?? '').toMatch(
+  assert.match(
+    checkSql(relationshipChecks, 'party_relationships_assertion_state_ck'),
     /ACTIVE.*SUPERSEDED.*RETRACTED.*DISPUTED/u,
   );
-  expect(relationshipChecks['party_relationships_assertion_state_ck'] ?? '').not.toMatch(/ENDED/u);
+  assert.notMatch(checkSql(relationshipChecks, 'party_relationships_assertion_state_ck'), /ENDED/u);
   const relationshipIntervalIndex = configOf(partyRelationships).indexes.find(
     (candidate) => candidate.config.name === 'party_relationships_interval_idx',
   );
-  expect(relationshipIntervalIndex?.config.unique).toBe(false);
-  expect(relationshipIntervalIndex?.config.where).toBe(undefined);
-  expect(relationshipChecks['party_relationships_revision_ck'] ?? '').toMatch(/> 0/u);
+  assert.equal(relationshipIntervalIndex?.config.unique, false);
+  assert.equal(relationshipIntervalIndex?.config.where, undefined);
+  assert.match(checkSql(relationshipChecks, 'party_relationships_revision_ck'), /> 0/u);
   for (const column of [
     'end_reason',
     'end_provenance_source',
@@ -449,38 +462,37 @@ it('models typed contact, relationship, and Counterparty lifecycles with owner-l
     'ended_by_principal_id',
     'ended_recorded_at',
   ]) {
-    expect(
+    assert.ok(
       configOf(partyRelationships).columns.some((candidate) => candidate.name === column),
       column,
-    ).toBeTruthy();
+    );
   }
-  expect(
+  assert.equal(
     getTableName(
       foreignKey(partyRelationships, 'party_relationships_tenant_from_party_fk').reference()
         .foreignTable,
     ),
-  ).toBe(getTableName(parties));
+    getTableName(parties),
+  );
+});
 
-  expect(uniqueColumns(counterparties, 'party_counterparties_context_uk')).toEqual([
+it('models Counterparty lifecycles with owner-local references', () => {
+  assert.deepEqual(uniqueColumns(counterparties, 'party_counterparties_context_uk'), [
     'tenant_id',
     'party_id',
     'legal_entity_id',
   ]);
   for (const column of ['creation_reason', 'evidence_refs', 'source_record_refs', 'recorded_at']) {
-    expect(
+    assert.ok(
       configOf(counterparties).columns.some((candidate) => candidate.name === column),
       column,
-    ).toBeTruthy();
+    );
   }
-  const roleChecks = Object.fromEntries(
-    configOf(counterpartyRolePeriods).checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
-  );
-  expect(roleChecks['party_counterparty_role_periods_type_ck'] ?? '').toMatch(/CUSTOMER/u);
-  expect(roleChecks['party_counterparty_role_periods_type_ck'] ?? '').toMatch(/SUPPLIER/u);
-  expect(roleChecks['party_counterparty_role_periods_type_ck'] ?? '').not.toMatch(
+  const roleChecks = checksOf(counterpartyRolePeriods);
+  assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /CUSTOMER/u);
+  assert.match(checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'), /SUPPLIER/u);
+  assert.notMatch(
+    checkSql(roleChecks, 'party_counterparty_role_periods_type_ck'),
     /BUSINESS_PARTNER/u,
   );
   for (const column of [
@@ -494,25 +506,29 @@ it('models typed contact, relationship, and Counterparty lifecycles with owner-l
     'ended_by_principal_id',
     'ended_recorded_at',
   ]) {
-    expect(
+    assert.ok(
       configOf(counterpartyRolePeriods).columns.some((candidate) => candidate.name === column),
       column,
-    ).toBeTruthy();
+    );
   }
-  const roleEndEvidence = roleChecks['party_counterparty_role_periods_end_evidence_ck'] ?? '';
-  expect(roleEndEvidence).toMatch(
+  const roleEndEvidence = checkSql(roleChecks, 'party_counterparty_role_periods_end_evidence_ck');
+  assert.match(
+    roleEndEvidence,
     /valid_to[^)]*is null[^)]*end_provenance_source[^)]*is null[^)]*end_provenance_method[^)]*is null/u,
   );
-  expect(roleEndEvidence).toMatch(
+  assert.match(
+    roleEndEvidence,
     /valid_to.*is not null.*end_provenance_source.*btrim.*end_provenance_method.*btrim/u,
   );
-  expect(
+  assert.equal(
     configOf(counterpartyRolePeriods).indexes.some(
       (candidate) => candidate.config.name === 'party_counterparty_role_periods_current_uk',
     ),
+    false,
     'effective intervals, not an is_current unique index, own role-period uniqueness',
-  ).toBe(false);
-  expect(roleChecks['party_counterparty_role_periods_state_ck'] ?? '').not.toMatch(
+  );
+  assert.notMatch(
+    checkSql(roleChecks, 'party_counterparty_role_periods_state_ck'),
     /ACTIVE' and [^)]*is_current/u,
   );
 });
@@ -522,12 +538,7 @@ it('persists one recoverable match decision per Action and bounded duplicate rev
     'tenant_id',
     'action_invocation_id',
   ]);
-  const decisionChecks = Object.fromEntries(
-    configOf(partyMatchDecisions).checks.map((candidate) => [
-      candidate.name,
-      dialect.sqlToQuery(candidate.value).sql,
-    ]),
-  );
+  const decisionChecks = checksOf(partyMatchDecisions);
   expect(decisionChecks['party_match_decisions_outcome_ck'] ?? '').toMatch(/CREATED/u);
   expect(decisionChecks['party_match_decisions_outcome_ck'] ?? '').toMatch(/MATCHED/u);
   expect(decisionChecks['party_match_decisions_outcome_ck'] ?? '').toMatch(/AMBIGUOUS/u);

@@ -1,5 +1,5 @@
 // expect-count: 3
-import { it, layer } from '@app/effect-rstest';
+import { it, layer } from 'effect-rstest';
 import { Layer } from 'effect';
 
 it.layer(Layer.empty)('suite', (suiteIt) => {

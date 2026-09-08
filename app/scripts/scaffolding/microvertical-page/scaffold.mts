@@ -149,6 +149,22 @@ const fileExists = (filePath: string) =>
     return yield* mapFileSystemError(fileSystem.exists(filePath));
   });
 
+const pageRouteIsInvalid = (
+  canonicalPath: string,
+  canonicalSegments: readonly string[],
+  parameterNames: readonly string[],
+  requestedUrl: string | undefined,
+): boolean =>
+  canonicalPath.length < 2 ||
+  canonicalPath.length > 200 ||
+  canonicalSegments.length === 0 ||
+  canonicalSegments.some(
+    (segment) =>
+      !staticRouteSegmentPattern.test(segment) && !parameterRouteSegmentPattern.test(segment),
+  ) ||
+  new Set(parameterNames).size !== parameterNames.length ||
+  (requestedUrl === undefined && parameterNames.length > 0);
+
 const resolvePageRoute = (
   vertical: PageVerticalMetadata,
   page: string,
@@ -163,17 +179,7 @@ const resolvePageRoute = (
       const name = parameterRouteSegmentPattern.exec(segment)?.groups?.['name'];
       return name === undefined ? [] : [name];
     });
-    if (
-      canonicalPath.length < 2 ||
-      canonicalPath.length > 200 ||
-      canonicalSegments.length === 0 ||
-      canonicalSegments.some(
-        (segment) =>
-          !staticRouteSegmentPattern.test(segment) && !parameterRouteSegmentPattern.test(segment),
-      ) ||
-      new Set(parameterNames).size !== parameterNames.length ||
-      (requestedUrl === undefined && parameterNames.length > 0)
-    ) {
+    if (pageRouteIsInvalid(canonicalPath, canonicalSegments, parameterNames, requestedUrl)) {
       return yield* pageScaffoldFailure(
         '--url must be a root-relative path of lowercase kebab-case segments and unique named :parameters, with no locale, query, fragment, wildcard, optional/catch-all syntax, or trailing slash',
       );
@@ -797,6 +803,27 @@ const routeCollisionIdentity = (routePath: string): string =>
     .map((segment) => (parameterRouteSegmentPattern.test(segment) ? ':parameter' : segment))
     .join('/');
 
+const assertShellRouteSiblingsAreAvailable = (
+  entries: readonly DirectoryEntry[],
+  segment: string,
+  route: PageRoute,
+) =>
+  Effect.gen(function* assertShellRouteSiblingsAreAvailableEffect() {
+    const desiredSegmentIsDynamic = isDynamicShellRouteSegment(segment);
+    const siblingCollision = entries.find(
+      (entry) =>
+        entry.isDirectory && (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
+    );
+    if (siblingCollision !== undefined) {
+      const collisionKind = isDynamicShellRouteSegment(siblingCollision.name)
+        ? 'dynamic'
+        : 'static';
+      yield* pageScaffoldFailure(
+        `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${siblingCollision.name}`,
+      );
+    }
+  });
+
 const assertShellRouteSegmentIsAvailable = (
   parent: string,
   index: number,
@@ -811,19 +838,7 @@ const assertShellRouteSegmentIsAvailable = (
     const entries = yield* readDirectoryEntries(parent);
     const childEntry = entries.find((entry) => entry.name === segment);
     if (childEntry === undefined) {
-      const desiredSegmentIsDynamic = isDynamicShellRouteSegment(segment);
-      const siblingCollision = entries.find(
-        (entry) =>
-          entry.isDirectory && (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
-      );
-      if (siblingCollision !== undefined) {
-        const collisionKind = isDynamicShellRouteSegment(siblingCollision.name)
-          ? 'dynamic'
-          : 'static';
-        yield* pageScaffoldFailure(
-          `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${siblingCollision.name}`,
-        );
-      }
+      yield* assertShellRouteSiblingsAreAvailable(entries, segment, route);
       return;
     }
     const child = resolveContainedPath(parent, segment);
@@ -901,6 +916,50 @@ const generatedFileMatches = (
         ? readTextFile(filePath).pipe(Effect.map((content) => content === expected))
         : Effect.succeed(false),
     ),
+  );
+
+const generatedWiringContentMatches = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  wiring: ReturnType<typeof pageWiring>,
+  shellClients: string,
+  navigationMatches: boolean,
+): boolean =>
+  generatedWiringEntryMatches(
+    vertical.manifestContent,
+    MODULE_MANIFEST_IMPORT_SLOT_START,
+    MODULE_MANIFEST_IMPORT_SLOT_END,
+    wiring.manifestImport,
+    new RegExp(`\\b${wiring.componentName}\\b`, 'u'),
+  ) &&
+  generatedWiringEntryMatches(
+    vertical.manifestContent,
+    MODULE_MANIFEST_COMPONENT_SLOT_START,
+    MODULE_MANIFEST_COMPONENT_SLOT_END,
+    wiring.manifestComponent,
+    new RegExp(`["']page-${page}["']\\s*:`, 'u'),
+  ) &&
+  navigationMatches &&
+  generatedWiringEntryMatches(
+    vertical.manifestContent,
+    MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
+    MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
+    wiring.manifestPage,
+    new RegExp(`\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.page\\.${page}["']`, 'u'),
+  ) &&
+  generatedWiringEntryMatches(
+    vertical.registrationContent,
+    MODULE_REGISTRATION_PAGE_SLOT_START,
+    MODULE_REGISTRATION_PAGE_SLOT_END,
+    wiring.registrationPage,
+    new RegExp(`["']page-${page}["']\\s*:`, 'u'),
+  ) &&
+  generatedWiringEntryMatches(
+    shellClients,
+    SHELL_PAGE_CLIENT_SLOT_START,
+    SHELL_PAGE_CLIENT_SLOT_END,
+    wiring.shellClient,
+    new RegExp(`\\bcomponentKey\\s*:\\s*["']${vertical.moduleId}\\.page-${page}["']`, 'u'),
   );
 
 const generatedWiringMatches = (
@@ -990,43 +1049,8 @@ const generatedWiringMatches = (
             ),
           );
     return (
-      generatedWiringEntryMatches(
-        vertical.manifestContent,
-        MODULE_MANIFEST_IMPORT_SLOT_START,
-        MODULE_MANIFEST_IMPORT_SLOT_END,
-        wiring.manifestImport,
-        new RegExp(`\\b${wiring.componentName}\\b`, 'u'),
-      ) &&
-      generatedWiringEntryMatches(
-        vertical.manifestContent,
-        MODULE_MANIFEST_COMPONENT_SLOT_START,
-        MODULE_MANIFEST_COMPONENT_SLOT_END,
-        wiring.manifestComponent,
-        new RegExp(`["']page-${page}["']\\s*:`, 'u'),
-      ) &&
-      navigationMatches &&
-      generatedWiringEntryMatches(
-        vertical.manifestContent,
-        MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
-        MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
-        wiring.manifestPage,
-        new RegExp(`\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.page\\.${page}["']`, 'u'),
-      ) &&
-      generatedWiringEntryMatches(
-        vertical.registrationContent,
-        MODULE_REGISTRATION_PAGE_SLOT_START,
-        MODULE_REGISTRATION_PAGE_SLOT_END,
-        wiring.registrationPage,
-        new RegExp(`["']page-${page}["']\\s*:`, 'u'),
-      ) &&
+      generatedWiringContentMatches(vertical, page, wiring, shellClients, navigationMatches) &&
       federationMatches &&
-      generatedWiringEntryMatches(
-        shellClients,
-        SHELL_PAGE_CLIENT_SLOT_START,
-        SHELL_PAGE_CLIENT_SLOT_END,
-        wiring.shellClient,
-        new RegExp(`\\bcomponentKey\\s*:\\s*["']${vertical.moduleId}\\.page-${page}["']`, 'u'),
-      ) &&
       shellRouteMatches.every(Boolean) &&
       shellRouteInventoryMatches
     );
@@ -1108,7 +1132,7 @@ const generatedPageState = (
       : 'invalid';
   });
 
-export const planPageScaffold = (
+const planPageScaffold = (
   workspaceRoot: string,
   config: PageScaffoldConfig,
 ): Effect.Effect<ScaffoldPlan<PageScaffoldResult>, PageScaffoldError, FileSystem.FileSystem> =>

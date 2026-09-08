@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { v1 } from '@authzed/authzed-node';
 import { Effect } from 'effect';
@@ -93,7 +93,11 @@ it.effect('checks resource writes independently from resource reads', () =>
         }),
       ),
     );
-    const target = { moduleId: 'property.registry', resourceId: 'unit-1', resourceType: 'unit' };
+    const target = {
+      moduleId: 'property.registry',
+      resourceId: 'unit-1',
+      resourceType: 'unit',
+    };
     const result = yield* service.resources({
       legalEntityId: 'entity-1',
       permission: 'write',
@@ -106,20 +110,25 @@ it.effect('checks resource writes independently from resource reads', () =>
   }),
 );
 
+const makeAllowedPermissionRecorder = () => {
+  const observed: string[] = [];
+  const service = makeContextAccess(
+    makeClient((request) =>
+      Effect.sync(() => {
+        observed.push(...request.items.map(({ permission }) => permission));
+        return responseFor(
+          request,
+          request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        );
+      }),
+    ),
+  );
+  return { observed, service };
+};
+
 it.effect('forwards every closed tenant permission key without widening it', () =>
   Effect.gen(function* forwardsTenantPermissionKeys() {
-    const observed: string[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          observed.push(...request.items.map(({ permission }) => permission));
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
+    const { observed, service } = makeAllowedPermissionRecorder();
 
     yield* Effect.all(
       TENANT_PERMISSION_KEYS.map((permission) =>
@@ -138,18 +147,7 @@ it.effect('forwards every closed tenant permission key without widening it', () 
 
 it.effect('forwards every closed Legal Entity permission key without widening it', () =>
   Effect.gen(function* forwardsLegalEntityPermissionKeys() {
-    const observed: string[] = [];
-    const service = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          observed.push(...request.items.map(({ permission }) => permission));
-          return responseFor(
-            request,
-            request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-          );
-        }),
-      ),
-    );
+    const { observed, service } = makeAllowedPermissionRecorder();
 
     yield* Effect.all(
       LEGAL_ENTITY_PERMISSION_KEYS.map((permission) =>
@@ -206,8 +204,16 @@ it.effect('supports empty batches and exact resource filtering', () =>
         legalEntityId,
         principalId,
         resources: [
-          { moduleId: 'property.registry', resourceId: 'unit-1', resourceType: 'property.unit' },
-          { moduleId: 'property.registry', resourceId: 'unit-2', resourceType: 'property.unit' },
+          {
+            moduleId: 'property.registry',
+            resourceId: 'unit-1',
+            resourceType: 'property.unit',
+          },
+          {
+            moduleId: 'property.registry',
+            resourceId: 'unit-2',
+            resourceType: 'property.unit',
+          },
         ],
         tenantId,
       }),

@@ -79,7 +79,7 @@ export const ${adapterType}ServiceLive = Layer.effect(
 `;
 };
 
-export const planExternalHttpAdapterScaffold = Effect.fn('ExternalHttpAdapterScaffold.plan')(
+const planExternalHttpAdapterScaffold = Effect.fn('ExternalHttpAdapterScaffold.plan')(
   function* planExternalHttpAdapterScaffold(
     workspaceRoot: string,
     config: ExternalHttpAdapterScaffoldConfig,

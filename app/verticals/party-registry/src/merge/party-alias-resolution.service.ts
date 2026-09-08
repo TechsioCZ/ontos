@@ -47,7 +47,7 @@ export interface PartyAliasResolutionService {
   ) => Effect.Effect<ResolvedPartyAlias, PartyAliasResolutionError>;
 }
 
-export class PartyAliasResolution extends Context.Service<
+class PartyAliasResolution extends Context.Service<
   PartyAliasResolution,
   PartyAliasResolutionService
 >()('@app/party-registry/merge/party-alias-resolution.service/PartyAliasResolution') {}
@@ -126,7 +126,7 @@ export const makePartyAliasResolutionService = (
     (tenantId: string, partyId: string) => resolveFrom(tenantId, partyId, partyId, new Set(), []),
   );
 
-  return {
+  return PartyAliasResolution.of({
     requireCanonicalWriteTarget: (tenantId, requestedPartyId) =>
       resolvePartyAlias(tenantId, requestedPartyId).pipe(
         Effect.flatMap((resolution) =>
@@ -141,7 +141,7 @@ export const makePartyAliasResolutionService = (
         ),
       ),
     resolvePartyAlias,
-  };
+  });
 };
 
 type AliasTransaction = Pick<PartyTransaction, 'select'>;
@@ -157,7 +157,7 @@ const unavailable = (cause?: unknown) =>
     cause,
   );
 
-export const makeTransactionPartyAliasResolutionService = (
+const makeTransactionPartyAliasResolutionService = (
   transaction: AliasTransaction,
 ): PartyAliasResolutionService =>
   makePartyAliasResolutionService({

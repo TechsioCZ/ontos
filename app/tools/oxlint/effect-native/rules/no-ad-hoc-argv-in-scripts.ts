@@ -12,56 +12,20 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { ESTree } from '@oxlint/plugins';
 
-import {
-  globToRegExp,
-  isScriptFile,
-  isTestFile,
-  matchesAny,
-  normalisePath,
-} from '../shared/paths.ts';
+import { literalText, propertyText, staticString, unwrap } from '../shared/ast.ts';
+import { importedName } from '../shared/imports.ts';
+import { stringList } from '../shared/options.ts';
+import { globToRegExp, inScriptScope, scriptScope } from '../shared/paths.ts';
+import { provenance } from '../shared/provenance.ts';
 
 type AnyNode = ESTree.Node;
 
-const WORKSPACE_MARKERS: readonly string[] = ['/apps/', '/verticals/', '/packages/', '/scripts/'];
-
-/**
- * Absolute filename → the workspace-relative path the scope globs are written against.
- *
- * The *last* workspace marker wins so real sources (`<root>/scripts/x.mts`) and this plugin's own
- * fixtures (`tools/.../tests/fixtures/<rule>/invalid/scripts/x.mts`) classify identically;
- * `normalisePath` alone would stop at the enclosing `tools/` segment.
- */
-function workspacePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  let best = -1;
-  for (const marker of WORKSPACE_MARKERS) best = Math.max(best, unified.lastIndexOf(marker));
-  return best === -1 ? normalisePath(unified) : unified.slice(best + 1);
-}
-
-/** Modules whose default/namespace export *is* the process object. */
+/** Modules whose default/namespace export is the process object. */
 const PROCESS_MODULES = new Set(['process', 'node:process']);
-
 /** Modules exposing Node's own argument parser. */
 const UTIL_MODULES = new Set(['util', 'node:util']);
-
-/** Globals that own an argv array. */
-const ARGV_HOSTS = new Set(['process', 'Bun']);
-
-/** Globals that can be used to reach the process object indirectly (`globalThis.process.argv`). */
-const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self']);
-
-/** Wrappers that do not change "is this expression the object / initialiser of its parent". */
-const TRANSPARENT = new Set([
-  'ParenthesizedExpression',
-  'ChainExpression',
-  'TSAsExpression',
-  'TSSatisfiesExpression',
-  'TSNonNullExpression',
-  'TSInstantiationExpression',
-  'TSTypeAssertion',
-]);
 
 /**
  * Third-party CLI argument parsers. The spec's six (`yargs`, `commander`, `minimist`, `cac`, `arg`,
@@ -100,12 +64,6 @@ const DEFAULTS: RuleOptions = {
   forbiddenCliModules: [...DEFAULT_FORBIDDEN_CLI_MODULES],
 };
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
 function numberList(value: unknown, fallback: readonly number[]): readonly number[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'number')
     ? (value as readonly number[])
@@ -127,37 +85,10 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** Strip `(...)`, `as`, `satisfies`, `!`, `<T>` and `a?.b` chain wrappers from an expression. */
-function unwrap(node: AnyNode | null | undefined): AnyNode | null {
-  let current = node ?? null;
-  for (let depth = 0; current !== null && depth < 8; depth += 1) {
-    if (!TRANSPARENT.has(current.type)) return current;
-    const inner = (current as { expression?: AnyNode | null }).expression ?? null;
-    if (inner === null) return current;
-    current = inner;
-  }
-  return current;
-}
-
-/** `process.argv` / `process["argv"]` → `"argv"`; a dynamic key → `null`. */
-function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  const property = syntax(node.property) as AnyNode;
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
-  if (property.type === 'TemplateLiteral') return literalText(property);
-  if (property.type !== 'Literal') return null;
-  const value = (property as { value?: unknown }).value;
-  return typeof value === 'string' ? value : null;
-}
-
 /** The integer index of a computed member (`argv[2]`, `argv["2"]`), or `null` when it is dynamic. */
 function staticIndex(node: ESTree.MemberExpression): number | null {
   if (!node.computed) return null;
-  const property = unwrap(node.property as AnyNode);
+  const property = unwrap(node.property, { maxDepth: 8 });
   if (property === null) return null;
   const value =
     property.type === 'Literal' ? (property as { value?: unknown }).value : literalText(property);
@@ -165,24 +96,6 @@ function staticIndex(node: ESTree.MemberExpression): number | null {
   if (typeof value !== 'string') return null;
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : null;
-}
-
-function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(from);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/** `true` when `node` is the global `name` — not a local, parameter, class or imported binding. */
-function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): boolean {
-  if (node.type !== 'Identifier') return false;
-  if ((node as ESTree.IdentifierReference).name !== name) return false;
-  const variable = resolveVariable(context, name, node);
-  return variable === null || variable.defs.length === 0;
 }
 
 /** `"yargs/helpers"` → `"yargs"`, `"@commander-js/extra-typings/x"` → `"@commander-js/extra-typings"`. */
@@ -195,18 +108,7 @@ function packageName(specifier: string): string {
 
 /** The static string value of an `import(...)` / `require(...)` argument, when there is one. */
 function staticStringValue(node: AnyNode | null | undefined): string | null {
-  const inner = unwrap(node);
-  if (inner === null) return null;
-  if (inner.type === 'Literal') {
-    const value = (inner as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  if (inner.type === 'TemplateLiteral') {
-    const template = inner as ESTree.TemplateLiteral;
-    if (template.expressions.length !== 0 || template.quasis.length !== 1) return null;
-    return template.quasis[0]?.value.cooked ?? null;
-  }
-  return null;
+  return staticString(node, { unwrap: { maxDepth: 8 }, singleQuasi: true });
 }
 
 /**
@@ -321,13 +223,6 @@ export const rule = defineRule({
     const allowedIndices = new Set(options.allowEntryGuardIndices);
     const forbiddenModules = new Set(options.forbiddenCliModules);
 
-    /** Locals bound to the process module itself (`import process from "node:process"`). */
-    const processLocals = new Set<string>();
-    /** Locals bound to `node:util` (`import util from "node:util"`), for `util.parseArgs`. */
-    const utilLocals = new Set<string>();
-    /** Locals bound to the argv array itself (`import { argv as nodeArgv } from "node:process"`). */
-    const argvLocals = new Set<string>();
-
     const printed = (node: AnyNode): string => {
       const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
       return text.length > 72 ? `${text.slice(0, 69)}...` : text;
@@ -337,8 +232,6 @@ export const rule = defineRule({
       context.report({ node, messageId, data });
     };
 
-    const isArgvHost = (node: AnyNode | null): boolean =>
-      ['process', 'Bun'].includes(provenance(context, node) ?? '');
     const isArgvSource = (node: AnyNode | null): boolean =>
       ['process.argv', 'Bun.argv'].includes(provenance(context, node) ?? '');
 
@@ -350,53 +243,22 @@ export const rule = defineRule({
       report(whole, 'argvDestructuring', { expression: printed(whole) });
     };
 
+    const reportParseArgsImports = (node: ESTree.ImportDeclaration): void => {
+      for (const specifier of node.specifiers) {
+        if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
+        if (importedName(specifier) === 'parseArgs')
+          report(specifier, 'parseArgsImport', { module: node.source.value });
+      }
+    };
+
     return {
       ImportDeclaration(node) {
         const module = node.source.value;
-        const isTypeOnly = node.importKind === 'type';
-
-        if (PROCESS_MODULES.has(module) && !isTypeOnly) {
-          for (const specifier of node.specifiers) {
-            if (
-              specifier.type === 'ImportDefaultSpecifier' ||
-              specifier.type === 'ImportNamespaceSpecifier'
-            ) {
-              processLocals.add(specifier.local.name);
-              continue;
-            }
-            if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
-            const imported =
-              specifier.imported.type === 'Identifier'
-                ? specifier.imported.name
-                : specifier.imported.value;
-            // `import { argv } from "node:process"` binds the argv array itself.
-            if (imported === 'argv') argvLocals.add(specifier.local.name);
-          }
+        if (node.importKind === 'type' || PROCESS_MODULES.has(module)) return;
+        if (UTIL_MODULES.has(module)) {
+          reportParseArgsImports(node);
           return;
         }
-
-        if (UTIL_MODULES.has(module) && !isTypeOnly) {
-          for (const specifier of node.specifiers) {
-            if (
-              specifier.type === 'ImportDefaultSpecifier' ||
-              specifier.type === 'ImportNamespaceSpecifier'
-            ) {
-              utilLocals.add(specifier.local.name);
-              continue;
-            }
-            if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
-            const imported =
-              specifier.imported.type === 'Identifier'
-                ? specifier.imported.name
-                : specifier.imported.value;
-            if (imported === 'parseArgs') {
-              report(specifier as unknown as AnyNode, 'parseArgsImport', { module });
-            }
-          }
-          return;
-        }
-
-        if (isTypeOnly) return;
         if (!forbiddenModules.has(packageName(module))) return;
         const valueSpecifiers = node.specifiers.filter(
           (specifier) => !(specifier.type === 'ImportSpecifier' && specifier.importKind === 'type'),
@@ -515,213 +377,3 @@ export const rule = defineRule({
     };
   },
 });
-
-/** Bounded, lexical provenance only; no type checker or interprocedural/data-flow inference. */
-type Syntax = ESTree.Node & Record<string, any>;
-function syntax(node: unknown): Syntax | null {
-  let n = node as Syntax | null;
-  while (
-    n &&
-    [
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TSTypeAssertion',
-      'TSInstantiationExpression',
-      'ParenthesizedExpression',
-      'ChainExpression',
-      'AwaitExpression',
-    ].includes(n.type)
-  )
-    n = n.expression ?? n.argument;
-  return n;
-}
-function lexicalVariable(context: Context, node: Syntax): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  while (scope) {
-    const v = scope.set.get(node.name);
-    if (v) return v;
-    scope = scope.upper;
-  }
-  return null;
-}
-function literalText(node: unknown): string | null {
-  const n = syntax(node);
-  if (n?.type === 'Literal' && typeof n.value === 'string') return n.value;
-  if (n?.type === 'TemplateLiteral' && n.expressions.length === 0)
-    return n.quasis[0]?.value.cooked ?? null;
-  return null;
-}
-function propertyText(node: unknown): string | null {
-  const n = node as Syntax;
-  const key = syntax(n.property ?? n.key);
-  return !n.computed && key?.type === 'Identifier' ? key.name : literalText(key);
-}
-function moduleIdentity(source: string): string {
-  if (/^(?:node:)?(?:process|console|util|module)$/.test(source))
-    return source.replace(/^node:/, '');
-  if (source === 'effect/Effect') return 'Effect';
-  if (source === 'effect/ManagedRuntime') return 'ManagedRuntime';
-  return source;
-}
-function bindingPath(pattern: Syntax, name: string): string[] | null {
-  if (pattern.type === 'Identifier') return pattern.name === name ? [] : null;
-  if (pattern.type === 'AssignmentPattern') return bindingPath(pattern.left, name);
-  if (pattern.type !== 'ObjectPattern') return null;
-  for (const p of pattern.properties) {
-    if (p.type !== 'Property') continue;
-    const key = propertyText(p),
-      tail = bindingPath(p.value, name);
-    if (key !== null && tail !== null) return [key, ...tail];
-  }
-  return null;
-}
-function provenance(context: Context, node: unknown, seen = new Set<Variable>()): string | null {
-  const n = syntax(node);
-  if (!n) return null;
-  if (n.type === 'Identifier') {
-    const v = lexicalVariable(context, n);
-    if (!v || v.defs.length === 0)
-      return [
-        'process',
-        'console',
-        'Bun',
-        'globalThis',
-        'global',
-        'window',
-        'self',
-        'require',
-        'Array',
-        'Set',
-      ].includes(n.name)
-        ? n.name
-        : null;
-    if (seen.has(v) || v.defs.length !== 1) return null;
-    const next = new Set(seen);
-    next.add(v);
-    const def = v.defs[0] as any;
-    if (def.type === 'ImportBinding') {
-      const spec = def.node as Syntax;
-      const decl = (def.parent ?? spec.parent) as Syntax;
-      if (decl.importKind === 'type' || spec.importKind === 'type') return null;
-      const source = literalText(decl.source);
-      if (!source) return null;
-      const base = moduleIdentity(source);
-      if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-        return base;
-      const name = spec.imported?.name ?? spec.imported?.value;
-      if (name === 'default') return base;
-      if (base === 'effect') return name;
-      return `${base}.${name}`;
-    }
-    if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
-    // A declaration is not a reaching-definition analysis: reassigned aliases are unknown.
-    if (v.references.some((r: any) => r.init !== true && r.isWrite())) return null;
-    const d = def.node as Syntax;
-    const base = provenance(context, d.init, next),
-      path = bindingPath(d.id, n.name);
-    return base !== null && path !== null ? [base, ...path].join('.') : null;
-  }
-  if (n.type === 'MemberExpression') {
-    const base = provenance(context, n.object, seen),
-      key = propertyText(n);
-    if (base === null || key === null) return null;
-    if (
-      ['globalThis', 'global', 'window', 'self'].includes(base) &&
-      ['process', 'console', 'Bun'].includes(key)
-    )
-      return key;
-    if (['process', 'console', 'util', 'module'].includes(base) && key === 'default') return base;
-    if (base === 'effect') return key;
-    return `${base}.${key}`;
-  }
-  if (n.type === 'ImportExpression') {
-    const text = literalText(n.source);
-    return text === null ? null : moduleIdentity(text);
-  }
-  if (n.type === 'CallExpression') {
-    const callee = provenance(context, n.callee, seen);
-    if (callee === 'require') {
-      const text = literalText(n.arguments[0]);
-      return text === null ? null : moduleIdentity(text);
-    }
-    if (callee === 'module.createRequire') return 'require';
-    if (callee === 'ManagedRuntime.make') return 'Runtime';
-  }
-  return null;
-}
-/** Only value references, never property names, bindings or TS-only identifiers. */
-function valueReference(context: Context, node: unknown): boolean {
-  const n = node as Syntax,
-    p = n.parent as Syntax | undefined;
-  if (!p) return false;
-  if (p.type.startsWith('Import') || p.type === 'ExportSpecifier') return false;
-  if (p.type === 'MemberExpression' && p.property === n && !p.computed) return false;
-  if (
-    [
-      'Property',
-      'PropertyDefinition',
-      'MethodDefinition',
-      'TSPropertySignature',
-      'TSMethodSignature',
-    ].includes(p.type) &&
-    p.key === n &&
-    !p.computed &&
-    !(p.shorthand && p.value === n)
-  )
-    return false;
-  if (['LabeledStatement', 'BreakStatement', 'ContinueStatement'].includes(p.type)) return false;
-  let child: Syntax = n;
-  let parent: Syntax | null = p;
-  while (parent) {
-    if (
-      parent.type.startsWith('TS') &&
-      !(
-        [
-          'TSAsExpression',
-          'TSSatisfiesExpression',
-          'TSNonNullExpression',
-          'TSTypeAssertion',
-          'TSInstantiationExpression',
-        ].includes(parent.type) && parent.expression === child
-      )
-    )
-      return false;
-    if (
-      parent.type.endsWith('Statement') ||
-      parent.type.endsWith('Declaration') ||
-      parent.type.includes('Function')
-    )
-      break;
-    child = parent;
-    parent = parent.parent as Syntax | null;
-  }
-  const v = lexicalVariable(context, n);
-  return (
-    !v ||
-    v.references.some(
-      (r: any) =>
-        r.identifier === n &&
-        r.isRead() &&
-        (typeof r.isValueReference !== 'function' || r.isValueReference()),
-    )
-  );
-}
-/** Strip fixture scaffolding first; do not renormalise a relative script path around inner markers. */
-function scriptScope(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture = unified.match(
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u,
-  );
-  if (fixture) return fixture[1];
-  if (!unified.startsWith('/') && !/^[A-Za-z]:\//u.test(unified))
-    return unified.replace(/^\.\//, '');
-  const match = unified.match(/(?:^|\/)((?:apps|packages|verticals|scripts|tools)\/.*)$/u);
-  return match?.[1] ?? unified;
-}
-function inScriptScope(path: string): boolean {
-  return (
-    /(?:^|\/)scripts\//u.test(path) &&
-    !/(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u.test(path)
-  );
-}

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { expect, it } from '@app/effect-rstest';
+
+import { expect, it } from 'effect-rstest';
 
 import {
   fixtureConfigPath,
@@ -19,6 +20,45 @@ if (rules.length === 0) {
     expect(rules, `No fixture directories found${suffix}.`).not.toHaveLength(0);
   });
 }
+
+const appendValidFailures = (
+  fixtureDirectory: string,
+  valid: readonly string[],
+  byFile: ReadonlyMap<string, number>,
+  failures: string[],
+): void => {
+  for (const file of valid) {
+    const key = path.relative(fixtureDirectory, file).replaceAll('\\', '/');
+    const count = byFile.get(key) ?? 0;
+    if (count !== 0) {
+      failures.push(`${key} must not report (false positive: ${count})`);
+    }
+  }
+};
+
+const fixtureFailures = (
+  fixtureDirectory: string,
+  invalid: readonly string[],
+  valid: readonly string[],
+  byFile: ReadonlyMap<string, number>,
+): string[] => {
+  const failures: string[] = [];
+  for (const file of invalid) {
+    const key = path.relative(fixtureDirectory, file).replaceAll('\\', '/');
+    const count = byFile.get(key) ?? 0;
+    const expected = /^\/\/\s*expect-count:\s*(?<count>\d+)/u.exec(readFileSync(file, 'utf-8'))
+      ?.groups?.count;
+    if (expected !== undefined) {
+      if (Number(expected) <= 0 || count !== Number(expected)) {
+        failures.push(`${key} expected ${expected} positive diagnostics, got ${count}`);
+      }
+    } else if (count === 0) {
+      failures.push(`${key} expected at least one diagnostic`);
+    }
+  }
+  appendValidFailures(fixtureDirectory, valid, byFile, failures);
+  return failures;
+};
 
 for (const rule of rules) {
   it(`effect-native/${rule} fixtures`, () => {
@@ -47,27 +87,7 @@ for (const rule of rules) {
     expect(run.numberOfFiles, `${rule}: not every fixture was linted`).toBe(
       invalid.length + valid.length,
     );
-    const failures: string[] = [];
-    for (const file of invalid) {
-      const key = path.relative(fixtureDirectory, file).replaceAll('\\', '/');
-      const count = byFile.get(key) ?? 0;
-      const expected = /^\/\/\s*expect-count:\s*(?<count>\d+)/u.exec(readFileSync(file, 'utf-8'))
-        ?.groups?.count;
-      if (expected !== undefined) {
-        if (Number(expected) <= 0 || count !== Number(expected)) {
-          failures.push(`${key} expected ${expected} positive diagnostics, got ${count}`);
-        }
-      } else if (count === 0) {
-        failures.push(`${key} expected at least one diagnostic`);
-      }
-    }
-    for (const file of valid) {
-      const key = path.relative(fixtureDirectory, file).replaceAll('\\', '/');
-      const count = byFile.get(key) ?? 0;
-      if (count !== 0) {
-        failures.push(`${key} must not report (false positive: ${count})`);
-      }
-    }
+    const failures = fixtureFailures(fixtureDirectory, invalid, valid, byFile);
     expect(failures, `${rule}:\n${failures.join('\n')}`).toStrictEqual([]);
   });
 }

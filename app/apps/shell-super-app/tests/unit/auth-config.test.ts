@@ -1,6 +1,6 @@
-import { expect, it } from '@app/effect-rstest';
-import { Effect, Schema } from 'effect';
-import { AuthConfigError, parseAuthConfig } from '../../api/auth/config.ts';
+import { expect, it } from 'effect-rstest';
+import { Effect, Predicate, Schema } from 'effect';
+import { parseAuthConfig } from '../../api/auth/config.ts';
 import {
   GatewayIssuerConfigError,
   parseGatewayIssuerConfig,
@@ -37,8 +37,8 @@ it.effect('requires a strong secret and PostgreSQL URL in the typed error channe
       ],
       { concurrency: 'unbounded' },
     );
-    expect(Schema.is(AuthConfigError)(secretError)).toBe(true);
-    expect(Schema.is(AuthConfigError)(databaseError)).toBe(true);
+    expect(Predicate.isTagged(secretError, 'AuthConfigError')).toBe(true);
+    expect(Predicate.isTagged(databaseError, 'AuthConfigError')).toBe(true);
   }),
 );
 it.effect('keeps gateway signing configuration independent from Better Auth configuration', () =>

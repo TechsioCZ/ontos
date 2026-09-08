@@ -194,15 +194,3 @@ export const ultramodernLocalisedUrls = {
     en: '/resources/:moduleId/:resourceType/:resourceId',
   },
 } as const;
-
-export const ultramodernPublicRoutes = [] as const;
-
-export const ultramodernRouteConfig = {
-  authoring: 'colocated-route-meta',
-  generatedManifest: true,
-  localisedUrls: ultramodernLocalisedUrls,
-  namespace: ultramodernRouteNamespace,
-  publicRoutes: ultramodernPublicRoutes,
-  routes: ultramodernRouteMetadata,
-  source: 'route-owned',
-} as const;

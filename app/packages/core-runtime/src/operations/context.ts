@@ -197,6 +197,16 @@ const validateRequestedScope = (
   return undefined;
 };
 
+const hasInvalidPersistedBinding = (
+  principal: TrustedPrincipalContext,
+  persisted: PersistedScopeRecord,
+  supportRecovery: boolean,
+): boolean =>
+  persisted.bindingTenantId !== principal.tenantId ||
+  persisted.bindingPrincipalId !== principal.principalId ||
+  (!supportRecovery &&
+    (persisted.bindingStatus !== 'active' || persisted.bindingRevokedAt !== null));
+
 const validatePersistedPrincipal = (
   principal: TrustedPrincipalContext,
   persisted: PersistedScopeRecord,
@@ -215,10 +225,7 @@ const validatePersistedPrincipal = (
   }
   if (
     principal.authBindingId !== undefined &&
-    (persisted.bindingTenantId !== principal.tenantId ||
-      persisted.bindingPrincipalId !== principal.principalId ||
-      (!supportRecovery &&
-        (persisted.bindingStatus !== 'active' || persisted.bindingRevokedAt !== null)))
+    hasInvalidPersistedBinding(principal, persisted, supportRecovery)
   ) {
     return new OperationAuthenticationRequired({
       code: 'operation_authentication_required',

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the correction service's Drizzle boundary. expires: 2026-12-31. */
 import { DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
 import {
@@ -305,49 +305,6 @@ it.effect(
       { concurrency: 1 },
     ),
 );
-it.effect('UNRESOLVED Party Type enrichment is rejected before mutation by correction', () =>
-  Effect.gen(function* correctionScenario5() {
-    const h = transactionHarness([
-      [],
-      [{ partyId }],
-      [],
-      [{ partyId }],
-      [
-        {
-          assertionId,
-          factKind: 'PARTY_TYPE',
-          isCurrent: true,
-          normalizedValue: 'UNRESOLVED',
-          partyId,
-          state: 'ACTIVE',
-        },
-      ],
-    ]);
-    const command = decode(PartyCorrectionCommandSchema)({
-      ...evidence,
-      factKind: 'PARTY_TYPE',
-      partyId,
-      replacementValue: 'PERSON',
-      subjectEvidence: [
-        {
-          basis: 'REVIEWED_DOCUMENT',
-          evidenceRef: 'record/42',
-          kind: 'ACTOR_ATTESTATION',
-          observedSubject: 'PERSON',
-          statement: 'Reviewed this external organization',
-          subjectKey: 'one-subject',
-        },
-      ],
-      targetAssertionId: assertionId,
-    });
-    const error = yield* Effect.flip(
-      correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
-    );
-    expect(Predicate.isTagged(error, 'PartyCorrectionConflict')).toBe(true);
-    expect(error.reason).toMatch(/enrichment/u);
-    expect(h.updateSets.length).toBe(0);
-  }),
-);
 it.effect(
   'detail exposes immutable original/result semantics, governance, and source distinct from actor',
   () =>
@@ -478,10 +435,37 @@ it('correction history requires reviewer authority; ordinary identity read permi
   expect(target).toEqual({ kind: 'tenant', permission: 'review_party_identity' });
   expect(target).not.toEqual({ kind: 'tenant', permission: 'read_party_identity' });
 });
-it.effect(
-  'Party Type correction reconciles newly eligible claims before superseding the original fact',
-  () =>
-    Effect.gen(function* correctionScenario9() {
+for (const scenario of [
+  {
+    name: 'UNRESOLVED Party Type enrichment is rejected before mutation by correction',
+    original: 'UNRESOLVED',
+    replacement: 'PERSON',
+    claimReads: [],
+    reason: /enrichment/u,
+  },
+  {
+    name: 'Party Type correction reconciles newly eligible claims before superseding the original fact',
+    original: 'PERSON',
+    replacement: 'ORGANIZATION',
+    claimReads: [
+      [],
+      [
+        {
+          identifierTypeKey: 'ICO',
+          namespace: 'CZ:ICO',
+          normalizedValue: '27074358',
+          officialIdentifierId: replacementId,
+          verificationState: 'VERIFIED',
+        },
+      ],
+      [],
+      [{ partyId: organizationId }],
+    ],
+    reason: /exclusive identifier claims/u,
+  },
+]) {
+  it.effect(scenario.name, () =>
+    Effect.gen(function* rejectCorrectionScenario() {
       const h = transactionHarness([
         [],
         [{ partyId }],
@@ -492,35 +476,24 @@ it.effect(
             assertionId,
             factKind: 'PARTY_TYPE',
             isCurrent: true,
-            normalizedValue: 'PERSON',
+            normalizedValue: scenario.original,
             partyId,
             state: 'ACTIVE',
           },
         ],
-        [],
-        [
-          {
-            identifierTypeKey: 'ICO',
-            namespace: 'CZ:ICO',
-            normalizedValue: '27074358',
-            officialIdentifierId: replacementId,
-            verificationState: 'VERIFIED',
-          },
-        ],
-        [],
-        [{ partyId: organizationId }],
+        ...scenario.claimReads,
       ]);
       const command = decode(PartyCorrectionCommandSchema)({
         ...evidence,
         factKind: 'PARTY_TYPE',
         partyId,
-        replacementValue: 'ORGANIZATION',
+        replacementValue: scenario.replacement,
         subjectEvidence: [
           {
             basis: 'REVIEWED_DOCUMENT',
             evidenceRef: 'record/42',
             kind: 'ACTOR_ATTESTATION',
-            observedSubject: 'ORGANIZATION',
+            observedSubject: scenario.replacement,
             statement: 'Reviewed this external organization',
             subjectKey: 'one-subject',
           },
@@ -534,11 +507,13 @@ it.effect(
         }),
       );
       expect(Predicate.isTagged(error, 'PartyCorrectionConflict')).toBe(true);
-      expect(error.reason).toMatch(/exclusive identifier claims/u);
+      expect(error.reason).toMatch(scenario.reason);
       expect(h.updateSets.length).toBe(0);
       expect(h.insertValues.length).toBe(0);
     }),
-);
+  );
+}
+
 it.effect(
   'type Correction cannot treat a reviewer decision or source label as subject evidence',
   () =>

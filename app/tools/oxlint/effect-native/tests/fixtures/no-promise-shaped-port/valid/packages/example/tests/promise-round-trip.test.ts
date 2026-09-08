@@ -1,4 +1,4 @@
-import { expect, it, rstest } from '@app/effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 import { Effect, Fiber } from 'effect';
 import { client } from 'external-sdk';
 import { expect as foreignExpect } from 'external-assertions';

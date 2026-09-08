@@ -88,7 +88,7 @@ interface PrincipalResolutionRecordReader<Result extends PrincipalResolutionReco
   readonly load: (subject: ProviderSubject, tenantId?: string) => Result;
 }
 
-export type PrincipalResolutionRecordRepository =
+type PrincipalResolutionRecordRepository =
   PrincipalResolutionRecordReader<PrincipalResolutionRecordLoadResult>;
 
 const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
@@ -186,9 +186,7 @@ export const classifyAvailableTenants = (
     ),
   );
 
-export const listAvailableTenantsFromRepository = <
-  Result extends PrincipalResolutionRecordLoadResult,
->(
+const listAvailableTenantsFromRepository = <Result extends PrincipalResolutionRecordLoadResult>(
   repository: PrincipalResolutionRecordReader<Result>,
   betterAuthUserId: string,
 ): Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError> =>

@@ -1,12 +1,14 @@
-import type { Pool } from 'pg';
+import { Pool } from 'pg';
 import { PgClient } from '@effect/sql-pg';
 import type { AnyRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect, Stream } from 'effect';
+import { Effect } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { Connection } from 'effect/unstable/sql/SqlConnection';
+import { testSqlConnection } from './sql-connection.ts';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 import { coreRelations } from '../../src/db/schema.ts';
+import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { acquirePoolResource } from '../../src/db/client.ts';
 
 /** Native SQL connection fixture; Drizzle and Effect own query and transaction execution. */
 export const makeTestDatabase = (
@@ -14,16 +16,7 @@ export const makeTestDatabase = (
 ) =>
   Effect.scoped(
     Effect.gen(function* makeNativeTestDatabase() {
-      const values = (sql: string, params: readonly unknown[]) =>
-        execute(sql, params).pipe(Effect.map((rows) => rows.map(Object.values)));
-      const connection: Connection = {
-        execute,
-        executeRaw: execute,
-        executeStream: (sql, params) => Stream.fromIterableEffect(execute(sql, params)),
-        executeUnprepared: execute,
-        executeValues: values,
-        executeValuesUnprepared: values,
-      };
+      const connection = testSqlConnection(execute);
       const reactivity = yield* Reactivity.make;
       const client = yield* PgClient.makeWith({
         acquirer: Effect.succeed(connection),
@@ -51,3 +44,15 @@ export const makeTestDatabaseFromPool = <Relations extends AnyRelations>(
       Effect.provideService(PgClient.PgClient, client),
     );
   });
+
+/** Fresh pools per execution; the caller's scope releases them after test cleanup. */
+export const testDatabasePools = Effect.gen(function* acquireTestDatabasePools() {
+  const connections = yield* loadDatabaseConnectionPair();
+  const admin = yield* acquirePoolResource(
+    () => new Pool({ connectionString: connections.admin.connectionString }),
+  );
+  const runtimePool = yield* acquirePoolResource(
+    () => new Pool({ connectionString: connections.runtime.connectionString }),
+  );
+  return { admin, runtimePool };
+});

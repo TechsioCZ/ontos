@@ -39,7 +39,7 @@ const ApiKeyCredentialInvalidErrorSchema = Schema.TaggedStruct(
   'ApiKeyCredentialInvalidError',
   apiKeyCredentialInvalidFields,
 );
-export const ApiKeyCredentialInvalidError = Schema.TaggedError<
+const ApiKeyCredentialInvalidError = Schema.TaggedError<
   Schema.Schema.Type<typeof ApiKeyCredentialInvalidErrorSchema>
 >()('ApiKeyCredentialInvalidError', apiKeyCredentialInvalidFields);
 const apiKeyRateLimitedFields = {
@@ -51,7 +51,7 @@ const ApiKeyRateLimitedErrorSchema = Schema.TaggedStruct(
   'ApiKeyRateLimitedError',
   apiKeyRateLimitedFields,
 );
-export const ApiKeyRateLimitedError = Schema.TaggedError<
+const ApiKeyRateLimitedError = Schema.TaggedError<
   Schema.Schema.Type<typeof ApiKeyRateLimitedErrorSchema>
 >()('ApiKeyRateLimitedError', apiKeyRateLimitedFields);
 const apiKeyProviderUnavailableFields = {
@@ -101,7 +101,7 @@ export interface IssuedApiKey extends ProviderApiKeyMetadata {
 export interface VerifiedApiKey {
   readonly providerKeyId: string;
 }
-export interface PendingApiKeyCleanupBatch {
+interface PendingApiKeyCleanupBatch {
   readonly hasMore: boolean;
   readonly providerKeyIds: readonly string[];
 }

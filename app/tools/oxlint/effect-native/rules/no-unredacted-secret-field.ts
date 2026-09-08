@@ -87,19 +87,17 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { compile, stringList } from '../shared/options.ts';
+import { parentOf, unwrapNode } from '../shared/ast.ts';
+import { resolveVariable, resolvesToImport as importedReference } from '../shared/bindings.ts';
+import { collectRootNamespaces, collectNamedImports, importedName } from '../shared/imports.ts';
 
 type AnyNode = ESTree.Node;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the production `includePaths` defaults instead of
- * forcing the fixture config to loosen them (`run-on-repo.mts` reuses that config verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+type IdentifierNode = Extract<AnyNode, { type: 'Identifier' }>;
 
 const DEFAULT_INCLUDE_PATHS: readonly string[] = [
   'apps/**',
@@ -135,6 +133,10 @@ const EFFECT_ROOT_MODULE = 'effect';
 const SCHEMA_NAMESPACE = 'Schema';
 const CONFIG_NAMESPACE = 'Config';
 const PIPE_EXPORT = 'pipe';
+const DIRECT_NAMESPACES = new Map([
+  ['effect/Schema', SCHEMA_NAMESPACE],
+  ['effect/Config', CONFIG_NAMESPACE],
+]);
 
 /** Type-reference containers whose single string argument is still a bag of raw strings. */
 const STRING_CONTAINERS = new Set(['Array', 'ReadonlyArray']);
@@ -213,22 +215,6 @@ interface RuleOptions {
   readonly secretNames: RegExp;
 }
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  return value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
-function compile(value: unknown, fallback: string, flags: string): RegExp {
-  const source = typeof value === 'string' && value.length > 0 ? value : fallback;
-  try {
-    return new RegExp(source, flags);
-  } catch {
-    return new RegExp(fallback, flags);
-  }
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Record<string, unknown>;
   const includePaths = stringList(given.includePaths, DEFAULT_INCLUDE_PATHS);
@@ -242,27 +228,8 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
 function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  for (let guard = 0; guard < 16; guard += 1) {
-    if (!UNWRAPPABLE.has(current.type)) return current;
-    const inner = (current as { expression?: AnyNode }).expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: UNWRAPPABLE, maxDepth: 16 });
 }
 
 /** `.String` or `["String"]` → `"String"`; a dynamic key → `null`. */
@@ -313,44 +280,55 @@ function unwrapType(node: AnyNode): AnyNode {
   return current;
 }
 
-/** `string`, `string | null`, `readonly string[]`, `ReadonlySet<string>` — but never `Redacted<string>`. */
+/** Nullable and literal alternatives do not themselves establish a raw string payload. */
+function isNeutralStringAlternative(type: AnyNode): boolean {
+  if (type.type === 'TSNullKeyword' || type.type === 'TSUndefinedKeyword') return true;
+  return (
+    type.type === 'TSLiteralType' &&
+    type.literal.type === 'Literal' &&
+    typeof type.literal.value === 'string'
+  );
+}
+
+function isStringUnion(types: readonly AnyNode[], depth: number): boolean {
+  let sawString = false;
+  for (const member of types) {
+    const inner = unwrapType(member);
+    if (isNeutralStringAlternative(inner)) continue;
+    if (!isStringShaped(inner, depth + 1)) return false;
+    sawString = true;
+  }
+  return sawString;
+}
+
+function isStringContainer(type: ESTree.TSTypeReference, depth: number): boolean {
+  const name = typeNameOf(type.typeName);
+  if (name === null || !STRING_CONTAINERS.has(name)) return false;
+  const args = type.typeArguments?.params ?? [];
+  return args.length === 1 && args[0] !== undefined && isStringShaped(args[0], depth + 1);
+}
+
+/** Raw strings, nullable alternatives and ordered collections, never redacted types. */
 function isStringShaped(node: AnyNode, depth: number): boolean {
   if (depth > 6) return false;
   const type = unwrapType(node);
-  if (type.type === 'TSStringKeyword') return true;
-  if (type.type === 'TSLiteralType' && type.literal.type === 'TemplateLiteral')
-    return type.literal.expressions.length > 0;
-  if (type.type === 'TSTemplateLiteralType')
-    return type.types.some((member) => isStringShaped(member, depth + 1));
-  if (type.type === 'TSIntersectionType')
-    return type.types.some((member) => isStringShaped(member, depth + 1));
-  if (type.type === 'TSArrayType')
-    return isStringShaped((type as { elementType: AnyNode }).elementType, depth + 1);
-  if (type.type === 'TSUnionType') {
-    let sawString = false;
-    for (const member of (type as { types: readonly AnyNode[] }).types) {
-      const inner = unwrapType(member);
-      if (inner.type === 'TSNullKeyword' || inner.type === 'TSUndefinedKeyword') continue;
-      if (
-        inner.type === 'TSLiteralType' &&
-        inner.literal.type === 'Literal' &&
-        typeof inner.literal.value === 'string'
-      )
-        continue;
-      if (!isStringShaped(inner, depth + 1)) return false;
-      sawString = true;
-    }
-    return sawString;
+  switch (type.type) {
+    case 'TSStringKeyword':
+      return true;
+    case 'TSLiteralType':
+      return type.literal.type === 'TemplateLiteral' && type.literal.expressions.length > 0;
+    case 'TSTemplateLiteralType':
+    case 'TSIntersectionType':
+      return type.types.some((member) => isStringShaped(member, depth + 1));
+    case 'TSArrayType':
+      return isStringShaped(type.elementType, depth + 1);
+    case 'TSUnionType':
+      return isStringUnion(type.types, depth);
+    case 'TSTypeReference':
+      return isStringContainer(type, depth);
+    default:
+      return false;
   }
-  if (type.type === 'TSTypeReference') {
-    const name = typeNameOf((type as { typeName: AnyNode }).typeName);
-    if (name === null || !STRING_CONTAINERS.has(name)) return false;
-    const args =
-      (type as { typeArguments?: { params?: readonly AnyNode[] } | null }).typeArguments?.params ??
-      [];
-    return args.length === 1 && args[0] !== undefined && isStringShaped(args[0], depth + 1);
-  }
-  return false;
 }
 
 export const rule = defineRule({
@@ -436,112 +414,95 @@ export const rule = defineRule({
 
     const isSecretName = (name: string): boolean => options.secretNames.test(name);
 
-    const lookupVariable = (identifier: AnyNode, name: string): Variable | null => {
-      let scope: Scope | null = context.sourceCode.getScope(identifier);
-      while (scope !== null) {
-        const variable = scope.set.get(name);
-        if (variable !== undefined) return variable;
-        scope = scope.upper;
-      }
-      return null;
+    const lookupVariable = (identifier: AnyNode, name: string) =>
+      resolveVariable(context, name, identifier);
+
+    const resolvesToImport = (node: AnyNode): boolean => importedReference(context, node);
+
+    const singleDefinition = (node: IdentifierNode) => {
+      const variable = lookupVariable(node, node.name);
+      return variable?.defs.length === 1 ? variable.defs[0] : undefined;
     };
 
-    /** `true` when the namespace identifier still resolves to its import (no local shadow). */
-    const resolvesToImport = (node: AnyNode, name: string): boolean => {
-      const variable = lookupVariable(node, name);
-      if (variable === null || variable.defs.length === 0) return true;
-      return variable.defs.some((definition) => definition.type === 'ImportBinding');
+    const constantInitializer = (node: IdentifierNode): AnyNode | null => {
+      const definition = singleDefinition(node);
+      if (definition?.type !== 'Variable') return null;
+      const declaration = definition.node as ESTree.VariableDeclarator;
+      if (declaration.id.type !== 'Identifier' || !declaration.init) return null;
+      return (parentOf(declaration) as ESTree.VariableDeclaration)?.kind === 'const'
+        ? (declaration.init as AnyNode)
+        : null;
     };
 
-    /** Resolve exact import identity, including direct submodule members and const aliases. */
-    const resolveMember = (
-      input: AnyNode,
-      depth = 0,
+    const valueImport = (node: IdentifierNode) => {
+      const definition = singleDefinition(node);
+      if (definition?.type !== 'ImportBinding') return null;
+      const specifier = definition.node as ESTree.ImportSpecifier;
+      const declaration = parentOf(specifier) as ESTree.ImportDeclaration;
+      if (
+        declaration?.type !== 'ImportDeclaration' ||
+        declaration.importKind === 'type' ||
+        specifier.importKind === 'type'
+      )
+        return null;
+      return { specifier, declaration };
+    };
+
+    const directMember = (
+      node: IdentifierNode,
+      depth: number,
     ): { namespace: string; member: string } | null => {
-      if (depth > 12) return null;
-      const node = unwrap(input);
-      if (node.type === 'Identifier') {
-        const variable = lookupVariable(node, node.name);
-        if (!variable || variable.defs.length !== 1) return null;
-        const definition = variable.defs[0];
-        if (definition.type === 'Variable') {
-          const declaration = definition.node as ESTree.VariableDeclarator;
-          if (
-            declaration.id.type !== 'Identifier' ||
-            !declaration.init ||
-            (parentOf(declaration) as ESTree.VariableDeclaration)?.kind !== 'const'
-          )
-            return null;
-          return resolveMember(declaration.init as AnyNode, depth + 1);
-        }
-        if (definition.type !== 'ImportBinding') return null;
-        const specifier = definition.node as ESTree.ImportSpecifier;
-        const declaration = parentOf(specifier as AnyNode) as ESTree.ImportDeclaration;
-        if (
-          declaration?.type !== 'ImportDeclaration' ||
-          declaration.importKind === 'type' ||
-          specifier.importKind === 'type'
-        )
-          return null;
-        if (specifier.type !== 'ImportSpecifier') return null;
-        const member =
-          specifier.imported.type === 'Identifier'
-            ? specifier.imported.name
-            : specifier.imported.value;
-        const namespace =
-          declaration.source.value === 'effect/Schema'
-            ? 'Schema'
-            : declaration.source.value === 'effect/Config'
-              ? 'Config'
-              : null;
-        return namespace ? { namespace, member } : null;
-      }
-      if (node.type !== 'MemberExpression') return null;
-      const member = memberName(node);
-      if (!member) return null;
-      const object = unwrap(node.object as AnyNode);
-      if (object.type === 'Identifier') {
-        const variable = lookupVariable(object, object.name);
-        const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-        if (definition?.type !== 'ImportBinding') return null;
-        const specifier = definition.node as ESTree.ImportSpecifier;
-        const declaration = parentOf(specifier as AnyNode) as ESTree.ImportDeclaration;
-        if (
-          declaration?.type !== 'ImportDeclaration' ||
-          declaration.importKind === 'type' ||
-          specifier.importKind === 'type'
-        )
-          return null;
-        const namespace = namespaces.get(object.name);
-        return namespace === 'Schema' || namespace === 'Config' ? { namespace, member } : null;
-      }
-      if (object.type !== 'MemberExpression') return null;
+      const initializer = constantInitializer(node);
+      if (initializer) return resolveMember(initializer, depth + 1);
+      const binding = valueImport(node);
+      if (!binding || binding.specifier.type !== 'ImportSpecifier') return null;
+      const namespace = DIRECT_NAMESPACES.get(binding.declaration.source.value);
+      return namespace ? { namespace, member: importedName(binding.specifier) } : null;
+    };
+
+    const namespaceMember = (object: IdentifierNode, member: string) => {
+      if (!valueImport(object)) return null;
+      const namespace = namespaces.get(object.name);
+      return namespace === 'Schema' || namespace === 'Config' ? { namespace, member } : null;
+    };
+
+    const barrelMember = (object: ESTree.MemberExpression, member: string) => {
       const namespace = memberName(object);
       const root = unwrap(object.object as AnyNode);
       if (
         !namespace ||
         root.type !== 'Identifier' ||
         !barrels.has(root.name) ||
-        !resolvesToImport(root, root.name)
+        !resolvesToImport(root)
       )
         return null;
       return { namespace, member };
     };
+
+    /** Exact imports and bounded const aliases, without broadening namespace alias support. */
+    const resolveMember = (
+      input: AnyNode,
+      depth = 0,
+    ): { namespace: string; member: string } | null => {
+      if (depth > 12) return null;
+      const node = unwrap(input);
+      if (node.type === 'Identifier') return directMember(node, depth);
+      if (node.type !== 'MemberExpression') return null;
+      const member = memberName(node);
+      if (!member) return null;
+      const object = unwrap(node.object as AnyNode);
+      if (object.type === 'Identifier') return namespaceMember(object, member);
+      return object.type === 'MemberExpression' ? barrelMember(object, member) : null;
+    };
+
     const configKey = (node: AnyNode, depth = 0): string | null => {
       if (depth > 12) return null;
       const value = unwrap(node);
       const literal = staticString(value);
       if (literal !== null) return literal;
       if (value.type !== 'Identifier') return null;
-      const variable = lookupVariable(value, value.name);
-      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-      if (definition?.type !== 'Variable') return null;
-      const declaration = definition.node as ESTree.VariableDeclarator;
-      return declaration.id.type === 'Identifier' &&
-        declaration.init &&
-        (parentOf(declaration) as ESTree.VariableDeclaration)?.kind === 'const'
-        ? configKey(declaration.init as AnyNode, depth + 1)
-        : null;
+      const initializer = constantInitializer(value);
+      return initializer ? configKey(initializer, depth + 1) : null;
     };
     const isRedaction = (node: AnyNode): boolean => {
       const expression = unwrap(node);
@@ -557,54 +518,54 @@ export const rule = defineRule({
     const isPipeIdentifier = (node: AnyNode): boolean => {
       if (node.type !== 'Identifier') return false;
       const name = (node as { name: string }).name;
-      return namespaces.get(name) === PIPE_EXPORT && resolvesToImport(node, name);
+      return namespaces.get(name) === PIPE_EXPORT && resolvesToImport(node);
     };
 
-    /** `Schema.String`, `Schema.String.check(...)`, `Schema.optional(Schema.Trim)`, `pipe(Schema.String, …)`. */
+    const isSchemaMember = (node: AnyNode, members: ReadonlySet<string>): boolean => {
+      const resolved = resolveMember(node);
+      return (
+        resolved !== null && resolved.namespace === SCHEMA_NAMESPACE && members.has(resolved.member)
+      );
+    };
+
+    const stringSchemaArgument = (call: ESTree.CallExpression, depth: number): boolean => {
+      const argument = call.arguments[0];
+      return (
+        argument !== undefined &&
+        argument.type !== 'SpreadElement' &&
+        isStringSchema(argument, depth + 1)
+      );
+    };
+
+    const isStringSchemaChain = (
+      call: ESTree.CallExpression,
+      callee: ESTree.MemberExpression,
+      depth: number,
+    ): boolean | null => {
+      const method = memberName(callee);
+      if (method === null || !SCHEMA_CHAIN_METHODS.has(method)) return null;
+      if (method === 'pipe' && call.arguments.some((argument) => isRedaction(argument as AnyNode)))
+        return false;
+      return isStringSchema(callee.object as AnyNode, depth + 1);
+    };
+
+    /** String constructors, absence wrappers and non-redacting fluent chains. */
     const isStringSchema = (node: AnyNode, depth: number): boolean => {
       if (depth > 8) return false;
       const expression = unwrap(node);
-      const direct = resolveMember(expression);
-      if (
-        direct !== null &&
-        direct.namespace === SCHEMA_NAMESPACE &&
-        STRING_SCHEMAS.has(direct.member)
-      )
-        return true;
+      if (isSchemaMember(expression, STRING_SCHEMAS)) return true;
       if (expression.type !== 'CallExpression') return false;
-      const call = expression as ESTree.CallExpression;
-      const callee = unwrap(call.callee as AnyNode);
-      const firstArgument = call.arguments[0] as AnyNode | undefined;
-      const wrapped =
-        firstArgument !== undefined && firstArgument.type !== 'SpreadElement'
-          ? firstArgument
-          : undefined;
-      const called = resolveMember(callee);
-      if (
-        called !== null &&
-        called.namespace === SCHEMA_NAMESPACE &&
-        SCHEMA_WRAPPERS.has(called.member)
-      ) {
-        return wrapped !== undefined && isStringSchema(wrapped, depth + 1);
-      }
+      const callee = unwrap(expression.callee as AnyNode);
+      if (isSchemaMember(callee, SCHEMA_WRAPPERS)) return stringSchemaArgument(expression, depth);
       if (callee.type === 'MemberExpression') {
-        const method = memberName(callee as ESTree.MemberExpression);
-        if (method !== null && SCHEMA_CHAIN_METHODS.has(method)) {
-          if (
-            method === 'pipe' &&
-            call.arguments.some((argument) => isRedaction(argument as AnyNode))
-          )
-            return false;
-          return isStringSchema((callee as ESTree.MemberExpression).object as AnyNode, depth + 1);
-        }
+        const chain = isStringSchemaChain(expression, callee, depth);
+        if (chain !== null) return chain;
       }
-      if (isPipeIdentifier(callee))
-        return (
-          !call.arguments.slice(1).some((argument) => isRedaction(argument as AnyNode)) &&
-          wrapped !== undefined &&
-          isStringSchema(wrapped, depth + 1)
-        );
-      return false;
+      return (
+        isPipeIdentifier(callee) &&
+        !expression.arguments.slice(1).some((argument) => isRedaction(argument as AnyNode)) &&
+        stringSchemaArgument(expression, depth)
+      );
     };
 
     const report = (node: AnyNode, messageId: string, data: Record<string, string>): void => {
@@ -628,90 +589,72 @@ export const rule = defineRule({
       return null;
     };
 
+    const accessor = (node: AnyNode, kind: 'get' | 'set') => {
+      const method = node.type === 'TSMethodSignature' ? node : parentOf(node);
+      if (!method) return null;
+      if (
+        method.type !== 'TSMethodSignature' &&
+        method.type !== 'MethodDefinition' &&
+        method.type !== 'TSAbstractMethodDefinition'
+      )
+        return null;
+      return method.kind === kind ? method : null;
+    };
+
+    const reportField = (field: { key: AnyNode; computed: boolean }): void => {
+      const name = keyName(field.key, field.computed);
+      if (name === null || !isSecretName(name)) return;
+      report(field.key, 'secretField', { name });
+    };
+
+    const reportParameter = (identifier: IdentifierNode): void => {
+      const owner = parameterOwner(identifier);
+      if (owner === null) return;
+      const setter = accessor(owner, 'set');
+      const setterName = setter ? keyName(setter.key, setter.computed) : null;
+      const name = setterName && isSecretName(setterName) ? setterName : identifier.name;
+      if (isSecretName(name)) report(identifier, 'secretParameter', { name });
+    };
+
     return {
       Program(node) {
-        const bindings = collectEffectBindings(node);
-        namespaces = new Map(bindings.namespaces);
-        barrels = new Set<string>();
-        for (const statement of node.body) {
-          if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
-          const source = statement.source.value;
-          const isReexport = matchesGlobs(source, options.reexportModules);
-          if (source === EFFECT_ROOT_MODULE || isReexport) {
-            for (const specifier of statement.specifiers) {
-              if (specifier.type === 'ImportNamespaceSpecifier') barrels.add(specifier.local.name);
-            }
-          }
-          if (!isReexport) continue;
-          for (const specifier of statement.specifiers) {
-            if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
-            const imported =
-              specifier.imported.type === 'Identifier'
-                ? specifier.imported.name
-                : specifier.imported.value;
-            namespaces.set(specifier.local.name, imported);
-          }
+        namespaces = new Map(collectEffectBindings(node).namespaces);
+        const isReexport = (source: string) => matchesGlobs(source, options.reexportModules);
+        barrels = collectRootNamespaces(
+          node,
+          (source) => source === EFFECT_ROOT_MODULE || isReexport(source),
+          { valueOnly: true },
+        );
+        for (const [local, imported] of collectNamedImports(node, isReexport, undefined, {
+          valueOnly: true,
+        })) {
+          namespaces.set(local, imported);
         }
       },
 
       // Cases 1 + 2: a string-shaped type annotation on a credential-shaped name.
       TSTypeAnnotation(node) {
-        const annotated = parentOf(node as unknown as AnyNode);
-        if (annotated === null) return;
-        const annotation = (node as { typeAnnotation: AnyNode }).typeAnnotation;
-        if (!isStringShaped(annotation, 0)) return;
-
-        if (annotated.type === 'TSPropertySignature') {
-          const signature = annotated as ESTree.TSPropertySignature;
-          const name = keyName(signature.key as AnyNode, signature.computed);
-          if (name === null || !isSecretName(name)) return;
-          report(signature.key as AnyNode, 'secretField', { name });
-          return;
-        }
+        const annotated = parentOf(node);
+        if (annotated === null || !isStringShaped(node.typeAnnotation, 0)) return;
         if (
           [
+            'TSPropertySignature',
             'PropertyDefinition',
             'AccessorProperty',
             'TSAbstractPropertyDefinition',
             'TSAbstractAccessorProperty',
           ].includes(annotated.type)
         ) {
-          const definition = annotated as unknown as { key: AnyNode; computed: boolean };
-          const name = keyName(definition.key, definition.computed);
-          if (name === null || !isSecretName(name)) return;
-          report(definition.key, 'secretField', { name });
+          reportField(annotated as unknown as { key: AnyNode; computed: boolean });
           return;
         }
-        const method = annotated.type === 'TSMethodSignature' ? annotated : parentOf(annotated);
-        if (
-          method &&
-          (method.type === 'TSMethodSignature' ||
-            method.type === 'MethodDefinition' ||
-            method.type === 'TSAbstractMethodDefinition') &&
-          method.kind === 'get'
-        ) {
-          const name = keyName(method.key, method.computed);
-          if (name && isSecretName(name)) report(method.key, 'secretField', { name });
+        const getter = accessor(annotated, 'get');
+        if (getter) {
+          const name = keyName(getter.key, getter.computed);
+          if (name && isSecretName(name)) report(getter.key, 'secretField', { name });
           return;
         }
-        if (annotated.type !== 'Identifier') return;
-        const owner = parameterOwner(annotated);
-        if (owner === null) return;
-        const setter = owner.type === 'TSMethodSignature' ? owner : parentOf(owner);
-        const setterName =
-          setter &&
-          (setter.type === 'TSMethodSignature' ||
-            setter.type === 'MethodDefinition' ||
-            setter.type === 'TSAbstractMethodDefinition') &&
-          setter.kind === 'set'
-            ? keyName(setter.key, setter.computed)
-            : null;
-        const name =
-          setterName && isSecretName(setterName)
-            ? setterName
-            : (annotated as { name: string }).name;
-        if (!isSecretName(name)) return;
-        report(annotated, 'secretParameter', { name });
+        if (annotated.type === 'Identifier') reportParameter(annotated);
       },
 
       // Case 3: a credential-shaped field in a Schema field bag.

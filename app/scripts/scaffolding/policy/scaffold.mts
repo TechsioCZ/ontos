@@ -20,10 +20,9 @@ import type {
   ScaffoldPlan,
 } from '../shared.mts';
 
-export class PolicyScaffoldError extends Schema.TaggedError<PolicyScaffoldError>()(
-  'PolicyScaffoldError',
-  { reason: Schema.String },
-) {
+class PolicyScaffoldError extends Schema.TaggedError<PolicyScaffoldError>()('PolicyScaffoldError', {
+  reason: Schema.String,
+}) {
   override get message(): string {
     return this.reason;
   }
@@ -77,7 +76,7 @@ ${ownerLine}  policyKey: '${policyKey}',
 `;
 };
 
-export const planPolicyScaffold = Effect.fn('PolicyScaffold.planPolicyScaffold')(
+const planPolicyScaffold = Effect.fn('PolicyScaffold.planPolicyScaffold')(
   function* planPolicyScaffoldEffect(
     workspaceRoot: string,
     config: PolicyScaffoldConfig,

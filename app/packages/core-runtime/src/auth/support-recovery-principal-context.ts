@@ -52,9 +52,6 @@ interface SupportRecoveryPrincipalContextRecordReader<
   readonly load: (input: SupportRecoveryPrincipalContextRepositoryInput) => Result;
 }
 
-export type SupportRecoveryPrincipalContextRepositoryService =
-  SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>;
-
 interface SupportRecoveryPrincipalContextEffectRecordReader {
   readonly load: (
     input: SupportRecoveryPrincipalContextRepositoryInput,
@@ -119,6 +116,18 @@ const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
       ),
 });
 
+const isInvalidRecoveryInput = (
+  input: Parameters<
+    SupportRecoveryPrincipalContextResolverService['resolveStoppedImpersonation']
+  >[0],
+): boolean =>
+  !Schema.is(uuid)(input.originalAuthBindingId) ||
+  !Schema.is(uuid)(input.originalPrincipalId) ||
+  !Schema.is(uuid)(input.tenantId) ||
+  input.originalSessionId.length === 0 ||
+  input.originalSessionId.length > 280 ||
+  /\s/u.test(input.originalSessionId);
+
 const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
   repository: SupportRecoveryPrincipalContextEffectRecordReader,
 ): SupportRecoveryPrincipalContextResolverService => ({
@@ -128,14 +137,7 @@ const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
     TrustedPrincipalContext,
     SupportRecoveryPrincipalContextError
   > {
-    if (
-      !Schema.is(uuid)(input.originalAuthBindingId) ||
-      !Schema.is(uuid)(input.originalPrincipalId) ||
-      !Schema.is(uuid)(input.tenantId) ||
-      input.originalSessionId.length === 0 ||
-      input.originalSessionId.length > 280 ||
-      /\s/u.test(input.originalSessionId)
-    ) {
+    if (isInvalidRecoveryInput(input)) {
       return yield* new SupportRecoveryPrincipalContextDeniedError({
         code: 'support_recovery_context_denied',
         reason: 'The support recovery identity is invalid',

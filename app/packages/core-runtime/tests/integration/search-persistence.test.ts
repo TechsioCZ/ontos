@@ -1,14 +1,12 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { Effect, Function as Fn, Schema, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';
-import type { QueryResult, QueryResultRow } from 'pg';
-import { Pool } from 'pg';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import type { Pool, QueryResult, QueryResultRow } from 'pg';
 import { coreRelations } from '../../src/db/schema.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
-import { makeCoreSearchQueryRuntime } from '../../src/search/projection.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { createCoreSearchQueryRuntime } from '../../src/search/projection.ts';
+import { makeTestDatabaseFromPool, testDatabasePools } from '../support/database.ts';
 
 const queryEffect = <Row extends QueryResultRow = QueryResultRow>(
   client: Pool,
@@ -24,15 +22,7 @@ it.live(
   'durably rebuilds tenant projections with tombstones and selected-Legal-Entity filtering',
   () =>
     Effect.gen(function* searchPersistenceIntegration() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const admin = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-        (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
-      );
-      const runtimePool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString })),
-        (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
-      );
+      const { admin, runtimePool } = yield* testDatabasePools;
       const tenantId = randomUUID();
       const otherTenantId = randomUUID();
       const legalEntityId = randomUUID();
@@ -50,7 +40,7 @@ it.live(
       const store = makePostgresCoreSearchProjectionStore({
         executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations),
       });
-      const search = makeCoreSearchQueryRuntime(store);
+      const search = createCoreSearchQueryRuntime(store);
       const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
         aliases: [
           {
@@ -212,7 +202,7 @@ it.live(
         executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations),
       });
       const floorSearch = () =>
-        makeCoreSearchQueryRuntime(restarted).search({
+        createCoreSearchQueryRuntime(restarted).search({
           includeArchived: false,
           moduleId: floorRef.moduleId,
           query: 'unseen',

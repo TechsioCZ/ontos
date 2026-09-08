@@ -1,5 +1,7 @@
+import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
+import { snapshotTree, write } from './fixture-files.mts';
 import { Cause, Effect, Fiber, FileSystem, Schema } from 'effect';
-import { afterEach, expect, it, rs } from '@app/effect-rstest';
+import { afterEach, expect, it, rs } from 'effect-rstest';
 
 import { CodeSmith, GeneratorCore } from '@modern-js/codesmith';
 import { applyMutationPlanEffect } from '../shared.mts';
@@ -7,7 +9,7 @@ import { NodeServices } from '@effect/platform-node';
 
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -45,44 +47,6 @@ type JsonValue =
   | { readonly [key: string]: JsonValue };
 
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
-
-const write = (root: string, relativePath: string, content: string): Effect.Effect<void, unknown> =>
-  Effect.gen(function* scenario1() {
-    const target = path.join(root, relativePath);
-    yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
-    yield* Effect.promise(() => writeFile(target, content, 'utf-8'));
-  });
-
-const visitTree = (
-  root: string,
-  snapshot: Record<string, string>,
-  directory: string,
-): Effect.Effect<void, unknown> =>
-  Effect.gen(function* scenario3() {
-    const entries = yield* Effect.promise(() => readdir(directory, { withFileTypes: true }));
-    yield* Effect.all(
-      entries.map(
-        Effect.fn(function* scenario4(entry) {
-          const entryPath = path.join(directory, entry.name);
-          if (entry.isDirectory() && entry.name !== 'node_modules') {
-            yield* visitTree(root, snapshot, entryPath);
-          } else if (entry.isFile()) {
-            snapshot[path.relative(root, entryPath)] = yield* Effect.promise(() =>
-              readFile(entryPath, 'utf-8'),
-            );
-          }
-        }),
-      ),
-      { concurrency: 'unbounded' },
-    );
-  });
-
-const snapshotTree = Effect.fn(function* scenario2(root: string) {
-  const snapshot: Record<string, string> = {};
-
-  yield* visitTree(root, snapshot, root);
-  return snapshot;
-});
 
 const createFixture = (): Effect.Effect<string, unknown> =>
   Effect.gen(function* mergedScenario9() {
@@ -197,19 +161,10 @@ export declare const ShellReportContributionSchema: Schema.Codec<unknown, unknow
 export declare const ShellSearchContributionSchema: Schema.Codec<unknown, unknown>;
 `,
     );
-    yield* Effect.promise(() =>
-      mkdir(path.join(root, 'node_modules', '@app'), { recursive: true }),
-    );
-    yield* Effect.promise(() =>
-      symlink(
-        path.join(appRoot, 'packages/core-runtime'),
-        path.join(root, 'node_modules/@app/core-runtime'),
-        'dir',
-      ),
-    );
-    yield* Effect.promise(() =>
-      symlink(path.join(appRoot, 'node_modules/effect'), path.join(root, 'node_modules/effect')),
-    );
+    yield* linkFixtureDependencies(root, appRoot, {
+      '@app/core-runtime': 'packages/core-runtime',
+      effect: 'node_modules/effect',
+    });
     yield* runScaffoldEffect(
       'module-contract',
       [verticalFlag, verticalName, '--module', moduleId],
@@ -220,15 +175,7 @@ export declare const ShellSearchContributionSchema: Schema.Codec<unknown, unknow
     return root;
   });
 
-const withFixture = (
-  run: (root: string) => Effect.Effect<void, unknown>,
-): Effect.Effect<void, unknown> =>
-  Effect.gen(function* scenario6() {
-    const root = yield* createFixture();
-    yield* run(root).pipe(
-      Effect.ensuring(Effect.promise(() => rm(root, { force: true, recursive: true }))),
-    );
-  });
+const withFixture = withCreatedFixture(createFixture());
 
 const scaffoldResource = Effect.fn(function* scenario7(root: string, resource = resourceName) {
   return yield* runScaffoldEffect(
@@ -238,6 +185,18 @@ const scaffoldResource = Effect.fn(function* scenario7(root: string, resource = 
       workspaceRoot: root,
     },
   ).pipe(Effect.provide(NodeServices.layer));
+});
+
+/** Refusal must preserve the fixture byte-for-byte. */
+const assertResourceScaffoldRefused = Effect.fn(function* assertResourceScaffoldRefused(
+  root: string,
+  expected: RegExp,
+  ignored: readonly string[] = ['node_modules'],
+) {
+  const before = yield* snapshotTree(root, ignored);
+  const cause = yield* scaffoldResource(root).pipe(Effect.sandbox, Effect.flip);
+  expect(String(Cause.squash(cause))).toMatch(expected);
+  expect(yield* snapshotTree(root, ignored)).toEqual(before);
 });
 
 it.live(
@@ -371,20 +330,15 @@ it.live(
   Effect.fn(function* scenario11() {
     yield* withFixture(
       Effect.fn(function* scenario12(root) {
-        const beforeTraversal = yield* snapshotTree(root);
+        const beforeTraversal = yield* snapshotTree(root, ['node_modules']);
         const failureCause1 = yield* Effect.flip(
           Effect.sandbox(scaffoldResource(root, '../unsafe')),
         );
         expect(String(Cause.squash(failureCause1))).toMatch(/lower-kebab-case/u);
-        expect(yield* snapshotTree(root)).toEqual(beforeTraversal);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(beforeTraversal);
 
         yield* scaffoldResource(root);
-        const afterFirstRun = yield* snapshotTree(root);
-        const failureCause2 = yield* Effect.flip(Effect.sandbox(scaffoldResource(root)));
-        expect(String(Cause.squash(failureCause2))).toMatch(
-          /refusing to overwrite existing business file/u,
-        );
-        expect(yield* snapshotTree(root)).toEqual(afterFirstRun);
+        yield* assertResourceScaffoldRefused(root, /refusing to overwrite existing business file/u);
       }),
     );
   }),
@@ -407,10 +361,7 @@ it.live(
             'utf-8',
           ),
         );
-        const beforeMissingSlot = yield* snapshotTree(root);
-        const failureCause3 = yield* Effect.flip(Effect.sandbox(scaffoldResource(root)));
-        expect(String(Cause.squash(failureCause3))).toMatch(/generated owner file/u);
-        expect(yield* snapshotTree(root)).toEqual(beforeMissingSlot);
+        yield* assertResourceScaffoldRefused(root, /generated owner file/u);
       }),
     );
 
@@ -430,12 +381,7 @@ it.live(
         yield* Effect.promise(() =>
           writeFile(packagePath, json(packageWithExportCollision), 'utf-8'),
         );
-        const beforeExportCollision = yield* snapshotTree(root);
-        const failureCause4 = yield* Effect.flip(Effect.sandbox(scaffoldResource(root)));
-        expect(String(Cause.squash(failureCause4))).toMatch(
-          /resource contract export .* already exists/u,
-        );
-        expect(yield* snapshotTree(root)).toEqual(beforeExportCollision);
+        yield* assertResourceScaffoldRefused(root, /resource contract export .* already exists/u);
       }),
     );
   }),
@@ -462,10 +408,7 @@ it.live(
           ),
         );
 
-        const before = yield* snapshotTree(root);
-        const failure = yield* scaffoldResource(root).pipe(Effect.flip);
-        expect(String(failure)).toMatch(/slot/u);
-        expect(yield* snapshotTree(root)).toEqual(before);
+        yield* assertResourceScaffoldRefused(root, /slot/u, []);
       }),
     );
   }),
@@ -487,17 +430,13 @@ it.live(
     const started = Promise.withResolvers<null>();
     const release = Promise.withResolvers<null>();
     const events: string[] = [];
-    rs.spyOn(core.output, 'fs').mockImplementation(() => {
+    rs.spyOn(core.output, 'fs').mockImplementation(async () => {
       started.resolve(null);
-      // Codesmith requires a Promise-returning output callback.
-      // oxlint-disable promise/prefer-await-to-then -- Keep this external SDK mock Promise-shaped without an async test body.
-      return release.promise
-        .then(() => mkdir(root, { recursive: true }))
-        .then(() => writeFile(path.join(root, 'generated.ts'), 'export {};'))
-        .then(() => {
-          events.push('write');
-        });
-      // oxlint-enable promise/prefer-await-to-then
+      // Codesmith owns this Promise-returning output callback.
+      await release.promise;
+      await mkdir(root, { recursive: true });
+      await writeFile(path.join(root, 'generated.ts'), 'export {};');
+      events.push('write');
     });
     const recordCleanup = () => events.push('cleanup');
     yield* Effect.gen(function* verifyWriteCleanupOrder() {
@@ -537,7 +476,7 @@ it.live(
     yield* withFixture(
       Effect.fn(function* scenario20(root) {
         yield* Effect.promise(() => writeFile(path.join(root, verticalPackagePath), '[]'));
-        const before = yield* snapshotTree(root);
+        const before = yield* snapshotTree(root, ['node_modules']);
         const failure = yield* runScaffoldEffect(
           'resource',
           [verticalFlag, verticalName, '--resource', resourceName],
@@ -547,7 +486,7 @@ it.live(
         ).pipe(Effect.flip, Effect.provide(NodeServices.layer));
         expect(Schema.is(ScaffoldingError)(failure)).toBe(true);
         expect(failure.message).toMatch(/JSON object/u);
-        expect(yield* snapshotTree(root)).toEqual(before);
+        expect(yield* snapshotTree(root, ['node_modules'])).toEqual(before);
       }),
     );
   }),

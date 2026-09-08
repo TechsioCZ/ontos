@@ -1,4 +1,4 @@
-import { expect } from '@app/effect-rstest';
+import { expect } from 'effect-rstest';
 import { Effect } from 'effect';
 declare const program: Effect.Effect<unknown, unknown>;
 program.pipe(Effect.catch((error) => {

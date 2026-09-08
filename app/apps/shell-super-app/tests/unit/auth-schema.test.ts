@@ -1,4 +1,4 @@
-import { expect, test } from '@app/effect-rstest';
+import { expect, test } from 'effect-rstest';
 import { getColumns } from 'drizzle-orm';
 import {
   AUTH_SCHEMA_NAME,
@@ -101,9 +101,26 @@ test('matches the generated API Key and Admin plugin persistence fields', () => 
 
 test('reports missing and unexpected authentication tables', () => {
   expect(
-    compareAuthCatalog(['auth.user', 'auth.session', 'auth.account', 'auth.unexpected']),
+    compareAuthCatalog([
+      'auth.user',
+      'auth.session',
+      'auth.account',
+      'auth.unexpected',
+      'auth.unexpected',
+    ]),
   ).toEqual({
     missing: ['auth.apikey', 'auth.support_impersonation_recovery', 'auth.verification'],
     unexpected: ['auth.unexpected'],
+  });
+});
+
+test('accepts unordered duplicate auth table rows without mutating the inventory', () => {
+  expect(compareAuthCatalog([...expectedAuthTableCatalog.toReversed(), 'auth.user'])).toEqual({
+    missing: [],
+    unexpected: [],
+  });
+  expect(compareAuthCatalog([])).toEqual({
+    missing: expectedAuthTableCatalog.toSorted(),
+    unexpected: [],
   });
 });

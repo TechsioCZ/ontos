@@ -1,14 +1,12 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Schema } from 'effect';
 import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
 import {
   makeSystemPrincipalContextResolver,
   registerSystemWorkload,
 } from '../../src/auth/system-principal-context.ts';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, dataAccessEvents } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
@@ -17,7 +15,7 @@ import {
 } from '../../src/operations/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { makeTestDatabaseFromPool, testDatabasePools } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 it('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
@@ -31,15 +29,7 @@ it('standalone governed-read evidence permits no Action invocation and requires 
 
 it.live('commits live allowed evidence before releasing a governed read result', () =>
   Effect.gen(function* readRuntime1() {
-    const connections = yield* loadDatabaseConnectionPair();
-    const admin = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-      (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
-    );
-    const runtimePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString })),
-      (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
-    );
+    const { admin, runtimePool } = yield* testDatabasePools;
     const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
     const tenantId = randomUUID();
     const principalId = randomUUID();

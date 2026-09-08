@@ -1,27 +1,53 @@
+import type {
+  emitFrameworkMicroVerticalReleaseEnvelope,
+  emitNodeStagedReleaseEnvelope,
+  verifyBuildOutputReleaseEnvelope,
+  verifyNodeReleaseEnvelopeStaging,
+} from '@modern-js/app-tools/release-envelope';
 import type { defineEffectBff } from '@modern-js/plugin-bff/effect-edge';
+
 import { Cause, Effect, Predicate, Schema } from 'effect';
-import { afterEach, expect, it, rs } from '@app/effect-rstest';
+
+import { afterEach, expect, it, rs } from 'effect-rstest';
+
 import { execFileSync, spawnSync } from 'node:child_process';
+
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
+
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+
 import { createRequire } from 'node:module';
+
 import os from 'node:os';
+
 import path from 'node:path';
+
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
 import { promisify } from 'node:util';
-import { transform } from 'esbuild';
+
+import { build as bundleSource, transform } from 'esbuild';
+
 import { format } from 'oxfmt';
+
 import { MicroVerticalReadinessSchema } from '../../packages/shared-contracts/src/microvertical-api-baseline.ts';
+
 import {
   configuredMicroVerticalApiStem,
   microVerticalApiBaselineViolation as microVerticalApiBaselineViolationForFile,
 } from '../microvertical-api-baseline-boundary.mts';
+
 import type { MicroVerticalApiBaselineExpectation } from '../microvertical-api-baseline-boundary.mts';
+
 import { strictEffectRuntimeTopologyViolation } from '../ultramodern-api-boundary-rules.mts';
+
+const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 const partyId = 'party-registry';
+
+const partyDirectory = 'verticals/party-registry';
 
 const generatedFixtureId = 'inventory-stock';
 
@@ -143,6 +169,7 @@ const unexpectedTopologyImport = (specifier: string): never => {
 const generatorRoot = await realpath(path.join(workspaceRoot, 'node_modules/@modern-js/create'));
 
 const require = createRequire(import.meta.url);
+
 const publishedGeneratorModulePath =
   (moduleFormat: string) =>
   (name: string): string =>
@@ -150,6 +177,7 @@ const publishedGeneratorModulePath =
       generatorRoot,
       `dist/${moduleFormat}/ultramodern-workspace/${name}.${moduleFormat === 'cjs' ? 'cjs' : 'js'}`,
     );
+
 const violationText = (violation: string | undefined): string => violation ?? '';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
@@ -177,26 +205,11 @@ const BuildArtifactSchema = Schema.Struct({
   }),
 });
 
-type ReleaseEnvelope = typeof ReleaseEnvelopeSchema.Type;
-
 interface ReleaseFramework {
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
-  readonly emitFrameworkMicroVerticalReleaseEnvelope: (input: {
-    readonly apiOnly: boolean;
-    readonly distDirectory: string;
-    readonly target: string;
-  }) => Promise<ReleaseEnvelope>;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
-  readonly emitNodeStagedReleaseEnvelope: (input: {
-    readonly distDirectory: string;
-    readonly outputDirectory: string;
-  }) => Promise<ReleaseEnvelope>;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
-  readonly verifyBuildOutputReleaseEnvelope: (root: string, target: string) => Promise<void>;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Structural mirror of the installed Modern.js release-envelope SDK.
-  readonly verifyNodeReleaseEnvelopeStaging: (input: {
-    readonly outputDirectory: string;
-  }) => Promise<void>;
+  readonly emitFrameworkMicroVerticalReleaseEnvelope: typeof emitFrameworkMicroVerticalReleaseEnvelope;
+  readonly emitNodeStagedReleaseEnvelope: typeof emitNodeStagedReleaseEnvelope;
+  readonly verifyBuildOutputReleaseEnvelope: typeof verifyBuildOutputReleaseEnvelope;
+  readonly verifyNodeReleaseEnvelopeStaging: typeof verifyNodeReleaseEnvelopeStaging;
 }
 
 interface WorkspaceAppFixture {
@@ -281,8 +294,6 @@ type MigratedWorkspaceScriptArtifacts = (options: {
   readonly hasBackendSurface: boolean;
   readonly shellOnly: boolean;
 }) => readonly GeneratedWorkspaceScriptArtifact[];
-
-type GeneratedHttpHandler = ReturnType<ReturnType<typeof defineEffectBff>['createHandler']>;
 
 type CreateGeneratedHttpHandler = () => GeneratedHttpHandler;
 
@@ -1145,7 +1156,7 @@ it('static API validation proves the imported helper call topology', () => {
     };
   };
   expect(
-    violationText(strictEffectRuntimeTopologyViolation(importedHandlers, resolveForeignHandlers)),
+    strictEffectRuntimeTopologyViolation(importedHandlers, resolveForeignHandlers) ?? '',
   ).toMatch(/explicitly composed Layer/u);
   expect(
     strictEffectRuntimeTopologyViolation(`
@@ -1171,21 +1182,22 @@ it('static API validation proves the imported helper call topology', () => {
   for (const source of adversarialStrictRuntimeSources) {
     expect(strictEffectRuntimeTopologyViolation(source)).not.toBe(undefined);
   }
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+  for (const [label, source, expected] of [
+    [
+      'defineEffectBff with a typed layer annotation',
+      `
       import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer: Layer.Layer<never> = HttpApiBuilder.layer(fixtureApi).pipe(
         Layer.provide(fixtureHandlers),
       );
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'handlers composed only inside an unreachable function',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1196,12 +1208,12 @@ it('static API validation proves the imported helper call topology', () => {
       }
       const handlers = Layer.empty;
       export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `),
-    ),
-  ).toMatch(/explicitly composed Layer/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'runtime assembled behind an unreachable branch',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1217,32 +1229,32 @@ it('static API validation proves the imported helper call topology', () => {
       };
       const apiRuntime = makeRuntime();
       export default apiRuntime;
-    `),
-    ),
-  ).toMatch(/return or export the assembled strict Effect BFF runtime/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /return or export the assembled strict Effect BFF runtime/u,
+    ],
+    [
+      'defineEffectBff with an empty layer',
+      `
       import { defineEffectBff, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer = Layer.empty;
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'defineEffectBff layer piped to an empty layer',
+      `
       import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer = HttpApiBuilder.layer(fixtureApi).pipe(() => Layer.empty);
       defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'defineEffectBff layer piped past its provided handlers',
+      `
       import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer = HttpApiBuilder.layer(fixtureApi).pipe(
@@ -1250,73 +1262,73 @@ it('static API validation proves the imported helper call topology', () => {
         () => Layer.empty,
       );
       defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'locally defined defineEffectBff',
+      `
       import { fixtureApi } from '../shared/api.ts';
       const defineEffectBff = () => undefined;
       defineEffectBff({ api: fixtureApi, layer: fakeLayer });
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'defineEffectBff call inside a string literal',
+      `
       import { fixtureApi } from '../shared/api.ts';
       const decoy = "defineEffectBff({ api: fixtureApi, layer: fakeLayer })";
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'locally defined assembleEffectBffRuntime',
+      `
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
       const assembleEffectBffRuntime = () => undefined;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: unrelated });
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'assembly of a foreign API binding',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
       assembleEffectBffRuntime({ api: otherApi, handlers: unrelated });
-    `),
-    ),
-  ).toMatch(/API imported from \.\.\/shared\/api\.ts/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /API imported from \.\.\/shared\/api\.ts/u,
+    ],
+    [
+      'handlers aliased from an uncomposed binding',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
       const handlers = unrelated;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `),
-    ),
-  ).toMatch(/explicitly composed Layer/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'handlers piped to an empty layer',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer).pipe(() => Layer.empty);
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `),
-    ),
-  ).toMatch(/explicitly composed Layer/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'transport piped to an empty layer',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1328,23 +1340,23 @@ it('static API validation proves the imported helper call topology', () => {
       const handlers = Layer.mergeAll(groupLayer);
       const transport = Layer.mergeAll(transportLayer).pipe(() => Layer.empty);
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers, transport: transport });
-    `),
-    ),
-  ).toMatch(/transport/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /transport/u,
+    ],
+    [
+      'handlers built by an unknown Layer member',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.thisDoesNotExist(groupLayer);
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `),
-    ),
-  ).toMatch(/explicitly composed Layer/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'assembly helper shadowed by a function parameter',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1352,12 +1364,12 @@ it('static API validation proves the imported helper call topology', () => {
       function fake(assembleEffectBffRuntime) {
         return assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `),
-    ),
-  ).toMatch(/unshadowed/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'assembly helper shadowed by a block destructuring',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1366,12 +1378,12 @@ it('static API validation proves the imported helper call topology', () => {
         const handlers = Layer.mergeAll(groupLayer);
         assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `),
-    ),
-  ).toMatch(/unshadowed/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'Layer shadowed by a catch binding',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1381,12 +1393,12 @@ it('static API validation proves the imported helper call topology', () => {
         const handlers = Layer.mergeAll(groupLayer);
         assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `),
-    ),
-  ).toMatch(/unshadowed/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'Layer shadowed by an object method parameter',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1396,12 +1408,12 @@ it('static API validation proves the imported helper call topology', () => {
           return assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
         },
       };
-    `),
-    ),
-  ).toMatch(/unshadowed/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'Layer shadowed by a function parameter',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1409,12 +1421,12 @@ it('static API validation proves the imported helper call topology', () => {
         const handlers = Layer.mergeAll(groupLayer);
         return assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `),
-    ),
-  ).toMatch(/unshadowed/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'imports declared only inside a template literal',
+      `
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       const fakeImport = \`
         import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
@@ -1424,25 +1436,54 @@ it('static API validation proves the imported helper call topology', () => {
       const handlers = Layer.mergeAll(groupLayer);
       const assembleEffectBffRuntime = (input) => input;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `),
-    ),
-  ).toMatch(/server-only shared Effect BFF assembly helper/u);
-  expect(
-    violationText(
-      strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'handlers assigned from a string literal',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fakeHandlers = "Layer.mergeAll(groupLayer)";
       assembleEffectBffRuntime({ api: fixtureApi, handlers: fakeHandlers });
-    `),
-    ),
-  ).toMatch(/explicitly composed Layer/u);
+    `,
+      /explicitly composed Layer/u,
+    ],
+  ] as const) {
+    expect(strictEffectRuntimeTopologyViolation(source) ?? '', label).toMatch(expected);
+  }
 });
+
+const strictBoundaryReports = (
+  module: typeof StrictEffectApiBoundaryRuleModuleSchema.Type,
+  filename: string,
+  source: string,
+): readonly string[] => {
+  const messages: string[] = [];
+  module
+    .createStrictEffectApiBoundariesRule()
+    .create({
+      filename,
+      getSourceCode: () => ({ getText: () => source, text: source }),
+      report: ({ message }) => {
+        messages.push(message);
+      },
+    })
+    .Program({});
+  return messages;
+};
+
+const reportsAssemblyViolation = (messages: readonly string[]): boolean =>
+  messages.some((message) =>
+    /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
+      message,
+    ),
+  );
 
 it.live(
   'published lint validators reject comment, string, and local strict-root spoofs',
-  Effect.fn(function* governanceScenario2() {
+  Effect.fn(function* mergedScenario2() {
     const codeToolsRoot = yield* Effect.promise(() =>
       realpath(path.join(workspaceRoot, 'node_modules/@modern-js/code-tools')),
     );
@@ -1454,7 +1495,7 @@ it.live(
     const apiServiceSource: unknown = yield* Effect.promise(
       () => import(pathToFileURL(path.join(generatorRoot, generatedApiServiceModule)).href),
     );
-    const apiServiceGenerator = yield* Schema.decodeUnknownEffect(ApiServiceGeneratorModuleSchema)(
+    const apiServiceGenerator = Schema.decodeUnknownSync(ApiServiceGeneratorModuleSchema)(
       apiServiceSource,
     );
     const generatedSource = apiServiceGenerator.createApiServiceEntry(
@@ -1494,17 +1535,15 @@ it.live(
       ),
     ).toBe(undefined);
     expect(
-      violationText(
-        strictEffectRuntimeTopologyViolation(generatedRpcSource, (specifier) =>
-          specifier === generatedSharedRpcImport
-            ? {
-                id: 'inventory-stock/shared/rpc.ts',
-                resolveImport: unexpectedTopologyImport,
-                source: 'export const inventoryStockRpcGroup = { toLayer: () => undefined };',
-              }
-            : unexpectedTopologyImport(specifier),
-        ),
-      ),
+      strictEffectRuntimeTopologyViolation(generatedRpcSource, (specifier) =>
+        specifier === generatedSharedRpcImport
+          ? {
+              id: 'inventory-stock/shared/rpc.ts',
+              resolveImport: unexpectedTopologyImport,
+              source: 'export const inventoryStockRpcGroup = { toLayer: () => undefined };',
+            }
+          : unexpectedTopologyImport(specifier),
+      ) ?? '',
     ).toMatch(/server-only shared Effect BFF assembly helper/u);
     const lintRoot = yield* Effect.acquireRelease(
       Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-strict-api-lint-'))),
@@ -1726,14 +1765,12 @@ it.live(
 
     const modules = yield* Effect.all(
       formats.map(
-        Effect.fn(function* governanceScenario3(moduleFormat) {
+        Effect.fn(function* mergedScenario1(moduleFormat) {
           const imported: unknown = yield* Effect.promise(
             () => import(pathToFileURL(path.join(codeToolsRoot, moduleFormat)).href),
           );
           return {
-            module: yield* Schema.decodeUnknownEffect(StrictEffectApiBoundaryRuleModuleSchema)(
-              imported,
-            ),
+            module: Schema.decodeUnknownSync(StrictEffectApiBoundaryRuleModuleSchema)(imported),
             moduleFormat,
           };
         }),
@@ -1742,21 +1779,8 @@ it.live(
     );
     for (const { module, moduleFormat } of modules) {
       for (const source of invalidSources) {
-        const messages: string[] = [];
-        const listener = module.createStrictEffectApiBoundariesRule().create({
-          filename: fixtureApiEntryPath,
-          getSourceCode: () => ({ getText: () => source, text: source }),
-          report: ({ message }) => {
-            messages.push(message);
-          },
-        });
-        listener.Program({});
         expect(
-          messages.some((message) =>
-            /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-              message,
-            ),
-          ),
+          reportsAssemblyViolation(strictBoundaryReports(module, fixtureApiEntryPath, source)),
           `${moduleFormat} accepted a fake strict runtime root`,
         ).toBeTruthy();
       }
@@ -1768,55 +1792,24 @@ it.live(
       );
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
     `;
-      const legacyMessages: string[] = [];
-      module
-        .createStrictEffectApiBoundariesRule()
-        .create({
-          filename: fixtureApiEntryPath,
-          getSourceCode: () => ({ getText: () => legacySource, text: legacySource }),
-          report: ({ message }) => {
-            legacyMessages.push(message);
-          },
-        })
-        .Program({});
       expect(
-        legacyMessages.some((message) =>
-          /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-            message,
-          ),
-        ),
+        reportsAssemblyViolation(strictBoundaryReports(module, fixtureApiEntryPath, legacySource)),
         `${moduleFormat} accepted a legacy runtime root without the shared assembly helper`,
       ).toBe(true);
-      const generatedMessages: string[] = [];
-      module
-        .createStrictEffectApiBoundariesRule()
-        .create({
-          filename: path.join(generatedRoot, apiIndexFile),
-          getSourceCode: () => ({ getText: () => generatedSource, text: generatedSource }),
-          report: ({ message }) => {
-            generatedMessages.push(message);
-          },
-        })
-        .Program({});
+      const generatedMessages = strictBoundaryReports(
+        module,
+        path.join(generatedRoot, apiIndexFile),
+        generatedSource,
+      );
       expect(
-        generatedMessages.some((message) =>
-          /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-            message,
-          ),
-        ),
+        reportsAssemblyViolation(generatedMessages),
         `${moduleFormat} rejected exact generated helper output: ${generatedMessages.join(' | ')}`,
       ).toBe(false);
-      const generatedRpcMessages: string[] = [];
-      module
-        .createStrictEffectApiBoundariesRule()
-        .create({
-          filename: path.join(generatedRoot, apiIndexFile),
-          getSourceCode: () => ({ getText: () => generatedRpcSource, text: generatedRpcSource }),
-          report: ({ message }) => {
-            generatedRpcMessages.push(message);
-          },
-        })
-        .Program({});
+      const generatedRpcMessages = strictBoundaryReports(
+        module,
+        path.join(generatedRoot, apiIndexFile),
+        generatedRpcSource,
+      );
       expect(
         generatedRpcMessages.some((message) =>
           /server-only shared Effect BFF assembly helper|explicitly composed handler Layer|\.\.\/shared\/api\.ts/u.test(
@@ -1826,23 +1819,9 @@ it.live(
         `${moduleFormat} rejected exact generated RPC output: ${generatedRpcMessages.join(' | ')}`,
       ).toBe(false);
       for (const source of [...validAdversarialStrictRuntimeSources, governedLayerAliasFixture]) {
-        const messages: string[] = [];
-        module
-          .createStrictEffectApiBoundariesRule()
-          .create({
-            filename: fixtureApiEntryPath,
-            getSourceCode: () => ({ getText: () => source, text: source }),
-            report: ({ message }) => {
-              messages.push(message);
-            },
-          })
-          .Program({});
+        const messages = strictBoundaryReports(module, fixtureApiEntryPath, source);
         expect(
-          messages.some((message) =>
-            /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-              message,
-            ),
-          ),
+          reportsAssemblyViolation(messages),
           `${moduleFormat} rejected a valid strict runtime root: ${messages.join(' | ')}`,
         ).toBe(false);
       }
@@ -1931,9 +1910,16 @@ it.live(
   }),
 );
 
-const releaseFixture = Effect.fn(function* scenario5() {
+const releaseFixture = Effect.fn(function* scenario5(
+  moduleFormat: 'cjs' | 'esm' | 'esm-node' = 'esm-node',
+) {
+  const extension = moduleFormat === 'cjs' ? 'js' : 'mjs';
   const releaseFramework = yield* loadReleaseFramework(
-    path.join(releaseFrameworkRoot, 'esm-node/ultramodern-release-envelope/framework-output.mjs'),
+    path.join(
+      releaseFrameworkRoot,
+      moduleFormat,
+      `ultramodern-release-envelope/framework-output.${extension}`,
+    ),
   );
   const root = yield* Effect.acquireRelease(
     Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-empty-producer-'))),
@@ -1996,12 +1982,13 @@ const releaseFixture = Effect.fn(function* scenario5() {
   );
   const emit = Effect.fn(function* scenario9() {
     return yield* Schema.decodeUnknownEffect(ReleaseEnvelopeSchema)(
-      yield* Effect.promise(() =>
-        releaseFramework.emitFrameworkMicroVerticalReleaseEnvelope({
-          apiOnly: false,
-          distDirectory: root,
-          target: 'node',
-        }),
+      yield* Effect.promise(
+        async () =>
+          await releaseFramework.emitFrameworkMicroVerticalReleaseEnvelope({
+            apiOnly: false,
+            distDirectory: root,
+            target: 'node',
+          }),
       ),
     );
   });
@@ -2012,43 +1999,32 @@ it.live(
   'empty MF producers retain complete build and Node staged release evidence in every framework format',
   Effect.fn(function* scenario10() {
     yield* Effect.all(
-      ['cjs', 'esm', 'esm-node'].map(
+      (['cjs', 'esm', 'esm-node'] as const).map(
         Effect.fn(function* scenario11(moduleFormat) {
-          const fixture = yield* releaseFixture();
-          const extension = moduleFormat === 'cjs' ? 'js' : 'mjs';
-          const framework = yield* loadReleaseFramework(
-            path.join(
-              releaseFrameworkRoot,
-              moduleFormat,
-              `ultramodern-release-envelope/framework-output.${extension}`,
-            ),
-          );
-          const envelope = yield* Schema.decodeUnknownEffect(ReleaseEnvelopeSchema)(
-            yield* Effect.promise(() =>
-              framework.emitFrameworkMicroVerticalReleaseEnvelope({
-                apiOnly: false,
-                distDirectory: fixture.root,
-                target: 'node',
-              }),
-            ),
-          );
+          const fixture = yield* releaseFixture(moduleFormat);
+          const envelope = yield* fixture.emit();
           expect(envelope.surfaces.uiClient.includes(compiledUiAssetPath)).toBe(true);
           expect(envelope.surfaces.ssr).toEqual([ssrBundlePath]);
           expect(envelope.surfaces.apiBackend).toEqual([apiBundlePath]);
-          yield* Effect.promise(() =>
-            framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
+          yield* Effect.promise(
+            async () =>
+              await fixture.framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
           );
           const staged = yield* Schema.decodeUnknownEffect(ReleaseEnvelopeSchema)(
-            yield* Effect.promise(() =>
-              framework.emitNodeStagedReleaseEnvelope({
-                distDirectory: fixture.root,
-                outputDirectory: fixture.root,
-              }),
+            yield* Effect.promise(
+              async () =>
+                await fixture.framework.emitNodeStagedReleaseEnvelope({
+                  distDirectory: fixture.root,
+                  outputDirectory: fixture.root,
+                }),
             ),
           );
           expect(staged.surfaces.uiClient.includes(compiledUiAssetPath)).toBe(true);
-          yield* Effect.promise(() =>
-            framework.verifyNodeReleaseEnvelopeStaging({ outputDirectory: fixture.root }),
+          yield* Effect.promise(
+            async () =>
+              await fixture.framework.verifyNodeReleaseEnvelopeStaging({
+                outputDirectory: fixture.root,
+              }),
           );
         }),
       ),
@@ -2060,8 +2036,9 @@ it.live(
     const failureCause1 = yield* Effect.flip(
       Effect.sandbox(
         Effect.fn(function* scenario12() {
-          return yield* Effect.promise(() =>
-            fixture.framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
+          return yield* Effect.promise(
+            async () =>
+              await fixture.framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
           );
         })(),
       ),
@@ -2074,31 +2051,15 @@ it.live(
   'empty MF producers bind root-relative route assets when publicPath is auto',
   Effect.fn(function* scenario13() {
     yield* Effect.all(
-      ['cjs', 'esm', 'esm-node'].map(
+      (['cjs', 'esm', 'esm-node'] as const).map(
         Effect.fn(function* scenario14(moduleFormat) {
-          const fixture = yield* releaseFixture();
+          const fixture = yield* releaseFixture(moduleFormat);
           fixture.manifest.metaData.publicPath = 'auto';
           yield* fixture.putJson(mfManifestFile, fixture.manifest);
           yield* fixture.putJson(routesManifestFile, {
             routeAssets: { index: { assets: [`/${compiledUiAssetPath}`] } },
           });
-          const extension = moduleFormat === 'cjs' ? 'js' : 'mjs';
-          const framework = yield* loadReleaseFramework(
-            path.join(
-              releaseFrameworkRoot,
-              moduleFormat,
-              `ultramodern-release-envelope/framework-output.${extension}`,
-            ),
-          );
-          const envelope = yield* Schema.decodeUnknownEffect(ReleaseEnvelopeSchema)(
-            yield* Effect.promise(() =>
-              framework.emitFrameworkMicroVerticalReleaseEnvelope({
-                apiOnly: false,
-                distDirectory: fixture.root,
-                target: 'node',
-              }),
-            ),
-          );
+          const envelope = yield* fixture.emit();
           expect(envelope.surfaces.uiClient.includes(compiledUiAssetPath)).toBe(true);
         }),
       ),
@@ -2226,8 +2187,10 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
       writeFile(
         harnessPath,
         `import * as effect from ${JSON.stringify(effectModuleUrl)};
+import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
 import { runInNewContext } from 'node:vm';
 const framework = {
+  ...sharedBuild,
   appTools: () => ({}),
   bffPlugin: () => ({}),
   createRequire: () => () => ({}),
@@ -2271,7 +2234,7 @@ it.live(
   Effect.fn(function* scenario22() {
     const shellOrigin = 'https://operations.example.test';
     const globalVars = yield* evaluatePartyBuildGlobalVars(shellOrigin);
-    const partyRoot = path.join(workspaceRoot, 'verticals/party-registry');
+    const partyRoot = path.join(workspaceRoot, partyDirectory);
     const source = yield* Effect.promise(() =>
       readFile(path.join(partyRoot, 'api/index.ts'), 'utf-8'),
     );
@@ -2281,8 +2244,9 @@ it.live(
       )?.groups?.reader;
     expect(reader, 'compile the actual API origin-reader boundary').not.toBe(undefined);
     const appToolsPath = require.resolve('@modern-js/app-tools/config', { paths: [partyRoot] });
+    const rsbuildPath = require.resolve('@rsbuild/core', { paths: [appToolsPath] });
     const rspackModule: unknown = require(
-      require.resolve('@rspack/core', { paths: [appToolsPath] }),
+      require.resolve('@rspack/core', { paths: [rsbuildPath] }),
     );
     const rspackFixture =
       yield* Schema.decodeUnknownEffect(RspackModuleFixtureSchema)(rspackModule);
@@ -2360,41 +2324,151 @@ const normalizedGeneratedSource = Effect.fn(function* scenario23(fileName: strin
   return result.code.replaceAll(/^\s*\n/gmu, '');
 });
 
+const evaluatedInfrastructureSource = Effect.fn(function* mergedScenario1(
+  fileName: string,
+  source: string,
+  cloudflare: boolean,
+) {
+  const partyRoot = path.join(workspaceRoot, partyDirectory);
+  const result = yield* Effect.promise(() =>
+    bundleSource({
+      bundle: true,
+      define: {
+        'import.meta.resolve': '__resolve',
+        'import.meta.url': JSON.stringify(pathToFileURL(path.join(partyRoot, fileName)).href),
+      },
+      external: ['./src/routes/ultramodern-route-metadata'],
+      format: 'cjs',
+      packages: 'external',
+      platform: 'node',
+      stdin: {
+        contents: source,
+        loader: 'ts',
+        resolveDir: path.dirname(path.join(partyRoot, fileName)),
+      },
+      write: false,
+    }),
+  );
+  const code = result.outputFiles[0]?.text;
+  expect(code).toBeTruthy();
+  if (!code) {
+    throw new Error(EXPECTED_PROOF_VALUE);
+  }
+  const effectUrl = pathToFileURL(require.resolve('effect')).href;
+  const buildIdentityUrl = pathToFileURL(
+    createRequire(path.join(partyRoot, fileName)).resolve(
+      '@app/shared-contracts/ultramodern-build',
+    ),
+  ).href;
+  return runNode([
+    '--input-type=module',
+    '-e',
+    `
+import * as effect from ${JSON.stringify(effectUrl)};
+import * as buildIdentity from ${JSON.stringify(buildIdentityUrl)};
+import * as nodeModule from 'node:module';
+import * as nodePath from 'node:path';
+import * as nodeUrl from 'node:url';
+import { runInNewContext } from 'node:vm';
+const environment = {
+  MODERNJS_DEPLOY: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')},
+  ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
+  ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
+  ZE_CI_TOKEN: 'proof-token',
+};
+const plugin = name => options => ({ name, options });
+const framework = {
+  appTools: plugin('appTools'), bffPlugin: plugin('bff'), i18nPlugin: plugin('i18n'),
+  moduleFederationPlugin: plugin('moduleFederation'), pluginTailwindcss: plugin('tailwind'),
+  tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
+  defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
+  getBuildConfigEnvironment: name => environment[name],
+  withBuildConfigEnvironment: (_name, _value, configuration) => configuration,
+  ultramodernLocalisedUrls: {},
+};
+const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}), { resolve: name => '/dependencies/' + name }) };
+const module = { exports: {} };
+runInNewContext(${JSON.stringify(code)}, {
+  exports: module.exports, module, URL,
+  ULTRAMODERN_BUILD_MARKER: 'injected-build', ULTRAMODERN_SOURCE_REVISION: 'injected-revision',
+  __resolve: name => 'file:///dependencies/' + name,
+  require: name => ({ effect, '@app/shared-contracts/ultramodern-build': buildIdentity, 'node:module': moduleShim, 'node:path': nodePath, 'node:url': nodeUrl }[name] ?? framework),
+});
+const configuration = module.exports.default;
+const observations = {};
+if (configuration?.tools) {
+  const chainValues = [];
+  const output = { uniqueName: name => { chainValues.push(name); return output; }, chunkLoadingGlobal: name => { chainValues.push(name); return output; } };
+  configuration.tools.bundlerChain?.({ output });
+  observations.chain = chainValues;
+  observations.plugins = [];
+  for (const entry of configuration.plugins ?? []) entry.setup?.({ modifyRspackConfig: value => observations.plugins.push(value) });
+  const plugins = {
+    DefinePlugin: class { constructor(definitions) { this.definitions = definitions; } },
+    NormalModuleReplacementPlugin: class { constructor(pattern, replace) {
+      this.pattern = pattern;
+      this.results = ['./handler.ts', './handler.ts?loaderId=x&retain=false', './other.ts?modern-bff-runtime-source'].map(request => {
+        const resource = { context: ${JSON.stringify(path.join(partyRoot, 'api'))}, request }; replace(resource); return resource;
+      });
+    } },
+  };
+  observations.rspack = ['client', 'workerSSR'].map(name => {
+    const config = { resolve: {}, externals: [], plugins: [], node: {} };
+    configuration.tools.rspack?.(config, { environment: { name }, rspack: plugins });
+    const externalResults = [];
+    for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'unrelated']) {
+      external({ request, dependencyType: 'commonjs' }, (...args) => externalResults.push(args));
+    }
+    return { config, externalResults };
+  });
+}
+const normalize = (_key, value) => {
+  if (typeof value === 'function') return '[Function]';
+  if (Object.prototype.toString.call(value) === '[object RegExp]') return String(value);
+  return value;
+};
+process.stdout.write(JSON.stringify({ exported: module.exports, observations }, normalize));
+`,
+  ]);
+});
+
 it.live(
-  'all published scaffold formats retain lint-safe Party infrastructure parity',
-  Effect.fn(function* governanceScenario5() {
+  'all published scaffold formats retain Party infrastructure behavior and source parity',
+  Effect.fn(function* mergedScenario4() {
     yield* Effect.all(
       ['esm', 'esm-node', 'cjs'].map(
-        Effect.fn(function* governanceScenario6(moduleFormat) {
-          const generatorModulePath = publishedGeneratorModulePath(moduleFormat);
-          const descriptorPath = generatorModulePath('descriptors');
+        Effect.fn(function* mergedScenario3(moduleFormat) {
+          const descriptorPath = publishedGeneratorModulePath(moduleFormat)('descriptors');
           const descriptorSource: unknown =
             moduleFormat === 'cjs'
               ? require(descriptorPath)
               : yield* Effect.promise(() => import(pathToFileURL(descriptorPath).href));
           const descriptorModule =
-            yield* Schema.decodeUnknownEffect(DescriptorModuleSchema)(descriptorSource);
-          const componentPath = generatorModulePath('demo-components');
+            Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
+          const componentPath = publishedGeneratorModulePath(moduleFormat)('demo-components');
           const componentSource: unknown =
             moduleFormat === 'cjs'
               ? require(componentPath)
               : yield* Effect.promise(() => import(pathToFileURL(componentPath).href));
-          const componentModule =
-            yield* Schema.decodeUnknownEffect(ComponentModuleSchema)(componentSource);
-          const federationPath = generatorModulePath('module-federation/config');
+          const componentModule = Schema.decodeUnknownSync(ComponentModuleSchema)(componentSource);
+          const federationPath = publishedGeneratorModulePath(moduleFormat)(
+            'module-federation/config',
+          );
           const federationSource: unknown =
             moduleFormat === 'cjs'
               ? require(federationPath)
               : yield* Effect.promise(() => import(pathToFileURL(federationPath).href));
-          const federationModule = yield* Schema.decodeUnknownEffect(FederationConfigModuleSchema)(
+          const federationModule = Schema.decodeUnknownSync(FederationConfigModuleSchema)(
             federationSource,
           );
-          const buildModulePath = generatorModulePath('module-federation/reexport-module');
+          const buildModulePath = publishedGeneratorModulePath(moduleFormat)(
+            'module-federation/reexport-module',
+          );
           const buildModuleSource: unknown =
             moduleFormat === 'cjs'
               ? require(buildModulePath)
               : yield* Effect.promise(() => import(pathToFileURL(buildModulePath).href));
-          const buildModule = yield* Schema.decodeUnknownEffect(BuildModuleGeneratorSchema)(
+          const buildModule = Schema.decodeUnknownSync(BuildModuleGeneratorSchema)(
             buildModuleSource,
           );
           const createVerticalDescriptor =
@@ -2406,30 +2480,49 @@ it.live(
             federationModule.createBackendModuleFederationConfig.bind(federationSource);
           const createUltramodernBuildModule =
             buildModule.createUltramodernBuildModule.bind(buildModuleSource);
-          const descriptor = yield* Schema.decodeUnknownEffect(WorkspaceAppFixtureSchema, {
-            onExcessProperty: 'preserve',
-          })(createVerticalDescriptor(partyId, 4102), { onExcessProperty: 'preserve' });
+          const descriptor: unknown = createVerticalDescriptor(partyId, 4102);
+          Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
           const app = { ...descriptor, exposes: {} };
           const generated = {
-            'backend-federation.config.ts': yield* Schema.decodeUnknownEffect(Schema.String)(
+            'backend-federation.config.ts': Schema.decodeUnknownSync(Schema.String)(
               createBackendModuleFederationConfig(app),
             ),
-            [buildMarkerFile]: yield* Schema.decodeUnknownEffect(Schema.String)(
+            [buildMarkerFile]: Schema.decodeUnknownSync(Schema.String)(
               createUltramodernBuildModule('app', app),
             ),
-            'modern.config.ts': yield* Schema.decodeUnknownEffect(Schema.String)(
+            'modern.config.ts': Schema.decodeUnknownSync(Schema.String)(
               createAppModernConfig('app', app),
             ),
-            'src/routes/layout.tsx': yield* Schema.decodeUnknownEffect(Schema.String)(
-              createLayout(app.id),
-            ),
+            'src/routes/layout.tsx': Schema.decodeUnknownSync(Schema.String)(createLayout(app.id)),
           };
           yield* Effect.all(
             Object.entries(generated).map(
-              Effect.fn(function* governanceScenario7([fileName, source]) {
+              Effect.fn(function* mergedScenario2([fileName, source]) {
                 const actual = yield* Effect.promise(() =>
-                  readFile(path.join(workspaceRoot, 'verticals/party-registry', fileName), 'utf-8'),
+                  readFile(path.join(workspaceRoot, partyDirectory, fileName), 'utf-8'),
                 );
+                if (fileName === 'modern.config.ts' || fileName === 'shared/ultramodern-build.ts') {
+                  yield* Effect.all(
+                    [false, true].map(
+                      Effect.fn(function* mergedScenario1(cloudflare) {
+                        const [expected, evaluated] = yield* Effect.all(
+                          [
+                            evaluatedInfrastructureSource(fileName, source, cloudflare),
+                            evaluatedInfrastructureSource(fileName, actual, cloudflare),
+                          ],
+                          { concurrency: 'unbounded' },
+                        );
+                        const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
+                        expect(
+                          decode(expected),
+                          `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
+                        ).toEqual(decode(evaluated));
+                      }),
+                    ),
+                    { concurrency: 'unbounded' },
+                  );
+                  return;
+                }
                 expect(
                   yield* normalizedGeneratedSource(fileName, source),
                   `${moduleFormat}: ${fileName} must match the controlled scaffold`,
@@ -2451,11 +2544,13 @@ it.live(
     yield* Effect.all(
       ['esm', 'esm-node', 'cjs'].map(
         Effect.fn(function* governanceScenario9(moduleFormat) {
-          const generatorModulePath = publishedGeneratorModulePath(moduleFormat);
-          const descriptorPath = generatorModulePath('descriptors');
-          const sharedApiPath = generatorModulePath(generatedSharedApiModule);
-          const clientPath = generatorModulePath('api/client');
-          const servicePath = generatorModulePath(generatedServiceModuleName);
+          const descriptorPath = publishedGeneratorModulePath(moduleFormat)('descriptors');
+          const sharedApiPath =
+            publishedGeneratorModulePath(moduleFormat)(generatedSharedApiModule);
+          const clientPath = publishedGeneratorModulePath(moduleFormat)('api/client');
+          const servicePath = publishedGeneratorModulePath(moduleFormat)(
+            generatedServiceModuleName,
+          );
           const descriptorSource: unknown =
             moduleFormat === 'cjs'
               ? require(descriptorPath)
@@ -2570,16 +2665,21 @@ it.live(
   }),
 );
 
+const makeProofRoot = Effect.fn(function* mergedScenario1(prefix: string) {
+  const scratchRoot = path.join(workspaceRoot, 'packages/shared-contracts/.scratch');
+  yield* Effect.promise(() => mkdir(scratchRoot, { recursive: true }));
+  const proofRoot = yield* Effect.acquireRelease(
+    Effect.promise(() => mkdtemp(path.join(scratchRoot, `${prefix}-`))),
+    (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+  );
+
+  return proofRoot;
+});
+
 it.live(
   'all published scaffold formats emit the executable AST baseline validator',
-  Effect.fn(function* governanceScenario10() {
-    const scratchRoot = path.join(workspaceRoot, 'packages/shared-contracts/.scratch');
-    yield* Effect.promise(() => mkdir(scratchRoot, { recursive: true }));
-    const proofRoot = yield* Effect.acquireRelease(
-      Effect.promise(() => mkdtemp(path.join(scratchRoot, 'generated-baseline-validator-proof-'))),
-      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
-    );
-
+  Effect.fn(function* mergedScenario2() {
+    const proofRoot = yield* makeProofRoot('generated-baseline-validator-proof');
     const expectedHelper = yield* Effect.promise(() =>
       readFile(
         path.join(workspaceRoot, 'scripts/microvertical-api-baseline-boundary.mts'),
@@ -2589,7 +2689,7 @@ it.live(
 
     yield* Effect.all(
       ['esm', 'esm-node', 'cjs'].map(
-        Effect.fn(function* governanceScenario11(moduleFormat) {
+        Effect.fn(function* mergedScenario1(moduleFormat) {
           const extension = moduleFormat === 'cjs' ? 'cjs' : 'js';
           const modulePath = path.join(
             generatorRoot,
@@ -2599,9 +2699,7 @@ it.live(
             moduleFormat === 'cjs'
               ? require(modulePath)
               : yield* Effect.promise(() => import(pathToFileURL(modulePath).href));
-          const generator = yield* Schema.decodeUnknownEffect(WorkspaceScriptsGeneratorSchema)(
-            moduleSource,
-          );
+          const generator = Schema.decodeUnknownSync(WorkspaceScriptsGeneratorSchema)(moduleSource);
           const artifacts = generator.migratedWorkspaceScriptArtifacts({
             hasBackendSurface: true,
             shellOnly: false,
@@ -2614,11 +2712,16 @@ it.live(
             ({ relativePath }) => relativePath === apiBoundaryCheckerPath,
           );
           expect(helper, `${moduleFormat} must emit the AST baseline helper`).toBeTruthy();
-          expect(checker, `${moduleFormat} must emit the API checker`).toBeDefined();
-          if (helper === undefined || checker === undefined) {
-            yield* Effect.die(new Error(`${moduleFormat} omitted baseline validator artifacts`));
-            return;
+          if (!helper) {
+            throw new Error(EXPECTED_PROOF_VALUE);
           }
+          expect(checker, `${moduleFormat} must emit the API checker`).toBeTruthy();
+          if (!checker) {
+            throw new Error(EXPECTED_PROOF_VALUE);
+          }
+          expect(helper.content, `${moduleFormat} must emit byte-exact baseline source`).toBe(
+            expectedHelper,
+          );
           expect(
             yield* normalizedGeneratedSource(
               'microvertical-api-baseline-boundary.mts',
@@ -2635,39 +2738,51 @@ it.live(
           yield* writeText(formatRoot, helper.relativePath, helper.content);
           yield* writeText(formatRoot, checker.relativePath, checker.content);
           expect(checker.content).toMatch(/microVerticalApiBaselineViolation/u);
-          // Execute against the owned workspace below; parallel tests create transient source
-          // bundles in the real workspace that can disappear between enumeration and reads.
+          expect(
+            runNode([path.join(formatRoot, checker.relativePath)], {
+              env: { ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot },
+            }),
+            moduleFormat,
+          ).toMatch(/UltraModern API boundary check passed/u);
 
-          const generatorModulePath = publishedGeneratorModulePath(moduleFormat);
           const descriptorSource: unknown =
             moduleFormat === 'cjs'
-              ? require(generatorModulePath('descriptors'))
+              ? require(publishedGeneratorModulePath(moduleFormat)('descriptors'))
               : yield* Effect.promise(
-                  () => import(pathToFileURL(generatorModulePath('descriptors')).href),
+                  () =>
+                    import(
+                      pathToFileURL(publishedGeneratorModulePath(moduleFormat)('descriptors')).href
+                    ),
                 );
           const sharedApiSource: unknown =
             moduleFormat === 'cjs'
-              ? require(generatorModulePath(generatedSharedApiModule))
+              ? require(publishedGeneratorModulePath(moduleFormat)(generatedSharedApiModule))
               : yield* Effect.promise(
-                  () => import(pathToFileURL(generatorModulePath(generatedSharedApiModule)).href),
+                  () =>
+                    import(
+                      pathToFileURL(
+                        publishedGeneratorModulePath(moduleFormat)(generatedSharedApiModule),
+                      ).href
+                    ),
                 );
           const descriptorModule =
-            yield* Schema.decodeUnknownEffect(DescriptorModuleSchema)(descriptorSource);
+            Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
           const sharedApiModule =
-            yield* Schema.decodeUnknownEffect(SharedApiGeneratorSchema)(sharedApiSource);
+            Schema.decodeUnknownSync(SharedApiGeneratorSchema)(sharedApiSource);
           const checkoutDescriptor = descriptorModule.createVerticalDescriptor('shopping', 4105);
           const checkoutStemDescriptor = {
             ...checkoutDescriptor,
             api: { prefix: checkoutApiPrefix, stem: checkoutId },
             exposes: {},
           };
-          const servicePath = generatorModulePath(generatedServiceModuleName);
+          const servicePath = publishedGeneratorModulePath(moduleFormat)(
+            generatedServiceModuleName,
+          );
           const serviceSource: unknown =
             moduleFormat === 'cjs'
               ? require(servicePath)
               : yield* Effect.promise(() => import(pathToFileURL(servicePath).href));
-          const serviceModule =
-            yield* Schema.decodeUnknownEffect(ApiServiceGeneratorSchema)(serviceSource);
+          const serviceModule = Schema.decodeUnknownSync(ApiServiceGeneratorSchema)(serviceSource);
           const checkoutWorkspace = path.join(formatRoot, 'checkout-workspace');
           yield* writeText(
             checkoutWorkspace,
@@ -2725,38 +2840,47 @@ it.live(
           });
           yield* writeText(
             checkoutWorkspace,
+            'apps/shell-super-app/src/api/vertical-clients.ts',
+            'export const verticalClients = {};\n',
+          );
+          const invalidApiSource = `import { Schema } from 'effect';
+export const response = new Response('generated');
+export const responseSchema = Schema.Unknown;
+`;
+          yield* writeText(
+            checkoutWorkspace,
             'verticals/shopping/dist-cloudflare/api/index.js',
-            'export const handler = () => new Response();',
+            invalidApiSource,
           );
           yield* writeText(
             checkoutWorkspace,
-            'verticals/retired/node_modules/cache.js',
-            'export const cached = true;',
+            'apps/shell-super-app/dist-cloudflare/api/index.js',
+            invalidApiSource,
           );
           expect(
             runNode([path.join(formatRoot, checker.relativePath)], {
               env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
             }),
-            `${moduleFormat} ignores generated output and retired package caches`,
+            `${moduleFormat} checkout workspace`,
           ).toMatch(/UltraModern API boundary check passed/u);
-          yield* writeText(
-            checkoutWorkspace,
-            'verticals/shopping/api/unsafe.ts',
-            'export const response = new Response();',
+          const authoredApiPath = 'verticals/shopping/api/invalid.ts';
+          yield* writeText(checkoutWorkspace, authoredApiPath, invalidApiSource);
+          const authoredResult = spawnSync(
+            process.execPath,
+            [path.join(formatRoot, checker.relativePath)],
+            {
+              encoding: 'utf-8',
+              env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
+            },
           );
-          expect(() =>
-            runNode([path.join(formatRoot, checker.relativePath)], {
-              env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
-            }),
-          ).toThrow(/API modules must not hand-build Response objects/u);
-          yield* writeJson(checkoutWorkspace, 'verticals/retired/package.json', {
-            name: '@generated-proof/retired',
-          });
-          expect(() =>
-            runNode([path.join(formatRoot, checker.relativePath)], {
-              env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
-            }),
-          ).toThrow(/verticals\/retired\/api\/index\.ts is required/u);
+          expect(authoredResult.status, moduleFormat).toBe(1);
+          expect(authoredResult.stderr, moduleFormat).toMatch(
+            /verticals\/shopping\/api\/invalid\.ts: API modules must not hand-build Response objects/u,
+          );
+          expect(authoredResult.stderr, moduleFormat).toMatch(
+            /verticals\/shopping\/api\/invalid\.ts: API modules must use concrete request, response and error schemas/u,
+          );
+          expect(authoredResult.stderr, moduleFormat).not.toMatch(/dist-cloudflare/u);
         }),
       ),
       { concurrency: 'unbounded' },
@@ -2985,25 +3109,25 @@ it.live(
       { concurrency: 'unbounded' },
     );
 
-    expect(readinessValues[0]?.marker.appId).not.toBe(readinessValues[1]?.marker.appId);
-    expect('kind' in (readinessValues[0]?.marker ?? {})).toBe(false);
-    expect('schemaVersion' in (readinessValues[0]?.marker ?? {})).toBe(false);
-    expect(readinessValues[0]?.checks).toEqual(readinessValues[1]?.checks);
-    expect(readinessValues[0]?.status).toBe(readinessValues[1]?.status);
-    expect(readinessValues[0]?.versionSkew).toBe(readinessValues[1]?.versionSkew);
+    const [firstReadiness, secondReadiness] = readinessValues;
+    expect(firstReadiness).toBeDefined();
+    expect(secondReadiness).toBeDefined();
+    if (firstReadiness === undefined || secondReadiness === undefined) {
+      throw new Error('Expected both generated readiness results');
+    }
+    expect(firstReadiness.marker.appId).not.toBe(secondReadiness.marker.appId);
+    expect('kind' in firstReadiness.marker).toBe(false);
+    expect('schemaVersion' in firstReadiness.marker).toBe(false);
+    expect(firstReadiness.checks).toEqual(secondReadiness.checks);
+    expect(firstReadiness.status).toBe(secondReadiness.status);
+    expect(firstReadiness.versionSkew).toBe(secondReadiness.versionSkew);
   }),
 );
 
 it.live(
   'generated shared-contracts baseline template is lint-clean and type-safe',
-  Effect.fn(function* governanceScenario17() {
-    const scratchRoot = path.join(workspaceRoot, 'packages/shared-contracts/.scratch');
-    yield* Effect.promise(() => mkdir(scratchRoot, { recursive: true }));
-    const proofRoot = yield* Effect.acquireRelease(
-      Effect.promise(() => mkdtemp(path.join(scratchRoot, 'generated-baseline-template-proof-'))),
-      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
-    );
-
+  Effect.fn(function* mergedScenario1() {
+    const proofRoot = yield* makeProofRoot('generated-baseline-template-proof');
     const templateSource = yield* Effect.promise(() =>
       readFile(path.join(generatorRoot, 'templates/packages/shared-contracts-index.ts'), 'utf-8'),
     );
@@ -3170,38 +3294,11 @@ it.live(
 
 it.live(
   'static validation rejects a MicroVertical root contract without readiness baseline',
-  Effect.fn(function* governanceScenario20() {
+  Effect.fn(function* mergedScenario1() {
     const contract = yield* Effect.promise(() =>
       readFile(path.join(workspaceRoot, `verticals/${partyId}/shared/api.ts`), 'utf-8'),
     );
     expect(yield* microVerticalApiBaselineViolation(partyId, contract)).toBe(undefined);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'"),
-        ),
-      ),
-    ).toMatch(/exact readiness endpoint/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace('...MicroVerticalReadinessSchema.fields,', '...Schema.Unknown.fields,'),
-        ),
-      ),
-    ).toMatch(/shared readiness schema/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            'success: partyRegistryReadinessSchema',
-            'success: Schema.String /* success: partyRegistryReadinessSchema */',
-          ),
-        ),
-      ),
-    ).toMatch(/exact readiness endpoint/u);
     const readinessEndpointDecoy =
       "HttpApiEndpoint.get('readiness', '/party-registry/readiness', { success: partyRegistryReadinessSchema })";
     const foundationComposition = '.addHttpApi(partyRegistryFoundationApi)';
@@ -3210,312 +3307,260 @@ it.live(
   MicroVerticalReadinessSchema,
   createMicroVerticalOperationContext,
 } from '@app/shared-contracts';`;
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace("from '@app/shared-contracts';", "from '@app/copied-contracts';"),
+    for (const [label, mutated, expected] of [
+      [
+        'renamed readiness endpoint',
+        contract.replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'"),
+        /exact readiness endpoint/u,
+      ],
+      [
+        'foreign readiness schema fields',
+        contract.replace('...MicroVerticalReadinessSchema.fields,', '...Schema.Unknown.fields,'),
+        /shared readiness schema/u,
+      ],
+      [
+        'readiness success schema commented out',
+        contract.replace(
+          'success: partyRegistryReadinessSchema',
+          'success: Schema.String /* success: partyRegistryReadinessSchema */',
         ),
-      ),
-    ).toMatch(/import exact baseline primitives from the shared contracts package/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            "from '@modern-js/plugin-bff/effect-client';",
-            "from '@evil/fake-effect-client';",
-          ),
+        /exact readiness endpoint/u,
+      ],
+      [
+        'baseline primitives imported from a copied package',
+        contract.replace("from '@app/shared-contracts';", "from '@app/copied-contracts';"),
+        /import exact baseline primitives from the shared contracts package/u,
+      ],
+      [
+        'Effect API primitives imported from a foreign client',
+        contract.replace(
+          "from '@modern-js/plugin-bff/effect-client';",
+          "from '@evil/fake-effect-client';",
         ),
-      ),
-    ).toMatch(/import exact Effect API primitives from the framework client package/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            sharedBaselineImport,
-            `const MicroVerticalBuildMarkerSchema = Schema.Struct({ copied: Schema.String });
+        /import exact Effect API primitives from the framework client package/u,
+      ],
+      [
+        'baseline primitives redefined locally',
+        contract.replace(
+          sharedBaselineImport,
+          `const MicroVerticalBuildMarkerSchema = Schema.Struct({ copied: Schema.String });
 const MicroVerticalReadinessSchema = Schema.Struct({ copied: Schema.String });
 const createMicroVerticalOperationContext = <Value>(value: Value): Value => value;`,
+        ),
+        /import exact baseline primitives from the shared contracts package/u,
+      ],
+      [
+        'renamed readiness endpoint with a decoy API name',
+        contract
+          .replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'")
+          .replace(
+            "HttpApi.make('PartyRegistryFoundationApi')",
+            `HttpApi.make("${readinessEndpointDecoy}")`,
           ),
-        ),
-      ),
-    ).toMatch(/import exact baseline primitives from the shared contracts package/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract
-            .replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'")
-            .replace(
-              "HttpApi.make('PartyRegistryFoundationApi')",
-              `HttpApi.make("${readinessEndpointDecoy}")`,
-            ),
-        ),
-      ),
-    ).toMatch(/exact readiness endpoint/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(foundationComposition, ''),
-        ),
-      ),
-    ).toMatch(/explicitly compose its readiness foundation API/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            foundationComposition,
-            `${foundationComposition}
+        /exact readiness endpoint/u,
+      ],
+      [
+        'missing foundation API composition',
+        contract.replace(foundationComposition, ''),
+        /explicitly compose its readiness foundation API/u,
+      ],
+      [
+        'foundation composition discarded by a pipe',
+        contract.replace(
+          foundationComposition,
+          `${foundationComposition}
   .pipe(() => HttpApi.make('DiscardedPartyRegistryApi'))`,
-          ),
         ),
-      ),
-    ).toMatch(/explicitly compose its readiness foundation API/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            `  ),
+        /explicitly compose its readiness foundation API/u,
+      ],
+      [
+        'foundation endpoint discarded by a pipe',
+        contract.replace(
+          `  ),
 );`,
-            `  ),
+          `  ),
 ).pipe(() => HttpApi.make('DiscardedPartyRegistryFoundationApi'));`,
+        ),
+        /directly compose its exact readiness endpoint/u,
+      ],
+      [
+        'missing foundation composition with a decoy API name',
+        contract
+          .replace(foundationComposition, '')
+          .replace(
+            "HttpApi.make('PartyRegistryApi')",
+            "HttpApi.make('.addHttpApi(partyRegistryFoundationApi)')",
           ),
-        ),
-      ),
-    ).toMatch(/directly compose its exact readiness endpoint/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract
-            .replace(foundationComposition, '')
-            .replace(
-              "HttpApi.make('PartyRegistryApi')",
-              "HttpApi.make('.addHttpApi(partyRegistryFoundationApi)')",
-            ),
-        ),
-      ),
-    ).toMatch(/explicitly compose its readiness foundation API/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract
-            .replaceAll('partyRegistryFoundationApi', 'renamedFoundationApi')
-            .replace('.addHttpApi(renamedFoundationApi)', ''),
-        ),
-      ),
-    ).toMatch(/directly compose its exact readiness endpoint/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace('...MicroVerticalBuildMarkerSchema.fields,', 'build: Schema.String,'),
-        ),
-      ),
-    ).toMatch(/shared build marker schema/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            `export const partyRegistryReadinessSchema = Schema.Struct({
+        /explicitly compose its readiness foundation API/u,
+      ],
+      [
+        'renamed foundation API without composition',
+        contract
+          .replaceAll('partyRegistryFoundationApi', 'renamedFoundationApi')
+          .replace('.addHttpApi(renamedFoundationApi)', ''),
+        /directly compose its exact readiness endpoint/u,
+      ],
+      [
+        'hand-forked build marker fields',
+        contract.replace('...MicroVerticalBuildMarkerSchema.fields,', 'build: Schema.String,'),
+        /shared build marker schema/u,
+      ],
+      [
+        'readiness schema built by a sequence expression',
+        contract.replace(
+          `export const partyRegistryReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
   marker: partyRegistryMarkerSchema,
 });`,
-            `export const partyRegistryReadinessSchema = (
+          `export const partyRegistryReadinessSchema = (
   MicroVerticalReadinessSchema,
   Schema.Struct({ marker: partyRegistryMarkerSchema, status: Schema.String })
 );`,
-          ),
         ),
-      ),
-    ).toMatch(/consume the shared readiness schema/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            `export const partyRegistryReadinessSchema = Schema.Struct({
+        /consume the shared readiness schema/u,
+      ],
+      [
+        'readiness schema aliased to the shared schema',
+        contract.replace(
+          `export const partyRegistryReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
   marker: partyRegistryMarkerSchema,
 });`,
-            'export const partyRegistryReadinessSchema = MicroVerticalReadinessSchema;',
-          ),
+          'export const partyRegistryReadinessSchema = MicroVerticalReadinessSchema;',
         ),
-      ),
-    ).toMatch(/consume the shared readiness schema/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            `export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
+        /consume the shared readiness schema/u,
+      ],
+      [
+        'foundation composed inside a pipe callback',
+        contract.replace(
+          `export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(partyRegistryFoundationApi)`,
-            `export const partyRegistryApi = HttpApi.make('PartyRegistryApi').pipe(
+          `export const partyRegistryApi = HttpApi.make('PartyRegistryApi').pipe(
   (api) => (api.addHttpApi(partyRegistryFoundationApi), api),
 )`,
-          ),
         ),
-      ),
-    ).toMatch(/explicitly compose its readiness foundation API/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          `${contract.replace(
-            'export const partyRegistryApi =',
-            'export const partyRegistryApiDecoy =',
-          )}\nexport const partyRegistryApi = HttpApi.make('PartyRegistryApi');\n`,
+        /explicitly compose its readiness foundation API/u,
+      ],
+      [
+        'decoy API declaration shadowed by an uncomposed API',
+        `${contract.replace(
+          'export const partyRegistryApi =',
+          'export const partyRegistryApiDecoy =',
+        )}\nexport const partyRegistryApi = HttpApi.make('PartyRegistryApi');\n`,
+        /explicitly compose its readiness foundation API/u,
+      ],
+      [
+        'decoy foundation API declaration without a readiness endpoint',
+        `${contract.replace(
+          'export const partyRegistryFoundationApi =',
+          'export const partyRegistryFoundationApiDecoy =',
+        )}\nexport const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationApi');\n`,
+        /exact readiness endpoint/u,
+      ],
+      [
+        'decoy contract declaration without path metadata',
+        `${contract.replace(
+          'export const partyRegistryApiContract =',
+          'export const partyRegistryApiContractDecoy =',
+        )}\nexport const partyRegistryApiContract = { ownerId: 'party-registry' };\n`,
+        /exact owner and API path metadata/u,
+      ],
+      [
+        'build marker overriding a shared field',
+        contract.replace(
+          '...MicroVerticalBuildMarkerSchema.fields,',
+          '...MicroVerticalBuildMarkerSchema.fields,\n  build: Schema.Number,',
         ),
-      ),
-    ).toMatch(/explicitly compose its readiness foundation API/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          `${contract.replace(
-            'export const partyRegistryFoundationApi =',
-            'export const partyRegistryFoundationApiDecoy =',
-          )}\nexport const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationApi');\n`,
+        /without overriding shared fields/u,
+      ],
+      [
+        'foreign AppId schema',
+        contract.replace(
+          "const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));",
+          'const AppIdSchema = Schema.Number;',
         ),
-      ),
-    ).toMatch(/exact readiness endpoint/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          `${contract.replace(
-            'export const partyRegistryApiContract =',
-            'export const partyRegistryApiContractDecoy =',
-          )}\nexport const partyRegistryApiContract = { ownerId: 'party-registry' };\n`,
+        /shared build marker schema/u,
+      ],
+      [
+        'readiness schema overriding a shared field',
+        contract.replace(
+          '...MicroVerticalReadinessSchema.fields,',
+          '...MicroVerticalReadinessSchema.fields,\n  status: Schema.String,',
         ),
-      ),
-    ).toMatch(/exact owner and API path metadata/u);
-
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            '...MicroVerticalBuildMarkerSchema.fields,',
-            '...MicroVerticalBuildMarkerSchema.fields,\n  build: Schema.Number,',
-          ),
+        /without overriding shared fields/u,
+      ],
+      [
+        'renamed foundation group',
+        contract.replace("HttpApiGroup.make('foundation')", "HttpApiGroup.make('not-foundation')"),
+        /exact readiness endpoint and foundation identity/u,
+      ],
+      [
+        'renamed root API',
+        contract.replace("HttpApi.make('PartyRegistryApi')", "HttpApi.make('WrongApi')"),
+        /explicitly compose its readiness foundation API/u,
+      ],
+      [
+        'renamed operation contexts',
+        contract.replace(
+          'export const partyRegistryOperationContexts =',
+          'export const renamedOperationContexts =',
         ),
-      ),
-    ).toMatch(/without overriding shared fields/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            "const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));",
-            'const AppIdSchema = Schema.Number;',
-          ),
+        /construct every operation with the shared context constructor/u,
+      ],
+      [
+        'foreign operation id',
+        contract.replace(
+          "operationId: 'PartyRegistryApi:/reads/ares-lookup'",
+          "operationId: 'WrongApi:unrelated'",
         ),
-      ),
-    ).toMatch(/shared build marker schema/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            '...MicroVerticalReadinessSchema.fields,',
-            '...MicroVerticalReadinessSchema.fields,\n  status: Schema.String,',
-          ),
-        ),
-      ),
-    ).toMatch(/without overriding shared fields/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            "HttpApiGroup.make('foundation')",
-            "HttpApiGroup.make('not-foundation')",
-          ),
-        ),
-      ),
-    ).toMatch(/exact readiness endpoint and foundation identity/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace("HttpApi.make('PartyRegistryApi')", "HttpApi.make('WrongApi')"),
-        ),
-      ),
-    ).toMatch(/explicitly compose its readiness foundation API/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            'export const partyRegistryOperationContexts =',
-            'export const renamedOperationContexts =',
-          ),
-        ),
-      ),
-    ).toMatch(/construct every operation with the shared context constructor/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace(
-            "operationId: 'PartyRegistryApi:/reads/ares-lookup'",
-            "operationId: 'WrongApi:unrelated'",
-          ),
-        ),
-      ),
-    ).toMatch(/construct every operation with the shared context constructor/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          contract.replace("routePath: '/reads/ares-lookup'", "routePath: '/not-an-endpoint'"),
-        ),
-      ),
-    ).toMatch(/construct every operation with the shared context constructor/u);
-    expect(
-      violationText(
-        yield* microVerticalApiBaselineViolation(
-          partyId,
-          `${contract.replace(
-            `readiness: createMicroVerticalOperationContext({
+        /construct every operation with the shared context constructor/u,
+      ],
+      [
+        'foreign route path',
+        contract.replace("routePath: '/reads/ares-lookup'", "routePath: '/not-an-endpoint'"),
+        /construct every operation with the shared context constructor/u,
+      ],
+      [
+        'readiness context built without the shared constructor',
+        `${contract.replace(
+          `readiness: createMicroVerticalOperationContext({
     method: 'GET',
     operationId: 'PartyRegistryApi:/party-registry/readiness',
     routePath: '/party-registry/readiness',
   }),`,
-            `readiness: {
+          `readiness: {
     method: 'GET',
     operationId: 'PartyRegistryApi:/party-registry/readiness',
     routePath: '/party-registry/readiness',
   },`,
-          )}
+        )}
 createMicroVerticalOperationContext({
   method: 'GET',
   operationId: 'PartyRegistryApi:/party-registry/readiness',
   routePath: '/party-registry/readiness',
 });
 `,
-        ),
-      ),
-    ).toMatch(/construct every operation with the shared context constructor/u);
-
-    for (const [label, mutated] of [
-      ['missing apiPrefix', contract.replace("  apiPrefix: '/party-registry-api',\n", '')],
+        /construct every operation with the shared context constructor/u,
+      ],
+      [
+        'missing apiPrefix',
+        contract.replace("  apiPrefix: '/party-registry-api',\n", ''),
+        /exact owner and API path metadata/u,
+      ],
       [
         'missing basePath',
         contract.replace("  basePath: '/party-registry-api/party-registry',\n", ''),
+        /exact owner and API path metadata/u,
       ],
-      ['missing ownerId', contract.replace("  ownerId: 'party-registry',\n", '')],
+      [
+        'missing ownerId',
+        contract.replace("  ownerId: 'party-registry',\n", ''),
+        /exact owner and API path metadata/u,
+      ],
       [
         'wrong apiPrefix',
         contract.replace("apiPrefix: '/party-registry-api'", "apiPrefix: '/evil-api'"),
+        /exact owner and API path metadata/u,
       ],
       [
         'wrong basePath',
@@ -3523,14 +3568,20 @@ createMicroVerticalOperationContext({
           "basePath: '/party-registry-api/party-registry'",
           "basePath: '/party-registry-api/evil'",
         ),
+        /exact owner and API path metadata/u,
       ],
-      ['wrong ownerId', contract.replace("ownerId: 'party-registry'", "ownerId: 'evil-owner'")],
+      [
+        'wrong ownerId',
+        contract.replace("ownerId: 'party-registry'", "ownerId: 'evil-owner'"),
+        /exact owner and API path metadata/u,
+      ],
       [
         'wrong readinessPath',
         contract.replace(
           "readinessPath: '/party-registry-api/party-registry/readiness'",
           "readinessPath: '/evil-prefix/party-registry/readiness'",
         ),
+        /exact owner and API path metadata/u,
       ],
       [
         'coordinated topology drift',
@@ -3544,6 +3595,7 @@ createMicroVerticalOperationContext({
             "readinessPath: '/party-registry-api/party-registry/readiness'",
             "readinessPath: '/evil-api/party-registry/readiness'",
           ),
+        /exact owner and API path metadata/u,
       ],
       [
         'forbidden credential metadata',
@@ -3551,6 +3603,7 @@ createMicroVerticalOperationContext({
           partyReadinessMetadataLine,
           `${partyReadinessMetadataLine}\n  credential: 'secret',`,
         ),
+        /exact owner and API path metadata/u,
       ],
       [
         'forbidden credential path metadata',
@@ -3558,6 +3611,7 @@ createMicroVerticalOperationContext({
           partyReadinessMetadataLine,
           `${partyReadinessMetadataLine}\n  credentialPath: '/party-registry-api/party-registry/secret',`,
         ),
+        /exact owner and API path metadata/u,
       ],
       [
         'unknown path metadata',
@@ -3565,6 +3619,7 @@ createMicroVerticalOperationContext({
           partyReadinessMetadataLine,
           `${partyReadinessMetadataLine}\n  unknownPath: '/party-registry-api/party-registry/unknown',`,
         ),
+        /exact owner and API path metadata/u,
       ],
       [
         'spread metadata',
@@ -3572,12 +3627,12 @@ createMicroVerticalOperationContext({
           'export const partyRegistryApiContract = {',
           'const copiedMetadata = {};\nexport const partyRegistryApiContract = {\n  ...copiedMetadata,',
         ),
+        /exact owner and API path metadata/u,
       ],
     ] as const) {
-      expect(
-        violationText(yield* microVerticalApiBaselineViolation(partyId, mutated)),
-        label,
-      ).toMatch(/exact owner and API path metadata/u);
+      expect((yield* microVerticalApiBaselineViolation(partyId, mutated)) ?? '', label).toMatch(
+        expected,
+      );
     }
   }),
 );
@@ -4072,6 +4127,8 @@ it.live(
     }
   }),
 );
+
+type GeneratedHttpHandler = ReturnType<ReturnType<typeof defineEffectBff>['createHandler']>;
 
 afterEach(() => {
   rs.restoreAllMocks();

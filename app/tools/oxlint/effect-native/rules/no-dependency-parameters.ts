@@ -15,18 +15,16 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { ESTree } from '@oxlint/plugins';
 
-import { bindingsFor } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
+import {
+  keyName as staticKeyName,
+  unwrapBinding,
+  unwrapType as unwrapSharedType,
+} from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { booleanOption as boolean, compile, stringList } from '../shared/options.ts';
+import { isSourceRuleInScope } from '../shared/source-rule-scope.ts';
 
 type AnyNode = ESTree.Node;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the production `includePaths` defaults instead of
- * forcing the fixture config to loosen them (`run-on-repo.mts` reuses that config verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_DEPENDENCY_TYPE_PATTERN =
   '(Service|Repository|Gateway|Resolver|Dependencies|ServiceFactory)$';
@@ -35,11 +33,9 @@ const DEFAULT_SERVICE_INDEX_KEYS: readonly string[] = ['Service'];
 const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
 
-/** Wrappers between a written parameter and the binding it introduces. */
-const PARAMETER_WRAPPERS = new Set(['AssignmentPattern', 'RestElement', 'TSParameterProperty']);
-
 /** Type wrappers that never change what a type annotation ultimately denotes. */
 const TYPE_WRAPPERS = new Set([
+  'TSTypeAnnotation',
   'TSParenthesizedType',
   'TSTypeOperator',
   'TSArrayType',
@@ -75,26 +71,6 @@ interface RuleOptions {
   readonly serviceIndexKeys: ReadonlySet<string>;
 }
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  return value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
-function compile(value: unknown, fallback: string): RegExp {
-  const source = typeof value === 'string' && value.length > 0 ? value : fallback;
-  try {
-    return new RegExp(source, 'u');
-  } catch {
-    return new RegExp(fallback, 'u');
-  }
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Record<string, unknown>;
   const includePaths = stringList(given.includePaths, DEFAULT_INCLUDE_PATHS);
@@ -112,56 +88,17 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** `{ correlationId: … }` / `{ "id": … }` → the written key; computed keys → `null`. */
+/** Computed option keys are deliberately excluded, including static strings. */
 function keyName(key: AnyNode, computed: boolean): string | null {
-  if (computed) return null;
-  if (key.type === 'Identifier') return (key as { name: string }).name;
-  if (key.type === 'Literal') {
-    const value = (key as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  return null;
+  return computed ? null : staticKeyName(key, false, { templates: false });
 }
 
-/** `AssignmentPattern` / `RestElement` / `TSParameterProperty` → the binding they wrap. */
-function unwrapBinding(node: AnyNode): AnyNode {
-  let current = node;
-  for (let guard = 0; guard < 4; guard += 1) {
-    if (!PARAMETER_WRAPPERS.has(current.type)) return current;
-    const inner =
-      (current as { left?: AnyNode }).left ??
-      (current as { argument?: AnyNode }).argument ??
-      (current as { parameter?: AnyNode }).parameter;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
-}
-
-/** `readonly`, parentheses, `T[]` and rest/optional wrappers never change what a type denotes. */
 function unwrapType(node: AnyNode): AnyNode {
-  let current = node;
-  for (let guard = 0; guard < 8; guard += 1) {
-    if (current.type === 'TSTypeAnnotation') {
-      current = (current as unknown as { typeAnnotation: AnyNode }).typeAnnotation;
-      continue;
-    }
-    if (!TYPE_WRAPPERS.has(current.type)) return current;
-    const inner =
-      (current as { typeAnnotation?: AnyNode }).typeAnnotation ??
-      (current as { elementType?: AnyNode }).elementType;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapSharedType(node, {
+    wrappers: TYPE_WRAPPERS,
+    maxDepth: 8,
+    elementTypeFallback: true,
+  });
 }
 
 /** Last identifier of a (possibly qualified) type name: `Foo.BarService` → `BarService`. */
@@ -301,24 +238,16 @@ export const rule = defineRule({
   },
   create(context) {
     const options = readOptions(context.options[0]);
-    const path = scopePath(context.filename);
-    if (!matchesGlobs(path, options.includePaths)) return {};
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (!options.includeScripts && isScriptFile(path)) return {};
-    if (!options.includeTests && isTestFile(path)) return {};
+    if (!isSourceRuleInScope(context.filename, options)) return {};
 
-    const bindings: EffectBindings = bindingsFor(context);
-
-    const variableFor = (node: any, name: string): any => {
-      for (
-        let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
-        scope;
-        scope = scope.upper
-      ) {
-        const variable = scope.set.get(name);
-        if (variable) return variable;
-      }
-      return null;
+    const variableFor = (node: AnyNode, name: string): any => resolveVariable(context, name, node);
+    const importSourcePath = (def: any): string | null => {
+      const source = def.parent?.source?.value;
+      const isRoot = ['effect', '@modern-js/plugin-bff/effect-edge'].includes(source);
+      if (!isRoot && !source?.startsWith('effect/')) return null;
+      const imported = def.node.imported?.name ?? def.node.imported?.value;
+      if (isRoot) return imported ?? 'root';
+      return `${source.split('/').at(-1)}${imported ? `.${imported}` : ''}`;
     };
     const importedPath = (node: any): string | null => {
       if (node.type === 'TSQualifiedName' || node.type === 'MemberExpression') {
@@ -331,17 +260,7 @@ export const rule = defineRule({
       const variable = variableFor(node, node.name);
       const def = variable?.defs.find((d: any) => d.type === 'ImportBinding');
       if (!def) return null;
-      const source = def.parent?.source?.value;
-      if (
-        source !== 'effect' &&
-        source !== '@modern-js/plugin-bff/effect-edge' &&
-        !source?.startsWith('effect/')
-      )
-        return null;
-      const imported = def.node.imported?.name ?? def.node.imported?.value;
-      return source === 'effect' || source === '@modern-js/plugin-bff/effect-edge'
-        ? (imported ?? 'root')
-        : `${source.split('/').at(-1)}${imported ? `.${imported}` : ''}`;
+      return importSourcePath(def);
     };
     const localType = (node: any): any => {
       if (node.type !== 'Identifier') return null;
@@ -351,25 +270,6 @@ export const rule = defineRule({
         )?.node ?? null
       );
     };
-
-    /** Same-module `type X = …` / `interface X { … }`, collected up front so order never matters. */
-    const localTypes = new Map<string, AnyNode>();
-    for (const statement of context.sourceCode.ast.body as readonly AnyNode[]) {
-      const declaration =
-        statement.type === 'ExportNamedDeclaration'
-          ? ((statement as unknown as { declaration?: AnyNode | null }).declaration ?? null)
-          : statement;
-      if (declaration === null) continue;
-      if (declaration.type === 'TSTypeAliasDeclaration') {
-        const alias = declaration as unknown as { id: AnyNode; typeAnnotation: AnyNode };
-        if (alias.id.type === 'Identifier')
-          localTypes.set((alias.id as { name: string }).name, alias.typeAnnotation);
-      } else if (declaration.type === 'TSInterfaceDeclaration') {
-        const declared = declaration as unknown as { id: AnyNode };
-        if (declared.id.type === 'Identifier')
-          localTypes.set((declared.id as { name: string }).name, declaration);
-      }
-    }
 
     /** A `TSFunctionType` / `TSMethodSignature` whose return type is `Effect.Effect<…>`. */
     const returnsEffect = (annotation: AnyNode | null | undefined): boolean => {
@@ -398,140 +298,141 @@ export const rule = defineRule({
       });
     };
 
-    /**
-     * Classify one type annotation. `depth` is 0 for a parameter's own annotation and 1 while
-     * looking inside an option bag's members, which is as deep as the walk ever goes.
-     */
-    const classify = (annotation: AnyNode | null | undefined, depth: number): Verdict | null => {
-      if (annotation === null || annotation === undefined || depth > 12) return null;
-      const node = unwrapType(annotation);
-
-      if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') {
-        for (const member of (node as unknown as { types: readonly AnyNode[] }).types) {
-          const verdict = classify(member, depth);
-          if (verdict !== null) return verdict;
-        }
-        return null;
-      }
-
-      // (a) `(typeof CoreDatabaseService)['Service']` — a resolved Context.Service instance.
-      if (node.type === 'TSIndexedAccessType') {
-        const indexed = node as unknown as { objectType: AnyNode; indexType: AnyNode };
-        const owner = typeQueryName(unwrapType(indexed.objectType));
-        const index = unwrapType(indexed.indexType);
-        const literal =
-          index.type === 'TSLiteralType'
-            ? (index as unknown as { literal: AnyNode }).literal
-            : null;
-        const key =
-          literal !== null && literal.type === 'Literal'
-            ? (literal as { value?: unknown }).value
-            : undefined;
-        if (owner !== null && typeof key === 'string' && options.serviceIndexKeys.has(key)) {
-          return {
-            member: null,
-            messageId: 'dependencyParameter',
-            tagName: owner,
-            type: `(typeof ${owner})['${key}']`,
-          };
-        }
-        return null;
-      }
-
-      if (node.type === 'TSTypeReference') {
-        const typeName = (node as unknown as { typeName: AnyNode; typeArguments: AnyNode | null })
-          .typeName;
-        const name = lastTypeName(typeName);
-        if (name === null) return null;
-        const qualifier = qualifierName(typeName);
-
-        // (b) `Layer.Layer<Service>` / `L.Layer<…>` / `import * as Layer from "effect/Layer"`,
-        // plus the verbatim `Layer.Layer` spelling that reaches this repository through the
-        // `@modern-js/plugin-bff/effect-edge` re-export barrel.
-        if (/^(?:root\.)?Layer(?:\.Layer)?$/u.test(importedPath(typeName) ?? '')) {
-          const args = (node as unknown as { typeArguments: AnyNode | null }).typeArguments;
-          const first =
-            args === null
-              ? undefined
-              : (args as unknown as { params: readonly AnyNode[] }).params[0];
-          const provided =
-            first === undefined
-              ? null
-              : lastTypeName(
-                  unwrapType(first).type === 'TSTypeReference'
-                    ? (unwrapType(first) as unknown as { typeName: AnyNode }).typeName
-                    : unwrapType(first),
-                );
-          return {
-            member: null,
-            messageId: 'layerParameter',
-            tagName: provided ?? 'TheService',
-            type: qualifier === null ? 'Layer' : `${qualifier}.Layer`,
-          };
-        }
-
-        // Effect's own namespaced types (`Effect.Service`, `Context.Tag`, `Schema.Codec`, …)
-        // are library types, never injected application dependencies.
-        if (importedPath(typeName) !== null) return null;
-
-        // Transparent built-in utility wrappers and same-scope aliases preserve the dependency.
-        if (
-          qualifier === null &&
-          ['Readonly', 'ReadonlyArray', 'Array', 'NonNullable'].includes(name) &&
-          !variableFor(typeName, name)?.defs.length
-        ) {
-          const argument = (node as any).typeArguments?.params?.[0];
-          return classify(argument, depth + 1);
-        }
-        const declaration = qualifier === null ? localType(typeName) : null;
-        const local = declaration?.typeAnnotation;
-        // B4 targets dependency injection, not pure per-definition Resolver callbacks.
-        // Only exempt an explicitly synchronous local function alias; imported types remain unknown.
-        if (name.endsWith('Resolver') && local?.type === 'TSFunctionType') {
-          const result = local.returnType?.typeAnnotation;
-          if (
-            result &&
-            !returnsEffect(local.returnType) &&
-            !(
-              result.type === 'TSTypeReference' &&
-              ['Promise', 'PromiseLike'].includes(lastTypeName(result.typeName) ?? '')
-            )
-          )
-            return null;
-        }
-
-        // (c) `ActionRepositoryService`, `ContactsGateway`, `OperationalScopeResolverService`, …
-        if (!options.allowTypeNames.has(name) && options.dependencyTypePattern.test(name)) {
-          return {
-            member: null,
-            messageId: 'dependencyParameter',
-            tagName: tagNameFor(name),
-            type: name,
-          };
-        }
-
-        // (e) `options: ActionRuntimeOptions` — the same graph edge, hidden in an option bag.
-        if (options.expandLocalTypes && declaration) {
-          if (local) return classify(local, depth + 1);
-          return inspectBag(declaration, depth + 1);
-        }
-        return null;
-      }
-
-      if (node.type === 'TSTypeLiteral') {
-        // (d) an inline record of Effect-returning operations is a hand-passed service value.
-        if (options.flagInlineServiceRecords && isServiceRecord(node)) {
-          return {
-            member: null,
-            messageId: 'inlineServiceRecord',
-            tagName: 'TheService',
-            type: '{ … => Effect.Effect<…> }',
-          };
-        }
-        return inspectBag(node, depth + 1);
+    function classifyIndexed(node: AnyNode): Verdict | null {
+      const indexed = node as unknown as { objectType: AnyNode; indexType: AnyNode };
+      const owner = typeQueryName(unwrapType(indexed.objectType));
+      const index = unwrapType(indexed.indexType);
+      const literal =
+        index.type === 'TSLiteralType' ? (index as unknown as { literal: AnyNode }).literal : null;
+      const key =
+        literal !== null && literal.type === 'Literal'
+          ? (literal as { value?: unknown }).value
+          : undefined;
+      if (owner !== null && typeof key === 'string' && options.serviceIndexKeys.has(key)) {
+        return {
+          member: null,
+          messageId: 'dependencyParameter',
+          tagName: owner,
+          type: `(typeof ${owner})['${key}']`,
+        };
       }
       return null;
-    };
+    }
+
+    function classifyLayer(node: AnyNode, qualifier: string | null): Verdict {
+      const args = (node as unknown as { typeArguments: AnyNode | null }).typeArguments;
+      const first =
+        args === null ? undefined : (args as unknown as { params: readonly AnyNode[] }).params[0];
+      const provided =
+        first === undefined
+          ? null
+          : lastTypeName(
+              unwrapType(first).type === 'TSTypeReference'
+                ? (unwrapType(first) as unknown as { typeName: AnyNode }).typeName
+                : unwrapType(first),
+            );
+      return {
+        member: null,
+        messageId: 'layerParameter',
+        tagName: provided ?? 'TheService',
+        type: qualifier === null ? 'Layer' : `${qualifier}.Layer`,
+      };
+    }
+
+    function isSynchronousResolver(name: string, local: any): boolean {
+      if (!name.endsWith('Resolver') || local?.type !== 'TSFunctionType') return false;
+      const result = local.returnType?.typeAnnotation;
+      if (!result || returnsEffect(local.returnType)) return false;
+      return !(
+        result.type === 'TSTypeReference' &&
+        ['Promise', 'PromiseLike'].includes(lastTypeName(result.typeName) ?? '')
+      );
+    }
+
+    function expandDeclaration(declaration: any, depth: number): Verdict | null {
+      if (!options.expandLocalTypes || !declaration) return null;
+      if (declaration.typeAnnotation) return classify(declaration.typeAnnotation, depth + 1);
+      return inspectBag(declaration, depth + 1);
+    }
+
+    function classifyApplicationReference(
+      node: AnyNode,
+      typeName: AnyNode,
+      name: string,
+      qualifier: string | null,
+      depth: number,
+    ): Verdict | null {
+      // Transparent built-in utility wrappers and same-scope aliases preserve the dependency.
+      if (
+        qualifier === null &&
+        ['Readonly', 'ReadonlyArray', 'Array', 'NonNullable'].includes(name) &&
+        !variableFor(typeName, name)?.defs.length
+      ) {
+        const argument = (node as any).typeArguments?.params?.[0];
+        return classify(argument, depth + 1);
+      }
+      const declaration = qualifier === null ? localType(typeName) : null;
+      const local = declaration?.typeAnnotation;
+      if (isSynchronousResolver(name, local)) return null;
+
+      // (c) `ActionRepositoryService`, `ContactsGateway`, `OperationalScopeResolverService`, …
+      if (!options.allowTypeNames.has(name) && options.dependencyTypePattern.test(name)) {
+        return {
+          member: null,
+          messageId: 'dependencyParameter',
+          tagName: tagNameFor(name),
+          type: name,
+        };
+      }
+
+      // (e) `options: ActionRuntimeOptions` — the same graph edge, hidden in an option bag.
+      return expandDeclaration(declaration, depth);
+    }
+
+    function classifyReference(node: AnyNode, depth: number): Verdict | null {
+      const typeName = (node as any).typeName;
+      const name = lastTypeName(typeName);
+      if (name === null) return null;
+      const qualifier = qualifierName(typeName);
+      const origin = importedPath(typeName);
+      if (/^(?:root\.)?Layer(?:\.Layer)?$/u.test(origin ?? ''))
+        return classifyLayer(node, qualifier);
+      if (origin !== null) return null;
+      return classifyApplicationReference(node, typeName, name, qualifier, depth);
+    }
+
+    function classifyRecord(node: AnyNode, depth: number): Verdict | null {
+      if (options.flagInlineServiceRecords && isServiceRecord(node)) {
+        return {
+          member: null,
+          messageId: 'inlineServiceRecord',
+          tagName: 'TheService',
+          type: '{ … => Effect.Effect<…> }',
+        };
+      }
+      return inspectBag(node, depth + 1);
+    }
+
+    function classifyMembers(members: readonly AnyNode[], depth: number): Verdict | null {
+      for (const member of members) {
+        const verdict = classify(member, depth);
+        if (verdict !== null) return verdict;
+      }
+      return null;
+    }
+
+    /** Expand aliases and nested option bags with a bounded recursion depth. */
+    function classify(annotation: AnyNode | null | undefined, depth: number): Verdict | null {
+      if (annotation === null || annotation === undefined || depth > 12) return null;
+      const node = unwrapType(annotation);
+      if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') {
+        return classifyMembers((node as any).types, depth);
+      }
+      if (node.type === 'TSIndexedAccessType') return classifyIndexed(node);
+      if (node.type === 'TSTypeReference') return classifyReference(node, depth);
+      if (node.type === 'TSTypeLiteral') return classifyRecord(node, depth);
+      return null;
+    }
 
     /** First dependency-typed member of an object type: B4's option bag. */
     function inspectBag(container: AnyNode, depth: number): Verdict | null {
@@ -551,6 +452,19 @@ export const rule = defineRule({
       return null;
     }
 
+    function objectParameterName(binding: AnyNode): string {
+      const keys: string[] = [];
+      for (const property of (binding as unknown as { properties: readonly AnyNode[] })
+        .properties) {
+        if (property.type !== 'Property') continue;
+        const entry = property as unknown as { key: AnyNode; computed: boolean };
+        const name = keyName(entry.key, entry.computed);
+        if (name !== null) keys.push(name);
+        if (keys.length === 3) break;
+      }
+      return keys.length === 0 ? '{ … }' : `{ ${keys.join(', ')} }`;
+    }
+
     /** How the offending parameter is written, for the message. */
     const parameterName = (param: AnyNode, binding: AnyNode): string => {
       if (binding.type === 'Identifier') {
@@ -558,48 +472,51 @@ export const rule = defineRule({
         return param.type === 'RestElement' ? `...${name}` : name;
       }
       if (binding.type === 'ObjectPattern') {
-        const keys: string[] = [];
-        for (const property of (binding as unknown as { properties: readonly AnyNode[] })
-          .properties) {
-          if (property.type !== 'Property') continue;
-          const entry = property as unknown as { key: AnyNode; computed: boolean };
-          const name = keyName(entry.key, entry.computed);
-          if (name !== null) keys.push(name);
-          if (keys.length === 3) break;
-        }
-        return keys.length === 0 ? '{ … }' : `{ ${keys.join(', ')} }`;
+        return objectParameterName(binding);
       }
       return '<destructured>';
     };
 
+    function isRuntimeInput(use: any): boolean {
+      const call = use.parent;
+      return (
+        call?.type === 'CallExpression' &&
+        call.arguments[0] === use &&
+        /^(?:root\.)?ManagedRuntime\.make$/u.test(importedPath(call.callee) ?? '')
+      );
+    }
+
+    function isLayerVerdict(verdict: Verdict): boolean {
+      return (
+        verdict.messageId === 'layerParameter' ||
+        (verdict.messageId === 'dependencyOptionBag' && verdict.type.endsWith('Layer'))
+      );
+    }
+
+    function rootInputUsage(identifier: any, verdict: Verdict): 'valid' | 'invalid' | 'skip' {
+      let use = identifier;
+      if (verdict.member) {
+        const parent = use.parent;
+        if (parent?.type !== 'MemberExpression' || parent.object !== use) return 'invalid';
+        const key = parent.property.name ?? parent.property.value;
+        if (key !== verdict.member) return 'skip';
+        use = parent;
+      }
+      return isRuntimeInput(use) ? 'valid' : 'invalid';
+    }
+
     // A1 explicitly composes a root Layer into ManagedRuntime.make. Exempt only the
     // precise parameter/member whose every value use is that construction, not a whole root file.
     const isRootLayerInput = (binding: any, verdict: Verdict): boolean => {
-      if (
-        verdict.messageId !== 'layerParameter' &&
-        !(verdict.messageId === 'dependencyOptionBag' && verdict.type.endsWith('Layer'))
-      )
-        return false;
+      if (!isLayerVerdict(verdict)) return false;
       if (binding.type !== 'Identifier') return false;
       const refs = variableFor(binding, binding.name)?.references ?? [];
       let uses = 0;
       for (const ref of refs) {
         if (!ref.isRead()) continue;
-        let use = ref.identifier;
-        if (verdict.member) {
-          const parent = use.parent;
-          if (parent?.type !== 'MemberExpression' || parent.object !== use) return false;
-          const key = parent.property.name ?? parent.property.value;
-          if (key !== verdict.member) continue;
-          use = parent;
-        }
-        const call = use.parent;
-        if (
-          call?.type !== 'CallExpression' ||
-          call.arguments[0] !== use ||
-          !/^(?:root\.)?ManagedRuntime\.make$/u.test(importedPath(call.callee) ?? '')
-        )
-          return false;
+        const usage = rootInputUsage(ref.identifier, verdict);
+        if (usage === 'invalid') return false;
+        if (usage === 'skip') continue;
         uses++;
       }
       return uses === 1;

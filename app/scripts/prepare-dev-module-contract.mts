@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { createRequire } from 'node:module';
-import { Console, Effect, Exit, FileSystem, Layer, Path, Result, Schema } from 'effect';
+import { loadCoreNodeServices } from './shared/core-node-services.mts';
+import { Console, Effect, Exit, FileSystem, Path, Schema } from 'effect';
 import { Argument, Command } from 'effect/unstable/cli';
 
 import { generateOntosModuleContract } from './generate-ontos-module-contract.mts';
@@ -70,20 +70,7 @@ const prepareDevModuleContractCommand = Command.make(
     ),
 );
 
-const loadFromCoreRuntime = createRequire(
-  new URL('../packages/core-runtime/package.json', import.meta.url),
-);
-const nodePlatform: unknown = loadFromCoreRuntime('@effect/platform-node');
-const AnyLayerSchema = Schema.declare(Layer.isLayer);
-const NodeServicesLayerSchema = Schema.declare<Layer.Layer<Command.Environment>>(
-  (value): value is Layer.Layer<Command.Environment> => Schema.is(AnyLayerSchema)(value),
-);
-const NodePlatformSchema = Schema.Struct({
-  NodeServices: Schema.Struct({ layer: NodeServicesLayerSchema }),
-});
-const { NodeServices } = Result.getOrThrow(
-  Schema.decodeUnknownResult(NodePlatformSchema)(nodePlatform),
-);
+const NodeServices = loadCoreNodeServices();
 
 const exit = await Effect.runPromiseExit(
   Command.run(prepareDevModuleContractCommand, { version: '1.0.0' }).pipe(

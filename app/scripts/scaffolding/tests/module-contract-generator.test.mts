@@ -1,8 +1,10 @@
+import { write } from './fixture-files.mts';
+import { linkFixtureDependencies, withCreatedFixture } from './fixture-ownership.mts';
 import { Cause, Effect, Schema } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -82,13 +84,6 @@ const decodeModuleContract = (source: string) =>
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
-
-const write = (root: string, relative: string, content: string): Effect.Effect<void, unknown> =>
-  Effect.gen(function* scenario1() {
-    const target = path.join(root, relative);
-    yield* Effect.promise(() => mkdir(path.dirname(target), { recursive: true }));
-    yield* Effect.promise(() => writeFile(target, content, 'utf-8'));
-  });
 
 const writePinnedEffectApi = (root: string, slug: string): Effect.Effect<void, unknown> =>
   Effect.gen(function* mergedScenario1() {
@@ -223,31 +218,14 @@ const createFixture = (): Effect.Effect<string, unknown> =>
         schemaVersion: 1,
       }),
     );
-    yield* Effect.promise(() =>
-      mkdir(path.join(root, 'node_modules', '@app'), { recursive: true }),
-    );
-    yield* Effect.promise(() =>
-      symlink(
-        path.join(appRoot, 'packages/core-runtime'),
-        path.join(root, 'node_modules/@app/core-runtime'),
-        'dir',
-      ),
-    );
-    yield* Effect.promise(() =>
-      symlink(path.join(appRoot, 'node_modules/effect'), path.join(root, 'node_modules/effect')),
-    );
+    yield* linkFixtureDependencies(root, appRoot, {
+      '@app/core-runtime': 'packages/core-runtime',
+      effect: 'node_modules/effect',
+    });
     return root;
   });
 
-const withFixture = (
-  run: (root: string) => Effect.Effect<void, unknown>,
-): Effect.Effect<void, unknown> =>
-  Effect.gen(function* scenario3() {
-    const root = yield* createFixture();
-    yield* run(root).pipe(
-      Effect.ensuring(Effect.promise(() => rm(root, { force: true, recursive: true }))),
-    );
-  });
+const withFixture = withCreatedFixture(createFixture());
 
 const scaffold = Effect.fn(function* scenario4(
   root: string,

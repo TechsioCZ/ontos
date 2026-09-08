@@ -1,6 +1,7 @@
-import { expect, it } from '@app/effect-rstest';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import nodePath from 'node:path';
+
+import { expect, it } from 'effect-rstest';
 
 import { runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
@@ -26,7 +27,11 @@ export const makeOutboxProcessor = (dependencies: OutboxProcessorDependencies) =
 
 for (const { rule, source } of cases) {
   it(`${rule} excludes nested scripts by default and honors includeScripts`, () => {
-    withTemporaryWorkspace((directory) => {
+    withTemporaryWorkspace((root) => {
+      const directory = nodePath.join(root, 'workspace');
+      const alias = nodePath.join(root, 'workspace-link');
+      mkdirSync(directory);
+      symlinkSync(directory, alias, 'dir');
       const workspaces = ['apps/shell-super-app', 'verticals/contacts', 'packages/core-runtime'];
       const sources = workspaces.map((workspace) => `${workspace}/src/operation.ts`);
       const scripts = workspaces.map((workspace) => `${workspace}/scripts/operation.mts`);
@@ -55,10 +60,14 @@ for (const { rule, source } of cases) {
             },
           }),
         );
-        for (const absolute of [false, true]) {
+        for (const pathMode of ['relative', 'absolute', 'symlink'] as const) {
           const run = runOxlint(
             config,
-            absolute ? paths.map((path) => nodePath.join(directory, path)) : paths,
+            pathMode === 'relative'
+              ? paths
+              : paths.map((path) =>
+                  nodePath.join(pathMode === 'symlink' ? alias : directory, path),
+                ),
             directory,
             rule,
           );
@@ -69,18 +78,20 @@ for (const { rule, source } of cases) {
           }
           const reported = [
             ...new Set(
+              // Oxlint may retain absolute spellings when input paths cross a symlink.
               run.diagnostics.map((diagnostic) =>
-                (nodePath.isAbsolute(diagnostic.filename)
-                  ? nodePath.relative(directory, diagnostic.filename)
-                  : diagnostic.filename
-                ).replaceAll('\\', '/'),
+                realpathSync(nodePath.resolve(directory, diagnostic.filename)),
               ),
             ),
           ];
           expect(
             reported.toSorted(),
-            `${rule}: includeScripts=${includeScripts}, absolute=${absolute}`,
-          ).toEqual((includeScripts ? paths : sources).toSorted());
+            `${rule}: includeScripts=${includeScripts}, pathMode=${pathMode}`,
+          ).toEqual(
+            (includeScripts ? paths : sources)
+              .map((path) => realpathSync(nodePath.join(directory, path)))
+              .toSorted(),
+          );
         }
       }
     });

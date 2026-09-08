@@ -1,9 +1,12 @@
+import {
+  matchingDelimiter,
+  separatedSource,
+  topLevelSeparators,
+} from './boundary-source-structure.mts';
+
 import path from 'node:path';
 
-export {
-  type ApiContractSourceContext,
-  unconstrainedHttpApiContractSchemaViolation,
-} from './typescript-api-contract-boundary.mts';
+export { unconstrainedHttpApiContractSchemaViolation } from './typescript-api-contract-boundary.mts';
 
 const normalize = (filePath: string): string => filePath.split(path.sep).join('/');
 
@@ -101,50 +104,11 @@ const withoutTerminalSatisfies = (expression: string): string =>
     .replace(/\s+satisfies\s+[$A-Z_a-z][$\w]*(?:\.[$A-Z_a-z][$\w]*)*(?:<[^<>]*>)?$/u, '')
     .trim();
 
-// oxlint-disable-next-line complexity -- Balanced TypeScript declaration scanning owns each delimiter state explicitly.
 const assignmentStart = (source: string, declarationEnd: number): number | undefined => {
-  let roundDepth = 0;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-  let angleDepth = 0;
-  for (let index = declarationEnd; index < source.length; index += 1) {
-    const character = source[index];
-    if (character === '(') {
-      roundDepth += 1;
-    } else if (character === ')') {
-      roundDepth -= 1;
-    } else if (character === '[') {
-      squareDepth += 1;
-    } else if (character === ']') {
-      squareDepth -= 1;
-    } else if (character === '{') {
-      curlyDepth += 1;
-    } else if (character === '}') {
-      curlyDepth -= 1;
-    } else if (character === '<') {
-      angleDepth += 1;
-    } else if (character === '>' && source[index - 1] !== '=') {
-      angleDepth -= 1;
-    } else if (
-      character === '=' &&
-      source[index + 1] !== '>' &&
-      roundDepth === 0 &&
-      squareDepth === 0 &&
-      curlyDepth === 0 &&
-      angleDepth === 0
-    ) {
-      return index + 1;
-    } else if (
-      character === ';' &&
-      roundDepth === 0 &&
-      squareDepth === 0 &&
-      curlyDepth === 0 &&
-      angleDepth === 0
-    ) {
-      return undefined;
-    }
-  }
-  return undefined;
+  const index = topLevelSeparators(source, '=;', declarationEnd, source.length, true).find(
+    (position) => source[position + 1] !== '>',
+  );
+  return index === undefined || source[index] === ';' ? undefined : index + 1;
 };
 
 const curlyAncestorsAt = (source: string, targetIndex: number): readonly number[] => {
@@ -213,28 +177,8 @@ const initializerFor = (
     return undefined;
   }
 
-  let roundDepth = 0;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-  for (let index = start; index < source.length; index += 1) {
-    const character = source[index];
-    if (character === '(') {
-      roundDepth += 1;
-    } else if (character === ')') {
-      roundDepth -= 1;
-    } else if (character === '[') {
-      squareDepth += 1;
-    } else if (character === ']') {
-      squareDepth -= 1;
-    } else if (character === '{') {
-      curlyDepth += 1;
-    } else if (character === '}') {
-      curlyDepth -= 1;
-    } else if (character === ';' && roundDepth === 0 && squareDepth === 0 && curlyDepth === 0) {
-      return withoutTerminalSatisfies(source.slice(start, index).trim());
-    }
-  }
-  return undefined;
+  const [end] = topLevelSeparators(source, ';', start);
+  return end === undefined ? undefined : withoutTerminalSatisfies(source.slice(start, end).trim());
 };
 
 const callArguments = (expression: string, callee: string): readonly string[] | undefined => {
@@ -244,51 +188,14 @@ const callArguments = (expression: string, callee: string): readonly string[] | 
   if (prefix === null) {
     return undefined;
   }
-
-  const openIndex = prefix[0].lastIndexOf('(');
-  let roundDepth = 0;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-  let angleDepth = 0;
-  let argumentStart = openIndex + 1;
-  const argumentsList: string[] = [];
-  for (let index = openIndex; index < expression.length; index += 1) {
-    const character = expression[index];
-    if (character === '(') {
-      roundDepth += 1;
-    } else if (character === ')') {
-      roundDepth -= 1;
-      if (roundDepth === 0) {
-        const finalArgument = expression.slice(argumentStart, index).trim();
-        if (finalArgument.length > 0) {
-          argumentsList.push(finalArgument);
-        }
-        return expression.slice(index + 1).trim().length === 0 ? argumentsList : undefined;
-      }
-    } else if (character === '[') {
-      squareDepth += 1;
-    } else if (character === ']') {
-      squareDepth -= 1;
-    } else if (character === '{') {
-      curlyDepth += 1;
-    } else if (character === '}') {
-      curlyDepth -= 1;
-    } else if (character === '<') {
-      angleDepth += 1;
-    } else if (character === '>' && expression[index - 1] !== '=') {
-      angleDepth -= 1;
-    } else if (
-      character === ',' &&
-      roundDepth === 1 &&
-      squareDepth === 0 &&
-      curlyDepth === 0 &&
-      angleDepth === 0
-    ) {
-      argumentsList.push(expression.slice(argumentStart, index).trim());
-      argumentStart = index + 1;
-    }
+  const open = prefix[0].lastIndexOf('(');
+  const close = matchingDelimiter(expression, open, '(', ')');
+  if (close === undefined || expression.slice(close + 1).trim().length !== 0) {
+    return undefined;
   }
-  return undefined;
+  const separators = topLevelSeparators(expression, ',', open + 1, close, true);
+  const argumentsList = separatedSource(expression, separators, open + 1, close);
+  return argumentsList.at(-1) === '' ? argumentsList.slice(0, -1) : argumentsList;
 };
 
 const safeLayerPipeArguments = (expression: string): readonly string[] | undefined => {
@@ -363,7 +270,7 @@ const groupCallbackRegistersHandler = (groupArguments: readonly string[]): boole
   );
 };
 
-export interface RuntimeTopologyModule {
+interface RuntimeTopologyModule {
   readonly id: string;
   readonly resolveImport: RuntimeTopologyModuleResolver;
   readonly source: string;
@@ -373,58 +280,70 @@ export type RuntimeTopologyModuleResolver = (
   specifier: string,
 ) => RuntimeTopologyModule | undefined;
 
-const importedBindingFromAnyModule = (
-  source: string,
+interface NamedBinding {
+  readonly imported: string;
+  readonly specifier: string;
+}
+
+const namedBindingInDeclaration = (
+  bindings: string,
   name: string,
-): { readonly imported: string; readonly specifier: string } | undefined => {
-  const visibleSource = withoutComments(source);
-  const code = withoutCommentsOrLiterals(source);
-  for (const candidate of visibleSource.matchAll(
-    /^(?<indent>[\t ]*)(?:import|export)\s*\{(?<bindings>[^}]*)\}\s*from\s*['"](?<specifier>[^'"]+)['"]/gmu,
-  )) {
-    const indentLength = candidate.groups?.indent?.length ?? 0;
-    const specifier = candidate.groups?.specifier;
-    if (
-      specifier === undefined ||
-      !/^(?:import|export)\b/u.test(code.slice(candidate.index + indentLength))
-    ) {
-      continue;
-    }
-    for (const binding of candidate.groups?.bindings?.split(',') ?? []) {
-      const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
-      if (local === name && imported !== undefined) {
-        return { imported, specifier };
-      }
+  specifier: string,
+): NamedBinding | undefined => {
+  for (const binding of bindings.split(',')) {
+    const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
+    if (local === name && imported !== undefined) {
+      return { imported, specifier };
     }
   }
   return undefined;
 };
 
-const importedValueBindingFromAnyModule = (
+const namedModuleBinding = (
   source: string,
   name: string,
-): { readonly imported: string; readonly specifier: string } | undefined => {
-  const visibleSource = withoutComments(source);
+  allowExport: boolean,
+): NamedBinding | undefined => {
+  const visible = withoutComments(source);
   const code = withoutCommentsOrLiterals(source);
-  for (const candidate of visibleSource.matchAll(
-    /^(?<indent>[\t ]*)import\s*\{(?<bindings>[^}]*)\}\s*from\s*['"](?<specifier>[^'"]+)['"]/gmu,
+  for (const candidate of visible.matchAll(
+    /^(?<indent>[\t ]*)(?<keyword>import|export)\s*\{(?<bindings>[^}]*)\}\s*from\s*['"](?<specifier>[^'"]+)['"]/gmu,
   )) {
-    const indentLength = candidate.groups?.indent?.length ?? 0;
-    const specifier = candidate.groups?.specifier;
+    const { bindings = '', indent = '', keyword = '', specifier = '' } = candidate.groups ?? {};
     if (
-      specifier === undefined ||
-      !code.slice(candidate.index + indentLength).startsWith('import')
+      (keyword === 'export' && !allowExport) ||
+      !code.slice(candidate.index + indent.length).startsWith(keyword)
     ) {
       continue;
     }
-    for (const binding of candidate.groups?.bindings?.split(',') ?? []) {
-      const [imported, local = imported] = binding.trim().split(/\s+as\s+/u);
-      if (local === name && imported !== undefined) {
-        return { imported, specifier };
-      }
+    const binding = namedBindingInDeclaration(bindings, name, specifier);
+    if (binding !== undefined) {
+      return binding;
     }
   }
   return undefined;
+};
+
+const importedBindingFromAnyModule = (source: string, name: string): NamedBinding | undefined =>
+  namedModuleBinding(source, name, true);
+const importedValueBindingFromAnyModule = (
+  source: string,
+  name: string,
+): NamedBinding | undefined => namedModuleBinding(source, name, false);
+
+const hasUnaliasedValueImport = (source: string, name: string, specifier: string): boolean => {
+  const binding = importedValueBindingFromAnyModule(source, name);
+  return binding?.imported === name && binding.specifier === specifier;
+};
+
+const initializerCalls = (
+  code: string,
+  name: string,
+  callee: string,
+  index = code.length,
+): boolean => {
+  const initializer = initializerFor(code, name, index);
+  return initializer !== undefined && callArguments(initializer, callee) !== undefined;
 };
 
 const layerValueUsesCors = (
@@ -452,109 +371,21 @@ const layerValueUsesCors = (
     : layerValueUsesCors(source, pipedLayer.groups.base, usageIndex, new Set([...seen, name]));
 };
 
-const matchingRoundClose = (source: string, openIndex: number): number | undefined => {
-  let depth = 0;
-  for (let index = openIndex; index < source.length; index += 1) {
-    if (source[index] === '(') {
-      depth += 1;
-    } else if (source[index] === ')') {
-      depth -= 1;
-      if (depth === 0) {
-        return index;
-      }
-    }
-  }
-  return undefined;
-};
+const matchingRoundClose = (source: string, openIndex: number): number | undefined =>
+  matchingDelimiter(source, openIndex, '(', ')');
 
-const matchingCurlyClose = (source: string, openIndex: number): number | undefined => {
-  let depth = 0;
-  for (let index = openIndex; index < source.length; index += 1) {
-    if (source[index] === '{') {
-      depth += 1;
-    } else if (source[index] === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return index;
-      }
-    }
-  }
-  return undefined;
-};
+const matchingCurlyClose = (source: string, openIndex: number): number | undefined =>
+  matchingDelimiter(source, openIndex, '{', '}');
 
-const parameterBinding = (parameter: string): string => {
-  let roundDepth = 0;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-  for (let index = 0; index < parameter.length; index += 1) {
-    const character = parameter[index];
-    if (character === '(') {
-      roundDepth += 1;
-    } else if (character === ')') {
-      roundDepth -= 1;
-    } else if (character === '[') {
-      squareDepth += 1;
-    } else if (character === ']') {
-      squareDepth -= 1;
-    } else if (character === '{') {
-      curlyDepth += 1;
-    } else if (character === '}') {
-      curlyDepth -= 1;
-    } else if (
-      (character === ':' || character === '=') &&
-      roundDepth === 0 &&
-      squareDepth === 0 &&
-      curlyDepth === 0
-    ) {
-      return parameter.slice(0, index);
-    }
-  }
-  return parameter;
-};
+const parameterBinding = (parameter: string): string =>
+  parameter.slice(0, topLevelSeparators(parameter, ':=')[0]);
 
 const parameterListShadows = (parameters: string, name: string): boolean => {
-  const escapedName = escapesRegularExpression(name);
-  let roundDepth = 0;
-  let squareDepth = 0;
-  let curlyDepth = 0;
-  let angleDepth = 0;
-  let parameterStart = 0;
-  for (let index = 0; index <= parameters.length; index += 1) {
-    const character = parameters[index];
-    if (character === '(') {
-      roundDepth += 1;
-    } else if (character === ')') {
-      roundDepth -= 1;
-    } else if (character === '[') {
-      squareDepth += 1;
-    } else if (character === ']') {
-      squareDepth -= 1;
-    } else if (character === '{') {
-      curlyDepth += 1;
-    } else if (character === '}') {
-      curlyDepth -= 1;
-    } else if (character === '<') {
-      angleDepth += 1;
-    } else if (character === '>' && parameters[index - 1] !== '=') {
-      angleDepth -= 1;
-    } else if (
-      (character === ',' || index === parameters.length) &&
-      roundDepth === 0 &&
-      squareDepth === 0 &&
-      curlyDepth === 0 &&
-      angleDepth === 0
-    ) {
-      if (
-        new RegExp(String.raw`\b${escapedName}\b`, 'u').test(
-          parameterBinding(parameters.slice(parameterStart, index)),
-        )
-      ) {
-        return true;
-      }
-      parameterStart = index + 1;
-    }
-  }
-  return false;
+  const pattern = new RegExp(String.raw`\b${escapesRegularExpression(name)}\b`, 'u');
+  const separators = topLevelSeparators(parameters, ',', 0, parameters.length, true);
+  return separatedSource(parameters, separators).some((parameter) =>
+    pattern.test(parameterBinding(parameter)),
+  );
 };
 
 const controlFlowParentheses = new Set(['for', 'if', 'switch', 'while', 'with']);
@@ -721,7 +552,86 @@ const sameApiExport = (
   return canonical !== undefined && canonical === canonicalApiExport(module.source, expected);
 };
 
-// oxlint-disable-next-line complexity -- Transitive handler provenance must fail closed across local groups, aggregates, and imported re-exports.
+const composedLayerOperand = (rawArgument: string): string | undefined => {
+  const argument = withoutTerminalSatisfies(rawArgument);
+  const layer = new RegExp(
+    String.raw`^(?<name>${identifierPattern})(?<remainder>[\s\S]*)$`,
+    'u',
+  ).exec(argument);
+  const { name, remainder } = layer?.groups ?? {};
+  if (name === undefined || remainder === undefined) {
+    return undefined;
+  }
+  return remainder.trim().length === 0 || safeLayerPipeArguments(remainder.trim()) !== undefined
+    ? name
+    : undefined;
+};
+
+const groupUsesExpectedApi = (
+  source: string,
+  code: string,
+  groupArguments: readonly string[],
+  expectedApiExport: string,
+  expectedApiModuleId: string | undefined,
+  usageIndex: number,
+  resolveImport: RuntimeTopologyModuleResolver | undefined,
+): boolean => {
+  const [apiName] = groupArguments;
+  if (apiName === undefined) {
+    return false;
+  }
+  const apiBinding = importedValueBindingFromAnyModule(source, apiName);
+  if (apiBinding === undefined) {
+    return false;
+  }
+  const apiModule = resolveImport?.(apiBinding.specifier);
+  return (
+    hasUnaliasedValueImport(source, 'HttpApiBuilder', effectEdgeSpecifier) &&
+    !shadowsBinding(code, 'HttpApiBuilder', usageIndex) &&
+    sameApiExport(apiModule, apiBinding.imported, expectedApiExport) &&
+    (expectedApiModuleId === undefined
+      ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier)
+      : apiModule?.id === expectedApiModuleId)
+  );
+};
+
+const resolvedHandlerBinding = (
+  source: string,
+  code: string,
+  name: string,
+  usageIndex: number,
+  resolveImport: RuntimeTopologyModuleResolver | undefined,
+): { readonly importedName: string; readonly resolved: RuntimeTopologyModule } | undefined => {
+  if (shadowsBinding(code, name, usageIndex)) {
+    return undefined;
+  }
+  const binding = importedBindingFromAnyModule(source, name);
+  if (binding === undefined) {
+    return undefined;
+  }
+  const resolved = resolveImport?.(binding.specifier);
+  return resolved === undefined ? undefined : { importedName: binding.imported, resolved };
+};
+
+const safeHandlerGroupArguments = (initializer: string): readonly string[] | undefined => {
+  const args = leadingCallArguments(initializer, 'HttpApiBuilder.group');
+  return hasSafeLayerConstructor(initializer, 'HttpApiBuilder.group') &&
+    args !== undefined &&
+    groupCallbackRegistersHandler(args)
+    ? args
+    : undefined;
+};
+
+const safeMergeOperands = (source: string, initializer: string): readonly string[] | undefined => {
+  const args = leadingCallArguments(initializer, layerMergeAllCallee);
+  return hasUnaliasedValueImport(source, 'Layer', effectEdgeSpecifier) &&
+    hasSafeLayerConstructor(initializer, layerMergeAllCallee) &&
+    args !== undefined &&
+    args.length > 0
+    ? args
+    : undefined;
+};
+
 const handlerLayerDerivesFromHttpApiBuilder = (
   source: string,
   code: string,
@@ -740,53 +650,26 @@ const handlerLayerDerivesFromHttpApiBuilder = (
   const nextSeen = new Set([...seen, key]);
   const initializer = initializerFor(code, name, usageIndex);
   if (initializer !== undefined) {
-    const groupArguments = leadingCallArguments(initializer, 'HttpApiBuilder.group');
-    if (
-      hasSafeLayerConstructor(initializer, 'HttpApiBuilder.group') &&
-      groupArguments !== undefined &&
-      groupCallbackRegistersHandler(groupArguments)
-    ) {
-      const [apiName] = groupArguments;
-      const apiBinding =
-        apiName === undefined ? undefined : importedValueBindingFromAnyModule(source, apiName);
-      const apiModule =
-        apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier);
-      const apiModuleId = apiModule?.id;
-      const builderBinding = importedValueBindingFromAnyModule(source, 'HttpApiBuilder');
-      return (
-        builderBinding?.imported === 'HttpApiBuilder' &&
-        builderBinding.specifier === effectEdgeSpecifier &&
-        !shadowsBinding(code, 'HttpApiBuilder', usageIndex) &&
-        apiBinding !== undefined &&
-        sameApiExport(apiModule, apiBinding.imported, expectedApiExport) &&
-        (expectedApiModuleId === undefined
-          ? /(?:^|\/)shared\/api\.ts$/u.test(apiBinding.specifier)
-          : apiModuleId === expectedApiModuleId)
+    const groupArguments = safeHandlerGroupArguments(initializer);
+    if (groupArguments !== undefined) {
+      return groupUsesExpectedApi(
+        source,
+        code,
+        groupArguments,
+        expectedApiExport,
+        expectedApiModuleId,
+        usageIndex,
+        resolveImport,
       );
     }
-    const mergeArguments = leadingCallArguments(initializer, layerMergeAllCallee);
-    const layerBinding = importedValueBindingFromAnyModule(source, 'Layer');
-    if (
-      layerBinding?.imported !== 'Layer' ||
-      layerBinding.specifier !== effectEdgeSpecifier ||
-      !hasSafeLayerConstructor(initializer, layerMergeAllCallee) ||
-      mergeArguments === undefined ||
-      mergeArguments.length === 0
-    ) {
+    const mergeArguments = safeMergeOperands(source, initializer);
+    if (mergeArguments === undefined) {
       return false;
     }
     return mergeArguments.every((rawArgument) => {
-      const argument = withoutTerminalSatisfies(rawArgument);
-      const layer = new RegExp(
-        String.raw`^(?<name>${identifierPattern})(?<remainder>[\s\S]*)$`,
-        'u',
-      ).exec(argument);
-      const layerName = layer?.groups?.name;
-      const remainder = layer?.groups?.remainder?.trim();
+      const layerName = composedLayerOperand(rawArgument);
       return (
         layerName !== undefined &&
-        remainder !== undefined &&
-        (remainder.length === 0 || safeLayerPipeArguments(remainder) !== undefined) &&
         handlerLayerDerivesFromHttpApiBuilder(
           source,
           code,
@@ -802,20 +685,16 @@ const handlerLayerDerivesFromHttpApiBuilder = (
     });
   }
 
-  if (shadowsBinding(code, name, usageIndex)) {
+  const imported = resolvedHandlerBinding(source, code, name, usageIndex, resolveImport);
+  if (imported === undefined) {
     return false;
   }
-  const importedBinding = importedBindingFromAnyModule(source, name);
-  const resolved =
-    importedBinding === undefined ? undefined : resolveImport?.(importedBinding.specifier);
-  if (importedBinding === undefined || resolved === undefined) {
-    return false;
-  }
+  const { importedName, resolved } = imported;
   const resolvedCode = withoutCommentsOrLiterals(resolved.source);
   return handlerLayerDerivesFromHttpApiBuilder(
     resolved.source,
     resolvedCode,
-    importedBinding.imported,
+    importedName,
     expectedApiExport,
     expectedApiModuleId,
     resolvedCode.length,
@@ -840,18 +719,8 @@ const composesHandlerLayers = (
     argumentsList !== undefined &&
     argumentsList.length > 0 &&
     argumentsList.every((rawArgument) => {
-      const argument = withoutTerminalSatisfies(rawArgument);
-      const layer = new RegExp(
-        String.raw`^(?<name>${identifierPattern})(?<remainder>[\s\S]*)$`,
-        'u',
-      ).exec(argument);
-      const layerName = layer?.groups?.name;
-      const remainder = layer?.groups?.remainder?.trim();
-      if (
-        layerName === undefined ||
-        remainder === undefined ||
-        (remainder.length > 0 && safeLayerPipeArguments(remainder) === undefined)
-      ) {
+      const layerName = composedLayerOperand(rawArgument);
+      if (layerName === undefined) {
         return false;
       }
       return handlerLayerDerivesFromHttpApiBuilder(
@@ -905,26 +774,23 @@ const declaresLayerValue = (
     return true;
   }
 
-  const pipedLayer = new RegExp(
-    String.raw`^(?<base>${identifierPattern})(?<pipe>\.pipe\s*\()`,
-    'u',
-  ).exec(initializer);
-  return pipedLayer?.groups?.base === undefined ||
-    pipedLayer.groups.pipe === undefined ||
-    safeLayerPipeArguments(initializer.slice(pipedLayer.groups.base.length)) === undefined
-    ? false
-    : declaresLayerValue(
-        source,
-        code,
-        pipedLayer.groups.base,
-        allowCors,
-        requireHandlerOperands,
-        expectedApiExport,
-        expectedApiModuleId,
-        resolveImport,
-        usageIndex,
-        new Set([...seen, name]),
-      );
+  const base = composedLayerOperand(initializer);
+  return (
+    base !== undefined &&
+    initializer.startsWith(`${base}.pipe`) &&
+    declaresLayerValue(
+      source,
+      code,
+      base,
+      allowCors,
+      requireHandlerOperands,
+      expectedApiExport,
+      expectedApiModuleId,
+      resolveImport,
+      usageIndex,
+      new Set([...seen, name]),
+    )
+  );
 };
 
 const curlyDepthAt = (code: string, targetIndex: number): number => {
@@ -1048,12 +914,9 @@ const exportedFactoryOwnsCall = (code: string, callIndex: number, callEnd: numbe
       ),
     ),
   ].find(({ index }) => curlyDepthAt(code, index) === 0)?.groups?.runtime;
-  const defaultRuntimeInitializer =
-    defaultRuntime === undefined ? undefined : initializerFor(code, defaultRuntime, code.length);
   return (
     defaultRuntime !== undefined &&
-    defaultRuntimeInitializer !== undefined &&
-    callArguments(defaultRuntimeInitializer, factory) !== undefined &&
+    initializerCalls(code, defaultRuntime, factory) &&
     new RegExp(
       String.raw`\bexport\s+default\s+${escapesRegularExpression(defaultRuntime)}\s*;`,
       'u',
@@ -1110,122 +973,137 @@ const usesImportedCorsTransport = (
     importedValueBindingFromAnyModule(source, 'HttpRouter')?.specifier === effectEdgeSpecifier &&
     !shadowsBinding(code, 'HttpRouter', callIndex));
 
+const hasRpcGroupContract = (
+  source: string,
+  group: string,
+  resolveImport: RuntimeTopologyModuleResolver | undefined,
+): boolean => {
+  if (!hasUnaliasedValueImport(source, group, '../shared/rpc.ts')) {
+    return false;
+  }
+  const module = resolveImport?.('../shared/rpc.ts');
+  if (module === undefined) {
+    return false;
+  }
+  const code = withoutCommentsOrLiterals(module.source);
+  return (
+    hasUnaliasedValueImport(module.source, 'RpcGroup', 'effect/unstable/rpc') &&
+    initializerCalls(code, group, 'RpcGroup.make') &&
+    !shadowsBinding(code, 'RpcGroup', code.length)
+  );
+};
+
+const hasRpcRuntimeLayers = (
+  source: string,
+  code: string,
+  call: RegExpExecArray,
+  helper: string,
+): boolean => {
+  const { api, group, layer = 'layer', rpcLayer } = call.groups ?? {};
+  if (api === undefined || group === undefined || rpcLayer === undefined) {
+    return false;
+  }
+  return (
+    ['HttpApi', 'Layer'].every((name) =>
+      hasUnaliasedValueImport(source, name, effectEdgeSpecifier),
+    ) &&
+    [helper, 'HttpApi', 'Layer', group].every((name) => !shadowsBinding(code, name, call.index)) &&
+    initializerCalls(code, api, 'HttpApi.make', call.index) &&
+    initializerFor(code, layer, call.index) === 'Layer.empty' &&
+    initializerCalls(code, rpcLayer, `${group}.toLayer`, call.index)
+  );
+};
+
 /** Keeps genuinely different generated RPC assembly outside the REST-only helper contract. */
-// oxlint-disable-next-line complexity -- The RPC exception is deliberately an exact, fail-closed topology proof.
 export const usesStrictRpcRuntimeTopology = (
   source: string,
   resolveImport?: RuntimeTopologyModuleResolver,
 ): boolean => {
   const code = withoutCommentsOrLiterals(source);
-  const defineEffectBff = importedLocalNameMatchingSpecifier(
+  const helper = importedLocalNameMatchingSpecifier(
     source,
     'defineEffectBff',
     escapesRegularExpression(effectEdgeSpecifier),
   );
   if (
-    defineEffectBff === undefined ||
+    helper === undefined ||
     !/\bfrom\s+['"]\.\.\/shared\/rpc\.ts['"]/u.test(withoutComments(source))
   ) {
     return false;
   }
   const call = new RegExp(
-    String.raw`\b${escapesRegularExpression(defineEffectBff)}\s*\(\s*\{\s*api:\s*(?<api>${identifierPattern})\s*,\s*layer(?:\s*:\s*(?<layer>${identifierPattern}))?\s*,\s*rpc:\s*\{\s*group:\s*(?<group>${identifierPattern})\s*,\s*layer:\s*(?<rpcLayer>${identifierPattern})\s*,\s*path:\s*,\s*serialization:\s*,?\s*\}\s*,?\s*\}\s*,?\s*\)`,
+    String.raw`\b${escapesRegularExpression(helper)}\s*\(\s*\{\s*api:\s*(?<api>${identifierPattern})\s*,\s*layer(?:\s*:\s*(?<layer>${identifierPattern}))?\s*,\s*rpc:\s*\{\s*group:\s*(?<group>${identifierPattern})\s*,\s*layer:\s*(?<rpcLayer>${identifierPattern})\s*,\s*path:\s*,\s*serialization:\s*,?\s*\}\s*,?\s*\}\s*,?\s*\)`,
     'u',
   ).exec(code);
-  const api = call?.groups?.api;
-  const layer = call === null ? undefined : (call.groups?.layer ?? 'layer');
-  const group = call?.groups?.group;
-  const rpcLayer = call?.groups?.rpcLayer;
-  const callIndex = call?.index ?? code.length;
-  const apiInitializer = api === undefined ? undefined : initializerFor(code, api, callIndex);
-  const layerInitializer = layer === undefined ? undefined : initializerFor(code, layer, callIndex);
-  const rpcLayerInitializer =
-    rpcLayer === undefined ? undefined : initializerFor(code, rpcLayer, callIndex);
-  const httpApiBinding = importedValueBindingFromAnyModule(source, 'HttpApi');
-  const layerBinding = importedValueBindingFromAnyModule(source, 'Layer');
-  const groupBinding =
-    group === undefined ? undefined : importedValueBindingFromAnyModule(source, group);
-  const rpcModule =
-    groupBinding === undefined ? undefined : resolveImport?.(groupBinding.specifier);
-  const rpcModuleCode =
-    rpcModule === undefined ? undefined : withoutCommentsOrLiterals(rpcModule.source);
-  const rpcGroupInitializer =
-    rpcModuleCode === undefined || groupBinding === undefined
-      ? undefined
-      : initializerFor(rpcModuleCode, groupBinding.imported, rpcModuleCode.length);
-  const rpcGroupConstructor =
-    rpcModule === undefined
-      ? undefined
-      : importedValueBindingFromAnyModule(rpcModule.source, 'RpcGroup');
+  if (call === null) {
+    return false;
+  }
+  const group = call.groups?.group;
   return (
-    call !== null &&
-    api !== undefined &&
-    layer !== undefined &&
     group !== undefined &&
-    rpcLayer !== undefined &&
-    httpApiBinding?.imported === 'HttpApi' &&
-    httpApiBinding.specifier === effectEdgeSpecifier &&
-    layerBinding?.imported === 'Layer' &&
-    layerBinding.specifier === effectEdgeSpecifier &&
-    groupBinding?.imported === group &&
-    groupBinding.specifier === '../shared/rpc.ts' &&
-    rpcModuleCode !== undefined &&
-    rpcGroupConstructor?.imported === 'RpcGroup' &&
-    rpcGroupConstructor.specifier === 'effect/unstable/rpc' &&
-    rpcGroupInitializer !== undefined &&
-    callArguments(rpcGroupInitializer, 'RpcGroup.make') !== undefined &&
-    !shadowsBinding(rpcModuleCode, 'RpcGroup', rpcModuleCode.length) &&
-    !shadowsBinding(code, defineEffectBff, call.index) &&
-    !shadowsBinding(code, 'HttpApi', call.index) &&
-    !shadowsBinding(code, 'Layer', call.index) &&
-    !shadowsBinding(code, group, call.index) &&
-    apiInitializer !== undefined &&
-    callArguments(apiInitializer, 'HttpApi.make') !== undefined &&
-    layerInitializer === 'Layer.empty' &&
-    rpcLayerInitializer !== undefined &&
-    callArguments(rpcLayerInitializer, `${group}.toLayer`) !== undefined &&
+    hasRpcGroupContract(source, group, resolveImport) &&
+    hasRpcRuntimeLayers(source, code, call, helper) &&
     isRuntimeRootCall(code, call.index, call.index + call[0].length)
   );
 };
 
-/** Proves the shared helper's concrete API/Layer topology. */
-// oxlint-disable-next-line complexity -- One fail-closed decision keeps the helper import, call, layers, and runtime-root proof atomic.
-export const strictEffectRuntimeTopologyViolation = (
+interface AssemblyBindings {
+  readonly api: string;
+  readonly handlers: string;
+  readonly transport: string | undefined;
+}
+
+const assemblyTransportViolation = (
   source: string,
-  resolveImport?: RuntimeTopologyModuleResolver,
+  code: string,
+  transport: string | undefined,
+  apiExport: string,
+  expectedApiModuleId: string | undefined,
+  resolveImport: RuntimeTopologyModuleResolver | undefined,
+  index: number,
 ): string | undefined => {
-  const code = withoutCommentsOrLiterals(source);
-  const helper = importedLocalNameMatchingSpecifier(
-    source,
-    'assembleEffectBffRuntime',
-    String.raw`@[a-z0-9-]+\/shared-contracts\/server\/effect-bff-runtime`,
-  );
-  if (helper === undefined) {
-    return usesStrictRpcRuntimeTopology(source, resolveImport)
-      ? undefined
-      : 'must import the server-only shared Effect BFF assembly helper';
+  if (transport === undefined) {
+    return undefined;
   }
-  const call = new RegExp(
-    String.raw`\b${escapesRegularExpression(helper)}\s*\(\s*\{\s*api:\s*(?<api>${identifierPattern})\s*,\s*handlers:\s*(?<handlers>${identifierPattern})(?:\s*,\s*transport:\s*(?<transport>${identifierPattern}))?\s*,?\s*\}\s*\)`,
-    'u',
-  ).exec(code);
-  const api = call?.groups?.api;
-  const handlers = call?.groups?.handlers;
-  const transport = call?.groups?.transport;
-  if (call === null || api === undefined || handlers === undefined) {
-    return 'must pass a concrete api and composed handlers directly to assembleEffectBffRuntime';
+  if (
+    !declaresLayerValue(
+      source,
+      code,
+      transport,
+      true,
+      false,
+      apiExport,
+      expectedApiModuleId,
+      resolveImport,
+      index,
+    )
+  ) {
+    return 'must pass an explicitly composed Layer as assembleEffectBffRuntime transport';
   }
+  return usesImportedCorsTransport(source, code, transport, index)
+    ? undefined
+    : 'must use the imported HttpRouter for the transport Layer';
+};
+
+const assembledRuntimeViolation = (
+  source: string,
+  code: string,
+  helper: string,
+  call: RegExpExecArray,
+  bindings: AssemblyBindings,
+  resolveImport: RuntimeTopologyModuleResolver | undefined,
+): string | undefined => {
+  const { api, handlers, transport } = bindings;
   if (!importsNamedValueFromSharedApi(source, api)) {
     return 'must pass the API imported from ../shared/api.ts to assembleEffectBffRuntime';
   }
   const apiBinding = importedValueBindingFromAnyModule(source, api);
-  const apiExport = apiBinding?.imported;
-  const expectedApiModuleId =
-    apiBinding === undefined ? undefined : resolveImport?.(apiBinding.specifier)?.id;
-  if (
-    apiExport === undefined ||
-    (resolveImport !== undefined && expectedApiModuleId === undefined)
-  ) {
+  if (apiBinding === undefined) {
+    return 'must prove the exact shared API export used by assembleEffectBffRuntime';
+  }
+  const apiExport = apiBinding.imported;
+  const expectedApiModuleId = resolveImport?.(apiBinding.specifier)?.id;
+  if (resolveImport !== undefined && expectedApiModuleId === undefined) {
     return 'must prove the exact shared API export used by assembleEffectBffRuntime';
   }
   if (!usesUnshadowedHelperImports(source, code, api, helper, call.index)) {
@@ -1246,29 +1124,56 @@ export const strictEffectRuntimeTopologyViolation = (
   ) {
     return 'must pass an explicitly composed Layer as assembleEffectBffRuntime handlers';
   }
-  if (
-    transport !== undefined &&
-    !declaresLayerValue(
-      source,
-      code,
-      transport,
-      true,
-      false,
-      apiExport,
-      expectedApiModuleId,
-      resolveImport,
-      call.index,
-    )
-  ) {
-    return 'must pass an explicitly composed Layer as assembleEffectBffRuntime transport';
-  }
-  if (transport !== undefined && !usesImportedCorsTransport(source, code, transport, call.index)) {
-    return 'must use the imported HttpRouter for the transport Layer';
+  const transportViolation = assemblyTransportViolation(
+    source,
+    code,
+    transport,
+    apiExport,
+    expectedApiModuleId,
+    resolveImport,
+    call.index,
+  );
+  if (transportViolation !== undefined) {
+    return transportViolation;
   }
   if (!isRuntimeRootCall(code, call.index, call.index + call[0].length)) {
     return 'must return or export the assembled strict Effect BFF runtime';
   }
   return undefined;
+};
+
+/** Proves the shared helper's concrete API/Layer topology. */
+export const strictEffectRuntimeTopologyViolation = (
+  source: string,
+  resolveImport?: RuntimeTopologyModuleResolver,
+): string | undefined => {
+  const code = withoutCommentsOrLiterals(source);
+  const helper = importedLocalNameMatchingSpecifier(
+    source,
+    'assembleEffectBffRuntime',
+    String.raw`@[a-z0-9-]+\/shared-contracts\/server\/effect-bff-runtime`,
+  );
+  if (helper === undefined) {
+    return usesStrictRpcRuntimeTopology(source, resolveImport)
+      ? undefined
+      : 'must import the server-only shared Effect BFF assembly helper';
+  }
+  const call = new RegExp(
+    String.raw`\b${escapesRegularExpression(helper)}\s*\(\s*\{\s*api:\s*(?<api>${identifierPattern})\s*,\s*handlers:\s*(?<handlers>${identifierPattern})(?:\s*,\s*transport:\s*(?<transport>${identifierPattern}))?\s*,?\s*\}\s*\)`,
+    'u',
+  ).exec(code);
+  const { api, handlers, transport } = call?.groups ?? {};
+  if (call === null || api === undefined || handlers === undefined) {
+    return 'must pass a concrete api and composed handlers directly to assembleEffectBffRuntime';
+  }
+  return assembledRuntimeViolation(
+    source,
+    code,
+    helper,
+    call,
+    { api, handlers, transport },
+    resolveImport,
+  );
 };
 
 export const privateOwnerImportViolation = (

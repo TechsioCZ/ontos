@@ -13,7 +13,7 @@ import {
 } from '../../shared/apis/party-match-decision.ts';
 import { findMatchDecision } from '../services/party-matching-persistence.service.ts';
 
-export const partyMatchDecisionEntrypoint = defineTenantModuleEntrypoint({
+const partyMatchDecisionEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-match-decision',

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { expect } from '@app/effect-rstest';
+import { expect } from 'effect-rstest';
 import foreign from 'foreign-assertions';
 declare const error: { _tag: string };
 const { strictEqual: foreignEqual } = foreign;
@@ -21,7 +21,7 @@ const fixture = { _tag: 'Missing' };
 expect(error).toMatchObject({ message: 'Missing' });
 expect(error).toMatchObject({ _tag: 'Failure' });
 foreign(error).toMatchObject(fixture);
-function shadowExpect(expect: typeof import('@app/effect-rstest').expect) {
+function shadowExpect(expect: typeof import('effect-rstest').expect) {
   expect(error).toMatchObject({ _tag: 'Missing' });
 }
 export { shadow, shadowExpect };
@@ -38,7 +38,7 @@ assert.deepStrictEqual(error, { _tag: 'Failure' });
 assert.notDeepEqual(error, { field: 'Missing' });
 assert.notDeepStrictEqual(error, { _tag: 'None' });
 foreign(error).toEqual(fixture);
-function shadowObjectExpect(expect: typeof import('@app/effect-rstest').expect) {
+function shadowObjectExpect(expect: typeof import('effect-rstest').expect) {
   expect(error).toStrictEqual({ _tag: 'Missing' });
 }
 export { shadowObjectExpect };

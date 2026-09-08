@@ -67,8 +67,13 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
+import { parentOf, isFunctionNode, unwrapNode, keyName } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
+import { sameNode } from '../shared/reporting.ts';
+import { stringArray as readStringArray } from '../shared/options.ts';
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { isScriptFile, isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
@@ -107,11 +112,6 @@ const NAME_WRAPPER_MEMBERS: ReadonlySet<string> = new Set([
 ]);
 
 const EFFECT_MODULE = /^effect(?:\/.*)?$/u;
-const FUNCTION_TYPES = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-]);
 const EXPRESSION_WRAPPERS = new Set([
   'ChainExpression',
   'ParenthesizedExpression',
@@ -122,6 +122,11 @@ const EXPRESSION_WRAPPERS = new Set([
 ]);
 
 type SiteKind = 'accessor' | 'constructor';
+interface PendingReport {
+  node: ESTree.Node;
+  messageId: string;
+  callee: string;
+}
 
 interface ResolvedOptions {
   readonly include: readonly string[];
@@ -133,12 +138,6 @@ interface ResolvedOptions {
   readonly transparentMembers: ReadonlySet<string>;
   readonly effectReexportModules: readonly string[];
   readonly includeTests: boolean;
-}
-
-function readStringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
 }
 
 function resolveOptions(context: Context): ResolvedOptions {
@@ -169,37 +168,9 @@ function resolveOptions(context: Context): ResolvedOptions {
   };
 }
 
-function parentOf(node: ESTree.Node): ESTree.Node | null {
-  return (node as unknown as { parent?: ESTree.Node | null }).parent ?? null;
-}
-
-function sameNode(
-  left: ESTree.Node | null | undefined,
-  right: ESTree.Node | null | undefined,
-): boolean {
-  if (left === null || left === undefined || right === null || right === undefined) return false;
-  return left.type === right.type && left.start === right.start && left.end === right.end;
-}
-
 /** Strip the wrappers that sit between an expression and its semantic parent. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  while (EXPRESSION_WRAPPERS.has(current.type)) {
-    const inner = (current as unknown as { expression?: ESTree.Node }).expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
-}
-
-function isFunctionNode(node: ESTree.Node): boolean {
-  return FUNCTION_TYPES.has(node.type);
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
+  return unwrapNode(node, { wrappers: EXPRESSION_WRAPPERS });
 }
 
 function lastSegment(module: string): string {
@@ -278,13 +249,6 @@ function memberParts(node: ESTree.Node): { object: string; property: string } | 
 }
 
 /** Static key of an object-pattern property: `{ make }`, `{ make: alias }`, `{ "make": alias }`. */
-function propertyKeyName(key: ESTree.Node): string | null {
-  if (key.type === 'Identifier') return (key as unknown as { name: string }).name;
-  if (key.type !== 'Literal') return null;
-  const value = (key as unknown as { value: unknown }).value;
-  return typeof value === 'string' ? value : null;
-}
-
 /** `Layer.effect` → `"Layer.effect"` when the object is a tracked Effect namespace binding. */
 function namespaceMemberString(node: ESTree.Node, bindings: EffectBindings): string | null {
   const matched = effectMember(node, bindings);
@@ -294,18 +258,6 @@ function namespaceMemberString(node: ESTree.Node, bindings: EffectBindings): str
   if (parts === null) return null;
   const namespace = bindings.namespaces.get(parts.object);
   return namespace === undefined ? null : `${namespace}.${parts.property}`;
-}
-
-function lookupVariable(context: Context, identifier: ESTree.Node): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  const name = (identifier as unknown as { name?: string }).name;
-  if (name === undefined) return null;
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
 }
 
 export const rule = defineRule({
@@ -494,39 +446,26 @@ export const rule = defineRule({
       return false;
     }
 
+    function isNameWrapper(parent: ESTree.Node, current: ESTree.Node): boolean {
+      if (EXPRESSION_WRAPPERS.has(parent.type)) return true;
+      if (parent.type !== 'CallExpression') return false;
+      return (
+        !sameNode(unwrap(parent.callee), current) && isWrapperCall(parent, NAME_WRAPPER_MEMBERS)
+      );
+    }
+
     /** The binding this function is stored under, when that is a module-level name. */
     function moduleFunctionName(fn: ESTree.Node): string | null {
-      if (fn.type === 'FunctionDeclaration') {
-        const id = (fn as unknown as { id?: { name?: string } | null }).id;
-        return id?.name ?? null;
-      }
-      let current: ESTree.Node = fn;
+      if (fn.type === 'FunctionDeclaration') return fn.id?.name ?? null;
+      let current = fn;
       let parent = parentOf(current);
       for (let guard = 0; guard < 16 && parent !== null; guard += 1) {
-        if (EXPRESSION_WRAPPERS.has(parent.type)) {
-          current = parent;
-          parent = parentOf(current);
-          continue;
-        }
-        // `export const op = Effect.fn("op")(function* () { ... })` still binds `op`.
-        if (
-          parent.type === 'CallExpression' &&
-          !sameNode(
-            unwrap((parent as unknown as ESTree.CallExpression).callee as unknown as ESTree.Node),
-            current,
-          ) &&
-          isWrapperCall(parent as unknown as ESTree.CallExpression, NAME_WRAPPER_MEMBERS)
-        ) {
-          current = parent;
-          parent = parentOf(current);
-          continue;
-        }
-        break;
+        if (!isNameWrapper(parent, current)) break;
+        current = parent;
+        parent = parentOf(current);
       }
-      if (parent === null || parent.type !== 'VariableDeclarator') return null;
-      const id = (parent as unknown as { id?: ESTree.Node }).id;
-      if (id === undefined || id.type !== 'Identifier') return null;
-      return (id as unknown as { name: string }).name;
+      if (parent?.type !== 'VariableDeclarator') return null;
+      return parent.id.type === 'Identifier' ? parent.id.name : null;
     }
 
     /** Name of the outermost enclosing function when it is declared at module level. */
@@ -596,113 +535,178 @@ export const rule = defineRule({
       return classifyMember(`${lastSegment(entry.source)}.${entry.imported}`);
     }
 
-    /** `bff.makeEffectHttpApiClient` / `HttpApiClient.make` / `HttpApiClient["make"]`. */
-    function classifyMemberCallee(callee: ESTree.Node): { text: string; kind: SiteKind } | null {
-      const resolved = options;
-      const moduleImports = imports;
-      if (resolved === null || moduleImports === null) return null;
-      const member = memberOf(callee);
-      if (member !== null) {
-        const kind = classifyMember(member);
-        if (kind !== null) return { kind, text: member };
-      }
+    function classifyBarrelCallee(callee: ESTree.Node): { text: string; kind: SiteKind } | null {
+      if (options === null || imports === null) return null;
       const parts = memberParts(callee);
       if (parts === null) return null;
-      const source = moduleImports.namespaces.get(parts.object);
-      if (source === undefined || !resolved.effectReexportModules.includes(source)) return null;
+      const source = imports.namespaces.get(parts.object);
+      if (source === undefined || !options.effectReexportModules.includes(source)) return null;
       if (callee.type !== 'MemberExpression' || bindingKind(callee.object) !== 'import')
         return null;
-      if (!resolved.constructorNames.has(parts.property)) return null;
+      if (!options.constructorNames.has(parts.property)) return null;
       return { kind: 'constructor', text: `${parts.object}.${parts.property}` };
     }
 
-    /**
-     * Module-level rebindings of a constructor: `const buildClient = makeEffectHttpApiClient`,
-     * `const { makeEffectHttpApiClient: build } = bff`, `const { make } = HttpApiClient`.
-     */
+    /** Classify real Effect members before configured barrel constructors. */
+    function classifyMemberCallee(callee: ESTree.Node): { text: string; kind: SiteKind } | null {
+      if (options === null || imports === null) return null;
+      const member = memberOf(callee);
+      const kind = member === null ? null : classifyMember(member);
+      if (kind !== null && member !== null) return { kind, text: member };
+      return classifyBarrelCallee(callee);
+    }
+
+    function identifierAliasKind(init: ESTree.Node): SiteKind | null {
+      if (init.type !== 'Identifier') return classifyMemberCallee(init)?.kind ?? null;
+      const named = imports?.named.get(init.name);
+      return named === undefined ? null : classifyNamedImport(named);
+    }
+
+    function collectPatternProperty(
+      property: ESTree.Node,
+      namespace: string | undefined,
+      found: Map<string, { text: string; kind: SiteKind }>,
+    ): void {
+      if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier')
+        return;
+      const key = keyName(property.key);
+      if (key === null) return;
+      const kind =
+        namespace === undefined
+          ? options?.constructorNames.has(key)
+            ? 'constructor'
+            : null
+          : classifyMember(`${namespace}.${key}`);
+      if (kind !== null) found.set(property.value.name, { kind, text: property.value.name });
+    }
+
+    function collectDeclaratorAlias(
+      entry: ESTree.VariableDeclarator,
+      found: Map<string, { text: string; kind: SiteKind }>,
+    ): void {
+      if (entry.init === undefined || entry.init === null) return;
+      const init = unwrap(entry.init);
+      if (entry.id.type === 'Identifier') {
+        const kind = identifierAliasKind(init);
+        if (kind !== null) found.set(entry.id.name, { kind, text: entry.id.name });
+        return;
+      }
+      collectPatternAliases(entry.id, init, found);
+    }
+
+    function collectPatternAliases(
+      pattern: ESTree.Node,
+      init: ESTree.Node,
+      found: Map<string, { text: string; kind: SiteKind }>,
+    ): void {
+      if (pattern.type !== 'ObjectPattern' || init.type !== 'Identifier') return;
+      const namespace = bindings?.namespaces.get(init.name);
+      const source = imports?.namespaces.get(init.name);
+      const isImportedNamespace =
+        source !== undefined && options?.effectReexportModules.includes(source);
+      if (namespace === undefined && !isImportedNamespace) return;
+      for (const property of pattern.properties) collectPatternProperty(property, namespace, found);
+    }
+
+    /** Collect module-level constructor rebindings without propagating operation-local aliases. */
     function collectAliases(
       program: ESTree.Program,
     ): Map<string, { text: string; kind: SiteKind }> {
-      const resolved = options;
-      const effects = bindings;
-      const moduleImports = imports;
       const found = new Map<string, { text: string; kind: SiteKind }>();
-      if (resolved === null || effects === null || moduleImports === null) return found;
+      if (options === null || bindings === null || imports === null) return found;
       for (const statement of program.body) {
         const declaration =
-          statement.type === 'ExportNamedDeclaration'
-            ? ((statement as unknown as { declaration?: ESTree.Node | null }).declaration ?? null)
-            : statement;
-        if (declaration === null || declaration.type !== 'VariableDeclaration') continue;
-        for (const declarator of (declaration as unknown as { declarations: ESTree.Node[] })
-          .declarations) {
-          const entry = declarator as unknown as { id: ESTree.Node; init?: ESTree.Node | null };
-          if (entry.init === undefined || entry.init === null) continue;
-          const init = unwrap(entry.init);
-          if (entry.id.type === 'Identifier') {
-            const local = (entry.id as unknown as { name: string }).name;
-            if (init.type === 'Identifier') {
-              const named = moduleImports.named.get((init as unknown as { name: string }).name);
-              const kind = named === undefined ? null : classifyNamedImport(named);
-              if (kind !== null) found.set(local, { kind, text: local });
-              continue;
-            }
-            const memberSite = classifyMemberCallee(init);
-            if (memberSite !== null) found.set(local, { kind: memberSite.kind, text: local });
-            continue;
-          }
-          if (entry.id.type !== 'ObjectPattern' || init.type !== 'Identifier') continue;
-          const objectName = (init as unknown as { name: string }).name;
-          const namespace = effects.namespaces.get(objectName);
-          const source = moduleImports.namespaces.get(objectName);
-          const isImportedNamespace =
-            source !== undefined && resolved.effectReexportModules.includes(source);
-          if (namespace === undefined && !isImportedNamespace) continue;
-          for (const property of (entry.id as unknown as { properties: ESTree.Node[] })
-            .properties) {
-            if (property.type !== 'Property') continue;
-            const pair = property as unknown as {
-              key: ESTree.Node;
-              value: ESTree.Node;
-              computed: boolean;
-            };
-            if (pair.computed || pair.value.type !== 'Identifier') continue;
-            const key = propertyKeyName(pair.key);
-            if (key === null) continue;
-            const local = (pair.value as unknown as { name: string }).name;
-            if (namespace !== undefined) {
-              const kind = classifyMember(`${namespace}.${key}`);
-              if (kind !== null) found.set(local, { kind, text: local });
-              continue;
-            }
-            if (resolved.constructorNames.has(key))
-              found.set(local, { kind: 'constructor', text: local });
-          }
-        }
+          statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+        if (declaration?.type !== 'VariableDeclaration') continue;
+        for (const entry of declaration.declarations) collectDeclaratorAlias(entry, found);
       }
       return found;
     }
 
-    /** `makeEffectHttpApiClient(...)` / `bff.makeEffectHttpApiClient(...)` / `HttpApiClient.make(...)`. */
-    function constructorSite(callee: ESTree.Node): { text: string; kind: SiteKind } | null {
-      const moduleImports = imports;
-      if (options === null || bindings === null || moduleImports === null) return null;
-      if (callee.type === 'Identifier') {
-        const local = (callee as unknown as { name: string }).name;
-        const kindOfBinding = bindingKind(callee);
-        const named = moduleImports.named.get(local);
-        if (named !== undefined) {
-          const kind = classifyNamedImport(named);
-          if (kind === null) return null;
-          return kindOfBinding === 'import' || kindOfBinding === 'unresolved'
-            ? { kind, text: local }
-            : null;
-        }
-        const alias = aliases.get(local);
-        if (alias === undefined) return null;
-        return kindOfBinding === 'module' || kindOfBinding === 'unresolved' ? alias : null;
+    function identifierConstructorSite(
+      callee: Extract<ESTree.Node, { type: 'Identifier' }>,
+    ): { text: string; kind: SiteKind } | null {
+      const kindOfBinding = bindingKind(callee);
+      const named = imports?.named.get(callee.name);
+      if (named !== undefined) {
+        const kind = classifyNamedImport(named);
+        if (kind === null) return null;
+        return kindOfBinding === 'import' || kindOfBinding === 'unresolved'
+          ? { kind, text: callee.name }
+          : null;
       }
-      return classifyMemberCallee(callee);
+      return kindOfBinding === 'module' || kindOfBinding === 'unresolved'
+        ? (aliases.get(callee.name) ?? null)
+        : null;
+    }
+
+    /** Recognize direct constructors and module-level aliases at their use site. */
+    function constructorSite(callee: ESTree.Node): { text: string; kind: SiteKind } | null {
+      if (options === null || bindings === null || imports === null) return null;
+      return callee.type === 'Identifier'
+        ? identifierConstructorSite(callee)
+        : classifyMemberCallee(callee);
+    }
+
+    function collectLayerConsumed(): Set<string> {
+      const layerConsumed = new Set<string>();
+      const blessedArgumentRanges: Array<{ start: number; end: number }> = [];
+      for (const layerCall of layerCalls) {
+        if (!resultEscapesToModuleLevel(layerCall.node)) continue;
+        for (const argument of layerCall.args) {
+          blessedArgumentRanges.push({ end: argument.end, start: argument.start });
+          const value = unwrap(argument);
+          if (value.type === 'Identifier' && resolvesToModuleFunction(value)) {
+            layerConsumed.add((value as unknown as { name: string }).name);
+          }
+        }
+      }
+      for (const call of identifierCalls) {
+        if (!blessedArgumentRanges.some((range) => withinRange(call.node, range))) continue;
+        if (!resolvesToModuleFunction(call.identifier)) continue;
+        layerConsumed.add(call.name);
+      }
+
+      return layerConsumed;
+    }
+
+    function collectConstructorReports(
+      factories: Set<string>,
+      reports: PendingReport[],
+      constructorSpans: Set<string>,
+      layerConsumed: ReadonlySet<string>,
+    ): void {
+      for (const site of constructorSites) {
+        constructorSpans.add(`${site.node.start}:${site.node.end}`);
+        if (!hasFunctionAncestor(site.node)) continue;
+        const owner = outermostModuleFunctionName(site.node);
+        const blessed =
+          isInsideBlessedLayerConstruction(site.node) ||
+          (owner !== null && layerConsumed.has(owner));
+        // A blessed construction still marks its function as a client factory: calling it from an
+        // operation elsewhere in the file is a fresh client per call.
+        if (owner !== null) factories.add(owner);
+        if (blessed) continue;
+        reports.push({
+          callee: site.text,
+          messageId: site.kind === 'accessor' ? 'accessorPerOperation' : 'clientPerOperation',
+          node: site.node,
+        });
+      }
+    }
+
+    function closeFactories(candidates: typeof identifierCalls, factories: Set<string>): void {
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const call of candidates) {
+          if (!factories.has(call.name)) continue;
+          const promoted = returnedFactoryName(call.node);
+          if (promoted === null || promoted === call.name || factories.has(promoted)) continue;
+          factories.add(promoted);
+          changed = true;
+        }
+      }
     }
 
     function withinRange(node: ESTree.Node, range: { start: number; end: number }): boolean {
@@ -768,47 +772,11 @@ export const rule = defineRule({
       'Program:exit'() {
         if (options === null || bindings === null) return;
         const factories = new Set<string>();
-        const reports: Array<{ node: ESTree.Node; messageId: string; callee: string }> = [];
+        const reports: PendingReport[] = [];
         const constructorSpans = new Set<string>();
 
-        // Module-level effect factories handed to a blessed `Layer.*`/`Effect.cached*` call build the
-        // client once per Layer build — the audit's target shape, even though the construction is not
-        // lexically nested inside the Layer call.
-        const layerConsumed = new Set<string>();
-        const blessedArgumentRanges: Array<{ start: number; end: number }> = [];
-        for (const layerCall of layerCalls) {
-          if (!resultEscapesToModuleLevel(layerCall.node)) continue;
-          for (const argument of layerCall.args) {
-            blessedArgumentRanges.push({ end: argument.end, start: argument.start });
-            const value = unwrap(argument);
-            if (value.type === 'Identifier' && resolvesToModuleFunction(value)) {
-              layerConsumed.add((value as unknown as { name: string }).name);
-            }
-          }
-        }
-        for (const call of identifierCalls) {
-          if (!blessedArgumentRanges.some((range) => withinRange(call.node, range))) continue;
-          if (!resolvesToModuleFunction(call.identifier)) continue;
-          layerConsumed.add(call.name);
-        }
-
-        for (const site of constructorSites) {
-          constructorSpans.add(`${site.node.start}:${site.node.end}`);
-          if (!hasFunctionAncestor(site.node)) continue;
-          const owner = outermostModuleFunctionName(site.node);
-          const blessed =
-            isInsideBlessedLayerConstruction(site.node) ||
-            (owner !== null && layerConsumed.has(owner));
-          // A blessed construction still marks its function as a client factory: calling it from an
-          // operation elsewhere in the file is a fresh client per call.
-          if (owner !== null) factories.add(owner);
-          if (blessed) continue;
-          reports.push({
-            callee: site.text,
-            messageId: site.kind === 'accessor' ? 'accessorPerOperation' : 'clientPerOperation',
-            node: site.node,
-          });
-        }
+        const layerConsumed = collectLayerConsumed();
+        collectConstructorReports(factories, reports, constructorSpans, layerConsumed);
 
         const candidates = identifierCalls.filter(
           (call) =>
@@ -818,17 +786,7 @@ export const rule = defineRule({
             resolvesToModuleFunction(call.identifier),
         );
 
-        let changed = true;
-        while (changed) {
-          changed = false;
-          for (const call of candidates) {
-            if (!factories.has(call.name)) continue;
-            const promoted = returnedFactoryName(call.node);
-            if (promoted === null || promoted === call.name || factories.has(promoted)) continue;
-            factories.add(promoted);
-            changed = true;
-          }
-        }
+        closeFactories(candidates, factories);
 
         for (const call of candidates) {
           if (!factories.has(call.name)) continue;

@@ -1,8 +1,8 @@
-import { expect, it } from '@app/effect-rstest';
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { openBoundaryDatabases } from '../support/database-boundary.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { expect, it } from 'effect-rstest';
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Option } from 'effect';
-import { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { normalizeOfficialIdentifier } from '../../shared/domain/identifier-contracts.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
@@ -31,36 +31,21 @@ it.live(
   'real PostgreSQL identity locks serialize concurrent exact creates and repeated identifier acceptance',
   () =>
     Effect.gen(function* identityConcurrencyTest() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-        (pool) => Effect.promise(() => pool.end()),
+      const { admin, runtime } = yield* openBoundaryDatabases(
+        (pool) => makeTestDatabaseFromPool(pool, partyRelations),
+        2,
       );
-      const runtimePool = yield* Effect.acquireRelease(
-        Effect.sync(
-          () => new Pool({ connectionString: connections.runtime.connectionString, max: 2 }),
-        ),
-        (pool) => Effect.promise(() => pool.end()),
+      const cleanup = purgeFixtureRows(
+        [
+          partyMatchDecisions,
+          duplicateCandidateCaseParties,
+          duplicateCandidateCases,
+          partyIdentifierClaims,
+          partyOfficialIdentifiers,
+          partyFactAssertions,
+          parties,
+        ].map((table) => admin.delete(table).where(eq(table.tenantId, tenantId))),
       );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, partyRelations);
-      const cleanup = Effect.gen(function* cleanupIdentityRecords() {
-        yield* admin.delete(partyMatchDecisions).where(eq(partyMatchDecisions.tenantId, tenantId));
-        yield* admin
-          .delete(duplicateCandidateCaseParties)
-          .where(eq(duplicateCandidateCaseParties.tenantId, tenantId));
-        yield* admin
-          .delete(duplicateCandidateCases)
-          .where(eq(duplicateCandidateCases.tenantId, tenantId));
-        yield* admin
-          .delete(partyIdentifierClaims)
-          .where(eq(partyIdentifierClaims.tenantId, tenantId));
-        yield* admin
-          .delete(partyOfficialIdentifiers)
-          .where(eq(partyOfficialIdentifiers.tenantId, tenantId));
-        yield* admin.delete(partyFactAssertions).where(eq(partyFactAssertions.tenantId, tenantId));
-        yield* admin.delete(parties).where(eq(parties.tenantId, tenantId));
-      });
       const scoped = <Value, Failure>(
         operation: (transaction: PartyTransaction) => Effect.Effect<Value, Failure>,
       ) =>

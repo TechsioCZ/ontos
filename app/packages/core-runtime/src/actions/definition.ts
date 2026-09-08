@@ -42,13 +42,13 @@ class ActionPrivateStorage<Value> {
   }
 }
 
-export const ActionIdempotencyRuleSchema = Schema.Literals(['optional', 'required']);
+const ActionIdempotencyRuleSchema = Schema.Literals(['optional', 'required']);
 export type ActionIdempotencyRule = typeof ActionIdempotencyRuleSchema.Type;
-export const ActionAuditProfileSchema = Schema.Literals(['minimal', 'sensitive', 'standard']);
+const ActionAuditProfileSchema = Schema.Literals(['minimal', 'sensitive', 'standard']);
 export type ActionAuditProfile = typeof ActionAuditProfileSchema.Type;
 export type ActionTenantPermission = Exclude<TenantPermissionKey, 'access' | 'read_party_identity'>;
 export type ActionLegalEntityPermission = 'manage_counterparty';
-export const ActionResourcePermissionSchema = Schema.Literals(['read', 'write']);
+const ActionResourcePermissionSchema = Schema.Literals(['read', 'write']);
 export type ActionResourcePermission = typeof ActionResourcePermissionSchema.Type;
 export interface ActionResourcePermissionTarget {
   readonly permission: ActionResourcePermission;
@@ -257,7 +257,7 @@ export interface ActionDescriptorValidationInput<Policy> {
   readonly tenantPermission?: unknown;
 }
 
-export const validateActionDescriptorInput = <Policy>(
+const validateActionEntrypoint = <Policy>(
   descriptor: ActionDescriptorValidationInput<Policy>,
 ): void => {
   if (
@@ -272,6 +272,10 @@ export const validateActionDescriptorInput = <Policy>(
       'Action entrypoint must be an immutable action/write descriptor with the required owner scope',
     );
   }
+};
+const validateActionLegalEntityScope = <Policy>(
+  descriptor: ActionDescriptorValidationInput<Policy>,
+): void => {
   if (!LEGAL_ENTITY_SCOPES.some((scope) => scope === descriptor.legalEntityScope)) {
     return failActionDefinition(
       'Action legal-entity scope must be required, optional, or forbidden',
@@ -286,11 +290,10 @@ export const validateActionDescriptorInput = <Policy>(
       'Action Legal Entity permission must be supported and require trusted Legal Entity scope',
     );
   }
-  if (!Array.isArray(descriptor.policies)) {
-    return failActionDefinition(
-      'Action policies must be an explicit readonly array of Policy references',
-    );
-  }
+};
+const validateActionPermissions = <Policy>(
+  descriptor: ActionDescriptorValidationInput<Policy>,
+): void => {
   if (
     (descriptor.resourcePermission !== undefined &&
       !Schema.is(ActionResourcePermissionDeclarationSchema)(descriptor.resourcePermission)) ||
@@ -299,7 +302,18 @@ export const validateActionDescriptorInput = <Policy>(
   ) {
     return failActionDefinition('Action permission declarations and resolvers must be valid');
   }
-  for (const policy of descriptor.policies) {
+};
+const validateActionPolicies = <Policy>(
+  descriptor: ActionDescriptorValidationInput<Policy>,
+  policies: readonly Policy[] | undefined,
+): void => {
+  if (!Array.isArray(policies)) {
+    return failActionDefinition(
+      'Action policies must be an explicit readonly array of Policy references',
+    );
+  }
+  validateActionPermissions(descriptor);
+  for (const policy of policies) {
     if (!isActionPolicy(policy)) {
       return failActionDefinition('Action policies must contain direct Policy object references');
     }
@@ -309,6 +323,13 @@ export const validateActionDescriptorInput = <Policy>(
       );
     }
   }
+};
+export const validateActionDescriptorInput = <Policy>(
+  descriptor: ActionDescriptorValidationInput<Policy>,
+): void => {
+  validateActionEntrypoint(descriptor);
+  validateActionLegalEntityScope(descriptor);
+  validateActionPolicies(descriptor, descriptor.policies);
 };
 
 export function defineAction<

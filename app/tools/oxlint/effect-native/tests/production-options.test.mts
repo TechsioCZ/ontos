@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 import { cpSync, readFileSync } from 'node:fs';
 import nodePath from 'node:path';

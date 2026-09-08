@@ -1,9 +1,8 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
-import { DateTime, Predicate, Struct, Schema } from 'effect';
+import { DateTime, Predicate, Struct } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import {
-  CanonicalPartyResolutionSchema,
   assertCanonicalWriteTarget,
   resolveCanonicalPartyRef,
 } from '../../src/merge/party-alias-resolution.ts';
@@ -33,7 +32,7 @@ it('resolves an historical alias chain to one final canonical Party', () => {
     alias('party-a', 'party-c'),
   ]);
 
-  expect(Schema.is(CanonicalPartyResolutionSchema.members[1])(result)).toBe(true);
+  expect(Predicate.isTagged(result, 'CanonicalPartyResolved')).toBe(true);
   expect(Struct.omit(result, ['_tag'])).toEqual({
     canonicalPartyRef: party('party-c'),
     requestedAlias: party('party-b'),

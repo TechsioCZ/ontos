@@ -1,5 +1,5 @@
 // expect-count: 6
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import * as rstest from '@rstest/core';
 import { Cause, Effect } from 'effect';
 import * as E from 'effect';

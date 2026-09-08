@@ -1,4 +1,4 @@
-import { beforeEach, expect, rstest, it } from '@app/effect-rstest';
+import { beforeEach, expect, rstest, it } from 'effect-rstest';
 import { ConfigProvider, Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',

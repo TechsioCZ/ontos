@@ -1,4 +1,4 @@
-import { describe, expect, it, rstest } from '@app/effect-rstest';
+import { describe, expect, it, rstest } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { Cause, Deferred, Effect, Exit, Fiber } from 'effect';

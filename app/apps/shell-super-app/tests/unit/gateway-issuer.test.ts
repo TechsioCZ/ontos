@@ -1,4 +1,4 @@
-import { expect, rs, it } from '@app/effect-rstest';
+import { expect, rs, it } from 'effect-rstest';
 import { Effect, Exit, Fiber, Predicate } from 'effect';
 import { TestClock } from 'effect/testing';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';

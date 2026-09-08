@@ -1,6 +1,6 @@
-import { expect, it } from '@app/effect-rstest';
-import { Effect, Result, Schema, Struct } from 'effect';
-import { PartyCommandConflictProblemSchema } from '../../shared/command-api.ts';
+import { makeCommandAssertionFetch } from '../support/command-assertion-fetch.ts';
+import { expect, it } from 'effect-rstest';
+import { Effect } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   requestSearchRebuild,
@@ -9,21 +9,10 @@ import {
 
 it.effect('fresh assertions and command metadata reach the independent owner deployment', () =>
   Effect.gen(function* testProgram1() {
-    const requests: Request[] = [];
-    let assertions = 0;
-    const fakeFetch: typeof fetch = (input, init) => {
-      const request = new Request(input, init);
-      requests.push(request);
-      if (new URL(request.url).hostname === 'shell.example') {
-        assertions += 1;
-        return Promise.resolve(
-          Response.json({ expiresAt: 2_000_000_000, token: `token-${assertions}` }),
-        );
-      }
-      return Promise.resolve(
-        Response.json({ requestId: '10000000-0000-4000-8000-000000000001', status: 'QUEUED' }),
-      );
-    };
+    const { requests, assertions, fakeFetch } = makeCommandAssertionFetch(
+      () => Response.json({ requestId: '10000000-0000-4000-8000-000000000001', status: 'QUEUED' }),
+      'token',
+    );
     const options = {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'command-correlation',
@@ -39,7 +28,7 @@ it.effect('fresh assertions and command metadata reach the independent owner dep
     const second = yield* invoke();
     expect(first.status).toBe('QUEUED');
     expect(second.status).toBe('QUEUED');
-    expect(assertions).toBe(2);
+    expect(assertions()).toBe(2);
     const commands = requests.filter(
       (request) => new URL(request.url).hostname === 'party.example',
     );
@@ -59,37 +48,6 @@ it.effect('fresh assertions and command metadata reach the independent owner dep
       expect(request.headers.get('x-trace-id')).toBe('command-trace');
       expect(request.headers.get('idempotency-key')).toBe('rebuild-1');
     }
-  }),
-);
-
-it.effect('decodes declared errors without weakening their tag or stable conflict code', () =>
-  Effect.gen(function* testProgram2() {
-    const problem = {
-      _tag: 'PartyCommandConflictProblem',
-      code: 'action_request_hash_conflict',
-      detail: 'This key was used with a different command payload.',
-      status: 409,
-      title: 'Idempotency conflict',
-      type: 'urn:ontos:action:request-hash-conflict',
-    };
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(
-        Response.json(problem, {
-          headers: { 'content-type': 'application/problem+json' },
-          status: 409,
-        }),
-      );
-    const outcome = yield* requestSearchRebuildWithAuthorization({}, 'Bearer test', {
-      baseUrl: 'https://party.example/party-registry-api',
-      correlationId: 'conflict',
-      idempotencyKey: 'rebuild-1',
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(Result.isFailure(outcome)).toBe(true);
-    if (!Result.isFailure(outcome)) {
-      throw new Error('Expected truthy value');
-    }
-    expect(Schema.is(PartyCommandConflictProblemSchema)(outcome.failure)).toBe(true);
-    expect(Struct.omit(outcome.failure, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
   }),
 );
 

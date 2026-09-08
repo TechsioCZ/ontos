@@ -1,21 +1,12 @@
 import { Schema } from 'effect';
+import { decodedStringBrand, nonEmptyString } from './string-schemas.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
-const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
-const AuthBindingIdSchema = uuid.pipe(
-  Schema.brand('AuthBindingId'),
-  Schema.decodeTo(Schema.String),
-);
-const ImpersonatedByPrincipalIdSchema = uuid.pipe(
-  Schema.brand('ImpersonatedByPrincipalId'),
-  Schema.decodeTo(Schema.String),
-);
-const LegalEntityIdSchema = uuid.pipe(
-  Schema.brand('LegalEntityId'),
-  Schema.decodeTo(Schema.String),
-);
-const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'), Schema.decodeTo(Schema.String));
-const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'), Schema.decodeTo(Schema.String));
+const AuthBindingIdSchema = decodedStringBrand(uuid, 'AuthBindingId');
+const ImpersonatedByPrincipalIdSchema = decodedStringBrand(uuid, 'ImpersonatedByPrincipalId');
+const LegalEntityIdSchema = decodedStringBrand(uuid, 'LegalEntityId');
+const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
+const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 
 const TrustedPrincipalContextFieldsSchema = Schema.Struct({
   authBindingId: Schema.optionalKey(AuthBindingIdSchema),

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -6,8 +6,10 @@ import path from 'node:path';
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, Predicate, Schema, Stream } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Config, Effect, Predicate, Schema } from 'effect';
+import { ChildProcess } from 'effect/unstable/process';
+
+import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 interface WorkspaceScriptPlan {
   readonly typecheck: string;
@@ -36,38 +38,22 @@ const typecheckWrapper = path.join(workspaceRoot, 'scripts/ultramodern-typecheck
 const executablePath = path.join(workspaceRoot, 'node_modules/.bin');
 
 const runTypecheck = (fixture: string, commandArguments: readonly string[]) =>
-  Effect.gen(function* testEffect1() {
-    return yield* Effect.gen(function* runTypecheckEffect() {
-      const inheritedPath = yield* Config.string('PATH').pipe(Config.withDefault(''));
-      const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      return yield* Effect.scoped(
-        Effect.gen(function* collectTypecheckResult() {
-          const handle = yield* processSpawner.spawn(
-            ChildProcess.make(process.execPath, [typecheckWrapper, ...commandArguments], {
-              cwd: fixture,
-              env: {
-                PATH: `${executablePath}${path.delimiter}${inheritedPath}`,
-                ULTRAMODERN_WORKSPACE_ROOT: fixture,
-              },
-              extendEnv: true,
-              stderr: 'pipe',
-              stdin: 'ignore',
-              stdout: 'pipe',
-            }),
-          );
-          const [status, stdout, stderr] = yield* Effect.all(
-            [
-              handle.exitCode.pipe(Effect.map(Number)),
-              handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
-              handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
-            ],
-            { concurrency: 'unbounded' },
-          );
-          return { status, stderr, stdout };
-        }),
-      );
-    }).pipe(Effect.provide(NodeServices.layer));
-  });
+  Effect.gen(function* runTypecheckEffect() {
+    const inheritedPath = yield* Config.string('PATH').pipe(Config.withDefault(''));
+    return yield* collectToolingProcess(
+      ChildProcess.make(process.execPath, [typecheckWrapper, ...commandArguments], {
+        cwd: fixture,
+        env: {
+          PATH: `${executablePath}${path.delimiter}${inheritedPath}`,
+          ULTRAMODERN_WORKSPACE_ROOT: fixture,
+        },
+        extendEnv: true,
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
+      }),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 it.live(
   'installed workspace generator keeps build mode as the root typecheck default',

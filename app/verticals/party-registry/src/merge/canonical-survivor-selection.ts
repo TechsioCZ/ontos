@@ -16,7 +16,7 @@ import { PartyRefSchema } from '../../shared/resources/party.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { Schema } from 'effect';
 
-export const CanonicalSurvivorSelectionSchema = Schema.Union([
+const CanonicalSurvivorSelectionSchema = Schema.Union([
   Schema.TaggedStruct('CanonicalSurvivorSelected', {
     confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema),
     decidingCriterion: MergeSurvivorSelectionReasonSchema,
@@ -112,89 +112,12 @@ const criteria = [
   reason: MergeSurvivorSelectionReason;
 }>[];
 
-export const selectCanonicalSurvivor = (
-  input: MergeSurvivorSelectionInput,
-): CanonicalSurvivorSelection => {
-  const { confirmation } = input;
-  const candidates = input.candidates
-    .map((candidate) =>
-      Object.freeze({
-        ...candidate,
-        partyRef: Object.freeze({ ...candidate.partyRef }),
-      }),
-    )
-    .toSorted((left, right) => left.partyRef.resourceId.localeCompare(right.partyRef.resourceId));
-  if (candidates.length < 2) {
-    return {
-      _tag: 'SurvivorSelectionBlocked',
-      blocker: 'INVALID_MERGE_SET',
-      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
-    };
-  }
-  const candidateKeys = candidates.map(
-    ({ partyRef }) => `${partyRef.tenantId}:${partyRef.resourceId}`,
-  );
-  if (new Set(candidateKeys).size !== candidates.length) {
-    return {
-      _tag: 'SurvivorSelectionBlocked',
-      blocker: 'INVALID_MERGE_SET',
-      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
-    };
-  }
-  const confirmedKeys = confirmation?.confirmedPartyRefs.map(
-    ({ tenantId, resourceId }) => `${tenantId}:${resourceId}`,
-  );
-  if (
-    confirmation === null ||
-    !confirmationHasEvidence(confirmation) ||
-    confirmedKeys?.length !== candidateKeys.length ||
-    confirmedKeys.toSorted().some((key, index) => key !== candidateKeys.toSorted()[index])
-  ) {
-    return {
-      _tag: 'SurvivorSelectionBlocked',
-      blocker: 'DUPLICATE_SET_NOT_CONFIRMED',
-      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
-    };
-  }
-  const tenants = new Set(candidates.map(({ partyRef }) => partyRef.tenantId));
-  if (tenants.size !== 1) {
-    return {
-      _tag: 'SurvivorSelectionBlocked',
-      blocker: 'CROSS_TENANT_MERGE_SET',
-      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
-    };
-  }
-  const conflicts = candidates.filter(
-    ({ blockingAuthoritativeConflict }) => blockingAuthoritativeConflict,
-  );
-  if (conflicts.length > 0) {
-    return {
-      _tag: 'SurvivorSelectionBlocked',
-      blocker: 'AUTHORITATIVE_IDENTITY_CONFLICT',
-      conflictingPartyRefs: conflicts.map(({ partyRef }) => partyRef),
-    };
-  }
-
-  const ordered = candidates.toSorted((left, right) => {
-    for (const { compare } of criteria) {
-      const difference = compare(left, right);
-      if (difference !== 0) {
-        return difference;
-      }
-    }
-    return left.partyRef.resourceId.localeCompare(right.partyRef.resourceId);
-  });
-  const [survivor, runnerUp] = ordered;
-  if (survivor === undefined || runnerUp === undefined) {
-    return {
-      _tag: 'SurvivorSelectionBlocked',
-      blocker: 'INVALID_MERGE_SET',
-      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
-    };
-  }
-  const decidingCriterion =
-    criteria.find(({ compare }) => compare(survivor, runnerUp) !== 0)?.reason ??
-    'STABLE_RESOURCE_IDENTITY';
+const selectionEvidence = (
+  candidates: readonly MergeSurvivorCandidate[],
+  confirmation: ConfirmedDuplicateSet,
+  survivor: MergeSurvivorCandidate,
+  decidingCriterion: MergeSurvivorSelectionReason,
+): readonly MergeSelectionEvidenceStep[] => {
   const decidingIndex = criteria.findIndex(({ reason }) => reason === decidingCriterion);
   const evidenceChain: MergeSelectionEvidenceStep[] = [
     evidenceStep(
@@ -247,11 +170,114 @@ export const selectCanonicalSurvivor = (
     );
   }
 
+  return Object.freeze(evidenceChain);
+};
+
+const confirmationMatchesCandidates = (
+  confirmation: ConfirmedDuplicateSet,
+  candidateKeys: readonly string[],
+): boolean => {
+  if (!confirmationHasEvidence(confirmation)) {
+    return false;
+  }
+  const confirmedKeys = confirmation.confirmedPartyRefs
+    .map(({ tenantId, resourceId }) => `${tenantId}:${resourceId}`)
+    .toSorted();
+  const sortedCandidates = candidateKeys.toSorted();
+  return (
+    confirmedKeys.length === sortedCandidates.length &&
+    confirmedKeys.every((key, index) => key === sortedCandidates[index])
+  );
+};
+
+const compareCandidates = (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) => {
+  for (const { compare } of criteria) {
+    const difference = compare(left, right);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return left.partyRef.resourceId.localeCompare(right.partyRef.resourceId);
+};
+
+const findDecidingCriterion = (
+  survivor: MergeSurvivorCandidate,
+  runnerUp: MergeSurvivorCandidate,
+): MergeSurvivorSelectionReason =>
+  criteria.find(({ compare }) => compare(survivor, runnerUp) !== 0)?.reason ??
+  'STABLE_RESOURCE_IDENTITY';
+
+export const selectCanonicalSurvivor = (
+  input: MergeSurvivorSelectionInput,
+): CanonicalSurvivorSelection => {
+  const { confirmation } = input;
+  const candidates = input.candidates
+    .map((candidate) =>
+      Object.freeze({
+        ...candidate,
+        partyRef: Object.freeze({ ...candidate.partyRef }),
+      }),
+    )
+    .toSorted((left, right) => left.partyRef.resourceId.localeCompare(right.partyRef.resourceId));
+  if (candidates.length < 2) {
+    return {
+      _tag: 'SurvivorSelectionBlocked',
+      blocker: 'INVALID_MERGE_SET',
+      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
+    };
+  }
+  const candidateKeys = candidates.map(
+    ({ partyRef }) => `${partyRef.tenantId}:${partyRef.resourceId}`,
+  );
+  if (new Set(candidateKeys).size !== candidates.length) {
+    return {
+      _tag: 'SurvivorSelectionBlocked',
+      blocker: 'INVALID_MERGE_SET',
+      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
+    };
+  }
+  if (confirmation === null || !confirmationMatchesCandidates(confirmation, candidateKeys)) {
+    return {
+      _tag: 'SurvivorSelectionBlocked',
+      blocker: 'DUPLICATE_SET_NOT_CONFIRMED',
+      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
+    };
+  }
+  const tenants = new Set(candidates.map(({ partyRef }) => partyRef.tenantId));
+  if (tenants.size !== 1) {
+    return {
+      _tag: 'SurvivorSelectionBlocked',
+      blocker: 'CROSS_TENANT_MERGE_SET',
+      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
+    };
+  }
+  const conflicts = candidates.filter(
+    ({ blockingAuthoritativeConflict }) => blockingAuthoritativeConflict,
+  );
+  if (conflicts.length > 0) {
+    return {
+      _tag: 'SurvivorSelectionBlocked',
+      blocker: 'AUTHORITATIVE_IDENTITY_CONFLICT',
+      conflictingPartyRefs: conflicts.map(({ partyRef }) => partyRef),
+    };
+  }
+
+  const ordered = candidates.toSorted(compareCandidates);
+  const [survivor, runnerUp] = ordered;
+  if (survivor === undefined || runnerUp === undefined) {
+    return {
+      _tag: 'SurvivorSelectionBlocked',
+      blocker: 'INVALID_MERGE_SET',
+      conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
+    };
+  }
+  const decidingCriterion = findDecidingCriterion(survivor, runnerUp);
+
   return {
     _tag: 'CanonicalSurvivorSelected',
     confirmedDuplicateDecisionId: confirmation.confirmedDuplicateDecisionId,
     decidingCriterion,
-    evidenceChain: Object.freeze(evidenceChain),
+    evidenceChain: selectionEvidence(candidates, confirmation, survivor, decidingCriterion),
     policyVersion: MERGE_SURVIVOR_SELECTION_POLICY_VERSION,
     survivorPartyRef: survivor.partyRef,
   };

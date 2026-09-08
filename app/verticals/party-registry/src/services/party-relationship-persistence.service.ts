@@ -356,6 +356,21 @@ const resolveCreateDecision = (input: {
     Match.exhaustive,
   );
 
+const staleRelationshipRevision = (actualRevision: number, expectedRevision: number) =>
+  Effect.fail(
+    new PartyRelationshipRevisionConflict({
+      actualRevision,
+      code: 'party_relationship_revision_conflict',
+      expectedRevision,
+      reason: 'The Party Relationship changed after it was read',
+    }),
+  );
+
+const invalidRelationshipInterval = (reason: string) =>
+  Effect.fail(
+    new PartyRelationshipInvalidInterval({ code: 'party_relationship_invalid_interval', reason }),
+  );
+
 const validateUpdateDecision = (
   decision: ReturnType<typeof decideRelationshipUpdate>,
   payload: UpdatePartyRelationshipPayload,
@@ -368,29 +383,16 @@ const validateUpdateDecision = (
   Match.value(decision).pipe(
     Match.tag('update', () => Effect.void),
     Match.tag('revision_conflict', (conflict) =>
-      Effect.fail(
-        new PartyRelationshipRevisionConflict({
-          actualRevision: conflict.actualRevision,
-          code: 'party_relationship_revision_conflict',
-          expectedRevision: payload.expectedRevision,
-          reason: 'The Party Relationship changed after it was read',
-        }),
-      ),
+      staleRelationshipRevision(conflict.actualRevision, payload.expectedRevision),
     ),
     Match.tag('invalid_interval', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'validTo must be later than validFrom for the exclusive [from,to) interval',
-        }),
+      invalidRelationshipInterval(
+        'validTo must be later than validFrom for the exclusive [from,to) interval',
       ),
     ),
     Match.tag('end_required', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'Use End to establish an immediate or retrospective effective end',
-        }),
+      invalidRelationshipInterval(
+        'Use End to establish an immediate or retrospective effective end',
       ),
     ),
     Match.tag('correction_required', (correction) =>
@@ -419,30 +421,15 @@ const validateEndDecision = (
     Match.tag('end', () => Effect.succeed('CHANGE' as const)),
     Match.tag('unchanged', () => Effect.succeed('UNCHANGED' as const)),
     Match.tag('revision_conflict', (conflict) =>
-      Effect.fail(
-        new PartyRelationshipRevisionConflict({
-          actualRevision: conflict.actualRevision,
-          code: 'party_relationship_revision_conflict',
-          expectedRevision: payload.expectedRevision,
-          reason: 'The Party Relationship changed after it was read',
-        }),
-      ),
+      staleRelationshipRevision(conflict.actualRevision, payload.expectedRevision),
     ),
     Match.tag('invalid_interval', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'The effective end must be later than the relationship validFrom',
-        }),
+      invalidRelationshipInterval(
+        'The effective end must be later than the relationship validFrom',
       ),
     ),
     Match.tag('update_required', () =>
-      Effect.fail(
-        new PartyRelationshipInvalidInterval({
-          code: 'party_relationship_invalid_interval',
-          reason: 'Use Update to change a still-future planned end',
-        }),
-      ),
+      invalidRelationshipInterval('Use Update to change a still-future planned end'),
     ),
     Match.tag('correction_required', (correction) =>
       Effect.fail(
@@ -652,14 +639,12 @@ export const createPartyRelationshipRecord = Effect.fn(
   return { outcome: 'CREATED', relationship: storedDetail(created, recordedAt) } as const;
 });
 
-export const updatePartyRelationshipRecord = Effect.fn(
-  'PartyRelationshipPersistenceService.updatePartyRelationshipRecord',
-)(function* updateRelationship(
+const loadActiveRelationshipContext = Effect.fn(
+  'PartyRelationshipPersistenceService.loadActiveRelationshipContext',
+)(function* loadActiveRelationshipContextEffect(
   transaction: RelationshipScopedTransaction,
   tenantId: string,
-  principalId: string,
-  actionInvocationId: string,
-  payload: UpdatePartyRelationshipPayload,
+  payload: Pick<UpdatePartyRelationshipPayload, 'relationshipRef'>,
 ) {
   yield* ensureTrustedTenant(tenantId, payload.relationshipRef.tenantId);
   const [current] = yield* loadLocked(transaction, tenantId, payload.relationshipRef.resourceId);
@@ -682,6 +667,62 @@ export const updatePartyRelationshipRecord = Effect.fn(
     transaction,
   });
   const now = yield* DateTime.nowAsDate;
+  return { current, fromCanonicalId, toCanonicalId, now };
+});
+
+const persistRelationshipChange = Effect.fn(
+  'PartyRelationshipPersistenceService.persistRelationshipChange',
+)(function* persistRelationshipChangeEffect(
+  transaction: RelationshipScopedTransaction,
+  tenantId: string,
+  current: PartyRelationshipRecord,
+  payload: Pick<UpdatePartyRelationshipPayload, 'expectedRevision'>,
+  values: Partial<typeof partyRelationships.$inferInsert>,
+  now: Date,
+  fromCanonicalId: string,
+  toCanonicalId: string,
+) {
+  const [updated] = yield* transaction
+    .update(partyRelationships)
+    .set(values)
+    .where(
+      and(
+        eq(partyRelationships.tenantId, tenantId),
+        eq(partyRelationships.relationshipId, current.relationshipId),
+        eq(partyRelationships.revision, current.revision),
+      ),
+    )
+    .returning()
+    .pipe(Effect.mapError(mutationFailure));
+  if (updated === undefined) {
+    return yield* new PartyRelationshipRevisionConflict({
+      actualRevision: current.revision + 1,
+      code: 'party_relationship_revision_conflict',
+      expectedRevision: payload.expectedRevision,
+      reason: 'The Party Relationship changed concurrently',
+    });
+  }
+  return {
+    outcome: 'CHANGED',
+    previous: storedDetail(current, now, fromCanonicalId, toCanonicalId),
+    relationship: storedDetail(updated, now, fromCanonicalId, toCanonicalId),
+  } as const;
+});
+
+export const updatePartyRelationshipRecord = Effect.fn(
+  'PartyRelationshipPersistenceService.updatePartyRelationshipRecord',
+)(function* updateRelationship(
+  transaction: RelationshipScopedTransaction,
+  tenantId: string,
+  principalId: string,
+  actionInvocationId: string,
+  payload: UpdatePartyRelationshipPayload,
+) {
+  const { current, fromCanonicalId, toCanonicalId, now } = yield* loadActiveRelationshipContext(
+    transaction,
+    tenantId,
+    payload,
+  );
   const decision = decideRelationshipUpdate(
     {
       revision: current.revision,
@@ -726,38 +767,23 @@ export const updatePartyRelationshipRecord = Effect.fn(
     payload,
     principalId,
   });
-  const [updated] = yield* transaction
-    .update(partyRelationships)
-    .set({
+  return yield* persistRelationshipChange(
+    transaction,
+    tenantId,
+    current,
+    payload,
+    {
       ...endEvidence,
       provenanceMethod: payload.provenance.method,
       provenanceSource: payload.provenance.source,
       revision: current.revision + 1,
       validFrom: nextValidFrom,
       validTo: nextValidTo,
-    })
-    .where(
-      and(
-        eq(partyRelationships.tenantId, tenantId),
-        eq(partyRelationships.relationshipId, current.relationshipId),
-        eq(partyRelationships.revision, current.revision),
-      ),
-    )
-    .returning()
-    .pipe(Effect.mapError(mutationFailure));
-  if (updated === undefined) {
-    return yield* new PartyRelationshipRevisionConflict({
-      actualRevision: current.revision + 1,
-      code: 'party_relationship_revision_conflict',
-      expectedRevision: payload.expectedRevision,
-      reason: 'The Party Relationship changed concurrently',
-    });
-  }
-  return {
-    outcome: 'CHANGED',
-    previous: storedDetail(current, now, fromCanonicalId, toCanonicalId),
-    relationship: storedDetail(updated, now, fromCanonicalId, toCanonicalId),
-  } as const;
+    },
+    now,
+    fromCanonicalId,
+    toCanonicalId,
+  );
 });
 
 export const endPartyRelationshipRecord = Effect.fn(
@@ -769,27 +795,11 @@ export const endPartyRelationshipRecord = Effect.fn(
   actionInvocationId: string,
   payload: EndPartyRelationshipPayload,
 ) {
-  yield* ensureTrustedTenant(tenantId, payload.relationshipRef.tenantId);
-  const [current] = yield* loadLocked(transaction, tenantId, payload.relationshipRef.resourceId);
-  if (current === undefined) {
-    return yield* new PartyRelationshipNotFound({
-      code: 'party_relationship_not_found',
-      reason: RELATIONSHIP_NOT_FOUND_REASON,
-    });
-  }
-  if (current.assertionState !== 'ACTIVE') {
-    return yield* new PartyRelationshipNotFound({
-      code: 'party_relationship_not_found',
-      reason: 'The requested active Party Relationship does not exist',
-    });
-  }
-  const [fromCanonicalId, toCanonicalId] = yield* resolveCanonicalEndpointIds({
-    fromPartyId: current.fromPartyId,
-    tenantId,
-    toPartyId: current.toPartyId,
+  const { current, fromCanonicalId, toCanonicalId, now } = yield* loadActiveRelationshipContext(
     transaction,
-  });
-  const now = yield* DateTime.nowAsDate;
+    tenantId,
+    payload,
+  );
   const decision = decideRelationshipEnd(
     {
       endProvenanceMethod: current.endProvenanceMethod,
@@ -810,9 +820,12 @@ export const endPartyRelationshipRecord = Effect.fn(
     } as const;
   }
   const effectiveAt = dateFromIso(payload.effectiveAt);
-  const [updated] = yield* transaction
-    .update(partyRelationships)
-    .set({
+  return yield* persistRelationshipChange(
+    transaction,
+    tenantId,
+    current,
+    payload,
+    {
       endedByActionInvocationId: actionInvocationId,
       endedByPrincipalId: principalId,
       endedRecordedAt: now,
@@ -821,29 +834,11 @@ export const endPartyRelationshipRecord = Effect.fn(
       endReason: payload.reason ?? null,
       revision: current.revision + 1,
       validTo: effectiveAt,
-    })
-    .where(
-      and(
-        eq(partyRelationships.tenantId, tenantId),
-        eq(partyRelationships.relationshipId, current.relationshipId),
-        eq(partyRelationships.revision, current.revision),
-      ),
-    )
-    .returning()
-    .pipe(Effect.mapError(mutationFailure));
-  if (updated === undefined) {
-    return yield* new PartyRelationshipRevisionConflict({
-      actualRevision: current.revision + 1,
-      code: 'party_relationship_revision_conflict',
-      expectedRevision: payload.expectedRevision,
-      reason: 'The Party Relationship changed concurrently',
-    });
-  }
-  return {
-    outcome: 'CHANGED',
-    previous: storedDetail(current, now, fromCanonicalId, toCanonicalId),
-    relationship: storedDetail(updated, now, fromCanonicalId, toCanonicalId),
-  } as const;
+    },
+    now,
+    fromCanonicalId,
+    toCanonicalId,
+  );
 });
 
 export const findPartyRelationshipRecord = Effect.fn(

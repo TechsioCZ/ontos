@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { compareApplicationCatalog, expectedCoreTableCatalog } from '../../src/db/catalog.ts';
 import type { CatalogEntry } from '../../src/db/catalog.ts';
 

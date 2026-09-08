@@ -1,4 +1,4 @@
-import { it, test, rstest } from '@app/effect-rstest';
+import { it, test, rstest } from 'effect-rstest';
 import { test as browserTest } from '@playwright/test';
 import { Effect } from 'effect';
 

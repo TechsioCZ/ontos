@@ -562,11 +562,6 @@ const adaptGeneratedOwner = Effect.fn('adaptGeneratedOwner')(function* adaptGene
   );
 });
 
-export interface GeneratedOwnerFixture {
-  readonly root: string;
-  readonly verticalRoot: string;
-}
-
 export const createGeneratedOwnerFixture = Effect.fn('createGeneratedOwnerFixture')(
   function* createGeneratedOwnerFixtureEffect(schemaName: string) {
     const fileSystem = yield* FileSystem.FileSystem;

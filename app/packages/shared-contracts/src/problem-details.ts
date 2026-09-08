@@ -40,9 +40,48 @@ const isJsonLiteral = (ast: SchemaAST.Literal): boolean =>
   (Predicate.isNumber(ast.literal) && Number.isFinite(ast.literal)) ||
   Predicate.isBoolean(ast.literal);
 
+const isConcreteExtensionValue = (ast: SchemaAST.AST): boolean => {
+  if (isUnsupportedExtensionPrimitive(ast) || SchemaAST.isDeclaration(ast)) {
+    return false;
+  }
+  if (SchemaAST.isLiteral(ast)) {
+    return isJsonLiteral(ast);
+  }
+  if (SchemaAST.isNumber(ast)) {
+    return hasJsonSafeNumberCheck(ast.checks);
+  }
+  if (SchemaAST.isEnum(ast)) {
+    return ast.enums.every(([, value]) => Predicate.isString(value) || Number.isFinite(value));
+  }
+  return true;
+};
+
+const visitExtensionChildren = (
+  ast: SchemaAST.AST,
+  visit: (ast: SchemaAST.AST) => boolean,
+): boolean => {
+  if (SchemaAST.isArrays(ast)) {
+    return ast.elements.every(visit) && ast.rest.every(visit);
+  }
+  if (SchemaAST.isObjects(ast)) {
+    return (
+      ast.indexSignatures.length === 0 &&
+      ast.propertySignatures.every(
+        ({ name, type }) => Predicate.isString(name) && name !== '__proto__' && visit(type),
+      )
+    );
+  }
+  if (SchemaAST.isUnion(ast)) {
+    return ast.types.every(visit);
+  }
+  if (SchemaAST.isSuspend(ast)) {
+    return visit(ast.thunk());
+  }
+  return true;
+};
+
 const isConcreteExtensionAst = (root: SchemaAST.AST): boolean => {
   const seen = new Set<SchemaAST.AST>();
-  // eslint-disable-next-line complexity -- The exhaustive AST visitor keeps every JSON-safety rule in one cycle-aware decision point.
   const visit = (ast: SchemaAST.AST): boolean => {
     if (seen.has(ast)) {
       return true;
@@ -54,44 +93,26 @@ const isConcreteExtensionAst = (root: SchemaAST.AST): boolean => {
       }
       return ast.encoding.every((link) => visit(link.to));
     }
-    if (isUnsupportedExtensionPrimitive(ast)) {
-      return false;
-    }
-    if (SchemaAST.isLiteral(ast) && !isJsonLiteral(ast)) {
-      return false;
-    }
-    if (SchemaAST.isNumber(ast) && !hasJsonSafeNumberCheck(ast.checks)) {
-      return false;
-    }
-    if (
-      SchemaAST.isEnum(ast) &&
-      !ast.enums.every(([, value]) => Predicate.isString(value) || Number.isFinite(value))
-    ) {
-      return false;
-    }
-    if (SchemaAST.isDeclaration(ast)) {
-      return false;
-    }
-    if (SchemaAST.isArrays(ast)) {
-      return ast.elements.every(visit) && ast.rest.every(visit);
-    }
-    if (SchemaAST.isObjects(ast)) {
-      return (
-        ast.indexSignatures.length === 0 &&
-        ast.propertySignatures.every(
-          ({ name, type }) => Predicate.isString(name) && name !== '__proto__' && visit(type),
-        )
-      );
-    }
-    if (SchemaAST.isUnion(ast)) {
-      return ast.types.every(visit);
-    }
-    if (SchemaAST.isSuspend(ast)) {
-      return visit(ast.thunk());
-    }
-    return true;
+    return isConcreteExtensionValue(ast) && visitExtensionChildren(ast, visit);
   };
   return visit(root);
+};
+
+const cloneDescriptors = <Value>(value: Value, clone: <Current>(value: Current) => Current) => {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if ('value' in descriptor) {
+      const descriptorValue = descriptor.value;
+      descriptor.value =
+        key === 'thunk' &&
+        SchemaAST.isAST(value) &&
+        SchemaAST.isSuspend(value) &&
+        Predicate.isFunction(descriptorValue)
+          ? () => clone(descriptorValue())
+          : clone(descriptorValue);
+    }
+  }
+  return descriptors;
 };
 
 const cloneAstGraph = <Value>(root: Value): Value => {
@@ -123,24 +144,46 @@ const cloneAstGraph = <Value>(root: Value): Value => {
     }
     const copy: object = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
     seen.set(objectValue, copy);
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    for (const [key, descriptor] of Object.entries(descriptors)) {
-      if ('value' in descriptor) {
-        const descriptorValue = descriptor.value;
-        descriptor.value =
-          key === 'thunk' &&
-          SchemaAST.isAST(value) &&
-          SchemaAST.isSuspend(value) &&
-          Predicate.isFunction(descriptorValue)
-            ? () => clone(descriptorValue())
-            : clone(descriptorValue);
-      }
-    }
-    Object.defineProperties(copy, descriptors);
+    Object.defineProperties(copy, cloneDescriptors(value, clone));
     return copy as Current;
   };
   return clone(root);
 };
+
+const stableExtensionField = (name: string, descriptor: PropertyDescriptor) => {
+  const field = descriptor.value;
+  if (!Schema.isSchema(field)) {
+    // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
+    throw new TypeError(`Problem Details extension field "${name}" must use a concrete schema.`);
+  }
+  const fieldDescriptors = Object.getOwnPropertyDescriptors(field);
+  const astDescriptor = fieldDescriptors.ast;
+  if (
+    astDescriptor === undefined ||
+    !('value' in astDescriptor) ||
+    !SchemaAST.isAST(astDescriptor.value)
+  ) {
+    // eslint-disable-next-line effect-native/no-native-error-construction -- Schema AST accessors could change after validation; the captured AST must be the one consumed by TaggedStruct.
+    throw new TypeError(`Problem Details extension field "${name}" must use a concrete schema.`);
+  }
+  const stableAst = cloneAstGraph(astDescriptor.value);
+  if (!isConcreteExtensionAst(stableAst)) {
+    // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
+    throw new TypeError(`Problem Details extension field "${name}" must use a concrete schema.`);
+  }
+  astDescriptor.value = stableAst;
+  return Object.defineProperties(Object.create(Object.getPrototypeOf(field)), fieldDescriptors);
+};
+
+const reservedExtensionFields = new Set([
+  '__proto__',
+  '_tag',
+  'detail',
+  'retryable',
+  'status',
+  'title',
+  'type',
+]);
 
 const concreteExtensionsSnapshot = <const Extensions extends Schema.Struct.Fields>(
   extensions: Extensions,
@@ -161,15 +204,7 @@ const concreteExtensionsSnapshot = <const Extensions extends Schema.Struct.Field
       // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
       throw new TypeError('Problem Details extension field names must be strings.');
     }
-    if (
-      name === '__proto__' ||
-      name === '_tag' ||
-      name === 'detail' ||
-      name === 'retryable' ||
-      name === 'status' ||
-      name === 'title' ||
-      name === 'type'
-    ) {
+    if (reservedExtensionFields.has(name)) {
       // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
       throw new TypeError(`Problem Details extension field "${name}" is reserved.`);
     }
@@ -180,31 +215,7 @@ const concreteExtensionsSnapshot = <const Extensions extends Schema.Struct.Field
         `Problem Details extension field "${name}" must be an enumerable data property.`,
       );
     }
-    const field = descriptor.value;
-    if (!Schema.isSchema(field)) {
-      // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
-      throw new TypeError(`Problem Details extension field "${name}" must use a concrete schema.`);
-    }
-    const fieldDescriptors = Object.getOwnPropertyDescriptors(field);
-    const astDescriptor = fieldDescriptors.ast;
-    if (
-      astDescriptor === undefined ||
-      !('value' in astDescriptor) ||
-      !SchemaAST.isAST(astDescriptor.value)
-    ) {
-      // eslint-disable-next-line effect-native/no-native-error-construction -- Schema AST accessors could change after validation; the captured AST must be the one consumed by TaggedStruct.
-      throw new TypeError(`Problem Details extension field "${name}" must use a concrete schema.`);
-    }
-    const stableAst = cloneAstGraph(astDescriptor.value);
-    if (!isConcreteExtensionAst(stableAst)) {
-      // eslint-disable-next-line effect-native/no-native-error-construction -- This synchronous, browser-safe schema factory rejects a caller programming error before a contract can be published.
-      throw new TypeError(`Problem Details extension field "${name}" must use a concrete schema.`);
-    }
-    astDescriptor.value = stableAst;
-    const stableField = Object.defineProperties(
-      Object.create(Object.getPrototypeOf(field)),
-      fieldDescriptors,
-    );
+    const stableField = stableExtensionField(name, descriptor);
     Object.defineProperty(snapshot, name, { ...descriptor, value: stableField });
   }
   return snapshot;

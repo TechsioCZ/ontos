@@ -16,15 +16,14 @@ const ProviderSubjectIdSchema = Schema.String.check(
 const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('AuthBindingId'),
 );
-export const BindSelfApiKeyPayloadSchema = Schema.Struct({
+const BindSelfApiKeyPayloadSchema = Schema.Struct({
   providerSubjectId: ProviderSubjectIdSchema,
 });
 export type BindSelfApiKeyPayload = Schema.Schema.Type<typeof BindSelfApiKeyPayloadSchema>;
-export const BindSelfApiKeyResultSchema = Schema.Struct({
+const BindSelfApiKeyResultSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   status: Schema.Literal('active'),
 });
-export type BindSelfApiKeyResult = Schema.Schema.Type<typeof BindSelfApiKeyResultSchema>;
 type BindApiKey = PrincipalManagementRepositoryService['bindApiKey'];
 type Input = Parameters<BindApiKey>[0];
 type Result = ReturnType<BindApiKey>;

@@ -1,5 +1,5 @@
 import { TestClock } from 'effect/testing';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Match, Schema, Predicate } from 'effect';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- Focused harness implements only the owner service's Drizzle seam. expires: 2026-12-31. */
 import type { SQL } from 'drizzle-orm';

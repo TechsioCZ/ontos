@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import nodePath from 'node:path';
 import { appRoot, pluginDirectory, runOxlint } from './oxlint.mts';
 

@@ -10,14 +10,13 @@ export { ClaimOwnedByDifferentParty } from './claim-owned-by-different-party.ts'
 export { DuplicateCandidateConflict } from './duplicate-candidate-conflict.ts';
 export { PartyCreateRecoveryUnavailable } from './party-create-recovery-unavailable.ts';
 
-export const MatchOutcomeSchema = Schema.Literals(['MATCHED', 'NO_MATCH', 'AMBIGUOUS']);
-export type MatchOutcome = typeof MatchOutcomeSchema.Type;
+const MatchOutcomeSchema = Schema.Literals(['MATCHED', 'NO_MATCH', 'AMBIGUOUS']);
+type MatchOutcome = typeof MatchOutcomeSchema.Type;
 
 export const RuleKeySchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(100),
 ).pipe(Schema.brand('RuleKey'));
-export type RuleKey = typeof RuleKeySchema.Type;
 
 // Matching contracts predate Option/DateTime models and are consumed directly as JSON-shaped DTOs.
 // Validate through Effect's temporal and absence codecs while retaining those decoded DTO shapes.
@@ -55,7 +54,7 @@ export const evaluateExactClaims = (partyIds: readonly string[]) => {
 };
 
 export const PartyMatchRequestSchema = Schema.Struct({ candidate: PartyCandidateSchema });
-export const MatchEvidenceExplanationSchema = Schema.Struct({
+const MatchEvidenceExplanationSchema = Schema.Struct({
   evidenceRefs: Schema.optionalKey(
     Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
       Schema.isMaxLength(100),
@@ -74,7 +73,7 @@ export const MatchEvidenceExplanationSchema = Schema.Struct({
   ruleKey: RuleKeySchema,
   verification: Schema.optionalKey(Schema.Literals(['REJECTED', 'UNVERIFIED', 'VERIFIED'])),
 });
-export const MatchPreviewEvidenceSchema = Schema.Struct({
+const MatchPreviewEvidenceSchema = Schema.Struct({
   kind: Schema.Literals(['EXACT_CLAIM', 'WEAK_EVIDENCE']),
   partyRef: PartyRefSchema,
 });
@@ -114,7 +113,7 @@ export const DuplicateCaseResolutionResultSchema = Schema.Struct({
 });
 export type DuplicateCaseResolutionResult = typeof DuplicateCaseResolutionResultSchema.Type;
 
-export const PartyDecisionOperationSchema = Schema.Literals([
+const PartyDecisionOperationSchema = Schema.Literals([
   'CREATE',
   'MATCH',
   'REVIEW_MATCH',
@@ -122,13 +121,9 @@ export const PartyDecisionOperationSchema = Schema.Literals([
   'LIFECYCLE',
   'LEGACY',
 ]);
-export const CommittedCreateOutcomeSchema = Schema.Literals([
-  'CREATED',
-  'MATCHED_EXISTING',
-  'AMBIGUOUS',
-]);
+const CommittedCreateOutcomeSchema = Schema.Literals(['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS']);
 
-export const PartyMatchDecisionRecordSchema = Schema.Struct({
+const PartyMatchDecisionRecordFieldsSchema = Schema.Struct({
   caseRef: Schema.toEncoded(Schema.OptionFromNullOr(DuplicateCandidateCaseRefSchema)),
   committedCreateOutcome: Schema.toEncoded(
     Schema.OptionFromOptionalNullOr(CommittedCreateOutcomeSchema, { onNoneEncoding: null }),
@@ -143,34 +138,47 @@ export const PartyMatchDecisionRecordSchema = Schema.Struct({
   operation: Schema.optionalKey(PartyDecisionOperationSchema),
   outcome: Schema.Literals(['CREATED', 'MATCHED', 'NO_MATCH', 'AMBIGUOUS']),
   partyRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyRefSchema)),
-}).check(
-  Schema.makeFilter((record) => {
-    const isCreate = record.operation === 'CREATE' || record.operation === 'REVIEW_CREATE';
-    const expected = record.outcome === 'MATCHED' ? 'MATCHED_EXISTING' : record.outcome;
-    if (isCreate && (record.committedCreateOutcome !== expected || record.outcome === 'NO_MATCH')) {
-      return 'Create decisions must preserve the exact committed Create result';
-    }
-    if (
-      !isCreate &&
-      record.committedCreateOutcome !== null &&
-      record.committedCreateOutcome !== undefined
-    ) {
-      return 'Only Create operations carry committed Create outcomes';
-    }
-    if (record.outcome === 'AMBIGUOUS') {
-      return record.partyRef === null && record.caseRef !== null
-        ? undefined
-        : 'Ambiguity requires exactly one case reference';
-    }
-    if (record.outcome === 'NO_MATCH') {
-      return record.partyRef === null && record.caseRef === null
-        ? undefined
-        : 'NO_MATCH has no result reference';
-    }
-    return record.partyRef !== null && record.caseRef === null
+});
+type DecisionRecord = typeof PartyMatchDecisionRecordFieldsSchema.Type;
+const isCreateOperation = (operation: DecisionRecord['operation']): boolean =>
+  operation === 'CREATE' || operation === 'REVIEW_CREATE';
+
+const validateCreateOutcome = (record: DecisionRecord): string | undefined => {
+  const isCreate = isCreateOperation(record.operation);
+  const expected = record.outcome === 'MATCHED' ? 'MATCHED_EXISTING' : record.outcome;
+  if (isCreate && (record.committedCreateOutcome !== expected || record.outcome === 'NO_MATCH')) {
+    return 'Create decisions must preserve the exact committed Create result';
+  }
+  if (
+    !isCreate &&
+    record.committedCreateOutcome !== null &&
+    record.committedCreateOutcome !== undefined
+  ) {
+    return 'Only Create operations carry committed Create outcomes';
+  }
+  return undefined;
+};
+
+const validateDecisionReferences = (record: DecisionRecord): string | undefined => {
+  if (record.outcome === 'AMBIGUOUS') {
+    return record.partyRef === null && record.caseRef !== null
       ? undefined
-      : 'Resolved decisions require exactly one Party reference';
-  }),
+      : 'Ambiguity requires exactly one case reference';
+  }
+  if (record.outcome === 'NO_MATCH') {
+    return record.partyRef === null && record.caseRef === null
+      ? undefined
+      : 'NO_MATCH has no result reference';
+  }
+  return record.partyRef !== null && record.caseRef === null
+    ? undefined
+    : 'Resolved decisions require exactly one Party reference';
+};
+
+export const PartyMatchDecisionRecordSchema = PartyMatchDecisionRecordFieldsSchema.check(
+  Schema.makeFilter(
+    (record) => validateCreateOutcome(record) ?? validateDecisionReferences(record),
+  ),
 );
 export const DuplicateCandidateDetailSchema = Schema.Struct({
   candidate: PartyCandidateSchema,
@@ -186,21 +194,9 @@ export const DuplicateCandidateDetailSchema = Schema.Struct({
   revision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
 });
 
-/** No inference from LEGACY, matching or lifecycle records is safe for Create recovery. */
-export const committedCreateResult = (
-  record: typeof PartyMatchDecisionRecordSchema.Type,
+const resolvedCreateResult = (
+  record: DecisionRecord,
 ): typeof PartyCreateOutcomeSchema.Type | null => {
-  if (record.operation !== 'CREATE' && record.operation !== 'REVIEW_CREATE') {
-    return null;
-  }
-  if (
-    record.committedCreateOutcome === 'AMBIGUOUS' &&
-    record.caseRef !== null &&
-    record.partyRef === null &&
-    record.outcome === 'AMBIGUOUS'
-  ) {
-    return { caseRef: record.caseRef, decisionRef: record.decisionRef, outcome: 'AMBIGUOUS' };
-  }
   if (
     record.partyRef !== null &&
     record.caseRef === null &&
@@ -214,4 +210,22 @@ export const committedCreateResult = (
     };
   }
   return null;
+};
+
+/** No inference from LEGACY, matching or lifecycle records is safe for Create recovery. */
+export const committedCreateResult = (
+  record: typeof PartyMatchDecisionRecordSchema.Type,
+): typeof PartyCreateOutcomeSchema.Type | null => {
+  if (!isCreateOperation(record.operation)) {
+    return null;
+  }
+  if (
+    record.committedCreateOutcome === 'AMBIGUOUS' &&
+    record.caseRef !== null &&
+    record.partyRef === null &&
+    record.outcome === 'AMBIGUOUS'
+  ) {
+    return { caseRef: record.caseRef, decisionRef: record.decisionRef, outcome: 'AMBIGUOUS' };
+  }
+  return resolvedCreateResult(record);
 };

@@ -25,7 +25,7 @@ export interface PartySearchProjectionHit {
   readonly title: string;
 }
 
-export interface CounterpartyRoleProjectionPeriod {
+interface CounterpartyRoleProjectionPeriod {
   readonly role: CurrentCounterpartyRole;
   readonly validFrom: string;
   readonly validTo?: string;

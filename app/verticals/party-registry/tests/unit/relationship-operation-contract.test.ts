@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { encodeRelationshipEventPayload } from '../../src/actions/relationship-event-payload.ts';
+import { expect, it } from 'effect-rstest';
 import { Effect, DateTime, Option, Schema } from 'effect';
 import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
 import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
@@ -91,6 +92,15 @@ it.effect('relationship detail preserves canonical and stored alias endpoint con
       revision: 4,
       state: 'HISTORICAL',
       to: { canonicalPartyRef: to, requestedAlias: null, storedPartyRef: to },
+      validFrom: '2026-01-01T00:00:00.000Z',
+      validTo: '2026-09-01T00:00:00.000Z',
+    });
+    expect(yield* encodeRelationshipEventPayload(detail)).toEqual({
+      fromPartyRef: canonicalFrom,
+      relationshipRef,
+      relationshipType: 'CONTACT_PERSON_OF',
+      revision: 4,
+      toPartyRef: to,
       validFrom: '2026-01-01T00:00:00.000Z',
       validTo: '2026-09-01T00:00:00.000Z',
     });

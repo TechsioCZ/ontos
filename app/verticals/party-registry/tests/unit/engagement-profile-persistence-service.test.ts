@@ -1,9 +1,20 @@
-import { expect, it } from '@app/effect-rstest';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import {
+  organizationEngagementProfiles,
+  personEngagementProfiles,
+} from '../../src/db/engagement-schema.ts';
+import { assert, expect, it } from 'effect-rstest';
 /* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
-import { DateTime, Effect, Predicate } from 'effect';
+import { DateTime, Effect, Match, Predicate } from 'effect';
 import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
 import {
   createOrganizationEngagementProfile,
+  createPersonEngagementProfile,
+  findOrganizationEngagementProfile,
+  findPersonEngagementProfile,
+  transitionOrganizationEngagementProfile,
+  transitionPersonEngagementProfile,
   ensureReferencesBelongToTenant,
   organizationEngagementProfileFromRecord,
 } from '../../src/services/engagement-profile-persistence.service.ts';
@@ -130,3 +141,145 @@ it.effect('maps an unrelated uniqueness constraint to the existing persistence f
     );
   }),
 );
+
+const profileKinds = [
+  {
+    table: organizationEngagementProfiles,
+    create: createOrganizationEngagementProfile,
+    find: findOrganizationEngagementProfile,
+    transition: transitionOrganizationEngagementProfile,
+    resourceType: 'party.registry.organization-engagement-profile',
+  },
+  {
+    table: personEngagementProfiles,
+    create: createPersonEngagementProfile,
+    find: findPersonEngagementProfile,
+    transition: transitionPersonEngagementProfile,
+    resourceType: 'party.registry.person-engagement-profile',
+  },
+] as const;
+
+for (const kind of profileKinds) {
+  it.effect(
+    `${kind.resourceType} binds creation, lookup and lifecycle to its own tenant-qualified table`,
+    () =>
+      Effect.gen(function* verifyProfilePersistence() {
+        let current: OrganizationEngagementProfileRecord | undefined = row;
+        let writes = 0;
+        let locks = 0;
+        const rows = () => (current === undefined ? [] : [current]);
+        const where = (predicate: SQL) => {
+          assert.deepEqual(new PgDialect().sqlToQuery(predicate).params, [
+            tenantId,
+            row.engagementProfileId,
+          ]);
+        };
+        // SAFETY: This focused double implements the factory's insert/select/update query chains.
+        const transaction = {
+          insert: (table: typeof kind.table) => {
+            assert.equal(table, kind.table);
+            return {
+              values: (values: typeof organizationEngagementProfiles.$inferInsert) => {
+                assert.deepEqual(values, {
+                  counterpartyResourceId: refs.counterpartyRef.resourceId,
+                  partyResourceId: refs.partyRef.resourceId,
+                  tenantId,
+                });
+                return { returning: () => Effect.succeed(rows()) };
+              },
+            };
+          },
+          select: () => ({
+            from: (table: typeof kind.table) => {
+              assert.equal(table, kind.table);
+              return {
+                where: (predicate: SQL) => {
+                  where(predicate);
+                  return {
+                    limit: () =>
+                      Object.assign(Effect.succeed(rows()), {
+                        for: (mode: string) => {
+                          assert.equal(mode, 'update');
+                          locks += 1;
+                          return Effect.succeed(rows());
+                        },
+                      }),
+                  };
+                },
+              };
+            },
+          }),
+          update: (table: typeof kind.table) => {
+            assert.equal(table, kind.table);
+            return {
+              set: (
+                values: Pick<OrganizationEngagementProfileRecord, 'archivedAt' | 'updatedAt'>,
+              ) => {
+                writes += 1;
+                current = { ...row, ...values };
+                return {
+                  where: (predicate: SQL) => {
+                    where(predicate);
+                    return { returning: () => Effect.succeed(rows()) };
+                  },
+                };
+              },
+            };
+          },
+        } as unknown as Parameters<typeof createOrganizationEngagementProfile>[0];
+        const created = yield* kind.create(transaction, { ...refs, tenantId });
+        assert.equal(created.profileRef.resourceType, kind.resourceType);
+        const found = yield* kind.find(transaction, tenantId, row.engagementProfileId);
+        assert.deepEqual(
+          Match.value(found).pipe(
+            Match.tag('found', ({ value }) => value),
+            Match.orElse(() => expect.unreachable('Expected found profile')),
+          ),
+          created,
+        );
+        const conflict = yield* kind.transition(
+          transaction,
+          tenantId,
+          row.engagementProfileId,
+          'active',
+        );
+        assert.deepEqual(
+          Match.value(conflict).pipe(
+            Match.tag('conflict', ({ value }) => value),
+            Match.orElse(() => expect.unreachable('Expected conflicting profile')),
+          ),
+          created,
+        );
+        assert.equal(writes, 0);
+        const archived = yield* kind.transition(
+          transaction,
+          tenantId,
+          row.engagementProfileId,
+          'archived',
+        );
+        assert.deepEqual(
+          archived,
+          yield* kind.find(transaction, tenantId, row.engagementProfileId),
+        );
+        assert.notEqual(current?.archivedAt, null);
+        yield* kind.transition(transaction, tenantId, row.engagementProfileId, 'active');
+        assert.equal(current?.archivedAt, null);
+        assert.equal(writes, 2);
+        current = undefined;
+        expect(
+          Predicate.isTagged(
+            yield* kind.find(transaction, tenantId, row.engagementProfileId),
+            'not_found',
+          ),
+        ).toBe(true);
+        expect(
+          Predicate.isTagged(
+            yield* kind.transition(transaction, tenantId, row.engagementProfileId, 'archived'),
+            'not_found',
+          ),
+        ).toBe(true);
+        assert.equal(writes, 2);
+        assert.equal(locks, 4);
+      }),
+  );
+}

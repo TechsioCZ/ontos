@@ -1,6 +1,8 @@
+import { linkFixtureDependencies } from './fixture-ownership.mts';
+import { snapshotTree, write } from './fixture-files.mts';
 import { Cause, Clock, ConfigProvider, Predicate, Redacted } from 'effect';
 import type { Scope } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 
 import { spawnSync } from 'node:child_process';
@@ -59,6 +61,8 @@ import {
   GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END,
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
   GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+  ScaffoldFailure,
+  createScaffoldErrorTools,
   insertSortedSlot,
   readGeneratedSlotEntries,
 } from '../shared.mts';
@@ -72,31 +76,102 @@ const expectFailure = <A, E, R>(self: Effect.Effect<A, E, R>, check: (cause: unk
       }),
   });
 
-const visitTree = (
-  root: string,
-  snapshot: Record<string, string>,
-  directory: string,
-): Effect.Effect<void, unknown> =>
-  Effect.gen(function* scenario9() {
-    const entries = yield* Effect.promise(() => readdir(directory, { withFileTypes: true }));
-    yield* Effect.all(
-      entries
-        .toSorted((left, right) => left.name.localeCompare(right.name))
-        .map(
-          Effect.fn(function* scenario10(entry) {
-            const entryPath = path.join(directory, entry.name);
-            if (entry.isDirectory()) {
-              yield* visitTree(root, snapshot, entryPath);
-            } else if (entry.isFile()) {
-              snapshot[path.relative(root, entryPath)] = yield* Effect.promise(() =>
-                readFile(entryPath, 'utf-8'),
-              );
-            }
-          }),
-        ),
-      { concurrency: 'unbounded' },
-    );
-  });
+class FirstScaffoldTestError extends Schema.TaggedError<FirstScaffoldTestError>()(
+  'FirstScaffoldTestError',
+  { cause: Schema.optionalKey(Schema.Unknown), message: Schema.String },
+) {}
+
+const firstScaffoldErrors = createScaffoldErrorTools(
+  FirstScaffoldTestError,
+  Schema.is(FirstScaffoldTestError),
+  'first update failed',
+);
+const secondScaffoldErrors = createScaffoldErrorTools(
+  ScaffoldFailure,
+  Schema.is(ScaffoldFailure),
+  'second update failed',
+);
+
+it.effect(
+  'scaffold error tools preserve success and own failure identity',
+  Effect.fn(function* ownScaffoldFailure() {
+    const value = { unchanged: true };
+    expect(yield* firstScaffoldErrors.trySync(() => value)).toBe(value);
+    const own = firstScaffoldErrors.scaffoldError('own failure');
+    const failure = yield* firstScaffoldErrors
+      .trySync(() => {
+        throw own;
+      })
+      .pipe(Effect.flip);
+    expect(failure).toBe(own);
+  }),
+);
+
+it('scaffold error tools omit undefined causes and retain defined causes', () => {
+  expect(Object.hasOwn(firstScaffoldErrors.scaffoldError('absent'), 'cause')).toBe(false);
+  const absentCause = firstScaffoldErrors.scaffoldError('absent').cause;
+  expect(Object.hasOwn(firstScaffoldErrors.scaffoldError('undefined', absentCause), 'cause')).toBe(
+    false,
+  );
+  for (const cause of [null, false, 0, '', { detail: 'retained' }]) {
+    const failure = firstScaffoldErrors.scaffoldError('defined', cause);
+    expect(Object.hasOwn(failure, 'cause')).toBe(true);
+    expect(failure.cause).toBe(cause);
+  }
+});
+
+it.effect(
+  'scaffold error tools normalize foreign errors without accepting another owner',
+  Effect.fn(function* foreignScaffoldFailure() {
+    const foreign = secondScaffoldErrors.scaffoldError('foreign owner');
+    expect(Schema.is(FirstScaffoldTestError)(foreign)).toBe(false);
+    expect(Schema.is(ScaffoldFailure)(foreign)).toBe(true);
+    const emptyMessageError = new Error('initial');
+    emptyMessageError.message = '';
+    yield* Effect.gen(function* foreignScaffoldErrors() {
+      for (const cause of [new Error('foreign error'), emptyMessageError, foreign]) {
+        const failure = yield* firstScaffoldErrors
+          .trySync(() => {
+            throw cause;
+          })
+          .pipe(Effect.flip);
+        expect(failure).not.toBe(cause);
+        expect(Schema.is(FirstScaffoldTestError)(failure)).toBe(true);
+        expect(Schema.is(ScaffoldFailure)(failure)).toBe(false);
+        expect(failure.message).toBe(cause.message);
+        expect(failure.cause).toBe(cause);
+      }
+    });
+  }),
+);
+
+for (const [index, cause] of [
+  undefined,
+  null,
+  'thrown string',
+  { message: 'not an Error' },
+].entries()) {
+  it.effect(
+    `scaffold error tools use owner fallback for non-error ${index}`,
+    Effect.fn(function* nonErrorScaffoldFailure() {
+      const operation = () => {
+        const iterator = (function* thrownValue() {
+          yield cause;
+        })();
+        iterator.next();
+        return iterator.throw(cause);
+      };
+      const first = yield* firstScaffoldErrors.trySync(operation).pipe(Effect.flip);
+      const second = yield* secondScaffoldErrors.trySync(operation).pipe(Effect.flip);
+      expect(first.message).toBe('first update failed');
+      expect(second.message).toBe('second update failed');
+      for (const failure of [first, second]) {
+        expect(failure.cause).toBe(cause);
+        expect(Object.hasOwn(failure, 'cause')).toBe(cause !== undefined);
+      }
+    }),
+  );
+}
 
 interface Fixture {
   readonly root: string;
@@ -487,25 +562,14 @@ const makeGatewayKey = (
     };
   });
 
-const writeFixtureFile = (
-  root: string,
-  relativePath: string,
-  content: string,
-): Effect.Effect<void, unknown> =>
-  Effect.gen(function* scenario2() {
-    const filePath = path.join(root, relativePath);
-    yield* Effect.promise(() => mkdir(path.dirname(filePath), { recursive: true }));
-    yield* Effect.promise(() => writeFile(filePath, content, 'utf-8'));
-  });
-
 const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<void, unknown> =>
   Effect.gen(function* mergedScenario15() {
-    yield* writeFixtureFile(
+    yield* write(
       root,
       `verticals/${vertical.slug}/module-federation.config.ts`,
       'export default { exposes: {} };\n',
     );
-    yield* writeFixtureFile(
+    yield* write(
       root,
       `verticals/${vertical.slug}/tsconfig.json`,
       json({
@@ -514,7 +578,7 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
         references: [],
       }),
     );
-    yield* writeFixtureFile(
+    yield* write(
       root,
       `verticals/${vertical.slug}/package.json`,
       json({
@@ -541,7 +605,7 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
         version: '0.1.0',
       }),
     );
-    yield* writeFixtureFile(
+    yield* write(
       root,
       `verticals/${vertical.slug}/api/index.ts`,
       `import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
@@ -558,7 +622,7 @@ const layer = HttpApiBuilder.layer(fixtureApi).pipe(
 export default defineEffectBff({ api: fixtureApi, layer });
 `,
     );
-    yield* writeFixtureFile(
+    yield* write(
       root,
       `verticals/${vertical.slug}/shared/api.ts`,
       `import { Schema } from 'effect';
@@ -576,7 +640,7 @@ export const fixtureApi = HttpApi.make('FixtureApi').add(
     yield* Effect.all(
       ['cs', 'en'].map(
         Effect.fn(function* mergedScenario14(locale) {
-          return yield* writeFixtureFile(
+          return yield* write(
             root,
             `verticals/${vertical.slug}/locales/${locale}/${vertical.namespace}.json`,
             json({
@@ -595,7 +659,7 @@ export const fixtureApi = HttpApi.make('FixtureApi').add(
         index === 0 ? segment : `${segment[0]?.toUpperCase() ?? ''}${segment.slice(1)}`,
       )
       .join('')}I18nResources`;
-    yield* writeFixtureFile(
+    yield* write(
       root,
       `verticals/${vertical.slug}/src/i18n/resources.ts`,
       `import csResource from '../../locales/cs/${vertical.namespace}.json';
@@ -624,7 +688,7 @@ export const ${resourcesName} = {
 } as const;
 `,
     );
-    yield* writeFixtureFile(
+    yield* write(
       root,
       `verticals/${vertical.slug}/src/routes/ultramodern-route-head.tsx`,
       'export const UltramodernRouteHead = () => null;\n',
@@ -634,13 +698,13 @@ export const ${resourcesName} = {
 const createFixture = (): Effect.Effect<Fixture, unknown> =>
   Effect.gen(function* scenario5() {
     const root = yield* Effect.promise(() => mkdtemp(path.join(tmpdir(), 'ontos-scaffolding-')));
-    yield* writeFixtureFile(root, rootPackageFile, json({ name: 'fixture', private: true }));
-    yield* writeFixtureFile(
+    yield* write(root, rootPackageFile, json({ name: 'fixture', private: true }));
+    yield* write(
       root,
       coreRuntimeIndexFile,
       `export const existingCoreSurface = true;\n\n// <generated-core-action-exports>\n// </generated-core-action-exports>\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
     );
-    yield* writeFixtureFile(
+    yield* write(
       root,
       coreActionCatalogFile,
       `export const existingCatalogSurface = true;
@@ -654,8 +718,8 @@ export const coreActionCatalog = [
 ];
 `,
     );
-    yield* writeFixtureFile(root, shellSentinelFile, 'export const shell = true;\n');
-    yield* writeFixtureFile(
+    yield* write(root, shellSentinelFile, 'export const shell = true;\n');
+    yield* write(
       root,
       shellVerticalClientsFile,
       `export const ultramodernVerticalClients = [
@@ -668,7 +732,7 @@ export const coreActionCatalog = [
     yield* createVertical(root, billingVertical);
     yield* createVertical(root, hrVertical);
     yield* createVertical(root, contactsVertical);
-    yield* writeFixtureFile(
+    yield* write(
       root,
       topologyFile,
       json({
@@ -715,17 +779,18 @@ const withFixture = (
     );
   });
 
-const snapshotTree = Effect.fn(function* scenario8(root: string) {
-  const snapshot: Record<string, string> = {};
-
-  yield* visitTree(root, snapshot, root);
-  return snapshot;
-});
-
 const readFixtureFile = (root: string, relativePath: string): Effect.Effect<string, unknown> =>
   Effect.gen(function* scenario11() {
     return yield* Effect.promise(() => readFile(path.join(root, relativePath), 'utf-8'));
   });
+
+const contextPermissionCommands = new Set<ScaffoldCommand>([
+  scaffoldCommand.microverticalPage,
+  scaffoldCommand.moduleApi,
+  scaffoldCommand.publicComponent,
+  'report',
+  scaffoldCommand.searchProvider,
+]);
 
 const run = Effect.fn(function* scenario12(
   fixture: Fixture,
@@ -755,13 +820,7 @@ const run = Effect.fn(function* scenario12(
           ];
         } else if (command === scaffoldCommand.outboxWorker) {
           flags = [...flags, scaffoldFlag.authorization, 'owner_local_background'];
-        } else if (
-          command === scaffoldCommand.microverticalPage ||
-          command === scaffoldCommand.moduleApi ||
-          command === scaffoldCommand.publicComponent ||
-          command === 'report' ||
-          command === scaffoldCommand.searchProvider
-        ) {
+        } else if (contextPermissionCommands.has(command)) {
           flags = [
             ...flags,
             scaffoldFlag.authorization,
@@ -778,6 +837,20 @@ const run = Effect.fn(function* scenario12(
       workspaceRoot: fixture.root,
     },
   ).pipe(Effect.provide(NodeServices.layer));
+});
+
+/** Refusal must preserve the fixture byte-for-byte. */
+const assertScaffoldRefused = Effect.fn(function* assertScaffoldRefused(
+  fixture: Fixture,
+  command: ScaffoldCommand,
+  commandArguments: readonly string[],
+  expected: RegExp,
+) {
+  const before = yield* snapshotTree(fixture.root);
+  yield* expectFailure(run(fixture, command, commandArguments), (error) =>
+    expect(String(error)).toMatch(expected),
+  );
+  expect(yield* snapshotTree(fixture.root)).toEqual(before);
 });
 
 const addInventoryItemResourceType = (fixture: Fixture): Effect.Effect<void, unknown> =>
@@ -955,9 +1028,10 @@ it.live(
             provider.replace('// @generated by OntOS Codesmith ', '// custom '),
           ),
         );
-        const beforeRejectedUpdate = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.searchProviderAccess, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.searchProviderAccess,
+          [
             scaffoldFlag.vertical,
             inventorySlug,
             '--name',
@@ -968,10 +1042,9 @@ it.live(
             'resource_permission',
             scaffoldFlag.requestFilters,
             'includeArchived,role',
-          ]),
-          (error) => expect(String(error)).toMatch(/Codesmith-owned provider/u),
+          ],
+          /Codesmith-owned provider/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRejectedUpdate);
       }),
     );
   }),
@@ -1040,33 +1113,11 @@ it.live(
           scaffoldFlag.resource,
           'item',
         ]);
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules/@app'), { recursive: true }),
-        );
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules/@modern-js'), { recursive: true }),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, sharedContractsPackagePath),
-            path.join(fixture.root, sharedContractsNodeModulePath),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, effectNodeModulePath),
-            path.join(fixture.root, effectNodeModulePath),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, pluginBffNodeModulePath),
-            path.join(fixture.root, pluginBffNodeModulePath),
-            'dir',
-          ),
-        );
+        yield* linkFixtureDependencies(fixture.root, appRoot, {
+          '@app/shared-contracts': sharedContractsPackagePath,
+          '@modern-js/plugin-bff': pluginBffNodeModulePath,
+          effect: effectNodeModulePath,
+        });
         const result = spawnSync(
           process.execPath,
           [
@@ -1212,6 +1263,96 @@ console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gateway
   }),
 );
 
+const compactGovernedSource = (source: string): string =>
+  source.replaceAll(/\s+/gu, '').replaceAll(/,(?=[)}\]])/gu, '');
+const inventorySharedApiFile = 'verticals/inventory-stock/shared/api.ts';
+
+it.live(
+  'all live Party read and search transports match actual scaffold output',
+  Effect.fn(function* livePartyTransports() {
+    yield* withFixture(
+      Effect.fn(function* generatedTransportFixture(fixture) {
+        yield* addInventoryItemResourceType(fixture);
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ]);
+        yield* run(fixture, scaffoldCommand.searchProvider, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.inventoryItems,
+          scaffoldFlag.resource,
+          'item',
+        ]);
+        const owner = path.join(appRoot, 'verticals/party-registry');
+        const ownerFiles = yield* Effect.promise(() => readdir(path.join(owner, 'api')));
+        const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
+        expect(serverNames.length).toBe(18);
+        yield* Effect.all(
+          serverNames.map(
+            Effect.fn(function* compareLiveTransport(serverName) {
+              const search = serverName.endsWith('-search-server.ts');
+              const suffix = search ? 'search' : 'read';
+              const name = serverName.slice(0, -`-${suffix}-server.ts`.length);
+              const camel = name.replaceAll(/-(?<letter>[a-z])/gu, (_, letter: string) =>
+                letter.toUpperCase(),
+              );
+              const pascal = `${camel.charAt(0).toUpperCase()}${camel.slice(1)}`;
+              const fixtureNameValue = search ? 'inventory-items' : 'resource-detail';
+              const fixtureCamel = search ? 'inventoryItems' : 'resourceDetail';
+              const fixturePascal = search ? 'InventoryItems' : 'ResourceDetail';
+              const clientName = `${name}${search ? '-search' : ''}-client.ts`;
+              const normalize = (source: string): string =>
+                compactGovernedSource(
+                  source
+                    .replaceAll(`/${name}`, `/${fixtureNameValue}`)
+                    .replaceAll(pascal, fixturePascal)
+                    .replaceAll(camel, fixtureCamel)
+                    .replaceAll(
+                      `${fixturePascal}SearchClientOptions`,
+                      `${fixturePascal}ClientOptions`,
+                    )
+                    .replaceAll('partyRegistryApi', 'fixtureApi')
+                    .replaceAll('/party-registry-api', '/inventory-stock-api'),
+                );
+              const expectedServer = yield* readFixtureFile(
+                fixture.root,
+                `verticals/inventory-stock/api/${fixtureNameValue}-${suffix}-server.ts`,
+              );
+              const expectedClient = yield* readFixtureFile(
+                fixture.root,
+                `verticals/inventory-stock/src/api/${fixtureNameValue}${search ? '-search' : ''}-client.ts`,
+              );
+              expect(
+                normalize(
+                  yield* Effect.promise(() =>
+                    readFile(path.join(owner, 'api', serverName), 'utf-8'),
+                  ),
+                ),
+                serverName,
+              ).toBe(compactGovernedSource(expectedServer));
+              expect(
+                normalize(
+                  yield* Effect.promise(() =>
+                    readFile(path.join(owner, 'src/api', clientName), 'utf-8'),
+                  ),
+                ),
+                clientName,
+              ).toBe(compactGovernedSource(expectedClient));
+            }),
+          ),
+          { concurrency: 'unbounded' },
+        );
+        const sharedApi = yield* readFixtureFile(fixture.root, inventorySharedApiFile);
+        expect(sharedApi).not.toMatch(/governedHttpApi/u);
+      }),
+    );
+  }),
+);
+
 it.live(
   'the migrated Party governed API slot accepts future generated additions',
   Effect.fn(function* mergedScenario22() {
@@ -1228,6 +1369,100 @@ it.live(
     expect(next).toMatch(/\.addHttpApi\(FutureReadApi\)/u);
   }),
 );
+
+const requiredGeneratedSlot = (source: string, start: string, end: string): string => {
+  const slot = new RegExp(`${start}[\\s\\S]*?${end}`, 'u').exec(source)?.[0];
+  if (slot === undefined) {
+    expect.unreachable(`expected the generated slot between ${start} and ${end}`);
+  }
+  return slot;
+};
+
+/**
+ * Moving a generated composition slot into a string literal leaves the real binding missing, so
+ * the generator must refuse rather than accept the relocated copy as the composition point.
+ */
+const assertRelocatedSlotRefused = Effect.fn(function* assertRelocatedSlotRefused(
+  fixture: Fixture,
+  file: string,
+  validSource: string,
+  [slotStart, slotEnd]: readonly [string, string],
+) {
+  const slot = requiredGeneratedSlot(validSource, slotStart, slotEnd);
+  yield* Effect.promise(() =>
+    writeFile(
+      file,
+      `${validSource.replace(slot, '')}\nconst relocatedSlot = String.raw\`${slot}\`;\n`,
+      'utf-8',
+    ),
+  );
+  yield* assertScaffoldRefused(
+    fixture,
+    scaffoldCommand.moduleApi,
+    [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
+    /composition slots are not bound/u,
+  );
+  yield* Effect.promise(() => writeFile(file, validSource, 'utf-8'));
+});
+const assertGovernedReadClients = (clients: readonly string[]): void => {
+  for (const client of clients) {
+    expect(client).toMatch(/from '@app\/shared-contracts\/client-runtime'/u);
+    expect(client).toMatch(/makeGovernedEffectBffClient\(/u);
+    expect(client).toMatch(/defaultApiPrefix: '\/inventory-stock-api'/u);
+    expect(client).toMatch(/operationGateway\.invoke\(\(credential\) =>/u);
+    expect(client).toMatch(/WithAuthorization/u);
+    expect(client).toMatch(
+      /credential,\s+defaultApiPrefix: '\/inventory-stock-api',\s+requestCorrelation,/u,
+    );
+    expect(client).not.toMatch(
+      /makeEffectHttpApiClient|Context\.Reference|HttpClientRequest|HttpClient\.mapRequest/u,
+    );
+  }
+};
+const assertGovernedReadProviders = (providers: readonly string[]): void => {
+  for (const provider of providers) {
+    expect(provider).toMatch(/defineRead\(/u);
+    expect(provider).toMatch(/legalEntityScope: 'required'/u);
+    expect(provider).toMatch(/permissionTarget: 'module'/u);
+    expect(provider).not.toMatch(/CoreDatabase|ScopedTransactionExecutor|from 'pg'/u);
+  }
+};
+const assertGovernedReadServers = (servers: readonly string[]): void => {
+  for (const server of servers) {
+    expect(server).toMatch(/makeGovernedReadHttpHandler\(\{/u);
+    expect(server).toMatch(/authenticatePrincipal: authenticateOperationPrincipal/u);
+    expect(server).toMatch(/registration: \w+Read/u);
+    expect(server).not.toMatch(/ReadRuntime|Match\.tags|catchTags|bearerChallenge/u);
+    expect(server).not.toMatch(/tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
+  }
+};
+const assertComposedGovernedReads = (composedApi: string, composedHandlers: string): void => {
+  for (const [contract, layer] of [
+    ['InventoryItemsSearchApi', 'inventoryItemsReadApiLive'],
+    ['ResourceDetailApi', 'resourceDetailReadApiLive'],
+    ['StockLevelsReportApi', 'stockLevelsReadApiLive'],
+  ] as const) {
+    expect(composedApi).toMatch(new RegExp(`import \\{ ${contract} \\}`, 'u'));
+    expect(composedApi).toMatch(new RegExp(`\\.addHttpApi\\(${contract}\\)`, 'u'));
+    expect(composedHandlers).toMatch(new RegExp(`import \\{ ${layer} \\}`, 'u'));
+    expect(composedHandlers).toMatch(
+      new RegExp(
+        `${layer}\\.pipe\\([\\s\\S]*?GovernedReadLayer\\.provide\\(governedReadRuntimeLive\\)`,
+        'u',
+      ),
+    );
+  }
+};
+const assertGovernedProblemDetailsContracts = (contracts: readonly string[]): void => {
+  for (const contract of contracts) {
+    expect(contract).toMatch(
+      /import \{\s*makeProblemDetailsSchema,\s*makeRetryableProblemDetailsSchema,?\s*\} from '@app\/shared-contracts\/problem-details';/u,
+    );
+    expect(contract).toMatch(/makeProblemDetailsSchema\([^)]*,\s*409,?\s*\)/u);
+    expect(contract).toMatch(/makeRetryableProblemDetailsSchema\([^)]*,\s*503,?\s*\)/u);
+    expect(contract).not.toMatch(/application\/problem\+json|HttpApiSchema/u);
+  }
+};
 
 it.live(
   'governed contribution generators patch owner contracts and lazy adapters atomically',
@@ -1353,66 +1588,22 @@ it.live(
         expect(moduleApiContract).toMatch(/HttpApiGroup\.make\('resourceDetail'\)/u);
         expect(secondModuleApiContract).toMatch(/HttpApiGroup\.make\('resourceHistory'\)/u);
         expect(secondModuleApiClient).toMatch(/client\.resourceHistory\.execute\(/u);
-        for (const client of [moduleApiClient, searchClient, reportClient]) {
-          expect(client).toMatch(/from '@app\/shared-contracts\/client-runtime'/u);
-          expect(client).toMatch(/return makeEffectBffClient\(/u);
-          expect(client).toMatch(/defaultApiPrefix: '\/inventory-stock-api'/u);
-          expect(client).toMatch(/operationGateway\.invoke\(\(credential\) =>/u);
-          expect(client).toMatch(/WithAuthorization/u);
-          expect(client).toMatch(
-            /authorization: Redacted\.value\(credential\),\s+'x-correlation-id': requestCorrelation/u,
-          );
-          expect(client).not.toMatch(
-            /makeEffectHttpApiClient|Context\.Reference|HttpClientRequest|HttpClient\.mapRequest/u,
-          );
-        }
+        assertGovernedReadClients([moduleApiClient, searchClient, reportClient]);
         expect(searchClient).not.toMatch(/\.provider\.ts|import\(/u);
         expect(reportClient).not.toMatch(/\.provider\.ts|import\(/u);
-        for (const provider of [searchProvider, reportProvider]) {
-          expect(provider).toMatch(/defineRead\(/u);
-          expect(provider).toMatch(/legalEntityScope: 'required'/u);
-          expect(provider).toMatch(/permissionTarget: 'module'/u);
-          expect(provider).not.toMatch(/CoreDatabase|ScopedTransactionExecutor|from 'pg'/u);
-        }
+        assertGovernedReadProviders([searchProvider, reportProvider]);
         expect(searchProvider).toMatch(/result\.map\(\(\{ ref \}\) => ref\)/u);
         expect(moduleApiRead).toMatch(/defineRead\(/u);
         expect(moduleApiRead).toMatch(/legalEntityScope: 'required'/u);
-        for (const server of [moduleApiServer, searchServer, reportServer]) {
-          expect(server).toMatch(/makeGovernedReadHttpHandler\(\{/u);
-          expect(server).toMatch(/authenticatePrincipal: authenticateOperationPrincipal/u);
-          expect(server).toMatch(/registration: \w+Read/u);
-          expect(server).not.toMatch(/ReadRuntime|Match\.tags|catchTags|bearerChallenge/u);
-          expect(server).not.toMatch(/tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
-        }
+        assertGovernedReadServers([moduleApiServer, searchServer, reportServer]);
         expect(operationBoundary).toMatch(/export const authenticateOperationPrincipal/u);
-        for (const [contract, layer] of [
-          ['InventoryItemsSearchApi', 'inventoryItemsReadApiLive'],
-          ['ResourceDetailApi', 'resourceDetailReadApiLive'],
-          ['StockLevelsReportApi', 'stockLevelsReadApiLive'],
-        ] as const) {
-          expect(composedApi).toMatch(new RegExp(`import \\{ ${contract} \\}`, 'u'));
-          expect(composedApi).toMatch(new RegExp(`\\.addHttpApi\\(${contract}\\)`, 'u'));
-          expect(composedHandlers).toMatch(new RegExp(`import \\{ ${layer} \\}`, 'u'));
-          expect(composedHandlers).toMatch(
-            new RegExp(
-              `${layer}\\.pipe\\([\\s\\S]*?GovernedReadLayer\\.provide\\(governedReadRuntimeLive\\)`,
-              'u',
-            ),
-          );
-        }
+        assertComposedGovernedReads(composedApi, composedHandlers);
         const searchContract = yield* readFixtureFile(fixture.root, inventorySearchContractFile);
         const reportContract = yield* readFixtureFile(
           fixture.root,
           'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
         );
-        for (const contract of [moduleApiContract, searchContract, reportContract]) {
-          expect(contract).toMatch(
-            /import \{\s*makeProblemDetailsSchema,\s*makeRetryableProblemDetailsSchema,?\s*\} from '@app\/shared-contracts\/problem-details';/u,
-          );
-          expect(contract).toMatch(/makeProblemDetailsSchema\([^)]*,\s*409,?\s*\)/u);
-          expect(contract).toMatch(/makeRetryableProblemDetailsSchema\([^)]*,\s*503,?\s*\)/u);
-          expect(contract).not.toMatch(/application\/problem\+json|HttpApiSchema/u);
-        }
+        assertGovernedProblemDetailsContracts([moduleApiContract, searchContract, reportContract]);
         expect(searchContract).toMatch(
           /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
         );
@@ -1423,43 +1614,13 @@ it.live(
         );
         expect(searchContract).toMatch(/HttpApiGroup\.make\('inventoryItemsSearch'\)/u);
 
-        yield* Effect.promise(() =>
-          mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true }),
-        );
-        yield* Effect.promise(() =>
-          mkdir(path.dirname(path.join(fixture.root, pluginBffNodeModulePath)), {
-            recursive: true,
-          }),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime'),
-            path.join(fixture.root, 'node_modules/@app/core-runtime'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, sharedContractsPackagePath),
-            path.join(fixture.root, sharedContractsNodeModulePath),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, effectNodeModulePath),
-            path.join(fixture.root, effectNodeModulePath),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, pluginBffNodeModulePath),
-            path.join(fixture.root, pluginBffNodeModulePath),
-            'dir',
-          ),
-        );
-        yield* writeFixtureFile(
+        yield* linkFixtureDependencies(fixture.root, appRoot, {
+          '@app/core-runtime': 'packages/core-runtime',
+          '@app/shared-contracts': sharedContractsPackagePath,
+          '@modern-js/plugin-bff': pluginBffNodeModulePath,
+          effect: effectNodeModulePath,
+        });
+        yield* write(
           fixture.root,
           inventoryActionPrincipalFile,
           `import { Effect, Layer, Redacted } from 'effect';
@@ -1479,7 +1640,7 @@ export const authenticateOperationPrincipal = (authorization, problems) =>
     : Effect.fail(problems.authentication());
 `,
         );
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'execute-generated-governed-reads.mts',
           `import { ReadRuntime } from '@app/core-runtime';
@@ -1495,7 +1656,7 @@ import { inventoryItemsReadApiLive } from './verticals/inventory-stock/api/inven
 import { inventorySuppliersReadApiLive } from './verticals/inventory-stock/api/inventory-suppliers-search-server.ts';
 import { stockLevelsReadApiLive } from './verticals/inventory-stock/api/stock-levels-report-server.ts';
 import generatedRuntime from './verticals/inventory-stock/api/index.ts';
-import { governedHttpApi } from './verticals/inventory-stock/shared/api.ts';
+import { fixtureApi } from './verticals/inventory-stock/shared/api.ts';
 import { NodeRuntime } from '${pathToFileURL(require.resolve('@effect/platform-node')).href}';
 Effect.gen(function* generatedHttpProof() {
 const calls = [];
@@ -1509,7 +1670,7 @@ const readRuntime = {
     }),
 };
 const readLayer = Layer.succeed(ReadRuntime, readRuntime);
-const fixtureHandlersLive = HttpApiBuilder.group(governedHttpApi, 'fixture', (handlers) =>
+const fixtureHandlersLive = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
   handlers.handle('readiness', () => Effect.succeed({ ok: true })),
 );
 const handlers = Layer.mergeAll(
@@ -1521,8 +1682,8 @@ const handlers = Layer.mergeAll(
   stockLevelsReadApiLive,
 ).pipe(Layer.provide(readLayer));
 const runtime = defineEffectBff({
-  api: governedHttpApi,
-  layer: HttpApiBuilder.layer(governedHttpApi).pipe(Layer.provide(handlers)),
+  api: fixtureApi,
+  layer: HttpApiBuilder.layer(fixtureApi).pipe(Layer.provide(handlers)),
 });
 const server = runtime.createHandler();
 const generatedServer = generatedRuntime.createHandler();
@@ -1594,7 +1755,7 @@ console.log(
             },
           },
         );
-        expect(execution.status, execution.stderr || execution.error?.message).toBe(0);
+        expect(execution.status, execution.stderr).toBe(0);
         const expectedGeneratedPrincipal = {
           authContextRef: 'job:generated-fixture:run:governed-read',
           authMethod: 'system',
@@ -1602,7 +1763,11 @@ console.log(
           tenantId: '00000000-0000-4000-8000-000000000002',
         };
         const expectedGeneratedTransport = { correlationId: 'generated-correlation' };
-        expect(JSON.parse(execution.stdout.trim().split('\n').at(-1) ?? '')).toEqual({
+        const lastGeneratedLine = execution.stdout.trim().split('\n').at(-1);
+        if (lastGeneratedLine === undefined) {
+          expect.unreachable('expected generated runtime output');
+        }
+        expect(JSON.parse(lastGeneratedLine)).toEqual({
           calls: [
             {
               input: {},
@@ -1642,7 +1807,7 @@ console.log(
 
         // Restore the generated contract after the execution-only authentication stub. Reruns
         // must validate the real owned boundary, not silently accept handwritten fixture code.
-        yield* writeFixtureFile(fixture.root, inventoryActionPrincipalFile, operationBoundary);
+        yield* write(fixture.root, inventoryActionPrincipalFile, operationBoundary);
         const packageJson = yield* decodeFixturePackage(
           yield* readFixtureFile(fixture.root, inventoryPackageFile),
         );
@@ -1682,11 +1847,7 @@ console.log(
           adaptedGeneratedArtifacts.map(
             Effect.fn(function* mergedScenario27([relativePath, ownerAddition]) {
               const generated = yield* readFixtureFile(fixture.root, relativePath);
-              yield* writeFixtureFile(
-                fixture.root,
-                relativePath,
-                `${generated}\n${ownerAddition}\n`,
-              );
+              yield* write(fixture.root, relativePath, `${generated}\n${ownerAddition}\n`);
             }),
           ),
           { concurrency: 'unbounded' },
@@ -1695,7 +1856,7 @@ console.log(
         const adaptedManifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         expect(adaptedManifest).toMatch(/dimensions: \[\]/u);
         expect(adaptedManifest).toMatch(/label: 'Stock Levels'/u);
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryManifestFile,
           adaptedManifest
@@ -1787,7 +1948,7 @@ console.log(
           );
           yield* Effect.promise(() => writeFile(serverPath, ownedServer, 'utf-8'));
         }
-        const sharedApiPath = path.join(fixture.root, 'verticals/inventory-stock/shared/api.ts');
+        const sharedApiPath = path.join(fixture.root, inventorySharedApiFile);
         const validSharedApi = yield* Effect.promise(() => readFile(sharedApiPath, 'utf-8'));
         yield* Effect.promise(() =>
           writeFile(
@@ -1799,48 +1960,18 @@ console.log(
             'utf-8',
           ),
         );
-        const beforeInvalidSharedSlot = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.moduleApi, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--name',
-            fixtureName.resourceDetail,
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(
-              /composition slots are not bound|unsupported developer content/u,
-            ),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
+          /composition slots are not bound|unsupported developer content/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeInvalidSharedSlot);
         yield* Effect.promise(() => writeFile(sharedApiPath, validSharedApi, 'utf-8'));
 
-        const governedApiSlot = new RegExp(
-          `${GOVERNED_HTTP_API_ADDITION_SLOT_START}[\\s\\S]*?${GOVERNED_HTTP_API_ADDITION_SLOT_END}`,
-          'u',
-        ).exec(validSharedApi)?.[0];
-        if (governedApiSlot === undefined) {
-          expect.unreachable('expected generated governed API slot');
-        }
-        yield* Effect.promise(() =>
-          writeFile(
-            sharedApiPath,
-            `${validSharedApi.replace(governedApiSlot, '')}\nconst relocatedGovernedApiSlot = String.raw\`${governedApiSlot}\`;\n`,
-            'utf-8',
-          ),
-        );
-        const beforeRelocatedSharedSlot = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.moduleApi, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--name',
-            fixtureName.resourceDetail,
-          ]),
-          (error) => expect(String(error)).toMatch(/composition slots are not bound/u),
-        );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRelocatedSharedSlot);
-        yield* Effect.promise(() => writeFile(sharedApiPath, validSharedApi, 'utf-8'));
+        yield* assertRelocatedSlotRefused(fixture, sharedApiPath, validSharedApi, [
+          GOVERNED_HTTP_API_ADDITION_SLOT_START,
+          GOVERNED_HTTP_API_ADDITION_SLOT_END,
+        ]);
 
         const registrationPath = path.join(
           fixture.root,
@@ -1861,17 +1992,12 @@ console.log(
           ),
         ]) {
           yield* Effect.promise(() => writeFile(registrationPath, invalidRegistration, 'utf-8'));
-          const beforeWrongCategoryRegistration = yield* snapshotTree(fixture.root);
-          yield* expectFailure(
-            run(fixture, scaffoldCommand.moduleApi, [
-              scaffoldFlag.vertical,
-              inventorySlug,
-              '--name',
-              fixtureName.resourceDetail,
-            ]),
-            (error) => expect(String(error)).toMatch(/wrong contribution category/u),
+          yield* assertScaffoldRefused(
+            fixture,
+            scaffoldCommand.moduleApi,
+            [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
+            /wrong contribution category/u,
           );
-          expect(yield* snapshotTree(fixture.root)).toEqual(beforeWrongCategoryRegistration);
         }
         yield* Effect.promise(() => writeFile(registrationPath, validRegistration, 'utf-8'));
 
@@ -1887,44 +2013,17 @@ console.log(
             'utf-8',
           ),
         );
-        const beforeDriftedHandlerSlot = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.moduleApi, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--name',
-            fixtureName.resourceDetail,
-          ]),
-          (error) => expect(String(error)).toMatch(/contains drift/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
+          /contains drift/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeDriftedHandlerSlot);
         yield* Effect.promise(() => writeFile(handlerRootPath, validHandlerRoot, 'utf-8'));
-        const handlerLayerSlot = new RegExp(
-          `${GOVERNED_HTTP_HANDLER_LAYER_SLOT_START}[\\s\\S]*?${GOVERNED_HTTP_HANDLER_LAYER_SLOT_END}`,
-          'u',
-        ).exec(validHandlerRoot)?.[0];
-        if (handlerLayerSlot === undefined) {
-          expect.unreachable('expected generated governed handler slot');
-        }
-        yield* Effect.promise(() =>
-          writeFile(
-            handlerRootPath,
-            `${validHandlerRoot.replace(handlerLayerSlot, '')}\nconst relocatedHandlerSlot = String.raw\`${handlerLayerSlot}\`;\n`,
-            'utf-8',
-          ),
-        );
-        const beforeRelocatedHandlerSlot = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.moduleApi, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--name',
-            fixtureName.resourceDetail,
-          ]),
-          (error) => expect(String(error)).toMatch(/composition slots are not bound/u),
-        );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRelocatedHandlerSlot);
-        yield* Effect.promise(() => writeFile(handlerRootPath, validHandlerRoot, 'utf-8'));
+        yield* assertRelocatedSlotRefused(fixture, handlerRootPath, validHandlerRoot, [
+          GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+          GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
+        ]);
         yield* expectFailure(
           run(fixture, scaffoldCommand.moduleApi, [
             scaffoldFlag.vertical,
@@ -1969,17 +2068,12 @@ void ignored;
         yield* Effect.promise(() =>
           writeFile(billingFederationPath, 'export default {};\n', 'utf-8'),
         );
-        const beforeUnpatchable = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.publicComponent, [
-            scaffoldFlag.vertical,
-            'billing',
-            '--name',
-            'billing-details',
-          ]),
-          (error) => expect(String(error)).toMatch(/exposes object is missing/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.publicComponent,
+          [scaffoldFlag.vertical, 'billing', '--name', 'billing-details'],
+          /exposes object is missing/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeUnpatchable);
       }),
     );
   }),
@@ -2002,19 +2096,13 @@ it.live(
           invalidApiContract: string,
         ): Effect.Effect<void, unknown> =>
           Effect.gen(function* mergedScenario32() {
-            yield* writeFixtureFile(
-              fixture.root,
-              inventoryModuleApiContractFile,
-              invalidApiContract,
-            );
-            const beforeInvalidContractRerun = yield* snapshotTree(fixture.root);
-            const businessFileFailure = yield* Effect.flip(
-              run(fixture, scaffoldCommand.moduleApi, scaffoldArguments),
-            );
-            expect(String(businessFileFailure)).toMatch(
+            yield* write(fixture.root, inventoryModuleApiContractFile, invalidApiContract);
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.moduleApi,
+              scaffoldArguments,
               /refusing to overwrite existing business file/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(beforeInvalidContractRerun);
           });
         yield* assertInvalidApiContractRerunRejected(
           apiContract.replace('/reads/resource-detail', '/reads/wrong'),
@@ -2031,10 +2119,10 @@ it.live(
             ".add(HttpApiGroup.make('resourceDetail'));\n",
           ),
         );
-        yield* writeFixtureFile(fixture.root, inventoryModuleApiContractFile, apiContract);
+        yield* write(fixture.root, inventoryModuleApiContractFile, apiContract);
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         const ownerImport = "import { ResourceDetailApi } from './shared/apis/resource-detail.ts';";
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryManifestFile,
           `${manifest.replace(ownerImport, '')}\n/* ${ownerImport} */\n`,
@@ -2048,15 +2136,16 @@ it.live(
         const registration = yield* readFixtureFile(fixture.root, inventoryRegistrationFile);
         const entry = "'resource-detail': () => import('./src/api/resource-detail-client.ts'),";
         const corrupted = registration.replace(entry, `${entry}\n${entry}`);
-        yield* writeFixtureFile(fixture.root, inventoryRegistrationFile, corrupted);
-        const beforeRejectedRerun = yield* snapshotTree(fixture.root);
-        yield* expectFailure(run(fixture, scaffoldCommand.moduleApi, scaffoldArguments), (error) =>
-          expect(String(error)).toMatch(/generated export already exists|generated owner slot/u),
+        yield* write(fixture.root, inventoryRegistrationFile, corrupted);
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          scaffoldArguments,
+          /generated export already exists|generated owner slot/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRejectedRerun);
 
-        yield* writeFixtureFile(fixture.root, inventoryRegistrationFile, registration);
-        yield* writeFixtureFile(
+        yield* write(fixture.root, inventoryRegistrationFile, registration);
+        yield* write(
           fixture.root,
           inventoryRegistrationFile,
           registration.replace(
@@ -2064,11 +2153,12 @@ it.live(
             "'resource-detail': () => import('./src/api/evil-client.ts'),",
           ),
         );
-        const beforeWrongBinding = yield* snapshotTree(fixture.root);
-        yield* expectFailure(run(fixture, scaffoldCommand.moduleApi, scaffoldArguments), (error) =>
-          expect(String(error)).toMatch(/generated owner slot contains mismatched identity/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          scaffoldArguments,
+          /generated owner slot contains mismatched identity/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeWrongBinding);
 
         const wrongSlotRegistration = registration
           .replace(`${entry}\n`, '')
@@ -2076,14 +2166,15 @@ it.live(
             '    // </generated-module-registration-search>',
             `    ${entry}\n    // </generated-module-registration-search>`,
           );
-        yield* writeFixtureFile(fixture.root, inventoryRegistrationFile, wrongSlotRegistration);
-        const beforeWrongSlot = yield* snapshotTree(fixture.root);
-        yield* expectFailure(run(fixture, scaffoldCommand.moduleApi, scaffoldArguments), (error) =>
-          expect(String(error)).toMatch(/generated owner slot contains mismatched identity/u),
+        yield* write(fixture.root, inventoryRegistrationFile, wrongSlotRegistration);
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          scaffoldArguments,
+          /generated owner slot contains mismatched identity/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeWrongSlot);
 
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryRegistrationFile,
           registration.replace(
@@ -2098,7 +2189,7 @@ it.live(
         );
         expect(commentSafeRegistration.split(entry).length - 1).toBe(1);
 
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryManifestFile,
           repairedManifest.replace(
@@ -2106,11 +2197,12 @@ it.live(
             "import { ResourceDetailApi } from './shared/apis/evil.ts';",
           ),
         );
-        const beforeWrongImport = yield* snapshotTree(fixture.root);
-        yield* expectFailure(run(fixture, scaffoldCommand.moduleApi, scaffoldArguments), (error) =>
-          expect(String(error)).toMatch(/generated owner import binding conflicts/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          scaffoldArguments,
+          /generated owner import binding conflicts/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeWrongImport);
       }),
     );
   }),
@@ -2134,18 +2226,18 @@ it.live(
             const [file, identity] = spoof;
             const current = yield* readFixtureFile(fixture.root, file);
             const removedIdentity = 'const removedIdentity = undefined;';
-            yield* writeFixtureFile(
+            yield* write(
               fixture.root,
               file,
               `${current.replace(identity, removedIdentity)}\n/* ${identity} */\nconst identitySpoof = ${JSON.stringify(identity)};\n`,
             );
-            const before = yield* snapshotTree(fixture.root);
-            const businessFileFailure = yield* Effect.flip(run(fixture, command, commandArguments));
-            expect(String(businessFileFailure)).toMatch(
+            yield* assertScaffoldRefused(
+              fixture,
+              command,
+              commandArguments,
               /refusing to overwrite existing business file/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
-            yield* writeFixtureFile(fixture.root, file, current);
+            yield* write(fixture.root, file, current);
             yield* assertSpoofsRejected(remaining, command, commandArguments);
           });
         yield* addInventoryItemResourceType(fixture);
@@ -2175,16 +2267,14 @@ it.live(
         ): Effect.Effect<void, unknown> =>
           Effect.gen(function* mergedScenario39() {
             const current = yield* readFixtureFile(fixture.root, file);
-            yield* writeFixtureFile(fixture.root, file, adapt(current));
-            const before = yield* snapshotTree(fixture.root);
-            const businessFileFailure = yield* Effect.flip(
-              run(fixture, scaffoldCommand.moduleApi, moduleArguments),
-            );
-            expect(String(businessFileFailure)).toMatch(
+            yield* write(fixture.root, file, adapt(current));
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.moduleApi,
+              moduleArguments,
               /refusing to overwrite existing business file/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
-            yield* writeFixtureFile(fixture.root, file, current);
+            yield* write(fixture.root, file, current);
           });
         yield* assertAdaptationRejected(
           inventoryModuleApiContractFile,
@@ -2275,18 +2365,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.moduleApi, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--name',
-            fixtureName.resourceDetail,
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(/incompatible @app\/shared-contracts dependency/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.moduleApi,
+          [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
+          /incompatible @app\/shared-contracts dependency/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -2626,24 +2710,19 @@ it.live(
     );
     yield* withFixture(
       Effect.fn(function* scenario32(fixture) {
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryActionPrincipalFile,
           `// Owner-authored identity adapter
 export const ownerCode = true;
 `,
         );
-        const before = yield* snapshotTree(fixture.root);
-        const businessFileFailure = yield* Effect.flip(
-          run(fixture, scaffoldCommand.microverticalActionBoundary, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-          ]),
-        );
-        expect(String(businessFileFailure)).toMatch(
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalActionBoundary,
+          [scaffoldFlag.vertical, inventorySlug],
           /refusing to overwrite existing business file/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -2665,7 +2744,7 @@ it.live(
           'export const verifyOperationPrincipal = verifyActionPrincipal;\n',
         );
         expect(legacy).not.toMatch(/export const authenticateOperationPrincipal/u);
-        yield* writeFixtureFile(fixture.root, inventoryActionPrincipalFile, legacy);
+        yield* write(fixture.root, inventoryActionPrincipalFile, legacy);
         const before = yield* snapshotTree(fixture.root);
         const calls: readonly [ScaffoldCommand, readonly string[]][] = [
           [scaffoldCommand.microverticalActionBoundary, []],
@@ -2706,7 +2785,7 @@ it.live(
           inventorySlug,
         ]);
         const adapted = `${yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile)}\n// Owner-specific diagnostics remain private to this adapter.\n`;
-        yield* writeFixtureFile(fixture.root, inventoryActionPrincipalFile, adapted);
+        yield* write(fixture.root, inventoryActionPrincipalFile, adapted);
         yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [
           scaffoldFlag.vertical,
           inventorySlug,
@@ -3329,17 +3408,12 @@ export const createOrder2Action = defineAction(
           zeta: '1.0.0',
         });
         expect(packageJson.scripts['existing']).toBe(preservedFixtureValue);
-        const beforeRerun = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'action', [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--action',
-            'create-order2',
-          ]),
-          (error) => expect(String(error)).toMatch(/refusing to overwrite/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [scaffoldFlag.vertical, inventorySlug, '--action', 'create-order2'],
+          /refusing to overwrite/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
       }),
     );
   }),
@@ -3365,17 +3439,12 @@ import { Effect } from 'effect';
 
 export const inventoryPersistenceService = () => Effect.succeed({});
 `);
-        const beforeRerun = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.actionService, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--service',
-            'inventory-persistence',
-          ]),
-          (error) => expect(String(error)).toMatch(/refusing to overwrite/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.actionService,
+          [scaffoldFlag.vertical, inventorySlug, '--service', 'inventory-persistence'],
+          /refusing to overwrite/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
       }),
     );
   }),
@@ -3458,19 +3527,19 @@ export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresS
           /fetch\(|httpClient\.(?:execute|get|head|post|patch|put|del|options)\(|https?:\/\//u,
         );
 
-        const beforeOverwrite = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.externalHttpAdapter, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.externalHttpAdapter,
+          [
             scaffoldFlag.vertical,
             'contacts',
             scaffoldFlag.provider,
             'ares',
             scaffoldFlag.operation,
             'subject',
-          ]),
-          (error) => expect(String(error)).toMatch(/refusing to overwrite/u),
+          ],
+          /refusing to overwrite/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeOverwrite);
       }),
     );
   }),
@@ -3628,42 +3697,42 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.externalHttpAdapter, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.externalHttpAdapter,
+          [
             scaffoldFlag.vertical,
             'contacts',
             scaffoldFlag.provider,
             'ares',
             scaffoldFlag.operation,
             'subject',
-          ]),
-          (error) => expect(String(error)).toMatch(/is not a generated module owner/u),
+          ],
+          /is not a generated module owner/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
 
     yield* withFixture(
       Effect.fn(function* scenario49(fixture) {
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'verticals/contacts/src/integrations',
           'planner fixture blocks the required directory\n',
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.externalHttpAdapter, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.externalHttpAdapter,
+          [
             scaffoldFlag.vertical,
             'contacts',
             scaffoldFlag.provider,
             'ares',
             scaffoldFlag.operation,
             'subject',
-          ]),
-          (error) => expect(String(error)).toMatch(/ENOTDIR|not a directory/u),
+          ],
+          /ENOTDIR|not a directory/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -3687,20 +3756,12 @@ import { fakeRead } from './src/api/fake.read.ts';`,
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'action', [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--action',
-            'create-order3',
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(
-              /generated owner slot contains unsupported developer content/u,
-            ),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [scaffoldFlag.vertical, inventorySlug, '--action', 'create-order3'],
+          /generated owner slot contains unsupported developer content/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -3764,19 +3825,12 @@ it.live(
         ).toBe(true);
         expect(coreCatalog).toMatch(/export const existingCatalogSurface = true/u);
 
-        const beforeOverwrite = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'action', [
-            '--scope',
-            'core',
-            '--module',
-            fixtureName.actionModule,
-            '--action',
-            'account-change',
-          ]),
-          (error) => expect(String(error)).toMatch(/refusing to overwrite/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          ['--scope', 'core', '--module', fixtureName.actionModule, '--action', 'account-change'],
+          /refusing to overwrite/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeOverwrite);
       }),
     );
 
@@ -3790,20 +3844,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'action', [
-            '--scope',
-            'core',
-            '--module',
-            fixtureName.actionModule,
-            '--action',
-            fixtureName.action,
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(/generated owner file does not contain one valid/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          ['--scope', 'core', '--module', fixtureName.actionModule, '--action', fixtureName.action],
+          /generated owner file does not contain one valid/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
 
@@ -3821,19 +3867,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'action', [
-            '--scope',
-            'core',
-            '--module',
-            fixtureName.actionModule,
-            '--action',
-            fixtureName.action,
-          ]),
-          (error) => expect(String(error)).toMatch(/unsupported developer content/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          ['--scope', 'core', '--module', fixtureName.actionModule, '--action', fixtureName.action],
+          /unsupported developer content/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
 
@@ -3851,19 +3890,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'action', [
-            '--scope',
-            'core',
-            '--module',
-            fixtureName.actionModule,
-            '--action',
-            fixtureName.action,
-          ]),
-          (error) => expect(String(error)).toMatch(/unsupported developer content/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          ['--scope', 'core', '--module', fixtureName.actionModule, '--action', fixtureName.action],
+          /unsupported developer content/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -3888,17 +3920,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'action', [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--action',
-            fixtureName.action,
-          ]),
-          (error) => expect(String(error)).toMatch(/incompatible/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action],
+          /incompatible/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -3923,18 +3950,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-
-        yield* expectFailure(
-          run(fixture, 'action', [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--action',
-            fixtureName.action,
-          ]),
-          (error) => expect(String(error)).toMatch(/duplicate generated appId inventory-stock/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action],
+          /duplicate generated appId inventory-stock/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -3959,21 +3980,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-
-        yield* expectFailure(
-          run(fixture, 'action', [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--action',
-            fixtureName.action,
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(
-              /must have exactly one matching generated topology entry/u,
-            ),
+        yield* assertScaffoldRefused(
+          fixture,
+          'action',
+          [scaffoldFlag.vertical, inventorySlug, '--action', fixtureName.action],
+          /must have exactly one matching generated topology entry/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -4108,22 +4120,19 @@ export const outboxProducerModuleKey = 'inventory.stock' as const;
           '--topic',
           'events.foo-1-bar',
         ]);
-        const beforeIdentifierCollision = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxMessage, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxMessage,
+          [
             scaffoldFlag.vertical,
             inventorySlug,
             '--action',
             fixtureName.action,
             '--topic',
             'events.foo1-bar',
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(
-              /Outbox identifier CreateOrderEventsFoo1BarOutbox already exists/u,
-            ),
+          ],
+          /Outbox identifier CreateOrderEventsFoo1BarOutbox already exists/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeIdentifierCollision);
       }),
     );
   }),
@@ -4134,38 +4143,38 @@ it.live(
   Effect.fn(function* scenario67() {
     yield* withFixture(
       Effect.fn(function* scenario68(fixture) {
-        const beforeMissing = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxMessage, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxMessage,
+          [
             scaffoldFlag.vertical,
             inventorySlug,
             '--action',
             'missing-action',
             '--topic',
             fixtureName.ordersCreated,
-          ]),
-          (error) => expect(String(error)).toMatch(/requires the generated Action/u),
+          ],
+          /requires the generated Action/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeMissing);
 
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'verticals/inventory-stock/src/actions/handwritten.action.ts',
           `// <generated-outbox-message-exports>\n// </generated-outbox-message-exports>\n`,
         );
-        const beforeHandwritten = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxMessage, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxMessage,
+          [
             scaffoldFlag.vertical,
             inventorySlug,
             '--action',
             'handwritten',
             '--topic',
             fixtureName.ordersCreated,
-          ]),
-          (error) => expect(String(error)).toMatch(/only the matching generated Action/u),
+          ],
+          /only the matching generated Action/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeHandwritten);
 
         yield* run(fixture, 'action', [
           scaffoldFlag.vertical,
@@ -4175,28 +4184,25 @@ it.live(
         ]);
         const governedActionPath = inventoryActionFile;
         const governedAction = yield* readFixtureFile(fixture.root, governedActionPath);
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           governedActionPath,
           governedAction.replace("      access: 'write',", "      access: 'read',"),
         );
-        const beforeMismatchedEntrypoint = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxMessage, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxMessage,
+          [
             scaffoldFlag.vertical,
             inventorySlug,
             '--action',
             fixtureName.action,
             '--topic',
             fixtureName.ordersCreated,
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(
-              /matching generated Action with its governed write entrypoint/u,
-            ),
+          ],
+          /matching generated Action with its governed write entrypoint/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeMismatchedEntrypoint);
-        yield* writeFixtureFile(fixture.root, governedActionPath, governedAction);
+        yield* write(fixture.root, governedActionPath, governedAction);
         yield* run(fixture, scaffoldCommand.outboxMessage, [
           scaffoldFlag.vertical,
           inventorySlug,
@@ -4437,9 +4443,10 @@ export const startBillingOutboxWorker = (): void =>
           registry.indexOf('ordersCreatedLoggerWorker') <
             registry.indexOf('ordersShippedProjectorWorker'),
         ).toBeTruthy();
-        const beforeRerun = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxWorker, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxWorker,
+          [
             scaffoldFlag.vertical,
             'billing',
             '--worker',
@@ -4448,10 +4455,9 @@ export const startBillingOutboxWorker = (): void =>
             inventorySlug,
             '--topic',
             fixtureName.ordersCreated,
-          ]),
-          (error) => expect(String(error)).toMatch(/refusing to overwrite/u),
+          ],
+          /refusing to overwrite/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
       }),
     );
   }),
@@ -4530,11 +4536,12 @@ it.live(
         for (const script of ['dev:worker', 'worker:start']) {
           expect(ownerPackage.scripts[script]).toBe(workerStartScript);
         }
-        const beforeRerun = yield* snapshotTree(fixture.root);
-        yield* expectFailure(run(fixture, scaffoldCommand.outboxWorker, args), (error) =>
-          expect(String(error)).toMatch(/refusing to overwrite/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxWorker,
+          args,
+          /refusing to overwrite/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeRerun);
         yield* run(fixture, 'action', [
           scaffoldFlag.vertical,
           inventorySlug,
@@ -4547,14 +4554,15 @@ it.live(
         );
         expect(registrationAfterAction.includes('requestRebuildAction,')).toBe(true);
         expect(registrationAfterAction.includes(workerRegistryEntry)).toBe(true);
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryTsconfigFile,
           JSON.stringify({ references: [{ path: '../inventory-stock' }] }),
         );
-        const beforeCircularReference = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxWorker, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxWorker,
+          [
             scaffoldFlag.vertical,
             inventorySlug,
             '--worker',
@@ -4563,10 +4571,9 @@ it.live(
             inventorySlug,
             '--topic',
             fixtureName.ordersCreated,
-          ]),
-          (error) => expect(String(error)).toMatch(/circular self project reference/u),
+          ],
+          /circular self project reference/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeCircularReference);
       }),
     );
   }),
@@ -4577,9 +4584,10 @@ it.live(
   Effect.fn(function* scenario74() {
     yield* withFixture(
       Effect.fn(function* scenario75(fixture) {
-        const beforeUnpublished = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxWorker, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxWorker,
+          [
             scaffoldFlag.vertical,
             'billing',
             '--worker',
@@ -4588,11 +4596,9 @@ it.live(
             inventorySlug,
             '--topic',
             'orders.missing',
-          ]),
-          (error) =>
-            expect(String(error)).toMatch(/published producer Outbox contract is missing/u),
+          ],
+          /published producer Outbox contract is missing/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeUnpublished);
 
         yield* run(fixture, 'action', [
           scaffoldFlag.vertical,
@@ -4620,9 +4626,10 @@ it.live(
             'utf-8',
           ),
         );
-        const beforeMalformed = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.outboxWorker, [
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.outboxWorker,
+          [
             scaffoldFlag.vertical,
             'billing',
             '--worker',
@@ -4631,10 +4638,9 @@ it.live(
             inventorySlug,
             '--topic',
             fixtureName.ordersCreated,
-          ]),
-          (error) => expect(String(error)).toMatch(/owner\/topic\/schema mismatch/u),
+          ],
+          /owner\/topic\/schema mismatch/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeMalformed);
       }),
     );
   }),
@@ -4705,21 +4711,20 @@ export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
           (yield* decodeFixturePackage(yield* readFixtureFile(fixture.root, inventoryPackageFile)))
             .dependencies['@app/core-runtime'],
         ).toBe(workspaceVersion);
-        const beforeDuplicate = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'policy', ['--scope', 'global', '--policy', fixtureName.policy]),
-          (error) => expect(String(error)).toMatch(/refusing to overwrite/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'policy',
+          ['--scope', 'global', '--policy', fixtureName.policy],
+          /refusing to overwrite/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeDuplicate);
 
         yield* run(fixture, 'policy', ['--scope', 'global', '--policy', 'foo-1-bar']);
-        const beforeIdentifierCollision = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, 'policy', ['--scope', 'global', '--policy', 'foo1-bar']),
-          (error) =>
-            expect(String(error)).toMatch(/Policy identifier foo1BarPolicy already exists/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          'policy',
+          ['--scope', 'global', '--policy', 'foo1-bar'],
+          /Policy identifier foo1BarPolicy already exists/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeIdentifierCollision);
       }),
     );
   }),
@@ -4931,7 +4936,7 @@ it.live(
           ),
           { concurrency: 'unbounded' },
         );
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'node_modules/@modern-js/plugin-i18n/package.json',
           json({
@@ -4940,7 +4945,7 @@ it.live(
             type: 'module',
           }),
         );
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'node_modules/@modern-js/plugin-i18n/runtime.tsx',
           `import { createContext, useContext } from 'react';
@@ -5182,19 +5187,12 @@ it.live(
         Effect.fn(function* scenario93(url) {
           return yield* withFixture(
             Effect.fn(function* scenario94(fixture) {
-              const before = yield* snapshotTree(fixture.root);
-              yield* expectFailure(
-                run(fixture, scaffoldCommand.microverticalPage, [
-                  scaffoldFlag.vertical,
-                  inventorySlug,
-                  '--page',
-                  'orders',
-                  '--url',
-                  url,
-                ]),
-                (error) => expect(String(error)).toMatch(/--url/u),
+              yield* assertScaffoldRefused(
+                fixture,
+                scaffoldCommand.microverticalPage,
+                [scaffoldFlag.vertical, inventorySlug, '--page', 'orders', '--url', url],
+                /--url/u,
               );
-              expect(yield* snapshotTree(fixture.root)).toEqual(before);
             }),
           );
         }),
@@ -5209,7 +5207,7 @@ it.live(
   Effect.fn(function* scenario95() {
     yield* withFixture(
       Effect.fn(function* scenario96(fixture) {
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryFederationConfigFile,
           `export default {
@@ -5355,18 +5353,17 @@ it.live(
 
     yield* withFixture(
       Effect.fn(function* scenario99(fixture) {
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/page.tsx',
           'export default function DeveloperOwnedPage() { return null; }\n',
         );
-        const before = yield* snapshotTree(fixture.root);
-
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
-          (error) => expect(String(error)).toMatch(/refusing to overwrite|already exists/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          generatorArguments,
+          /refusing to overwrite|already exists/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -5390,19 +5387,19 @@ it.live(
         Effect.fn(function* scenario101(url) {
           return yield* withFixture(
             Effect.fn(function* scenario102(fixture) {
-              const before = yield* snapshotTree(fixture.root);
-              yield* expectFailure(
-                run(fixture, scaffoldCommand.microverticalPage, [
+              yield* assertScaffoldRefused(
+                fixture,
+                scaffoldCommand.microverticalPage,
+                [
                   scaffoldFlag.vertical,
                   inventorySlug,
                   '--page',
                   fixtureName.customerEditPage,
                   '--url',
                   url,
-                ]),
-                (error) => expect(String(error)).toMatch(/--url/u),
+                ],
+                /--url/u,
               );
-              expect(yield* snapshotTree(fixture.root)).toEqual(before);
             }),
           );
         }),
@@ -5422,20 +5419,19 @@ it.live(
               '--url',
               customerDetailUrl,
             ]);
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
                 scaffoldFlag.vertical,
                 inventorySlug,
                 '--page',
                 fixtureName.customerEditPage,
                 '--url',
                 '/inventory/customers/:customerId',
-              ]),
-              (error) =>
-                expect(String(error)).toMatch(/routing collision|already registered|collides/u),
+              ],
+              /routing collision|already registered|collides/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
@@ -5457,34 +5453,34 @@ it.live(
             yield* Effect.promise(() =>
               writeFile(pagePath, `${pageSource}\n// developer edit\n`, 'utf-8'),
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
-              (error) => expect(String(error)).toMatch(/collides/u),
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              generatorArguments,
+              /collides/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
           Effect.fn(function* scenario105(fixture) {
-            yield* writeFixtureFile(
+            yield* write(
               fixture.root,
               'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
               'export default function PartialPage() { return null; }\n',
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
                 scaffoldFlag.vertical,
                 inventorySlug,
                 '--page',
                 fixtureName.customerEditPage,
                 '--url',
                 customerEditUrl,
-              ]),
-              (error) => expect(String(error)).toMatch(/collides with nested content/u),
+              ],
+              /collides with nested content/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
@@ -5497,19 +5493,19 @@ it.live(
               '--url',
               '/inventory/customers/new',
             ]);
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
                 scaffoldFlag.vertical,
                 inventorySlug,
                 '--page',
                 fixtureName.customerEditPage,
                 '--url',
                 customerDetailUrl,
-              ]),
-              (error) => expect(String(error)).toMatch(/static route segment|collides/u),
+              ],
+              /static route segment|collides/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
@@ -5531,19 +5527,19 @@ it.live(
                 { recursive: true },
               ),
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
                 scaffoldFlag.vertical,
                 inventorySlug,
                 '--page',
                 fixtureName.customerEditPage,
                 '--url',
                 '/shared/customers/:id/edit',
-              ]),
-              (error) => expect(String(error)).toMatch(/already registered by billing/u),
+              ],
+              /already registered by billing/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
       ],
@@ -5565,7 +5561,7 @@ it.live(
           '--url',
           customerDetailUrl,
         ]);
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'apps/shell-super-app/src/routes/[lang]/inventory/customers/new/page.tsx',
           'export default function ExistingStaticSibling() { return null; }\n',
@@ -5600,47 +5596,46 @@ it.live(
       [
         withFixture(
           Effect.fn(function* scenario111(fixture) {
-            yield* writeFixtureFile(
+            yield* write(
               fixture.root,
               'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.tsx',
               'export default function ModulePage() { return null; }\n',
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
                 scaffoldFlag.vertical,
                 inventorySlug,
                 '--page',
                 'customers',
                 '--url',
                 '/modules/customers',
-              ]),
-              (error) =>
-                expect(String(error)).toMatch(/collides with dynamic route segment \[moduleId\]/u),
+              ],
+              /collides with dynamic route segment \[moduleId\]/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
           Effect.fn(function* scenario112(fixture) {
-            yield* writeFixtureFile(
+            yield* write(
               fixture.root,
               'apps/shell-super-app/src/routes/[lang]/login/page.tsx',
               'export default function LoginPage() { return null; }\n',
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
                 scaffoldFlag.vertical,
                 inventorySlug,
                 '--page',
                 'customers',
                 '--url',
                 '/login/customers',
-              ]),
-              (error) => expect(String(error)).toMatch(/reserved route prefix \/login/u),
+              ],
+              /reserved route prefix \/login/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
@@ -5661,19 +5656,19 @@ it.live(
                 },
               ),
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
                 scaffoldFlag.vertical,
                 inventorySlug,
                 '--page',
                 'customer-list',
                 '--url',
                 '/shared/customers',
-              ]),
-              (error) => expect(String(error)).toMatch(/already registered by billing/u),
+              ],
+              /already registered by billing/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
       ],
@@ -5733,22 +5728,12 @@ it.live(
                 'utf-8',
               ),
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, [
-                scaffoldFlag.vertical,
-                inventorySlug,
-                '--page',
-                'orders',
-                '--url',
-                '/second/orders',
-              ]),
-              (error) =>
-                expect(String(error)).toMatch(
-                  /page identity inventory\.stock\.page\.orders already exists/u,
-                ),
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [scaffoldFlag.vertical, inventorySlug, '--page', 'orders', '--url', '/second/orders'],
+              /page identity inventory\.stock\.page\.orders already exists/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
@@ -5760,12 +5745,12 @@ it.live(
             yield* Effect.promise(() =>
               writeFile(manifestPath, manifest.replace('order: 100', 'order: 101'), 'utf-8'),
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
-              (error) => expect(String(error)).toMatch(/already exists|collides/u),
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              generatorArguments,
+              /already exists|collides/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
@@ -5785,12 +5770,12 @@ it.live(
                 'utf-8',
               ),
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
-              (error) => expect(String(error)).toMatch(/already exists|collides/u),
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              generatorArguments,
+              /already exists|collides/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
@@ -5809,29 +5794,29 @@ it.live(
                 'utf-8',
               ),
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
-              (error) => expect(String(error)).toMatch(/already exists|collides/u),
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              generatorArguments,
+              /already exists|collides/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
         withFixture(
           Effect.fn(function* scenario120(fixture) {
             const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
             yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
-            yield* writeFixtureFile(
+            yield* write(
               fixture.root,
               'apps/shell-super-app/src/routes/[lang]/inventory-stock/orders/developer-note.ts',
               'export const developerNote = true;\n',
             );
-            const before = yield* snapshotTree(fixture.root);
-            yield* expectFailure(
-              run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
-              (error) => expect(String(error)).toMatch(/already exists|collides/u),
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              generatorArguments,
+              /already exists|collides/u,
             );
-            expect(yield* snapshotTree(fixture.root)).toEqual(before);
           }),
         ),
       ],
@@ -5854,7 +5839,7 @@ it.live(
           '/orders',
         ];
         yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           inventoryOrdersRouteFile,
           `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -5895,7 +5880,7 @@ export const OrdersPage = () => {
 export default OrdersPage;
 `,
         );
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'apps/shell-super-app/src/routes/[lang]/orders/page.data.ts',
           `import { loader as loadModuleTarget } from '../modules/[moduleId]/page.data.ts';
@@ -5943,12 +5928,12 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
           { concurrency: 'unbounded' },
         );
 
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.microverticalPage, generatorArguments),
-          (error) => expect(String(error)).toMatch(/page route already exists or collides/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          generatorArguments,
+          /page route already exists or collides/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -5973,23 +5958,17 @@ it.live(
             'utf-8',
           ),
         );
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'verticals/inventory-stock/locales/de/inventory.json',
           json({ inventory: { existing: 'de-preserved' } }),
         );
-        const before = yield* snapshotTree(fixture.root);
-
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.microverticalPage, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--page',
-            fixtureName.purchaseOrdersPage,
-          ]),
-          (error) => expect(String(error)).toMatch(/no starter translation for locale de/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          [scaffoldFlag.vertical, inventorySlug, '--page', fixtureName.purchaseOrdersPage],
+          /no starter translation for locale de/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),
@@ -6008,38 +5987,28 @@ it.live(
             ),
           ),
         );
-        const beforeMissingHead = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.microverticalPage, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--page',
-            'orders',
-          ]),
-          (error) => expect(String(error)).toMatch(/UltramodernRouteHead is missing/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
+          /UltramodernRouteHead is missing/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeMissingHead);
       }),
     );
 
     yield* withFixture(
       Effect.fn(function* scenario128(fixture) {
-        yield* writeFixtureFile(
+        yield* write(
           fixture.root,
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/nested.ts',
           'export {};\n',
         );
-        const beforeCollision = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.microverticalPage, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-            '--page',
-            'orders',
-          ]),
-          (error) => expect(String(error)).toMatch(/collides with nested content/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
+          /collides with nested content/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(beforeCollision);
       }),
     );
 
@@ -6311,159 +6280,84 @@ it.live(
         yield* Effect.promise(() =>
           mkdir(path.join(fixture.root, 'node_modules', '@types'), { recursive: true }),
         );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/effect'),
-            path.join(fixture.root, effectNodeModulePath),
-            'dir',
+        // Every generated-runtime dependency is linked from the real workspace so the fixture
+        // typechecks and runs against the same modules the shipped verticals resolve.
+        yield* Effect.all(
+          (
+            [
+              ['packages/core-runtime/node_modules/effect', effectNodeModulePath, 'dir'],
+              [
+                'packages/core-runtime/node_modules/@effect/sql-pg',
+                'node_modules/@effect/sql-pg',
+                'dir',
+              ],
+              [
+                'packages/core-runtime/node_modules/@effect/platform-node',
+                'node_modules/@effect/platform-node',
+                'dir',
+              ],
+              ['apps/shell-super-app/node_modules/jose', 'node_modules/jose', 'dir'],
+              ['packages/core-runtime/node_modules/drizzle-orm', 'node_modules/drizzle-orm', 'dir'],
+              ['packages/core-runtime/node_modules/dotenv', 'node_modules/dotenv', 'dir'],
+              ['packages/core-runtime/node_modules/pg', 'node_modules/pg', 'dir'],
+              [
+                'packages/core-runtime/node_modules/@authzed/authzed-node',
+                'node_modules/@authzed/authzed-node',
+                'dir',
+              ],
+              [
+                'apps/shell-super-app/node_modules/@modern-js/plugin-i18n',
+                'node_modules/@modern-js/plugin-i18n',
+                'dir',
+              ],
+              [
+                'apps/shell-super-app/node_modules/@modern-js/plugin-bff',
+                pluginBffNodeModulePath,
+                'dir',
+              ],
+              [
+                'apps/shell-super-app/node_modules/@types/react',
+                'node_modules/@types/react',
+                'dir',
+              ],
+              ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
+              ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
+              ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
+              ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
+              [
+                'packages/core-runtime/src/operations',
+                'packages/core-runtime/src/operations',
+                'dir',
+              ],
+              ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
+              [
+                'packages/core-runtime/src/environment',
+                'packages/core-runtime/src/environment',
+                'dir',
+              ],
+              [
+                'packages/core-runtime/src/permissions',
+                'packages/core-runtime/src/permissions',
+                'dir',
+              ],
+              ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
+              [
+                'packages/core-runtime/src/authorization',
+                'packages/core-runtime/src/authorization',
+                'dir',
+              ],
+              [
+                'packages/core-runtime/src/modules/module-entrypoint.ts',
+                'packages/core-runtime/src/modules/module-entrypoint.ts',
+                'file',
+              ],
+            ] as const
+          ).map(([source, target, kind]) =>
+            Effect.promise(() =>
+              symlink(path.join(appRoot, source), path.join(fixture.root, target), kind),
+            ),
           ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/@effect/sql-pg'),
-            path.join(fixture.root, 'node_modules/@effect/sql-pg'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/@effect/platform-node'),
-            path.join(fixture.root, 'node_modules/@effect/platform-node'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
-            path.join(fixture.root, 'node_modules/jose'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/drizzle-orm'),
-            path.join(fixture.root, 'node_modules/drizzle-orm'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/dotenv'),
-            path.join(fixture.root, 'node_modules/dotenv'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/pg'),
-            path.join(fixture.root, 'node_modules/pg'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/@authzed/authzed-node'),
-            path.join(fixture.root, 'node_modules/@authzed/authzed-node'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-i18n'),
-            path.join(fixture.root, 'node_modules/@modern-js/plugin-i18n'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
-            path.join(fixture.root, pluginBffNodeModulePath),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'apps/shell-super-app/node_modules/@types/react'),
-            path.join(fixture.root, 'node_modules/@types/react'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/node_modules/@types/pg'),
-            path.join(fixture.root, 'node_modules/@types/pg'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'node_modules/@types/node'),
-            path.join(fixture.root, 'node_modules/@types/node'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/actions'),
-            path.join(fixture.root, 'packages/core-runtime/src/actions'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/db'),
-            path.join(fixture.root, 'packages/core-runtime/src/db'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/operations'),
-            path.join(fixture.root, 'packages/core-runtime/src/operations'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/database'),
-            path.join(fixture.root, 'packages/core-runtime/src/database'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/environment'),
-            path.join(fixture.root, 'packages/core-runtime/src/environment'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/permissions'),
-            path.join(fixture.root, 'packages/core-runtime/src/permissions'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/auth'),
-            path.join(fixture.root, 'packages/core-runtime/src/auth'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/authorization'),
-            path.join(fixture.root, 'packages/core-runtime/src/authorization'),
-            'dir',
-          ),
-        );
-        yield* Effect.promise(() =>
-          symlink(
-            path.join(appRoot, 'packages/core-runtime/src/modules/module-entrypoint.ts'),
-            path.join(fixture.root, 'packages/core-runtime/src/modules/module-entrypoint.ts'),
-            'file',
-          ),
+          { concurrency: 'unbounded' },
         );
         yield* Effect.all(
           [
@@ -6544,6 +6438,9 @@ it.live(
                   ],
                   '@app/shared-contracts/problem-details': [
                     path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
+                  ],
+                  '@app/shared-contracts/server/effect-bff-runtime': [
+                    path.join(appRoot, 'packages/shared-contracts/src/effect-bff-runtime.ts'),
                   ],
                 },
                 resolveJsonModule: true,
@@ -6767,15 +6664,12 @@ it.live(
             'utf-8',
           ),
         );
-        const before = yield* snapshotTree(fixture.root);
-        yield* expectFailure(
-          run(fixture, scaffoldCommand.microverticalActionBoundary, [
-            scaffoldFlag.vertical,
-            inventorySlug,
-          ]),
-          (error) => expect(String(error)).toMatch(/refusing|owned|boundary/u),
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalActionBoundary,
+          [scaffoldFlag.vertical, inventorySlug],
+          /refusing|owned|boundary/u,
         );
-        expect(yield* snapshotTree(fixture.root)).toEqual(before);
       }),
     );
   }),

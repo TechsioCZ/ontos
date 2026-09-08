@@ -95,8 +95,8 @@ export interface ReadRuntimeOptions {
 }
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
-export const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
-export type PermissionDecision = typeof PermissionDecisionSchema.Type;
+const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
+type PermissionDecision = typeof PermissionDecisionSchema.Type;
 const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget): boolean => {
   if (target.kind === 'tenant') {
     return true;
@@ -270,6 +270,34 @@ const preserveFailureCause = <Failure extends object>(failure: Failure, cause: u
     writable: false,
   });
 
+const checkTenantResultPermission = Effect.fnUntraced(function* checkTenantResultPermission<
+  AccessValue extends (typeof ContextAccess)['Service'],
+>(
+  contextAccess: AccessValue,
+  scope: OperationalScope,
+  permissionTarget: Extract<ResolvedReadPermissionTarget, { kind: 'tenant' }>,
+) {
+  const decisions = yield* contextAccess.tenants({
+    permission: permissionTarget.permission,
+    principalId: scope.principalId,
+    tenantIds: [scope.tenantId],
+  });
+  const decision = decisionFor(decisions, scope.tenantId);
+  if (decision === 'unavailable') {
+    return yield* new ReadPermissionUnavailable({
+      code: 'read_permission_unavailable',
+      reason: 'Read result authorization is temporarily unavailable',
+    });
+  }
+  if (decision === 'denied') {
+    return yield* new ReadPermissionDenied({
+      code: 'read_permission_denied',
+      reason: 'The read result contains a forbidden resource',
+    });
+  }
+  return yield* Effect.void;
+});
+
 const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(
   function* checkResultPermissionsEffect<
     Result,
@@ -316,25 +344,7 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(
       return yield* Effect.void;
     }
     if (permissionTarget.kind === 'tenant') {
-      const decisions = yield* contextAccess.tenants({
-        permission: permissionTarget.permission,
-        principalId: scope.principalId,
-        tenantIds: [scope.tenantId],
-      });
-      const decision = decisionFor(decisions, scope.tenantId);
-      if (decision === 'unavailable') {
-        return yield* new ReadPermissionUnavailable({
-          code: 'read_permission_unavailable',
-          reason: 'Read result authorization is temporarily unavailable',
-        });
-      }
-      if (decision === 'denied') {
-        return yield* new ReadPermissionDenied({
-          code: 'read_permission_denied',
-          reason: 'The read result contains a forbidden resource',
-        });
-      }
-      return yield* Effect.void;
+      return yield* checkTenantResultPermission(contextAccess, scope, permissionTarget);
     }
     if (scope.legalEntityId === undefined) {
       return yield* new ReadHandlerExecutionError({

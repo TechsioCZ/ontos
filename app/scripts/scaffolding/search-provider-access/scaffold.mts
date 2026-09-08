@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Schema, Predicate } from 'effect';
+import { Effect, FileSystem, Schema } from 'effect';
 import {
   discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
@@ -9,6 +9,7 @@ import {
   toCamelCase,
   toPascalCase,
   updateMutation,
+  createScaffoldErrorTools,
 } from '../shared.mts';
 import type {
   Mutation,
@@ -29,20 +30,11 @@ class SearchProviderAccessScaffoldError extends Schema.TaggedError<SearchProvide
   },
 ) {}
 
-const scaffoldError = (message: string, cause?: unknown): SearchProviderAccessScaffoldError =>
-  new SearchProviderAccessScaffoldError(cause === undefined ? { message } : { cause, message });
-
-const trySync = <Value,>(operation: () => Value) =>
-  Effect.try({
-    catch: (cause) =>
-      Schema.is(SearchProviderAccessScaffoldError)(cause)
-        ? cause
-        : scaffoldError(
-            Predicate.isError(cause) ? cause.message : 'search provider access update failed',
-            cause,
-          ),
-    try: operation,
-  });
+const { scaffoldError, trySync } = createScaffoldErrorTools(
+  SearchProviderAccessScaffoldError,
+  Schema.is(SearchProviderAccessScaffoldError),
+  'search provider access update failed',
+);
 
 const replaceOwnedLine = (
   content: string,
@@ -186,23 +178,24 @@ const patchManifest = (
     return `${content.slice(0, start + MODULE_MANIFEST_SEARCH_SLOT_START.length)}${slot.replace(pattern, replacement)}${content.slice(end)}`;
   });
 
+const hasConsistentAccessScope = (config: SearchProviderAccessScaffoldConfig): boolean =>
+  (config.accessFiltering === 'tenant_scope') === (config.tenantPermission !== undefined) &&
+  (config.accessFiltering !== 'tenant_scope' || config.legalEntityScope === 'optional') &&
+  (config.accessFiltering !== 'resource_permission' || config.legalEntityScope === 'required');
+
+const hasValidAccessFlags = (config: SearchProviderAccessScaffoldConfig): boolean =>
+  ['tenant_scope', 'resource_permission'].includes(config.accessFiltering) &&
+  ['optional', 'required'].includes(config.legalEntityScope) &&
+  (config.tenantPermission === undefined || config.tenantPermission === 'read_party_identity') &&
+  config.requestFilters.every((filter) => ['includeArchived', 'role'].includes(filter)) &&
+  new Set(config.requestFilters).size === config.requestFilters.length;
+
 const validateConfig = (
   config: SearchProviderAccessScaffoldConfig,
 ): Effect.Effect<void, SearchProviderAccessScaffoldError> =>
   Effect.gen(function* validateConfigEffect() {
     yield* trySync(() => requireCanonicalSlug(config.name, 'search provider'));
-    if (
-      !['tenant_scope', 'resource_permission'].includes(config.accessFiltering) ||
-      !['optional', 'required'].includes(config.legalEntityScope) ||
-      (config.tenantPermission !== undefined &&
-        config.tenantPermission !== 'read_party_identity') ||
-      config.requestFilters.some((filter) => filter !== 'includeArchived' && filter !== 'role') ||
-      (config.accessFiltering === 'tenant_scope') !== (config.tenantPermission !== undefined) ||
-      (config.accessFiltering === 'tenant_scope' && config.legalEntityScope !== 'optional') ||
-      (config.accessFiltering === 'resource_permission' &&
-        config.legalEntityScope !== 'required') ||
-      new Set(config.requestFilters).size !== config.requestFilters.length
-    ) {
+    if (!hasValidAccessFlags(config) || !hasConsistentAccessScope(config)) {
       yield* scaffoldError('search provider access flags are internally inconsistent');
     }
   });
@@ -272,5 +265,3 @@ export const planSearchProviderAccessScaffold = (
       result: { contractPath, manifestPath: vertical.manifestPath, providerPath, serverPath },
     };
   });
-
-export default planSearchProviderAccessScaffold;

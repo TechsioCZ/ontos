@@ -169,17 +169,14 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
 
     const cleanup = Effect.fn('cleanupAuthenticationFixture')(
       function* cleanupAuthenticationFixtureEffect() {
+        const tenantIds = Object.values(e2eTenants).map(({ tenantId }) => tenantId);
+        const principalIds = Object.values(e2eTenants).map(({ principalId }) => principalId);
         // Authenticated shell reads write evidence asynchronously. Let those writes
         // settle, then remove their E2E-owned rows before the referenced identities.
         yield* Effect.sleep('250 millis');
         yield* coreDatabase
           .delete(dataAccessEvents)
-          .where(
-            inArray(dataAccessEvents.principalId, [
-              e2eTenants.first.principalId,
-              e2eTenants.second.principalId,
-            ]),
-          );
+          .where(inArray(dataAccessEvents.principalId, principalIds));
         const existingUsers = yield* authDatabase
           .select({ id: user.id })
           .from(user)
@@ -200,12 +197,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         // binding referenced by the evidence foreign key.
         yield* coreDatabase
           .delete(dataAccessEvents)
-          .where(
-            inArray(dataAccessEvents.principalId, [
-              e2eTenants.first.principalId,
-              e2eTenants.second.principalId,
-            ]),
-          );
+          .where(inArray(dataAccessEvents.principalId, principalIds));
         yield* Effect.all(
           existingUsers.map((existingUser) =>
             coreDatabase
@@ -216,30 +208,13 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         );
         yield* coreDatabase
           .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.principalId, e2eTenants.first.principalId));
-        yield* coreDatabase
-          .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.principalId, e2eTenants.second.principalId));
+          .where(inArray(principalAuthBindings.principalId, principalIds));
         yield* coreDatabase
           .delete(tenantModuleStates)
-          .where(eq(tenantModuleStates.tenantId, e2eTenants.first.tenantId));
-        yield* coreDatabase
-          .delete(tenantModuleStates)
-          .where(eq(tenantModuleStates.tenantId, e2eTenants.second.tenantId));
-        yield* coreDatabase
-          .delete(legalEntities)
-          .where(eq(legalEntities.tenantId, e2eTenants.first.tenantId));
-        yield* coreDatabase
-          .delete(legalEntities)
-          .where(eq(legalEntities.tenantId, e2eTenants.second.tenantId));
-        yield* coreDatabase
-          .delete(principals)
-          .where(eq(principals.principalId, e2eTenants.first.principalId));
-        yield* coreDatabase
-          .delete(principals)
-          .where(eq(principals.principalId, e2eTenants.second.principalId));
-        yield* coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.first.tenantId));
-        yield* coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.second.tenantId));
+          .where(inArray(tenantModuleStates.tenantId, tenantIds));
+        yield* coreDatabase.delete(legalEntities).where(inArray(legalEntities.tenantId, tenantIds));
+        yield* coreDatabase.delete(principals).where(inArray(principals.principalId, principalIds));
+        yield* coreDatabase.delete(tenants).where(inArray(tenants.tenantId, tenantIds));
       },
     );
 

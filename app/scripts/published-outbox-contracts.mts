@@ -36,6 +36,17 @@ const sortLexically = (values: readonly string[]): readonly string[] => {
   return sorted;
 };
 
+const packageMatchesManifest = (
+  packageJson: PublishedOutboxPackage,
+  packageName: string,
+  appId: string,
+  moduleId: string,
+): boolean =>
+  packageJson.name === packageName &&
+  packageJson.modernjs?.appId === appId &&
+  packageJson.modernjs?.ontosModule?.manifest === './vertical.manifest.ts' &&
+  packageJson.modernjs?.ontosModule?.moduleId === moduleId;
+
 export const resolvePublishedContractModuleId = (input: {
   readonly dependencyPackageJson: PublishedOutboxPackage;
   readonly dependencyPackageName: string;
@@ -55,10 +66,12 @@ export const resolvePublishedContractModuleId = (input: {
       moduleId !== undefined &&
       appIds.length === 1 &&
       appIds[0] === input.expectedAppId &&
-      input.dependencyPackageJson.name === input.dependencyPackageName &&
-      input.dependencyPackageJson.modernjs?.appId === input.expectedAppId &&
-      input.dependencyPackageJson.modernjs?.ontosModule?.manifest === './vertical.manifest.ts' &&
-      input.dependencyPackageJson.modernjs?.ontosModule?.moduleId === moduleId,
+      packageMatchesManifest(
+        input.dependencyPackageJson,
+        input.dependencyPackageName,
+        input.expectedAppId,
+        moduleId,
+      ),
     `${input.dependencyPackageName} package and generated manifest ownership disagree`,
   );
   return moduleId;
@@ -108,7 +121,7 @@ export const publishedResourceRefContractExports = (
       .map(([exportKey]) => exportKey),
   );
 
-export const publishedEffectClientContractExports = (
+const publishedEffectClientContractExports = (
   packageJson: PublishedOutboxPackage,
 ): readonly string[] => {
   const appId = packageJson.modernjs?.appId;
@@ -132,12 +145,31 @@ const importedModuleSpecifiers = (source: string): readonly string[] =>
     .map((match) => match.groups?.specifier)
     .filter((specifier): specifier is string => specifier !== undefined);
 
-const isGeneratedSchemaOnlyResourceRef = (input: {
+const hasResourceRefDeclarations = (input: {
   readonly moduleId: string;
   readonly slug: string;
   readonly source: string;
 }): boolean => {
   const resourceType = `${input.moduleId}.${input.slug}`;
+  return (
+    /export const [A-Z][A-Za-z0-9]*RefSchema = Schema\.Struct\(/u.test(input.source) &&
+    /export type [A-Z][A-Za-z0-9]*Ref = typeof [A-Z][A-Za-z0-9]*RefSchema\.Type;/u.test(
+      input.source,
+    ) &&
+    input.source.includes(`moduleId: Schema.Literal('${input.moduleId}')`) &&
+    input.source.includes(`resourceType: Schema.Literal('${resourceType}')`) &&
+    /export const [a-z][A-Za-z0-9]*ResourceDescriptor = \{/u.test(input.source) &&
+    input.source.includes(`key: '${resourceType}'`) &&
+    input.source.includes(`owningModuleId: '${input.moduleId}'`) &&
+    input.source.includes('satisfies OntosResourceType')
+  );
+};
+
+const isGeneratedSchemaOnlyResourceRef = (input: {
+  readonly moduleId: string;
+  readonly slug: string;
+  readonly source: string;
+}): boolean => {
   const expectedHeader = `${RESOURCE_HEADER}\n// @ontos-resource-owner ${input.moduleId}\n// @ontos-resource-slug ${input.slug}\n`;
   const imports = importedModuleSpecifiers(input.source);
   return (
@@ -150,16 +182,7 @@ const isGeneratedSchemaOnlyResourceRef = (input: {
       input.source,
     ) &&
     !input.source.includes('=>') &&
-    /export const [A-Z][A-Za-z0-9]*RefSchema = Schema\.Struct\(/u.test(input.source) &&
-    /export type [A-Z][A-Za-z0-9]*Ref = typeof [A-Z][A-Za-z0-9]*RefSchema\.Type;/u.test(
-      input.source,
-    ) &&
-    input.source.includes(`moduleId: Schema.Literal('${input.moduleId}')`) &&
-    input.source.includes(`resourceType: Schema.Literal('${resourceType}')`) &&
-    /export const [a-z][A-Za-z0-9]*ResourceDescriptor = \{/u.test(input.source) &&
-    input.source.includes(`key: '${resourceType}'`) &&
-    input.source.includes(`owningModuleId: '${input.moduleId}'`) &&
-    input.source.includes('satisfies OntosResourceType')
+    hasResourceRefDeclarations(input)
   );
 };
 
@@ -180,6 +203,23 @@ const isAllowedEffectClientAggregateImport = (specifier: string): boolean =>
 const isGeneratedEffectClientLeaf = (source: string, appId: string): boolean =>
   GENERATED_CLIENT_HEADERS.some((header) => source.startsWith(header)) ||
   source.startsWith(`${COMMAND_CLIENT_HEADER}// @ontos-command-client-owner ${appId}\n`);
+
+const hasValidActionGateway = (
+  imports: readonly string[],
+  input: { readonly appId: string; readonly readOwnerSource: (path: string) => string },
+): boolean => {
+  if (imports.includes('./action-gateway.ts')) {
+    const gateway = input.readOwnerSource('./src/api/action-gateway.ts');
+    if (
+      !gateway.startsWith(ACTION_GATEWAY_HEADER) ||
+      !gateway.includes(`// @ontos-action-boundary-owner ${input.appId}\n`) ||
+      !gateway.includes(`// @ontos-action-boundary-audience ${input.appId}\n`)
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
 
 const isGeneratedPublicEffectClient = (input: {
   readonly appId: string;
@@ -219,27 +259,76 @@ const isGeneratedPublicEffectClient = (input: {
       return false;
     }
   }
-  if (imports.includes('./action-gateway.ts')) {
-    const gateway = input.readOwnerSource('./src/api/action-gateway.ts');
-    if (
-      !gateway.startsWith(ACTION_GATEWAY_HEADER) ||
-      !gateway.includes(`// @ontos-action-boundary-owner ${input.appId}\n`) ||
-      !gateway.includes(`// @ontos-action-boundary-audience ${input.appId}\n`)
-    ) {
-      return false;
-    }
-  }
-  return true;
+  return hasValidActionGateway(imports, input);
 };
 
-export const assertPublishedCrossMicroVerticalContractUsage = (input: {
+interface PublishedContractUsageInput {
   readonly dependencyDeclared: boolean;
   readonly dependencyPackageJson: PublishedOutboxPackage;
   readonly dependencyPackageName: string;
   readonly moduleSpecifiers: readonly string[];
   readonly projectReferenceDeclared: boolean;
   readonly readExportSource: (exportTarget: string) => string;
-}): void => {
+}
+
+const resourceExportSlug = (exportKey: string): string | undefined =>
+  resourceExportPattern.exec(exportKey)?.groups?.slug;
+
+const assertResourceRefUsage = (
+  input: PublishedContractUsageInput,
+  dependencySpecifiers: readonly string[],
+  resourceExports: readonly string[],
+): void => {
+  const moduleId = input.dependencyPackageJson.modernjs?.ontosModule?.moduleId;
+  for (const resourceExport of resourceExports) {
+    const specifier = `${input.dependencyPackageName}${resourceExport.slice(1)}`;
+    if (!dependencySpecifiers.includes(specifier)) {
+      continue;
+    }
+    const target = input.dependencyPackageJson.exports?.[resourceExport];
+    const slug = resourceExportSlug(resourceExport);
+    assertCondition(
+      moduleId !== undefined &&
+        target !== undefined &&
+        slug !== undefined &&
+        isGeneratedSchemaOnlyResourceRef({
+          moduleId,
+          slug,
+          source: input.readExportSource(target),
+        }),
+      `${specifier} must remain a generated schema-only ResourceRef contract`,
+    );
+  }
+};
+
+const assertEffectClientUsage = (
+  input: PublishedContractUsageInput,
+  dependencySpecifiers: readonly string[],
+  effectClientExports: readonly string[],
+): void => {
+  if (effectClientExports.length === 1) {
+    const specifier = `${input.dependencyPackageName}/api/client`;
+    if (dependencySpecifiers.includes(specifier)) {
+      const target = input.dependencyPackageJson.exports?.['./api/client'];
+      const appId = input.dependencyPackageJson.modernjs?.appId;
+      assertCondition(
+        target !== undefined &&
+          appId !== undefined &&
+          isGeneratedPublicEffectClient({
+            appId,
+            dependencyPackageName: input.dependencyPackageName,
+            readOwnerSource: input.readExportSource,
+            source: input.readExportSource(target),
+          }),
+        `${specifier} must remain a generated public Effect client aggregate`,
+      );
+    }
+  }
+};
+
+export const assertPublishedCrossMicroVerticalContractUsage = (
+  input: PublishedContractUsageInput,
+): void => {
   const dependencySpecifiers = input.moduleSpecifiers.filter(
     (specifier) =>
       specifier === input.dependencyPackageName ||
@@ -274,45 +363,8 @@ export const assertPublishedCrossMicroVerticalContractUsage = (input: {
     `${forbiddenSpecifier} is not a published schema-only contract subpath`,
   );
 
-  const moduleId = input.dependencyPackageJson.modernjs?.ontosModule?.moduleId;
-  for (const resourceExport of resourceExports) {
-    const specifier = `${input.dependencyPackageName}${resourceExport.slice(1)}`;
-    if (!dependencySpecifiers.includes(specifier)) {
-      continue;
-    }
-    const target = input.dependencyPackageJson.exports?.[resourceExport];
-    const slug = resourceExportPattern.exec(resourceExport)?.groups?.slug;
-    assertCondition(
-      moduleId !== undefined &&
-        target !== undefined &&
-        slug !== undefined &&
-        isGeneratedSchemaOnlyResourceRef({
-          moduleId,
-          slug,
-          source: input.readExportSource(target),
-        }),
-      `${specifier} must remain a generated schema-only ResourceRef contract`,
-    );
-  }
-
-  if (effectClientExports.length === 1) {
-    const specifier = `${input.dependencyPackageName}/api/client`;
-    if (dependencySpecifiers.includes(specifier)) {
-      const target = input.dependencyPackageJson.exports?.['./api/client'];
-      const appId = input.dependencyPackageJson.modernjs?.appId;
-      assertCondition(
-        target !== undefined &&
-          appId !== undefined &&
-          isGeneratedPublicEffectClient({
-            appId,
-            dependencyPackageName: input.dependencyPackageName,
-            readOwnerSource: input.readExportSource,
-            source: input.readExportSource(target),
-          }),
-        `${specifier} must remain a generated public Effect client aggregate`,
-      );
-    }
-  }
+  assertResourceRefUsage(input, dependencySpecifiers, resourceExports);
+  assertEffectClientUsage(input, dependencySpecifiers, effectClientExports);
 };
 
 export const assertPublishedOutboxDependencyUsage = (input: {

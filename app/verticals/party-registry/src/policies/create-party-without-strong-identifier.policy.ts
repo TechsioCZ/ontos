@@ -10,11 +10,32 @@ import type {
   PartyEvidenceInsufficientError,
 } from '../../shared/domain/identity-contracts.ts';
 
-export const CreateWithoutStrongIdentifierPolicyConfigurationSchema = Schema.Struct({
+const CreateWithoutStrongIdentifierPolicyConfigurationSchema = Schema.Struct({
   requireIdentityReview: Schema.Boolean,
 });
 export type CreateWithoutStrongIdentifierPolicyConfiguration =
   typeof CreateWithoutStrongIdentifierPolicyConfigurationSchema.Type;
+
+const subjectEvidenceReason = (evidence: NonNullable<PartyCandidate['subjectEvidence']>) => {
+  const subjects = new Set(evidence.map((item) => item.subjectKey));
+  const kinds = new Set(evidence.map((item) => item.observedSubject));
+  if (evidence.length === 0) {
+    return 'subject_evidence_required';
+  }
+  if (kinds.has('MANAGED_LEGAL_ENTITY')) {
+    return 'managed_legal_entity_forbidden';
+  }
+  if (kinds.has('TECHNICAL_RECORD')) {
+    return 'technical_record_forbidden';
+  }
+  if (subjects.size !== 1) {
+    return 'one_concrete_subject_required';
+  }
+  if (kinds.has('PERSON') && kinds.has('ORGANIZATION')) {
+    return 'conflicting_type_evidence';
+  }
+  return 'proven_concrete_subject';
+};
 
 /** Evaluates explicit actor attestations. The owner Action, not a reference prefix or provider
  * label, records who accepted them. A review decision never bypasses subject/type evidence. */
@@ -22,23 +43,12 @@ export const evaluatePartySubjectEvidence = (
   candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>,
 ): PartyEvidenceEvaluation => {
   const evidence = candidate.subjectEvidence ?? [];
-  const subjects = new Set(evidence.map((item) => item.subjectKey));
-  const kinds = new Set(evidence.map((item) => item.observedSubject));
-  let reasonCode = 'proven_concrete_subject';
-  if (evidence.length === 0) {
-    reasonCode = 'subject_evidence_required';
-  } else if (kinds.has('MANAGED_LEGAL_ENTITY')) {
-    reasonCode = 'managed_legal_entity_forbidden';
-  } else if (kinds.has('TECHNICAL_RECORD')) {
-    reasonCode = 'technical_record_forbidden';
-  } else if (subjects.size !== 1) {
-    reasonCode = 'one_concrete_subject_required';
-  } else if (kinds.has('PERSON') && kinds.has('ORGANIZATION')) {
-    reasonCode = 'conflicting_type_evidence';
-  }
+  let reasonCode: string = subjectEvidenceReason(evidence);
   const subjectEligible = reasonCode === 'proven_concrete_subject';
   const typeSupported =
-    subjectEligible && (candidate.partyType === 'UNRESOLVED' || kinds.has(candidate.partyType));
+    subjectEligible &&
+    (candidate.partyType === 'UNRESOLVED' ||
+      evidence.some(({ observedSubject }) => observedSubject === candidate.partyType));
   if (subjectEligible && !typeSupported) {
     reasonCode = 'party_type_evidence_required';
   }
@@ -52,7 +62,7 @@ export const evaluatePartySubjectEvidence = (
   };
 };
 
-export const CreateWithoutStrongIdentifierDecisionSchema = Schema.Union([
+const CreateWithoutStrongIdentifierDecisionSchema = Schema.Union([
   Schema.Struct({
     decision: Schema.Literal('ALLOW'),
     reasonCode: Schema.Literal('proven_concrete_subject'),

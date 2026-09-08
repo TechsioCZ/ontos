@@ -497,6 +497,29 @@ export const createCounterpartyRecord = Effect.fn(
   } as const;
 });
 
+const roleEndEvidence = (input: AcceptedActionEvidence, recordedAt: Date, hasEnd: boolean) => {
+  if (!hasEnd) {
+    return {
+      endEvidenceRefs: null,
+      endProvenanceMethod: null,
+      endProvenanceSource: null,
+      endReason: null,
+      endedByActionInvocationId: null,
+      endedByPrincipalId: null,
+      endedRecordedAt: null,
+    };
+  }
+  return {
+    endEvidenceRefs: [input.provenance.evidenceReference],
+    endProvenanceMethod: input.provenance.method,
+    endProvenanceSource: input.provenance.source,
+    endReason: input.provenance.reason ?? input.provenance.method,
+    endedByActionInvocationId: input.actionInvocationId,
+    endedByPrincipalId: input.principalId,
+    endedRecordedAt: recordedAt,
+  };
+};
+
 export const addCounterpartyRoleRecord = Effect.fn(
   'CounterpartyPersistenceService.addCounterpartyRoleRecord',
 )(function* addCounterpartyRole(
@@ -563,13 +586,7 @@ export const addCounterpartyRoleRecord = Effect.fn(
       addEvidenceRefs: [input.provenance.evidenceReference],
       addReason: input.provenance.reason ?? input.provenance.method,
       counterpartyId: input.counterpartyId,
-      endEvidenceRefs: validTo === null ? null : [input.provenance.evidenceReference],
-      endProvenanceMethod: validTo === null ? null : input.provenance.method,
-      endProvenanceSource: validTo === null ? null : input.provenance.source,
-      endReason: validTo === null ? null : (input.provenance.reason ?? input.provenance.method),
-      endedByActionInvocationId: validTo === null ? null : input.actionInvocationId,
-      endedByPrincipalId: validTo === null ? null : input.principalId,
-      endedRecordedAt: validTo === null ? null : recordedAt,
+      ...roleEndEvidence(input, recordedAt, validTo !== null),
       isCurrent: lifecycle.isCurrent,
       legalEntityId: input.legalEntityId,
       policyVersion: input.policyVersion,
@@ -590,6 +607,18 @@ export const addCounterpartyRoleRecord = Effect.fn(
   yield* syncRoleReadModel(transaction, row);
   return { _tag: 'found', value: roleDto(row) } as const;
 });
+
+const repeatsRecordedRoleEnd = (
+  current: RolePeriodRow,
+  input: EndCounterpartyRoleInput,
+  validTo: Date,
+): boolean =>
+  current.validTo !== null &&
+  DateTime.Equivalence(DateTime.makeUnsafe(current.validTo), DateTime.makeUnsafe(validTo)) &&
+  current.endProvenanceMethod === input.provenance.method &&
+  current.endProvenanceSource === input.provenance.source &&
+  current.endEvidenceRefs?.[0] === input.provenance.evidenceReference &&
+  current.endReason === (input.provenance.reason ?? input.provenance.method);
 
 export const endCounterpartyRoleRecord = Effect.fn(
   'CounterpartyPersistenceService.endCounterpartyRoleRecord',
@@ -637,13 +666,7 @@ export const endCounterpartyRoleRecord = Effect.fn(
       roleType,
     } as const;
   }
-  const repeatsRecordedEnd =
-    current.validTo?.getTime() === validTo.getTime() &&
-    current.endProvenanceMethod === input.provenance.method &&
-    current.endProvenanceSource === input.provenance.source &&
-    current.endEvidenceRefs?.[0] === input.provenance.evidenceReference &&
-    current.endReason === (input.provenance.reason ?? input.provenance.method);
-  if (repeatsRecordedEnd) {
+  if (repeatsRecordedRoleEnd(current, input, validTo)) {
     return { _tag: 'found', changed: false, value: roleDto(current) } as const;
   }
   if (current.state !== 'ACTIVE' || current.validTo !== null) {

@@ -309,7 +309,7 @@ const planPageRetirement = Effect.fn('planPageRetirement')(function* planPageRet
   ];
 });
 
-export const planRetireContributionScaffold = Effect.fn('RetireContributionScaffold.plan')(
+const planRetireContributionScaffold = Effect.fn('RetireContributionScaffold.plan')(
   function* planRetireContributionScaffoldEffect(
     workspaceRoot: string,
     config: RetireContributionScaffoldConfig,

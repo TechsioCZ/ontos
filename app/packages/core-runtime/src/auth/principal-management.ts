@@ -279,6 +279,17 @@ export interface ChangePrincipalStatusInput {
   readonly tenantId: string;
 }
 
+const hasStatusChangeReason = (reason: string | undefined): boolean =>
+  reason !== undefined && reason.trim().length > 0;
+
+const principalTransitionAllowed = (current: PrincipalStatus, next: PrincipalStatus): boolean =>
+  (current === 'active' && ['disabled', 'archived'].includes(next)) ||
+  (current === 'disabled' && ['active', 'archived'].includes(next));
+
+const bindingTransitionAllowed = (current: BindingStatus, next: BindingStatus): boolean =>
+  (current === 'active' && ['disabled', 'revoked'].includes(next)) ||
+  (current === 'disabled' && ['active', 'revoked'].includes(next));
+
 const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =>
   Effect.fn('PrincipalManagement.changePrincipalStatus')(function* changeStatus(
     input: ChangePrincipalStatusInput,
@@ -290,20 +301,11 @@ const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =
     if (target.value.status !== input.expectedStatus) {
       return yield* conflict('The principal status changed concurrently');
     }
-    if (target.value.status === 'archived' || input.newStatus === target.value.status) {
+    if (!principalTransitionAllowed(target.value.status, input.newStatus)) {
       return yield* conflict('The principal status transition is not allowed');
     }
-    if (
-      input.newStatus !== 'active' &&
-      (input.reason === undefined || input.reason.trim().length === 0)
-    ) {
+    if (input.newStatus !== 'active' && !hasStatusChangeReason(input.reason)) {
       return yield* invalid('A reason is required for disable or archive');
-    }
-    const allowed =
-      (target.value.status === 'active' && ['disabled', 'archived'].includes(input.newStatus)) ||
-      (target.value.status === 'disabled' && ['active', 'archived'].includes(input.newStatus));
-    if (!allowed) {
-      return yield* conflict('The principal status transition is not allowed');
     }
     const updated = yield* persistence.updatePrincipalStatus(input);
     if (Option.isNone(updated)) {
@@ -387,6 +389,15 @@ const validateSupportImpersonationFor = (persistence: PrincipalManagementPersist
     },
   );
 
+const isEligibleBindingTarget = (
+  managed: boolean,
+  status: PrincipalStatus,
+  kind: PrincipalKind,
+): boolean => {
+  const allowedKinds: readonly PrincipalKind[] = managed ? ['service', 'integration'] : ['human'];
+  return status === 'active' && allowedKinds.includes(kind);
+};
+
 const setApiKeyBindingStatusFor = (persistence: PrincipalManagementPersistence) =>
   Effect.fn('PrincipalManagement.setApiKeyBindingStatus')(function* setBindingStatus(
     input: SetApiKeyBindingStatusInput,
@@ -395,37 +406,23 @@ const setApiKeyBindingStatusFor = (persistence: PrincipalManagementPersistence) 
     if (Option.isNone(binding)) {
       return yield* invalid('The API key binding is unavailable');
     }
-    const allowedKinds: readonly PrincipalKind[] = input.managed
-      ? ['service', 'integration']
-      : ['human'];
     if (
-      binding.value.principalStatus !== 'active' ||
-      !allowedKinds.includes(binding.value.principalKind)
+      !isEligibleBindingTarget(
+        input.managed,
+        binding.value.principalStatus,
+        binding.value.principalKind,
+      )
     ) {
       return yield* invalid('The API key binding target is not eligible');
     }
     if (binding.value.bindingStatus !== input.expectedStatus) {
       return yield* conflict('The binding status changed concurrently');
     }
-    if (
-      binding.value.bindingStatus === 'revoked' ||
-      binding.value.bindingStatus === input.newStatus
-    ) {
+    if (!bindingTransitionAllowed(binding.value.bindingStatus, input.newStatus)) {
       return yield* conflict('The binding transition is not allowed');
     }
-    if (
-      input.newStatus === 'revoked' &&
-      (input.reason === undefined || input.reason.trim().length === 0)
-    ) {
+    if (input.newStatus === 'revoked' && !hasStatusChangeReason(input.reason)) {
       return yield* invalid('A reason is required for revocation');
-    }
-    const allowed =
-      (binding.value.bindingStatus === 'active' &&
-        ['disabled', 'revoked'].includes(input.newStatus)) ||
-      (binding.value.bindingStatus === 'disabled' &&
-        ['active', 'revoked'].includes(input.newStatus));
-    if (!allowed) {
-      return yield* conflict('The binding transition is not allowed');
     }
     const updated = yield* persistence.updateApiKeyBindingStatus(input);
     if (Option.isNone(updated)) {

@@ -1,5 +1,5 @@
 import { TestClock } from 'effect/testing';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -142,6 +142,12 @@ const transactionHarness = (
   return { deletedTargets, insertedValues, selectSelections, transaction, updateSets };
 };
 /* eslint-enable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions */
+
+const assertNoIdentityWrites = (harness: ReturnType<typeof transactionHarness>) => {
+  expect(harness.insertedValues).toEqual([]);
+  expect(harness.updateSets).toEqual([]);
+  expect(harness.deletedTargets).toEqual([]);
+};
 
 const assertTenantLockIsFirst = (harness: ReturnType<typeof transactionHarness>) => {
   // SAFETY: Every service under test first calls the tenant lock with one Drizzle SQL lock selection.
@@ -691,9 +697,7 @@ it.layer(
         validFrom: '2026-01-01T00:00:00.000Z',
       });
       expect(Predicate.isTagged(result, 'conflict')).toBe(true);
-      expect(harness.insertedValues).toEqual([]);
-      expect(harness.updateSets).toEqual([]);
-      expect(harness.deletedTargets).toEqual([]);
+      assertNoIdentityWrites(harness);
     }),
   );
 
@@ -792,9 +796,7 @@ it.layer(
           validFrom: '2026-01-01T00:00:00.000Z',
         });
         expect(Predicate.isTagged(result, 'conflict')).toBe(true);
-        expect(harness.insertedValues).toEqual([]);
-        expect(harness.updateSets).toEqual([]);
-        expect(harness.deletedTargets).toEqual([]);
+        assertNoIdentityWrites(harness);
       }),
   );
 

@@ -1,8 +1,10 @@
-import { expect, it } from '@app/effect-rstest';
+import { makeCommandAssertionFetch } from '../support/command-assertion-fetch.ts';
+import { expect, it } from 'effect-rstest';
 import { Effect, Match, Result, Schema, Struct } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   PartyCommandCommitIndeterminateProblemSchema,
+  PartyCommandConflictProblemSchema,
   PartyCommandAlreadyCommittedProblemSchema,
   ResolvePartyCommandCommitPayloadSchema,
   ResolvePartyCommandCommitResultSchema,
@@ -20,9 +22,12 @@ const invocationId = Schema.decodeUnknownSync(ActionInvocationIdSchema)(
   '10000000-0000-4000-8000-000000000001',
 );
 
-it.effect('already committed is terminal and carries the invocation for governed refresh', () =>
-  Effect.gen(function* decodeContract1() {
-    const problem = {
+const recoveryProblems = [
+  {
+    name: 'already committed is terminal and carries the invocation for governed refresh',
+    decode: Schema.decodeUnknownEffect(PartyCommandAlreadyCommittedProblemSchema),
+    is: Schema.is(PartyCommandAlreadyCommittedProblemSchema),
+    problem: {
       _tag: 'PartyCommandAlreadyCommittedProblem',
       code: 'action_already_committed',
       detail: 'Refresh the authoritative governed reads.',
@@ -32,61 +37,50 @@ it.effect('already committed is terminal and carries the invocation for governed
       status: 409,
       title: 'Already committed',
       type: 'urn:ontos:party:already-committed',
-    };
-    const decodedProblem = yield* Schema.decodeUnknownEffect(
-      PartyCommandAlreadyCommittedProblemSchema,
-    )(problem);
-    expect(Schema.is(PartyCommandAlreadyCommittedProblemSchema)(decodedProblem)).toBe(true);
-    expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
-    for (const endpoint of Object.values(partyRegistryCommandsApi.groups.partyCommands.endpoints)) {
-      expect([...endpoint.error].some((schema) => Schema.is(schema)(problem))).toBe(true);
-    }
-    expect(() =>
-      Schema.decodeUnknownSync(PartyCommandAlreadyCommittedProblemSchema)({
-        ...problem,
-        retryCommand: true,
-      }),
-    ).toThrow();
-  }),
-);
+    },
+  },
+  {
+    name: 'commit uncertainty retains a resolution handle and never instructs blind command retry',
+    decode: Schema.decodeUnknownEffect(PartyCommandCommitIndeterminateProblemSchema),
+    is: Schema.is(PartyCommandCommitIndeterminateProblemSchema),
+    problem: {
+      _tag: 'PartyCommandCommitIndeterminateProblem',
+      detail: 'Resolve the invocation before deciding the next step.',
+      invocationId,
+      resolution: 'RESOLVE_COMMIT',
+      retryCommand: false,
+      status: 503,
+      title: 'Commit outcome unknown',
+      type: 'urn:ontos:party:commit-indeterminate',
+    },
+  },
+];
 
-it.effect(
-  'commit uncertainty retains a resolution handle and never instructs blind command retry',
-  () =>
-    Effect.gen(function* decodeContract2() {
-      const problem = {
-        _tag: 'PartyCommandCommitIndeterminateProblem',
-        detail: 'Resolve the invocation before deciding the next step.',
-        invocationId,
-        resolution: 'RESOLVE_COMMIT',
-        retryCommand: false,
-        status: 503,
-        title: 'Commit outcome unknown',
-        type: 'urn:ontos:party:commit-indeterminate',
-      };
-      const decodedProblem = yield* Schema.decodeUnknownEffect(
-        PartyCommandCommitIndeterminateProblemSchema,
-      )(problem);
-      expect(Schema.is(PartyCommandCommitIndeterminateProblemSchema)(decodedProblem)).toBe(true);
-      expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
+for (const { name, decode, is, problem } of recoveryProblems) {
+  it.effect(name, () =>
+    Effect.gen(function* decodeRecoveryContract() {
+      const decoded = yield* decode(problem);
+      expect(is(decoded)).toBe(true);
+      expect(Struct.omit(decoded, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
       for (const endpoint of Object.values(
         partyRegistryCommandsApi.groups.partyCommands.endpoints,
       )) {
         expect([...endpoint.error].some((schema) => Schema.is(schema)(problem))).toBe(true);
       }
-      expect(() =>
-        Schema.decodeUnknownSync(PartyCommandCommitIndeterminateProblemSchema)({
-          ...problem,
-          retryCommand: true,
-        }),
-      ).toThrow();
-      expect(() =>
-        Schema.decodeUnknownSync(ResolvePartyCommandCommitPayloadSchema)({
-          invocationId: 'invalid',
-        }),
-      ).toThrow();
+      const invalid: Effect.Effect<unknown, Schema.SchemaError> = decode({
+        ...problem,
+        retryCommand: true,
+      });
+      expect(Result.isFailure(yield* Effect.result(invalid))).toBe(true);
     }),
-);
+  );
+}
+
+it('recovery rejects an invalid invocation handle', () => {
+  expect(() =>
+    Schema.decodeUnknownSync(ResolvePartyCommandCommitPayloadSchema)({ invocationId: 'invalid' }),
+  ).toThrow();
+});
 
 it.effect('recovery is separate from the unchanged set of explicit mutation endpoints', () =>
   Effect.gen(function* decodeContract3() {
@@ -110,97 +104,59 @@ it.effect('recovery is separate from the unchanged set of explicit mutation endp
   }),
 );
 
-it.effect('the command client decodes indeterminate commits without losing recovery metadata', () =>
-  Effect.gen(function* testProgram1() {
-    const problem = {
-      _tag: 'PartyCommandCommitIndeterminateProblem',
-      detail: 'Resolve first.',
-      invocationId,
-      resolution: 'RESOLVE_COMMIT',
-      retryCommand: false,
-      status: 503,
-      title: 'Unknown commit',
-      type: 'urn:ontos:party:commit-indeterminate',
-    };
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(
-        Response.json(problem, {
-          headers: { 'content-type': 'application/problem+json' },
-          status: 503,
-        }),
-      );
-    const result = yield* requestSearchRebuildWithAuthorization({}, 'Bearer test', {
-      baseUrl: 'https://party.example/party-registry-api',
-      correlationId: 'uncertain',
-      idempotencyKey: 'same-key',
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(Result.isFailure(result)).toBe(true);
-    if (!Result.isFailure(result)) {
-      throw new Error('Expected truthy value');
-    }
-    expect(Schema.is(PartyCommandCommitIndeterminateProblemSchema)(result.failure)).toBe(true);
-    expect(Struct.omit(result.failure, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
-  }),
-);
-
-it.effect('the command client preserves committed invocation metadata across HTTP', () =>
-  Effect.gen(function* testProgram2() {
-    const problem = {
-      _tag: 'PartyCommandAlreadyCommittedProblem',
-      code: 'action_already_committed',
-      detail: 'Refresh the authoritative governed reads.',
-      invocationId,
-      resolution: 'REFRESH_GOVERNED_READS',
-      retryCommand: false,
+for (const { name, is, problem } of [
+  ...recoveryProblems,
+  {
+    name: 'declared conflict retains its tag and stable conflict code',
+    is: Schema.is(PartyCommandConflictProblemSchema),
+    problem: {
+      _tag: 'PartyCommandConflictProblem',
+      code: 'action_request_hash_conflict',
+      detail: 'This key was used with a different command payload.',
       status: 409,
-      title: 'Already committed',
-      type: 'urn:ontos:party:already-committed',
-    };
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(
-        Response.json(problem, {
-          headers: { 'content-type': 'application/problem+json' },
-          status: 409,
-        }),
-      );
-    const result = yield* requestSearchRebuildWithAuthorization({}, 'Bearer test', {
-      baseUrl: 'https://party.example/party-registry-api',
-      correlationId: 'committed',
-      idempotencyKey: 'same-key',
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(Result.isFailure(result)).toBe(true);
-    if (!Result.isFailure(result)) {
-      throw new Error('Expected truthy value');
-    }
-    expect(Schema.is(PartyCommandAlreadyCommittedProblemSchema)(result.failure)).toBe(true);
-    expect(Struct.omit(result.failure, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
-  }),
-);
+      title: 'Idempotency conflict',
+      type: 'urn:ontos:action:request-hash-conflict',
+    },
+  },
+]) {
+  it.effect(`command client HTTP decoding: ${name}`, () =>
+    Effect.gen(function* decodeHttpProblem() {
+      const fakeFetch: typeof fetch = () =>
+        Promise.resolve(
+          Response.json(problem, {
+            headers: { 'content-type': 'application/problem+json' },
+            status: problem.status,
+          }),
+        );
+      const result = yield* requestSearchRebuildWithAuthorization({}, 'Bearer test', {
+        baseUrl: 'https://party.example/party-registry-api',
+        correlationId: 'problem-decoding',
+        idempotencyKey: 'same-key',
+      }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+      expect(Result.isFailure(result)).toBe(true);
+      if (!Result.isFailure(result)) {
+        return expect.unreachable('Expected HTTP problem decoding to fail');
+      }
+      expect(is(result.failure)).toBe(true);
+      expect(Struct.omit(result.failure, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
+    }),
+  );
+}
 
 it.effect(
   'recovery acquires a fresh assertion without submitting an idempotency key or re-running a command',
   () =>
     Effect.gen(function* testProgram3() {
-      const requests: Request[] = [];
-      let assertions = 0;
-      const fakeFetch: typeof fetch = (input, init) => {
-        const request = new Request(input, init);
-        requests.push(request);
-        if (new URL(request.url).hostname === 'shell.example') {
-          assertions += 1;
-          return Promise.resolve(
-            Response.json({ expiresAt: 2_000_000_000, token: `fresh-${assertions}` }),
-          );
-        }
-        return Promise.resolve(
+      const { requests, assertions, fakeFetch } = makeCommandAssertionFetch(
+        () =>
           Response.json({
             _tag: 'PartyCommandCommitResolution',
             invocationId,
             retryCommand: false,
             state: 'COMMITTED',
           }),
-        );
-      };
+        'fresh',
+      );
       const result = yield* resolvePartyCommandCommit(
         { invocationId },
         {
@@ -211,7 +167,7 @@ it.effect(
         },
       ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
       expect(result.state).toBe('COMMITTED');
-      expect(assertions).toBe(1);
+      expect(assertions()).toBe(1);
       expect(requests.length).toBe(2);
       const [, request] = requests;
       expect(Boolean(request)).toBe(true);
@@ -235,8 +191,6 @@ it.effect(
     Effect.all(
       (['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const).map((outcome) =>
         Effect.gen(function* testProgram5() {
-          const requests: Request[] = [];
-          let assertions = 0;
           const partyRef = {
             moduleId: 'party.registry',
             resourceId: invocationId,
@@ -251,38 +205,27 @@ it.effect(
             ...partyRef,
             resourceType: 'party.registry.duplicate-candidate-case',
           };
-          const fakeFetch: typeof fetch = (input, init) => {
-            const request = new Request(input, init);
-            requests.push(request);
-            if (new URL(request.url).hostname === 'shell.example') {
-              return Promise.resolve(
-                Response.json({ expiresAt: 2_000_000_000, token: `fresh-${(assertions += 1)}` }),
-              );
-            }
+          const { requests, assertions, fakeFetch } = makeCommandAssertionFetch((request) => {
             if (request.url.endsWith('/resolve')) {
-              return Promise.resolve(
-                Response.json({
-                  _tag: 'PartyCommandCommitResolution',
-                  invocationId,
-                  retryCommand: false,
-                  state: 'COMMITTED',
-                }),
-              );
+              return Response.json({
+                _tag: 'PartyCommandCommitResolution',
+                invocationId,
+                retryCommand: false,
+                state: 'COMMITTED',
+              });
             }
-            return Promise.resolve(
-              Response.json({
-                caseRef: outcome === 'AMBIGUOUS' ? caseRef : null,
-                committedCreateOutcome: outcome,
-                decidedAt: '2026-09-04T00:00:00Z',
-                decisionRef,
-                evidenceExplanation: [],
-                matchRuleVersion: 'party-exact-claims.v1',
-                operation: 'CREATE',
-                outcome: outcome === 'MATCHED_EXISTING' ? 'MATCHED' : outcome,
-                partyRef: outcome === 'AMBIGUOUS' ? null : partyRef,
-              }),
-            );
-          };
+            return Response.json({
+              caseRef: outcome === 'AMBIGUOUS' ? caseRef : null,
+              committedCreateOutcome: outcome,
+              decidedAt: '2026-09-04T00:00:00Z',
+              decisionRef,
+              evidenceExplanation: [],
+              matchRuleVersion: 'party-exact-claims.v1',
+              operation: 'CREATE',
+              outcome: outcome === 'MATCHED_EXISTING' ? 'MATCHED' : outcome,
+              partyRef: outcome === 'AMBIGUOUS' ? null : partyRef,
+            });
+          }, 'fresh');
           const recovered = yield* recoverPartyCreate(
             { invocationId },
             {
@@ -301,7 +244,7 @@ it.effect(
             Match.exhaustive,
           );
           expect(recoveredResult.outcome).toBe(outcome);
-          expect(assertions).toBe(2);
+          expect(assertions()).toBe(2);
           expect(requests.length).toBe(4);
           expect(
             requests.every(

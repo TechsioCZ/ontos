@@ -1,9 +1,9 @@
-import { expect, it } from '@app/effect-rstest';
-import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { expect, it } from 'effect-rstest';
 
 import { eq, inArray, sql } from 'drizzle-orm';
-import { Effect, Option } from 'effect';
-import { Pool } from 'pg';
+import { Effect } from 'effect';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   contactsRelations,
@@ -15,37 +15,20 @@ const tenantA = 'c1000000-0000-4000-8000-000000000001';
 const tenantB = 'c1000000-0000-4000-8000-000000000002';
 const fixtureTenants = [tenantA, tenantB] as const;
 
-const hasPostgreSqlCode =
-  (expected: string) =>
-  (error: Parameters<typeof findPostgresFailure>[0]): boolean =>
-    Option.exists(findPostgresFailure(error), ({ code }) => code === expected);
-
 it.live(
   'enforces tenant isolation and canonical-reference uniqueness without cross-vertical FKs',
   () =>
     Effect.gen(function* testEffect1() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
+      const { admin, runtime } = yield* openBoundaryDatabases(
+        (pool) => makeTestDatabaseFromPool(pool, contactsRelations),
+        1,
       );
-      const runtimePool = yield* Effect.acquireRelease(
-        Effect.sync(
-          () => new Pool({ connectionString: connections.runtime.connectionString, max: 1 }),
-        ),
-        (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-      );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, contactsRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, contactsRelations);
       const cleanup = () =>
-        Effect.gen(function* testEffect2() {
-          yield* admin
-            .delete(personEngagementProfiles)
-            .where(inArray(personEngagementProfiles.tenantId, fixtureTenants));
-          yield* admin
-            .delete(organizationEngagementProfiles)
-            .where(inArray(organizationEngagementProfiles.tenantId, fixtureTenants));
-        });
+        purgeFixtureRows(
+          [personEngagementProfiles, organizationEngagementProfiles].map((table) =>
+            admin.delete(table).where(inArray(table.tenantId, fixtureTenants)),
+          ),
+        );
 
       yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
       yield* cleanup();

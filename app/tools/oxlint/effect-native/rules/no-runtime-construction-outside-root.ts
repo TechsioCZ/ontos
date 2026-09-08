@@ -1,3 +1,4 @@
+import { optionRecord, positiveInteger, stringArray } from '../shared/options.ts';
 /**
  * Audit finding: **A1** — "Establish one process-level Layer and ManagedRuntime composition model"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). A1 records "four runtime roots, 15+ manually
@@ -67,20 +68,21 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import { unwrapNode, keyName, memberName as sharedMemberName } from '../shared/ast.ts';
+import {
+  collectNamespaceLocals as sharedNamespaceLocals,
+  collectDirectMemberImports as sharedDirectMembers,
+} from '../shared/imports.ts';
+import { isNonReferencePosition as nonReferencePosition } from '../shared/reference-positions.ts';
+import { nodeKey } from '../shared/reporting.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SUBMODULE_PREFIX = `${EFFECT_ROOT_MODULE}/`;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include`/`rootFiles` defaults
- * instead of forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -136,40 +138,17 @@ interface RuleOptions {
   readonly includeTests: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
-  const maxPerRoot = record.maxPerRoot;
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
     rootFiles: stringArray(record.rootFiles, DEFAULT_ROOT_FILES),
     members: stringArray(record.members, DEFAULT_MEMBERS),
-    maxPerRoot:
-      typeof maxPerRoot === 'number' && Number.isInteger(maxPerRoot) && maxPerRoot >= 0
-        ? maxPerRoot
-        : 1,
+    maxPerRoot: positiveInteger(record.maxPerRoot, 1, 0),
     reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
     includeTests: record.includeTests === true,
   };
-}
-
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
 }
 
 /** `["ManagedRuntime.make", "Layer.build"]` → `{ ManagedRuntime: {make}, Layer: {build} }`. */
@@ -192,10 +171,6 @@ function moduleExportName(node: ESTree.Node): string | null {
   if (node.type === 'Identifier') return node.name;
   if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
   return null;
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string | null {
-  return moduleExportName(specifier.imported as ESTree.Node);
 }
 
 /** The last path segment of `effect/ManagedRuntime`, or `null` for anything else. */
@@ -240,29 +215,18 @@ function collectNamespaceLocals(
   reexportModules: readonly string[],
   typeOnly: ReadonlySet<string>,
 ): NamespaceLocals {
-  const namespaces = new Map<string, string>();
-  const barrels = new Set<string>();
-  for (const [local, namespace] of bindings.namespaces) {
-    if (tracked.has(namespace) && !typeOnly.has(local)) namespaces.set(local, namespace);
-  }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.importKind === 'type') continue;
-    const source = statement.source.value;
-    const isEffectRoot = source === EFFECT_ROOT_MODULE;
-    const isReexport = matchesGlobs(source, reexportModules);
-    if (!isEffectRoot && !isReexport) continue;
-    for (const specifier of statement.specifiers) {
-      if (typeOnly.has(specifier.local.name)) continue;
-      if (specifier.type === 'ImportNamespaceSpecifier') barrels.add(specifier.local.name);
-      else if (specifier.type === 'ImportSpecifier') {
-        const imported = importedName(specifier);
-        if (imported !== null && tracked.has(imported))
-          namespaces.set(specifier.local.name, imported);
-      }
-    }
-  }
-  return { namespaces, barrels };
+  const { namespaced, barrel } = sharedNamespaceLocals(
+    program,
+    bindings,
+    tracked,
+    reexportModules,
+    {
+      valueOnly: true,
+      excludedLocals: typeOnly,
+    },
+  );
+  for (const local of typeOnly) namespaced.delete(local);
+  return { namespaces: namespaced, barrels: barrel };
 }
 
 /** `import { make as boot } from "effect/ManagedRuntime"` → `boot` → `ManagedRuntime.make`. */
@@ -271,23 +235,19 @@ function collectDirectMemberImports(
   byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
   typeOnly: ReadonlySet<string>,
 ): ReadonlyMap<string, string> {
-  const locals = new Map<string, string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.importKind === 'type') continue;
-    const namespace = effectSubmodule(statement.source.value);
-    if (namespace === null) continue;
-    const members = byNamespace.get(namespace);
-    if (members === undefined) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      if (typeOnly.has(specifier.local.name)) continue;
-      const imported = importedName(specifier);
-      if (imported !== null && members.has(imported))
-        locals.set(specifier.local.name, `${namespace}.${imported}`);
-    }
-  }
-  return locals;
+  return new Map(
+    [
+      ...sharedDirectMembers(
+        program,
+        byNamespace,
+        {
+          valueOnly: true,
+          excludedLocals: typeOnly,
+        },
+        effectSubmodule,
+      ),
+    ].map(([local, { namespace, member }]) => [local, `${namespace}.${member}`]),
+  );
 }
 
 interface Finding {
@@ -301,137 +261,66 @@ interface Finding {
  * `export { make as makeRuntime } from "effect/ManagedRuntime"` (re-export with a source) and
  * `import { make } from "effect/ManagedRuntime"; export { make }` (re-export of a local binding).
  */
+function exportedMember(
+  local: string,
+  namespace: string | null,
+  members: ReadonlySet<string> | undefined,
+  directMembers: ReadonlyMap<string, string>,
+): string | undefined {
+  if (namespace !== null && members !== undefined)
+    return members.has(local) ? `${namespace}.${local}` : undefined;
+  return directMembers.get(local);
+}
+
+function reexportFindings(
+  statement: ESTree.ExportNamedDeclaration,
+  byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
+  directMembers: ReadonlyMap<string, string>,
+): Finding[] {
+  const namespace = statement.source == null ? null : effectSubmodule(statement.source.value);
+  const members = namespace === null ? undefined : byNamespace.get(namespace);
+  if (statement.source != null && members === undefined) return [];
+  const findings: Finding[] = [];
+  for (const specifier of statement.specifiers) {
+    if (specifier.exportKind === 'type') continue;
+    const local = moduleExportName(specifier.local as ESTree.Node);
+    if (local === null) continue;
+    const member = exportedMember(local, namespace, members, directMembers);
+    if (member !== undefined) findings.push({ node: specifier, member, start: specifier.start });
+  }
+  return findings;
+}
+
 function collectReexportedMembers(
   program: ESTree.Program,
   byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
   directMembers: ReadonlyMap<string, string>,
 ): readonly Finding[] {
-  const findings: Finding[] = [];
-  for (const statement of program.body) {
-    if (statement.type !== 'ExportNamedDeclaration') continue;
-    if (statement.exportKind === 'type') continue;
-    const source = statement.source;
-    const namespace =
-      source === null || source === undefined ? null : effectSubmodule(source.value);
-    const members = namespace === null ? undefined : byNamespace.get(namespace);
-    if (source !== null && source !== undefined && members === undefined) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.exportKind === 'type') continue;
-      const local = moduleExportName(specifier.local as ESTree.Node);
-      if (local === null) continue;
-      if (namespace !== null && members !== undefined) {
-        // `export { make } from "effect/ManagedRuntime"`.
-        if (members.has(local))
-          findings.push({
-            node: specifier,
-            member: `${namespace}.${local}`,
-            start: specifier.start,
-          });
-        continue;
-      }
-      // `export { make }` where `make` is a direct member import in this file.
-      const qualified = directMembers.get(local);
-      if (qualified !== undefined)
-        findings.push({ node: specifier, member: qualified, start: specifier.start });
-    }
-  }
-  return findings;
-}
-
-/** A statically known string key: `"make"` or a no-substitution `` `make` ``. */
-function staticStringOf(node: ESTree.Node): string | null {
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
-    const quasi = node.quasis[0];
-    if (quasi === undefined) return null;
-    const cooked = quasi.value.cooked;
-    return typeof cooked === 'string' ? cooked : quasi.value.raw;
-  }
-  return null;
+  return program.body.flatMap((statement) =>
+    statement.type === 'ExportNamedDeclaration' && statement.exportKind !== 'type'
+      ? reexportFindings(statement, byNamespace, directMembers)
+      : [],
+  );
 }
 
 /** Non-computed `.make`, computed `["make"]`, computed `` [`make`] ``. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  return staticStringOf(node.property as ESTree.Node);
+  return sharedMemberName(node, { templates: true, rawTemplates: true });
 }
 
 /** `{ make: boot }`, `{ "make": boot }`, `{ ["make"]: boot }`, `` { [`make`]: boot } ``. */
 function propertyKeyName(property: Extract<ESTree.Node, { type: 'Property' }>): string | null {
-  const key = property.key as ESTree.Node;
-  if (!property.computed) return key.type === 'Identifier' ? key.name : staticStringOf(key);
-  return staticStringOf(key);
+  return keyName(property.key, property.computed, { templates: true, rawTemplates: true });
 }
 
 /** Peel `as` / `satisfies` / `!` / `<T>` / parentheses / optional-chain wrappers off an expression. */
 function unwrapExpression(node: ESTree.Node): ESTree.Node {
-  let current: ESTree.Node = node;
-  for (let depth = 0; depth < 8; depth += 1) {
-    if (!TRANSPARENT_EXPRESSIONS.has(current.type)) return current;
-    const inner = (current as { expression?: ESTree.Node }).expression;
-    if (inner === undefined || inner === null) return current;
-    current = inner;
-  }
-  return current;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, …) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
+  return unwrapNode(node, { wrappers: TRANSPARENT_EXPRESSIONS, maxDepth: 8 });
 }
 
 /** Identifier positions that are declarations, property keys or type references — never runtime uses. */
 function isNonReferencePosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
-  const parent = node.parent;
-  if (parent === null || parent === undefined) return true;
-  if (TYPE_POSITION_PARENTS.has(parent.type)) return true;
-  switch (parent.type) {
-    case 'ImportSpecifier':
-    case 'ImportDefaultSpecifier':
-    case 'ImportNamespaceSpecifier':
-    case 'ExportSpecifier': {
-      return true;
-    }
-    case 'MemberExpression': {
-      return parent.property === node && !parent.computed;
-    }
-    case 'Property':
-    case 'PropertyDefinition':
-    case 'MethodDefinition': {
-      return parent.key === node && !parent.computed;
-    }
-    default: {
-      return false;
-    }
-  }
-}
-
-/** Stable key for an AST node: oxlint may hand out fresh wrapper objects for the same node. */
-function nodeKey(node: ESTree.Node): string {
-  return `${node.start}:${node.end}`;
+  return nonReferencePosition(node, { nonReferenceParents: TYPE_POSITION_PARENTS });
 }
 
 type ResolvedBinding =
@@ -577,19 +466,71 @@ export const rule = defineRule({
       for (const definition of variable.defs) {
         if (definition.type === 'ImportBinding') return fromImports(identifier.name);
         if (definition.type !== 'Variable') continue;
-        const key = nodeKey(definition.node);
-        const alias = aliasDeclarators.get(key);
+        const alias = aliasDeclarators.get(nodeKey(definition.node));
         if (alias !== undefined) return resolveBinding(alias, depth + 1);
-        const destructured = destructureDeclarators.get(key);
-        if (destructured === undefined) continue;
-        const property = destructured.keys.get(identifier.name);
-        if (property === undefined || !tracked.has(property)) continue;
-        const source = resolveBinding(destructured.source, depth + 1);
-        if (source !== null && source.kind === 'barrel')
-          return { kind: 'namespace', namespace: property };
+        const resolved = resolveDeclarator(definition.node, identifier.name, depth);
+        if (resolved !== null) return resolved;
       }
       return null;
     };
+
+    function resolveDeclarator(node: ESTree.Node, name: string, depth: number): ResolvedBinding {
+      const key = nodeKey(node);
+      const destructured = destructureDeclarators.get(key);
+      if (destructured === undefined) return null;
+      const property = destructured.keys.get(name);
+      if (property === undefined || !tracked.has(property)) return null;
+      const source = resolveBinding(destructured.source, depth + 1);
+      if (source !== null && source.kind === 'barrel')
+        return { kind: 'namespace', namespace: property };
+      return null;
+    }
+
+    function collectMemberFindings(found: Finding[]): void {
+      for (const candidate of memberCandidates) {
+        const resolved = resolveBinding(candidate.object, 0);
+        if (resolved === null) continue;
+        const namespace =
+          candidate.viaBarrel === null
+            ? resolved.kind === 'namespace'
+              ? resolved.namespace
+              : null
+            : resolved.kind === 'barrel'
+              ? candidate.viaBarrel
+              : null;
+        if (namespace === null || byNamespace.get(namespace)?.has(candidate.member) !== true)
+          continue;
+        found.push({
+          node: candidate.node,
+          member: `${namespace}.${candidate.member}`,
+          start: candidate.node.start,
+        });
+      }
+    }
+
+    function collectDestructureFindings(found: Finding[]): void {
+      for (const candidate of destructureCandidates) {
+        const resolved = resolveBinding(candidate.source, 0);
+        if (resolved === null || resolved.kind !== 'namespace') continue;
+        if (byNamespace.get(resolved.namespace)?.has(candidate.key) !== true) continue;
+        found.push({
+          node: candidate.node,
+          member: `${resolved.namespace}.${candidate.key}`,
+          start: candidate.node.start,
+        });
+      }
+    }
+
+    function collectPlainFindings(found: Finding[]): void {
+      for (const candidate of plainCandidates) {
+        if (!resolvesToImport(context, candidate.node)) continue;
+        found.push({
+          node: candidate.node,
+          member: candidate.member,
+          start: candidate.node.start,
+        });
+      }
+    }
 
     return {
       MemberExpression(node) {
@@ -647,47 +588,9 @@ export const rule = defineRule({
       'Program:exit'() {
         const found: Finding[] = [...reexports];
 
-        for (const candidate of memberCandidates) {
-          const resolved = resolveBinding(candidate.object, 0);
-          if (resolved === null) continue;
-          if (candidate.viaBarrel === null) {
-            if (resolved.kind !== 'namespace') continue;
-            if (byNamespace.get(resolved.namespace)?.has(candidate.member) !== true) continue;
-            found.push({
-              node: candidate.node,
-              member: `${resolved.namespace}.${candidate.member}`,
-              start: candidate.node.start,
-            });
-            continue;
-          }
-          if (resolved.kind !== 'barrel') continue;
-          if (byNamespace.get(candidate.viaBarrel)?.has(candidate.member) !== true) continue;
-          found.push({
-            node: candidate.node,
-            member: `${candidate.viaBarrel}.${candidate.member}`,
-            start: candidate.node.start,
-          });
-        }
-
-        for (const candidate of destructureCandidates) {
-          const resolved = resolveBinding(candidate.source, 0);
-          if (resolved === null || resolved.kind !== 'namespace') continue;
-          if (byNamespace.get(resolved.namespace)?.has(candidate.key) !== true) continue;
-          found.push({
-            node: candidate.node,
-            member: `${resolved.namespace}.${candidate.key}`,
-            start: candidate.node.start,
-          });
-        }
-
-        for (const candidate of plainCandidates) {
-          if (!resolvesToImport(context, candidate.node)) continue;
-          found.push({
-            node: candidate.node,
-            member: candidate.member,
-            start: candidate.node.start,
-          });
-        }
+        collectMemberFindings(found);
+        collectDestructureFindings(found);
+        collectPlainFindings(found);
 
         if (found.length === 0) return;
         found.sort((left, right) => left.start - right.start);

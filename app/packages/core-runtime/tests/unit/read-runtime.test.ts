@@ -1,5 +1,5 @@
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
@@ -398,6 +398,29 @@ it.effect('preserves scoped service-factory unavailability and never invokes the
     expect(harness.evidence()).toBe(0);
   }),
 );
+const counterpartyReadRegistration = (
+  legalEntityScope: 'required' | 'optional',
+  onHandler: () => void,
+) =>
+  defineRead(
+    { ...registration().descriptor, legalEntityScope, permissionTarget: 'legal_entity' },
+    () => {
+      onHandler();
+      return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+    },
+    () => Effect.succeed({}),
+    () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
+  );
+
+const counterpartyReadPrincipal = (legalEntityId: string) => ({
+  authBindingId: '00000000-0000-4000-8000-000000000005',
+  authContextRef: 'better-auth-session:read-runtime',
+  authMethod: 'session' as const,
+  legalEntityId,
+  principalId: scope.principalId,
+  tenantId: scope.tenantId,
+});
+
 it.effect('persists sanitized permission denial and never invokes the private handler', () =>
   Effect.gen(function* migratedTest11() {
     const legalEntityId = '00000000-0000-4000-8000-000000000004';
@@ -408,30 +431,13 @@ it.effect('persists sanitized permission denial and never invokes the private ha
       resolvedScope: { ...scope, legalEntityId },
     });
     let handlerCalls = 0;
-    const deniedRegistration = defineRead(
-      {
-        ...registration().descriptor,
-        legalEntityScope: 'required',
-        permissionTarget: 'legal_entity',
-      },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-      },
-      () => Effect.succeed({}),
-      () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
-    );
+    const deniedRegistration = counterpartyReadRegistration('required', () => {
+      handlerCalls += 1;
+    });
     const error = yield* Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authBindingId: '00000000-0000-4000-8000-000000000005',
-          authContextRef: 'better-auth-session:read-runtime',
-          authMethod: 'session',
-          legalEntityId,
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: counterpartyReadPrincipal(legalEntityId),
         registration: deniedRegistration,
         transport: { correlationId: scope.correlationId },
       }),
@@ -450,30 +456,13 @@ it.effect('fails closed when explicit Counterparty read authority is unavailable
       permissionDecision: 'unavailable',
       resolvedScope: { ...scope, legalEntityId },
     });
-    const counterpartyRead = defineRead(
-      {
-        ...registration().descriptor,
-        legalEntityScope: 'optional',
-        permissionTarget: 'legal_entity',
-      },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-      },
-      () => Effect.succeed({}),
-      () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
-    );
+    const counterpartyRead = counterpartyReadRegistration('optional', () => {
+      handlerCalls += 1;
+    });
     const error = yield* Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authBindingId: '00000000-0000-4000-8000-000000000005',
-          authContextRef: 'better-auth-session:read-runtime',
-          authMethod: 'session',
-          legalEntityId,
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: counterpartyReadPrincipal(legalEntityId),
         registration: counterpartyRead,
         transport: { correlationId: scope.correlationId },
       }),
@@ -710,122 +699,102 @@ it.effect('rejects generic tenant access as an alternative permission target', (
     expect(handlerCalls).toBe(0);
   }),
 );
-it.effect('never treats missing Legal Entity scope as an allowed alternative', () =>
-  Effect.gen(function* migratedTest16() {
-    let handlerCalls = 0;
-    const composed = defineRead(
-      {
-        ...registration().descriptor,
-        permissionTarget: 'tenant',
-      },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-      },
-      () => Effect.succeed({}),
-      () => ({
-        kind: 'any_of',
-        targets: [
-          { kind: 'tenant', permission: 'manage_party_identity' },
-          { kind: 'module', moduleId: 'party.registry' },
-        ],
+for (const scenario of [
+  {
+    expectedFailure: 'ReadPermissionUnavailable',
+    name: 'never treats missing Legal Entity scope as an allowed alternative',
+    permission: 'manage_party_identity',
+    resultTargets: null,
+    tenantPermissionDecision: 'denied',
+  },
+  {
+    expectedFailure: 'ReadHandlerExecutionError',
+    name: 'rejects alternative targets whenever result authorization cannot preserve them',
+    permission: 'read_party_identity',
+    resultTargets: () => [],
+    tenantPermissionDecision: 'allowed',
+  },
+] as const) {
+  it.effect(scenario.name, () =>
+    Effect.gen(function* tableScenario() {
+      let handlerCalls = 0;
+      const alternativeRead = defineRead(
+        { ...registration().descriptor, permissionTarget: 'tenant' },
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+        () => Effect.succeed({}),
+        () => ({
+          kind: 'any_of',
+          targets: [
+            { kind: 'tenant', permission: scenario.permission },
+            { kind: 'module', moduleId: 'party.registry' },
+          ],
+        }),
+        scenario.resultTargets ?? undefined,
+      );
+      const failure = yield* Effect.flip(
+        (yield* makeHarness({
+          tenantPermissionDecision: scenario.tenantPermissionDecision,
+        })).runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: alternativeRead,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, scenario.expectedFailure)).toBe(true);
+      expect(handlerCalls).toBe(0);
+    }),
+  );
+}
+
+for (const scenario of [
+  {
+    expectedEvidence: 0,
+    expectedFailure: 'ReadEvidenceValidationError',
+    name: 'rejects handler-controlled hashes in metadata-only evidence',
+    outcome: Effect.succeed({
+      evidence: { queryHash: 'raw query text', resultCount: 1 },
+      result: [],
+    }),
+  },
+  {
+    expectedEvidence: 1,
+    expectedFailure: 'ReadPermissionDenied',
+    name: 'persists late definite denial after rolling back the owner transaction',
+    outcome: Effect.fail(
+      new ReadPermissionDenied({
+        code: 'read_permission_denied',
+        reason: 'A late provider target check denied this read',
       }),
-    );
-    const failure = yield* Effect.flip(
-      (yield* makeHarness({ tenantPermissionDecision: 'denied' })).runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: composed,
-        transport: { correlationId: scope.correlationId },
-      }),
-    );
-    expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
-    expect(handlerCalls).toBe(0);
-  }),
-);
-it.effect('rejects alternative targets whenever result authorization cannot preserve them', () =>
-  Effect.gen(function* migratedTest17() {
-    let handlerCalls = 0;
-    const search = defineRead(
-      {
-        ...registration().descriptor,
-        permissionTarget: 'tenant',
-      },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-      },
-      () => Effect.succeed({}),
-      () => ({
-        kind: 'any_of',
-        targets: [
-          { kind: 'tenant', permission: 'read_party_identity' },
-          { kind: 'module', moduleId: 'party.registry' },
-        ],
-      }),
-      () => [],
-    );
-    const failure = yield* Effect.flip(
-      (yield* makeHarness({ tenantPermissionDecision: 'allowed' })).runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: search,
-        transport: { correlationId: scope.correlationId },
-      }),
-    );
-    expect(Predicate.isTagged(failure, 'ReadHandlerExecutionError')).toBe(true);
-    expect(handlerCalls).toBe(0);
-  }),
-);
-it.effect('rejects handler-controlled hashes in metadata-only evidence', () =>
-  Effect.gen(function* migratedTest18() {
-    const harness = yield* makeHarness();
-    const unboundedEvidence = defineRead(
-      registration().descriptor,
-      () =>
-        Effect.succeed({ evidence: { queryHash: 'raw query text', resultCount: 1 }, result: [] }),
-      () => Effect.succeed({}),
-      () => ({ kind: 'module', moduleId: 'core.shell' }),
-    );
-    const error = yield* Effect.flip(
-      harness.runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: unboundedEvidence,
-        transport: { correlationId: scope.correlationId },
-      }),
-    );
-    expect(Predicate.isTagged(error, 'ReadEvidenceValidationError')).toBe(true);
-    expect(harness.evidence()).toBe(0);
-  }),
-);
-it.effect('persists late definite denial after rolling back the owner transaction', () =>
-  Effect.gen(function* migratedTest19() {
-    const harness = yield* makeHarness();
-    const lateDenial = defineRead(
-      registration().descriptor,
-      () =>
-        Effect.fail(
-          new ReadPermissionDenied({
-            code: 'read_permission_denied',
-            reason: 'A late provider target check denied this read',
-          }),
-        ),
-      () => Effect.succeed({}),
-      () => ({ kind: 'module', moduleId: 'core.shell' }),
-    );
-    const error = yield* Effect.flip(
-      harness.runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: lateDenial,
-        transport: { correlationId: scope.correlationId },
-      }),
-    );
-    expect(Predicate.isTagged(error, 'ReadPermissionDenied')).toBe(true);
-    expect(harness.evidence()).toBe(1);
-  }),
-);
+    ),
+  },
+]) {
+  it.effect(scenario.name, () =>
+    Effect.gen(function* tableScenario() {
+      const harness = yield* makeHarness();
+      const failingRead = defineRead(
+        registration().descriptor,
+        () => scenario.outcome,
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
+      );
+      const error = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: failingRead,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(error, scenario.expectedFailure)).toBe(true);
+      expect(harness.evidence()).toBe(scenario.expectedEvidence);
+    }),
+  );
+}
+
 it.effect('does not release generated search candidates denied by result-level authorization', () =>
   Effect.gen(function* migratedTest20() {
     const legalEntityId = '00000000-0000-4000-8000-000000000004';

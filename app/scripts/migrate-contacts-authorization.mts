@@ -35,11 +35,7 @@ const DENIED_PROBE_PRINCIPAL_ID = 'contacts-identity-migration-denied-probe';
 const OUTSIDE_AUTHORITATIVE_CONTEXT_MESSAGE =
   'A module-access relationship is outside the authoritative context';
 
-export const ContactsAuthorizationMigrationModeSchema = Schema.Literals([
-  'finalize',
-  'prepare',
-  'verify',
-]);
+const ContactsAuthorizationMigrationModeSchema = Schema.Literals(['finalize', 'prepare', 'verify']);
 
 export type ContactsAuthorizationMigrationMode =
   typeof ContactsAuthorizationMigrationModeSchema.Type;
@@ -239,6 +235,14 @@ const hasExpectedRelationshipEnvelope = (
   relationship.optionalCaveat === undefined &&
   relationship.optionalExpiresAt === undefined;
 
+const matchesRelationshipSubject = (
+  relation: string,
+  subjectType: string | undefined,
+  expectedRelation: ContactsAuthorizationRelationship['relation'],
+): boolean =>
+  relation === expectedRelation &&
+  subjectType === (expectedRelation === 'accessor' ? 'principal' : 'legal_entity');
+
 const decodeRelationship = (
   relationship: v1.Relationship | undefined,
   resourceId: string,
@@ -255,11 +259,11 @@ const decodeRelationship = (
   const subjectType = relationship.subject?.object?.objectType;
   const { relation } = relationship;
   const isLegalEntity =
-    relation === 'legal_entity' &&
-    subjectType === 'legal_entity' &&
+    matchesRelationshipSubject(relation, subjectType, 'legal_entity') &&
     subjectId === legalEntityObjectId;
   const isAccessor =
-    relation === 'accessor' && subjectType === 'principal' && activePrincipalIds.has(subjectId);
+    matchesRelationshipSubject(relation, subjectType, 'accessor') &&
+    activePrincipalIds.has(subjectId);
   if (isLegalEntity) {
     return Result.succeed({ relation: 'legal_entity', subjectId, subjectType: 'legal_entity' });
   }
@@ -415,6 +419,25 @@ const assertContactsPermissions = (
     }
   });
 
+const deleteLegacyRelationships = (
+  client: SpiceDbClient,
+  resourceId: string,
+  relationships: readonly ContactsAuthorizationRelationship[],
+  context: AuthoritativeContext,
+) =>
+  Effect.gen(function* deleteLegacyRelationshipsEffect() {
+    yield* writeRelationships(
+      client,
+      v1.RelationshipUpdate_Operation.DELETE,
+      resourceId,
+      relationships,
+    );
+    const remaining = yield* readRelationships(client, resourceId, context);
+    if (remaining.length > 0) {
+      yield* migrationFailure('Legacy relationship cleanup was incomplete');
+    }
+  });
+
 const migrateContext = (
   client: SpiceDbClient,
   mode: ContactsAuthorizationMigrationMode,
@@ -460,16 +483,7 @@ const migrateContext = (
       yield* assertContactsPermissions(client, contactsResourceId, contactsAfter);
     }
     if (plan.deleteLegacy) {
-      yield* writeRelationships(
-        client,
-        v1.RelationshipUpdate_Operation.DELETE,
-        legacyResourceId,
-        legacy,
-      );
-      const remainingLegacy = yield* readRelationships(client, legacyResourceId, context);
-      if (remainingLegacy.length > 0) {
-        return yield* migrationFailure('Legacy relationship cleanup was incomplete');
-      }
+      yield* deleteLegacyRelationships(client, legacyResourceId, legacy, context);
     }
     return {
       deleted: plan.deleteLegacy ? legacy.length : 0,
@@ -491,7 +505,7 @@ const acquireSpiceDbClient = (configuration: SpiceDbConfigValue) =>
     (client) => Effect.sync(() => client.close()),
   );
 
-export const migrateContactsAuthorization = (
+const migrateContactsAuthorization = (
   mode: ContactsAuthorizationMigrationMode,
 ): Effect.Effect<ContactsAuthorizationMigrationResult, ContactsAuthorizationMigrationError> =>
   Effect.gen(function* migrateContactsAuthorizationProgram() {

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
 import {
@@ -252,32 +252,21 @@ it.effect('keeps declared backend failures in the typed Effect error channel', (
   }),
 );
 
-it.effect('keeps transport failures in the typed Effect error channel', () =>
-  Effect.gen(function* testScenario7() {
-    const outcome = yield* makeEffectBffClient({
-      api: RepresentativeApi,
-      defaultApiPrefix: 'https://owner.example/representative-api',
-    }).pipe(
-      Effect.flatMap((client) => client.representative.read({})),
-      Effect.flip,
-      Effect.provideService(FetchHttpClient.Fetch, controlledTransportFailureFetch),
-    );
-
-    expect(Predicate.isTagged(outcome, 'HttpClientError')).toBe(true);
-  }),
-);
-
-it.effect('keeps response decoding failures in the typed Effect error channel', () =>
-  Effect.gen(function* testScenario8() {
-    const outcome = yield* makeEffectBffClient({
-      api: RepresentativeApi,
-      defaultApiPrefix: 'https://owner.example/representative-api',
-    }).pipe(
-      Effect.flatMap((client) => client.representative.read({})),
-      Effect.flip,
-      Effect.provideService(FetchHttpClient.Fetch, invalidResponseFetch),
-    );
-
-    expect(Predicate.isTagged(outcome, 'SchemaError')).toBe(true);
-  }),
-);
+for (const [failureKind, transport, expectedTag] of [
+  ['transport', controlledTransportFailureFetch, 'HttpClientError'],
+  ['response decoding', invalidResponseFetch, 'SchemaError'],
+] as const) {
+  it.effect(`keeps ${failureKind} failures in the typed Effect error channel`, () =>
+    Effect.gen(function* typedClientFailure() {
+      const outcome = yield* makeEffectBffClient({
+        api: RepresentativeApi,
+        defaultApiPrefix: 'https://owner.example/representative-api',
+      }).pipe(
+        Effect.flatMap((client) => client.representative.read({})),
+        Effect.flip,
+        Effect.provideService(FetchHttpClient.Fetch, transport),
+      );
+      expect(Predicate.isTagged(outcome, expectedTag)).toBe(true);
+    }),
+  );
+}

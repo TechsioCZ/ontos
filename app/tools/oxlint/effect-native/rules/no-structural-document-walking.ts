@@ -72,26 +72,21 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
+import {
+  parentOf,
+  unwrapNode as unwrap,
+  staticString,
+  nearestFunction,
+  walk,
+} from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
+import { stringList } from '../shared/options.ts';
+import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
-
-const WORKSPACE_MARKERS: readonly string[] = ['/apps/', '/verticals/', '/packages/', '/scripts/'];
-
-/**
- * Absolute filename → the workspace-relative path the scope globs are written against. The *last*
- * marker wins so real sources and the plugin's own fixtures classify identically.
- */
-function workspacePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  let best = -1;
-  for (const marker of WORKSPACE_MARKERS) best = Math.max(best, unified.lastIndexOf(marker));
-  return best === -1 ? normalisePath(unified) : unified.slice(best + 1);
-}
 
 const DEFAULT_INCLUDE_PATHS: readonly string[] = [
   'apps/**',
@@ -169,12 +164,6 @@ const DEFAULTS: RuleOptions = {
   allowInKeys: [...DEFAULT_ALLOW_IN_KEYS],
 };
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
@@ -199,46 +188,12 @@ function compilePattern(source: string): RegExp {
   }
 }
 
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
 function spanOf(node: AnyNode): { readonly start: number; readonly end: number } {
   return node as unknown as { readonly start: number; readonly end: number };
 }
 
-/** Strip parentheses, chains and type wrappers. */
-function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  for (;;) {
-    if (current.type === 'ChainExpression') {
-      current = (current as { expression: AnyNode }).expression;
-      continue;
-    }
-    if (TRANSPARENT_PARENTS.has(current.type)) {
-      const inner = (current as { expression?: AnyNode }).expression;
-      if (inner === undefined) return current;
-      current = inner;
-      continue;
-    }
-    return current;
-  }
-}
-
-/** A statically known string operand (`'x'`, `"x"`, `` `x` ``), or null. */
 function asStringLiteral(node: AnyNode): string | null {
-  const expression = unwrap(node);
-  if (expression.type === 'Literal') {
-    const value = (expression as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  if (expression.type === 'TemplateLiteral') {
-    const template = expression as ESTree.TemplateLiteral;
-    const quasi = template.quasis[0];
-    if (template.expressions.length !== 0 || quasi === undefined) return null;
-    return quasi.value.cooked ?? quasi.value.raw;
-  }
-  return null;
+  return staticString(node, { unwrap: {}, templates: true, rawTemplates: true });
 }
 
 /** `x.y` / `x["y"]` → `"y"`; a dynamic key → `null`. */
@@ -247,16 +202,6 @@ function staticPropertyName(node: ESTree.MemberExpression): string | null {
   if (!node.computed)
     return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
   return asStringLiteral(property);
-}
-
-function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(from);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
 }
 
 /** `true` when `node` is the unshadowed global `name`. */
@@ -281,11 +226,16 @@ function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): bool
   );
 }
 
-/** `true` when the variable, if any, comes from an import (so `Predicate` reached via a barrel counts). */
-function isImportedOrGlobal(context: Context, node: AnyNode, name: string): boolean {
-  const variable = resolveVariable(context, name, node);
-  if (variable === null || variable.defs.length === 0) return true;
-  return variable.defs.every((definition) => definition.type === 'ImportBinding');
+function typeofComparison(
+  binary: ESTree.BinaryExpression,
+): { argument: AnyNode; other: AnyNode } | null {
+  const left = unwrap(binary.left);
+  const right = unwrap(binary.right);
+  if (left.type === 'UnaryExpression' && left.operator === 'typeof')
+    return { argument: unwrap(left.argument), other: right };
+  if (right.type === 'UnaryExpression' && right.operator === 'typeof')
+    return { argument: unwrap(right.argument), other: left };
+  return null;
 }
 
 /**
@@ -365,7 +315,6 @@ export const rule = defineRule({
     if (matchesAny(path, options.allowPaths)) return {};
     if (options.ignoreTestFiles && isTestFile(path)) return {};
 
-    const bindings: EffectBindings = collectEffectBindings(context.sourceCode.ast);
     const documentIdentifier = compilePattern(options.documentIdentifiers);
     const allowedKeys = new Set(options.allowInKeys);
     /** Spans already reported as a whole object-shape guard; nested field probes stay silent there. */
@@ -417,45 +366,47 @@ export const rule = defineRule({
      * `Predicate` is accepted when it is an import (a re-export barrel this rule cannot follow),
      * never when it is a local object literal.
      */
+    const namedPredicateIdentity = (
+      source: string,
+      imported: string,
+      submodule: boolean,
+    ): string | null => {
+      if (submodule) return imported;
+      return source === 'effect' && imported === 'Predicate' ? '@predicate' : null;
+    };
+    const importPredicateIdentity = (def: Variable['defs'][number]): string | null => {
+      if (
+        def.type !== 'ImportBinding' ||
+        def.parent?.type !== 'ImportDeclaration' ||
+        def.parent.importKind === 'type'
+      )
+        return null;
+      const source = def.parent.source.value;
+      const submodule = /^effect\/(?:.*\/)?Predicate$/u.test(source);
+      if (def.node.type === 'ImportNamespaceSpecifier') return submodule ? '@predicate' : null;
+      if (def.node.type !== 'ImportSpecifier' || def.node.importKind === 'type') return null;
+      return namedPredicateIdentity(source, importedName(def.node), submodule);
+    };
+    const constantInitializer = (def: Variable['defs'][number]): AnyNode | null => {
+      if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
+      if (def.node.id.type !== 'Identifier' || def.node.parent?.type !== 'VariableDeclaration')
+        return null;
+      return def.node.parent.kind === 'const' ? def.node.init : null;
+    };
     const predicateIdentity = (input: AnyNode, depth = 0): string | null => {
       if (depth > 12) return null;
       const node = unwrap(input);
-      if (node.type === 'MemberExpression') {
+      if (node.type === 'MemberExpression')
         return predicateIdentity(node.object, depth + 1) === '@predicate'
           ? staticPropertyName(node)
           : null;
-      }
       if (node.type !== 'Identifier') return null;
       const variable = resolveVariable(context, node.name, node);
       for (const def of variable?.defs ?? []) {
-        if (
-          def.type === 'ImportBinding' &&
-          def.parent?.type === 'ImportDeclaration' &&
-          def.parent.importKind !== 'type'
-        ) {
-          const source = def.parent.source.value;
-          if (
-            def.node.type === 'ImportNamespaceSpecifier' &&
-            /^effect\/(?:.*\/)?Predicate$/u.test(source)
-          )
-            return '@predicate';
-          if (def.node.type !== 'ImportSpecifier' || def.node.importKind === 'type') continue;
-          const imported =
-            def.node.imported.type === 'Identifier'
-              ? def.node.imported.name
-              : def.node.imported.value;
-          if (/^effect\/(?:.*\/)?Predicate$/u.test(source)) return imported;
-          if (source === 'effect' && imported === 'Predicate') return '@predicate';
-        }
-        if (
-          def.type === 'Variable' &&
-          def.node.type === 'VariableDeclarator' &&
-          def.node.init &&
-          def.node.id.type === 'Identifier' &&
-          def.node.parent?.type === 'VariableDeclaration' &&
-          def.node.parent.kind === 'const'
-        )
-          return predicateIdentity(def.node.init, depth + 1);
+        const imported = importPredicateIdentity(def);
+        if (imported !== null) return imported;
+        const initializer = constantInitializer(def);
+        if (initializer) return predicateIdentity(initializer, depth + 1);
       }
       return null;
     };
@@ -484,19 +435,9 @@ export const rule = defineRule({
       if (expression.type === 'BinaryExpression') {
         const binary = expression as ESTree.BinaryExpression;
         if (!EQUALITY_OPERATORS.has(binary.operator)) return null;
-        const left = unwrap(binary.left as AnyNode);
-        const right = unwrap(binary.right as AnyNode);
-        const typeofSide =
-          left.type === 'UnaryExpression' && (left as ESTree.UnaryExpression).operator === 'typeof'
-            ? left
-            : right.type === 'UnaryExpression' &&
-                (right as ESTree.UnaryExpression).operator === 'typeof'
-              ? right
-              : null;
-        if (typeofSide === null) return null;
-        const other = typeofSide === left ? right : left;
-        if (asStringLiteral(other) !== 'object') return null;
-        return unwrap((typeofSide as ESTree.UnaryExpression).argument as AnyNode);
+        const comparison = typeofComparison(binary);
+        if (!comparison || asStringLiteral(comparison.other) !== 'object') return null;
+        return comparison.argument;
       }
       if (expression.type !== 'CallExpression') return null;
       const call = expression as ESTree.CallExpression;
@@ -585,31 +526,34 @@ export const rule = defineRule({
       );
     };
     const recursiveCache = new WeakMap<AnyNode, boolean>();
+    const functionIdentifier = (fn: AnyNode): ESTree.BindingIdentifier | null => {
+      if (fn.type === 'FunctionDeclaration' || fn.type === 'FunctionExpression') return fn.id;
+      const parent = parentOf(fn);
+      return parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier'
+        ? parent.id
+        : null;
+    };
     const inGenericRecursiveTraversal = (node: AnyNode): boolean => {
-      let fn: AnyNode | null = parentOf(node);
-      while (
-        fn &&
-        !['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression'].includes(fn.type)
-      )
-        fn = parentOf(fn);
+      const fn = nearestFunction(node);
       if (!fn) return false;
       const cached = recursiveCache.get(fn);
       if (cached !== undefined) return cached;
-      const id =
-        fn.type === 'FunctionDeclaration' || fn.type === 'FunctionExpression'
-          ? fn.id
-          : fn.parent?.type === 'VariableDeclarator' && fn.parent.id.type === 'Identifier'
-            ? fn.parent.id
-            : null;
+      const id = functionIdentifier(fn);
       if (!id) return false;
       const binding = resolveVariable(context, id.name, id);
       let recursive = false,
         genericKeys = false,
         array = false;
-      const visit = (current: AnyNode): void => {
-        if (current !== fn && ['FunctionDeclaration', 'FunctionExpression'].includes(current.type))
-          return;
-        if (current.type === 'CallExpression') {
+      walk(
+        fn,
+        {},
+        (current) => {
+          if (
+            current !== fn &&
+            ['FunctionDeclaration', 'FunctionExpression'].includes(current.type)
+          )
+            return false;
+          if (current.type !== 'CallExpression') return;
           const callee = unwrap(current.callee);
           if (
             callee.type === 'Identifier' &&
@@ -621,17 +565,9 @@ export const rule = defineRule({
           )
             genericKeys = true;
           if (isGlobalMethod(callee, 'Array', 'isArray')) array = true;
-        }
-        for (const [key, value] of Object.entries(current)) {
-          if (key === 'parent' || key === 'loc' || key === 'range') continue;
-          if (Array.isArray(value))
-            for (const child of value) {
-              if (child && typeof child === 'object' && 'type' in child) visit(child as AnyNode);
-            }
-          else if (value && typeof value === 'object' && 'type' in value) visit(value as AnyNode);
-        }
-      };
-      visit(fn);
+        },
+        false,
+      );
       const result = recursive && genericKeys && array;
       recursiveCache.set(fn, result);
       return result;
@@ -639,6 +575,89 @@ export const rule = defineRule({
     const serializedDocument = (node: ESTree.CallExpression): boolean => {
       const first = node.arguments[0];
       return first !== undefined && first.type !== 'SpreadElement' && isDocumentReceiver(first);
+    };
+
+    const isSerializedComparison = (node: ESTree.BinaryExpression): boolean => {
+      const left = unwrap(node.left),
+        right = unwrap(node.right);
+      if (left.type !== 'CallExpression' || right.type !== 'CallExpression') return false;
+      return (
+        isGlobalMethod(left.callee, 'JSON', 'stringify') &&
+        isGlobalMethod(right.callee, 'JSON', 'stringify') &&
+        (serializedDocument(left) || serializedDocument(right))
+      );
+    };
+    const reportMembership = (
+      node: AnyNode,
+      receiver: AnyNode | undefined,
+      keyNode: AnyNode | undefined,
+    ): void => {
+      if (!receiver || receiver.type === 'SpreadElement' || !isDocumentReceiver(receiver)) return;
+      if (!keyNode || keyNode.type === 'SpreadElement' || keyNode.type === 'PrivateIdentifier')
+        return;
+      const key = asStringLiteral(keyNode);
+      if (key !== null && !allowedKeys.has(key)) report(node, 'documentKeyProbe');
+    };
+    const fieldCallTarget = (call: ESTree.CallExpression): AnyNode | null => {
+      const arrayTarget = arrayGuardArgument(call);
+      if (arrayTarget !== null && isDocumentField(arrayTarget)) return arrayTarget;
+      const guard = predicateGuardName(call.callee);
+      if (guard === null || !(FIELD_GUARDS.has(guard) || OBJECT_GUARDS.has(guard))) return null;
+      const target = soleArgument(call);
+      return target !== null && isDocumentField(target) ? target : null;
+    };
+    const reportFieldCall = (call: ESTree.CallExpression): boolean => {
+      if (fieldCallTarget(call) === null) return false;
+      if (!insideReportedGuard(call)) report(call, 'documentFieldGuard');
+      return true;
+    };
+    const spreadKeys = (node: AnyNode): AnyNode => {
+      if (
+        node.type === 'ArrayExpression' &&
+        node.elements.length === 1 &&
+        node.elements[0]?.type === 'SpreadElement'
+      )
+        return unwrap(node.elements[0].argument);
+      return node;
+    };
+    const reportExactKeyJoin = (
+      call: ESTree.CallExpression,
+      member: ESTree.MemberExpression,
+    ): void => {
+      const sorted = unwrap(member.object);
+      if (sorted.type !== 'CallExpression') return;
+      const sortCallee = unwrap(sorted.callee);
+      if (sortCallee.type !== 'MemberExpression') return;
+      const method = staticPropertyName(sortCallee);
+      if (method === null || !SORT_METHODS.has(method)) return;
+      const keys = spreadKeys(unwrap(sortCallee.object));
+      if (keys.type !== 'CallExpression' || !isGlobalMethod(keys.callee, 'Object', 'keys')) return;
+      const receiver = soleArgument(keys);
+      if (receiver && isDocumentReceiver(receiver)) report(call, 'exactKeyJoin');
+    };
+    const isStaticMembership = (member: ESTree.MemberExpression, method: string | null): boolean =>
+      (method === 'hasOwn' && isGlobalHost(member.object, 'Object')) ||
+      (method === 'has' && isGlobalHost(member.object, 'Reflect'));
+    const reportMemberCall = (
+      call: ESTree.CallExpression,
+      member: ESTree.MemberExpression,
+    ): void => {
+      const method = staticPropertyName(member);
+      if (isStaticMembership(member, method)) {
+        reportMembership(call, call.arguments[0], call.arguments[1]);
+        return;
+      }
+      if (method === 'hasOwnProperty') {
+        reportMembership(call, member.object, call.arguments[0]);
+        return;
+      }
+      if (method === 'call') {
+        const host = unwrap(member.object);
+        if (host.type === 'MemberExpression' && staticPropertyName(host) === 'hasOwnProperty')
+          reportMembership(call, call.arguments[0], call.arguments[1]);
+        return;
+      }
+      if (method === 'join') reportExactKeyJoin(call, member);
     };
 
     return {
@@ -664,153 +683,26 @@ export const rule = defineRule({
       },
 
       BinaryExpression(node) {
-        const expression = node as unknown as AnyNode;
-        const binary = node as ESTree.BinaryExpression;
-
-        // `'field' in document` — a hand-written key set.
-        if (binary.operator === 'in') {
-          const left = binary.left as AnyNode;
-          if (left.type === 'PrivateIdentifier') return;
-          const key = asStringLiteral(left);
-          if (key === null || allowedKeys.has(key) || !isDocumentReceiver(binary.right as AnyNode))
-            return;
-          report(expression, 'documentKeyProbe');
+        if (node.operator === 'in') {
+          reportMembership(node, node.right, node.left);
           return;
         }
-
-        if (!EQUALITY_OPERATORS.has(binary.operator)) return;
-        const left = unwrap(binary.left as AnyNode);
-        const right = unwrap(binary.right as AnyNode);
-
-        // `JSON.stringify(a) === JSON.stringify(b)` — structural equality by serialized text.
-        if (
-          left.type === 'CallExpression' &&
-          right.type === 'CallExpression' &&
-          isGlobalMethod((left as ESTree.CallExpression).callee as AnyNode, 'JSON', 'stringify') &&
-          isGlobalMethod((right as ESTree.CallExpression).callee as AnyNode, 'JSON', 'stringify') &&
-          (serializedDocument(left) || serializedDocument(right))
-        ) {
-          report(expression, 'serializedComparison');
+        if (!EQUALITY_OPERATORS.has(node.operator)) return;
+        if (isSerializedComparison(node)) {
+          report(node, 'serializedComparison');
           return;
         }
-
-        // `typeof decoded.kind === 'string'` — a field's type decided here, not in the Schema.
-        const typeofSide =
-          left.type === 'UnaryExpression' && (left as ESTree.UnaryExpression).operator === 'typeof'
-            ? left
-            : right.type === 'UnaryExpression' &&
-                (right as ESTree.UnaryExpression).operator === 'typeof'
-              ? right
-              : null;
-        if (typeofSide === null) return;
-        const other = typeofSide === left ? right : left;
-        if (asStringLiteral(other) === null) return;
-        const argument = unwrap((typeofSide as ESTree.UnaryExpression).argument as AnyNode);
-        if (!isDocumentField(argument)) return;
-        if (insideReportedGuard(expression) || inGenericRecursiveTraversal(expression)) return;
-        report(expression, 'documentFieldGuard');
+        const comparison = typeofComparison(node);
+        if (!comparison || asStringLiteral(comparison.other) === null) return;
+        if (!isDocumentField(comparison.argument)) return;
+        if (insideReportedGuard(node) || inGenericRecursiveTraversal(node)) return;
+        report(node, 'documentFieldGuard');
       },
-
       CallExpression(node) {
-        const expression = node as unknown as AnyNode;
-        const call = node as ESTree.CallExpression;
-        const callee = unwrap(call.callee as AnyNode);
-        if (inGenericRecursiveTraversal(expression)) return;
-
-        // `Array.isArray(topology['verticals'])`, `Predicate.isString(decoded.id)`.
-        const arrayTarget = arrayGuardArgument(expression);
-        if (arrayTarget !== null && isDocumentField(arrayTarget)) {
-          if (!insideReportedGuard(expression)) report(expression, 'documentFieldGuard');
-          return;
-        }
-        const guard = predicateGuardName(call.callee as AnyNode);
-        if (guard !== null && (FIELD_GUARDS.has(guard) || OBJECT_GUARDS.has(guard))) {
-          const target = soleArgument(call);
-          if (target !== null && isDocumentField(target)) {
-            if (!insideReportedGuard(expression)) report(expression, 'documentFieldGuard');
-            return;
-          }
-        }
-
+        if (inGenericRecursiveTraversal(node) || reportFieldCall(node)) return;
+        const callee = unwrap(node.callee);
         if (callee.type !== 'MemberExpression') return;
-        const member = callee as ESTree.MemberExpression;
-        const method = staticPropertyName(member);
-        if (method === null) return;
-
-        // `Object.hasOwn(document, 'field')`.
-        if (
-          (method === 'hasOwn' && isGlobalHost(member.object as AnyNode, 'Object')) ||
-          (method === 'has' && isGlobalHost(member.object as AnyNode, 'Reflect'))
-        ) {
-          const receiver = call.arguments[0];
-          if (!receiver || receiver.type === 'SpreadElement' || !isDocumentReceiver(receiver))
-            return;
-          const [, second] = call.arguments;
-          if (
-            second !== undefined &&
-            second.type !== 'SpreadElement' &&
-            asStringLiteral(second as AnyNode) !== null
-          ) {
-            const key = asStringLiteral(second as AnyNode);
-            if (key !== null && !allowedKeys.has(key)) report(expression, 'documentKeyProbe');
-          }
-          return;
-        }
-
-        // `document.hasOwnProperty('field')`.
-        if (method === 'hasOwnProperty') {
-          if (!isDocumentReceiver(member.object)) return;
-          if (!isDocumentReceiver(member.object)) return;
-          const [first] = call.arguments;
-          if (first !== undefined && first.type !== 'SpreadElement') {
-            const key = asStringLiteral(first as AnyNode);
-            if (key !== null && !allowedKeys.has(key)) report(expression, 'documentKeyProbe');
-          }
-          return;
-        }
-
-        // `Object.prototype.hasOwnProperty.call(document, 'field')`.
-        if (method === 'call') {
-          const receiver = call.arguments[0];
-          if (!receiver || receiver.type === 'SpreadElement' || !isDocumentReceiver(receiver))
-            return;
-          const host = unwrap(member.object as AnyNode);
-          if (
-            host.type === 'MemberExpression' &&
-            staticPropertyName(host as ESTree.MemberExpression) === 'hasOwnProperty'
-          ) {
-            const target = call.arguments[0];
-            if (!target || target.type === 'SpreadElement' || !isDocumentReceiver(target)) return;
-            const [, second] = call.arguments;
-            if (second !== undefined && second.type !== 'SpreadElement') {
-              const key = asStringLiteral(second as AnyNode);
-              if (key !== null && !allowedKeys.has(key)) report(expression, 'documentKeyProbe');
-            }
-          }
-          return;
-        }
-
-        // `Object.keys(document).toSorted().join('\0')` — an exact-key comparison.
-        if (method !== 'join') return;
-        const sorted = unwrap(member.object as AnyNode);
-        if (sorted.type !== 'CallExpression') return;
-        const sortCallee = unwrap((sorted as ESTree.CallExpression).callee as AnyNode);
-        if (sortCallee.type !== 'MemberExpression') return;
-        const sortMethod = staticPropertyName(sortCallee as ESTree.MemberExpression);
-        if (sortMethod === null || !SORT_METHODS.has(sortMethod)) return;
-        let keys = unwrap((sortCallee as ESTree.MemberExpression).object as AnyNode);
-        if (
-          keys.type === 'ArrayExpression' &&
-          keys.elements.length === 1 &&
-          keys.elements[0]?.type === 'SpreadElement'
-        )
-          keys = unwrap(keys.elements[0].argument);
-        if (keys.type !== 'CallExpression') return;
-        if (!isGlobalMethod((keys as ESTree.CallExpression).callee as AnyNode, 'Object', 'keys'))
-          return;
-        const keyReceiver = soleArgument(keys as ESTree.CallExpression);
-        if (!keyReceiver || !isDocumentReceiver(keyReceiver)) return;
-        report(expression, 'exactKeyJoin');
+        reportMemberCall(node, callee);
       },
     };
   },

@@ -1,35 +1,17 @@
 import { Schema } from 'effect';
+import {
+  decodedStringBrand,
+  nonEmptyString,
+  TargetModuleKeySchema,
+  TargetResourceIdSchema,
+} from './string-schemas.ts';
 
-const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 const nonNegativeInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
-const EvidencePolicyKeySchema = nonEmptyString.pipe(
-  Schema.brand('EvidencePolicyKey'),
-  Schema.decodeTo(Schema.String),
-);
-const ProducerModuleKeySchema = nonEmptyString.pipe(
-  Schema.brand('ProducerModuleKey'),
-  Schema.decodeTo(Schema.String),
-);
-const ServingModuleKeySchema = nonEmptyString.pipe(
-  Schema.brand('ServingModuleKey'),
-  Schema.decodeTo(Schema.String),
-);
-const SubjectModuleKeySchema = nonEmptyString.pipe(
-  Schema.brand('SubjectModuleKey'),
-  Schema.decodeTo(Schema.String),
-);
-const SubjectResourceIdSchema = nonEmptyString.pipe(
-  Schema.brand('SubjectResourceId'),
-  Schema.decodeTo(Schema.String),
-);
-const TargetModuleKeySchema = nonEmptyString.pipe(
-  Schema.brand('TargetModuleKey'),
-  Schema.decodeTo(Schema.String),
-);
-const TargetResourceIdSchema = nonEmptyString.pipe(
-  Schema.brand('TargetResourceId'),
-  Schema.decodeTo(Schema.String),
-);
+const EvidencePolicyKeySchema = decodedStringBrand(nonEmptyString, 'EvidencePolicyKey');
+const ProducerModuleKeySchema = decodedStringBrand(nonEmptyString, 'ProducerModuleKey');
+const ServingModuleKeySchema = decodedStringBrand(nonEmptyString, 'ServingModuleKey');
+const SubjectModuleKeySchema = decodedStringBrand(nonEmptyString, 'SubjectModuleKey');
+const SubjectResourceIdSchema = decodedStringBrand(nonEmptyString, 'SubjectResourceId');
 
 export type DomainEventContractMap = Readonly<Record<string, Schema.ConstraintDecoder<unknown>>>;
 

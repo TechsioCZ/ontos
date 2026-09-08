@@ -142,10 +142,12 @@ values; full serialized-object assertions and diagnostic tag output remain valid
 
 `no-effect-run-in-tests` rejects references, calls, imports, re-exports, and dynamic imports of
 `Effect.run*` inside tests, including test support and harness directories. Use `it.effect`,
-`it.live`, and `it.layer` from `@app/effect-rstest` so the runner owns services, scopes,
-test time, and configuration. There is no harness-path allowlist: the runner implementation in
-`packages/effect-rstest/src/**` is already outside test-file scope. That vendored upstream port is
-ignored by workspace lint; `packages/effect-rstest/tests/**` remains linted.
+`it.live`, and `it.layer` from `effect-rstest` so the runner owns services, scopes,
+test time, and configuration. The external package owns the runner boundary; there is no
+repository-owned implementation or harness-path allowlist. The immutable upstream canary currently
+uses a temporary pnpm patch for [effect-rstest PR #4](https://github.com/ScriptedAlchemy/effect-rstest/pull/4).
+[OntOS #507](https://github.com/TechsioCZ/ontos/issues/507) tracks replacing it with a published
+upstream package and deleting the patch; do not add a local runner alias or wrapper.
 
 Playwright/e2e adapters remain exempt through `ignorePaths`. Type-only imports, non-Effect
 bindings, and ManagedRuntime instance methods are not Effect root-function violations. Nested

@@ -67,7 +67,7 @@
     "module-entrypoints:check": "node ./scripts/check-module-entrypoint-boundaries.mts",
     "check:module-contracts": "node ./scripts/check-ontos-module-contracts.mts",
     "typecheck": "node ./scripts/ultramodern-typecheck.mts --build tsconfig.json",
-    "check": "pnpm format:check && pnpm typecheck:lint-rules && pnpm test:lint-rules && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm database-access:check && pnpm module-entrypoints:check && pnpm check:module-contracts && pnpm contract:check && pnpm performance:readiness",
+    "check": "pnpm format:check && pnpm typecheck:lint-rules && pnpm test:lint-rules && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm database-access:check && pnpm module-entrypoints:check && pnpm check:module-contracts && pnpm contract:check && pnpm performance:readiness && pnpm quality:check",
     "database-access:check": "node ./scripts/check-database-access-boundaries.mts",
     "format": "oxfmt . '!repos/**'",
     "format:check": "oxfmt --check . '!repos/**'",
@@ -85,20 +85,20 @@
     "authorization:impact:report": "node ./scripts/report-fail-closed-authorization-impact.mts",
     "authorization:readiness:check": "node ./scripts/check-authorization-readiness.mts",
     "quality:audit": "node ./scripts/quality-audit.mts",
-    "quality:audit:test": "rstest --project scripts scripts/tests/quality-audit.test.mts scripts/tests/quality-audit-model.test.mts scripts/tests/quality-audit-runtime-model.test.mts"
+    "quality:audit:gate": "node ./scripts/quality-audit-gate.mts",
+    "quality:check": "pnpm quality:audit && pnpm quality:audit:gate",
+    "quality:audit:test": "rstest --project scripts scripts/tests/quality-audit.test.mts scripts/tests/quality-audit-model.test.mts scripts/tests/quality-audit-runtime-model.test.mts scripts/tests/quality-audit-gate.test.mts scripts/tests/quality-cli-lifecycle.test.mts scripts/tests/quality-audit-count-domain.test.mts"
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
-    "@better-auth/drizzle-adapter": "1.7.2",
     "better-auth": "1.7.2",
-    "dotenv": "17.4.2",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "pg": "8.22.0",
     "@effect/sql-pg": "4.0.0-beta.107"
   },
   "devDependencies": {
-    "@app/effect-rstest": "workspace:*",
-    "@rstest/core": "0.11.10",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc",
+    "@rstest/core": "0.11.11",
     "@effect/platform-node": "4.0.0-beta.107",
     "@effect/tsgo": "0.19.0",
     "@noble/hashes": "2.2.0",
@@ -113,16 +113,13 @@
     "@typescript/native-preview": "npm:typescript@7.0.2",
     "effect": "4.0.0-beta.107",
     "esbuild": "0.28.1",
-    "gel": "2.2.0",
     "jose": "6.2.5",
     "lefthook": "^2.1.10",
     "miniflare": "4.20260708.1",
     "oxfmt": "0.64.0",
     "oxlint": "1.79.0",
-    "oxc-parser": "0.143.0",
+    "oxc-parser": "0.147.0",
     "ultracite": "7.10.7",
-    "wrangler": "4.110.0",
-    "zephyr-agent": "1.1.1",
     "@nkzw/eslint-plugin": "2.0.0",
     "eslint-plugin-github": "6.1.2",
     "eslint-plugin-perfectionist": "5.10.1",
@@ -133,7 +130,8 @@
     "jscpd": "5.1.2",
     "jsonc-parser": "3.3.1",
     "fallow": "3.22.0",
-    "oxc-parser": "0.147.0"
+    "@vercel/nft": "0.29.2",
+    "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12"
   },
   "engines": {
     "node": ">=26",

@@ -1,5 +1,5 @@
 import { TestClock } from 'effect/testing';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
 import type { SQL } from 'drizzle-orm';
@@ -418,6 +418,32 @@ it.layer(
       }),
   );
 
+  const invokeReviewedMatch = (subject: ReturnType<typeof harness>) =>
+    Effect.gen(function* invokeReviewedMatchEffect() {
+      const collector = createActionCollector(
+        resolveDuplicateCandidateMatchAction.descriptor.domainEvents,
+        'party.registry',
+        resolveDuplicateCandidateMatchAction.descriptor.accessEvidencePolicy,
+      );
+      const result = yield* getActionHandler(resolveDuplicateCandidateMatchAction)(
+        {
+          caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
+          expectedRevision: 1,
+          reason: resolutionInput.reason,
+          selectedPartyRef: makePartyRef(tenantId, partyC),
+        },
+        {
+          ...collector,
+          actionInvocationId,
+          scope: actionScope,
+          services: {
+            resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
+          },
+        },
+      );
+      return { collector, result };
+    });
+
   testIt.effect(
     'reviewed matching publishes the accepted identifier through its declared Action event and linked outbox',
     () =>
@@ -431,27 +457,7 @@ it.layer(
             [partyOfficialIdentifiers, [[]]],
           ]),
         );
-        const collector = createActionCollector(
-          resolveDuplicateCandidateMatchAction.descriptor.domainEvents,
-          'party.registry',
-          resolveDuplicateCandidateMatchAction.descriptor.accessEvidencePolicy,
-        );
-        const result = yield* getActionHandler(resolveDuplicateCandidateMatchAction)(
-          {
-            caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
-            expectedRevision: 1,
-            reason: resolutionInput.reason,
-            selectedPartyRef: makePartyRef(tenantId, partyC),
-          },
-          {
-            ...collector,
-            actionInvocationId,
-            scope: actionScope,
-            services: {
-              resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
-            },
-          },
-        );
+        const { collector, result } = yield* invokeReviewedMatch(subject);
         expect(result.outcome).toBe('MATCH_EXISTING');
         expect('addedOfficialIdentifierRefs' in result).toBe(false);
         const evidence = collector.snapshot();
@@ -608,27 +614,7 @@ it.layer(
             [partyIdentifierClaims, [[{ officialIdentifierId, partyId: partyC }]]],
           ]),
         );
-        const collector = createActionCollector(
-          resolveDuplicateCandidateMatchAction.descriptor.domainEvents,
-          'party.registry',
-          resolveDuplicateCandidateMatchAction.descriptor.accessEvidencePolicy,
-        );
-        const result = yield* getActionHandler(resolveDuplicateCandidateMatchAction)(
-          {
-            caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
-            expectedRevision: 1,
-            reason: resolutionInput.reason,
-            selectedPartyRef: makePartyRef(tenantId, partyC),
-          },
-          {
-            ...collector,
-            actionInvocationId,
-            scope: actionScope,
-            services: {
-              resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
-            },
-          },
-        );
+        const { collector, result } = yield* invokeReviewedMatch(subject);
         expect(result.outcome).toBe('MATCH_EXISTING');
         expect(collector.snapshot().domainEvents).toEqual([]);
         expect(collector.snapshot().outboxMessages).toEqual([]);

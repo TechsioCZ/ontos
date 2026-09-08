@@ -86,19 +86,13 @@
  * suggestions. Reassigned aliases are not traced; no control-flow value inference is attempted.
  */
 import { defineRule } from '@oxlint/plugins';
-
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
+import { unwrapNode, templateText, asNamedMember } from '../shared/ast.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { optionRecord, stringArray } from '../shared/options.ts';
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -186,18 +180,8 @@ interface RuleOptions {
   readonly reexportModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -212,45 +196,9 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Strip the wrappers that never change what an expression denotes. */
+/** Preserve this rule's bounded transparent-wrapper traversal. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current: ESTree.Node = node;
-  for (let depth = 0; depth < MAX_DEPTH; depth += 1) {
-    if (current.type === 'ChainExpression') {
-      current = current.expression;
-      continue;
-    }
-    if (current.type === 'TSNonNullExpression' || current.type === 'ParenthesizedExpression') {
-      current = current.expression;
-      continue;
-    }
-    if (
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSInstantiationExpression' ||
-      current.type === 'TSTypeAssertion'
-    ) {
-      current = current.expression;
-      continue;
-    }
-    return current;
-  }
-  return current;
-}
-
-function templateText(node: ESTree.TemplateLiteral): string | null {
-  const quasi = node.quasis[0];
-  if (node.quasis.length !== 1 || quasi === undefined) return null;
-  return quasi.value.cooked ?? quasi.value.raw;
+  return unwrapNode(node, { maxDepth: MAX_DEPTH });
 }
 
 /** A statically known string operand (`'X'`, `"X"`, `` `X` ``), or null. */
@@ -278,19 +226,40 @@ function resolveVariable(context: Context, name: string, from: ESTree.Node): Var
   return null;
 }
 
-/** Single-assignment `const NAME = <expr>` initialiser for an identifier reference, or null. */
-function constInitialiser(context: Context, node: ESTree.Node): ESTree.Node | null {
-  const expression = unwrap(node);
-  if (expression.type !== 'Identifier') return null;
-  const variable = resolveVariable(context, expression.name, expression);
+function isNamedIdentifier(node: ESTree.Node, name: string): boolean {
+  return node.type === 'Identifier' && node.name === name;
+}
+
+/** A single-assignment variable declarator, resolved at the identifier's lexical scope. */
+function immutableDeclarator(
+  context: Context,
+  node: Extract<ESTree.Node, { type: 'Identifier' }>,
+): ESTree.VariableDeclarator | null {
+  const variable = resolveVariable(context, node.name, node);
   if (variable === null || variable.defs.length !== 1) return null;
   if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
   const def = variable.defs[0];
   if (def === undefined || def.type !== 'Variable') return null;
   const declarator = def.node as ESTree.Node;
-  if (declarator.type !== 'VariableDeclarator') return null;
-  if (declarator.id.type !== 'Identifier' || declarator.id.name !== expression.name) return null;
+  return declarator.type === 'VariableDeclarator' ? declarator : null;
+}
+
+/** Single-assignment `const NAME = <expr>` initialiser for an identifier reference, or null. */
+function constInitialiser(context: Context, node: ESTree.Node): ESTree.Node | null {
+  const expression = unwrap(node);
+  if (expression.type !== 'Identifier') return null;
+  const declarator = immutableDeclarator(context, expression);
+  if (declarator === null || !isNamedIdentifier(declarator.id, expression.name)) return null;
   return declarator.init ?? null;
+}
+
+function assertionPropertyName(
+  context: Context,
+  property: { readonly key: ESTree.Node; readonly computed: boolean },
+): string | null {
+  return !property.computed && property.key.type === 'Identifier'
+    ? property.key.name
+    : staticString(context, property.key);
 }
 
 /** Trace a simple immutable destructured method without losing the source binding's scope. */
@@ -299,56 +268,112 @@ function destructuredMethod(
   node: ESTree.Node,
 ): { source: ESTree.Node; method: string } | null {
   if (node.type !== 'Identifier') return null;
-  const variable = resolveVariable(context, node.name, node);
-  if (variable === null || variable.defs.length !== 1) return null;
-  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
-  const def = variable.defs[0];
-  if (def === undefined || def.type !== 'Variable') return null;
-  const declarator = def.node as ESTree.Node;
+  const declarator = immutableDeclarator(context, node);
   if (
-    declarator.type !== 'VariableDeclarator' ||
+    declarator === null ||
     declarator.id.type !== 'ObjectPattern' ||
     declarator.init === null ||
     declarator.parent.type !== 'VariableDeclaration' ||
     declarator.parent.kind !== 'const'
   )
     return null;
-  for (const property of declarator.id.properties) {
-    if (
-      property.type !== 'Property' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== node.name
-    )
-      continue;
-    const method =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : staticString(context, property.key);
-    return method === null ? null : { source: declarator.init, method };
+  const property = declarator.id.properties.find(
+    (entry) => entry.type === 'Property' && isNamedIdentifier(entry.value, node.name),
+  );
+  if (property?.type !== 'Property') return null;
+  const method = assertionPropertyName(context, property);
+  return method === null ? null : { source: declarator.init, method };
+}
+
+interface AssertionCall {
+  readonly method: string;
+  readonly subject: ESTree.CallExpression | null;
+}
+
+/** Node assertions allow strict/default namespace prefixes but never an expect subject. */
+function nodeAssertion(
+  members: string[],
+  subject: ESTree.CallExpression | null,
+): AssertionCall | null {
+  if (subject !== null) return null;
+  while (members[0] === 'strict' || members[0] === 'default') members.shift();
+  const method = members[0];
+  return members.length === 1 && method !== undefined ? { method, subject: null } : null;
+}
+
+/** Match the supported assertion APIs only after proving the import's lexical identity. */
+function importedAssertion(
+  source: string,
+  members: string[],
+  subject: ESTree.CallExpression | null,
+): AssertionCall | null {
+  if (/^(?:node:)?assert(?:\/strict)?$/u.test(source)) return nodeAssertion(members, subject);
+  if (!['@rstest/core', 'effect-rstest', 'vitest', '@jest/globals', 'expect'].includes(source))
+    return null;
+  if (subject === null) {
+    const method = members[1];
+    return members.length === 2 && members[0] === 'assert' && method !== undefined
+      ? { method, subject: null }
+      : null;
   }
-  return null;
+  if (members.shift() !== 'expect') return null;
+  const method = members.pop();
+  if (
+    method === undefined ||
+    !members.every((member) => ['not', 'resolves', 'rejects'].includes(member))
+  )
+    return null;
+  return { method, subject };
+}
+
+function assertionImport(
+  context: Context,
+  expression: ESTree.Node,
+  members: string[],
+  subject: ESTree.CallExpression | null,
+): AssertionCall | null {
+  if (expression.type !== 'Identifier') return null;
+  const variable = resolveVariable(context, expression.name, expression);
+  const definition = variable?.defs.find((entry) => entry.type === 'ImportBinding');
+  const specifier = definition?.node as ESTree.Node | undefined;
+  if (specifier === undefined) return null;
+  const declaration = context.sourceCode.ast.body.find(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.specifiers.some((entry) => entry === specifier),
+  );
+  if (declaration?.type !== 'ImportDeclaration') return null;
+  if (specifier.type === 'ImportSpecifier')
+    members.unshift(
+      specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value,
+    );
+  const source = declaration.source.value;
+  if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect') members.unshift('expect');
+  return importedAssertion(source, members, subject);
+}
+
+function assertionAlias(
+  context: Context,
+  expression: ESTree.Node,
+  members: string[],
+): ESTree.Node | null {
+  const destructured = destructuredMethod(context, expression);
+  if (destructured === null) return constInitialiser(context, expression);
+  members.unshift(destructured.method);
+  return destructured.source;
 }
 
 /** Resolve assertion imports through lexical bindings, aliases, and matcher modifiers. */
-function assertionCall(
-  context: Context,
-  call: ESTree.CallExpression,
-): { method: string; subject: ESTree.CallExpression | null } | null {
+function assertionCall(context: Context, call: ESTree.CallExpression): AssertionCall | null {
   let expression = unwrap(call.callee);
   const members: string[] = [];
   const seen = new Set<ESTree.Node>();
   let subject: ESTree.CallExpression | null = null;
   for (let depth = 0; depth < MAX_DEPTH && !seen.has(expression); depth += 1) {
     seen.add(expression);
-    const destructured = destructuredMethod(context, expression);
-    if (destructured !== null) {
-      members.unshift(destructured.method);
-      expression = unwrap(destructured.source);
-      continue;
-    }
-    const initialiser = constInitialiser(context, expression);
-    if (initialiser !== null) {
-      expression = unwrap(initialiser);
+    const alias = assertionAlias(context, expression, members);
+    if (alias !== null) {
+      expression = unwrap(alias);
       continue;
     }
     if (expression.type === 'MemberExpression') {
@@ -358,54 +383,11 @@ function assertionCall(
       expression = unwrap(expression.object as ESTree.Node);
       continue;
     }
-    if (expression.type === 'CallExpression') {
-      if (subject !== null) return null;
-      subject = expression;
-      expression = unwrap(expression.callee);
-      continue;
-    }
-    if (expression.type !== 'Identifier') return null;
-    const variable = resolveVariable(context, expression.name, expression);
-    const definition = variable?.defs.find((entry) => entry.type === 'ImportBinding');
-    const specifier = definition?.node as ESTree.Node | undefined;
-    if (specifier === undefined) return null;
-    const declaration = context.sourceCode.ast.body.find(
-      (statement) =>
-        statement.type === 'ImportDeclaration' &&
-        statement.specifiers.some((entry) => entry === specifier),
-    );
-    if (declaration?.type !== 'ImportDeclaration') return null;
-    if (specifier.type === 'ImportSpecifier')
-      members.unshift(
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value,
-      );
-    const source = declaration.source.value;
-    if (/^(?:node:)?assert(?:\/strict)?$/u.test(source)) {
-      if (subject !== null) return null;
-      while (members[0] === 'strict' || members[0] === 'default') members.shift();
-      const method = members[0];
-      return members.length === 1 && method !== undefined ? { method, subject: null } : null;
-    }
-    if (
-      !['@rstest/core', '@app/effect-rstest', 'vitest', '@jest/globals', 'expect'].includes(source)
-    )
-      return null;
-    if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect')
-      members.unshift('expect');
-    if (subject === null && members.length === 2 && members[0] === 'assert') {
-      const method = members[1];
-      return method === undefined ? null : { method, subject: null };
-    }
-    if (subject === null || members.shift() !== 'expect') return null;
-    const method = members.pop();
-    if (
-      method === undefined ||
-      !members.every((member) => ['not', 'resolves', 'rejects'].includes(member))
-    )
-      return null;
-    return { method, subject };
+    if (expression.type !== 'CallExpression')
+      return assertionImport(context, expression, members, subject);
+    if (subject !== null) return null;
+    subject = expression;
+    expression = unwrap(expression.callee);
   }
   return null;
 }
@@ -427,6 +409,14 @@ function staticString(context: Context, node: ESTree.Node): string | null {
   return initialiser === null ? null : asStringLiteral(initialiser);
 }
 
+/** Array paths permit static strings and numeric indexes, but never holes or spreads. */
+function validTagPathSegment(context: Context, element: ESTree.Node | null): boolean {
+  if (element === null || element.type === 'SpreadElement') return false;
+  if (staticString(context, element) !== null) return true;
+  const value = unwrap(element);
+  return value.type === 'Literal' && typeof value.value === 'number';
+}
+
 /** Resolve only the asserted property: dotted strings and literal array-path segments. */
 function tagPropertyPath(context: Context, node: ESTree.Node): boolean {
   const path = staticString(context, node);
@@ -436,29 +426,16 @@ function tagPropertyPath(context: Context, node: ESTree.Node): boolean {
   }
   const expression = unwrap(node);
   if (expression.type !== 'ArrayExpression' || expression.elements.length > MAX_DEPTH) return false;
-  let hasTag = false;
-  for (const element of expression.elements) {
-    if (element === null || element.type === 'SpreadElement') return false;
-    const key = staticString(context, element);
-    if (key === null) {
-      const value = unwrap(element);
-      if (value.type !== 'Literal' || typeof value.value !== 'number') return false;
-    }
-    hasTag = key === TAG_PROPERTY;
-  }
-  return hasTag;
+  if (!expression.elements.every((element) => validTagPathSegment(context, element))) return false;
+  const last = expression.elements.at(-1);
+  return last !== undefined && last !== null && staticString(context, last) === TAG_PROPERTY;
 }
 
 /** The `_tag` member access itself (`x._tag`, `x?._tag`, `x!._tag`, `x["_tag"]`, `x[KEY]`), or null. */
 function asTagMember(context: Context, node: ESTree.Node): ESTree.MemberExpression | null {
-  const expression = unwrap(node);
-  if (expression.type !== 'MemberExpression') return null;
-  const property = expression.property;
-  if (!expression.computed) {
-    return property.type === 'Identifier' && property.name === TAG_PROPERTY ? expression : null;
-  }
-  if (property.type === 'PrivateIdentifier') return null;
-  return staticString(context, property) === TAG_PROPERTY ? expression : null;
+  return asNamedMember(node, TAG_PROPERTY, (key) => staticString(context, key), {
+    maxDepth: MAX_DEPTH,
+  });
 }
 
 /** Non-computed `.x` or computed `["x"]` property name of a member expression. */
@@ -507,10 +484,12 @@ function combinatorName(
     return null;
   const namespace = bindings.namespaces.get(object.name);
   if (namespace === undefined) return null;
-  if (namespace === 'Effect' && ERROR_COMBINATORS.has(member)) return `${namespace}.${member}`;
-  if (namespace === 'Schedule' && SCHEDULE_COMBINATORS.has(member)) return `${namespace}.${member}`;
-  if (namespace === 'Match' && MATCH_COMBINATORS.has(member)) return `${namespace}.${member}`;
-  return null;
+  const members = new Map([
+    ['Effect', ERROR_COMBINATORS],
+    ['Schedule', SCHEDULE_COMBINATORS],
+    ['Match', MATCH_COMBINATORS],
+  ]).get(namespace);
+  return members?.has(member) ? `${namespace}.${member}` : null;
 }
 
 const FUNCTION_TYPES = new Set([
@@ -572,25 +551,10 @@ function patternBindsTag(
 ): boolean {
   if (pattern === null || pattern === undefined || depth > MAX_DEPTH) return false;
   switch (pattern.type) {
-    case 'ObjectPattern': {
-      for (const property of pattern.properties) {
-        if (property.type === 'RestElement') continue;
-        const value = property.value as ESTree.Node;
-        if (isTagKey(property as ESTree.Node & { key?: ESTree.Node; computed?: boolean })) {
-          if (bindsName(value, name, depth + 1)) return true;
-          continue;
-        }
-        // A nested pattern may still reach `_tag` one level down: `{ reason: { _tag } }`.
-        if (patternBindsTag(value, name, depth + 1)) return true;
-      }
-      return false;
-    }
-    case 'ArrayPattern': {
-      for (const element of pattern.elements) {
-        if (patternBindsTag(element as ESTree.Node | null, name, depth + 1)) return true;
-      }
-      return false;
-    }
+    case 'ObjectPattern':
+      return pattern.properties.some((property) => propertyBindsTag(property, name, depth));
+    case 'ArrayPattern':
+      return pattern.elements.some((element) => patternBindsTag(element, name, depth + 1));
     case 'AssignmentPattern':
       return patternBindsTag(pattern.left as ESTree.Node, name, depth + 1);
     case 'RestElement':
@@ -598,6 +562,18 @@ function patternBindsTag(
     default:
       return false;
   }
+}
+
+function propertyBindsTag(property: ESTree.Node, name: string, depth: number): boolean {
+  if (property.type === 'RestElement') return false;
+  const entry = property as ESTree.Node & {
+    key?: ESTree.Node;
+    computed?: boolean;
+    value: ESTree.Node;
+  };
+  return isTagKey(entry)
+    ? bindsName(entry.value, name, depth + 1)
+    : patternBindsTag(entry.value, name, depth + 1);
 }
 
 /** `true` when a (possibly defaulted) binding target is exactly the identifier `name`. */
@@ -635,24 +611,27 @@ function tagAliasOrigin(context: Context, node: ESTree.Node): ESTree.Node | null
   for (const def of variable.defs) {
     const declaration = def.node as ESTree.Node | undefined;
     if (declaration === undefined) continue;
-    if (declaration.type === 'VariableDeclarator') {
-      const id = declaration.id as ESTree.Node;
-      const init = (declaration.init ?? null) as ESTree.Node | null;
-      // `const tag = error._tag`
-      if (id.type === 'Identifier' && id.name === expression.name && init !== null) {
-        const member = asTagMember(context, init);
-        if (member !== null) return member.object as ESTree.Node;
-        continue;
-      }
-      // `const { _tag } = error`, `const { _tag: classification } = error`, `for (const { _tag } of …)`
-      if (patternBindsTag(id, expression.name)) return init;
-      continue;
-    }
-    for (const pattern of definitionPatterns(declaration)) {
-      if (patternBindsTag(pattern, expression.name)) return null;
-    }
+    const origin = declarationTagOrigin(context, declaration, expression.name);
+    if (origin !== undefined) return origin;
   }
   return undefined;
+}
+
+function declarationTagOrigin(
+  context: Context,
+  declaration: ESTree.Node,
+  name: string,
+): ESTree.Node | null | undefined {
+  if (declaration.type !== 'VariableDeclarator') {
+    return definitionPatterns(declaration).some((pattern) => patternBindsTag(pattern, name))
+      ? null
+      : undefined;
+  }
+  const init = declaration.init ?? null;
+  if (isNamedIdentifier(declaration.id, name) && init !== null) {
+    return asTagMember(context, init)?.object ?? undefined;
+  }
+  return patternBindsTag(declaration.id, name) ? init : undefined;
 }
 
 /** A resolved tag read: the node whose source text names it, for the diagnostic message. */
@@ -676,7 +655,10 @@ function tagReference(
 
   const member = asTagMember(context, expression);
   if (member !== null)
-    return { origin: member.object as ESTree.Node, fallback: describe(context, expression) };
+    return {
+      origin: member.object as ESTree.Node,
+      fallback: describe(context, expression),
+    };
 
   if (expression.type === 'Identifier') {
     if (!options.includeIndirectTags) return null;
@@ -685,29 +667,34 @@ function tagReference(
     return { origin, fallback: expression.name };
   }
 
-  if (expression.type === 'CallExpression') {
-    const callee = unwrap(expression.callee);
-    // `String(error._tag)` — laundering the tag through a wrapper leaves it a tag.
-    if (callee.type === 'Identifier' && callee.name === 'String') {
-      const variable = resolveVariable(context, callee.name, callee);
-      if (variable !== null && variable.defs.length > 0) return null;
-      const argument = expression.arguments[0] as ESTree.Node | undefined;
-      if (argument !== undefined && argument.type !== 'SpreadElement') {
-        return tagReference(context, argument, options, depth + 1);
-      }
-      return null;
-    }
-    // `error._tag.slice(0, 8)` — string surgery on the tag is still the tag.
-    if (callee.type === 'MemberExpression') {
-      const method = memberPropertyName(callee);
-      if (method !== null && STRING_TRANSFORMS.has(method)) {
-        return tagReference(context, callee.object as ESTree.Node, options, depth + 1);
-      }
-    }
-    return null;
-  }
+  return expression.type === 'CallExpression'
+    ? callTagReference(context, expression, options, depth)
+    : null;
+}
 
-  return null;
+function callTagReference(
+  context: Context,
+  expression: ESTree.CallExpression,
+  options: RuleOptions,
+  depth: number,
+): TagReference | null {
+  const callee = unwrap(expression.callee);
+  if (isNamedIdentifier(callee, 'String')) {
+    const variable = resolveVariable(context, 'String', callee);
+    if (variable !== null && variable.defs.length > 0) return null;
+    const argument = firstArgument(expression);
+    return argument === null ? null : tagReference(context, argument, options, depth + 1);
+  }
+  if (callee.type !== 'MemberExpression') return null;
+  const method = memberPropertyName(callee);
+  return method !== null && STRING_TRANSFORMS.has(method)
+    ? tagReference(context, callee.object, options, depth + 1)
+    : null;
+}
+
+function firstArgument(node: ESTree.CallExpression): ESTree.Node | null {
+  const argument = node.arguments[0];
+  return argument === undefined || argument.type === 'SpreadElement' ? null : argument;
 }
 
 /** The text used to name the compared value in the diagnostic. */
@@ -745,6 +732,126 @@ function isRegexReceiver(context: Context, node: ESTree.Node, depth = 0): boolea
   }
   const initialiser = constInitialiser(context, expression);
   return initialiser === null ? false : isRegexReceiver(context, initialiser, depth + 1);
+}
+
+function containerElements(expression: ESTree.Node): ESTree.ArrayExpression['elements'] | null {
+  if (expression.type === 'ArrayExpression') return expression.elements;
+  if (expression.type !== 'NewExpression' || expression.arguments.length !== 1) return null;
+  const first = unwrap(expression.arguments[0] as ESTree.Node);
+  return first.type === 'ArrayExpression' ? first.elements : null;
+}
+
+/** Only map callback results propagate tag values; arbitrary callback reads do not. */
+function mappedTagValues(
+  context: Context,
+  expression: ESTree.CallExpression,
+): readonly ESTree.Node[] {
+  const callee = unwrap(expression.callee);
+  if (callee.type !== 'MemberExpression' || memberPropertyName(callee) !== 'map') return [];
+  const first = firstArgument(expression);
+  if (first === null) return [];
+  const callback = unwrap(constInitialiser(context, first) ?? first);
+  if (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression')
+    return [];
+  return callback.body === null ? [] : [callback.body];
+}
+
+/** Follow values reaching a comparison, without descending into unrelated predicates or fields. */
+function comparedValues(context: Context, expression: ESTree.Node): readonly ESTree.Node[] {
+  switch (expression.type) {
+    case 'ArrayExpression':
+      return expression.elements.filter((element) => element !== null);
+    case 'SpreadElement':
+      return [expression.argument];
+    case 'LogicalExpression':
+      return [expression.left, expression.right];
+    case 'ConditionalExpression':
+      return [expression.consequent, expression.alternate];
+    case 'SequenceExpression':
+      return expression.expressions.slice(-1);
+    case 'CallExpression':
+      return mappedTagValues(context, expression);
+    default:
+      return returnedTagValues(expression);
+  }
+}
+
+/** Statement bodies expose return values, not conditions or arbitrary expression statements. */
+function returnedTagValues(expression: ESTree.Node): readonly ESTree.Node[] {
+  switch (expression.type) {
+    case 'BlockStatement':
+      return expression.body;
+    case 'ReturnStatement':
+      return expression.argument === null ? [] : [expression.argument];
+    case 'IfStatement':
+      return expression.alternate === null
+        ? [expression.consequent]
+        : [expression.consequent, expression.alternate];
+    default:
+      return [];
+  }
+}
+
+const ASSERTION_METHODS = new Set([
+  'equal',
+  'strictEqual',
+  'notEqual',
+  'notStrictEqual',
+  'deepEqual',
+  'deepStrictEqual',
+  'notDeepEqual',
+  'notDeepStrictEqual',
+  'toBe',
+  'toEqual',
+  'toStrictEqual',
+  'toContain',
+  'toContainEqual',
+  'toMatch',
+  'toMatchObject',
+  'match',
+  'doesNotMatch',
+]);
+
+const OBJECT_ASSERTION_METHODS = new Set([
+  'toMatchObject',
+  'toEqual',
+  'toStrictEqual',
+  'toContainEqual',
+  'deepEqual',
+  'deepStrictEqual',
+  'notDeepEqual',
+  'notDeepStrictEqual',
+]);
+
+/** Preserve the bounded immutable shape walk, including cycles and depth-limit behavior. */
+function expectedShapeTag(context: Context, expected: ESTree.Node): ESTree.Node | null {
+  let shape = unwrap(expected);
+  const seen = new Set<ESTree.Node>();
+  for (let depth = 0; depth < MAX_DEPTH && !seen.has(shape); depth += 1) {
+    seen.add(shape);
+    const initialiser = constInitialiser(context, shape);
+    if (initialiser === null) break;
+    shape = unwrap(initialiser);
+  }
+  if (shape.type !== 'ObjectExpression') return null;
+  const tag = shape.properties.find(
+    (property) =>
+      property.type === 'Property' && assertionPropertyName(context, property) === TAG_PROPERTY,
+  );
+  return tag?.type === 'Property' ? tag.value : null;
+}
+
+/** Resolve callable aliases without applying object-shape depth limits to the original walk. */
+function assertionCallee(context: Context, node: ESTree.Node): ESTree.Node {
+  let callee = unwrap(node);
+  const seen = new Set<ESTree.Node>();
+  while (callee.type === 'Identifier' && !seen.has(callee)) {
+    seen.add(callee);
+    const initialiser = constInitialiser(context, callee);
+    if (initialiser === null) break;
+    callee = unwrap(initialiser);
+  }
+  return callee;
 }
 
 const REPLACEMENTS =
@@ -852,53 +959,7 @@ export const rule = defineRule({
       const expression = unwrap(node);
       const initialiser = constInitialiser(context, expression);
       if (initialiser !== null) return comparedTag(initialiser, seen);
-      // Follow values that reach the comparison. Reading a tag inside an arbitrary
-      // callback or predicate does not make that function or its result a tag value.
-      let values: readonly ESTree.Node[];
-      switch (expression.type) {
-        case 'ArrayExpression':
-          values = expression.elements.filter((element) => element !== null);
-          break;
-        case 'SpreadElement':
-          values = [expression.argument];
-          break;
-        case 'LogicalExpression':
-          values = [expression.left, expression.right];
-          break;
-        case 'ConditionalExpression':
-          values = [expression.consequent, expression.alternate];
-          break;
-        case 'SequenceExpression':
-          values = expression.expressions.slice(-1);
-          break;
-        case 'CallExpression': {
-          const callee = unwrap(expression.callee);
-          if (callee.type !== 'MemberExpression' || memberPropertyName(callee) !== 'map')
-            return null;
-          const first = expression.arguments[0];
-          if (first === undefined || first.type === 'SpreadElement') return null;
-          const callback = unwrap(constInitialiser(context, first) ?? first);
-          if (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression')
-            return null;
-          if (callback.body === null) return null;
-          values = [callback.body];
-          break;
-        }
-        case 'BlockStatement':
-          values = expression.body;
-          break;
-        case 'ReturnStatement':
-          values = expression.argument === null ? [] : [expression.argument];
-          break;
-        case 'IfStatement':
-          values =
-            expression.alternate === null
-              ? [expression.consequent]
-              : [expression.consequent, expression.alternate];
-          break;
-        default:
-          return null;
-      }
+      const values = comparedValues(context, expression);
       for (const value of values) {
         const found = comparedTag(value, seen);
         if (found !== null) return found;
@@ -909,15 +970,7 @@ export const rule = defineRule({
     /** `[…]`/`new Set([…])` of nothing but Effect's own ADT tags — the sibling rule's territory. */
     const containerIsAdtOnly = (node: ESTree.Node): boolean => {
       const expression = unwrap(node);
-      const elements =
-        expression.type === 'ArrayExpression'
-          ? expression.elements
-          : expression.type === 'NewExpression' && expression.arguments.length === 1
-            ? (() => {
-                const first = unwrap(expression.arguments[0] as ESTree.Node);
-                return first.type === 'ArrayExpression' ? first.elements : null;
-              })()
-            : null;
+      const elements = containerElements(expression);
       if (elements === null || elements.length === 0) return false;
       let sawTag = false;
       for (const element of elements) {
@@ -929,6 +982,294 @@ export const rule = defineRule({
       return sawTag;
     };
 
+    function checkIn(node: ESTree.BinaryExpression) {
+      // `'_tag' in value` — a hand-rolled shape test for the discriminant.
+      if (staticString(context, node.left) === TAG_PROPERTY) {
+        if (suppressed(node)) return;
+        context.report({
+          node,
+          messageId: 'tagPresenceCheck',
+          data: { text: describe(context, node.right) },
+        });
+        return;
+      }
+      // `error._tag in HANDLERS` — membership against a hand-maintained dispatch map.
+      if (!options.includeMembershipProbes) return;
+      const reference = tagOf(node.left);
+      if (reference === null) return;
+      if (suppressed(node)) return;
+      context.report({
+        node,
+        messageId: 'tagMembershipProbe',
+        data: {
+          text: referenceText(context, reference),
+          probe: `\`in ${describe(context, node.right)}\``,
+        },
+      });
+      return;
+    }
+    function equalityOperands(first: ESTree.Node, second: ESTree.Node) {
+      const left = tagOf(first);
+      const reference = left ?? tagOf(second);
+      const other = left === null ? first : second;
+      if (reference === null) return null;
+      const tag = asStringLiteral(other);
+      if (tag !== null && exempt.has(tag)) return null;
+      return { reference, other, tag };
+    }
+    function checkBinary(node: ESTree.BinaryExpression) {
+      if ((node.left as ESTree.Node).type === 'PrivateIdentifier') return;
+
+      if (node.operator === 'in') return checkIn(node);
+
+      if (!EQUALITY_OPERATORS.has(node.operator)) return;
+
+      const operands = equalityOperands(node.left, node.right);
+      if (operands === null) return;
+      const { reference, other, tag } = operands;
+      if (suppressed(node)) return;
+
+      const text = referenceText(context, reference);
+      if (tag === null) {
+        context.report({
+          node,
+          messageId: 'tagEqualityDynamic',
+          data: {
+            text,
+            operator: node.operator,
+            other: describe(context, other),
+          },
+        });
+        return;
+      }
+      context.report({
+        node,
+        messageId: 'tagEquality',
+        data: { text, operator: node.operator, tag },
+      });
+    }
+    function checkShape(node: ESTree.CallExpression): boolean {
+      // `Object.hasOwn(error, '_tag')` / `Reflect.has(error, '_tag')` — `'_tag' in error` by another name.
+      const shapeProbe =
+        globalNamespaceCall(context, node, 'Object', 'hasOwn') ||
+        globalNamespaceCall(context, node, 'Reflect', 'has');
+      if (shapeProbe && node.arguments.length >= 2) {
+        const target = node.arguments[0] as ESTree.Node;
+        const key = node.arguments[1] as ESTree.Node;
+        if (target.type !== 'SpreadElement' && staticString(context, key) === TAG_PROPERTY) {
+          if (suppressed(node)) return true;
+          context.report({
+            node,
+            messageId: 'tagPresenceCheck',
+            data: { text: describe(context, target) },
+          });
+        }
+        return true;
+      }
+
+      return false;
+    }
+    function checkEqualityCall(node: ESTree.CallExpression): boolean {
+      // `Object.is(error._tag, 'X')` — equality without an equality operator.
+      if (globalNamespaceCall(context, node, 'Object', 'is') && node.arguments.length === 2) {
+        const first = node.arguments[0] as ESTree.Node;
+        const second = node.arguments[1] as ESTree.Node;
+        if (first.type === 'SpreadElement' || second.type === 'SpreadElement') return true;
+        const operands = equalityOperands(first, second);
+        if (operands === null) return true;
+        const { reference } = operands;
+        if (suppressed(node)) return true;
+        context.report({
+          node,
+          messageId: 'tagEqualityCall',
+          data: {
+            callee: describe(context, node.callee as ESTree.Node),
+            text: referenceText(context, reference),
+          },
+        });
+        return true;
+      }
+
+      return false;
+    }
+    function checkStringProbe(
+      node: ESTree.CallExpression,
+      receiver: ESTree.Node,
+      method: string,
+    ): boolean {
+      // `error._tag.startsWith('Contacts')`, `String(error._tag).endsWith('Problem')`.
+      if (STRING_PROBES.has(method)) {
+        const reference = tagOf(receiver);
+        if (reference !== null) {
+          if (suppressed(node)) return true;
+          context.report({
+            node,
+            messageId: 'tagStringProbe',
+            data: {
+              text: referenceText(context, reference),
+              method: `.${method}(…)`,
+            },
+          });
+          return true;
+        }
+      }
+
+      return false;
+    }
+    function checkRegexProbe(
+      node: ESTree.CallExpression,
+      receiver: ESTree.Node,
+      method: string,
+    ): boolean {
+      // `/^Contacts/u.test(error._tag)` — the mirrored spelling of the same naming-convention probe.
+      if (REGEX_PROBES.has(method) && isRegexReceiver(context, receiver)) {
+        const argument = node.arguments[0] as ESTree.Node | undefined;
+        if (argument !== undefined && argument.type !== 'SpreadElement') {
+          const reference = tagOf(argument);
+          if (reference !== null) {
+            if (suppressed(node)) return true;
+            context.report({
+              node,
+              messageId: 'tagStringProbe',
+              data: {
+                text: referenceText(context, reference),
+                method: `${describe(context, receiver)}.${method}(…)`,
+              },
+            });
+            return true;
+          }
+        }
+      }
+
+      return false;
+    }
+    function checkMembership(node: ESTree.CallExpression, receiver: ESTree.Node, method: string) {
+      // `KNOWN_TAGS.includes(error._tag)`, `TAG_SET.has(error._tag)`.
+      if (options.includeMembershipProbes && MEMBERSHIP_METHODS.has(method)) {
+        const argument = firstArgument(node);
+        if (argument === null) return;
+        const reference = tagOf(argument);
+        if (reference === null) return;
+        // A receiver that is itself the tag is the string probe above, already handled.
+        if (tagOf(receiver) !== null) return;
+        if (containerIsAdtOnly(receiver)) return;
+        const initialiser = constInitialiser(context, receiver);
+        if (initialiser !== null && containerIsAdtOnly(initialiser)) return;
+        if (suppressed(node)) return;
+        context.report({
+          node,
+          messageId: 'tagMembershipProbe',
+          data: {
+            text: referenceText(context, reference),
+            probe: `\`${describe(context, receiver)}.${method}(…)\``,
+          },
+        });
+      }
+    }
+    function reportAssertion(node: ESTree.CallExpression, text: string) {
+      context.report({
+        node,
+        messageId: 'tagEqualityCall',
+        data: { callee: describe(context, node.callee), text },
+      });
+    }
+
+    function exemptStaticTag(node: ESTree.Node | undefined): boolean {
+      if (node === undefined) return false;
+      const literal = staticString(context, node);
+      return literal !== null && exempt.has(literal);
+    }
+
+    function checkPropertyAssertion(node: ESTree.CallExpression, subject: ESTree.CallExpression) {
+      const assertedPath = firstArgument(node);
+      const target = firstArgument(subject);
+      if (
+        assertedPath === null ||
+        target === null ||
+        !tagPropertyPath(context, assertedPath) ||
+        suppressed(node)
+      )
+        return;
+      const expected = node.arguments[1];
+      if (expected?.type === 'SpreadElement') return;
+      if (exemptStaticTag(expected)) return;
+      context.report({
+        node,
+        messageId: expected === undefined ? 'tagPresenceCheck' : 'tagEqualityCall',
+        data: { callee: describe(context, node.callee), text: describe(context, target) },
+      });
+    }
+
+    /** Object matchers inspect only the expected top-level discriminant, never payload fields. */
+    function checkObjectAssertion(node: ESTree.CallExpression, assertion: AssertionCall): boolean {
+      if (!OBJECT_ASSERTION_METHODS.has(assertion.method)) return false;
+      const expected = node.arguments[assertion.subject === null ? 1 : 0];
+      if (expected === undefined || expected.type === 'SpreadElement') return false;
+      const tag = expectedShapeTag(context, expected);
+      if (tag === null) return false;
+      if (exemptStaticTag(tag)) return false;
+      if (suppressed(node)) return false;
+      reportAssertion(
+        node,
+        describe(context, assertion.subject?.arguments[0] ?? node.arguments[0] ?? node),
+      );
+      return true;
+    }
+
+    function exemptAssertionValue(other: ESTree.Node | undefined): boolean {
+      if (other === undefined || other.type === 'SpreadElement') return false;
+      const literal = asStringLiteral(other);
+      return (literal !== null && exempt.has(literal)) || containerIsAdtOnly(other);
+    }
+
+    function checkAssertionValues(node: ESTree.CallExpression, assertion: AssertionCall): boolean {
+      const compared =
+        assertion.subject === null
+          ? node.arguments.slice(0, 2)
+          : [...assertion.subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
+      for (const [index, argument] of compared.entries()) {
+        if (argument.type === 'SpreadElement') continue;
+        const reference = comparedTag(argument);
+        if (reference === null || exemptAssertionValue(compared[index === 0 ? 1 : 0])) continue;
+        if (suppressed(node)) return true;
+        reportAssertion(node, referenceText(context, reference));
+        return true;
+      }
+      return false;
+    }
+
+    function checkAssertion(node: ESTree.CallExpression, assertion: AssertionCall | null): boolean {
+      if (assertion === null) return false;
+      // Property assertions are shape/equality probes only on a proven `expect(subject)` chain.
+      if (assertion.method === 'toHaveProperty' && assertion.subject !== null) {
+        checkPropertyAssertion(node, assertion.subject);
+        return true;
+      }
+      if (!ASSERTION_METHODS.has(assertion.method)) return false;
+      return checkObjectAssertion(node, assertion) || checkAssertionValues(node, assertion);
+    }
+    function checkReceiverProbes(
+      node: ESTree.CallExpression,
+      receiver: ESTree.Node,
+      method: string,
+    ) {
+      if (checkStringProbe(node, receiver, method)) return;
+      if (checkRegexProbe(node, receiver, method)) return;
+      checkMembership(node, receiver, method);
+    }
+
+    function checkCall(node: ESTree.CallExpression) {
+      if (checkShape(node) || checkEqualityCall(node)) return;
+      const callee = assertionCallee(context, node.callee);
+      const assertion = assertionCall(context, node);
+      const method =
+        callee.type === 'MemberExpression' ? memberPropertyName(callee) : assertion?.method;
+      const receiver = callee.type === 'MemberExpression' ? callee.object : null;
+      if (method === null || method === undefined) return;
+      if (checkAssertion(node, assertion) || receiver === null) return;
+
+      checkReceiverProbes(node, receiver, method);
+    }
     return {
       SwitchStatement(node) {
         if (tagOf(node.discriminant) === null || suppressed(node)) return;
@@ -943,308 +1284,8 @@ export const rule = defineRule({
           return;
         context.report({ node, messageId: 'tagSwitch' });
       },
-      BinaryExpression(node) {
-        if ((node.left as ESTree.Node).type === 'PrivateIdentifier') return;
-
-        if (node.operator === 'in') {
-          // `'_tag' in value` — a hand-rolled shape test for the discriminant.
-          if (staticString(context, node.left) === TAG_PROPERTY) {
-            if (suppressed(node)) return;
-            context.report({
-              node,
-              messageId: 'tagPresenceCheck',
-              data: { text: describe(context, node.right) },
-            });
-            return;
-          }
-          // `error._tag in HANDLERS` — membership against a hand-maintained dispatch map.
-          if (!options.includeMembershipProbes) return;
-          const reference = tagOf(node.left);
-          if (reference === null) return;
-          if (suppressed(node)) return;
-          context.report({
-            node,
-            messageId: 'tagMembershipProbe',
-            data: {
-              text: referenceText(context, reference),
-              probe: `\`in ${describe(context, node.right)}\``,
-            },
-          });
-          return;
-        }
-
-        if (!EQUALITY_OPERATORS.has(node.operator)) return;
-
-        let reference = tagOf(node.left);
-        let other: ESTree.Node = node.right;
-        if (reference === null) {
-          reference = tagOf(node.right);
-          other = node.left;
-        }
-        if (reference === null) return;
-
-        const tag = asStringLiteral(other);
-        // Effect's own ADT tags belong to `no-raw-effect-adt-tag-check`; `allowTags` is the escape hatch.
-        if (tag !== null && exempt.has(tag)) return;
-        if (suppressed(node)) return;
-
-        const text = referenceText(context, reference);
-        if (tag === null) {
-          context.report({
-            node,
-            messageId: 'tagEqualityDynamic',
-            data: { text, operator: node.operator, other: describe(context, other) },
-          });
-          return;
-        }
-        context.report({
-          node,
-          messageId: 'tagEquality',
-          data: { text, operator: node.operator, tag },
-        });
-      },
-
-      CallExpression(node) {
-        // `Object.hasOwn(error, '_tag')` / `Reflect.has(error, '_tag')` — `'_tag' in error` by another name.
-        const shapeProbe =
-          globalNamespaceCall(context, node, 'Object', 'hasOwn') ||
-          globalNamespaceCall(context, node, 'Reflect', 'has');
-        if (shapeProbe && node.arguments.length >= 2) {
-          const target = node.arguments[0] as ESTree.Node;
-          const key = node.arguments[1] as ESTree.Node;
-          if (target.type !== 'SpreadElement' && staticString(context, key) === TAG_PROPERTY) {
-            if (suppressed(node)) return;
-            context.report({
-              node,
-              messageId: 'tagPresenceCheck',
-              data: { text: describe(context, target) },
-            });
-          }
-          return;
-        }
-
-        // `Object.is(error._tag, 'X')` — equality without an equality operator.
-        if (globalNamespaceCall(context, node, 'Object', 'is') && node.arguments.length === 2) {
-          const first = node.arguments[0] as ESTree.Node;
-          const second = node.arguments[1] as ESTree.Node;
-          if (first.type === 'SpreadElement' || second.type === 'SpreadElement') return;
-          let reference = tagOf(first);
-          let other: ESTree.Node = second;
-          if (reference === null) {
-            reference = tagOf(second);
-            other = first;
-          }
-          if (reference === null) return;
-          const literal = asStringLiteral(other);
-          if (literal !== null && exempt.has(literal)) return;
-          if (suppressed(node)) return;
-          context.report({
-            node,
-            messageId: 'tagEqualityCall',
-            data: {
-              callee: describe(context, node.callee as ESTree.Node),
-              text: referenceText(context, reference),
-            },
-          });
-          return;
-        }
-
-        let callee = unwrap(node.callee);
-        const seenCallees = new Set<ESTree.Node>();
-        while (callee.type === 'Identifier' && !seenCallees.has(callee)) {
-          seenCallees.add(callee);
-          const initialiser = constInitialiser(context, callee);
-          if (initialiser === null) break;
-          callee = unwrap(initialiser);
-        }
-        const assertion = assertionCall(context, node);
-        const method =
-          callee.type === 'MemberExpression' ? memberPropertyName(callee) : assertion?.method;
-        const receiver = callee.type === 'MemberExpression' ? callee.object : null;
-        if (method === null || method === undefined) return;
-
-        // Property assertions are shape/equality probes only on a proven `expect(subject)` chain.
-        if (assertion?.method === 'toHaveProperty' && assertion.subject !== null) {
-          const path = node.arguments[0];
-          const subject = assertion.subject.arguments[0];
-          if (
-            path === undefined ||
-            path.type === 'SpreadElement' ||
-            subject === undefined ||
-            subject.type === 'SpreadElement' ||
-            !tagPropertyPath(context, path) ||
-            suppressed(node)
-          )
-            return;
-          const expected = node.arguments[1];
-          if (expected?.type === 'SpreadElement') return;
-          const literal = expected === undefined ? null : staticString(context, expected);
-          if (literal !== null && exempt.has(literal)) return;
-          context.report({
-            node,
-            messageId: expected === undefined ? 'tagPresenceCheck' : 'tagEqualityCall',
-            data: { callee: describe(context, node.callee), text: describe(context, subject) },
-          });
-          return;
-        }
-
-        // Assertions are comparisons too, including tag projections in arrays and aliased values.
-        const assertionMethods = new Set([
-          'equal',
-          'strictEqual',
-          'notEqual',
-          'notStrictEqual',
-          'deepEqual',
-          'deepStrictEqual',
-          'notDeepEqual',
-          'notDeepStrictEqual',
-          'toBe',
-          'toEqual',
-          'toStrictEqual',
-          'toContain',
-          'toContainEqual',
-          'toMatch',
-          'toMatchObject',
-          'match',
-          'doesNotMatch',
-        ]);
-        if (assertion !== null && assertionMethods.has(assertion.method)) {
-          let compared = node.arguments.slice(0, 2);
-          if (assertion.subject !== null)
-            compared = [...assertion.subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
-          // Object matchers discriminate by the expected shape, not a tag read.
-          // Only inspect the expected top-level discriminant; unrelated fields/fixtures are not probes.
-          if (
-            [
-              'toMatchObject',
-              'toEqual',
-              'toStrictEqual',
-              'toContainEqual',
-              'deepEqual',
-              'deepStrictEqual',
-              'notDeepEqual',
-              'notDeepStrictEqual',
-            ].includes(assertion.method)
-          ) {
-            const expected = node.arguments[assertion.subject === null ? 1 : 0];
-            if (expected !== undefined && expected.type !== 'SpreadElement') {
-              let shape = unwrap(expected);
-              const seenShapes = new Set<ESTree.Node>();
-              for (let depth = 0; depth < MAX_DEPTH && !seenShapes.has(shape); depth += 1) {
-                seenShapes.add(shape);
-                const initialiser = constInitialiser(context, shape);
-                if (initialiser === null) break;
-                shape = unwrap(initialiser);
-              }
-              if (shape.type === 'ObjectExpression') {
-                const tag = shape.properties.find(
-                  (property) =>
-                    property.type === 'Property' &&
-                    (!property.computed && property.key.type === 'Identifier'
-                      ? property.key.name
-                      : staticString(context, property.key)) === TAG_PROPERTY,
-                );
-                if (tag?.type === 'Property') {
-                  const literal = staticString(context, tag.value);
-                  if ((literal === null || !exempt.has(literal)) && !suppressed(node)) {
-                    context.report({
-                      node,
-                      messageId: 'tagEqualityCall',
-                      data: {
-                        callee: describe(context, node.callee),
-                        text: describe(
-                          context,
-                          assertion.subject?.arguments[0] ?? node.arguments[0] ?? node,
-                        ),
-                      },
-                    });
-                    return;
-                  }
-                }
-              }
-            }
-          }
-          for (const [index, argument] of compared.entries()) {
-            if (argument.type === 'SpreadElement') continue;
-            const reference = comparedTag(argument);
-            if (reference === null) continue;
-            const other = compared[index === 0 ? 1 : 0];
-            if (other !== undefined && other.type !== 'SpreadElement') {
-              const literal = asStringLiteral(other);
-              if (literal !== null && exempt.has(literal)) continue;
-              if (containerIsAdtOnly(other)) continue;
-            }
-            if (suppressed(node)) return;
-            context.report({
-              node,
-              messageId: 'tagEqualityCall',
-              data: {
-                callee: describe(context, node.callee as ESTree.Node),
-                text: referenceText(context, reference),
-              },
-            });
-            return;
-          }
-        }
-
-        if (receiver === null) return;
-
-        // `error._tag.startsWith('Contacts')`, `String(error._tag).endsWith('Problem')`.
-        if (STRING_PROBES.has(method)) {
-          const reference = tagOf(receiver);
-          if (reference !== null) {
-            if (suppressed(node)) return;
-            context.report({
-              node,
-              messageId: 'tagStringProbe',
-              data: { text: referenceText(context, reference), method: `.${method}(…)` },
-            });
-            return;
-          }
-        }
-
-        // `/^Contacts/u.test(error._tag)` — the mirrored spelling of the same naming-convention probe.
-        if (REGEX_PROBES.has(method) && isRegexReceiver(context, receiver)) {
-          const argument = node.arguments[0] as ESTree.Node | undefined;
-          if (argument !== undefined && argument.type !== 'SpreadElement') {
-            const reference = tagOf(argument);
-            if (reference !== null) {
-              if (suppressed(node)) return;
-              context.report({
-                node,
-                messageId: 'tagStringProbe',
-                data: {
-                  text: referenceText(context, reference),
-                  method: `${describe(context, receiver)}.${method}(…)`,
-                },
-              });
-              return;
-            }
-          }
-        }
-
-        // `KNOWN_TAGS.includes(error._tag)`, `TAG_SET.has(error._tag)`.
-        if (options.includeMembershipProbes && MEMBERSHIP_METHODS.has(method)) {
-          const argument = node.arguments[0] as ESTree.Node | undefined;
-          if (argument === undefined || argument.type === 'SpreadElement') return;
-          const reference = tagOf(argument);
-          if (reference === null) return;
-          // A receiver that is itself the tag is the string probe above, already handled.
-          if (tagOf(receiver) !== null) return;
-          if (containerIsAdtOnly(receiver)) return;
-          const initialiser = constInitialiser(context, receiver);
-          if (initialiser !== null && containerIsAdtOnly(initialiser)) return;
-          if (suppressed(node)) return;
-          context.report({
-            node,
-            messageId: 'tagMembershipProbe',
-            data: {
-              text: referenceText(context, reference),
-              probe: `\`${describe(context, receiver)}.${method}(…)\``,
-            },
-          });
-        }
-      },
+      BinaryExpression: checkBinary,
+      CallExpression: checkCall,
     };
   },
 });

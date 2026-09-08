@@ -1,7 +1,7 @@
 // expect-count: 5
 import assert from 'node:assert/strict';
 import * as assertions from 'node:assert';
-import { expect } from '@app/effect-rstest';
+import { expect } from 'effect-rstest';
 declare const error: { _tag: string };
 const { strictEqual } = assert;
 strictEqual(error._tag, 'Missing');

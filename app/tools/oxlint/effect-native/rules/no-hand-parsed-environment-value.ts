@@ -79,6 +79,8 @@
  * Report-only: no fixers, no suggestions.
  */
 import { defineRule } from '@oxlint/plugins';
+import { optionRecord, stringArray } from '../shared/options.ts';
+import { importedName } from '../shared/imports.ts';
 
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
@@ -217,28 +219,19 @@ interface RuleOptions {
   readonly environmentReaders: readonly string[];
 }
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
-  const given: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
-  const includePaths = stringList(given.includePaths, DEFAULT_INCLUDE_PATHS);
+  const given = optionRecord(raw);
+  const includePaths = stringArray(given.includePaths, DEFAULT_INCLUDE_PATHS);
   const identifiers = given.environmentIdentifiers;
   return {
-    allowPaths: stringList(given.allowPaths, []),
+    allowPaths: stringArray(given.allowPaths, []),
     ignoreTestFiles: given.ignoreTestFiles === true,
     includePaths: includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
     environmentIdentifiers:
       typeof identifiers === 'string' && identifiers.length > 0
         ? identifiers
         : DEFAULT_ENVIRONMENT_IDENTIFIERS,
-    environmentReaders: stringList(given.environmentReaders, DEFAULT_ENVIRONMENT_READERS),
+    environmentReaders: stringArray(given.environmentReaders, DEFAULT_ENVIRONMENT_READERS),
   };
 }
 
@@ -453,12 +446,7 @@ export const rule = defineRule({
         return null;
       return {
         source: declaration.source.value,
-        member:
-          specifier.type === 'ImportSpecifier'
-            ? specifier.imported.type === 'Identifier'
-              ? specifier.imported.name
-              : specifier.imported.value
-            : 'default',
+        member: specifier.type === 'ImportSpecifier' ? importedName(specifier) : 'default',
       };
     };
     const processModule = (source: string) => source === 'process' || source === 'node:process';
@@ -469,6 +457,15 @@ export const rule = defineRule({
         return value.quasis[0]?.value.cooked ?? null;
       return null;
     };
+    const isNamedEnvHost = (host: AnyNode, name: string, depth: number): boolean => {
+      const imported = importOf(host);
+      if (imported) return processModule(imported.source) && imported.member === 'default';
+      if (ENV_HOSTS.has(name) && isUnshadowedGlobal(context, host, name)) return true;
+      const declaration = declaratorOf(context, host);
+      return (
+        declaration?.id.type === 'Identifier' && isEnvHost(declaration.init as AnyNode, depth + 1)
+      );
+    };
     const isEnvHost = (node: AnyNode | null, depth = 0): boolean => {
       const host = unwrap(node);
       if (!host || depth > MAX_DEPTH) return false;
@@ -477,15 +474,10 @@ export const rule = defineRule({
       if (host.type === 'MetaProperty')
         return host.meta.name === 'import' && host.property.name === 'meta';
       const name = identifierName(host);
-      if (name) {
-        const imported = importOf(host);
-        if (imported) return processModule(imported.source) && imported.member === 'default';
-        if (ENV_HOSTS.has(name) && isUnshadowedGlobal(context, host, name)) return true;
-        const declaration = declaratorOf(context, host);
-        return (
-          declaration?.id.type === 'Identifier' && isEnvHost(declaration.init as AnyNode, depth + 1)
-        );
-      }
+      if (name) return isNamedEnvHost(host, name, depth);
+      return isGlobalEnvHostMember(host);
+    };
+    const isGlobalEnvHostMember = (host: AnyNode): boolean => {
       if (host.type !== 'MemberExpression' || !ENV_HOSTS.has(staticKey(host) ?? '')) return false;
       const owner = unwrap(host.object as AnyNode);
       const ownerName = identifierName(owner);
@@ -493,6 +485,21 @@ export const rule = defineRule({
         ownerName !== null &&
         CONTAINER_GLOBALS.has(ownerName) &&
         isUnshadowedGlobal(context, owner as AnyNode, ownerName)
+      );
+    };
+    const isDestructuredEnvBag = (
+      declaration: ESTree.VariableDeclarator,
+      name: string,
+    ): boolean => {
+      if (declaration.id.type !== 'ObjectPattern' || !isEnvHost(declaration.init as AnyNode))
+        return false;
+      return declaration.id.properties.some(
+        (property) =>
+          property.type === 'Property' &&
+          (property.computed
+            ? staticString(property.key)
+            : (identifierName(property.key) ?? staticString(property.key))) === 'env' &&
+          identifierName(property.value) === name,
       );
     };
     /** Only statically known local aliases are followed; arbitrary returned records are unknown. */
@@ -508,16 +515,7 @@ export const rule = defineRule({
       if (!declaration) return false;
       if (declaration.id.type === 'Identifier')
         return isAmbientEnvBag(declaration.init as AnyNode, depth + 1);
-      if (declaration.id.type !== 'ObjectPattern' || !isEnvHost(declaration.init as AnyNode))
-        return false;
-      return declaration.id.properties.some(
-        (property) =>
-          property.type === 'Property' &&
-          (property.computed
-            ? staticString(property.key)
-            : (identifierName(property.key) ?? staticString(property.key))) === 'env' &&
-          identifierName(property.value) === bag.name,
-      );
+      return isDestructuredEnvBag(declaration, bag.name);
     };
     const isLiteralObject = (node: AnyNode | null, depth = 0): boolean => {
       const value = unwrap(node);
@@ -537,6 +535,9 @@ export const rule = defineRule({
       const record = unwrap(node);
       if (!record || depth > MAX_DEPTH) return false;
       if (isAmbientEnvBag(record)) return true;
+      return isNamedEnvironmentRecord(record, depth);
+    };
+    const isNamedEnvironmentRecord = (record: AnyNode, depth: number): boolean => {
       const name = identifierName(record);
       if (!name) return false;
       const declaration = declaratorOf(context, record);
@@ -570,73 +571,78 @@ export const rule = defineRule({
       );
     };
 
+    const isComputedEnvironmentKey = (input: AnyNode): boolean => {
+      const property = unwrap(input);
+      if (property === null) return false;
+      const literalKey = staticString(property);
+      if (literalKey !== null) return SCREAMING_KEY.test(literalKey);
+      if (property.type !== 'Literal') return true;
+      const value = (property as { value?: unknown }).value;
+      return typeof value === 'string' && SCREAMING_KEY.test(value);
+    };
+    const isEnvironmentMemberRead = (member: ESTree.MemberExpression, depth: number): boolean => {
+      const object = member.object as AnyNode;
+      if (isAmbientEnvBag(object)) return true;
+      if (!isEnvironmentRecord(object, depth)) return false;
+      if (member.computed) return isComputedEnvironmentKey(member.property as AnyNode);
+      const key = staticKey(member);
+      return key !== null && SCREAMING_KEY.test(key);
+    };
+    const isEnvironmentReaderCall = (read: ESTree.CallExpression): boolean => {
+      const callee = unwrap(read.callee as AnyNode);
+      if (callee === null) return false;
+      if (identifierName(callee) !== null) return isReader(callee);
+      if (callee.type !== 'MemberExpression') return false;
+      const key = staticKey(callee);
+      if (key === null) return false;
+      if (readers.has(key)) return true;
+      return key === 'get' && isAmbientEnvBag(callee.object as AnyNode);
+    };
+    const isEnvironmentBindingRead = (read: AnyNode, depth: number): boolean => {
+      const declarator = declaratorOf(context, read);
+      if (declarator === null) return false;
+      const target = declarator.id as AnyNode;
+      if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern')
+        return isEnvironmentRecord(declarator.init as AnyNode | null, depth + 1);
+      return isEnvironmentDerived(declarator.init as AnyNode | null, depth + 1);
+    };
     /** A read of a single environment variable. */
     const isEnvironmentRead = (node: AnyNode | null, depth: number): boolean => {
       const read = unwrap(node);
       if (read === null || depth > MAX_DEPTH) return false;
-
-      if (read.type === 'MemberExpression') {
-        const member = read as ESTree.MemberExpression;
-        const object = member.object as AnyNode;
-        // `process.env.DATABASE_URL` — the ambient bag has no non-configuration members.
-        if (isAmbientEnvBag(object)) return true;
-        if (!isEnvironmentRecord(object, depth)) return false;
-        if (member.computed) {
-          const property = unwrap(member.property as AnyNode);
-          if (property === null) return false;
-          const literalKey = staticString(property);
-          if (literalKey !== null) return SCREAMING_KEY.test(literalKey);
-          if (property.type !== 'Literal') return true; // `environment[name]`
-          const value = (property as { value?: unknown }).value;
-          return typeof value === 'string' && SCREAMING_KEY.test(value);
-        }
-        const key = staticKey(member);
-        return key !== null && SCREAMING_KEY.test(key);
+      switch (read.type) {
+        case 'MemberExpression':
+          return isEnvironmentMemberRead(read, depth);
+        case 'CallExpression':
+          return isEnvironmentReaderCall(read);
+        case 'Identifier':
+          return isEnvironmentBindingRead(read, depth);
+        default:
+          return false;
       }
-
-      if (read.type === 'CallExpression') {
-        const callee = unwrap((read as ESTree.CallExpression).callee as AnyNode);
-        if (callee === null) return false;
-        const calleeName = identifierName(callee);
-        if (calleeName !== null) return isReader(callee);
-        if (callee.type !== 'MemberExpression') return false;
-        const key = staticKey(callee as ESTree.MemberExpression);
-        if (key === null) return false;
-        if (readers.has(key)) return true;
-        // `Deno.env.get('X')`, `process.env.get?.('X')`.
-        return (
-          key === 'get' && isAmbientEnvBag((callee as ESTree.MemberExpression).object as AnyNode)
-        );
-      }
-
-      if (read.type === 'Identifier') {
-        const declarator = declaratorOf(context, read);
-        if (declarator === null) return false;
-        const target = declarator.id as AnyNode;
-        // `const { DATABASE_URL } = process.env`.
-        if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern') {
-          return isEnvironmentRecord(declarator.init as AnyNode | null, depth + 1);
-        }
-        return isEnvironmentDerived(declarator.init as AnyNode | null, depth + 1);
-      }
-
-      return false;
     };
 
+    const isDerivedLogical = (logical: ESTree.LogicalExpression, depth: number): boolean => {
+      if (logical.operator !== '??' && logical.operator !== '||') return false;
+      return (
+        isEnvironmentDerived(logical.left as AnyNode, depth + 1) ||
+        isEnvironmentDerived(logical.right as AnyNode, depth + 1)
+      );
+    };
+    const isDerivedStringCall = (value: ESTree.CallExpression, depth: number): boolean => {
+      const callee = unwrap((value as ESTree.CallExpression).callee as AnyNode);
+      if (callee === null || callee.type !== 'MemberExpression') return false;
+      const key = staticKey(callee as ESTree.MemberExpression);
+      if (key === null || !DERIVING_STRING_OPS.has(key)) return false;
+      return isEnvironmentDerived((callee as ESTree.MemberExpression).object as AnyNode, depth + 1);
+    };
     /** An environment read, possibly defaulted, interpolated or passed through a string op. */
     function isEnvironmentDerived(node: AnyNode | null, depth: number): boolean {
       const value = unwrap(node);
       if (value === null || depth > MAX_DEPTH) return false;
       if (isEnvironmentRead(value, depth)) return true;
 
-      if (value.type === 'LogicalExpression') {
-        const logical = value as ESTree.LogicalExpression;
-        if (logical.operator !== '??' && logical.operator !== '||') return false;
-        return (
-          isEnvironmentDerived(logical.left as AnyNode, depth + 1) ||
-          isEnvironmentDerived(logical.right as AnyNode, depth + 1)
-        );
-      }
+      if (value.type === 'LogicalExpression') return isDerivedLogical(value, depth);
 
       if (value.type === 'ConditionalExpression')
         return (
@@ -651,16 +657,7 @@ export const rule = defineRule({
         );
       }
 
-      if (value.type === 'CallExpression') {
-        const callee = unwrap((value as ESTree.CallExpression).callee as AnyNode);
-        if (callee === null || callee.type !== 'MemberExpression') return false;
-        const key = staticKey(callee as ESTree.MemberExpression);
-        if (key === null || !DERIVING_STRING_OPS.has(key)) return false;
-        return isEnvironmentDerived(
-          (callee as ESTree.MemberExpression).object as AnyNode,
-          depth + 1,
-        );
-      }
+      if (value.type === 'CallExpression') return isDerivedStringCall(value, depth);
 
       return false;
     }
@@ -689,109 +686,136 @@ export const rule = defineRule({
       return verdict;
     };
 
-    function computeClassification(
-      node: AnyNode,
-    ): { readonly messageId: string; readonly data: Record<string, string> } | null {
-      if (node.type === 'CallExpression') {
-        const call = node as ESTree.CallExpression;
-        const callee = unwrap(call.callee as AnyNode);
-        if (callee === null) return null;
-        const firstArgument = (call.arguments[0] as AnyNode | undefined) ?? null;
-
-        if (callee.type === 'MemberExpression') {
-          const member = callee as ESTree.MemberExpression;
-          const key = staticKey(member);
-          if (key === null) return null;
-          const owner = unwrap(member.object as AnyNode);
-          const ownerName = identifierName(owner);
-          // `JSON.parse(...)` / `Number.parseInt(...)`.
-          const namespaced = ownerName === null ? undefined : NAMESPACED_PARSERS.get(ownerName);
-          if (
-            namespaced !== undefined &&
-            namespaced.has(key) &&
-            isUnshadowedGlobal(context, owner as AnyNode, ownerName as string) &&
-            firstArgument !== null &&
-            firstArgument.type !== 'SpreadElement' &&
-            isEnvironmentDerived(firstArgument, 0)
-          ) {
-            return ownerName === 'JSON'
-              ? { messageId: 'envJsonParse', data: { operation: `${ownerName}.${key}` } }
-              : {
-                  messageId:
-                    ownerName === 'URL' || ownerName === 'Date'
-                      ? 'envStructuredParse'
-                      : 'envCoercion',
-                  data: { operation: `${ownerName}.${key}` },
-                };
-          }
-          // `environment['X'].trim()`, `env.MODE.split(',')`.
-          if (!MEMBER_PARSE_OPS.has(key)) return null;
-          return isEnvironmentDerived(member.object as AnyNode, 0)
-            ? { messageId: 'envStringSurgery', data: { operation: key } }
-            : null;
-        }
-
-        const calleeName = identifierName(callee);
-        if (calleeName === null || !GLOBAL_COERCIONS.has(calleeName)) return null;
-        if (!isUnshadowedGlobal(context, callee, calleeName)) return null;
-        if (firstArgument === null || firstArgument.type === 'SpreadElement') return null;
-        return isEnvironmentDerived(firstArgument, 0)
-          ? { messageId: 'envCoercion', data: { operation: calleeName } }
-          : null;
-      }
-
-      if (node.type === 'NewExpression') {
-        const construction = node as ESTree.NewExpression;
-        const callee = unwrap(construction.callee as AnyNode);
-        const calleeName = identifierName(callee);
-        if (calleeName === null || !STRUCTURED_CONSTRUCTORS.has(calleeName)) return null;
-        if (!isUnshadowedGlobal(context, callee as AnyNode, calleeName)) return null;
-        const firstArgument = (construction.arguments[0] as AnyNode | undefined) ?? null;
-        if (firstArgument === null || firstArgument.type === 'SpreadElement') return null;
-        return isEnvironmentDerived(firstArgument, 0)
-          ? { messageId: 'envStructuredParse', data: { operation: calleeName } }
-          : null;
-      }
-
-      if (node.type === 'UnaryExpression') {
-        if (node.operator === '!' && isEnvironmentLength(node.argument))
-          return { messageId: 'envLengthCheck', data: { operation: 'length' } };
-        if (
-          (node.operator === '+' || node.operator === '-') &&
-          isEnvironmentDerived(node.argument, 0)
-        )
-          return { messageId: 'envCoercion', data: { operation: node.operator } };
-      }
-      if (node.type === 'SwitchStatement' && isEnvironmentDerived(node.discriminant, 0)) {
-        const branch = node.cases.find((entry) => isLiteralValue(entry.test));
-        if (branch?.test)
-          return {
-            messageId: 'envLiteralComparison',
-            data: { literal: context.sourceCode.getText(branch.test) },
-          };
-      }
-      if (node.type === 'BinaryExpression') {
-        const comparison = node as ESTree.BinaryExpression;
-        if (!COMPARISON_OPERATORS.has(comparison.operator)) return null;
-        const left = comparison.left as AnyNode;
-        const right = comparison.right as AnyNode;
-        if (isEnvironmentLength(left) || isEnvironmentLength(right)) {
-          return { messageId: 'envLengthCheck', data: { operation: 'length' } };
-        }
-        const leftValue = unwrap(left);
-        const rightValue = unwrap(right);
-        let literal: AnyNode | null = null;
-        if (isLiteralValue(rightValue) && isEnvironmentDerived(left, 0)) literal = rightValue;
-        else if (isLiteralValue(leftValue) && isEnvironmentDerived(right, 0)) literal = leftValue;
-        if (literal === null) return null;
-        const raw = (literal as { raw?: string | null }).raw;
+    type Classification = {
+      readonly messageId: string;
+      readonly data: Record<string, string>;
+    } | null;
+    function namespaceMessage(name: string | null): string {
+      if (name === 'JSON') return 'envJsonParse';
+      return name === 'URL' || name === 'Date' ? 'envStructuredParse' : 'envCoercion';
+    }
+    function classifyNamespacedCall(
+      member: ESTree.MemberExpression,
+      key: string,
+      firstArgument: AnyNode | null,
+    ): Classification {
+      const owner = unwrap(member.object as AnyNode);
+      const ownerName = identifierName(owner);
+      // `JSON.parse(...)` / `Number.parseInt(...)`.
+      const namespaced = ownerName === null ? undefined : NAMESPACED_PARSERS.get(ownerName);
+      if (
+        namespaced !== undefined &&
+        namespaced.has(key) &&
+        isUnshadowedGlobal(context, owner as AnyNode, ownerName as string) &&
+        firstArgument !== null &&
+        firstArgument.type !== 'SpreadElement' &&
+        isEnvironmentDerived(firstArgument, 0)
+      ) {
         return {
-          messageId: 'envLiteralComparison',
-          data: { literal: raw ?? String((literal as { value?: unknown }).value) },
+          messageId: namespaceMessage(ownerName),
+          data: { operation: `${ownerName}.${key}` },
         };
       }
-
       return null;
+    }
+    function classifyMemberCall(
+      member: ESTree.MemberExpression,
+      firstArgument: AnyNode | null,
+    ): Classification {
+      const key = staticKey(member);
+      if (key === null) return null;
+      const namespaced = classifyNamespacedCall(member, key, firstArgument);
+      if (namespaced !== null) return namespaced;
+      // `environment['X'].trim()`, `env.MODE.split(',')`.
+      if (!MEMBER_PARSE_OPS.has(key)) return null;
+      return isEnvironmentDerived(member.object as AnyNode, 0)
+        ? { messageId: 'envStringSurgery', data: { operation: key } }
+        : null;
+    }
+    function classifyCall(node: ESTree.CallExpression): Classification {
+      const call = node as ESTree.CallExpression;
+      const callee = unwrap(call.callee as AnyNode);
+      if (callee === null) return null;
+      const firstArgument = (call.arguments[0] as AnyNode | undefined) ?? null;
+
+      if (callee.type === 'MemberExpression') return classifyMemberCall(callee, firstArgument);
+      const calleeName = identifierName(callee);
+      if (calleeName === null || !GLOBAL_COERCIONS.has(calleeName)) return null;
+      if (!isUnshadowedGlobal(context, callee, calleeName)) return null;
+      if (firstArgument === null || firstArgument.type === 'SpreadElement') return null;
+      return isEnvironmentDerived(firstArgument, 0)
+        ? { messageId: 'envCoercion', data: { operation: calleeName } }
+        : null;
+    }
+    function classifyConstruction(node: ESTree.NewExpression): Classification {
+      const construction = node as ESTree.NewExpression;
+      const callee = unwrap(construction.callee as AnyNode);
+      const calleeName = identifierName(callee);
+      if (calleeName === null || !STRUCTURED_CONSTRUCTORS.has(calleeName)) return null;
+      if (!isUnshadowedGlobal(context, callee as AnyNode, calleeName)) return null;
+      const firstArgument = (construction.arguments[0] as AnyNode | undefined) ?? null;
+      if (firstArgument === null || firstArgument.type === 'SpreadElement') return null;
+      return isEnvironmentDerived(firstArgument, 0)
+        ? { messageId: 'envStructuredParse', data: { operation: calleeName } }
+        : null;
+    }
+    function classifyUnary(node: ESTree.UnaryExpression): Classification {
+      if (node.operator === '!' && isEnvironmentLength(node.argument))
+        return { messageId: 'envLengthCheck', data: { operation: 'length' } };
+      if (
+        (node.operator === '+' || node.operator === '-') &&
+        isEnvironmentDerived(node.argument, 0)
+      )
+        return { messageId: 'envCoercion', data: { operation: node.operator } };
+      return null;
+    }
+    function classifySwitch(node: ESTree.SwitchStatement): Classification {
+      if (!isEnvironmentDerived(node.discriminant, 0)) return null;
+      const branch = node.cases.find((entry) => isLiteralValue(entry.test));
+      if (!branch?.test) return null;
+      return {
+        messageId: 'envLiteralComparison',
+        data: { literal: context.sourceCode.getText(branch.test) },
+      };
+    }
+    function classifyComparison(
+      node: ESTree.BinaryExpression | ESTree.PrivateInExpression,
+    ): Classification {
+      const comparison = node as ESTree.BinaryExpression;
+      if (!COMPARISON_OPERATORS.has(comparison.operator)) return null;
+      const left = comparison.left as AnyNode;
+      const right = comparison.right as AnyNode;
+      if (isEnvironmentLength(left) || isEnvironmentLength(right)) {
+        return { messageId: 'envLengthCheck', data: { operation: 'length' } };
+      }
+      const leftValue = unwrap(left);
+      const rightValue = unwrap(right);
+      let literal: AnyNode | null = null;
+      if (isLiteralValue(rightValue) && isEnvironmentDerived(left, 0)) literal = rightValue;
+      else if (isLiteralValue(leftValue) && isEnvironmentDerived(right, 0)) literal = leftValue;
+      if (literal === null) return null;
+      const raw = (literal as { raw?: string | null }).raw;
+      return {
+        messageId: 'envLiteralComparison',
+        data: { literal: raw ?? String((literal as { value?: unknown }).value) },
+      };
+    }
+    /** The diagnostic a node would raise on its own. */
+    function computeClassification(node: AnyNode): Classification {
+      switch (node.type) {
+        case 'CallExpression':
+          return classifyCall(node);
+        case 'NewExpression':
+          return classifyConstruction(node);
+        case 'UnaryExpression':
+          return classifyUnary(node);
+        case 'SwitchStatement':
+          return classifySwitch(node);
+        case 'BinaryExpression':
+          return classifyComparison(node);
+        default:
+          return null;
+      }
     }
 
     /** Only the outermost hand parse reports; an enclosing parse always wins. */

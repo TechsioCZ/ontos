@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Option, Schema, Predicate } from 'effect';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';

@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/require-timeout-on-external-effect
  *
@@ -83,10 +84,12 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/** Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`. */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { identityUnwrap, staticString, FUNCTION_TYPES } from '../shared/ast.ts';
+import { lookupVariable as lexicalVariable } from '../shared/bindings.ts';
+import { bindingPath } from '../shared/effect-identity.ts';
+import { importedName } from '../shared/imports.ts';
+import { stringArray, booleanOption as boolean, stringOption, compile } from '../shared/options.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE = [
@@ -107,23 +110,10 @@ const DEFAULT_PROMISE_BRIDGES = ['promise', 'tryPromise', 'tryMapPromise'];
 /** `HttpClient` request-execution members (Effect v4 `effect/unstable/http`). */
 const DEFAULT_HTTP_METHODS = ['execute', 'get', 'post', 'put', 'patch', 'del', 'head', 'options'];
 
-const EFFECT_NAMESPACE = 'Effect';
-const EFFECT_ROOT_MODULE = 'effect';
-const EFFECT_SUBMODULE = 'effect/Effect';
-const HTTP_CLIENT_NAMESPACE = 'HttpClient';
-/** Namespaces whose `make`/`layer` produce an `HttpClient` value. */
-const HTTP_CLIENT_FACTORY_NAMESPACES = new Set(['HttpClient', 'FetchHttpClient']);
-
 const TIMEOUT_MEMBERS = new Set(['timeout', 'timeoutOption', 'timeoutOrElse', 'timeoutFail']);
 const RETRY_MEMBERS = new Set(['retry', 'retryOrElse']);
 /** `Effect.gen(function* () { … })` — the one function boundary a policy legitimately spans. */
 const EFFECT_PROGRAM_WRAPPERS = new Set(['gen', 'fn', 'fnUntraced']);
-
-const FUNCTION_TYPES = new Set([
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
 
 interface Policy {
   timeout: boolean;
@@ -145,32 +135,18 @@ interface RuleOptions {
   readonly crossEffectGen: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function text(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.length > 0 ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     requireTimeout: boolean(record.requireTimeout, true),
     requireRetry: boolean(record.requireRetry, false),
     portFiles: stringArray(record.portFiles, DEFAULT_PORT_FILES),
     trustPorts: boolean(record.trustPorts, false),
-    policyHelperPattern: text(record.policyHelperPattern, DEFAULT_POLICY_HELPER_PATTERN),
+    policyHelperPattern: stringOption(
+      record.policyHelperPattern,
+      DEFAULT_POLICY_HELPER_PATTERN,
+      false,
+    ),
     includeTests: boolean(record.includeTests, false),
     includeScripts: boolean(record.includeScripts, false),
     include: stringArray(record.include, DEFAULT_INCLUDE),
@@ -181,120 +157,93 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
+function inScope(path: string, options: RuleOptions): boolean {
+  if (!options.requireTimeout && !options.requireRetry) return false;
+  if (matchesGlobs(path, options.ignore) || (!options.includeTests && isTestFile(path)))
+    return false;
+  if (isScriptFile(path) ? !options.includeScripts : !matchesGlobs(path, options.include))
+    return false;
+  return !(options.trustPorts && matchesGlobs(path, options.portFiles));
 }
 
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function isScriptPath(path: string): boolean {
-  return isScriptFile(path) || path.includes('/scripts/');
-}
-
-// Resolve lexical value bindings, not identifier spellings. Only immutable local aliases are
-// followed; arbitrary object mutation, re-export contents and dynamic keys need type/data-flow analysis.
-function lexicalVariable(context: Context, node: Extract<ESTree.Node, { type: 'Identifier' }>) {
-  let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
-  while (scope !== null) {
-    const variable = scope.set.get(node.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-function staticString(node: ESTree.Node): string | null {
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? null;
-  return null;
-}
-function identityUnwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (;;) {
-    if (current.type === 'SequenceExpression') {
-      const last = current.expressions.at(-1);
-      if (last === undefined) return current;
-      current = last;
-    } else if (
-      [
-        'ChainExpression',
-        'ParenthesizedExpression',
-        'TSAsExpression',
-        'TSTypeAssertion',
-        'TSNonNullExpression',
-        'TSSatisfiesExpression',
-        'TSInstantiationExpression',
-      ].includes(current.type)
-    ) {
-      current = (current as unknown as { expression: ESTree.Node }).expression;
-    } else return current;
-  }
-}
-function bindingPath(
+type Definition = import('@oxlint/plugins').Variable['defs'][number];
+function unseenDefinition(
   context: Context,
-  expression: ESTree.Node,
-  extraModules: readonly string[] = [],
-  seen = new Set<unknown>(),
-): readonly string[] | null {
-  const node = identityUnwrap(expression);
-  if (node.type === 'MemberExpression') {
-    const key =
-      !node.computed && node.property.type === 'Identifier'
-        ? node.property.name
-        : staticString(node.property);
-    const root = bindingPath(context, node.object, extraModules, seen);
-    return root !== null && key !== null ? [...root, key] : null;
-  }
-  if (node.type !== 'Identifier') return null;
+  node: ESTree.Node,
+  seen: Set<unknown>,
+): Definition | undefined {
   const variable = lexicalVariable(context, node);
-  if (variable === null || seen.has(variable)) return null;
+  if (variable === null || seen.has(variable) || variable.defs.length !== 1) return undefined;
   seen.add(variable);
-  if (variable.defs.length !== 1) return null;
-  const definition = variable.defs[0];
-  if (definition === undefined) return null;
-  if (definition.type === 'ImportBinding') {
-    const specifier = definition.node as
-      | ESTree.ImportSpecifier
-      | ESTree.ImportNamespaceSpecifier
-      | ESTree.ImportDefaultSpecifier;
-    const declaration = definition.parent as ESTree.ImportDeclaration;
-    if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
-    if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
-    const source = declaration.source.value;
-    if (source !== 'effect' && !source.startsWith('effect/') && !extraModules.includes(source))
-      return null;
-    const last = source.split('/').at(-1) ?? '';
-    const base = source.startsWith('effect/') && /^[A-Z]/u.test(last) ? [last] : [];
-    if (specifier.type === 'ImportNamespaceSpecifier') return base;
-    if (specifier.type !== 'ImportSpecifier') return null;
-    const imported =
-      specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
-    return [...base, imported];
-  }
-  if (definition.type !== 'Variable') return null;
-  const declaration = definition.node as ESTree.VariableDeclarator;
-  const parent = definition.parent as ESTree.VariableDeclaration;
-  if (parent?.kind !== 'const' || declaration.init === null) return null;
-  const base = bindingPath(context, declaration.init, extraModules, seen);
-  if (base === null) return null;
-  if (declaration.id.type === 'Identifier') return base;
-  if (declaration.id.type !== 'ObjectPattern') return null;
-  for (const property of declaration.id.properties) {
-    if (
-      property.type === 'RestElement' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== node.name
-    )
-      continue;
-    const key =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : staticString(property.key);
-    return key === null ? null : [...base, key];
-  }
-  return null;
+  return variable.defs[0];
+}
+function memberPolicy(member: string | null): Policy | null {
+  if (member === null) return null;
+  if (TIMEOUT_MEMBERS.has(member)) return { timeout: true, retry: false };
+  return RETRY_MEMBERS.has(member) ? { timeout: false, retry: true } : null;
+}
+function constantInitializer(def: Definition | undefined): ESTree.Expression | null {
+  if (def?.type !== 'Variable' || (def.parent as ESTree.VariableDeclaration)?.kind !== 'const')
+    return null;
+  return (def.node as ESTree.VariableDeclarator).init;
+}
+function importedPolicy(def: Definition, localName: string, pattern: RegExp): Policy | null {
+  const declaration = def.parent as ESTree.ImportDeclaration;
+  const specifier = def.node as ESTree.ImportSpecifier;
+  if (declaration.importKind === 'type' || specifier.importKind === 'type') return null;
+  const name = specifier.type === 'ImportSpecifier' ? importedName(specifier) : localName;
+  return pattern.test(name) ? { timeout: true, retry: true } : null;
+}
+function isHttpNamespace(
+  context: Context,
+  name: Extract<ESTree.Node, { type: 'Identifier' }>,
+): boolean {
+  const imported = lexicalVariable(context, name)?.defs[0];
+  if (imported?.type !== 'ImportBinding') return false;
+  const source = (imported.parent as ESTree.ImportDeclaration).source.value;
+  const specifier = imported.node as ESTree.ImportSpecifier;
+  if (!source.startsWith('effect/')) return false;
+  return (
+    source.endsWith('/HttpClient') ||
+    (specifier.type === 'ImportSpecifier' &&
+      specifier.imported.type === 'Identifier' &&
+      specifier.imported.name === 'HttpClient')
+  );
+}
+function hasHttpAnnotation(context: Context, binding: ESTree.Node | undefined): boolean {
+  if (binding?.type !== 'Identifier') return false;
+  const annotation = binding.typeAnnotation?.typeAnnotation;
+  if (annotation?.type !== 'TSTypeReference' || annotation.typeName.type !== 'TSQualifiedName')
+    return false;
+  const name = annotation.typeName;
+  return (
+    name.left.type === 'Identifier' &&
+    name.right.name === 'HttpClient' &&
+    isHttpNamespace(context, name.left)
+  );
+}
+function tryProperty(property: ESTree.ObjectExpression['properties'][number]): boolean {
+  if (property.type !== 'Property') return false;
+  return (
+    (!property.computed && property.key.type === 'Identifier' && property.key.name === 'try') ||
+    staticString(property.key) === 'try'
+  );
+}
+function bridgeThunk(call: ESTree.CallExpression): ESTree.Node | null {
+  const argument = call.arguments[0];
+  if (argument === undefined) return null;
+  const thunk = identityUnwrap(argument);
+  if (thunk.type !== 'ObjectExpression') return thunk;
+  const property = thunk.properties.find(tryProperty);
+  return property?.type === 'Property' ? property.value : null;
+}
+function returnedBody(thunk: ESTree.Node | null): ESTree.Node | null {
+  if (thunk?.type !== 'ArrowFunctionExpression' && thunk?.type !== 'FunctionExpression')
+    return null;
+  const body = thunk.body;
+  if (body?.type !== 'BlockStatement') return body;
+  if (body.body.length !== 1 || body.body[0]?.type !== 'ReturnStatement') return null;
+  return body.body[0].argument;
 }
 
 export const rule = defineRule({
@@ -361,19 +310,9 @@ export const rule = defineRule({
   },
   create(context) {
     const options = readOptions(context);
-    if (!options.requireTimeout && !options.requireRetry) return {};
     const path = scopePath(context.filename);
-    if (matchesGlobs(path, options.ignore) || (!options.includeTests && isTestFile(path)))
-      return {};
-    const script = isScriptPath(path);
-    if (script ? !options.includeScripts : !matchesGlobs(path, options.include)) return {};
-    if (options.trustPorts && matchesGlobs(path, options.portFiles)) return {};
-    let policyHelper: RegExp;
-    try {
-      policyHelper = new RegExp(options.policyHelperPattern, 'u');
-    } catch {
-      policyHelper = new RegExp(DEFAULT_POLICY_HELPER_PATTERN, 'u');
-    }
+    if (!inScope(path, options)) return {};
+    const policyHelper = compile(options.policyHelperPattern, DEFAULT_POLICY_HELPER_PATTERN);
     const effectMemberOf = (node: ESTree.Node): string | null => {
       const identity = bindingPath(context, node);
       return identity?.length === 2 && identity[0] === 'Effect' ? (identity[1] ?? null) : null;
@@ -390,32 +329,15 @@ export const rule = defineRule({
     const policyOf = (value: ESTree.Node, seen = new Set<unknown>()): Policy | null => {
       const node = identityUnwrap(value);
       if (node.type === 'CallExpression') {
-        const member = effectMemberOf(node.callee);
-        if (member !== null && TIMEOUT_MEMBERS.has(member)) return { timeout: true, retry: false };
-        if (member !== null && RETRY_MEMBERS.has(member)) return { timeout: false, retry: true };
+        const policy = memberPolicy(effectMemberOf(node.callee));
+        if (policy !== null) return policy;
         // Shared policy helpers are explicitly trusted only through real imports.
         return policyOf(node.callee, seen);
       }
       if (node.type !== 'Identifier') return null;
-      const variable = lexicalVariable(context, node);
-      if (variable === null || seen.has(variable) || variable.defs.length !== 1) return null;
-      seen.add(variable);
-      const def = variable.defs[0];
-      if (def?.type === 'ImportBinding') {
-        const declaration = def.parent as ESTree.ImportDeclaration;
-        const specifier = def.node as ESTree.ImportSpecifier;
-        if (declaration.importKind === 'type' || specifier.importKind === 'type') return null;
-        const imported =
-          specifier.type === 'ImportSpecifier'
-            ? specifier.imported.type === 'Identifier'
-              ? specifier.imported.name
-              : specifier.imported.value
-            : node.name;
-        return policyHelper.test(imported) ? { timeout: true, retry: true } : null;
-      }
-      if (def?.type !== 'Variable' || (def.parent as ESTree.VariableDeclaration)?.kind !== 'const')
-        return null;
-      const init = (def.node as ESTree.VariableDeclarator).init;
+      const def = unseenDefinition(context, node, seen);
+      if (def?.type === 'ImportBinding') return importedPolicy(def, node.name, policyHelper);
+      const init = constantInitializer(def);
       return init === null ? null : policyOf(init, seen);
     };
     const pipeKind = (call: ESTree.CallExpression): 'function' | 'member' | null => {
@@ -461,6 +383,80 @@ export const rule = defineRule({
           index === call.arguments.length - 1)
       );
     };
+    type AncestorStep = 'continue' | 'stop' | 'finalizer';
+    const inspectFunction = (current: ESTree.Node): AncestorStep => {
+      const outer = outerExpression(current);
+      const owner = outer.parent;
+      if (owner?.type !== 'CallExpression') return 'stop';
+      if (finalizerArgument(owner, outer)) return 'finalizer';
+      const member = effectCallee(owner);
+      if (member === null) return 'stop';
+      return effectCallbacks.has(member) ||
+        (options.crossEffectGen && EFFECT_PROGRAM_WRAPPERS.has(member))
+        ? 'continue'
+        : 'stop';
+    };
+    const canCrossCall = (
+      call: ESTree.CallExpression,
+      member: string | null,
+      index: number,
+    ): boolean => {
+      const separateLifetime = [
+        'map',
+        'sync',
+        'succeed',
+        'as',
+        'forkChild',
+        'forkScoped',
+        'forkDaemon',
+        'cached',
+      ];
+      if (member !== null && !separateLifetime.includes(member)) return true;
+      // Native Array.map builds the Effect collection; do not infer arbitrary helpers.
+      const callee = identityUnwrap(call.callee);
+      return callee.type === 'MemberExpression' && memberKey(callee) === 'map' && index >= 0;
+    };
+    const mergeFollowing = (
+      call: ESTree.CallExpression,
+      start: number,
+      merge: (value: ESTree.Node) => void,
+    ): void => {
+      for (const argument of call.arguments.slice(start)) merge(argument);
+    };
+    const isPolicyMember = (member: string | null): boolean =>
+      member !== null && (TIMEOUT_MEMBERS.has(member) || RETRY_MEMBERS.has(member));
+    const inspectCall = (
+      call: ESTree.CallExpression,
+      child: ESTree.Node,
+      merge: (value: ESTree.Node) => void,
+    ): AncestorStep => {
+      const kind = pipeKind(call);
+      const index = call.arguments.indexOf(child as ESTree.Argument);
+      const member = effectCallee(call);
+      if (finalizerArgument(call, child)) return 'finalizer';
+      if (kind !== null) {
+        // Only later operators bound work newly added to a pipe.
+        mergeFollowing(call, Math.max(index + 1, kind === 'function' ? 1 : 0), merge);
+        return 'continue';
+      }
+      if (member === 'fn' || member === 'fnUntraced') {
+        mergeFollowing(call, index + 1, merge);
+        return 'continue';
+      }
+      if (isPolicyMember(member)) {
+        if (index === 0 && call.arguments.length >= 2) merge(call);
+        return 'continue';
+      }
+      return canCrossCall(call, member, index) ? 'continue' : 'stop';
+    };
+    const inspectAncestor = (
+      current: ESTree.Node,
+      child: ESTree.Node,
+      merge: (value: ESTree.Node) => void,
+    ): AncestorStep => {
+      if (FUNCTION_TYPES.has(current.type)) return inspectFunction(current);
+      return current.type === 'CallExpression' ? inspectCall(current, child, merge) : 'continue';
+    };
     const inspectAncestors = (site: ESTree.Node): { policy: Policy; finalizer: boolean } => {
       const policy: Policy = { timeout: false, retry: false };
       const merge = (value: ESTree.Node): void => {
@@ -470,64 +466,12 @@ export const rule = defineRule({
           policy.retry ||= found.retry;
         }
       };
-      let child = site,
-        current = site.parent;
+      let child = site;
+      let current = site.parent;
       while (current !== null && current !== undefined) {
-        if (FUNCTION_TYPES.has(current.type)) {
-          const outer = outerExpression(current),
-            owner = outer.parent;
-          if (owner?.type !== 'CallExpression') break;
-          if (finalizerArgument(owner, outer)) return { policy, finalizer: true };
-          const member = effectCallee(owner);
-          if (
-            !(
-              member !== null &&
-              (effectCallbacks.has(member) ||
-                (options.crossEffectGen && EFFECT_PROGRAM_WRAPPERS.has(member)))
-            )
-          )
-            break;
-        } else if (current.type === 'CallExpression') {
-          const kind = pipeKind(current),
-            index = current.arguments.indexOf(child as ESTree.Argument);
-          const member = effectCallee(current);
-          if (finalizerArgument(current, child)) return { policy, finalizer: true };
-          if (kind !== null) {
-            // A timeout BEFORE flatMap does not bound work added by that flatMap.
-            for (
-              let i = Math.max(index + 1, kind === 'function' ? 1 : 0);
-              i < current.arguments.length;
-              i++
-            ) {
-              const argument = current.arguments[i];
-              if (argument !== undefined) merge(argument);
-            }
-          } else if (member === 'fn' || member === 'fnUntraced') {
-            for (const argument of current.arguments.slice(index + 1)) merge(argument);
-          } else if (
-            member !== null &&
-            (TIMEOUT_MEMBERS.has(member) || RETRY_MEMBERS.has(member))
-          ) {
-            if (index === 0 && current.arguments.length >= 2) merge(current);
-          } else if (
-            member === null ||
-            [
-              'map',
-              'sync',
-              'succeed',
-              'as',
-              'forkChild',
-              'forkScoped',
-              'forkDaemon',
-              'cached',
-            ].includes(member)
-          ) {
-            // Native Array.map builds the Effect collection; do not infer arbitrary helpers.
-            const callee = identityUnwrap(current.callee);
-            if (!(callee.type === 'MemberExpression' && memberKey(callee) === 'map' && index >= 0))
-              break;
-          }
-        }
+        const step = inspectAncestor(current, child, merge);
+        if (step === 'finalizer') return { policy, finalizer: true };
+        if (step === 'stop') break;
         child = current;
         current = current.parent;
       }
@@ -541,40 +485,14 @@ export const rule = defineRule({
       const node = identityUnwrap(value);
       if (bindingPath(context, node)?.join('.') === 'HttpClient') return true;
       if (node.type !== 'Identifier') return false;
-      const variable = lexicalVariable(context, node);
-      if (variable === null || seen.has(variable) || variable.defs.length !== 1) return false;
-      seen.add(variable);
-      const def = variable.defs[0];
+      const def = unseenDefinition(context, node, seen);
       if (def === undefined) return false;
-      const binding = def.name;
-      if (binding?.type === 'Identifier') {
-        const annotation = binding.typeAnnotation?.typeAnnotation;
-        if (
-          annotation?.type === 'TSTypeReference' &&
-          annotation.typeName.type === 'TSQualifiedName'
-        ) {
-          const name = annotation.typeName;
-          if (name.left.type === 'Identifier' && name.right.name === 'HttpClient') {
-            const imported = lexicalVariable(context, name.left)?.defs[0];
-            if (imported?.type === 'ImportBinding') {
-              const source = (imported.parent as ESTree.ImportDeclaration).source.value;
-              const specifier = imported.node as ESTree.ImportSpecifier;
-              if (
-                source.startsWith('effect/') &&
-                ((specifier.type === 'ImportSpecifier' &&
-                  specifier.imported.type === 'Identifier' &&
-                  specifier.imported.name === 'HttpClient') ||
-                  source.endsWith('/HttpClient'))
-              )
-                return true;
-            }
-          }
-        }
-      }
-      if (def.type !== 'Variable' || (def.parent as ESTree.VariableDeclaration)?.kind !== 'const')
-        return false;
-      const init = (def.node as ESTree.VariableDeclarator).init;
+      if (hasHttpAnnotation(context, def.name)) return true;
+      const init = constantInitializer(def);
       if (init === null) return false;
+      return initializedHttpClient(init, seen);
+    };
+    const initializedHttpClient = (init: ESTree.Node, seen: Set<unknown>): boolean => {
       const actual = identityUnwrap(init);
       if (actual.type === 'YieldExpression' && actual.delegate && actual.argument !== null)
         return bindingPath(context, actual.argument)?.join('.') === 'HttpClient.HttpClient';
@@ -588,32 +506,8 @@ export const rule = defineRule({
       // D-tier server module-loading adapters, not browser chunk/network imports. This is a
       // boundary exemption, not a claim that imported modules cannot perform async work.
       if (!/(?:^packages\/core-runtime\/|\/api\/|\/server\/)/u.test(path)) return false;
-      let thunk = call.arguments[0];
-      if (thunk === undefined) return false;
-      thunk = identityUnwrap(thunk) as ESTree.Argument;
-      if (thunk.type === 'ObjectExpression') {
-        const property = thunk.properties.find(
-          (p) =>
-            p.type === 'Property' &&
-            ((!p.computed && p.key.type === 'Identifier' && p.key.name === 'try') ||
-              staticString(p.key) === 'try'),
-        );
-        if (property?.type !== 'Property') return false;
-        thunk = property.value as ESTree.Argument;
-      }
-      if (thunk.type !== 'ArrowFunctionExpression' && thunk.type !== 'FunctionExpression')
-        return false;
-      if (thunk.body === null) return false;
-      let body: ESTree.Node = thunk.body;
-      if (body.type === 'BlockStatement') {
-        if (
-          body.body.length !== 1 ||
-          body.body[0]?.type !== 'ReturnStatement' ||
-          body.body[0].argument === null
-        )
-          return false;
-        body = body.body[0].argument;
-      }
+      let body = returnedBody(bridgeThunk(call));
+      if (body === null) return false;
       body = identityUnwrap(body);
       if (body.type === 'AwaitExpression') body = identityUnwrap(body.argument);
       return (

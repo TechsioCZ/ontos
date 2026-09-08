@@ -4,10 +4,7 @@ import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 
 export const CounterpartyUuidSchema = Schema.String.check(Schema.isUUID());
-export const CounterpartyTextSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500),
-);
+const CounterpartyTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const CounterpartyInstantSchema = Schema.String.check(
   Schema.makeFilter((value) => {
     const parsed = DateTime.make(value);
@@ -61,14 +58,13 @@ export const CounterpartyAuditEvidenceSchema = Schema.Struct({
 export const CounterpartyRoleTypeSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 export type CounterpartyRoleType = typeof CounterpartyRoleTypeSchema.Type;
 
-export const CounterpartyRoleStateSchema = Schema.Literals([
+const CounterpartyRoleStateSchema = Schema.Literals([
   'ACTIVE',
   'ENDED',
   'SUPERSEDED',
   'RETRACTED',
   'DISPUTED',
 ]);
-export type CounterpartyRoleState = typeof CounterpartyRoleStateSchema.Type;
 
 export const CounterpartyRolePeriodSchema = Schema.Struct({
   endProvenance: Schema.toEncoded(Schema.OptionFromOptionalNullOr(CounterpartyProvenanceSchema)),
@@ -95,9 +91,8 @@ export const CounterpartyPartyProjectionSchema = Schema.Struct({
   partyType: Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']),
   storedPartyRef: PartyRefSchema,
 });
-export type CounterpartyPartyProjection = typeof CounterpartyPartyProjectionSchema.Type;
 
-export const CounterpartyRecordSchema = Schema.Struct({
+const CounterpartyRecordSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   createdAt: CounterpartyIsoTimestampSchema,
   legalEntityRef: LegalEntityRefSchema,

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
 import {
@@ -74,6 +74,29 @@ it.effect(
           role: 'SUPPLIER',
           tenantId,
         },
+      ]);
+    }),
+);
+
+it.effect(
+  'Counterparty provider preserves typed normalization failures and omits an absent role',
+  () =>
+    Effect.gen(function* invalidCounterpartyInstant() {
+      const calls: unknown[] = [];
+      const gateway: PartySearchProjectionGatewayService = {
+        searchCounterparties: (input) => {
+          calls.push(input);
+          return Effect.succeed([]);
+        },
+        searchParties: () => Effect.succeed([]),
+      };
+      const error = yield* Effect.flip(
+        loadCounterpartySearch(gateway, { legalEntityId, tenantId }, { query: 'ACME' }, 'invalid'),
+      );
+      assert.equal(error.code, 'party_search_projection_unavailable');
+      assert.equal(error.reason, 'Counterparty Search effective time is invalid');
+      assert.deepEqual(calls, [
+        { effectiveAt: 'invalid', includeArchived: false, legalEntityId, query: 'ACME', tenantId },
       ]);
     }),
 );

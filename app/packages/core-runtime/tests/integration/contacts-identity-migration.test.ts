@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 import { Crypto, Effect, FileSystem, Schema } from 'effect';
 import { Pool } from 'pg';

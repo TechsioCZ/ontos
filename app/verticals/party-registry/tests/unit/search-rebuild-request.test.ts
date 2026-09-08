@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';

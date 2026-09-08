@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
+import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
 import type { DeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import {
@@ -7,53 +8,20 @@ import {
   makeInstalledModuleCatalogLoader,
 } from '../../api/modules/installed-module-catalog.ts';
 
-const contract = (appId: string, moduleId: string) => ({
-  deployment: { appId, buildMarker: `${appId}-build` },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: [
-        'inactive',
-        'active',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ],
-    },
-    module: {
-      description: `${moduleId} module`,
-      displayName: moduleId,
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
+const contract = (appId: string, moduleId: string) =>
+  makeModuleContractFixture({
+    appId,
+    moduleId,
+    supportedStates: [
+      'inactive',
+      'active',
+      'read_only',
+      'suspended',
+      'quarantined',
+      'deprecated',
+      'archived',
+    ],
+  });
 
 const allowlist = (entries: DeploymentAllowlist['entries']): DeploymentAllowlist =>
   Object.freeze({ entries: Object.freeze([...entries]), revision: JSON.stringify(entries) });

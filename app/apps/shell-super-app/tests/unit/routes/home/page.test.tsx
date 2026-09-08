@@ -1,7 +1,7 @@
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
-import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
@@ -9,9 +9,12 @@ import type { ReactNode } from 'react';
 import {
   AppIdSchema,
   GroupKeySchema,
+  LegalEntityAccessForbiddenProblemSchema,
   LegalEntityIdSchema,
   ModuleIdSchema,
   PrincipalIdSchema,
+  TenantAccessForbiddenProblemSchema,
+  TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
 } from '../../../../shared/api.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
@@ -256,4 +259,124 @@ it.live('logout clears the authenticated composition together', () =>
       ),
     );
   }),
+);
+
+const tenantAuthenticationRequired = Schema.decodeUnknownSync(
+  TenantAuthenticationRequiredProblemSchema,
+)({
+  _tag: 'TenantAuthenticationRequiredProblem',
+  detail: 'The tenant session expired.',
+  status: 401,
+  title: 'Tenant authentication required',
+  type: 'https://ontos.dev/problems/tenant-authentication-required',
+});
+const tenantAccessForbidden = Schema.decodeUnknownSync(TenantAccessForbiddenProblemSchema)({
+  _tag: 'TenantAccessForbiddenProblem',
+  detail: 'The principal cannot use this tenant.',
+  status: 403,
+  title: 'Tenant access forbidden',
+  type: 'https://ontos.dev/problems/tenant-access-forbidden',
+});
+const legalEntityAccessForbidden = Schema.decodeUnknownSync(
+  LegalEntityAccessForbiddenProblemSchema,
+)({
+  _tag: 'LegalEntityAccessForbiddenProblem',
+  detail: 'The principal cannot use this legal entity.',
+  status: 403,
+  title: 'Legal entity access forbidden',
+  type: 'https://ontos.dev/problems/legal-entity-access-forbidden',
+});
+
+interface SwitchFailureCase {
+  readonly comboboxName: string;
+  readonly failedText: string;
+  readonly failure:
+    | typeof legalEntityAccessForbidden
+    | typeof tenantAccessForbidden
+    | typeof tenantAuthenticationRequired;
+  readonly name: string;
+  readonly optionName: string;
+  readonly pendingText: string;
+  readonly reloads: boolean;
+  readonly switchMock: typeof switchLegalEntityMock;
+}
+
+const switchFailureCases: SwitchFailureCase[] = [
+  {
+    comboboxName: 'Current tenant',
+    failedText: 'Tenant switching failed',
+    failure: tenantAccessForbidden,
+    name: 'a forbidden tenant switch',
+    optionName: 'Zeta tenant',
+    pendingText: 'Switching tenant',
+    reloads: false,
+    switchMock: switchTenantMock,
+  },
+  {
+    comboboxName: 'Current legal entity',
+    failedText: 'Legal entity switching failed',
+    failure: legalEntityAccessForbidden,
+    name: 'a forbidden legal-entity switch',
+    optionName: 'Beta company',
+    pendingText: 'Switching legal entity',
+    reloads: false,
+    switchMock: switchLegalEntityMock,
+  },
+  {
+    comboboxName: 'Current tenant',
+    failedText: 'Tenant switching failed',
+    failure: tenantAuthenticationRequired,
+    name: 'an unauthenticated tenant switch',
+    optionName: 'Zeta tenant',
+    pendingText: 'Switching tenant',
+    reloads: true,
+    switchMock: switchTenantMock,
+  },
+  {
+    comboboxName: 'Current legal entity',
+    failedText: 'Legal entity switching failed',
+    failure: tenantAuthenticationRequired,
+    name: 'an unauthenticated legal-entity switch',
+    optionName: 'Beta company',
+    pendingText: 'Switching legal entity',
+    reloads: true,
+    switchMock: switchLegalEntityMock,
+  },
+];
+
+it.live.each(switchFailureCases)(
+  'settles $name into its own selector without leaving it pending',
+  ({ comboboxName, failedText, failure, optionName, pendingText, reloads, switchMock }) =>
+    Effect.gen(function* settlesTheSwitchFailureIntoItsOwnSelector() {
+      switchMock.mockReturnValue(Effect.fail(failure));
+      const user = userEvent.setup();
+      render(<HomeView initialModel={authenticatedModel()} />);
+
+      yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: comboboxName })));
+      const option = yield* Effect.promise(() => screen.findByRole('option', { name: optionName }));
+      yield* Effect.promise(() => user.click(option));
+      yield* Effect.promise(() => waitFor(() => expect(switchMock).toHaveBeenCalledTimes(1)));
+
+      if (reloads) {
+        yield* Effect.promise(() =>
+          waitFor(() =>
+            expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }),
+          ),
+        );
+        yield* Effect.promise(() =>
+          waitFor(() => expect(screen.queryByText(pendingText)).toBeNull()),
+        );
+        expect(screen.queryByText(failedText)).toBeNull();
+      } else {
+        yield* Effect.promise(() =>
+          waitFor(() => expect(screen.getByText(failedText)).toBeTruthy()),
+        );
+        expect(navigateMock).not.toHaveBeenCalled();
+        expect(screen.queryByText(pendingText)).toBeNull();
+      }
+
+      expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(
+        false,
+      );
+    }),
 );

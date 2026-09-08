@@ -14,7 +14,7 @@ const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const status = Schema.Literals(['active', 'disabled', 'revoked']);
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const SetManagedApiKeyBindingStatusPayloadSchema = Schema.Union([
+const SetManagedApiKeyBindingStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     authBindingId: AuthBindingIdSchema,
     expectedStatus: status,
@@ -33,22 +33,16 @@ export const SetManagedApiKeyBindingStatusPayloadSchema = Schema.Union([
 export type SetManagedApiKeyBindingStatusPayload = Schema.Schema.Type<
   typeof SetManagedApiKeyBindingStatusPayloadSchema
 >;
-export const SetManagedApiKeyBindingStatusResultSchema = Schema.Struct({
+const SetManagedApiKeyBindingStatusResultSchema = Schema.Struct({
   previousStatus: status,
   status,
 });
-export type SetManagedApiKeyBindingStatusResult = Schema.Schema.Type<
-  typeof SetManagedApiKeyBindingStatusResultSchema
->;
-type SetStatus = PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
-type Input = Parameters<SetStatus>[0];
-type Result = ReturnType<SetStatus>;
 const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
   function* setManagedApiKeyBindingStatusActionHandle(
     payload: SetManagedApiKeyBindingStatusPayload,
     context: ActionHandlerContext<
       Readonly<Record<never, never>>,
-      { readonly setStatus: (input: Input) => Result }
+      { readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'] }
     >,
   ) {
     const result = yield* context.services.setStatus({

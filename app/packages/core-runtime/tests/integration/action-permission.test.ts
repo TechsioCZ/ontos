@@ -1,5 +1,5 @@
 // oxlint-disable-next-line max-classes-per-file -- Effect requires class declarations for both the typed error and fixture service; remove when this fixture no longer needs its client service.
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Exit, Schema, Predicate } from 'effect';
@@ -535,6 +535,26 @@ const withDenialPersistenceFailure = (
 
 const DenialFailureStageSchema = Schema.Literals(['audit', 'invocation-update']);
 
+const runFailedAction = (
+  runtime: ReturnType<typeof makeActionRuntime>,
+  actionKey: string,
+  key: string,
+  moduleStateKey: string,
+  executions: ExecutionCounter,
+) =>
+  Effect.flip(
+    runtime.runAction({
+      payload: undefined,
+      principal,
+      registration: registration(
+        actionKey,
+        moduleStateKey,
+        incrementExecution.bind(undefined, executions),
+      ),
+      transport: transport(key, moduleStateKey),
+    }),
+  );
+
 const testProgram1 = () =>
   withDatabase((database) =>
     Effect.forEach(
@@ -576,18 +596,7 @@ const testProgram2 = () =>
       const key = 'missing';
       const moduleStateKey = `${actionPrefix}.state.missing`;
       const failure = yield* runWithLivePermission(database, (runtime) =>
-        Effect.flip(
-          runtime.runAction({
-            payload: undefined,
-            principal,
-            registration: registration(
-              actionKeys.missing,
-              moduleStateKey,
-              incrementExecution.bind(undefined, executions),
-            ),
-            transport: transport(key, moduleStateKey),
-          }),
-        ),
+        runFailedAction(runtime, actionKeys.missing, key, moduleStateKey, executions),
       );
       const [invocation] = yield* database.executor
         .select()
@@ -795,18 +804,7 @@ const testProgram6 = () =>
       const failure = yield* runWithLivePermission(
         database,
         (runtime) =>
-          Effect.flip(
-            runtime.runAction({
-              payload: undefined,
-              principal,
-              registration: registration(
-                actionKeys.unavailable,
-                moduleStateKey,
-                incrementExecution.bind(undefined, executions),
-              ),
-              transport: transport(key, moduleStateKey),
-            }),
-          ),
+          runFailedAction(runtime, actionKeys.unavailable, key, moduleStateKey, executions),
         { ...(yield* loadSpiceDbConfig()), preSharedKey: 'invalid-integration-key' },
       );
       const [invocation] = yield* database.executor

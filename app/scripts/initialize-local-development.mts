@@ -1,3 +1,10 @@
+import {
+  bootstrapPrincipalRecord,
+  bootstrapRelationshipRequest,
+  selectBootstrapLegalEntities,
+  selectBootstrapPrincipals,
+  selectBootstrapAuthBindings,
+} from '../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,7 +29,10 @@ import { isSqlError } from 'effect/unstable/sql/SqlError';
 import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
-import type { CoreDatabaseExecutor } from '../packages/core-runtime/src/db/types.ts';
+import type {
+  CoreDatabaseExecutor,
+  CoreTransaction,
+} from '../packages/core-runtime/src/db/types.ts';
 import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
 import {
   DatabaseConfig,
@@ -526,6 +536,52 @@ const ensureAuthUser = Effect.fn('LocalDevelopment.ensureAuthUser')(function* en
   return { status: 'created' as const, userId: created.user.id };
 });
 
+const reconcileLocalModules = Effect.fn('LocalDevelopment.reconcileLocalModules')(
+  function* reconcileModuleStates(transaction: CoreTransaction, moduleIds: readonly string[]) {
+    const context = LOCAL_DEVELOPMENT_CONTEXT;
+    for (const moduleId of moduleIds) {
+      const moduleStateId = moduleStateIdFor(moduleId);
+      const moduleCandidates = yield* transaction
+        .select({
+          moduleKey: tenantModuleStates.moduleKey,
+          state: tenantModuleStates.state,
+          tenantId: tenantModuleStates.tenantId,
+          tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
+        })
+        .from(tenantModuleStates)
+        .where(
+          or(
+            eq(tenantModuleStates.tenantModuleStateId, moduleStateId),
+            and(
+              eq(tenantModuleStates.tenantId, context.tenantId),
+              eq(tenantModuleStates.moduleKey, moduleId),
+            ),
+          ),
+        )
+        .limit(2);
+      if (moduleCandidates.length > 1) {
+        return yield* failure('local_conflict', `The ${moduleId} module-state identity conflicts`);
+      }
+      const expectedModuleState = {
+        moduleKey: moduleId,
+        state: 'active',
+        tenantId: context.tenantId,
+        tenantModuleStateId: moduleStateId,
+      } as const;
+      if (
+        (yield* classifyLocalModuleState(
+          `${moduleId} module state`,
+          moduleCandidates[0],
+          expectedModuleState,
+        )) === 'create'
+      ) {
+        yield* transaction.insert(tenantModuleStates).values(expectedModuleState);
+      }
+    }
+    return yield* Effect.void;
+  },
+);
+
 export const reconcileCoreContext = (
   database: CoreDatabaseExecutor,
   authUserId: string,
@@ -563,27 +619,7 @@ export const reconcileCoreContext = (
           yield* transaction.insert(tenants).values(expectedTenant);
         }
 
-        const legalCandidates = yield* transaction
-          .select({
-            legalEntityId: legalEntities.legalEntityId,
-            legalName: legalEntities.legalName,
-            registrationCountry: legalEntities.registrationCountry,
-            registrationNumber: legalEntities.registrationNumber,
-            status: legalEntities.status,
-            tenantId: legalEntities.tenantId,
-          })
-          .from(legalEntities)
-          .where(
-            or(
-              eq(legalEntities.legalEntityId, context.legalEntityId),
-              and(
-                eq(legalEntities.tenantId, context.tenantId),
-                eq(legalEntities.registrationCountry, context.registrationCountry),
-                eq(legalEntities.registrationNumber, context.registrationNumber),
-              ),
-            ),
-          )
-          .limit(2);
+        const legalCandidates = yield* selectBootstrapLegalEntities(transaction, context);
         if (legalCandidates.length > 1) {
           return yield* failure('local_conflict', 'The local Legal Entity identity conflicts');
         }
@@ -605,24 +641,8 @@ export const reconcileCoreContext = (
           yield* transaction.insert(legalEntities).values(expectedLegalEntity);
         }
 
-        const expectedPrincipal = {
-          displayName: context.principalDisplayName,
-          kind: 'human',
-          principalId: context.principalId,
-          status: 'active',
-          tenantId: context.tenantId,
-        } as const;
-        const principalCandidates = yield* transaction
-          .select({
-            displayName: principals.displayName,
-            kind: principals.kind,
-            principalId: principals.principalId,
-            status: principals.status,
-            tenantId: principals.tenantId,
-          })
-          .from(principals)
-          .where(eq(principals.principalId, context.principalId))
-          .limit(1);
+        const expectedPrincipal = bootstrapPrincipalRecord(context);
+        const principalCandidates = yield* selectBootstrapPrincipals(transaction, context);
         if (
           (yield* classifyExactLocalRecord(
             'principal',
@@ -633,29 +653,11 @@ export const reconcileCoreContext = (
           yield* transaction.insert(principals).values(expectedPrincipal);
         }
 
-        const bindingCandidates = yield* transaction
-          .select({
-            principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
-            principalId: principalAuthBindings.principalId,
-            provider: principalAuthBindings.provider,
-            providerSubjectId: principalAuthBindings.providerSubjectId,
-            status: principalAuthBindings.status,
-            subjectType: principalAuthBindings.subjectType,
-            tenantId: principalAuthBindings.tenantId,
-          })
-          .from(principalAuthBindings)
-          .where(
-            or(
-              eq(principalAuthBindings.principalAuthBindingId, context.authBindingId),
-              and(
-                eq(principalAuthBindings.tenantId, context.tenantId),
-                eq(principalAuthBindings.provider, 'better_auth'),
-                eq(principalAuthBindings.subjectType, 'user'),
-                eq(principalAuthBindings.providerSubjectId, authUserId),
-              ),
-            ),
-          )
-          .limit(2);
+        const bindingCandidates = yield* selectBootstrapAuthBindings(
+          transaction,
+          context,
+          authUserId,
+        );
         if (bindingCandidates.length > 1) {
           return yield* failure('local_conflict', 'The local authentication binding conflicts');
         }
@@ -678,48 +680,7 @@ export const reconcileCoreContext = (
           yield* transaction.insert(principalAuthBindings).values(expectedBinding);
         }
 
-        for (const moduleId of moduleIds) {
-          const moduleStateId = moduleStateIdFor(moduleId);
-          const moduleCandidates = yield* transaction
-            .select({
-              moduleKey: tenantModuleStates.moduleKey,
-              state: tenantModuleStates.state,
-              tenantId: tenantModuleStates.tenantId,
-              tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
-            })
-            .from(tenantModuleStates)
-            .where(
-              or(
-                eq(tenantModuleStates.tenantModuleStateId, moduleStateId),
-                and(
-                  eq(tenantModuleStates.tenantId, context.tenantId),
-                  eq(tenantModuleStates.moduleKey, moduleId),
-                ),
-              ),
-            )
-            .limit(2);
-          if (moduleCandidates.length > 1) {
-            return yield* failure(
-              'local_conflict',
-              `The ${moduleId} module-state identity conflicts`,
-            );
-          }
-          const expectedModuleState = {
-            moduleKey: moduleId,
-            state: 'active',
-            tenantId: context.tenantId,
-            tenantModuleStateId: moduleStateId,
-          } as const;
-          if (
-            (yield* classifyLocalModuleState(
-              `${moduleId} module state`,
-              moduleCandidates[0],
-              expectedModuleState,
-            )) === 'create'
-          ) {
-            yield* transaction.insert(tenantModuleStates).values(expectedModuleState);
-          }
-        }
+        yield* reconcileLocalModules(transaction, moduleIds);
         return yield* Effect.void;
       }),
     )
@@ -770,28 +731,7 @@ const touchRelationships = (
             'The local authorization relationships could not be reconciled',
           ),
         try: async () => {
-          await client.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: relationships.map((item) =>
-                v1.RelationshipUpdate.create({
-                  operation: v1.RelationshipUpdate_Operation.TOUCH,
-                  relationship: v1.Relationship.create({
-                    relation: item.relation,
-                    resource: v1.ObjectReference.create({
-                      objectId: item.resourceId,
-                      objectType: item.resourceType,
-                    }),
-                    subject: v1.SubjectReference.create({
-                      object: v1.ObjectReference.create({
-                        objectId: item.subjectId,
-                        objectType: item.subjectType,
-                      }),
-                    }),
-                  }),
-                }),
-              ),
-            }),
-          );
+          await client.promises.writeRelationships(bootstrapRelationshipRequest(relationships));
         },
       });
     }),

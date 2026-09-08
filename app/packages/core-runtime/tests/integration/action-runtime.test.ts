@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { and, eq } from 'drizzle-orm';
 import { Cause, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
@@ -96,53 +97,22 @@ const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   targetResourceType: 'test-state',
 });
 
-const inventoryStockContract: OntosModuleDeploymentContract = {
-  deployment: { appId: 'inventory-stock', buildMarker: 'integration-test' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: [
-        'inactive',
-        'active',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ],
-    },
-    module: {
-      description: 'Inventory integration fixture',
-      displayName: 'Inventory',
-      id: 'inventory.stock',
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-};
+const inventoryStockContract: OntosModuleDeploymentContract = makeModuleContractFixture({
+  appId: 'inventory-stock',
+  buildMarker: 'integration-test',
+  description: 'Inventory integration fixture',
+  displayName: 'Inventory',
+  moduleId: 'inventory.stock',
+  supportedStates: [
+    'inactive',
+    'active',
+    'read_only',
+    'suspended',
+    'quarantined',
+    'deprecated',
+    'archived',
+  ],
+});
 
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: Object.freeze([inventoryStockContract]),
@@ -174,6 +144,30 @@ const withDatabase = <Value, Error, Requirements>(
   );
 
 type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
+
+const withTransactionOverride = (
+  database: ContextServiceContract,
+  override: Pick<ContextServiceContract['executor'], 'transaction'>,
+): ContextServiceContract => ({
+  executor: Object.assign(Object.create(database.executor), override),
+});
+
+const invocationEvidence = (database: ContextServiceContract, key: string) =>
+  Effect.gen(function* readInvocationEvidence() {
+    const [invocation] = yield* database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, key));
+    expect(invocation).toBeDefined();
+    if (invocation === undefined) {
+      throw new Error('Expected invocation');
+    }
+    const audits = yield* database.executor
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+    return { audits, invocation };
+  });
 
 const EvidencePersistenceStageSchema = Schema.Literals([
   'audit',
@@ -215,12 +209,7 @@ const withEvidencePersistenceFailure = (
         );
       }),
   } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
-  const executor: ContextServiceContract['executor'] = Object.assign(
-    Object.create(database.executor),
-    transactionOverride,
-  );
-
-  return { executor };
+  return withTransactionOverride(database, transactionOverride);
 };
 
 const liveModuleStateOptions = (database: ContextServiceContract) => {
@@ -277,27 +266,23 @@ const prepare = (() =>
 const cleanup = (() =>
   withDatabase(
     Effect.fn(function* integrationProgram2(database) {
-      yield* database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
-      yield* database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
-      yield* database.executor
-        .delete(dataAccessEvents)
-        .where(eq(dataAccessEvents.tenantId, tenantId));
-      yield* database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
-      yield* database.executor
-        .delete(tenantModuleStateChanges)
-        .where(eq(tenantModuleStateChanges.tenantId, tenantId));
-      yield* database.executor
-        .delete(tenantModuleStates)
-        .where(eq(tenantModuleStates.tenantId, tenantId));
-      yield* database.executor
-        .delete(actionInvocations)
-        .where(eq(actionInvocations.tenantId, tenantId));
-      yield* database.executor
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.tenantId, tenantId));
-      yield* database.executor.delete(principals).where(eq(principals.tenantId, tenantId));
-      yield* database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
-      yield* database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      yield* Effect.forEach(
+        [
+          outboxMessages,
+          domainEvents,
+          dataAccessEvents,
+          auditEvents,
+          tenantModuleStateChanges,
+          tenantModuleStates,
+          actionInvocations,
+          principalAuthBindings,
+          principals,
+          legalEntities,
+          tenants,
+        ],
+        (table) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
+        { discard: true },
+      );
     }),
   ))();
 
@@ -666,18 +651,7 @@ const testProgram3 = Effect.fn(function* integrationProgram6() {
         transport: transport(key, moduleStateKey),
       });
 
-      const [invocation] = yield* database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key));
-      expect(invocation).toBeDefined();
-      if (invocation === undefined) {
-        throw new Error('Expected invocation');
-      }
-      const audits = yield* database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+      const { audits, invocation } = yield* invocationEvidence(database, key);
 
       expect(observed).toEqual(['policy', 'handler']);
       expect(invocation.status).toBe('succeeded');
@@ -899,18 +873,7 @@ const testProgram5 = Effect.fn(function* integrationProgram11() {
               transport: transport(key),
             }),
           );
-          const [invocation] = yield* database.executor
-            .select()
-            .from(actionInvocations)
-            .where(eq(actionInvocations.idempotencyKey, key));
-          expect(invocation).toBeDefined();
-          if (invocation === undefined) {
-            throw new Error('Expected invocation');
-          }
-          const audits = yield* database.executor
-            .select()
-            .from(auditEvents)
-            .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+          const { audits, invocation } = yield* invocationEvidence(database, key);
 
           expect(
             hasFailure(exit, 'ActionInvocationPersistenceError'),
@@ -1142,18 +1105,7 @@ const testProgram8 = () =>
       };
       const first = yield* Effect.exit(runtime.runAction(input));
       const retry = yield* Effect.exit(runtime.runAction(input));
-      const [invocation] = yield* database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key));
-      expect(invocation).toBeDefined();
-      if (invocation === undefined) {
-        throw new Error('Expected invocation');
-      }
-      const audits = yield* database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+      const { audits, invocation } = yield* invocationEvidence(database, key);
 
       expect(hasFailure(first, 'ActionPolicyDenied')).toBe(true);
       expect(hasFailure(retry, 'ActionInvocationStateError')).toBe(true);
@@ -1278,18 +1230,7 @@ const testProgram9 = () =>
         [Fiber.join(success), Fiber.join(rejected)],
         { concurrency: 'unbounded' },
       );
-      const [invocation] = yield* database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key));
-      expect(invocation).toBeDefined();
-      if (invocation === undefined) {
-        throw new Error('Expected invocation');
-      }
-      const audits = yield* database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+      const { audits, invocation } = yield* invocationEvidence(database, key);
 
       expect(successResult.value).toBe('same');
       expect(hasFailure(rejectedExit, 'ActionInvocationPersistenceError')).toBe(true);
@@ -1531,12 +1472,9 @@ const testProgram12 = () =>
             .transaction(transactionBody)
             .pipe(Effect.andThen(Effect.die(acknowledgementLost))),
       } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
-      const uncertainExecutor: ContextServiceContract['executor'] = Object.assign(
-        Object.create(database.executor),
-        uncertainTransaction,
-      );
+
       const uncertainRuntime = makeActionRuntime(
-        { executor: uncertainExecutor },
+        withTransactionOverride(database, uncertainTransaction),
         repository,
         allowedPermission,
         testOperationalScopeResolver,
@@ -1638,12 +1576,9 @@ const testProgram12 = () =>
             )
             .pipe(Effect.catchCause(() => Effect.die(acknowledgementLost))),
       } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
-      const uncertainRollbackExecutor: ContextServiceContract['executor'] = Object.assign(
-        Object.create(database.executor),
-        uncertainRollbackTransaction,
-      );
+
       const uncertainOpenRuntime = makeActionRuntime(
-        { executor: uncertainRollbackExecutor },
+        withTransactionOverride(database, uncertainRollbackTransaction),
         repository,
         allowedPermission,
         testOperationalScopeResolver,

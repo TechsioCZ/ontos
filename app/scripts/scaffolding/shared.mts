@@ -104,7 +104,25 @@ export const MODULE_REGISTRATION_SEARCH_SLOT_END = '// </generated-module-regist
 export const MODULE_REGISTRATION_WORKER_SLOT_START = '// <generated-module-registration-workers>';
 export const MODULE_REGISTRATION_WORKER_SLOT_END = '// </generated-module-registration-workers>';
 
-export interface VerticalActionScaffoldConfig {
+export const createScaffoldErrorTools = <Failure,>(
+  ErrorClass: new (fields: { readonly cause?: unknown; readonly message: string }) => Failure,
+  isOwnError: Predicate.Refinement<unknown, Failure>,
+  fallbackMessage: string,
+) => {
+  const scaffoldError = (message: string, cause?: unknown): Failure =>
+    new ErrorClass(cause === undefined ? { message } : { cause, message });
+  const trySync = <Value,>(operation: () => Value): Effect.Effect<Value, Failure> =>
+    Effect.try({
+      catch: (cause) =>
+        isOwnError(cause)
+          ? cause
+          : scaffoldError(Predicate.isError(cause) ? cause.message : fallbackMessage, cause),
+      try: operation,
+    });
+  return { scaffoldError, trySync };
+};
+
+interface VerticalActionScaffoldConfig {
   readonly action: string;
   readonly authorization: 'action_execution';
   readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
@@ -114,7 +132,7 @@ export interface VerticalActionScaffoldConfig {
   readonly vertical: string;
 }
 
-export interface CoreActionScaffoldConfig {
+interface CoreActionScaffoldConfig {
   readonly action: string;
   readonly authorization: 'action_execution';
   readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
@@ -202,7 +220,7 @@ export interface RetireContributionScaffoldConfig {
   readonly vertical: string;
 }
 
-export interface WriteMutation {
+interface WriteMutation {
   readonly content: string;
   readonly kind: 'create' | 'update';
   readonly path: string;
@@ -399,7 +417,7 @@ export const asJsonObject = (value: JsonValue | undefined, label: string): JsonO
   return value;
 };
 
-export const isStringValue = Schema.is(Schema.String);
+const isStringValue = Schema.is(Schema.String);
 
 export const requiredString = (value: JsonValue | undefined, label: string): string => {
   if (!isStringValue(value) || value.trim().length === 0) {
@@ -407,9 +425,6 @@ export const requiredString = (value: JsonValue | undefined, label: string): str
   }
   return value;
 };
-
-export const isMissingFileError = <ErrorValue,>(error: ErrorValue): boolean =>
-  Predicate.hasProperty(error, 'code') && error.code === 'ENOENT';
 
 const pathExistsEffect = (targetPath: string) =>
   Effect.gen(function* pathExistsProgram() {
@@ -478,6 +493,32 @@ interface NonCodeTransition {
   readonly state: NonCodeState | null;
 }
 
+const closesNonCodeQuote = (state: NonCodeState, character: string): boolean =>
+  (state === SINGLE_QUOTE_STATE && character === "'") ||
+  (state === DOUBLE_QUOTE_STATE && character === '"') ||
+  (state === TEMPLATE_STATE && character === '`');
+
+const advanceRegexState = (
+  state: NonCodeState,
+  character: string,
+  regexCharacterClass: boolean,
+): NonCodeTransition => {
+  if (state !== REGEX_STATE) {
+    return { escaped: false, regexCharacterClass, state };
+  }
+  if (character === '[') {
+    return { escaped: false, regexCharacterClass: true, state };
+  }
+  if (character === ']') {
+    return { escaped: false, regexCharacterClass: false, state };
+  }
+  return {
+    escaped: false,
+    regexCharacterClass,
+    state: character === '/' && !regexCharacterClass ? null : state,
+  };
+};
+
 const advanceNonCodeState = (
   state: NonCodeState,
   character: string,
@@ -505,27 +546,10 @@ const advanceNonCodeState = (
   if (character === '\\') {
     return { escaped: true, regexCharacterClass, state };
   }
-  if (
-    (state === SINGLE_QUOTE_STATE && character === "'") ||
-    (state === DOUBLE_QUOTE_STATE && character === '"') ||
-    (state === TEMPLATE_STATE && character === '`')
-  ) {
+  if (closesNonCodeQuote(state, character)) {
     return { escaped: false, regexCharacterClass: false, state: null };
   }
-  if (state !== REGEX_STATE) {
-    return { escaped: false, regexCharacterClass, state };
-  }
-  if (character === '[') {
-    return { escaped: false, regexCharacterClass: true, state };
-  }
-  if (character === ']') {
-    return { escaped: false, regexCharacterClass: false, state };
-  }
-  return {
-    escaped: false,
-    regexCharacterClass,
-    state: character === '/' && !regexCharacterClass ? null : state,
-  };
+  return advanceRegexState(state, character, regexCharacterClass);
 };
 
 const shouldMaskNonCodeState = (state: NonCodeState, preserveStrings: boolean): boolean =>
@@ -544,6 +568,25 @@ const stringCodeUnits = (content: string): string[] => {
   return units;
 };
 
+const maskNonCodeOpening = (
+  masked: string[],
+  index: number,
+  state: NonCodeState | null,
+  preserveStrings: boolean,
+): number => {
+  if (state === null) {
+    return 0;
+  }
+  if (shouldMaskNonCodeState(state, preserveStrings)) {
+    masked[index] = ' ';
+  }
+  if (state === LINE_COMMENT_STATE || state === BLOCK_COMMENT_STATE) {
+    masked[index + 1] = ' ';
+    return 1;
+  }
+  return 0;
+};
+
 export const maskNonCode = (content: string, preserveStrings = false): string => {
   const masked = stringCodeUnits(content);
   let state: NonCodeState | null = null;
@@ -554,20 +597,10 @@ export const maskNonCode = (content: string, preserveStrings = false): string =>
     const next = content[index + 1] ?? null;
     if (state === null) {
       state = nonCodeStateAt(content, index, character, next);
-      if (state !== null) {
-        if (shouldMaskNonCodeState(state, preserveStrings)) {
-          masked[index] = ' ';
-        }
-        if (state === LINE_COMMENT_STATE || state === BLOCK_COMMENT_STATE) {
-          masked[index + 1] = ' ';
-          index += 1;
-        }
-      }
+      index += maskNonCodeOpening(masked, index, state, preserveStrings);
       continue;
     }
-    const isString =
-      state === DOUBLE_QUOTE_STATE || state === SINGLE_QUOTE_STATE || state === TEMPLATE_STATE;
-    if (!preserveStrings || !isString) {
+    if (shouldMaskNonCodeState(state, preserveStrings)) {
       masked[index] = character === '\n' || character === '\r' ? character : ' ';
     }
     const transition = advanceNonCodeState(state, character, next, escaped, regexCharacterClass);
@@ -838,36 +871,34 @@ const scanJsonString = (source: string, start: number): number => {
   return raiseScaffoldFailure('unterminated JSON string while planning an owner-file patch');
 };
 
+const scanJsonCollection = (source: string, start: number, first: '[' | '{'): number => {
+  const closing = first === '{' ? '}' : ']';
+  let depth = 0;
+  let cursor = start;
+  while (cursor < source.length) {
+    const character = source[cursor];
+    if (character === '"') {
+      cursor = scanJsonString(source, cursor) - 1;
+    } else if (character === first) {
+      depth += 1;
+    } else if (character === closing) {
+      depth -= 1;
+      if (depth === 0) {
+        return cursor + 1;
+      }
+    }
+    cursor += 1;
+  }
+  return raiseScaffoldFailure('unterminated JSON collection while planning an owner-file patch');
+};
+
 const scanJsonValue = (source: string, start: number): number => {
   const first = source[start];
   if (first === '"') {
     return scanJsonString(source, start);
   }
   if (first === '{' || first === '[') {
-    const closing = first === '{' ? '}' : ']';
-    let depth = 0;
-    let stringEnd = -1;
-    let cursor = start;
-    while (cursor < source.length) {
-      if (cursor < stringEnd) {
-        cursor += 1;
-        continue;
-      }
-      const character = source[cursor];
-      if (character === '"') {
-        stringEnd = scanJsonString(source, cursor);
-        cursor = stringEnd - 1;
-      } else if (character === first) {
-        depth += 1;
-      } else if (character === closing) {
-        depth -= 1;
-        if (depth === 0) {
-          return cursor + 1;
-        }
-      }
-      cursor += 1;
-    }
-    return raiseScaffoldFailure('unterminated JSON collection while planning an owner-file patch');
+    return scanJsonCollection(source, start, first);
   }
   let cursor = start;
   while (cursor < source.length && !/[\s,}\]]/u.test(source[cursor] ?? '')) {
@@ -1459,6 +1490,36 @@ interface GeneratedSlotScanState {
   quote: '"' | "'" | '`' | null;
 }
 
+const consumeGeneratedSlotQuote = (state: GeneratedSlotScanState, character: string): void => {
+  if (state.escaped) {
+    state.escaped = false;
+  } else if (character === '\\') {
+    state.escaped = true;
+  } else if (character === state.quote) {
+    state.quote = null;
+  }
+};
+
+const startGeneratedSlotProtection = (
+  state: GeneratedSlotScanState,
+  character: string,
+  nextCharacter: string,
+): boolean => {
+  if (character === '/' && nextCharacter === '/') {
+    state.lineComment = true;
+    return true;
+  }
+  if (character === '/' && nextCharacter === '*') {
+    state.blockComment = true;
+    return true;
+  }
+  if (character === '"' || character === "'" || character === '`') {
+    state.quote = character;
+    return true;
+  }
+  return false;
+};
+
 const consumeGeneratedSlotProtectedCharacter = (
   state: GeneratedSlotScanState,
   character: string,
@@ -1478,28 +1539,10 @@ const consumeGeneratedSlotProtectedCharacter = (
     return true;
   }
   if (state.quote !== null) {
-    if (state.escaped) {
-      state.escaped = false;
-    } else if (character === '\\') {
-      state.escaped = true;
-    } else if (character === state.quote) {
-      state.quote = null;
-    }
+    consumeGeneratedSlotQuote(state, character);
     return true;
   }
-  if (character === '/' && nextCharacter === '/') {
-    state.lineComment = true;
-    return true;
-  }
-  if (character === '/' && nextCharacter === '*') {
-    state.blockComment = true;
-    return true;
-  }
-  if (character === '"' || character === "'" || character === '`') {
-    state.quote = character;
-    return true;
-  }
-  return false;
+  return startGeneratedSlotProtection(state, character, nextCharacter);
 };
 
 const updateGeneratedSlotDepth = (state: GeneratedSlotScanState, character: string): void => {
@@ -1521,6 +1564,16 @@ const updateGeneratedSlotDepth = (state: GeneratedSlotScanState, character: stri
 const generatedSlotDepthIsZero = (state: GeneratedSlotScanState): boolean =>
   state.braces === 0 && state.brackets === 0 && state.parentheses === 0;
 
+const generatedSlotDepthIsNegative = (state: GeneratedSlotScanState): boolean =>
+  state.braces < 0 || state.brackets < 0 || state.parentheses < 0;
+
+const generatedSlotIsIncomplete = (state: GeneratedSlotScanState, current: string): boolean =>
+  current.trim().length > 0 ||
+  state.quote !== null ||
+  state.lineComment ||
+  state.blockComment ||
+  !generatedSlotDepthIsZero(state);
+
 const isCompleteFluentSlotTail = (state: GeneratedSlotScanState, source: string): boolean =>
   source.trimStart().startsWith('.') &&
   state.quote === null &&
@@ -1537,27 +1590,17 @@ const isGeneratedSlotFluentBoundary = (
   /\n\s*\.$/u.test(source) &&
   isCompleteFluentSlotTail(state, source.slice(0, -1));
 
-const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
-  const body = dedentGeneratedSlotBody(slotBody);
-  if (body.length === 0) {
-    return [];
-  }
-  const entries: string[] = [];
-  const fluentTailBoundaries: number[] = [];
+const scanGeneratedSlotEntries = (
+  body: string,
+  state: GeneratedSlotScanState,
+  entries: string[],
+  fluentTailBoundaries: number[],
+): string => {
   let current = '';
-  const state: GeneratedSlotScanState = {
-    blockComment: false,
-    braces: 0,
-    brackets: 0,
-    escaped: false,
-    lineComment: false,
-    parentheses: 0,
-    quote: null,
-  };
   for (let index = 0; index < body.length; index += 1) {
-    const character = body[index] ?? '';
-    const previousCharacter = body[index - 1] ?? '';
-    const nextCharacter = body[index + 1] ?? '';
+    const character = body.charAt(index);
+    const previousCharacter = body.charAt(index - 1);
+    const nextCharacter = body.charAt(index + 1);
     current += character;
     if (
       consumeGeneratedSlotProtectedCharacter(state, character, previousCharacter, nextCharacter)
@@ -1565,7 +1608,7 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
       continue;
     }
     updateGeneratedSlotDepth(state, character);
-    if (state.braces < 0 || state.brackets < 0 || state.parentheses < 0) {
+    if (generatedSlotDepthIsNegative(state)) {
       return raiseScaffoldFailure('generated owner slot contains unbalanced syntax');
     }
     if (isGeneratedSlotFluentBoundary(state, character, current)) {
@@ -1577,6 +1620,26 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
       fluentTailBoundaries.length = 0;
     }
   }
+  return current;
+};
+
+const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
+  const body = dedentGeneratedSlotBody(slotBody);
+  if (body.length === 0) {
+    return [];
+  }
+  const entries: string[] = [];
+  const fluentTailBoundaries: number[] = [];
+  const state: GeneratedSlotScanState = {
+    blockComment: false,
+    braces: 0,
+    brackets: 0,
+    escaped: false,
+    lineComment: false,
+    parentheses: 0,
+    quote: null,
+  };
+  let current = scanGeneratedSlotEntries(body, state, entries, fluentTailBoundaries);
   if (isCompleteFluentSlotTail(state, current)) {
     entries.push(
       ...[0, ...fluentTailBoundaries].map((start, index) =>
@@ -1585,13 +1648,7 @@ const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
     );
     current = '';
   }
-  if (
-    current.trim().length > 0 ||
-    state.quote !== null ||
-    state.lineComment ||
-    state.blockComment ||
-    !generatedSlotDepthIsZero(state)
-  ) {
+  if (generatedSlotIsIncomplete(state, current)) {
     return raiseScaffoldFailure('generated owner slot contains incomplete syntax');
   }
   return entries;
@@ -1639,6 +1696,28 @@ export const readGeneratedSlotEntries = (
   return entries.success;
 };
 
+const renderGeneratedSlotEntries = (
+  content: string,
+  startMarker: string,
+  endMarker: string,
+  entries: readonly string[],
+): string => {
+  const start = content.indexOf(startMarker);
+  const end = content.indexOf(endMarker);
+  const bodyStart = start + startMarker.length;
+  const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
+  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
+  const rendered = entries
+    .map((entry) =>
+      entry
+        .split('\n')
+        .map((line) => `${indentation}${line}`)
+        .join('\n'),
+    )
+    .join('\n');
+  return `${content.slice(0, bodyStart)}\n${rendered}\n${content.slice(end)}`;
+};
+
 export const removeGeneratedSlotEntry = (
   content: string,
   startMarker: string,
@@ -1654,20 +1733,7 @@ export const removeGeneratedSlotEntry = (
     );
   }
   const remaining = entries.filter((entry) => !matches(entry));
-  const start = content.indexOf(startMarker);
-  const end = content.indexOf(endMarker);
-  const bodyStart = start + startMarker.length;
-  const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
-  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
-  const rendered = remaining
-    .map((entry) =>
-      entry
-        .split('\n')
-        .map((line) => `${indentation}${line}`)
-        .join('\n'),
-    )
-    .join('\n');
-  return `${content.slice(0, bodyStart)}\n${rendered}\n${content.slice(end)}`;
+  return renderGeneratedSlotEntries(content, startMarker, endMarker, remaining);
 };
 
 export const generatedSlotContainsExactEntry = (
@@ -1691,20 +1757,6 @@ export const insertSortedSlot = (
   additions: readonly string[],
   validateEntry: (candidate: string) => boolean,
 ): string => {
-  const start = content.indexOf(startMarker);
-  const end = content.indexOf(endMarker);
-  if (
-    start === -1 ||
-    end === -1 ||
-    start >= end ||
-    content.includes(startMarker, start + startMarker.length) ||
-    content.includes(endMarker, end + endMarker.length)
-  ) {
-    return raiseScaffoldFailure(
-      `generated owner file does not contain one valid ${startMarker} slot`,
-    );
-  }
-  const bodyStart = start + startMarker.length;
   const existing = readGeneratedSlotEntries(content, startMarker, endMarker);
   if (existing.some((line) => !validateEntry(line))) {
     return raiseScaffoldFailure(
@@ -1720,15 +1772,5 @@ export const insertSortedSlot = (
   const entries = [...existing, ...additions].toSorted((left, right) =>
     generatedSlotSortKey(left).localeCompare(generatedSlotSortKey(right)),
   );
-  const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
-  const indentation = /^[ \t]*/u.exec(content.slice(endLineStart, end))?.[0] ?? '';
-  const renderedEntries = entries
-    .map((entry) =>
-      entry
-        .split('\n')
-        .map((line) => `${indentation}${line}`)
-        .join('\n'),
-    )
-    .join('\n');
-  return `${content.slice(0, bodyStart)}\n${renderedEntries}\n${content.slice(end)}`;
+  return renderGeneratedSlotEntries(content, startMarker, endMarker, entries);
 };

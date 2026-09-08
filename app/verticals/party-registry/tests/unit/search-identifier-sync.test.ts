@@ -1,9 +1,9 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   makeCoreSearchIngestion,
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type { OutboxMessage, OutboxWorkerHandlerContext } from '@app/core-runtime';
@@ -144,7 +144,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
   return {
     deliver,
     query: () =>
-      makeCoreSearchQueryRuntime(store).search({
+      createCoreSearchQueryRuntime(store).search({
         effectiveAt: '2026-09-03T00:00:00.000Z',
         includeArchived: false,
         moduleId: 'party.registry',
@@ -157,26 +157,32 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
   };
 };
 
+const assertIdentifierOutbox = (
+  harness: Effect.Success<ReturnType<typeof makeActionTestHarness>>,
+  eventType: string,
+) => {
+  const [commit] = harness.snapshot().committed;
+  expect(commit).toBeTruthy();
+  if (commit === undefined) {
+    throw new Error('Expected value to be present');
+  }
+  expect(commit.evidence.outboxMessages.length).toBe(1);
+  const [outbox] = commit.evidence.outboxMessages;
+  expect(outbox).toBeTruthy();
+  if (outbox === undefined) {
+    throw new Error('Expected value to be present');
+  }
+  expect(commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType).toBe(eventType);
+  expect(outbox.message.payloadJson).toEqual({ officialIdentifierRef, partyRef });
+  return outbox;
+};
+
 const assertAttachedIdentifierDelivery = (
   harness: Effect.Success<ReturnType<typeof makeActionTestHarness>>,
   search: ReturnType<typeof makeSearchFixture>,
 ) =>
   Effect.gen(function* verifyCommittedIdentifierDelivery() {
-    const [commit] = harness.snapshot().committed;
-    expect(commit).toBeTruthy();
-    if (commit === undefined) {
-      throw new Error('Expected value to be present');
-    }
-    expect(commit.evidence.outboxMessages.length).toBe(1);
-    const [outbox] = commit.evidence.outboxMessages;
-    expect(outbox).toBeTruthy();
-    if (outbox === undefined) {
-      throw new Error('Expected value to be present');
-    }
-    expect(commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType).toBe(
-      'party.registry.official-identifier-added.v1',
-    );
-    expect(outbox.message.payloadJson).toEqual({ officialIdentifierRef, partyRef });
+    const outbox = assertIdentifierOutbox(harness, 'party.registry.official-identifier-added.v1');
     expect(yield* search.query()).toEqual([]);
     yield* search.deliver(outbox.message);
     const hits = yield* search.query();
@@ -328,21 +334,10 @@ it.effect(
         registration: updatePartyOfficialIdentifierAction,
         transport: { correlationId: 'identifier-sync', idempotencyKey: 'end-identifier-1' },
       });
-      const [commit] = harness.snapshot().committed;
-      expect(commit).toBeTruthy();
-      if (commit === undefined) {
-        throw new Error('Expected value to be present');
-      }
-      expect(commit.evidence.outboxMessages.length).toBe(1);
-      const [outbox] = commit.evidence.outboxMessages;
-      expect(outbox).toBeTruthy();
-      if (outbox === undefined) {
-        throw new Error('Expected value to be present');
-      }
-      expect(commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType).toBe(
+      const outbox = assertIdentifierOutbox(
+        harness,
         'party.registry.official-identifier-updated.v1',
       );
-      expect(outbox.message.payloadJson).toEqual({ officialIdentifierRef, partyRef });
       expect((yield* search.query()).length).toBe(1);
       yield* search.deliver(outbox.message);
       expect(yield* search.query()).toEqual([]);

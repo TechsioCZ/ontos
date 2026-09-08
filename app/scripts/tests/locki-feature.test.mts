@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { spawnSync } from 'node:child_process';
 import { chmod, cp, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';

@@ -1,5 +1,5 @@
 import { HttpServerResponse } from '@modern-js/plugin-bff/effect-edge';
-import { expect, test } from '@app/effect-rstest';
+import { expect, test } from 'effect-rstest';
 import { noStoreResponse } from '../../api/index.ts';
 
 test('marks freshly issued API-key responses as non-cacheable', () => {

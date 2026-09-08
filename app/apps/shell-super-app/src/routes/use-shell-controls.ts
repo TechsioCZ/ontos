@@ -8,8 +8,8 @@ import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../..
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/page.data.ts';
 
-export const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
-export type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
+const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
+type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
 
 const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailureState =>
   Match.value(error).pipe(
@@ -80,6 +80,38 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     );
   };
 
+  const runSwitch = <E>(
+    switching: Effect.Effect<unknown, E>,
+    switchFailureState: (error: NoInfer<E>) => SwitchFailureState,
+    setPending: (pending: boolean) => void,
+    setFailed: (failed: boolean) => void,
+  ) => {
+    setPending(true);
+    setFailed(false);
+    void browserRuntime.runPromise(
+      switching.pipe(
+        Effect.matchEffect({
+          onFailure: (error) => Effect.succeed(switchFailureState(error)),
+          onSuccess: () => Effect.succeed('switched' as const),
+        }),
+        Effect.flatMap((outcome) =>
+          outcome === 'authentication-required' || outcome === 'switched'
+            ? reload()
+            : Effect.sync(() => setFailed(true)),
+        ),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              void error;
+              setFailed(true);
+            }),
+          onSuccess: Effect.succeed,
+        }),
+        Effect.ensuring(Effect.sync(() => setPending(false))),
+      ),
+    );
+  };
+
   const handleLegalEntityChange = (legalEntityId: string) => {
     if (
       model === undefined ||
@@ -88,30 +120,13 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     ) {
       return;
     }
-    setLegalEntitySwitchPending(true);
-    setLegalEntitySwitchFailed(false);
-    void browserRuntime.runPromise(
+    runSwitch(
       Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({ legalEntityId }).pipe(
         Effect.flatMap((payload) => switchLegalEntity(payload, { locale: language })),
-        Effect.matchEffect({
-          onFailure: (error) => Effect.succeed(legalEntitySwitchFailureState(error)),
-          onSuccess: () => Effect.succeed('switched' as const),
-        }),
-        Effect.flatMap((outcome) =>
-          outcome === 'authentication-required' || outcome === 'switched'
-            ? reload()
-            : Effect.sync(() => setLegalEntitySwitchFailed(true)),
-        ),
-        Effect.matchEffect({
-          onFailure: (error) =>
-            Effect.sync(() => {
-              void error;
-              setLegalEntitySwitchFailed(true);
-            }),
-          onSuccess: Effect.succeed,
-        }),
-        Effect.ensuring(Effect.sync(() => setLegalEntitySwitchPending(false))),
       ),
+      legalEntitySwitchFailureState,
+      setLegalEntitySwitchPending,
+      setLegalEntitySwitchFailed,
     );
   };
 
@@ -124,30 +139,13 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     ) {
       return;
     }
-    setTenantSwitchPending(true);
-    setTenantSwitchFailed(false);
-    void browserRuntime.runPromise(
+    runSwitch(
       Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId }).pipe(
         Effect.flatMap((payload) => switchTenant(payload, { locale: language })),
-        Effect.matchEffect({
-          onFailure: (error) => Effect.succeed(tenantSwitchFailureState(error)),
-          onSuccess: () => Effect.succeed('switched' as const),
-        }),
-        Effect.flatMap((outcome) =>
-          outcome === 'authentication-required' || outcome === 'switched'
-            ? reload()
-            : Effect.sync(() => setTenantSwitchFailed(true)),
-        ),
-        Effect.matchEffect({
-          onFailure: (error) =>
-            Effect.sync(() => {
-              void error;
-              setTenantSwitchFailed(true);
-            }),
-          onSuccess: Effect.succeed,
-        }),
-        Effect.ensuring(Effect.sync(() => setTenantSwitchPending(false))),
       ),
+      tenantSwitchFailureState,
+      setTenantSwitchPending,
+      setTenantSwitchFailed,
     );
   };
 

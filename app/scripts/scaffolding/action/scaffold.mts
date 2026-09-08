@@ -287,7 +287,7 @@ const planCoreActionScaffold = Effect.fn('ActionScaffold.planCore')(
   },
 );
 
-export const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planActionScaffold(
+const planActionScaffold = Effect.fn('ActionScaffold.plan')(function* planActionScaffold(
   workspaceRoot: string,
   config: ActionScaffoldConfig,
 ) {

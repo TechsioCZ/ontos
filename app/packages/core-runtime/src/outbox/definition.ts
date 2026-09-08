@@ -202,25 +202,7 @@ const assertFiniteInteger = (
   }
 };
 
-export const defineOutboxWorker = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
-  const Consumer extends string,
-  const Producer extends string,
-  HandlerError,
-  HandlerRequirements,
->(
-  descriptor: OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>,
-  handler: OutboxWorkerHandler<PayloadSchema['Type'], HandlerError, HandlerRequirements>,
-): OutboxWorkerRegistration<
-  PayloadSchema,
-  Consumer,
-  Producer,
-  HandlerError,
-  HandlerRequirements
-> => {
-  if (!moduleKeyPattern.test(descriptor.consumerModuleKey)) {
-    throw descriptorError('consumerModuleKey must be a stable module key');
-  }
+const assertWorkerEntrypoint = (descriptor: OutboxWorkerSubscription, reason: string): void => {
   if (
     descriptor.entrypoint.scope !== 'tenant' ||
     descriptor.entrypoint.role !== 'worker' ||
@@ -229,10 +211,18 @@ export const defineOutboxWorker = <
     descriptor.entrypoint.entrypointKey !== descriptor.workerKey ||
     !Object.isFrozen(descriptor.entrypoint)
   ) {
-    throw descriptorError(
-      'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
-    );
+    throw descriptorError(reason);
   }
+};
+
+const assertWorkerSubscription = (
+  descriptor: OutboxWorkerSubscription,
+  entrypointError: string,
+): void => {
+  if (!moduleKeyPattern.test(descriptor.consumerModuleKey)) {
+    throw descriptorError('consumerModuleKey must be a stable module key');
+  }
+  assertWorkerEntrypoint(descriptor, entrypointError);
   if (!moduleKeyPattern.test(descriptor.producerModuleKey)) {
     throw descriptorError('producerModuleKey must be a stable module key');
   }
@@ -249,6 +239,28 @@ export const defineOutboxWorker = <
       'workerKey must be owned by consumerModuleKey and end in lower-kebab-case',
     );
   }
+};
+
+export const defineOutboxWorker = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  const Consumer extends string,
+  const Producer extends string,
+  HandlerError,
+  HandlerRequirements,
+>(
+  descriptor: OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>,
+  handler: OutboxWorkerHandler<PayloadSchema['Type'], HandlerError, HandlerRequirements>,
+): OutboxWorkerRegistration<
+  PayloadSchema,
+  Consumer,
+  Producer,
+  HandlerError,
+  HandlerRequirements
+> => {
+  assertWorkerSubscription(
+    descriptor,
+    'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
+  );
   assertFiniteInteger(descriptor.leaseDurationMs, 1000, 3_600_000, 'leaseDurationMs');
   assertFiniteInteger(descriptor.retryPolicy.maxAttempts, 1, 100, 'retryPolicy.maxAttempts');
   assertFiniteInteger(
@@ -311,37 +323,10 @@ export const validateOutboxWorkerSubscriptions = (
 ): readonly OutboxWorkerSubscription[] => {
   const workerKeys = new Set<string>();
   for (const subscription of subscriptions) {
-    if (!moduleKeyPattern.test(subscription.consumerModuleKey)) {
-      throw descriptorError('consumerModuleKey must be a stable module key');
-    }
-    if (
-      subscription.entrypoint.scope !== 'tenant' ||
-      subscription.entrypoint.role !== 'worker' ||
-      subscription.entrypoint.access !== 'background' ||
-      subscription.entrypoint.moduleKey !== subscription.consumerModuleKey ||
-      subscription.entrypoint.entrypointKey !== subscription.workerKey ||
-      !Object.isFrozen(subscription.entrypoint)
-    ) {
-      throw descriptorError(
-        'installed Worker entrypoint is inconsistent with its subscription owner',
-      );
-    }
-    if (!moduleKeyPattern.test(subscription.producerModuleKey)) {
-      throw descriptorError('producerModuleKey must be a stable module key');
-    }
-    if (!topicPattern.test(subscription.topic)) {
-      throw descriptorError('topic must be an exact lowercase dot-separated identifier');
-    }
-    const expectedWorkerPrefix = `${subscription.consumerModuleKey}.`;
-    const workerSlug = subscription.workerKey.slice(expectedWorkerPrefix.length);
-    if (
-      !subscription.workerKey.startsWith(expectedWorkerPrefix) ||
-      !workerSlugPattern.test(workerSlug)
-    ) {
-      throw descriptorError(
-        'workerKey must be owned by consumerModuleKey and end in lower-kebab-case',
-      );
-    }
+    assertWorkerSubscription(
+      subscription,
+      'installed Worker entrypoint is inconsistent with its subscription owner',
+    );
     if (workerKeys.has(subscription.workerKey)) {
       throw descriptorError(`duplicate Outbox Worker key ${subscription.workerKey}`);
     }

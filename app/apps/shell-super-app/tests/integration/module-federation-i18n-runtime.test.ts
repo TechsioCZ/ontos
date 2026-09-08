@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createRequire, registerHooks } from 'node:module';
-import { describe, expect, it } from '@app/effect-rstest';
+import { describe, expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
 import * as Schema from 'effect/Schema';
 

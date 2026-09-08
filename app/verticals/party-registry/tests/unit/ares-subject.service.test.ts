@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off -- Tests intentionally provide isolated adapter and logger layers. expires: 2026-12-31.
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { DateTime, Effect, Fiber, Logger, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';

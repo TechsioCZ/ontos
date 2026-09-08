@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit, Option, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';
@@ -44,16 +44,16 @@ it.live(
       const configuration = yield* loadDatabaseConfig();
       const database = yield* makeCoreDatabase(configuration);
       yield* Effect.addFinalizer(() =>
-        Effect.gen(function* moduleStateGate2() {
-          yield* database.executor
-            .delete(tenantModuleStates)
-            .where(eq(tenantModuleStates.tenantId, tenantOne));
-          yield* database.executor
-            .delete(tenantModuleStates)
-            .where(eq(tenantModuleStates.tenantId, tenantTwo));
-          yield* database.executor.delete(tenants).where(eq(tenants.tenantId, tenantOne));
-          yield* database.executor.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
-        }).pipe(Effect.orDie),
+        Effect.forEach(
+          [tenantModuleStates, tenants],
+          (table) =>
+            Effect.forEach(
+              [tenantOne, tenantTwo],
+              (tenantId) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
+              { discard: true },
+            ),
+          { discard: true },
+        ).pipe(Effect.orDie),
       );
       yield* database.executor.insert(tenants).values([
         {

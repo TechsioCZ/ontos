@@ -1,4 +1,4 @@
-import { assert, expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -414,14 +414,16 @@ it.live(
       expect(persisted.contacts.length).toBe(1);
       const identifierEvidence = persisted.identifiers[0]?.externalEvidence;
       const contactEvidence = persisted.contacts[0]?.externalEvidence;
-      expect(identifierEvidence?.queryIco).toBe('27074358');
-      expect(identifierEvidence?.observedAt).toBe(encodedObservation.observedAt);
-      expect(identifierEvidence?.servedAt).toBe(encodedObservation.servedAt);
-      expect(identifierEvidence?.providerChangedOn).toBe(encodedObservation.providerChangedOn);
-      expect(identifierEvidence?.providerRecordRef).toBe(encodedObservation.providerRecordRef);
-      expect(contactEvidence?.observedAt).toBe(encodedObservation.observedAt);
-      expect(contactEvidence?.providerChangedOn).toBe(encodedObservation.providerChangedOn);
-      expect(contactEvidence?.providerRecordRef).toBe(encodedObservation.providerRecordRef);
+      assert.ok(identifierEvidence);
+      assert.ok(contactEvidence);
+      expect(identifierEvidence.queryIco).toBe('27074358');
+      expect(identifierEvidence.observedAt).toBe(encodedObservation.observedAt);
+      expect(identifierEvidence.servedAt).toBe(encodedObservation.servedAt);
+      expect(identifierEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
+      expect(identifierEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
+      expect(contactEvidence.observedAt).toBe(encodedObservation.observedAt);
+      expect(contactEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
+      expect(contactEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
       expect(
         persisted.assertions.find((item) => item.factKind === 'DISPLAY_NAME')?.externalEvidence
           ?.decidedAt,

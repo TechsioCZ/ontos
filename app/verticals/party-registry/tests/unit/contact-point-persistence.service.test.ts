@@ -1,5 +1,5 @@
 import { TestClock } from 'effect/testing';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle native Effect query surface exercised by Contact Point ending. expires: 2026-12-31. */
 import { is, SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';

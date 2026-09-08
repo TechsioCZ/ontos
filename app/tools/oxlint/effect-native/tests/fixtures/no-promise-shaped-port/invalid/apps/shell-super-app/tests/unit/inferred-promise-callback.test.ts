@@ -1,5 +1,5 @@
 // expect-count: 7
-import { it } from '@app/effect-rstest';
+import { it } from 'effect-rstest';
 import { Effect } from 'effect';
 
 const complete = () => Promise.resolve();

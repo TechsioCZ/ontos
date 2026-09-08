@@ -1,5 +1,6 @@
+import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { TestClock } from 'effect/testing';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import {
   ActionRuntime,
   ActionAlreadyCommitted,
@@ -12,7 +13,6 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionRuntimeService,
-  ContextAccessService,
   PrincipalResolverService,
   SupportRecoveryPrincipalContextResolverService,
 } from '@app/core-runtime';
@@ -77,21 +77,7 @@ const providePrincipalManagementRepository = Effect.provideService(
   PrincipalManagementRepository,
   principalManagementRepository,
 );
-const contextAccess: ContextAccessService = {
-  legalEntities: ({ legalEntityIds }) =>
-    Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-  modules: ({ moduleIds }) =>
-    Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
-  resources: ({ resources }) =>
-    Effect.succeed(
-      resources.map(({ moduleId, resourceId, resourceType }) => ({
-        decision: 'allowed' as const,
-        key: `${moduleId}:${resourceType}:${resourceId}`,
-      })),
-    ),
-  tenants: ({ tenantIds }) =>
-    Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
-};
+const contextAccess = makeContextAccessDouble('allowed');
 const provideContextAccess = Effect.provideService(ContextAccess, contextAccess);
 
 const makeService = (options: {
@@ -606,6 +592,39 @@ it.effect(
     }),
 );
 
+const makeLostResponseRecoveryService = (recovery: SupportRecoveryRecord, expiresAt: Date) => {
+  let deleted = false;
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+  ]);
+  const service = makeService({
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: makeSupportAuthProviderDouble({
+      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+    }),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () =>
+        Effect.sync(() => {
+          deleted = true;
+        }),
+      deleteSession: () => Effect.void,
+      loadOriginalSession: () =>
+        Effect.succeed(
+          Option.some({
+            expiresAt,
+            id: restoredSessionId,
+          }),
+        ),
+      loadRecoveries: () => Effect.succeed([recovery]),
+    }),
+    supportRecoveryPrincipal,
+  });
+  return { actionRuntime, deleted: () => deleted, service };
+};
+
 it.effect(
   'restores the original session and stopped checkpoint after the provider response is lost',
   () =>
@@ -629,35 +648,10 @@ it.effect(
         targetPrincipalId,
         tenantId,
       };
-      let deleted = false;
-      const actionRuntime = makeActionRuntimeDouble([
-        actionSuccess({ checkpoint: 'stopped', recorded: true }),
-      ]);
-      const service = makeService({
-        actionRuntime: actionRuntime.runtime,
-        authentication: makeAuthenticationServiceDouble(),
-        configuration,
-        provider: makeSupportAuthProviderDouble({
-          getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
-        }),
-        resolver: makePrincipalResolverDouble(),
-        store: makeSupportImpersonationStoreDouble({
-          deleteRecovery: () =>
-            Effect.sync(() => {
-              deleted = true;
-            }),
-          deleteSession: () => Effect.void,
-          loadOriginalSession: () =>
-            Effect.succeed(
-              Option.some({
-                expiresAt: new Date('2099-01-01T00:00:00.000Z'),
-                id: restoredSessionId,
-              }),
-            ),
-          loadRecoveries: () => Effect.succeed([recovery]),
-        }),
-        supportRecoveryPrincipal,
-      });
+      const { actionRuntime, deleted, service } = makeLostResponseRecoveryService(
+        recovery,
+        new Date('2099-01-01T00:00:00.000Z'),
+      );
 
       const result = yield* service
         .stop({
@@ -671,7 +665,7 @@ it.effect(
       expect(result.active).toBe(false);
       expect(result.checkpointPending).toBe(false);
       expect(actionRuntime.invocationCount()).toBe(1);
-      expect(deleted).toBe(true);
+      expect(deleted()).toBe(true);
       const restoredSessionCookie = result.setCookieHeaders.find((header) =>
         header.startsWith('better-auth.session_token='),
       );
@@ -712,35 +706,10 @@ it.effect(
         targetPrincipalId,
         tenantId,
       };
-      let deleted = false;
-      const actionRuntime = makeActionRuntimeDouble([
-        actionSuccess({ checkpoint: 'stopped', recorded: true }),
-      ]);
-      const service = makeService({
-        actionRuntime: actionRuntime.runtime,
-        authentication: makeAuthenticationServiceDouble(),
-        configuration,
-        provider: makeSupportAuthProviderDouble({
-          getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
-        }),
-        resolver: makePrincipalResolverDouble(),
-        store: makeSupportImpersonationStoreDouble({
-          deleteRecovery: () =>
-            Effect.sync(() => {
-              deleted = true;
-            }),
-          deleteSession: () => Effect.void,
-          loadOriginalSession: () =>
-            Effect.succeed(
-              Option.some({
-                expiresAt: new Date('2000-01-01T00:00:00.000Z'),
-                id: restoredSessionId,
-              }),
-            ),
-          loadRecoveries: () => Effect.succeed([recovery]),
-        }),
-        supportRecoveryPrincipal,
-      });
+      const { actionRuntime, deleted, service } = makeLostResponseRecoveryService(
+        recovery,
+        new Date('2000-01-01T00:00:00.000Z'),
+      );
 
       const result = yield* service
         .stop({
@@ -759,7 +728,7 @@ it.effect(
       expect(result.active).toBe(false);
       expect(result.checkpointPending).toBe(false);
       expect(actionRuntime.invocationCount()).toBe(1);
-      expect(deleted).toBe(true);
+      expect(deleted()).toBe(true);
       expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
     }),
 );

@@ -1,4 +1,5 @@
-import { expect, it } from '@app/effect-rstest';
+import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
+import { expect, it } from 'effect-rstest';
 
 import { eq } from 'drizzle-orm';
 import { Effect, Predicate, Schema } from 'effect';
@@ -27,13 +28,13 @@ it.live(
         (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
       );
       const database = yield* makeTestDatabaseFromPool(pool, coreRelations);
-      const cleanup = Effect.gen(function* principalManagement2() {
-        yield* database
+      const cleanup = purgeFixtureRows([
+        database
           .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.providerSubjectId, providerKeyId));
-        yield* database.delete(principals).where(eq(principals.tenantId, tenantId));
-        yield* database.delete(tenants).where(eq(tenants.tenantId, tenantId));
-      });
+          .where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
+        database.delete(principals).where(eq(principals.tenantId, tenantId)),
+        database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+      ]);
 
       yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
       yield* database.insert(tenants).values({

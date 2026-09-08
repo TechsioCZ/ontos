@@ -1,6 +1,6 @@
 import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
 
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -383,6 +383,24 @@ interface ProvisioningClientFixture {
   readonly state: ProvisioningClientState;
 }
 
+const permissionResponse = (hasPermission: boolean) =>
+  Option.some(
+    response(
+      hasPermission
+        ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
+        : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+    ),
+  );
+
+const hasActionGrant = (
+  grants: ReadonlySet<string>,
+  resourceId: string,
+  principalId: string,
+  tenantId: string | undefined,
+): boolean =>
+  grants.has(`${resourceId}:${principalId}`) ||
+  (tenantId !== undefined && grants.has(`${resourceId}:${tenantId}`));
+
 const makeProvisioningClient = (
   contexts: readonly ActionAuthorizationContext[],
 ): ProvisioningClientFixture => {
@@ -399,27 +417,13 @@ const makeProvisioningClient = (
     client: {
       checkPermission: (request) =>
         Effect.sync(() => {
-          if (request.permission === 'access') {
-            return Option.some(
-              response(
-                principalTenants.get(request.subject?.object?.objectId ?? '') ===
-                  request.resource?.objectId
-                  ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
-                  : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-              ),
-            );
-          }
           const principalId = request.subject?.object?.objectId ?? '';
           const tenantId = principalTenants.get(principalId);
-          const tenantGrant = `${request.resource?.objectId ?? ''}:${tenantId ?? ''}`;
-          const principalGrant = `${request.resource?.objectId ?? ''}:${principalId}`;
-          return Option.some(
-            response(
-              state.grants.has(principalGrant) ||
-                (tenantId !== undefined && state.grants.has(tenantGrant))
-                ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
-                : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-            ),
+          if (request.permission === 'access') {
+            return permissionResponse(tenantId === request.resource?.objectId);
+          }
+          return permissionResponse(
+            hasActionGrant(state.grants, request.resource?.objectId ?? '', principalId, tenantId),
           );
         }),
       writeRelationships: (request) =>

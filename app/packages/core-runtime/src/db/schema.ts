@@ -16,6 +16,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+
 export const CORE_SCHEMA_NAME = 'core';
 
 export const CORE_TABLE_INVENTORY = [
@@ -233,6 +235,32 @@ export const tenantModuleStates = coreSchema.table(
   ],
 );
 
+const authContextForeignKeys = (
+  prefix: string,
+  table: {
+    readonly authBindingId: AnyPgColumn;
+    readonly impersonatedByPrincipalId: AnyPgColumn;
+    readonly principalId: AnyPgColumn;
+    readonly tenantId: AnyPgColumn;
+  },
+) => [
+  foreignKey({
+    columns: [table.tenantId, table.principalId],
+    foreignColumns: [principals.tenantId, principals.principalId],
+    name: `${prefix}_tenant_principal_fk`,
+  }).onDelete('restrict'),
+  foreignKey({
+    columns: [table.tenantId, table.authBindingId],
+    foreignColumns: [principalAuthBindings.tenantId, principalAuthBindings.principalAuthBindingId],
+    name: `${prefix}_tenant_auth_binding_fk`,
+  }).onDelete('restrict'),
+  foreignKey({
+    columns: [table.tenantId, table.impersonatedByPrincipalId],
+    foreignColumns: [principals.tenantId, principals.principalId],
+    name: `${prefix}_tenant_impersonator_fk`,
+  }).onDelete('restrict'),
+];
+
 export const actionInvocations = coreSchema.table(
   'action_invocations',
   {
@@ -275,24 +303,7 @@ export const actionInvocations = coreSchema.table(
       foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
       name: 'core_action_invocations_tenant_legal_entity_fk',
     }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.principalId],
-      foreignColumns: [principals.tenantId, principals.principalId],
-      name: 'core_action_invocations_tenant_principal_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.authBindingId],
-      foreignColumns: [
-        principalAuthBindings.tenantId,
-        principalAuthBindings.principalAuthBindingId,
-      ],
-      name: 'core_action_invocations_tenant_auth_binding_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.impersonatedByPrincipalId],
-      foreignColumns: [principals.tenantId, principals.principalId],
-      name: 'core_action_invocations_tenant_impersonator_fk',
-    }).onDelete('restrict'),
+    ...authContextForeignKeys('core_action_invocations', table),
     check(
       'core_action_invocations_auth_method_ck',
       sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation')`,
@@ -384,24 +395,7 @@ export const auditEvents = coreSchema.table(
       foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
       name: 'core_audit_events_tenant_invocation_fk',
     }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.principalId],
-      foreignColumns: [principals.tenantId, principals.principalId],
-      name: 'core_audit_events_tenant_principal_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.authBindingId],
-      foreignColumns: [
-        principalAuthBindings.tenantId,
-        principalAuthBindings.principalAuthBindingId,
-      ],
-      name: 'core_audit_events_tenant_auth_binding_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.impersonatedByPrincipalId],
-      foreignColumns: [principals.tenantId, principals.principalId],
-      name: 'core_audit_events_tenant_impersonator_fk',
-    }).onDelete('restrict'),
+    ...authContextForeignKeys('core_audit_events', table),
     check(
       'core_audit_events_outcome_ck',
       sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`,
@@ -460,24 +454,7 @@ export const dataAccessEvents = coreSchema.table(
       foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
       name: 'core_data_access_events_tenant_invocation_fk',
     }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.principalId],
-      foreignColumns: [principals.tenantId, principals.principalId],
-      name: 'core_data_access_events_tenant_principal_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.authBindingId],
-      foreignColumns: [
-        principalAuthBindings.tenantId,
-        principalAuthBindings.principalAuthBindingId,
-      ],
-      name: 'core_data_access_events_tenant_auth_binding_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.impersonatedByPrincipalId],
-      foreignColumns: [principals.tenantId, principals.principalId],
-      name: 'core_data_access_events_tenant_impersonator_fk',
-    }).onDelete('restrict'),
+    ...authContextForeignKeys('core_data_access_events', table),
     check(
       'core_data_access_events_outcome_ck',
       sql`${table.outcome} in ('allowed', 'denied', 'failed')`,

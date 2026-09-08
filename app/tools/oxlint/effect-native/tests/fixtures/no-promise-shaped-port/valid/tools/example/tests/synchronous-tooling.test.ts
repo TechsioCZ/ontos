@@ -1,4 +1,4 @@
-import { it, layer } from '@app/effect-rstest';
+import { it, layer } from 'effect-rstest';
 import { Effect, Layer } from 'effect';
 import { test } from '@playwright/test';
 

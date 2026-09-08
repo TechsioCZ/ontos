@@ -1,5 +1,6 @@
+import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { TestClock } from 'effect/testing';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { NodeServices } from '@effect/platform-node';
 import {
   makeFaultInjectableCoreDatabase,
@@ -32,7 +33,6 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionRegistration,
-  ContextAccessService,
   DomainEventContractMap,
   GatewayAssertionRedemption,
   InstalledModuleCatalog,
@@ -252,6 +252,38 @@ const makeOwnerHandler = (
   const handler: OwnerHttpHandler = bff.createHandler();
   return handler;
 };
+const loadClientWiring = Effect.fnUntraced(function* loadClientWiring(
+  entrypoints: ReturnType<typeof getVerticalRuntimeEntrypoints>,
+) {
+  const [detailClient, listClient, searchClient] = yield* Effect.all(
+    [
+      Effect.tryPromise(() => Promise.resolve(entrypoints.api['resource-detail']?.())),
+      Effect.tryPromise(() => Promise.resolve(entrypoints.api['resource-list']?.())),
+      Effect.tryPromise(() => Promise.resolve(entrypoints.search['records']?.())),
+    ],
+    { concurrency: 'unbounded' },
+  );
+  return {
+    action: true,
+    detailClient:
+      detailClient !== undefined &&
+      Predicate.isFunction(
+        Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')
+          ?.value,
+      ),
+    listClient:
+      listClient !== undefined &&
+      Predicate.isFunction(
+        Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')?.value,
+      ),
+    searchClient:
+      searchClient !== undefined &&
+      Predicate.isFunction(
+        Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')?.value,
+      ),
+  };
+});
+
 const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1(
   verticalRoot: string,
   runtime: ReadRuntimeService,
@@ -293,14 +325,7 @@ const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1(
   );
   const actions = getVerticalRuntimeActions(registration);
   const entrypoints = getVerticalRuntimeEntrypoints(registration);
-  const [detailClient, listClient, searchClient] = yield* Effect.all(
-    [
-      Effect.tryPromise(() => Promise.resolve(entrypoints.api['resource-detail']?.())),
-      Effect.tryPromise(() => Promise.resolve(entrypoints.api['resource-list']?.())),
-      Effect.tryPromise(() => Promise.resolve(entrypoints.search['records']?.())),
-    ],
-    { concurrency: 'unbounded' },
-  );
+  const wiring = yield* loadClientWiring(entrypoints);
   const generatedAction = actions.find(
     ({ descriptor }) => descriptor.actionKey === GENERATED_OWNER.actionKey,
   );
@@ -340,27 +365,7 @@ const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1(
     verifyActionPrincipal: yield* Schema.decodeUnknownEffect(OwnerVerifierSchema)(
       verifier['verifyActionPrincipal'],
     ),
-    wiring: {
-      action: true,
-      detailClient:
-        detailClient !== undefined &&
-        Predicate.isFunction(
-          Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')
-            ?.value,
-        ),
-      listClient:
-        listClient !== undefined &&
-        Predicate.isFunction(
-          Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')
-            ?.value,
-        ),
-      searchClient:
-        searchClient !== undefined &&
-        Predicate.isFunction(
-          Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')
-            ?.value,
-        ),
-    },
+    wiring,
   };
 });
 const requestOwner = Effect.fnUntraced(function* runIntegration3<Payload>(
@@ -1294,21 +1299,7 @@ it.live(
         result_count: 0,
       },
     ]);
-    const unavailableContextAccess: ContextAccessService = {
-      legalEntities: ({ legalEntityIds }) =>
-        Effect.succeed(legalEntityIds.map((key) => ({ decision: 'unavailable' as const, key }))),
-      modules: ({ moduleIds }) =>
-        Effect.succeed(moduleIds.map((key) => ({ decision: 'unavailable' as const, key }))),
-      resources: ({ resources }) =>
-        Effect.succeed(
-          resources.map(({ moduleId, resourceId, resourceType }) => ({
-            decision: 'unavailable' as const,
-            key: `${moduleId}:${resourceType}:${resourceId}`,
-          })),
-        ),
-      tenants: ({ tenantIds }) =>
-        Effect.succeed(tenantIds.map((key) => ({ decision: 'unavailable' as const, key }))),
-    };
+    const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = makeOperationalScopeResolver(
       makeOperationalScopeRepository(runtimeDatabase),
       unavailableContextAccess,

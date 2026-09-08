@@ -1,12 +1,9 @@
-import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
-import {
-  LegalEntityIdSchema,
-  ResolvedModuleTargetSchema,
-  SafeTenantIdentitySchema,
-} from '../../../../shared/api.ts';
+import { ResolvedModuleTargetSchema } from '../../../../shared/api.ts';
+import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 import ContactsPage from '../../../../src/routes/[lang]/contacts/page.tsx';
 import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
@@ -62,22 +59,7 @@ rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
   }),
 }));
 
-const shell: ResolvedPageModel['shell'] = {
-  contextState: 'authenticated' as const,
-  identity: Schema.decodeUnknownSync(SafeTenantIdentitySchema)({
-    displayName: 'Ada Lovelace',
-    email: 'ada@example.test',
-    principalId: 'principal-1',
-    tenantId: 'tenant-1',
-  }),
-  legalEntities: { items: [], state: 'available' as const },
-  navigation: { items: [], state: 'available' as const, unavailableDeployments: [] },
-  selectedLegalEntityId: Schema.decodeUnknownSync(LegalEntityIdSchema)(
-    '20000000-0000-4000-8000-000000000001',
-  ),
-  state: 'authenticated' as const,
-  tenants: { items: [], state: 'available' as const },
-};
+const shell: ResolvedPageModel['shell'] = authenticatedShellFixture();
 
 const targetFixture = (componentKey: string, entrypointKey: string, writable = true) =>
   Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
@@ -94,6 +76,72 @@ const resolvedModel: ResolvedPageModel = {
   state: 'resolved',
   target: targetFixture('contacts.core.page-customers', 'contacts.core.page.customers'),
 };
+
+interface ExactPageCase {
+  readonly componentKey: string;
+  readonly entrypointKey: string;
+  readonly renderedText: string;
+  readonly routeParams: ResolvedPageModel['routeParams'];
+  readonly writable: boolean;
+}
+
+const exactPageCases: ExactPageCase[] = [
+  {
+    componentKey: 'contacts.core.page-customers-list',
+    entrypointKey: 'contacts.core.page.customers-list',
+    renderedText: 'contacts.core.page-customers-list:static',
+    routeParams: {},
+    writable: true,
+  },
+  {
+    componentKey: 'contacts.core.page-customer-detail',
+    entrypointKey: 'contacts.core.page.customer-detail',
+    renderedText: 'contacts.core.page-customer-detail:11111111-1111-4111-8111-111111111111',
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+    writable: true,
+  },
+  {
+    componentKey: 'contacts.core.page-customer-edit',
+    entrypointKey: 'contacts.core.page.customer-edit',
+    renderedText: 'contacts.core.page-customer-edit:customer-1',
+    routeParams: { id: 'customer-1' },
+    writable: false,
+  },
+  {
+    componentKey: 'contacts.core.page-customer-create',
+    entrypointKey: 'contacts.core.page.customer-create',
+    renderedText: 'contacts.core.page-customer-create:untrusted-route-context',
+    routeParams: { id: 'untrusted-route-context' },
+    writable: true,
+  },
+  {
+    componentKey: 'contacts.core.page-contact-detail',
+    entrypointKey: 'contacts.core.page.contact-detail',
+    renderedText: 'contacts.core.page-contact-detail:11111111-1111-4111-8111-111111111111',
+    routeParams: {
+      contactId: '33333333-3333-4333-8333-333333333333',
+      id: '11111111-1111-4111-8111-111111111111',
+    },
+    writable: true,
+  },
+  {
+    componentKey: 'contacts.core.page-contact-edit',
+    entrypointKey: 'contacts.core.page.contact-edit',
+    renderedText: 'contacts.core.page-contact-edit:11111111-1111-4111-8111-111111111111',
+    routeParams: {
+      contactId: '33333333-3333-4333-8333-333333333333',
+      id: '11111111-1111-4111-8111-111111111111',
+    },
+    writable: false,
+  },
+  {
+    componentKey: 'contacts.core.page-contact-create',
+    entrypointKey: 'contacts.core.page.contact-create',
+    renderedText: 'contacts.core.page-contact-create:11111111-1111-4111-8111-111111111111',
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+    writable: false,
+  },
+];
 
 beforeEach(() => {
   loadRemotePageMock.mockResolvedValue({
@@ -191,178 +239,24 @@ it.live('passes an empty route-parameter record to a resolved static page', () =
   }),
 );
 
-it.live('loads the generated Customers list page as a static exact target', () =>
-  Effect.gen(function* loadsTheGeneratedCustomersListPage() {
-    const customersListModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: {},
-      target: targetFixture(
-        'contacts.core.page-customers-list',
-        'contacts.core.page.customers-list',
-      ),
-    };
-    useLoaderDataMock.mockReturnValue(customersListModel);
-    render(<ModuleTargetPage />);
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customersListModel.target);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(
-      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers-list:static')),
-    ).toBeTruthy();
-  }),
-);
+it.live.each(exactPageCases)(
+  'loads the approved $componentKey remote once with its exact route context and resolved target',
+  ({ componentKey, entrypointKey, renderedText, routeParams, writable }) =>
+    Effect.gen(function* loadsTheApprovedExactRemoteOnce() {
+      const exactModel: ResolvedPageModel = {
+        ...resolvedModel,
+        routeParams,
+        target: targetFixture(componentKey, entrypointKey, writable),
+      };
+      useLoaderDataMock.mockReturnValue(exactModel);
 
-it.live('loads the approved Customer-detail remote once with the exact declared Customer ID', () =>
-  Effect.gen(function* loadsTheApprovedCustomerDetailRemote() {
-    const customerDetailModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-      target: targetFixture(
-        'contacts.core.page-customer-detail',
-        'contacts.core.page.customer-detail',
-      ),
-    };
-    useLoaderDataMock.mockReturnValue(customerDetailModel);
-    render(<ModuleTargetPage />);
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerDetailModel.target);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(
+      render(<ModuleTargetPage />);
+
+      expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(exactModel.target);
       yield* Effect.promise(() =>
-        screen.findByText(
-          'contacts.core.page-customer-detail:11111111-1111-4111-8111-111111111111',
-        ),
-      ),
-    ).toBeTruthy();
-  }),
-);
-
-it.live('loads the approved Contact-detail remote once with both exact hierarchical IDs', () =>
-  Effect.gen(function* loadsTheApprovedContactDetailRemote() {
-    const contactDetailModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: {
-        contactId: '33333333-3333-4333-8333-333333333333',
-        id: '11111111-1111-4111-8111-111111111111',
-      },
-      target: targetFixture(
-        'contacts.core.page-contact-detail',
-        'contacts.core.page.contact-detail',
-      ),
-    };
-    useLoaderDataMock.mockReturnValue(contactDetailModel);
-    render(<ModuleTargetPage />);
-
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactDetailModel.target);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(remotePropsMock).toHaveBeenCalledWith({
-      routeParams: contactDetailModel.routeParams,
-      target: contactDetailModel.target,
-    });
-  }),
-);
-
-it.live('passes ContactEdit both hierarchical IDs and the resolved fail-closed target', () =>
-  Effect.gen(function* passesContactEditBothHierarchicalIDsAnd() {
-    const contactEditModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: {
-        contactId: '33333333-3333-4333-8333-333333333333',
-        id: '11111111-1111-4111-8111-111111111111',
-      },
-      target: targetFixture(
-        'contacts.core.page-contact-edit',
-        'contacts.core.page.contact-edit',
-        false,
-      ),
-    };
-    useLoaderDataMock.mockReturnValue(contactEditModel);
-    render(<ModuleTargetPage />);
-
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactEditModel.target);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(remotePropsMock).toHaveBeenCalledWith({
-      routeParams: contactEditModel.routeParams,
-      target: contactEditModel.target,
-    });
-  }),
-);
-
-it.live('passes CustomerEdit its exact ID and fail-closed writable target', () =>
-  Effect.gen(function* passesCustomerEditItsExactIDAnd() {
-    const customerEditModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: { id: 'customer-1' },
-      target: targetFixture(
-        'contacts.core.page-customer-edit',
-        'contacts.core.page.customer-edit',
-        false,
-      ),
-    };
-    useLoaderDataMock.mockReturnValue(customerEditModel);
-    render(<ModuleTargetPage />);
-
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerEditModel.target);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(remotePropsMock).toHaveBeenCalledWith({
-      routeParams: { id: 'customer-1' },
-      target: customerEditModel.target,
-    });
-    expect(
-      yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-edit:customer-1')),
-    ).toBeTruthy();
-  }),
-);
-
-it.live('passes CustomerCreate its bounded route context and resolved writable target', () =>
-  Effect.gen(function* passesCustomerCreateItsBoundedRouteContext() {
-    const customerCreateModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: { id: 'untrusted-route-context' },
-      target: targetFixture(
-        'contacts.core.page-customer-create',
-        'contacts.core.page.customer-create',
-      ),
-    };
-    useLoaderDataMock.mockReturnValue(customerCreateModel);
-    render(<ModuleTargetPage />);
-
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerCreateModel.target);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(remotePropsMock).toHaveBeenCalledWith({
-      routeParams: { id: 'untrusted-route-context' },
-      target: customerCreateModel.target,
-    });
-    expect(
-      yield* Effect.promise(() =>
-        screen.findByText('contacts.core.page-customer-create:untrusted-route-context'),
-      ),
-    ).toBeTruthy();
-  }),
-);
-
-it.live('passes ContactCreate its exact ID and fail-closed writable target', () =>
-  Effect.gen(function* passesContactCreateItsExactIDAnd() {
-    const contactCreateModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-      target: targetFixture(
-        'contacts.core.page-contact-create',
-        'contacts.core.page.contact-create',
-        false,
-      ),
-    };
-    useLoaderDataMock.mockReturnValue(contactCreateModel);
-    render(<ModuleTargetPage />);
-
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactCreateModel.target);
-    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-    expect(remotePropsMock).toHaveBeenCalledWith({
-      routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-      target: contactCreateModel.target,
-    });
-    expect(
-      yield* Effect.promise(() =>
-        screen.findByText('contacts.core.page-contact-create:11111111-1111-4111-8111-111111111111'),
-      ),
-    ).toBeTruthy();
-  }),
+        waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)),
+      );
+      expect(remotePropsMock).toHaveBeenCalledWith({ routeParams, target: exactModel.target });
+      expect(yield* Effect.promise(() => screen.findByText(renderedText))).toBeTruthy();
+    }),
 );

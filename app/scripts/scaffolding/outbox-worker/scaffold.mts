@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Match, Option, Schema, Predicate } from 'effect';
+import { Effect, FileSystem, Match, Option, Predicate, Schema } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_REGISTRATION_IMPORT_SLOT_END,
@@ -357,85 +357,27 @@ const patchConsumerTsconfig = (
     return yield* trySync(() => patchJsonObjectProperty(content, [], 'references', patched));
   });
 
-const planOutboxWorkerScaffoldEffect = (
-  workspaceRoot: string,
-  config: OutboxWorkerScaffoldConfig,
-): Effect.Effect<
-  ScaffoldPlan<OutboxWorkerScaffoldResult>,
-  OutboxWorkerScaffoldError | ScaffoldFailure,
-  FileSystem.FileSystem
-> =>
-  Effect.gen(function* planOutboxWorkerScaffoldProgram() {
-    const worker = yield* trySync(() => requireCanonicalSlug(config.worker, 'worker'));
-    const topic = yield* trySync(() => requireTopic(config.topic));
-    const [consumer, producer] = yield* Effect.all([
-      discoverOntosModuleEffect(workspaceRoot, config.vertical),
-      discoverOntosModuleEffect(workspaceRoot, config.producer),
-    ]);
-    const topicSlug = yield* trySync(() => topicToSlug(topic));
-    const contractPath = yield* trySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        producer.slug,
-        'shared',
-        'outbox',
-        `${topicSlug}.ts`,
-      ),
-    );
-    const contract = yield* readRequiredFile(contractPath, 'published producer Outbox contract');
-    const contractExport = `./outbox/${topicSlug}`;
-    const packageExports = producer.packageJson['exports'];
-    if (packageExports === undefined) {
-      return yield* new OutboxWorkerScaffoldError({
-        cause: packageExports,
-        message: `vertical ${producer.slug} package exports must be a JSON object`,
-      });
-    }
-    const producerExports = yield* trySync(() =>
-      asJsonObject(packageExports, `vertical ${producer.slug} package exports`),
-    );
-    if (producerExports[contractExport] !== `./shared/outbox/${topicSlug}.ts`) {
-      return yield* new OutboxWorkerScaffoldError({
-        cause: producerExports[contractExport],
-        message: `topic ${topic} is not published by ${producer.packageName}`,
-      });
-    }
-    if (
-      !contract.startsWith(`${OUTBOX_CONTRACT_GENERATOR_HEADER}\n`) ||
-      !contract.includes(`// @ontos-outbox-producer ${producer.moduleId}\n`) ||
-      !contract.includes(`// @ontos-outbox-topic ${topic}\n`) ||
-      !contract.includes(`export const outboxTopic = '${topic}' as const;`) ||
-      !contract.includes(
-        `export const outboxProducerModuleKey = '${producer.moduleId}' as const;`,
-      ) ||
-      !contract.includes('export const OutboxPayloadSchema =') ||
-      /(?:src\/actions|create[A-Za-z0-9]+Message|handler|repository|transport)/u.test(contract)
-    ) {
-      return yield* new OutboxWorkerScaffoldError({
-        cause: contractPath,
-        message: `published Outbox contract for ${topic} has an owner/topic/schema mismatch`,
-      });
-    }
+const isMatchingOutboxContract = (
+  contract: string,
+  producer: OntosVerticalMetadata,
+  topic: string,
+): boolean =>
+  contract.startsWith(`${OUTBOX_CONTRACT_GENERATOR_HEADER}\n`) &&
+  [
+    `// @ontos-outbox-producer ${producer.moduleId}\n`,
+    `// @ontos-outbox-topic ${topic}\n`,
+    `export const outboxTopic = '${topic}' as const;`,
+    `export const outboxProducerModuleKey = '${producer.moduleId}' as const;`,
+    'export const OutboxPayloadSchema =',
+  ].every((fragment) => contract.includes(fragment)) &&
+  !/(?:src\/actions|create[A-Za-z0-9]+Message|handler|repository|transport)/u.test(contract);
 
-    const workerPath = yield* trySync(() =>
-      resolveContainedPath(
-        workspaceRoot,
-        'verticals',
-        consumer.slug,
-        'src',
-        'workers',
-        `${worker}.worker.ts`,
-      ),
-    );
-    const workerMutation = yield* createMutationEffect(
-      workerPath,
-      renderWorker(consumer, producer, worker, topic),
-    );
-    const registryPath = yield* trySync(() =>
-      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'workers', 'index.ts'),
-    );
-    const registryContent = yield* readOptionalFile(registryPath);
+const planRegistryMutation = (
+  registryPath: string,
+  registryContent: Option.Option<string>,
+  worker: string,
+) =>
+  Effect.gen(function* planRegistryMutationEffect() {
     const workerVariable = `${toCamelCase(worker)}Worker`;
     let registryMutation: Mutation;
     if (Option.isSome(registryContent)) {
@@ -501,6 +443,81 @@ const planOutboxWorkerScaffoldEffect = (
       });
       registryMutation = yield* createMutationEffect(registryPath, withRegistration);
     }
+
+    return registryMutation;
+  });
+
+const planOutboxWorkerScaffoldEffect = (
+  workspaceRoot: string,
+  config: OutboxWorkerScaffoldConfig,
+): Effect.Effect<
+  ScaffoldPlan<OutboxWorkerScaffoldResult>,
+  OutboxWorkerScaffoldError | ScaffoldFailure,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* planOutboxWorkerScaffoldProgram() {
+    const worker = yield* trySync(() => requireCanonicalSlug(config.worker, 'worker'));
+    const topic = yield* trySync(() => requireTopic(config.topic));
+    const [consumer, producer] = yield* Effect.all([
+      discoverOntosModuleEffect(workspaceRoot, config.vertical),
+      discoverOntosModuleEffect(workspaceRoot, config.producer),
+    ]);
+    const topicSlug = yield* trySync(() => topicToSlug(topic));
+    const contractPath = yield* trySync(() =>
+      resolveContainedPath(
+        workspaceRoot,
+        'verticals',
+        producer.slug,
+        'shared',
+        'outbox',
+        `${topicSlug}.ts`,
+      ),
+    );
+    const contract = yield* readRequiredFile(contractPath, 'published producer Outbox contract');
+    const contractExport = `./outbox/${topicSlug}`;
+    const packageExports = producer.packageJson['exports'];
+    if (packageExports === undefined) {
+      return yield* new OutboxWorkerScaffoldError({
+        cause: packageExports,
+        message: `vertical ${producer.slug} package exports must be a JSON object`,
+      });
+    }
+    const producerExports = yield* trySync(() =>
+      asJsonObject(packageExports, `vertical ${producer.slug} package exports`),
+    );
+    if (producerExports[contractExport] !== `./shared/outbox/${topicSlug}.ts`) {
+      return yield* new OutboxWorkerScaffoldError({
+        cause: producerExports[contractExport],
+        message: `topic ${topic} is not published by ${producer.packageName}`,
+      });
+    }
+    if (!isMatchingOutboxContract(contract, producer, topic)) {
+      return yield* new OutboxWorkerScaffoldError({
+        cause: contractPath,
+        message: `published Outbox contract for ${topic} has an owner/topic/schema mismatch`,
+      });
+    }
+
+    const workerPath = yield* trySync(() =>
+      resolveContainedPath(
+        workspaceRoot,
+        'verticals',
+        consumer.slug,
+        'src',
+        'workers',
+        `${worker}.worker.ts`,
+      ),
+    );
+    const workerMutation = yield* createMutationEffect(
+      workerPath,
+      renderWorker(consumer, producer, worker, topic),
+    );
+    const registryPath = yield* trySync(() =>
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'workers', 'index.ts'),
+    );
+    const registryContent = yield* readOptionalFile(registryPath);
+    const workerVariable = `${toCamelCase(worker)}Worker`;
+    const registryMutation = yield* planRegistryMutation(registryPath, registryContent, worker);
 
     const workerHostLayerPath = yield* trySync(() =>
       resolveContainedPath(
@@ -593,6 +610,4 @@ const planOutboxWorkerScaffoldEffect = (
     return { mutations, result: { registryPath, workerPath } };
   });
 
-export const planOutboxWorkerScaffold = planOutboxWorkerScaffoldEffect;
-
-export default createCodesmithGenerator(planOutboxWorkerScaffold);
+export default createCodesmithGenerator(planOutboxWorkerScaffoldEffect);

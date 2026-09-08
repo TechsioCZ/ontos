@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
 import { Effect, Option, Schema } from 'effect';

@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 
 import {
   copyFileSync,
@@ -14,16 +14,19 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Schema, Stream } from 'effect';
+import { Effect, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
+import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const FALLOW_CLONES = 'fallow-clones';
 const FALLOW_SIMILARITY = 'fallow-similarity';
 const FALLOW_HEALTH = 'fallow-health';
 const CONFIG_DIRECTORY = 'quality-audit';
 const REPORT_DIRECTORY = 'reports';
+const SUMMARY_FILE = 'summary.json';
+const GITIGNORE_FILE = '.gitignore';
 const KNIP_CONFIG = 'quality-audit/knip.json';
 const PACKAGE_JSON = 'package.json';
 const CALLER_OWNED_FILE = 'caller-owned.txt';
@@ -229,7 +232,7 @@ const SummarySchema = Schema.Struct({
 });
 const summary = (output: string) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
-    readFileSync(path.join(output, 'summary.json'), 'utf-8'),
+    readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
   );
 
 it.live(
@@ -443,7 +446,7 @@ it.live(
         status: 'error',
       },
     ]);
-    expect(readFileSync(path.join(output, 'summary.json'), 'utf-8')).toMatch(
+    expect(readFileSync(path.join(output, SUMMARY_FILE), 'utf-8')).toMatch(
       /Source inventory: analysis contains no files/u,
     );
   }),
@@ -458,36 +461,33 @@ it.live(
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       yield* spawner.string(ChildProcess.make('git', ['init', '-q', root]));
     }).pipe(Effect.provide(NodeServices.layer));
+    mkdirSync(path.join(root, 'scripts/shared'), { recursive: true });
+    copyFileSync(
+      path.join(appRoot, 'scripts/shared/ultramodern-wrapper-source.mts'),
+      path.join(root, 'scripts/shared/ultramodern-wrapper-source.mts'),
+    );
     const executable = path.join(root, 'scripts/quality audit.mts');
     copyFileSync(path.join(appRoot, 'scripts/quality-audit.mts'), executable);
+    copyFileSync(
+      path.join(appRoot, 'scripts/quality-cli-lifecycle.mts'),
+      path.join(root, 'scripts/quality-cli-lifecycle.mts'),
+    );
     for (const file of ['knip-model.mts', 'knip-runtime-model.mts']) {
       copyFileSync(
         path.join(appRoot, CONFIG_DIRECTORY, file),
         path.join(root, CONFIG_DIRECTORY, file),
       );
     }
-    const result = yield* Effect.gen(function* runColoredCli() {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const handle = yield* spawner.spawn(
-        ChildProcess.make(process.execPath, [executable, '--tool', 'knip', '--output', output], {
-          cwd: tmpdir(),
-          env: { CI: 'true', FORCE_COLOR: '1', GITHUB_ACTIONS: 'true', NO_COLOR: '1' },
-          extendEnv: true,
-          stderr: 'pipe',
-          stdin: 'ignore',
-          stdout: 'pipe',
-        }),
-      );
-      const [status, stdout, stderr] = yield* Effect.all(
-        [
-          handle.exitCode.pipe(Effect.map(Number)),
-          handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
-          handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
-        ],
-        { concurrency: 'unbounded' },
-      );
-      return { status, stderr, stdout };
-    }).pipe(Effect.scoped, Effect.timeout('60 seconds'), Effect.provide(NodeServices.layer));
+    const result = yield* collectToolingProcess(
+      ChildProcess.make(process.execPath, [executable, '--tool', 'knip', '--output', output], {
+        cwd: tmpdir(),
+        env: { CI: 'true', FORCE_COLOR: '1', GITHUB_ACTIONS: 'true', NO_COLOR: '1' },
+        extendEnv: true,
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
+      }),
+    ).pipe(Effect.scoped, Effect.timeout('60 seconds'), Effect.provide(NodeServices.layer));
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const report = yield* summary(output);
     expect(report.status).toBe('reported');
@@ -553,12 +553,12 @@ it.live(
   Effect.fn(function* testEffect17() {
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
-    writeFileSync(path.join(root, '.gitignore'), 'node_modules\n.codex\n');
+    writeFileSync(path.join(root, GITIGNORE_FILE), 'node_modules\n.codex\n');
     yield* Effect.gen(function* commitFixture() {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const commands = [
         ['init', '-q'],
-        ['add', '.gitignore', PACKAGE_JSON, CONFIG_DIRECTORY, 'scripts'],
+        ['add', GITIGNORE_FILE, PACKAGE_JSON, CONFIG_DIRECTORY, 'scripts'],
         [
           '-c',
           `core.hooksPath=${path.join(root, '.git/no-hooks')}`,
@@ -700,4 +700,50 @@ it.live(
       }
     }
   }),
+);
+
+it.live('external report directories preserve valid Fallow exclusions and source coverage', () =>
+  Effect.gen(function* externalReportDirectory() {
+    const root = yield* createFixture();
+    const output = yield* Effect.acquireRelease(
+      Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'ontos-external-report-'))),
+      (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+    );
+    const generatedTypes = path.join(root, 'apps/shell/@mf-types/remote');
+    mkdirSync(generatedTypes, { recursive: true });
+    writeFileSync(path.join(root, GITIGNORE_FILE), '**/@mf-types/\n');
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const initialized = yield* spawner.exitCode(
+      ChildProcess.make('git', ['init', '-q'], { cwd: root }),
+    );
+    expect(Number(initialized)).toBe(0);
+    writeFileSync(
+      path.join(generatedTypes, 'index.d.ts'),
+      'export declare const remoteComponent: unknown;\n',
+    );
+    yield* runQualityAudit(root, output, 'fallow');
+    const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
+      readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
+    );
+    expect(result.status).toBe('reported');
+    expect(result.results.length).toBe(4);
+    expect(result.results.every((row) => row.status === 'reported' && row.files > 0)).toBeTruthy();
+    const coverage = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          extra: Schema.Array(Schema.String),
+          intendedSources: Schema.Number,
+          missing: Schema.Array(Schema.String),
+        }),
+      ),
+    )(readFileSync(path.join(result.runDirectory, 'coverage.json'), 'utf-8'));
+    // Two authored fixture sources plus the copied Knip reporter, not remote declarations.
+    expect(coverage).toEqual({ extra: [], intendedSources: 3, missing: [] });
+    expect(
+      result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0),
+    ).toBeTruthy();
+    expect(readFileSync(path.join(result.runDirectory, 'configs/fallow.json'), 'utf-8')).toBe(
+      readFileSync(path.join(root, 'quality-audit/fallow.json'), 'utf-8'),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

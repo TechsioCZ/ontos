@@ -1,3 +1,4 @@
+import { snippet } from '../shared/reporting.ts';
 /**
  * effect-native/no-environment-record-type
  *
@@ -74,20 +75,15 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { ESTree, Scope } from '@oxlint/plugins';
+import type { ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
+import { includesRuleFile } from '../shared/paths.ts';
+import { parentOf } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { stringList } from '../shared/options.ts';
 
 type AnyNode = ESTree.Node;
-
-/** Normalize real paths and remove only the fixture prefix, preserving nested workspace directories. */
-function workspacePath(filename: string): string {
-  return normalisePath(filename).replace(
-    /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u,
-    '',
-  );
-}
 
 const DEFAULT_INCLUDE_PATHS: readonly string[] = [
   'apps/**',
@@ -125,12 +121,6 @@ const DEFAULTS: RuleOptions = {
   includePaths: [...DEFAULT_INCLUDE_PATHS],
 };
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
@@ -140,10 +130,6 @@ function readOptions(raw: unknown): RuleOptions {
       typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
     includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
   };
-}
-
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
 }
 
 /** `(A | B)` → `A | B`; every other node is returned unchanged. */
@@ -229,18 +215,86 @@ function isInsidePartial(node: AnyNode): boolean {
   return false;
 }
 
-/**
- * `typeof process.env` / `typeof globalThis.process.env` / `typeof Deno.env` → `true`.
- * The chain is flattened, leading container globals are stripped, and the remainder must be
- * `<env host>.env`.
- */
-function isAmbientEnvQueryName(node: AnyNode): boolean {
-  const dotted = dottedTypeName(node);
-  if (dotted === null) return false;
-  const segments = dotted.split('.');
-  while (segments.length > 2 && CONTAINER_GLOBALS.has(segments[0] ?? '')) segments.shift();
-  if (segments.length !== 2) return false;
-  return ENV_HOSTS.has(segments[0] ?? '') && segments[1] === 'env';
+/** Return only an unambiguous import binding; local declarations remain shadowing. */
+function singleImport(variable: Variable) {
+  const definition = variable.defs.length === 1 ? variable.defs[0] : undefined;
+  return definition?.type === 'ImportBinding' ? definition.node : null;
+}
+
+function importedRecordName(
+  variable: Variable,
+  imported: string | undefined,
+  rest: readonly string[],
+): string | null {
+  const specifier = singleImport(variable);
+  if (!specifier) return null;
+  const declaration = parentOf(specifier) as ESTree.ImportDeclaration | null;
+  if (!declaration || !['effect', 'effect/Record'].includes(declaration.source.value)) return null;
+  if (
+    declaration.source.value === 'effect/Record' &&
+    specifier.type === 'ImportSpecifier' &&
+    imported === 'ReadonlyRecord' &&
+    rest.length === 0
+  )
+    return 'ReadonlyRecord';
+  return imported === 'Record' && rest.join('.') === 'ReadonlyRecord'
+    ? 'Record.ReadonlyRecord'
+    : null;
+}
+
+function isImportedEnvQuery(variable: Variable, segments: readonly string[]): boolean {
+  const specifier = singleImport(variable);
+  if (!specifier) return false;
+  const declaration = parentOf(specifier) as ESTree.ImportDeclaration | null;
+  return (
+    declaration?.type === 'ImportDeclaration' &&
+    PROCESS_MODULES.has(declaration.source.value) &&
+    segments.length === 2 &&
+    segments[1] === 'env' &&
+    ['ImportDefaultSpecifier', 'ImportNamespaceSpecifier'].includes(specifier.type)
+  );
+}
+
+function isGlobalEnvQuery(segments: readonly string[]): boolean {
+  if (segments.length === 2) return ENV_HOSTS.has(segments[0]) && segments[1] === 'env';
+  return (
+    segments.length === 3 &&
+    CONTAINER_GLOBALS.has(segments[0]) &&
+    ENV_HOSTS.has(segments[1]) &&
+    segments[2] === 'env'
+  );
+}
+
+function isWithinConstraint(node: AnyNode): boolean {
+  let ancestor = parentOf(node);
+  while (ancestor && ancestor.type !== 'Program') {
+    if (
+      ancestor.type === 'TSTypeParameter' &&
+      ancestor.constraint &&
+      node.start >= ancestor.constraint.start &&
+      node.end <= ancestor.constraint.end
+    )
+      return true;
+    ancestor = parentOf(ancestor);
+  }
+  return false;
+}
+
+function isStringValue(node: AnyNode | undefined): boolean {
+  return (
+    node !== undefined &&
+    (unwrapParens(node).type === 'TSStringKeyword' || isOptionalStringUnion(node))
+  );
+}
+
+function isEnvironmentRecord(node: AnyNode): boolean {
+  const args = typeArgumentsOf(node);
+  if (args.length !== 2 || unwrapParens(args[0]).type !== 'TSStringKeyword') return false;
+  const value = args[1];
+  return (
+    isOptionalStringUnion(value) ||
+    (unwrapParens(value).type === 'TSStringKeyword' && isInsidePartial(node))
+  );
 }
 
 /** Effect-native rule: configuration is a Schema decoded through Config and injected as a service. */
@@ -293,15 +347,10 @@ export const rule = defineRule({
   },
   create(context) {
     const options = readOptions(context.options[0]);
-    const path = workspacePath(context.filename);
-    if (!matchesAny(`/${path}`, options.includePaths)) return {};
-    if (matchesAny(`/${path}`, options.allowPaths)) return {};
-    if (options.ignoreTestFiles && isTestFile(`/${path}`)) return {};
+    if (!includesRuleFile(context.filename, options)) return {};
 
-    const printed = (node: AnyNode): string => {
-      const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
-      return text.length > 80 ? `${text.slice(0, 77)}...` : text;
-    };
+    const printed = (node: AnyNode): string =>
+      snippet(context.sourceCode.getText(node), 80, 77, '...');
 
     const report = (node: AnyNode, messageId: string): void => {
       context.report({
@@ -312,118 +361,35 @@ export const rule = defineRule({
     };
 
     const bindings = collectEffectBindings(context.sourceCode.ast);
-    const lookup = (name: string, node: AnyNode) => {
-      for (
-        let scope: Scope | null = context.sourceCode.getScope(node);
-        scope;
-        scope = scope.upper
-      ) {
-        const variable = scope.set.get(name);
-        if (variable) return variable;
-      }
-      return null;
-    };
     // Import identity, not the local spelling, distinguishes Effect.Record from domain lookalikes.
     const canonicalName = (node: AnyNode): string | null => {
       const name = typeReferenceName(node);
       if (!name) return null;
       const [root, ...rest] = name.split('.');
-      const variable = lookup(root, node);
+      const variable = resolveVariable(context, root, node);
       if (!variable || variable.defs.length === 0) return name;
-      const definition = variable.defs.length === 1 ? variable.defs[0] : undefined;
-      if (definition?.type !== 'ImportBinding') return null;
-      const specifier = definition.node as ESTree.ImportDeclaration['specifiers'][number];
-      const declaration = parentOf(specifier as AnyNode) as ESTree.ImportDeclaration;
-      if (!declaration || !['effect', 'effect/Record'].includes(declaration.source.value))
-        return null;
-      const imported = bindings.namespaces.get(root);
-      if (
-        declaration.source.value === 'effect/Record' &&
-        specifier.type === 'ImportSpecifier' &&
-        imported === 'ReadonlyRecord' &&
-        rest.length === 0
-      )
-        return 'ReadonlyRecord';
-      return imported === 'Record' && rest.join('.') === 'ReadonlyRecord'
-        ? 'Record.ReadonlyRecord'
-        : null;
+      return importedRecordName(variable, bindings.namespaces.get(root), rest);
     };
     const isAmbientQuery = (expression: AnyNode, indexed = false): boolean => {
       const name = dottedTypeName(expression);
       if (!name) return false;
-      const full = indexed ? `${name}.env` : name;
-      const segments = full.split('.');
-      const root = segments[0];
-      const variable = lookup(root, expression);
-      if (variable && variable.defs.length > 0) {
-        const definition = variable.defs.length === 1 ? variable.defs[0] : undefined;
-        if (definition?.type !== 'ImportBinding') return false;
-        const specifier = definition.node as ESTree.ImportDeclaration['specifiers'][number];
-        const declaration = parentOf(specifier as AnyNode) as ESTree.ImportDeclaration;
-        return (
-          declaration?.type === 'ImportDeclaration' &&
-          PROCESS_MODULES.has(declaration.source.value) &&
-          segments.length === 2 &&
-          segments[1] === 'env' &&
-          (specifier.type === 'ImportDefaultSpecifier' ||
-            specifier.type === 'ImportNamespaceSpecifier')
-        );
-      }
-      return (
-        (segments.length === 2 && ENV_HOSTS.has(root) && segments[1] === 'env') ||
-        (segments.length === 3 &&
-          CONTAINER_GLOBALS.has(root) &&
-          ENV_HOSTS.has(segments[1]) &&
-          segments[2] === 'env')
-      );
+      const segments = (indexed ? `${name}.env` : name).split('.');
+      const variable = resolveVariable(context, segments[0], expression);
+      return variable && variable.defs.length > 0
+        ? isImportedEnvQuery(variable, segments)
+        : isGlobalEnvQuery(segments);
     };
     const inspectReference = (node: AnyNode): void => {
       // A generic utility constraint is not a declaration of configuration authority.
-      let ancestor = parentOf(node);
-      while (ancestor && ancestor.type !== 'Program') {
-        if (
-          ancestor.type === 'TSTypeParameter' &&
-          ancestor.constraint &&
-          node.start >= ancestor.constraint.start &&
-          node.end <= ancestor.constraint.end
-        )
-          return;
-        ancestor = parentOf(ancestor);
-      }
+      if (isWithinConstraint(node)) return;
       const name = canonicalName(node);
       if (name === null) return;
-
       if (NODEJS_ENV_TYPES.has(name)) {
-        // `NodeJS.Dict<T>` is only the environment shape when `T` is `string`.
-        if (name === 'NodeJS.Dict') {
-          const argument = typeArgumentsOf(node as unknown as AnyNode)[0];
-          if (
-            argument === undefined ||
-            (unwrapParens(argument).type !== 'TSStringKeyword' && !isOptionalStringUnion(argument))
-          )
-            return;
-        }
-        report(node as unknown as AnyNode, 'processEnvType');
+        if (name === 'NodeJS.Dict' && !isStringValue(typeArgumentsOf(node)[0])) return;
+        report(node, 'processEnvType');
         return;
       }
-
-      if (!RECORD_NAMES.has(name)) return;
-      const args = typeArgumentsOf(node as unknown as AnyNode);
-      if (args.length !== 2) return;
-      const key = unwrapParens(args[0] as AnyNode);
-      if (key.type !== 'TSStringKeyword') return;
-      const value = args[1] as AnyNode;
-      if (isOptionalStringUnion(value)) {
-        report(node as unknown as AnyNode, 'environmentRecord');
-        return;
-      }
-      // `Partial<Record<string, string>>` *is* `Record<string, string | undefined>`.
-      if (
-        unwrapParens(value).type === 'TSStringKeyword' &&
-        isInsidePartial(node as unknown as AnyNode)
-      ) {
-        report(node as unknown as AnyNode, 'environmentRecord');
-      }
+      if (RECORD_NAMES.has(name) && isEnvironmentRecord(node)) report(node, 'environmentRecord');
     };
     return {
       TSTypeReference: inspectReference,

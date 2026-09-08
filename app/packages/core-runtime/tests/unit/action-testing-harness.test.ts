@@ -1,6 +1,7 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
+import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { bindActionTestServices, makeActionTestHarness } from '../../src/testing/actions.ts';
@@ -97,6 +98,8 @@ it.effect(
     expect(snapshot.invocations.length).toBe(1);
     expect(snapshot.invocations[0]?.status).toBe('rejected');
     expect(snapshot.permissionDenials.length).toBe(1);
+    expect(snapshot.policyDenials.length).toBe(0);
+    expect(snapshot.invocations[0]?.completedAt?.getTime()).toBe(0);
     expect(snapshot.transactionCount).toBe(0);
     expect(snapshot.stages.includes('handler_executed')).toBe(false);
   }),
@@ -110,14 +113,20 @@ it.effect(
     }
     const serviceAction = defineAction(
       {
-        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'test.service.read.v1' },
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'test.service.read.v1',
+        },
         actionKey: 'test.service.increment',
         auditProfile: 'minimal',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
-          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
           entrypointKey: 'test.service.increment',
           moduleKey: 'test.service',
           role: 'action',
@@ -181,4 +190,39 @@ it.effect(
 
     expect(harness.snapshot().invocations.length).toBe(0);
   }),
+);
+
+it.effect(
+  'persists policy denials separately from permission denials before handler execution',
+  () =>
+    Effect.gen(function* policyDenialSnapshot() {
+      const registration = defineAction(
+        {
+          ...lifecycleAction.descriptor,
+          policies: [
+            defineGlobalPolicy({
+              evaluate: () => Effect.fail(denyPolicy('counter_locked', 'Counter is locked')),
+              policyKey: 'global.counter-locked.v1',
+            }),
+          ],
+        },
+        () => Effect.die('A denied policy must not execute the handler'),
+      );
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        tenantPermission: 'allowed',
+      });
+      yield* harness.runtime.runAction({ ...request, registration }).pipe(Effect.flip);
+      const snapshot = harness.snapshot();
+      expect(snapshot.policyDenials.length).toBe(1);
+      expect(snapshot.permissionDenials.length).toBe(0);
+      expect(snapshot.invocations[0]?.status).toBe('rejected');
+      expect(snapshot.invocations[0]?.completedAt?.getTime()).toBe(0);
+      expect(snapshot.policyDenials[0]?.actionInvocationId).toBe(
+        snapshot.invocations[0]?.actionInvocationId,
+      );
+      expect(snapshot.transactionCount).toBe(0);
+      expect(snapshot.committed.length).toBe(0);
+      expect(snapshot.stages.includes('handler_executed')).toBe(false);
+    }),
 );

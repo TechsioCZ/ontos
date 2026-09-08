@@ -1,3 +1,4 @@
+import { hasUltramodernDispatch } from '../scripts/shared/ultramodern-wrapper-source.mts';
 import { Effect, FileSystem, Path, Schema } from 'effect';
 import { parse as parseJsonc } from 'jsonc-parser';
 import type { ParseError } from 'jsonc-parser';
@@ -23,7 +24,7 @@ const documentsBuiltInPlugin = (readme: string): boolean =>
   readme.includes('"name": "@effect/language-service"');
 class InvalidTsconfig extends Schema.TaggedError<InvalidTsconfig>()('InvalidTsconfig', {
   file: Schema.String,
-  offset: Schema.Number,
+  offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 }) {}
 const Tsconfig = Schema.Struct({
   compilerOptions: Schema.optional(
@@ -32,6 +33,9 @@ const Tsconfig = Schema.Struct({
       types: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
+  exclude: Schema.optional(Schema.Array(Schema.String)),
+  files: Schema.optional(Schema.Array(Schema.String)),
+  include: Schema.optional(Schema.Array(Schema.String)),
 });
 const parseTsconfig = Effect.fn('QualityAudit.parseTsconfig')(function* parseTsconfigEffect(
   file: string,
@@ -41,7 +45,7 @@ const parseTsconfig = Effect.fn('QualityAudit.parseTsconfig')(function* parseTsc
   const parsed: unknown = parseJsonc(source, errors, { allowTrailingComma: true });
   const [error] = errors;
   if (error !== undefined) {
-    yield* new InvalidTsconfig({ file, offset: error.offset });
+    return yield* new InvalidTsconfig({ file, offset: error.offset });
   }
   return yield* Schema.decodeUnknownEffect(Tsconfig)(parsed);
 });
@@ -89,8 +93,8 @@ const uncomment = (file: string, source: string | undefined): string | undefined
 };
 
 const invokedShell = (command: string): string | undefined => {
-  const shell = /^(?:sh|bash)\s+(?:\.\/)?(?<shell>[\w./-]+\.sh)(?:\s|$)/u.exec(command)?.groups
-    ?.shell;
+  const { shell } =
+    /^(?:sh|bash)\s+(?:\.\/)?(?<shell>[\w./-]+\.sh)(?:\s|$)/u.exec(command)?.groups ?? {};
   if (shell === undefined || shell.includes('..')) {
     return undefined;
   }
@@ -109,7 +113,8 @@ const cssDependencies = (
   for (const match of withoutComments.matchAll(
     /@import\s+(?:url\(\s*)?["'](?<specifier>[^"']+)["']/gu,
   )) {
-    const target = packageName(match.groups?.specifier ?? '');
+    const { specifier = '' } = match.groups ?? {};
+    const target = packageName(specifier);
     if (target === undefined || target.length === 0) {
       continue;
     }
@@ -182,7 +187,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       for (const match of source.matchAll(
         /^\s*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu,
       )) {
-        const target = match.groups?.target;
+        const { target } = match.groups ?? {};
         if (
           target !== undefined &&
           !target.includes('..') &&
@@ -202,6 +207,76 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         }
       }
     });
+    const testConsumerEvidence = Effect.fn('QualityAudit.testConsumerEvidence')(
+      function* testConsumerEvidence(
+        manifestFile: string,
+        manifestText: string,
+        commands: readonly string[],
+        prefix: string,
+        workspace: string,
+      ) {
+        // Rstest's default-config loader consumes default, not every named export.
+        const config = `${prefix}rstest.config.ts`;
+        if (
+          commands.some(
+            (command) => /^rstest(?:\s|$)/u.test(command) && !/--config(?:\s|=)/u.test(command),
+          ) &&
+          (yield* read(config)) !== undefined
+        ) {
+          evidence.push(
+            at(
+              manifestFile,
+              manifestText,
+              0,
+              workspace,
+              'file',
+              'rstest.config.ts',
+              'Package script invokes Rstest default configuration discovery',
+            ),
+            at(
+              manifestFile,
+              manifestText,
+              0,
+              workspace,
+              'export',
+              `${config}#default`,
+              'Rstest default-config loader consumes the default export',
+            ),
+          );
+        }
+        const tsconfigFile = `${prefix}tsconfig.json`;
+        const tsconfigText = yield* read(tsconfigFile);
+        if (tsconfigText === undefined) {
+          return;
+        }
+        const tsconfig = yield* parseTsconfig(tsconfigFile, tsconfigText);
+        // Only the explicit directory inclusion contract is modeled here. Do not
+        // turn all compiler inputs into roots or mark their exports as consumed.
+        if (
+          tsconfig.include?.includes('src') !== true ||
+          tsconfig.exclude !== undefined ||
+          tsconfig.files !== undefined ||
+          !(yield* fs.exists(path.join(appRoot, prefix, 'src')))
+        ) {
+          return;
+        }
+        for (const name of yield* fs.readDirectory(path.join(appRoot, prefix, 'src'))) {
+          if (name.endsWith('.type-test.ts')) {
+            evidence.push(
+              at(
+                tsconfigFile,
+                tsconfigText,
+                0,
+                workspace,
+                'file',
+                `src/${name}`,
+                'TypeScript include src compiles this type-test module; exports remain audited',
+              ),
+            );
+          }
+        }
+      },
+    );
     const cssEvidence = Effect.fn('QualityAudit.cssEvidence')(function* cssEvidence(
       extension: string,
       prefix: string,
@@ -279,7 +354,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         for (const match of source.matchAll(
           /^\s*-\s+cd app && (?:[A-Z_]+=\S+\s+)*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu,
         )) {
-          const target = match.groups?.target;
+          const { target } = match.groups ?? {};
           if (
             target !== undefined &&
             !target.includes('..') &&
@@ -325,7 +400,11 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         'node_modules/@modern-js/create/templates/workspace-scripts/ultramodern-typecheck.mjs',
       );
       const usesTsgo =
-        typecheck?.includes("['ultramodern', 'typecheck', ...forwardedArgs]") === true &&
+        hasUltramodernDispatch(
+          typecheck,
+          'typecheck',
+          yield* read('scripts/shared/ultramodern-command.mts'),
+        ) &&
         vendorTypecheck?.includes('resolveEffectTsgoCompiler({') === true &&
         vendorTypecheck.includes("from: pathToFileURL(join(workspaceRoot, 'package.json'))");
       if (usesTsgo && typecheck !== undefined) {
@@ -378,15 +457,20 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           'node_modules/@modern-js/create/templates/workspace-scripts/ultramodern-performance-readiness.mjs';
         const vendor = yield* read(vendorFile);
         if (
-          readiness?.includes("['ultramodern', 'performance-readiness', ...forwardedArgs]") ===
-            true &&
+          hasUltramodernDispatch(
+            readiness,
+            'performance-readiness',
+            yield* read('scripts/shared/ultramodern-command.mts'),
+          ) &&
           vendor?.includes('pathToFileURL(path.join(root, configPath)).href') === true &&
           vendor.includes('import(moduleUrl)')
         ) {
           const match = /const configPath = '(?<target>[^']+)'/u.exec(vendor);
-          const target = match?.groups?.target;
+          if (match === null) {
+            return;
+          }
+          const [, target] = match;
           if (
-            match !== null &&
             target !== undefined &&
             !target.includes('..') &&
             (yield* read(target)) !== undefined
@@ -429,7 +513,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         for (const match of source.matchAll(
           /^(?:pre-commit|pre-push):\r?\n(?<body>(?:^[ \t].*(?:\r?\n|$))*)/gmu,
         )) {
-          const body = match.groups?.body ?? '';
+          const { body = '' } = match.groups ?? {};
           if (/^\s+commands:\s*$/mu.test(body) && /^\s+run:\s+\S.+$/mu.test(body)) {
             evidence.push(
               at(
@@ -455,7 +539,9 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         continue;
       }
       const manifest = yield* Schema.decodeUnknownEffect(Manifest)(manifestText);
-      for (const command of Object.values(manifest.scripts ?? {})) {
+      const commands = Object.values(manifest.scripts ?? {});
+      yield* testConsumerEvidence(manifestFile, manifestText, commands, prefix, workspace);
+      for (const command of commands) {
         yield* shellEvidence(command, prefix, workspace);
       }
       for (const extension of ['tsx', 'ts', 'jsx', 'js']) {

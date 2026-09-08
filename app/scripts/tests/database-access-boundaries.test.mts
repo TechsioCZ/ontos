@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import { NodeServices } from '@effect/platform-node';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

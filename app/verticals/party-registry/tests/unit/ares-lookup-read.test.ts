@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Read-only architecture assertions use native filesystem promises. expires: 2026-12-31.
-import { assert, expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
 
 import { Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';

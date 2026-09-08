@@ -1,12 +1,11 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
 
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const repositoryRoot = path.dirname(appRoot);
@@ -51,25 +50,7 @@ it.live(
 );
 
 it('all server configuration resolves the app-root .env from any invocation directory', () => {
-  const databaseConfigUrl = pathToFileURL(
-    path.join(appRoot, 'packages/core-runtime/src/db/config.ts'),
-  ).href;
-  const permissionConfigUrl = pathToFileURL(
-    path.join(appRoot, 'packages/core-runtime/src/permissions/config.ts'),
-  ).href;
-  const authConfigUrl = pathToFileURL(
-    path.join(appRoot, 'apps/shell-super-app/api/auth/config.ts'),
-  ).href;
-  const source = `
-    const database = await import(${JSON.stringify(databaseConfigUrl)});
-    const permissions = await import(${JSON.stringify(permissionConfigUrl)});
-    const auth = await import(${JSON.stringify(authConfigUrl)});
-    console.log(JSON.stringify([
-      database.ROOT_ENV_PATH,
-      permissions.SPICEDB_ROOT_ENV_PATH,
-      auth.ROOT_ENV_PATH,
-    ]));
-  `;
+  const probe = new URL('server-environment-paths.fixture.mts', import.meta.url);
   const child = spawnSync(
     '/usr/bin/env',
     [
@@ -77,9 +58,7 @@ it('all server configuration resolves the app-root .env from any invocation dire
       'ULTRAMODERN_WORKSPACE_ROOT',
       `INIT_CWD=${repositoryRoot}`,
       process.execPath,
-      '--input-type=module',
-      '--eval',
-      source,
+      fileURLToPath(probe),
     ],
     {
       cwd: '/',

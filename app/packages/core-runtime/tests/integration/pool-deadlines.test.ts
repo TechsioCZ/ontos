@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Effect, Redacted } from 'effect';
 import { Pool } from 'pg';
 import type { PoolClient } from 'pg';

@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A2** — "Make Schema the sole authority for contracts and domain models"
  * ("Model absence and outcomes with `Option`, `Result`, `Schema.OptionFromNullOr`, or typed
@@ -83,16 +84,14 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults.
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { typeNameSegments } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { collectRootNamespaces } from '../shared/imports.ts';
+import { booleanOption as boolean, positiveInteger, stringArray } from '../shared/options.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
@@ -103,7 +102,6 @@ const DEFAULT_PROMISE_TYPES = ['Promise', 'PromiseLike'];
 /** Effect's outcome type, matched only through real `effect` import bindings. */
 const EFFECT_NAMESPACE = 'Effect';
 const EFFECT_TYPE = 'Effect';
-const EFFECT_ROOT_MODULE = 'effect';
 
 const ABSENCE_TYPES = new Set(['TSNullKeyword', 'TSUndefinedKeyword']);
 /** Members that carry no value worth wrapping in an `Option`. */
@@ -114,37 +112,8 @@ const VOID_LIKE_TYPES = new Set([
   'TSUnknownKeyword',
 ]);
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-  readonly includeAsyncFunctions: boolean;
-  readonly promiseTypes: readonly string[];
-  readonly checkEffect: boolean;
-  readonly resolveAliases: boolean;
-  readonly aliasDepth: number;
-}
-
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function integer(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback;
-}
-
-function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+function readOptions(context: Context) {
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -153,50 +122,8 @@ function readOptions(context: Context): RuleOptions {
     promiseTypes: stringArray(record.promiseTypes, DEFAULT_PROMISE_TYPES),
     checkEffect: boolean(record.checkEffect, true),
     resolveAliases: boolean(record.resolveAliases, true),
-    aliasDepth: integer(record.aliasDepth, 3),
+    aliasDepth: positiveInteger(record.aliasDepth, 3, 0),
   };
-}
-
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Flatten `Schema.Codec` / `Effect.Effect` / `Effect` into its dotted segments. */
-function typeNameSegments(name: ESTree.TSTypeName): readonly string[] | null {
-  if (name.type === 'Identifier') return [name.name];
-  if (name.type === 'TSQualifiedName') {
-    const left = typeNameSegments(name.left);
-    return left === null ? null : [...left, name.right.name];
-  }
-  return null;
-}
-
-/** Locals bound to the whole `effect` root barrel (`import * as E from "effect"` → `E.Effect.Effect`). */
-function collectEffectBarrels(program: ESTree.Program): ReadonlySet<string> {
-  const barrels = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.source.value !== EFFECT_ROOT_MODULE) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') barrels.add(specifier.local.name);
-    }
-  }
-  return barrels;
-}
-
-/** Resolve type bindings lexically; namespace-local aliases must not leak into other scopes. */
-function lookupVariable(context: Context, node: ESTree.Node, name: string): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
 }
 
 interface Absence {
@@ -267,7 +194,7 @@ export const rule = defineRule({
 
     const program = context.sourceCode.ast;
     const bindings: EffectBindings = collectEffectBindings(program);
-    const barrels = collectEffectBarrels(program);
+    const barrels = collectRootNamespaces(program);
 
     /** Strip type-level parentheses so `(Row | undefined)` behaves like the bare union. */
     const unwrapType = (type: ESTree.TSType): ESTree.TSType => {
@@ -284,7 +211,7 @@ export const rule = defineRule({
     const rootVariable = (reference: ESTree.TSTypeReference): Variable | null => {
       let root = reference.typeName;
       while (root.type === 'TSQualifiedName') root = root.left;
-      return root.type === 'Identifier' ? lookupVariable(context, root, root.name) : null;
+      return root.type === 'Identifier' ? resolveVariable(context, root.name, root) : null;
     };
 
     const aliasTarget = (reference: ESTree.TSTypeReference): ESTree.TSType | null => {
@@ -300,37 +227,32 @@ export const rule = defineRule({
     };
 
     /**
-     * `Promise` / `PromiseLike` / `Effect.Effect` / `Eff.Effect` / `E.Effect.Effect` / bare `Effect`.
-     * Returns the printed wrapper name, or `null` when the reference is not an async outcome wrapper.
+     * Resolve an imported Effect wrapper from its bare, namespace or root-barrel name.
      */
+    const effectWrapperName = (segments: readonly string[]): string | null => {
+      const root = segments[0] ?? '';
+      if (segments.length === 1) {
+        return bindings.namespaces.get(root) === EFFECT_NAMESPACE ? root : null;
+      }
+      if (segments[segments.length - 1] !== EFFECT_TYPE) return null;
+      if (segments.length === 2) {
+        return bindings.namespaces.get(root) === EFFECT_NAMESPACE ? segments.join('.') : null;
+      }
+      if (segments.length !== 3) return null;
+      return barrels.has(root) && segments[1] === EFFECT_NAMESPACE ? segments.join('.') : null;
+    };
+
     const wrapperName = (reference: ESTree.TSTypeReference): string | null => {
       const segments = typeNameSegments(reference.typeName);
       if (segments === null || segments.length === 0) return null;
-      const last = segments[segments.length - 1] ?? '';
       const variable = rootVariable(reference);
-      const global = variable === null || variable.defs.length === 0;
-      const imported =
-        variable?.defs.some((definition) => definition.type === 'ImportBinding') === true;
-      if (segments.length === 1) {
-        const name = segments[0] ?? '';
-        // A same-file `type Promise = ...` shadow means this is not the global promise.
-        if (options.promiseTypes.includes(name)) return global ? name : null;
-        if (!options.checkEffect || !imported) return null;
-        return bindings.namespaces.get(name) === EFFECT_NAMESPACE ? name : null;
+      const name = segments[0] ?? '';
+      if (segments.length === 1 && options.promiseTypes.includes(name)) {
+        return variable === null || variable.defs.length === 0 ? name : null;
       }
-      if (!options.checkEffect || !imported || last !== EFFECT_TYPE) return null;
-      if (segments.length === 2) {
-        const namespace = segments[0] ?? '';
-        return bindings.namespaces.get(namespace) === EFFECT_NAMESPACE
-          ? `${namespace}.${last}`
-          : null;
-      }
-      if (segments.length === 3) {
-        const barrel = segments[0] ?? '';
-        if (!barrels.has(barrel) || segments[1] !== EFFECT_NAMESPACE) return null;
-        return `${barrel}.${EFFECT_NAMESPACE}.${last}`;
-      }
-      return null;
+      if (!options.checkEffect) return null;
+      const imported = variable?.defs.some((definition) => definition.type === 'ImportBinding');
+      return imported ? effectWrapperName(segments) : null;
     };
 
     /** Flatten nested unions/parentheses into their leaf members. */
@@ -370,6 +292,16 @@ export const rule = defineRule({
       return { absence: absenceNames.join(' | '), value: values.map(printed).join(' | ') };
     };
 
+    const nextAlias = (current: ESTree.TSTypeReference, seen: Set<string>) => {
+      const segments = typeNameSegments(current.typeName);
+      if (segments === null || segments.length !== 1) return null;
+      const name = segments[0] ?? '';
+      if (seen.has(name)) return null;
+      seen.add(name);
+      const target = aliasTarget(current);
+      return target === null ? null : { name, target };
+    };
+
     /** Absence carried by the outcome type, following same-file aliases up to `aliasDepth` hops. */
     const outcomeAbsence = (type: ESTree.TSType): Absence | null => {
       const direct = unionAbsence(type);
@@ -379,16 +311,11 @@ export const rule = defineRule({
       const seen = new Set<string>();
       for (let depth = 0; depth < options.aliasDepth; depth += 1) {
         if (current.type !== 'TSTypeReference') return null;
-        const segments = typeNameSegments(current.typeName);
-        if (segments === null || segments.length !== 1) return null;
-        const name = segments[0] ?? '';
-        if (seen.has(name)) return null;
-        seen.add(name);
-        const target = aliasTarget(current);
-        if (target === null) return null;
-        const resolved = unionAbsence(target);
-        if (resolved !== null) return { ...resolved, via: name };
-        current = unwrapType(target);
+        const alias = nextAlias(current, seen);
+        if (alias === null) return null;
+        const resolved = unionAbsence(alias.target);
+        if (resolved !== null) return { ...resolved, via: alias.name };
+        current = unwrapType(alias.target);
       }
       return null;
     };
@@ -418,15 +345,10 @@ export const rule = defineRule({
           return first === undefined ? null : { wrapper, first, via };
         }
         if (!options.resolveAliases) return null;
-        const segments = typeNameSegments(current.typeName);
-        if (segments === null || segments.length !== 1) return null;
-        const name = segments[0] ?? '';
-        if (seen.has(name)) return null;
-        seen.add(name);
-        const target = aliasTarget(current);
-        if (target === null) return null;
-        if (via === null) via = name;
-        current = unwrapType(target);
+        const alias = nextAlias(current, seen);
+        if (alias === null) return null;
+        if (via === null) via = alias.name;
+        current = unwrapType(alias.target);
       }
       return null;
     };
@@ -448,23 +370,31 @@ export const rule = defineRule({
       );
     };
 
-    const hasExternalAdapterType = (annotation: ESTree.TSTypeAnnotation): boolean => {
-      const fn = annotation.parent;
-      if (fn?.type !== 'ArrowFunctionExpression' && fn?.type !== 'FunctionExpression') return false;
-      let current: ESTree.Node = fn;
+    const adapterContainer = (fn: ESTree.Node): ESTree.Node => {
+      let current = fn;
       for (let depth = 0; depth < 8; depth += 1) {
-        const container: ESTree.Node | null | undefined = current.parent;
+        const container = current.parent;
         if (container?.type !== 'Property' && container?.type !== 'ObjectExpression') break;
         current = container;
       }
-      const parent = current.parent;
-      if (parent?.type === 'TSSatisfiesExpression') return externalType(parent.typeAnnotation);
-      if (parent?.type !== 'VariableDeclarator' || parent.id.type !== 'Identifier') return false;
-      return (
-        parent.id.typeAnnotation !== null &&
-        parent.id.typeAnnotation !== undefined &&
-        externalType(parent.id.typeAnnotation.typeAnnotation)
-      );
+      return current;
+    };
+
+    const hasExternalAdapterType = (annotation: ESTree.TSTypeAnnotation): boolean => {
+      const fn = annotation.parent;
+      if (!fn) return false;
+      if (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression') return false;
+      const parent = adapterContainer(fn).parent;
+      if (!parent) return false;
+      if (parent.type === 'TSSatisfiesExpression') return externalType(parent.typeAnnotation);
+      if (parent.type !== 'VariableDeclarator' || parent.id.type !== 'Identifier') return false;
+      const type = parent.id.typeAnnotation;
+      return type != null && externalType(type.typeAnnotation);
+    };
+
+    const absenceMessage = (outcomeAlias: string | null, absenceAlias: string | null) => {
+      if (outcomeAlias !== null) return 'nullableOutcomeAlias';
+      return absenceAlias === null ? 'nullableOutcome' : 'nullableAlias';
     };
 
     const reported = new Set<number>();
@@ -481,12 +411,7 @@ export const rule = defineRule({
       if (absence === null) return;
       if (reported.has(anchor.start)) return;
       reported.add(anchor.start);
-      const messageId =
-        outcome.via !== null
-          ? 'nullableOutcomeAlias'
-          : absence.via === null
-            ? 'nullableOutcome'
-            : 'nullableAlias';
+      const messageId = absenceMessage(outcome.via, absence.via);
       context.report({
         node: anchor,
         messageId,

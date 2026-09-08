@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { Deferred, Effect, Fiber, Layer, Stream } from 'effect';
 import { ChildProcess } from 'effect/unstable/process';
 

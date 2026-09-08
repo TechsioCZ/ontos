@@ -4,9 +4,9 @@ export const expectedAuthTableCatalog = AUTH_TABLE_INVENTORY.map(
   (tableName) => `${AUTH_SCHEMA_NAME}.${tableName}`,
 );
 
-export interface AuthCatalogDifference {
-  readonly missing: readonly string[];
-  readonly unexpected: readonly string[];
+interface AuthCatalogDifference {
+  readonly missing: string[];
+  readonly unexpected: string[];
 }
 
 export const compareAuthCatalog = (
@@ -16,7 +16,7 @@ export const compareAuthCatalog = (
   const expected = new Set(expectedAuthTableCatalog);
 
   return {
-    missing: [...expected].filter((name) => !actual.has(name)).toSorted(),
-    unexpected: [...actual].filter((name) => !expected.has(name)).toSorted(),
+    missing: [...expected.difference(actual)].toSorted(),
+    unexpected: [...actual.difference(expected)].toSorted(),
   };
 };

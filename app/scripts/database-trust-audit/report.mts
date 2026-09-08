@@ -327,6 +327,69 @@ export const assertDatabaseSessionIdentities = (
   }
 };
 
+const hasMembershipObjectAuthority = (membership: RoleMembership): boolean =>
+  [
+    membership.createSchemas,
+    membership.ownedRelations,
+    membership.ownedRoutines,
+    membership.ownedSchemas,
+    membership.ownedTypes,
+    membership.parameterPrivileges ?? [],
+    membership.relationPrivilegeSchemas,
+    membership.securityDefinerRoutines,
+  ].some((objects) => objects.length > 0);
+
+const hasPrivilegedMembership = (membership: RoleMembership): boolean =>
+  ((membership.canSetRole || membership.canAdministerRole) &&
+    hasClusterPrivilege(membership.attributes)) ||
+  membership.predefinedRole === true ||
+  membership.databaseCreate ||
+  hasMembershipObjectAuthority(membership);
+
+const hasUsableViewPrivileges = (table: TablePrivilege): boolean =>
+  table.privileges.select ||
+  (table.privileges.insert && table.insertable !== false) ||
+  (table.privileges.update && table.updatable !== false) ||
+  (table.privileges.delete && table.deletable !== false);
+
+const hasPrivilegedViewOwner = (table: TablePrivilege, administrativeRole: string): boolean =>
+  (table.securityInvoker !== true &&
+    (table.owner === administrativeRole ||
+      table.ownerBypassRls === true ||
+      table.ownerSuperuser === true)) ||
+  table.ownerContextPrivileged === true ||
+  table.ownerContextRlsBypass === true;
+
+const isPrivilegedOwnerView = (table: TablePrivilege, administrativeRole: string): boolean =>
+  table.kind === 'view' &&
+  hasUsableViewPrivileges(table) &&
+  hasPrivilegedViewOwner(table, administrativeRole);
+
+const hasDdlAuthority = (snapshot: DatabaseTrustBoundarySnapshot): boolean => {
+  const { memberships, routines, schemas, sequences, tables, types } = snapshot;
+  const ownsRelation =
+    tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
+    sequences.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
+  const inheritsOwnership = memberships.some(
+    ({ canInheritRole, ownedRelations, ownedRoutines, ownedSchemas, ownedTypes }) =>
+      canInheritRole &&
+      (ownedRelations.length > 0 ||
+        ownedRoutines.length > 0 ||
+        ownedSchemas.length > 0 ||
+        ownedTypes.length > 0),
+  );
+  return (
+    snapshot.databasePrivileges.create ||
+    schemas.some(({ create }) => create) ||
+    ownsRelation ||
+    ownsRoutine ||
+    ownsType ||
+    inheritsOwnership
+  );
+};
+
 export const buildDatabaseTrustBoundaryReport = (
   snapshot: DatabaseTrustBoundarySnapshot,
 ): DatabaseTrustBoundaryReport => {
@@ -397,34 +460,7 @@ export const buildDatabaseTrustBoundaryReport = (
     ({ canAdministerRole, canInheritRole, canSetRole, role }) =>
       (canSetRole || canAdministerRole || canInheritRole) && role !== snapshot.administrativeRole,
   );
-  const privilegedMemberships = nonAdministrativeMemberships.filter(
-    ({
-      attributes,
-      canAdministerRole,
-      canSetRole,
-      createSchemas,
-      databaseCreate,
-      ownedRelations,
-      ownedRoutines,
-      ownedSchemas,
-      ownedTypes,
-      parameterPrivileges: membershipParameterPrivileges = [],
-      predefinedRole,
-      relationPrivilegeSchemas,
-      securityDefinerRoutines,
-    }) =>
-      ((canSetRole || canAdministerRole) && hasClusterPrivilege(attributes)) ||
-      predefinedRole === true ||
-      databaseCreate ||
-      createSchemas.length > 0 ||
-      ownedRelations.length > 0 ||
-      ownedRoutines.length > 0 ||
-      ownedSchemas.length > 0 ||
-      ownedTypes.length > 0 ||
-      membershipParameterPrivileges.length > 0 ||
-      relationPrivilegeSchemas.length > 0 ||
-      securityDefinerRoutines.length > 0,
-  );
+  const privilegedMemberships = nonAdministrativeMemberships.filter(hasPrivilegedMembership);
   addFinding(findings, privilegedMemberships.length > 0, {
     code: 'runtime_role_can_assume_privileged_role',
     evidence:
@@ -437,34 +473,12 @@ export const buildDatabaseTrustBoundaryReport = (
       'The runtime role can inherit, SET ROLE to, or administer at least one additional identity.',
     severity: 'high',
   });
-  const ownsRelation =
-    tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
-    sequences.some(({ owner }) => owner === snapshot.runtimeRole);
-  const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
-  const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
-  const inheritsOwnership = memberships.some(
-    ({ canInheritRole, ownedRelations, ownedRoutines, ownedSchemas, ownedTypes }) =>
-      canInheritRole &&
-      (ownedRelations.length > 0 ||
-        ownedRoutines.length > 0 ||
-        ownedSchemas.length > 0 ||
-        ownedTypes.length > 0),
-  );
-  addFinding(
-    findings,
-    snapshot.databasePrivileges.create ||
-      schemas.some(({ create }) => create) ||
-      ownsRelation ||
-      ownsRoutine ||
-      ownsType ||
-      inheritsOwnership,
-    {
-      code: 'runtime_role_has_ddl_authority',
-      evidence:
-        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited schema, relation, routine, or application type.',
-      severity: 'high',
-    },
-  );
+  addFinding(findings, hasDdlAuthority(snapshot), {
+    code: 'runtime_role_has_ddl_authority',
+    evidence:
+      'The runtime role has database/schema CREATE or direct/inherited ownership of an audited schema, relation, routine, or application type.',
+    severity: 'high',
+  });
   const relationControlTables = tables.filter(
     ({ privileges }) =>
       privileges.maintain || privileges.references || privileges.trigger || privileges.truncate,
@@ -479,100 +493,69 @@ export const buildDatabaseTrustBoundaryReport = (
     ({ executable, owner, securityDefiner }) =>
       executable && securityDefiner && owner !== snapshot.runtimeRole,
   );
-  if (executableSecurityDefiners.length > 0) {
-    findings.push({
-      code: 'runtime_role_can_execute_security_definer',
-      evidence:
-        'The runtime role can execute a SECURITY DEFINER routine owned by another role in an audited schema.',
-      severity: 'high',
-    });
-  }
-  const privilegedOwnerViews = tables.filter(
-    ({
-      deletable,
-      insertable,
-      kind,
-      owner,
-      ownerBypassRls,
-      ownerContextPrivileged,
-      ownerContextRlsBypass,
-      ownerSuperuser,
-      privileges,
-      securityInvoker,
-      updatable,
-    }) =>
-      kind === 'view' &&
-      (privileges.select ||
-        (privileges.insert && insertable !== false) ||
-        (privileges.update && updatable !== false) ||
-        (privileges.delete && deletable !== false)) &&
-      ((securityInvoker !== true &&
-        (owner === snapshot.administrativeRole ||
-          ownerBypassRls === true ||
-          ownerSuperuser === true)) ||
-        ownerContextPrivileged === true ||
-        ownerContextRlsBypass === true),
+  addFinding(findings, executableSecurityDefiners.length > 0, {
+    code: 'runtime_role_can_execute_security_definer',
+    evidence:
+      'The runtime role can execute a SECURITY DEFINER routine owned by another role in an audited schema.',
+    severity: 'high',
+  });
+  const privilegedOwnerViews = tables.filter((table) =>
+    isPrivilegedOwnerView(table, snapshot.administrativeRole),
   );
-  if (privilegedOwnerViews.length > 0) {
-    findings.push({
-      code: 'runtime_role_can_use_privileged_owner_view',
-      evidence:
-        'The runtime role can read or write through an owner-context view with an administrative, BYPASSRLS, superuser, or RLS-bypassing owner in its dependency chain.',
-      severity: 'high',
-    });
-  }
-  if (parameterPrivileges.length > 0) {
-    findings.push({
-      code: 'runtime_role_has_parameter_authority',
-      evidence:
-        'The runtime role has an explicit effective SET or ALTER SYSTEM privilege on a PostgreSQL configuration parameter.',
-      severity: 'critical',
-    });
-  }
-  if (grantOptions.length > 0 || grantableDefaultPrivileges.length > 0) {
-    findings.push({
-      code: 'runtime_role_has_grant_authority',
-      evidence:
-        'The runtime role has a grant option on at least one existing or creator-default database object privilege.',
-      severity: 'high',
-    });
-  }
-  if (sequences.some(({ privileges }) => privileges.update)) {
-    findings.push({
+  addFinding(findings, privilegedOwnerViews.length > 0, {
+    code: 'runtime_role_can_use_privileged_owner_view',
+    evidence:
+      'The runtime role can read or write through an owner-context view with an administrative, BYPASSRLS, superuser, or RLS-bypassing owner in its dependency chain.',
+    severity: 'high',
+  });
+  addFinding(findings, parameterPrivileges.length > 0, {
+    code: 'runtime_role_has_parameter_authority',
+    evidence:
+      'The runtime role has an explicit effective SET or ALTER SYSTEM privilege on a PostgreSQL configuration parameter.',
+    severity: 'critical',
+  });
+  addFinding(findings, grantOptions.length > 0 || grantableDefaultPrivileges.length > 0, {
+    code: 'runtime_role_has_grant_authority',
+    evidence:
+      'The runtime role has a grant option on at least one existing or creator-default database object privilege.',
+    severity: 'high',
+  });
+  addFinding(
+    findings,
+    sequences.some(({ privileges }) => privileges.update),
+    {
       code: 'runtime_role_has_sequence_mutation_authority',
       evidence: 'The runtime role has UPDATE on an audited sequence.',
       severity: 'high',
-    });
-  }
-  if (
+    },
+  );
+  addFinding(
+    findings,
     snapshot.trustedContext.tenantSettingSettable ||
-    snapshot.trustedContext.legalEntitySettingSettable
-  ) {
-    findings.push({
+      snapshot.trustedContext.legalEntitySettingSettable,
+    {
       code: 'runtime_role_can_forge_trusted_context',
       evidence:
         'The ordinary runtime role can set and read at least one custom GUC used by tenant RLS.',
       severity: 'high',
-    });
-  }
-  if (
+    },
+  );
+  addFinding(
+    findings,
     snapshot.trustedContext.tenantSettingRetainedAfterRollback ||
-    snapshot.trustedContext.legalEntitySettingRetainedAfterRollback
-  ) {
-    findings.push({
+      snapshot.trustedContext.legalEntitySettingRetainedAfterRollback,
+    {
       code: 'trusted_context_survives_transaction',
       evidence: 'A probed transaction-local trusted context value remained visible after rollback.',
       severity: 'critical',
-    });
-  }
+    },
+  );
   const dmlSchemas = new Set(dmlTables.map(({ schema }) => schema));
-  if (dmlSchemas.size > 1) {
-    findings.push({
-      code: 'runtime_role_has_cross_schema_dml',
-      evidence: 'One runtime role has DML privileges in more than one audited application schema.',
-      severity: 'high',
-    });
-  }
+  addFinding(findings, dmlSchemas.size > 1, {
+    code: 'runtime_role_has_cross_schema_dml',
+    evidence: 'One runtime role has DML privileges in more than one audited application schema.',
+    severity: 'high',
+  });
 
   return {
     ...snapshot,

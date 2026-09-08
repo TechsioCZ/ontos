@@ -1,9 +1,9 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { Effect, Exit, Match, Predicate } from 'effect';
 import {
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeCoreSearchIngestion,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
@@ -80,7 +80,7 @@ it.effect(
           kind: 'upsert',
         }),
       )(documents);
-      const search = makeCoreSearchQueryRuntime(store);
+      const search = createCoreSearchQueryRuntime(store);
       const query = (value: string) =>
         search.search({
           effectiveAt: '2026-09-03T00:00:00.000Z',
@@ -136,7 +136,7 @@ it.effect(
         }),
       )(documents);
       const query = (value: string) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           includeArchived: false,
           moduleId: 'party.registry',
           query: value,
@@ -181,7 +181,7 @@ it.effect(
           partyId: partyRef.resourceId,
         });
       const query = (includeArchived = false) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           includeArchived,
           moduleId: 'party.registry',
           query: 'ACME',
@@ -258,7 +258,7 @@ it.effect(
         }),
       )(documents);
       const query = (effectiveAt: string) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           effectiveAt,
           includeArchived: false,
           moduleId: 'party.registry',
@@ -326,7 +326,7 @@ it.effect(
           kind: 'upsert',
         }),
       )(documents);
-      const gateway = makePartySearchProjectionGateway(makeCoreSearchQueryRuntime(store));
+      const gateway = makePartySearchProjectionGateway(createCoreSearchQueryRuntime(store));
       const input = {
         effectiveAt: '2026-09-03T00:00:00.000Z',
         includeArchived: false,
@@ -386,7 +386,7 @@ it.effect(
           kind: 'upsert',
         }),
       )(documents);
-      const hits = yield* makeCoreSearchQueryRuntime(store).search({
+      const hits = yield* createCoreSearchQueryRuntime(store).search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'public@example.test',
@@ -428,7 +428,7 @@ it.effect(
         partyId: 'party-1',
       });
       expect(
-        yield* makeCoreSearchQueryRuntime(store).search({
+        yield* createCoreSearchQueryRuntime(store).search({
           includeArchived: true,
           moduleId: 'party.registry',
           query: 'ACME',
@@ -468,7 +468,7 @@ it.effect(
           partyId: 'party-1',
         }),
       );
-      const priorHits = yield* makeCoreSearchQueryRuntime(store).search({
+      const priorHits = yield* createCoreSearchQueryRuntime(store).search({
         includeArchived: false,
         moduleId: 'party.registry',
         query: 'ACME',
@@ -560,7 +560,7 @@ it.effect('projection generation is independent of an out-of-order business even
         partyId: 'party-1',
       },
     );
-    const hits = yield* makeCoreSearchQueryRuntime(store).search({
+    const hits = yield* createCoreSearchQueryRuntime(store).search({
       includeArchived: false,
       moduleId: 'party.registry',
       query: 'ACME',
@@ -613,7 +613,7 @@ it.effect(
         partyId: 'party-1',
       });
       const query = (value: string) =>
-        makeCoreSearchQueryRuntime(store).search({
+        createCoreSearchQueryRuntime(store).search({
           includeArchived: false,
           moduleId: 'party.registry',
           query: value,
@@ -651,7 +651,7 @@ it.effect(
       yield* projector.project(context, {
         partyId: 'party-1',
       });
-      const hits = yield* makeCoreSearchQueryRuntime(store).search({
+      const hits = yield* createCoreSearchQueryRuntime(store).search({
         includeArchived: true,
         moduleId: 'party.registry',
         query: 'ACME',

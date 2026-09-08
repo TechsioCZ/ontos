@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **A5** — "Introduce an Effect-shaped persistence seam and typed database failures"
  * in `docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`: *"PostgreSQL failures are either walked
@@ -57,16 +58,17 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
-import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include`/`ignore` defaults instead
- * of forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import {
+  isNode,
+  EXPRESSION_WRAPPERS,
+  staticString as readStaticString,
+  keyName,
+} from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { effectOrigin } from '../shared/effect-identity.ts';
+import { compile, stringArray } from '../shared/options.ts';
+import { snippet } from '../shared/reporting.ts';
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 
@@ -178,37 +180,10 @@ interface RuleOptions {
   readonly detectCauseWalk: boolean;
 }
 
-type AnyNode = Record<string, unknown> & { readonly type: string };
-
-function isNode(value: unknown): value is AnyNode {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as { type?: unknown }).type === 'string'
-  );
-}
-
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function compile(value: unknown, fallback: string, flags: string): RegExp {
-  const source = typeof value === 'string' && value.length > 0 ? value : fallback;
-  try {
-    return new RegExp(source, flags);
-  } catch {
-    return new RegExp(fallback, flags);
-  }
-}
+type AnyNode = ESTree.Node & Record<string, any>;
 
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -231,38 +206,17 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Non-computed `.x`, or computed `["x"]`. */
 function memberPropertyName(node: AnyNode): string | null {
-  const property = node.property;
-  if (!isNode(property)) return null;
-  if (node.computed === true) {
-    return staticString(property);
-  }
-  return property.type === 'Identifier' && typeof property.name === 'string' ? property.name : null;
+  if (!isNode(node.property)) return null;
+  if (node.computed === true) return staticString(node.property);
+  return node.property.type === 'Identifier' ? node.property.name : null;
 }
 
 /** Unwrap parentheses, chains, `!`, `as T` so callee/operand inspection sees the real node. */
 function unwrap(node: unknown): AnyNode | null {
   let current: unknown = node;
   while (isNode(current)) {
-    if (
-      current.type === 'ChainExpression' ||
-      current.type === 'ParenthesizedExpression' ||
-      current.type === 'TSNonNullExpression' ||
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSInstantiationExpression' ||
-      current.type === 'TSTypeAssertion'
-    ) {
+    if (EXPRESSION_WRAPPERS.has(current.type)) {
       current = current.expression ?? current.argument;
       continue;
     }
@@ -293,12 +247,7 @@ function objectLooksLikeExit(object: unknown, pattern: RegExp): boolean {
 }
 
 /** `Cause.*`, `Exit.*`, `Effect.failCause` — a sink that legitimately consumes an Effect `Cause`. */
-function isCauseSink(
-  context: Context,
-  callee: unknown,
-  bindings: EffectBindings,
-  sinks: readonly string[],
-): boolean {
+function isCauseSink(context: Context, callee: unknown, sinks: readonly string[]): boolean {
   const target = unwrap(callee);
   if (target === null) return false;
   const origin = effectOrigin(context, target as unknown as ESTree.Node, [
@@ -314,49 +263,36 @@ function isCauseSink(
 }
 
 /** Walk parents: is `node` (transitively) an argument of a `Cause.*`/`Exit.*`/`Effect.failCause` call? */
-function insideCauseSink(
-  context: Context,
-  node: AnyNode,
-  bindings: EffectBindings,
-  sinks: readonly string[],
-): boolean {
+function insideCauseSink(context: Context, node: AnyNode, sinks: readonly string[]): boolean {
   let current: AnyNode = node;
   let parent = isNode(current.parent) ? current.parent : null;
   let depth = 0;
   while (parent !== null && depth < 12) {
     if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
-      const args = Array.isArray(parent.arguments) ? parent.arguments : [];
-      if (args.includes(current) && isCauseSink(context, parent.callee, bindings, sinks))
-        return true;
-      const origin = isNode(parent.callee)
-        ? effectOrigin(context, parent.callee as unknown as ESTree.Node, [])
-        : null;
-      // Only the first transformation receives the unchanged value; a later sink is not proof.
-      if (
-        args[0] === current &&
-        (origin?.join('.') === 'pipe' || origin?.join('.') === 'Function.pipe') &&
-        isCauseSink(context, args[1], bindings, sinks)
-      )
-        return true;
-      return false;
+      return callConsumesCause(context, parent, current, sinks);
     }
-    // Only transparent wrappers keep the "argument of" relation alive.
-    if (
-      parent.type !== 'ChainExpression' &&
-      parent.type !== 'ParenthesizedExpression' &&
-      parent.type !== 'TSNonNullExpression' &&
-      parent.type !== 'TSAsExpression' &&
-      parent.type !== 'TSSatisfiesExpression' &&
-      parent.type !== 'TSTypeAssertion' &&
-      parent.type !== 'TSInstantiationExpression'
-    ) {
-      return false;
-    }
+    if (!EXPRESSION_WRAPPERS.has(parent.type)) return false;
     current = parent;
     parent = isNode(current.parent) ? current.parent : null;
     depth += 1;
   }
   return false;
+}
+
+function callConsumesCause(
+  context: Context,
+  call: AnyNode,
+  value: AnyNode,
+  sinks: readonly string[],
+): boolean {
+  const args = Array.isArray(call.arguments) ? call.arguments : [];
+  if (args.includes(value) && isCauseSink(context, call.callee, sinks)) return true;
+  const origin = isNode(call.callee) ? effectOrigin(context, call.callee, []) : null;
+  return (
+    args[0] === value &&
+    ['pipe', 'Function.pipe'].includes(origin?.join('.') ?? '') &&
+    isCauseSink(context, args[1], sinks)
+  );
 }
 
 /** `this.cause = …` / `error.cause = …` — a write to an explicit cause field, not a chain walk. */
@@ -369,44 +305,43 @@ function isAssignmentTarget(node: AnyNode): boolean {
   );
 }
 
+const NON_EXPRESSION_PARENTS = new Set([
+  'ImportDeclaration',
+  'ExportNamedDeclaration',
+  'ExportAllDeclaration',
+  'ImportExpression',
+  'ImportAttribute',
+  'TSLiteralType',
+  'TSModuleDeclaration',
+  'TSImportType',
+  'TSEnumMember',
+  'TSPropertySignature',
+  'TSAbstractMethodDefinition',
+  'JSXAttribute',
+  'Directive',
+  'ExpressionStatement',
+]);
+const PROPERTY_PARENTS = new Set([
+  'Property',
+  'PropertyDefinition',
+  'MethodDefinition',
+  'AccessorProperty',
+]);
+
 /** Positions where a string literal is real runtime data rather than a key, type or module specifier. */
 function isExpressionContext(node: AnyNode): boolean {
   const parent = isNode(node.parent) ? node.parent : null;
   if (parent === null) return false;
-  switch (parent.type) {
-    case 'ImportDeclaration':
-    case 'ExportNamedDeclaration':
-    case 'ExportAllDeclaration':
-    case 'ImportExpression':
-    case 'ImportAttribute':
-    case 'TSLiteralType':
-    case 'TSModuleDeclaration':
-    case 'TSImportType':
-    case 'TSEnumMember':
-    case 'TSPropertySignature':
-    case 'TSAbstractMethodDefinition':
-    case 'JSXAttribute':
-    case 'Directive':
-      return false;
-    case 'Property':
-    case 'PropertyDefinition':
-    case 'MethodDefinition':
-    case 'AccessorProperty':
-      return (
-        (parent.type === 'Property' &&
-          isNode(parent.parent) &&
-          parent.parent.type === 'ObjectExpression') ||
-        parent.key !== node
-      );
-    case 'ExpressionStatement':
-      // A bare string statement is a directive prologue, not an inspection.
-      return false;
-    case 'MemberExpression':
-      // `x["23505"]` reads a field named after the code; still an inspection of driver data.
-      return parent.computed === true;
-    default:
-      return true;
+  if (NON_EXPRESSION_PARENTS.has(parent.type)) return false;
+  if (PROPERTY_PARENTS.has(parent.type)) {
+    return (
+      (parent.type === 'Property' &&
+        isNode(parent.parent) &&
+        parent.parent.type === 'ObjectExpression') ||
+      (parent as AnyNode).key !== node
+    );
   }
+  return parent.type !== 'MemberExpression' || parent.computed === true;
 }
 
 /**
@@ -421,15 +356,16 @@ function isCodeComparisonPosition(node: AnyNode): boolean {
   }
   if (parent.type === 'SwitchCase' && parent.test === node) return true;
   if (parent.type === 'ArrayExpression') return true;
-  if (parent.type === 'CallExpression') {
-    const args = Array.isArray(parent.arguments) ? parent.arguments : [];
-    if (!args.includes(node)) return false;
-    const callee = unwrap(parent.callee);
-    if (callee === null || callee.type !== 'MemberExpression') return false;
-    const method = memberPropertyName(callee);
-    return method !== null && MEMBERSHIP_METHODS.has(method);
-  }
+  if (parent.type === 'CallExpression') return isMembershipArgument(parent, node);
   return false;
+}
+
+function isMembershipArgument(parent: AnyNode, node: AnyNode): boolean {
+  const args = Array.isArray(parent.arguments) ? parent.arguments : [];
+  if (!args.includes(node)) return false;
+  const callee = unwrap(parent.callee);
+  if (callee?.type !== 'MemberExpression') return false;
+  return MEMBERSHIP_METHODS.has(memberPropertyName(callee) ?? '');
 }
 
 /**
@@ -450,122 +386,11 @@ function operandLooksLikeFailure(node: unknown, pattern: RegExp): boolean {
 }
 
 function excerpt(context: Context, node: ESTree.Node): string {
-  const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
-  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
-}
-
-// Resolve runtime identity, not spelling. Only immutable same-file aliases are followed;
-// dynamic imports, mutable rebinding and arbitrary cross-module re-exports remain unknown.
-function effectOrigin(
-  context: Context,
-  input: ESTree.Node,
-  barrels: readonly string[],
-  depth = 0,
-): readonly string[] | null {
-  if (depth > 24) return null;
-  let node = input;
-  while (
-    [
-      'ParenthesizedExpression',
-      'ChainExpression',
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TSInstantiationExpression',
-      'TSTypeAssertion',
-    ].includes(node.type)
-  ) {
-    node = (node as { expression: ESTree.Node }).expression;
-  }
-  const keyOf = (key: ESTree.Node, computed: boolean): string | null => {
-    if (!computed && key.type === 'Identifier') return key.name;
-    if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-    if (key.type === 'TemplateLiteral' && key.expressions.length === 0)
-      return key.quasis[0]?.value.cooked ?? null;
-    return null;
-  };
-  if (node.type === 'MemberExpression') {
-    const key = keyOf(node.property, node.computed);
-    const base = effectOrigin(context, node.object, barrels, depth + 1);
-    return base && key !== null ? [...base, key] : null;
-  }
-  if (node.type !== 'Identifier') return null;
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-    context.sourceCode.getScope(node);
-  while (scope) {
-    const variable = scope.set.get(node.name);
-    const defs = variable?.defs.filter(
-      (def) =>
-        !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSTypeParameter'].includes(
-          def.node.type,
-        ),
-    );
-    if (!variable || !defs?.length) {
-      scope = scope.upper;
-      continue;
-    }
-    if (defs.length !== 1) return null;
-    const def = defs[0]!;
-    if (def.type === 'ImportBinding') {
-      const spec = def.node;
-      const declaration = def.parent?.type === 'ImportDeclaration' ? def.parent : spec.parent;
-      if (
-        declaration?.type !== 'ImportDeclaration' ||
-        declaration.importKind === 'type' ||
-        (spec as { importKind?: string }).importKind === 'type'
-      )
-        return null;
-      const source = declaration.source.value;
-      const root = source === 'effect' || barrels.some((glob) => globToRegExp(glob).test(source));
-      if (!root && !source.startsWith('effect/')) return null;
-      const base = root ? [] : [source.split('/').at(-1)!];
-      if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-        return base;
-      if (spec.type !== 'ImportSpecifier') return null;
-      return [
-        ...base,
-        spec.imported.type === 'Identifier' ? spec.imported.name : spec.imported.value,
-      ];
-    }
-    const declaration = def.node;
-    if (
-      declaration.type !== 'VariableDeclarator' ||
-      !declaration.init ||
-      declaration.parent?.type !== 'VariableDeclaration' ||
-      declaration.parent.kind !== 'const'
-    )
-      return null;
-    if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-      return null;
-    const base = effectOrigin(context, declaration.init, barrels, depth + 1);
-    if (!base) return null;
-    if (declaration.id.type === 'Identifier') return base;
-    if (declaration.id.type !== 'ObjectPattern') return null;
-    for (const property of declaration.id.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.value.type !== 'Identifier' ||
-        property.value.name !== node.name
-      )
-        continue;
-      const key = keyOf(property.key, property.computed);
-      return key === null ? null : [...base, key];
-    }
-    return null;
-  }
-  return null;
+  return snippet(context.sourceCode.getText(node), 80, 77);
 }
 
 function staticString(input: unknown): string | null {
-  const node = unwrap(input);
-  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (
-    node?.type === 'TemplateLiteral' &&
-    Array.isArray(node.expressions) &&
-    node.expressions.length === 0
-  )
-    return (node.quasis as { value: { cooked: string } }[])[0]?.value.cooked ?? null;
-  return null;
+  return readStaticString(unwrap(input));
 }
 
 function unshadowedGlobal(context: Context, input: unknown, name: string): boolean {
@@ -588,30 +413,26 @@ function unshadowedGlobal(context: Context, input: unknown, name: string): boole
   return true;
 }
 
+function isReassignment(reference: { isWrite(): boolean; init?: boolean }): boolean {
+  return reference.isWrite() && !reference.init;
+}
+function isConstantDeclaration(node: ESTree.Node | undefined): node is ESTree.VariableDeclarator {
+  return (
+    node?.type === 'VariableDeclarator' &&
+    node.parent?.type === 'VariableDeclaration' &&
+    node.parent.kind === 'const'
+  );
+}
+
 function constValue(context: Context, input: unknown, depth = 0): AnyNode | null {
   const node = unwrap(input);
   if (!node || node.type !== 'Identifier' || depth > 24) return node;
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null = context.sourceCode.getScope(
-    node as unknown as ESTree.Node,
-  );
-  while (scope) {
-    const variable = scope.set.get(String(node.name));
-    if (!variable) {
-      scope = scope.upper;
-      continue;
-    }
-    if (variable.defs.length !== 1 || variable.references.some((r) => r.isWrite() && !r.init))
-      return node;
-    const declaration = variable.defs[0]?.node;
-    if (
-      declaration?.type !== 'VariableDeclarator' ||
-      declaration.parent?.type !== 'VariableDeclaration' ||
-      declaration.parent.kind !== 'const'
-    )
-      return node;
-    return constValue(context, declaration.init, depth + 1);
-  }
-  return node;
+  const variable = resolveVariable(context, String(node.name), node as unknown as ESTree.Node);
+  if (!variable || variable.defs.length !== 1 || variable.references.some(isReassignment))
+    return node;
+  const declaration = variable.defs[0]?.node;
+  if (!isConstantDeclaration(declaration)) return node;
+  return constValue(context, declaration.init, depth + 1);
 }
 
 // Two-digit strings are also months/hours. Require a code-shaped receiver (including
@@ -626,17 +447,14 @@ function codePrefixSubject(context: Context, input: unknown, depth = 0): boolean
   if (node.type === 'CallExpression' && unshadowedGlobal(context, node.callee, 'String')) {
     return codePrefixSubject(context, (node.arguments as unknown[])[0], depth + 1);
   }
-  if (node.type === 'ConditionalExpression')
-    return (
-      codePrefixSubject(context, node.consequent, depth + 1) ||
-      codePrefixSubject(context, node.alternate, depth + 1)
-    );
-  if (node.type === 'LogicalExpression')
-    return (
-      codePrefixSubject(context, node.left, depth + 1) ||
-      codePrefixSubject(context, node.right, depth + 1)
-    );
-  return false;
+  const branches = prefixBranches(node);
+  return branches.some((branch) => codePrefixSubject(context, branch, depth + 1));
+}
+
+function prefixBranches(node: AnyNode): unknown[] {
+  if (node.type === 'ConditionalExpression') return [node.consequent, node.alternate];
+  if (node.type === 'LogicalExpression') return [node.left, node.right];
+  return [];
 }
 
 // `code` is also a first-party domain/transport field. Require independent driver evidence
@@ -656,24 +474,7 @@ function hasDriverEvidence(input: AnyNode, options: RuleOptions): boolean {
       ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)
     )
       return false;
-    const text = staticString(node);
-    if (
-      text !== null &&
-      (options.sqlStatePattern.test(text) ||
-        options.networkCodes.has(text) ||
-        ['cause', 'constraint', 'sqlState', 'errno', 'syscall'].includes(text))
-    )
-      return true;
-    if (
-      node.type === 'MemberExpression' &&
-      ['cause', 'constraint', 'sqlState', 'errno', 'syscall'].includes(
-        memberPropertyName(node) ?? '',
-      )
-    )
-      return true;
-    const regex = node.regex as { pattern?: string } | undefined;
-    if (regex?.pattern && SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(regex.pattern!)))
-      return true;
+    if (isDriverEvidence(node, options)) return true;
     for (const [key, value] of Object.entries(node)) {
       if (['parent', 'loc', 'range', 'tokens', 'comments'].includes(key)) continue;
       if (isNode(value) && walk(value)) return true;
@@ -682,6 +483,103 @@ function hasDriverEvidence(input: AnyNode, options: RuleOptions): boolean {
     return false;
   };
   return walk(region);
+}
+
+function isDriverEvidence(node: AnyNode, options: RuleOptions): boolean {
+  const text = staticString(node);
+  if (
+    text !== null &&
+    (options.sqlStatePattern.test(text) ||
+      options.networkCodes.has(text) ||
+      ['cause', 'constraint', 'sqlState', 'errno', 'syscall'].includes(text))
+  )
+    return true;
+  if (
+    node.type === 'MemberExpression' &&
+    ['cause', 'constraint', 'sqlState', 'errno', 'syscall'].includes(memberPropertyName(node) ?? '')
+  )
+    return true;
+  return hasSqlStateRegex(node);
+}
+
+function hasSqlStateRegex(node: AnyNode): boolean {
+  const regex = node.regex as { pattern?: string } | undefined;
+  return Boolean(
+    regex?.pattern && SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(regex.pattern!)),
+  );
+}
+
+function isPrefixComparison(context: Context, value: unknown, other: unknown): boolean {
+  const text = staticString(value);
+  const call = unwrap(other);
+  if (text === null || !TWO_DIGIT.test(text) || call?.type !== 'CallExpression') return false;
+  const callee = unwrap(call.callee);
+  if (callee?.type !== 'MemberExpression' || !codePrefixSubject(context, callee.object))
+    return false;
+  return isPrefixSlice(callee, call.arguments as unknown[]);
+}
+function isPrefixSlice(callee: AnyNode, args: unknown[]): boolean {
+  return (
+    ['slice', 'substring', 'substr'].includes(memberPropertyName(callee) ?? '') &&
+    unwrap(args[0])?.value === 0 &&
+    unwrap(args[1])?.value === 2
+  );
+}
+function isOwnKeyProbe(context: Context, callee: AnyNode, method: string | null): boolean {
+  if (method === 'hasOwn') return unshadowedGlobal(context, callee.object, 'Object');
+  if (method === 'has') return unshadowedGlobal(context, callee.object, 'Reflect');
+  return method === 'call' && isPrototypeOwnProbe(context, callee.object);
+}
+function isPrototypeOwnProbe(context: Context, input: unknown): boolean {
+  const own = unwrap(input);
+  if (own?.type !== 'MemberExpression' || memberPropertyName(own) !== 'hasOwnProperty')
+    return false;
+  const prototype = unwrap(own.object);
+  return (
+    prototype?.type === 'MemberExpression' &&
+    memberPropertyName(prototype) === 'prototype' &&
+    unshadowedGlobal(context, prototype.object, 'Object')
+  );
+}
+function isClassArrayParameter(context: Context, input: unknown): boolean {
+  const first = unwrap(input);
+  if (first?.type !== 'Identifier') return false;
+  const variable = resolveVariable(context, String(first.name), first as unknown as ESTree.Node);
+  if (!variable || variable.references.some(isReassignment)) return false;
+  const def = variable.defs[0];
+  if (def?.type !== 'Parameter') return false;
+  return callbackUsesClassArray(context, def.node, String(first.name));
+}
+function callbackUsesClassArray(context: Context, fn: ESTree.Node, name: string): boolean {
+  if (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression') return false;
+  if (fn.params[0]?.type !== 'Identifier' || fn.params[0].name !== name) return false;
+  const parent = fn.parent;
+  if (parent?.type !== 'CallExpression' || parent.arguments[0] !== fn) return false;
+  return isClassArrayIteration(context, parent.callee);
+}
+function isClassArrayIteration(context: Context, input: unknown): boolean {
+  const owner = unwrap(input);
+  if (
+    owner?.type !== 'MemberExpression' ||
+    !['some', 'every', 'find', 'filter'].includes(memberPropertyName(owner) ?? '')
+  )
+    return false;
+  const list = constValue(context, owner.object);
+  return (
+    list?.type === 'ArrayExpression' &&
+    Array.isArray(list.elements) &&
+    list.elements.length > 0 &&
+    list.elements.every(isClassPrefix)
+  );
+}
+function isClassPrefix(entry: unknown): boolean {
+  const value = staticString(entry);
+  return value !== null && TWO_DIGIT.test(value);
+}
+
+function isOwnCauseReceiver(input: unknown): boolean {
+  const value = unwrap(input);
+  return value?.type === 'ThisExpression' || value?.type === 'Super';
 }
 
 export const rule = defineRule({
@@ -776,8 +674,6 @@ export const rule = defineRule({
     if (!options.includeTests && isTestFile(path)) return {};
     if (isScriptFile(path)) return {};
 
-    let bindings: EffectBindings = { importsEffect: false, namespaces: new Map() };
-
     const reportNode = (
       node: ESTree.Node,
       messageId: string,
@@ -823,9 +719,6 @@ export const rule = defineRule({
         reportNode(node, 'sqlStateRegex', {});
     };
     return {
-      Program(program) {
-        bindings = collectEffectBindings(program);
-      },
       BinaryExpression(node) {
         if (node.operator === 'in') {
           narrowing(node, node.right, staticString(node.left));
@@ -836,18 +729,7 @@ export const rule = defineRule({
           [node.left, node.right],
           [node.right, node.left],
         ]) {
-          const text = staticString(value);
-          const call = unwrap(other);
-          if (text === null || !TWO_DIGIT.test(text) || call?.type !== 'CallExpression') continue;
-          const callee = unwrap(call.callee);
-          const args = call.arguments as unknown[];
-          if (
-            callee?.type === 'MemberExpression' &&
-            codePrefixSubject(context, callee.object) &&
-            ['slice', 'substring', 'substr'].includes(memberPropertyName(callee) ?? '') &&
-            unwrap(args[0])?.value === 0 &&
-            unwrap(args[1])?.value === 2
-          ) {
+          if (isPrefixComparison(context, value, other)) {
             reportNode(node, 'codePrefix', {});
             return;
           }
@@ -867,7 +749,7 @@ export const rule = defineRule({
           return;
         if (
           objectLooksLikeExit(raw.object, options.exitNamePattern) ||
-          insideCauseSink(context, raw, bindings, options.causeSinks)
+          insideCauseSink(context, raw, options.causeSinks)
         )
           return;
         reportNode(node, 'causeWalk', {});
@@ -880,14 +762,13 @@ export const rule = defineRule({
           objectLooksLikeExit(node.init, options.exitNamePattern)
         )
           return;
-        const value = unwrap(node.init);
-        if (value?.type === 'ThisExpression' || value?.type === 'Super') return;
+        if (isOwnCauseReceiver(node.init)) return;
         for (const property of node.id.properties) {
           if (property.type !== 'Property') continue;
-          const key =
-            !property.computed && property.key.type === 'Identifier'
-              ? property.key.name
-              : staticString(property.key);
+          const key = keyName(property.key, property.computed, {
+            templates: true,
+            unwrap: { argumentFallback: true },
+          });
           if (key === 'cause') reportNode(property, 'causeWalk', {});
         }
       },
@@ -901,23 +782,7 @@ export const rule = defineRule({
         if (callee?.type !== 'MemberExpression') return;
         const method = memberPropertyName(callee);
         const args = node.arguments;
-        if (
-          (method === 'hasOwn' && unshadowedGlobal(context, callee.object, 'Object')) ||
-          (method === 'has' && unshadowedGlobal(context, callee.object, 'Reflect'))
-        )
-          narrowing(node, args[0], staticString(args[1]));
-        if (method === 'call') {
-          const own = unwrap(callee.object);
-          const prototype = own?.type === 'MemberExpression' ? unwrap(own.object) : null;
-          if (
-            own?.type === 'MemberExpression' &&
-            memberPropertyName(own) === 'hasOwnProperty' &&
-            prototype?.type === 'MemberExpression' &&
-            memberPropertyName(prototype) === 'prototype' &&
-            unshadowedGlobal(context, prototype.object, 'Object')
-          )
-            narrowing(node, args[0], staticString(args[1]));
-        }
+        if (isOwnKeyProbe(context, callee, method)) narrowing(node, args[0], staticString(args[1]));
         if (
           !method ||
           !options.prefixMethods.has(method) ||
@@ -929,49 +794,7 @@ export const rule = defineRule({
           reportNode(node, 'codePrefix', {});
           return;
         }
-        // Hoisted class arrays only when the callback's actual parameter supplies the prefix.
-        const first = unwrap(args[0]);
-        if (first?.type !== 'Identifier') return;
-        let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-          context.sourceCode.getScope(first as unknown as ESTree.Node);
-        while (scope) {
-          const variable = scope.set.get(String(first.name));
-          if (!variable) {
-            scope = scope.upper;
-            continue;
-          }
-          const def = variable.defs[0];
-          const fn = def?.node;
-          if (
-            def?.type !== 'Parameter' ||
-            !fn ||
-            (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression') ||
-            fn.params[0]?.type !== 'Identifier' ||
-            fn.params[0].name !== first.name ||
-            variable.references.some((r) => r.isWrite() && !r.init)
-          )
-            return;
-          const parent = fn.parent;
-          if (parent?.type !== 'CallExpression' || parent.arguments[0] !== fn) return;
-          const owner = unwrap(parent.callee);
-          if (
-            owner?.type !== 'MemberExpression' ||
-            !['some', 'every', 'find', 'filter'].includes(memberPropertyName(owner) ?? '')
-          )
-            return;
-          const list = constValue(context, owner.object);
-          if (
-            list?.type === 'ArrayExpression' &&
-            Array.isArray(list.elements) &&
-            list.elements.length > 0 &&
-            list.elements.every((entry) => {
-              const value = staticString(entry);
-              return value !== null && TWO_DIGIT.test(value);
-            })
-          )
-            reportNode(node, 'codePrefix', {});
-          return;
-        }
+        if (isClassArrayParameter(context, args[0])) reportNode(node, 'codePrefix', {});
       },
     };
   },

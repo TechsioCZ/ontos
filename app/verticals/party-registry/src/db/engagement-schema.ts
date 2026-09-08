@@ -122,7 +122,7 @@ export const gatewayAssertionRedemptions = contactsSchema.table(
   ],
 );
 
-export const contactsDatabaseSchema = {
+const contactsDatabaseSchema = {
   gatewayAssertionRedemptions,
   organizationEngagementProfiles,
   personEngagementProfiles,
@@ -136,10 +136,7 @@ export const CONTACTS_TABLES = [
 
 export type OrganizationEngagementProfileRecord =
   typeof organizationEngagementProfiles.$inferSelect;
-export type NewOrganizationEngagementProfileRecord =
-  typeof organizationEngagementProfiles.$inferInsert;
 export type PersonEngagementProfileRecord = typeof personEngagementProfiles.$inferSelect;
-export type NewPersonEngagementProfileRecord = typeof personEngagementProfiles.$inferInsert;
 
 /** Relational Queries v2 entry point for the Contacts owner. */
 export const contactsRelations = defineRelations(contactsDatabaseSchema);

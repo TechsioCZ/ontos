@@ -9,6 +9,10 @@ import {
   OperationContextUnavailable,
 } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+import {
+  counterpartyRoleWritePermission,
+  failCounterpartyNotFound,
+} from './counterparty-role-action-support.ts';
 import { CounterpartyAuditEvidenceSchema } from '../../shared/domain/counterparty-contract.ts';
 import {
   CounterpartyNotFound,
@@ -34,12 +38,9 @@ export {
   CounterpartyRoleEndPayloadSchema,
   CounterpartyRoleEndResultSchema,
 } from '../../shared/actions/counterparty-role-end.ts';
-export type {
-  CounterpartyRoleEndPayload,
-  CounterpartyRoleEndResult,
-} from '../../shared/actions/counterparty-role-end.ts';
+export type { CounterpartyRoleEndPayload } from '../../shared/actions/counterparty-role-end.ts';
 
-export const CounterpartyRoleEndError = Schema.Union([
+const CounterpartyRoleEndError = Schema.Union([
   CounterpartyEvidenceInsufficient,
   CounterpartyNotFound,
   CounterpartyPersistenceUnavailable,
@@ -76,15 +77,7 @@ const handleCounterpartyRoleEnd = Effect.fn('CounterpartyRoleEndAction.handleCou
     }
     const persistenceResult = yield* context.services.end(payload, context);
     const result = yield* Match.value(persistenceResult).pipe(
-      Match.tag('counterparty_not_found', ({ counterpartyId }) =>
-        Effect.fail(
-          new CounterpartyNotFound({
-            code: 'counterparty_not_found',
-            counterpartyId,
-            reason: 'The Counterparty does not exist in the selected Legal Entity',
-          }),
-        ),
-      ),
+      Match.tag('counterparty_not_found', failCounterpartyNotFound),
       Match.tag('evidence_insufficient', ({ method, roleType }) =>
         Effect.fail(
           new CounterpartyEvidenceInsufficient({
@@ -194,14 +187,9 @@ export const counterpartyRoleEndAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyRoleEndPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CounterpartyRoleEndPayload>((payload) => ({
-      permission: 'write',
-      resource: {
-        moduleId: payload.counterpartyRef.moduleId,
-        resourceId: payload.counterpartyRef.resourceId,
-        resourceType: payload.counterpartyRef.resourceType,
-      },
-    })),
+    resourcePermission: defineActionResourcePermission<CounterpartyRoleEndPayload>(
+      counterpartyRoleWritePermission,
+    ),
     resultSchema: CounterpartyRoleEndResultSchema,
     schemaVersion: '1',
   },
@@ -235,11 +223,3 @@ export const counterpartyRoleEndAction = defineAction(
     });
   },
 );
-
-// <generated-outbox-message-exports>
-export { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxPayloadSchema } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxProducerModuleKey } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxTopic } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export { createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-export type { CounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxPayload } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

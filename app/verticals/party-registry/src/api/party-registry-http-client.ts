@@ -21,7 +21,7 @@ export type PartyRegistryHttpClient = HttpApiClient.Client<
   Extract<PartyRegistryApiGroups, HttpApiGroup.Constraint>
 >;
 
-export const traceparentOption = 'traceparent' as const;
+const traceparentOption = 'traceparent' as const;
 const requestCorrelationHeaderName = 'x-correlation-id' as const;
 
 export interface PartyRegistryHttpClientOptions {
@@ -30,17 +30,6 @@ export interface PartyRegistryHttpClientOptions {
   readonly operationContext?: OperationContext;
   readonly [traceparentOption]?: string;
 }
-
-export type PartyRegistryAuthorizedInvocation<Options> = readonly [
-  credential: string,
-  requestCorrelation: string,
-  options?: Options,
-];
-
-export type PartyRegistryOperationInvocation<Options> = readonly [
-  requestCorrelation: string,
-  options?: Options,
-];
 
 export interface PartyRegistryHttpRequestContextValue {
   readonly baseUrl: string | URL;

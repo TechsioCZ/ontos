@@ -46,6 +46,7 @@ const PackageSchema = Schema.Struct({
       ),
     }),
   ),
+  'zephyr:dependencies': Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 
 class KnipModelError extends Schema.TaggedError<KnipModelError>()('KnipModelError', {
@@ -56,7 +57,7 @@ const unprovenResolver = { kind: 'resolver-unproven' } as const;
 
 export const KnipModelEvidenceSchema = Schema.Struct({
   anchor: Schema.optional(Schema.String),
-  column: Schema.optional(Schema.Number),
+  column: Schema.optional(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   kind: Schema.Literals([
     'entry',
     'file',
@@ -66,7 +67,7 @@ export const KnipModelEvidenceSchema = Schema.Struct({
     unprovenResolver.kind,
     'compiler-option',
   ]),
-  line: Schema.Number,
+  line: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   owningManifest: Schema.optional(Schema.String),
   producerManifest: Schema.optional(Schema.String),
   producerResolved: Schema.optional(Schema.String),
@@ -217,11 +218,9 @@ const parseSource = Effect.fn('QualityAudit.parseKnipModelSource')(function* par
     try: () => parseSync(file, source),
   });
   if (result.errors.length > 0) {
-    return yield* Effect.fail(
-      new KnipModelError({
-        reason: `Invalid quality model source ${file}: ${result.errors[0]?.message}`,
-      }),
-    );
+    return yield* new KnipModelError({
+      reason: `Invalid quality model source ${file}: ${result.errors[0]?.message}`,
+    });
   }
   return { file, program: result.program, source, variables: declarations(result.program) };
 });
@@ -250,6 +249,60 @@ const sourceFiles = Effect.fn('QualityAudit.knipModelSourceFiles')(function* rea
   }
   return files;
 });
+
+/**
+ * `zephyr:dependencies` maps a Module Federation remote alias to a versioned package
+ * reference such as `@app/party-registry@workspace:*`; the deployment platform resolves
+ * the package by that name, so the manifest entry is a real consumer of the dependency.
+ */
+const zephyrPackageName = (reference: string): string | undefined => {
+  const separator = reference.lastIndexOf('@');
+  const name = separator > 0 ? reference.slice(0, separator) : reference;
+  return name.length === 0 ? undefined : name;
+};
+
+/**
+ * A package manifest names consumers no import graph can see: declared export leaves, the Modern
+ * module contract, and the Zephyr composition remotes the deployment platform resolves by package
+ * name. Each one is evidence that the referenced entry point or dependency is genuinely used.
+ */
+const manifestEvidence = (
+  manifest: typeof PackageSchema.Type,
+  manifestFile: string,
+  workspace: string,
+): readonly KnipModelEvidence[] => {
+  const facts: KnipModelEvidence[] = [];
+  for (const target of [
+    ...exportLeaves(manifest.exports),
+    manifest.modernjs?.ontosModule?.manifest,
+    manifest.modernjs?.ontosModule?.registration,
+  ]) {
+    if (target !== undefined) {
+      facts.push({
+        kind: 'entry',
+        line: 1,
+        reason: 'Declared package export or Modern module contract',
+        source: manifestFile,
+        target,
+        workspace,
+      });
+    }
+  }
+  for (const [alias, reference] of Object.entries(manifest['zephyr:dependencies'] ?? {})) {
+    const target = zephyrPackageName(reference);
+    if (target !== undefined) {
+      facts.push({
+        kind: 'dependency',
+        line: 1,
+        reason: `Zephyr composition dependency declared for the ${alias} remote`,
+        source: manifestFile,
+        target,
+        workspace,
+      });
+    }
+  }
+  return facts;
+};
 
 const evidenceAt = (
   facts: SourceFacts,
@@ -446,7 +499,8 @@ const validatedBuildExport = (
     return undefined;
   }
   const expected = staticString(node.arguments[0], variables);
-  const name = expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups?.name;
+  const { name } =
+    expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups ?? {};
   return name === undefined ? undefined : { name, source: node.callee.object };
 };
 
@@ -486,21 +540,6 @@ const validatorEvidence = (facts: SourceFacts): KnipModelEvidence[] => {
       return;
     }
     const [argument] = node.arguments;
-    if (node.callee.name === 'requiredShellWorkerCompositionPath') {
-      const target = staticString(argument, facts.variables);
-      if (target !== undefined) {
-        evidence.push(
-          evidenceAt(
-            facts,
-            '.',
-            'file',
-            `${target}/src/routes/vertical-components.worker.tsx`,
-            node.start,
-            'Workspace validator resolves the required shell worker composition',
-          ),
-        );
-      }
-    }
     if (node.callee.name !== 'readText' || !isAppBuildTemplate(argument)) {
       return;
     }
@@ -527,6 +566,19 @@ const isChildProcessMake = (node: Node): boolean =>
   node.object.type === 'Identifier' &&
   node.object.name === 'ChildProcess' &&
   propertyName(node.property) === 'make';
+
+const isJoinedSourceSpecifier = (
+  node: Node | undefined,
+  directory: string,
+  file: string,
+  variables: ReadonlyMap<string, Node>,
+): boolean =>
+  node?.type === 'CallExpression' &&
+  node.callee.type === 'MemberExpression' &&
+  propertyName(node.callee.property) === 'join' &&
+  node.arguments[0]?.type === 'Identifier' &&
+  node.arguments[0].name === directory &&
+  staticString(node.arguments[1], variables) === file;
 
 const sourceEvidence = (
   facts: SourceFacts,
@@ -617,43 +669,74 @@ const sourceEvidence = (
     }
   };
   const recordLintConfig = (node: Extract<Node, { type: 'CallExpression' }>) => {
+    const consumers = new Map([
+      ['tools/oxlint/effect-native/report.mts', 'report.config.ts'],
+      [
+        'tools/oxlint/effect-native/tests/repository-policy.test.mts',
+        'repository-policy.config.ts',
+      ],
+    ]);
+    const config = consumers.get(facts.file);
+    const [joined] = node.arguments;
     if (
-      facts.file === 'tools/oxlint/effect-native/report.mts' &&
-      node.callee.type === 'Identifier' &&
-      node.callee.name === 'runOxlint'
+      config === undefined ||
+      node.callee.type !== 'Identifier' ||
+      node.callee.name !== 'runOxlint' ||
+      joined?.type !== 'CallExpression' ||
+      staticString(joined.arguments[1], facts.variables) !== config
     ) {
-      const [joined] = node.arguments;
-      if (
-        joined?.type === 'CallExpression' &&
-        staticString(joined.arguments[1], facts.variables) === 'report.config.ts'
-      ) {
-        result.push(
-          evidenceAt(
-            facts,
-            workspace,
-            'file',
-            'tools/oxlint/effect-native/report.config.ts',
-            node.start,
-            'Lint report subprocess configuration',
-          ),
-          evidenceAt(
-            facts,
-            workspace,
-            'export',
-            'tools/oxlint/effect-native/report.config.ts#default',
-            node.start,
-            'Oxlint loader consumes the configuration default export',
-          ),
-        );
-      }
+      return;
     }
+    const target = `tools/oxlint/effect-native/${config}`;
+    result.push(
+      evidenceAt(facts, workspace, 'file', target, node.start, 'Lint subprocess configuration'),
+      evidenceAt(
+        facts,
+        workspace,
+        'export',
+        `${target}#default`,
+        node.start,
+        'Oxlint loader consumes the configuration default export',
+      ),
+    );
+  };
+  const recordLintPlugin = (node: ObjectExpression) => {
+    const specifier = objectValue(node, 'specifier');
+    if (
+      facts.file !== 'tools/oxlint/effect-native/tests/shared-helpers.test.mts' ||
+      staticString(objectValue(node, 'name'), facts.variables) !== 'shared-helpers-probe' ||
+      !isJoinedSourceSpecifier(
+        specifier,
+        'testsDirectory',
+        'shared-helpers-probe.ts',
+        facts.variables,
+      )
+    ) {
+      return;
+    }
+    const target = 'tools/oxlint/effect-native/tests/shared-helpers-probe.ts';
+    result.push(
+      evidenceAt(facts, workspace, 'file', target, node.start, 'Oxlint jsPlugins source specifier'),
+      evidenceAt(
+        facts,
+        workspace,
+        'export',
+        `${target}#default`,
+        node.start,
+        'Oxlint jsPlugins loader consumes only the plugin default export',
+      ),
+    );
   };
   const recordCall = (node: Extract<Node, { type: 'CallExpression' }>) => {
     recordSubprocess(node);
     recordConfiguredFile(node);
     recordLintConfig(node);
   };
-  new Visitor({ CallExpression: recordCall, NewExpression: recordUrl }).visit(facts.program);
+  new Visitor({
+    CallExpression: recordCall,
+    NewExpression: recordUrl,
+    ObjectExpression: recordLintPlugin,
+  }).visit(facts.program);
   if (/rstest\.config\.[cm]?[jt]s$/u.test(facts.file)) {
     const target = staticString(
       objectValue(exportedObject(facts), 'testEnvironment'),
@@ -1123,22 +1206,8 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
     }
     evidence.push(fact);
   };
-  const manifestTargets = [
-    ...exportLeaves(manifest.exports),
-    manifest.modernjs?.ontosModule?.manifest,
-    manifest.modernjs?.ontosModule?.registration,
-  ];
-  for (const target of manifestTargets) {
-    if (target !== undefined) {
-      add({
-        kind: 'entry',
-        line: 1,
-        reason: 'Declared package export or Modern module contract',
-        source: manifestFile,
-        target,
-        workspace,
-      });
-    }
+  for (const fact of manifestEvidence(manifest, manifestFile, workspace)) {
+    add(fact);
   }
   const ownedFiles = files.filter(
     (file) =>

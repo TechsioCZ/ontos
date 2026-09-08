@@ -1,4 +1,4 @@
-import { assert, expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';
@@ -162,6 +162,23 @@ type EngagementTestPayload =
         readonly tenantId: string;
       };
     }>;
+
+const makeMissingDecisionReadRuntime = () => {
+  let reads = 0;
+  const readRuntime: ReadRuntimeService = {
+    runRead: () =>
+      Effect.suspend(() => {
+        reads += 1;
+        return Effect.fail(
+          new ReadHandlerNotFound({
+            code: 'read_handler_not_found',
+            reason: 'No fixture decision',
+          }),
+        );
+      }),
+  };
+  return { readCount: () => reads, readRuntime };
+};
 
 const issuer = 'https://shell.ontos.test';
 
@@ -626,22 +643,7 @@ it.live(
     Effect.gen(function* reportRedemptionOutages() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness();
-      let reads = 0;
-      const readRuntime: ReadRuntimeService = {
-        runRead: () =>
-          Effect.sync(() => {
-            reads += 1;
-          }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new ReadHandlerNotFound({
-                  code: 'read_handler_not_found',
-                  reason: 'No fixture decision',
-                }),
-              ),
-            ),
-          ),
-      };
+      const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
       const app = yield* mountApp(harness, assertion.environment, readRuntime, {
         consume: () =>
           Effect.fail(
@@ -681,7 +683,7 @@ it.live(
             expect(encoded.includes(assertion.token)).toBe(false);
             expect(encoded.includes(principal.principalId)).toBe(false);
             expect(encoded.includes(principal.tenantId)).toBe(false);
-            expect(reads).toBe(0);
+            expect(readCount()).toBe(0);
             expect(harness.snapshot()).toEqual(before);
           }),
       );
@@ -931,22 +933,7 @@ it.live(
     Effect.gen(function* rejectAssertionReplays() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness();
-      let reads = 0;
-      const readRuntime: ReadRuntimeService = {
-        runRead: () =>
-          Effect.sync(() => {
-            reads += 1;
-          }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new ReadHandlerNotFound({
-                  code: 'read_handler_not_found',
-                  reason: 'No fixture decision',
-                }),
-              ),
-            ),
-          ),
-      };
+      const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
       const app = yield* mountApp(
         harness,
         assertion.environment,
@@ -979,15 +966,15 @@ it.live(
       );
       expect(actionAssertionReadReplay.status).toBe(401);
       expect(actionAssertionReadReplay.headers.get('www-authenticate')).toBe('Bearer');
-      expect(reads).toBe(0);
+      expect(readCount()).toBe(0);
       const firstRead = yield* handle(app, decisionRequest(randomUUID(), assertion.otherToken));
       expect(firstRead.status).toBe(404);
-      expect(reads).toBe(1);
+      expect(readCount()).toBe(1);
       const replayedRead = yield* handle(app, decisionRequest(randomUUID(), assertion.otherToken));
       expect(replayedRead.status).toBe(401);
       expect(replayedRead.headers.get('www-authenticate')).toBe('Bearer');
       expect(replayedRead.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
-      expect(reads).toBe(1);
+      expect(readCount()).toBe(1);
     }),
 );
 

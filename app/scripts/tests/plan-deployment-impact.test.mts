@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { execFileSync } from 'node:child_process';
 import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -310,32 +310,6 @@ for (const changedPath of [
   );
 }
 
-for (const changedPath of [
-  'scripts/postgres/bootstrap-spicedb-database.mts',
-  'packages/core-runtime/src/install/spicedb-database-config.ts',
-]) {
-  it.live(
-    `includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap change ${changedPath}`,
-    () =>
-      Effect.gen(function* testEffect16() {
-        yield* withFixture((root) =>
-          Effect.gen(function* testEffect17() {
-            const plan = yield* planDeploymentImpact({
-              changedPaths: [changedPath],
-              rootDirectory: root,
-            });
-            expect(plan.phases.map((phase) => phase.id)).toEqual([
-              'migrator',
-              'spicedb',
-              'contacts',
-              SHELL_ID,
-            ]);
-          }),
-        );
-      }),
-  );
-}
-
 it.live('expands shared-package changes to every consumer in dependency order', () =>
   Effect.gen(function* testEffect18() {
     yield* withFixture((root) =>
@@ -379,6 +353,8 @@ it.live('orders SpiceDB before all consumers for authorization runtime changes',
 );
 
 for (const changedPath of [
+  'scripts/postgres/bootstrap-spicedb-database.mts',
+  'packages/core-runtime/src/install/spicedb-database-config.ts',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
   '.mise.toml',

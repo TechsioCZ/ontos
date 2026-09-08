@@ -16,12 +16,9 @@ const OwnerPackageSchema = Schema.Struct({
 /** @typedef {{ readonly _tag: 'OutboxWorkerDeliveryInvalid', readonly reason: string }} OutboxWorkerDeliveryInvalidValue */
 /** @typedef {{ readonly entry: string, readonly id: string, readonly ownerId: string, readonly packageName: string, readonly path: string, readonly serviceIdEnv: string, readonly stageSetup: string }} OutboxWorkerDelivery */
 
-export class OutboxWorkerDeliveryInvalid extends Schema.TaggedError()(
-  'OutboxWorkerDeliveryInvalid',
-  {
-    reason: Schema.String,
-  },
-) {}
+class OutboxWorkerDeliveryInvalid extends Schema.TaggedError()('OutboxWorkerDeliveryInvalid', {
+  reason: Schema.String,
+}) {}
 
 /**
  * A generated worker host is the deployment capability; topology owns its identity.

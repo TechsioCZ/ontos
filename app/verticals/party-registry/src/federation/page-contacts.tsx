@@ -1,6 +1,6 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { partyRegistryI18nResources } from '../i18n/resources';
-import { ContactsPage } from '../routes/[lang]/contacts/page';
+import ContactsPage from '../routes/[lang]/contacts/page';
 
 const ContactsFederatedPage = () => (
   <FederatedI18nBoundary

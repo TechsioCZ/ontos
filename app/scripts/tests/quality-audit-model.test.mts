@@ -1,4 +1,4 @@
-import { expect, it } from '@app/effect-rstest';
+import { expect, it } from 'effect-rstest';
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 import {
@@ -29,6 +29,7 @@ const requirePrelude = [
 const resolverFile = 'src/resolver.ts';
 const directFile = 'src/direct.ts';
 const configurationFiles = '*.config.ts';
+const toolsPattern = 'tools/**/*.{ts,mts}';
 const sourcePattern = 'src/**/*.{ts,mts}';
 const knipManifestFile = 'node_modules/knip/package.json';
 const indexFile = 'src/index.ts';
@@ -123,10 +124,11 @@ const fixture = () =>
       root,
       'verticals/remote/package.json',
       yield* stringify({
-        dependencies: { effect: '4.0.0-beta.107' },
+        dependencies: { 'drizzle-orm': '1.0.0-rc.4', effect: '4.0.0-beta.107' },
         name: 'remote-controls',
         private: true,
         type: 'module',
+        'zephyr:dependencies': { composed: 'drizzle-orm@workspace:*' },
       }),
     );
     write(
@@ -212,7 +214,7 @@ it.live(
           entry: [indexFile, configurationFiles],
           lefthook: false,
           node: false,
-          project: [sourcePattern, configurationFiles, 'tools/**/*.{ts,mts}'],
+          project: [sourcePattern, configurationFiles, toolsPattern],
         },
         'verticals/*': { entry: [indexFile, configurationFiles], project: ['**/*.{ts,mts}'] },
       },
@@ -274,6 +276,10 @@ it.live(
       true,
     );
     expect(findings('dependencies').includes('verticals/remote/package.json#effect')).toBe(true);
+    expect(
+      findings('dependencies').includes('verticals/remote/package.json#drizzle-orm'),
+      'a zephyr:dependencies composition reference must count as a dependency consumer',
+    ).toBe(false);
     expect(model.config.workspaces['.']?.ignoreDependencies).toEqual([]);
     expect(findings('unlisted').includes('src/index.ts#shadowedRemote')).toBe(true);
     expect(findings('unlisted').includes('src/direct.ts#@rspack/core')).toBe(true);
@@ -361,7 +367,7 @@ it.live(
             entry: [indexFile, configurationFiles],
             lefthook: false,
             node: false,
-            project: [sourcePattern, configurationFiles, 'tools/**/*.{ts,mts}'],
+            project: [sourcePattern, configurationFiles, toolsPattern],
           },
           'verticals/*': { entry: [indexFile, configurationFiles], project: ['**/*.{ts,mts}'] },
         },
@@ -523,5 +529,128 @@ it.live(
     expect(
       !missingAnchor.evidence.some((item) => item.kind === 'resolver' && item.target === 'target'),
     ).toBe(true);
+  }),
+);
+
+it.live(
+  'Rstest, compiler type tests and Oxlint loaders consume files without hiding unused exports',
+  Effect.fn(function* testConsumerExports() {
+    const root = yield* fixture();
+    const lintDirectory = 'tools/oxlint/effect-native';
+    const policyTest = `${lintDirectory}/tests/repository-policy.test.mts`;
+    const helperTest = `${lintDirectory}/tests/shared-helpers.test.mts`;
+    const loadedFiles = [
+      'rstest.config.ts',
+      `${lintDirectory}/repository-policy.config.ts`,
+      `${lintDirectory}/tests/shared-helpers-probe.ts`,
+    ];
+    write(
+      root,
+      packageFile,
+      '{"name":"consumer-controls","type":"module","scripts":{"test":"rstest --project unit"}}',
+    );
+    for (const file of loadedFiles) {
+      write(root, file, 'export default {}; export const unusedNeighbor = 1;');
+    }
+    write(
+      root,
+      policyTest,
+      "runOxlint(nodePath.join(pluginDirectory, 'repository-policy.config.ts'), []);",
+    );
+    write(
+      root,
+      helperTest,
+      "void { name: 'shared-helpers-probe', specifier: path.join(testsDirectory, 'shared-helpers-probe.ts') };",
+    );
+    write(root, 'tsconfig.json', '{"include":["src"]}');
+    const typeTest = 'src/contract.type-test.ts';
+    write(root, typeTest, 'export const unusedTypeTestNeighbor = 1;');
+    const consumerPath = path.join(root, '.audit/consumers.mts');
+    const base = {
+      workspaces: {
+        '.': {
+          entry: [policyTest, helperTest],
+          node: false,
+          project: ['rstest.config.ts', 'src/*.ts', toolsPattern],
+          rstest: { config: [] },
+        },
+      },
+    };
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(
+      run.stdout,
+    );
+    const files = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    const exports = report.issues.flatMap((issue) =>
+      issue.exports.map((finding) => `${issue.file}#${finding.name}`),
+    );
+    for (const file of loadedFiles) {
+      expect(files).not.toContain(file);
+      expect(exports).toContain(`${file}#unusedNeighbor`);
+      expect(exports).not.toContain(`${file}#default`);
+    }
+    expect(files).not.toContain(typeTest);
+    expect(exports).toContain(`${typeTest}#unusedTypeTestNeighbor`);
+    expect(files).toContain('src/dead.ts');
+    const probeFile = `${lintDirectory}/tests/shared-helpers-probe.ts`;
+    expect(model.evidence.filter((fact) => fact.source === helperTest)).toEqual([
+      expect.objectContaining({
+        column: 6,
+        kind: 'file',
+        line: 1,
+        source: helperTest,
+        target: probeFile,
+        workspace: '.',
+      }),
+      expect.objectContaining({
+        column: 6,
+        kind: 'export',
+        line: 1,
+        source: helperTest,
+        target: `${probeFile}#default`,
+        workspace: '.',
+      }),
+    ]);
+    for (const specifier of [
+      'undefined',
+      "'shared-helpers-probe.ts'",
+      "join(testsDirectory, 'shared-helpers-probe.ts')",
+      "path.resolve(testsDirectory, 'shared-helpers-probe.ts')",
+      "path.join('testsDirectory', 'shared-helpers-probe.ts')",
+      "path.join(otherDirectory, 'shared-helpers-probe.ts')",
+      "path.join(testsDirectory, 'other-probe.ts')",
+    ]) {
+      write(root, helperTest, `void { name: 'shared-helpers-probe', specifier: ${specifier} };`);
+      const unrecognized = yield* buildKnipModel(root, base, consumerPath).pipe(
+        Effect.provide(NodeServices.layer),
+      );
+      expect(unrecognized.evidence.some((fact) => fact.source === helperTest)).toBe(false);
+    }
+    write(
+      root,
+      packageFile,
+      '{"name":"consumer-controls","type":"module","scripts":{"test":"rstest --config other.ts"}}',
+    );
+    write(root, 'tsconfig.json', '{"include":["src"],"exclude":["src/*.type-test.ts"]}');
+    write(root, policyTest, "runOxlint(nodePath.join(pluginDirectory, 'other.config.ts'), []);");
+    write(
+      root,
+      helperTest,
+      "void { name: 'other-plugin', specifier: path.join(testsDirectory, 'shared-helpers-probe.ts') };",
+    );
+    const unrelated = yield* buildKnipModel(root, base, consumerPath).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(
+      unrelated.evidence.some(
+        (fact) => loadedFiles.includes(fact.target) || fact.target === typeTest,
+      ),
+    ).toBe(false);
   }),
 );

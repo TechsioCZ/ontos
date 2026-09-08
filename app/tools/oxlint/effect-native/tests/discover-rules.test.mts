@@ -1,11 +1,10 @@
-import { expect, it } from '@app/effect-rstest';
-import { Effect, Predicate } from 'effect';
-
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-
 import { pathToFileURL } from 'node:url';
+
+import { expect, it } from 'effect-rstest';
+import { Effect, Predicate } from 'effect';
 
 import { discoverRules } from '../shared/discover-rules.ts';
 import { pluginDirectory } from './oxlint.mts';
@@ -41,7 +40,12 @@ it('rule discovery uses file URLs in workspaces containing spaces, URL delimiter
       path.join(rules, 'unselected.ts'),
       'throw new Error("unselected rule must not load"); export const rule = {};',
     );
-    const moduleUrl = pathToFileURL(realpathSync(path.join(shared, discoveryFile))).href;
+    const alias = path.join(directory, 'workspace-link');
+    symlinkSync(workspace, alias, 'dir');
+    const modulePath = path.join(alias, 'shared', 'discover-rules.ts');
+    const moduleUrl = pathToFileURL(modulePath).href;
+    // Node resolves symlinked workspace roots before exposing the import's parent URL.
+    const resolvedModuleUrl = pathToFileURL(realpathSync(modulePath)).href;
     const result = spawnSync(
       process.execPath,
       [
@@ -54,7 +58,7 @@ it('rule discovery uses file URLs in workspaces containing spaces, URL delimiter
         let imports = 0;
         const hooks = registerHooks({
           resolve(specifier, context, nextResolve) {
-            if (context.parentURL === ${JSON.stringify(moduleUrl)} && specifier.includes('selected.ts')) {
+            if (context.parentURL === ${JSON.stringify(resolvedModuleUrl)} && specifier.includes('selected.ts')) {
               imports += 1;
               assert.equal(new URL(specifier).protocol, 'file:');
             }
