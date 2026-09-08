@@ -1,8 +1,10 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { v1 } from '@authzed/authzed-node';
 import { Cause, Effect, flow, Schema } from 'effect';
+
 import {
   SpiceDbPermissionClientError,
   createSpiceDbPermissionClient,
@@ -26,9 +28,12 @@ test(
           (
             _request: v1.CheckPermissionRequest,
             // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Implements the Authzed SDK callback protocol; remove-when: SDK exposes native Effect.
-            callback: (error: null, response: v1.CheckPermissionResponse) => void,
+            callback: (
+              error: null,
+              response: v1.CheckPermissionResponse
+            ) => void
             // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Implements the Authzed SDK callback protocol; remove-when: SDK exposes native Effect.
-          ) => callback(null, v1.CheckPermissionResponse.create({})),
+          ) => callback(null, v1.CheckPermissionResponse.create({}))
         );
         const bulk = context.mock.method(
           v1.PermissionsServiceClient.prototype,
@@ -36,11 +41,17 @@ test(
           (
             _request: v1.CheckBulkPermissionsRequest,
             // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Implements the Authzed SDK callback protocol; remove-when: SDK exposes native Effect.
-            callback: (error: null, response: v1.CheckBulkPermissionsResponse) => void,
+            callback: (
+              error: null,
+              response: v1.CheckBulkPermissionsResponse
+            ) => void
             // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Implements the Authzed SDK callback protocol; remove-when: SDK exposes native Effect.
-          ) => callback(null, v1.CheckBulkPermissionsResponse.create({})),
+          ) => callback(null, v1.CheckBulkPermissionsResponse.create({}))
         );
-        const client = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
+        const client = createSpiceDbPermissionClient(
+          configuration,
+          SPICEDB_CHECK_TIMEOUT_MS
+        );
         context.after(() => client.close());
         const request = v1.CheckPermissionRequest.create({});
         const bulkRequest = v1.CheckBulkPermissionsRequest.create({});
@@ -57,8 +68,8 @@ test(
         assert.equal(check.mock.calls[0]?.arguments[0], request);
         assert.equal(bulk.mock.calls[0]?.arguments[0], bulkRequest);
       }),
-    runEffectTestPromise,
-  ),
+    runEffectTestPromise
+  )
 );
 
 test(
@@ -70,22 +81,31 @@ test(
         context.mock.method(
           v1.PermissionsServiceClient.prototype,
           'checkPermission',
-          // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Implements the Authzed SDK callback protocol; remove-when: SDK exposes native Effect.
-          (_request: v1.CheckPermissionRequest, callback: (error: Error) => void) =>
+          (
+            _request: v1.CheckPermissionRequest,
             // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Implements the Authzed SDK callback protocol; remove-when: SDK exposes native Effect.
-            callback(cause),
+            callback: (error: Error) => void
+          ) =>
+            // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Implements the Authzed SDK callback protocol; remove-when: SDK exposes native Effect.
+            callback(cause)
         );
-        const client = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
+        const client = createSpiceDbPermissionClient(
+          configuration,
+          SPICEDB_CHECK_TIMEOUT_MS
+        );
         context.after(() => client.close());
         const failure = yield* Effect.flip(
-          client.checkPermission(v1.CheckPermissionRequest.create({})),
+          client.checkPermission(v1.CheckPermissionRequest.create({}))
         );
         assert.ok(Schema.is(SpiceDbPermissionClientError)(failure));
         assert.equal(failure.reason.includes(cause.message), false);
-        assert.equal(Object.getOwnPropertyDescriptor(failure, 'cause')?.value, cause);
+        assert.equal(
+          Object.getOwnPropertyDescriptor(failure, 'cause')?.value,
+          cause
+        );
       }),
-    runEffectTestPromise,
-  ),
+    runEffectTestPromise
+  )
 );
 
 test(
@@ -93,15 +113,26 @@ test(
   flow(
     (context) =>
       Effect.gen(function* checksPermissionDeadline() {
-        context.mock.method(v1.PermissionsServiceClient.prototype, 'checkPermission', () => {});
-        const client = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
+        context.mock.method(
+          v1.PermissionsServiceClient.prototype,
+          'checkPermission',
+          () => {}
+        );
+        const client = createSpiceDbPermissionClient(
+          configuration,
+          SPICEDB_CHECK_TIMEOUT_MS
+        );
         context.after(() => client.close());
         const failure = yield* Effect.flip(
-          client.checkPermission(v1.CheckPermissionRequest.create({})),
+          client.checkPermission(v1.CheckPermissionRequest.create({}))
         );
         assert.ok(Schema.is(SpiceDbPermissionClientError)(failure));
-        assert.ok(Cause.isTimeoutError(Object.getOwnPropertyDescriptor(failure, 'cause')?.value));
+        assert.ok(
+          Cause.isTimeoutError(
+            Object.getOwnPropertyDescriptor(failure, 'cause')?.value
+          )
+        );
       }),
-    runEffectTestPromise,
-  ),
+    runEffectTestPromise
+  )
 );
