@@ -21,6 +21,7 @@ zerops:
         - 'app/pnpm-lock.yaml'
         - 'app/pnpm-workspace.yaml'
         - 'app/scripts'
+        - 'app/tsconfig.base.json'
         - 'app/verticals/party-registry'
     deploy:
       temporaryShutdown: false
