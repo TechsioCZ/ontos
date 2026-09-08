@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts';
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/api.ts';
-import { runBrowserEffect } from '../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/page.data.ts';
 
 const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
@@ -60,7 +60,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     }
     setLogoutPending(true);
     setLogoutFailed(false);
-    void runBrowserEffect(
+    void browserRuntime.runPromise(
       signOut({ locale: language }).pipe(
         Effect.andThen(
           Effect.tryPromise(() =>
@@ -88,7 +88,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
   ) => {
     setPending(true);
     setFailed(false);
-    void runBrowserEffect(
+    void browserRuntime.runPromise(
       switching.pipe(
         Effect.matchEffect({
           onFailure: (error) => Effect.succeed(switchFailureState(error)),

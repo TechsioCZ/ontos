@@ -1,7 +1,5 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { Effect, Predicate, Schema, Struct } from 'effect';
 import type { Cause } from 'effect';
 import {
   OutboxClaimLostError,
@@ -31,47 +29,47 @@ const checkErrorContract = <Failure extends Cause.YieldableError>(
   failure: Failure,
   encoded: { readonly _tag: string; readonly code: string; readonly reason: string },
 ): void => {
-  void test(
-    `${encoded._tag} preserves its schema and yieldable failure contract`,
-    makeEffectTestCallback(
-      Effect.gen(function* errorContract() {
-        assert.ok(Schema.is(schema)(failure));
-        assert.deepEqual(yield* Schema.encodeEffect(schema)(failure), encoded);
-        const decoded = yield* Schema.decodeUnknownEffect(schema)(encoded);
-        assert.ok(Schema.is(schema)(decoded));
-        assert.deepEqual(yield* Schema.encodeEffect(schema)(decoded), encoded);
-        for (const otherSchema of errorSchemas) {
-          assert.equal(Schema.is(otherSchema)(failure), Object.is(otherSchema, schema));
-          assert.equal(Schema.is(otherSchema)(decoded), Object.is(otherSchema, schema));
-        }
-        assert.throws(() => Schema.decodeUnknownSync(schema)({ ...encoded, _tag: 'WrongError' }));
-        assert.throws(() => Schema.decodeUnknownSync(schema)({ ...encoded, code: 'wrong_code' }));
-        assert.throws(() => Schema.decodeUnknownSync(schema)({ ...encoded, reason: 42 }));
-        assert.throws(() =>
-          Schema.decodeUnknownSync(schema)({ _tag: encoded._tag, code: encoded.code }),
-        );
-        const yielded = yield* Effect.flip(
-          Effect.gen(function* yieldFailure() {
-            assert.ok(Schema.is(schema)(failure));
-            return yield* failure;
-          }),
-        );
-        assert.equal(yielded, failure);
-        const decodedFailure = yield* Effect.flip(
-          Effect.gen(function* yieldDecodedFailure() {
-            assert.ok(Schema.is(schema)(decoded));
-            return yield* decoded;
-          }),
-        );
-        assert.equal(decodedFailure, decoded);
-      }),
-    ),
+  it.effect(`${encoded._tag} preserves its schema and yieldable failure contract`, () =>
+    Effect.gen(function* errorContract() {
+      expect(Schema.is(schema)(failure)).toBeTruthy();
+      expect(yield* Schema.encodeEffect(schema)(failure)).toEqual(encoded);
+      const decoded = yield* Schema.decodeUnknownEffect(schema)(encoded);
+      expect(Schema.is(schema)(decoded)).toBeTruthy();
+      expect(yield* Schema.encodeEffect(schema)(decoded)).toEqual(encoded);
+      for (const otherSchema of errorSchemas) {
+        expect(Schema.is(otherSchema)(failure)).toBe(Object.is(otherSchema, schema));
+        expect(Schema.is(otherSchema)(decoded)).toBe(Object.is(otherSchema, schema));
+      }
+      expect(() => Schema.decodeUnknownSync(schema)({ ...encoded, _tag: 'WrongError' })).toThrow();
+      expect(() => Schema.decodeUnknownSync(schema)({ ...encoded, code: 'wrong_code' })).toThrow();
+      expect(() => Schema.decodeUnknownSync(schema)({ ...encoded, reason: 42 })).toThrow();
+      expect(() =>
+        Schema.decodeUnknownSync(schema)({ _tag: encoded._tag, code: encoded.code }),
+      ).toThrow();
+      const yielded = yield* Effect.flip(
+        Effect.gen(function* yieldFailure() {
+          expect(Schema.is(schema)(failure)).toBeTruthy();
+          return yield* failure;
+        }),
+      );
+      expect(yielded).toBe(failure);
+      const decodedFailure = yield* Effect.flip(
+        Effect.gen(function* yieldDecodedFailure() {
+          expect(Schema.is(schema)(decoded)).toBeTruthy();
+          return yield* decoded;
+        }),
+      );
+      expect(decodedFailure).toBe(decoded);
+    }),
   );
 };
 
 checkErrorContract(
   OutboxWorkerDescriptorError,
-  new OutboxWorkerDescriptorError({ code: 'outbox_worker_descriptor_invalid', reason: 'detail' }),
+  new OutboxWorkerDescriptorError({
+    code: 'outbox_worker_descriptor_invalid',
+    reason: 'detail',
+  }),
   {
     _tag: 'OutboxWorkerDescriptorError',
     code: 'outbox_worker_descriptor_invalid',
@@ -95,7 +93,10 @@ checkErrorContract(
 );
 checkErrorContract(
   OutboxHandlerExecutionError,
-  new OutboxHandlerExecutionError({ code: 'outbox_handler_execution_failed', reason: 'detail' }),
+  new OutboxHandlerExecutionError({
+    code: 'outbox_handler_execution_failed',
+    reason: 'detail',
+  }),
   {
     _tag: 'OutboxHandlerExecutionError',
     code: 'outbox_handler_execution_failed',
@@ -108,44 +109,41 @@ checkErrorContract(
   { _tag: 'OutboxPollerConfigError', code: 'outbox_poller_config_invalid', reason: 'detail' },
 );
 
-void test('persistence errors keep the original cause private and immutable', () => {
+it('persistence errors keep the original cause private and immutable', () => {
   const cause = { secret: 'database credential' };
   const failure = outboxPersistenceError(cause);
-  assert.ok(Schema.is(OutboxPersistenceError)(failure));
-  assert.deepEqual(Object.getOwnPropertyDescriptor(failure, 'ontosOutboxPersistenceCause'), {
+  expect(Schema.is(OutboxPersistenceError)(failure)).toBeTruthy();
+  expect(Object.getOwnPropertyDescriptor(failure, 'ontosOutboxPersistenceCause')).toEqual({
     configurable: false,
     enumerable: false,
     value: cause,
     writable: false,
   });
-  assert.equal(
-    Object.getOwnPropertyDescriptor(failure, 'ontosOutboxPersistenceCause')?.value,
+  expect(Object.getOwnPropertyDescriptor(failure, 'ontosOutboxPersistenceCause')?.value).toBe(
     cause,
   );
-  assert.equal(Object.keys(failure).includes('ontosOutboxPersistenceCause'), false);
-  assert.equal(JSON.stringify(failure).includes('database credential'), false);
+  expect(Object.keys(failure).includes('ontosOutboxPersistenceCause')).toBe(false);
+  expect(JSON.stringify(failure).includes('database credential')).toBe(false);
   const encoded = Schema.encodeSync(OutboxPersistenceError)(failure);
-  assert.deepEqual(encoded, {
-    _tag: 'OutboxPersistenceError',
+  expect(Predicate.isTagged(encoded, 'OutboxPersistenceError')).toBe(true);
+  expect(Struct.omit(encoded, ['_tag'])).toEqual({
     code: 'outbox_persistence_failed',
     reason: 'The Outbox Worker persistence operation failed',
   });
-  assert.equal(
+  expect(
     Object.hasOwn(
       Schema.decodeUnknownSync(OutboxPersistenceError)(encoded),
       'ontosOutboxPersistenceCause',
     ),
-    false,
-  );
+  ).toBe(false);
 });
 
-void test('sanitizer normalizes control whitespace, trims, truncates and falls back', () => {
-  assert.equal(
-    sanitizeOutboxErrorMessage(' \r\nfirst\r\n\tsecond\t third \n'),
+it('sanitizer normalizes control whitespace, trims, truncates and falls back', () => {
+  expect(sanitizeOutboxErrorMessage(' \r\nfirst\r\n\tsecond\t third \n')).toBe(
     'first second  third',
   );
-  assert.equal(sanitizeOutboxErrorMessage('  plain  detail  '), 'plain  detail');
-  assert.equal(sanitizeOutboxErrorMessage(`  ${'x'.repeat(501)}  `), 'x'.repeat(500));
-  assert.equal(sanitizeOutboxErrorMessage(' \r\n\t '), 'Outbox Worker processing failed');
-  assert.equal(sanitizeOutboxErrorMessage(''), 'Outbox Worker processing failed');
+  expect(sanitizeOutboxErrorMessage('  plain  detail  ')).toBe('plain  detail');
+  expect(sanitizeOutboxErrorMessage(`  ${'x'.repeat(501)}  `)).toBe('x'.repeat(500));
+  expect(sanitizeOutboxErrorMessage(' \r\n\t ')).toBe('Outbox Worker processing failed');
+  expect(sanitizeOutboxErrorMessage('')).toBe('Outbox Worker processing failed');
 });

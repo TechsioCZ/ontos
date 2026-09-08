@@ -5,7 +5,6 @@ import {
   Effect,
   Exit,
   FileSystem,
-  flow,
   ManagedRuntime,
   Order,
   Path,
@@ -376,7 +375,7 @@ const compareViolations = (
 
 const ViolationOrder = Order.make(compareViolations);
 
-const checkDatabaseAccessBoundariesEffect = (root: string) =>
+export const checkDatabaseAccessBoundaries = (root: string) =>
   Effect.gen(function* checkDatabaseAccessBoundariesProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -422,15 +421,6 @@ const checkDatabaseAccessBoundariesEffect = (root: string) =>
     return EffectArray.sort(violations, ViolationOrder);
   });
 
-const databaseAccessBoundaryRuntime = ManagedRuntime.make(NodeServices.layer);
-
-export const checkDatabaseAccessBoundaries: (
-  root: string,
-) => Promise<readonly DatabaseAccessViolation[]> = flow(
-  checkDatabaseAccessBoundariesEffect,
-  databaseAccessBoundaryRuntime.runPromise,
-);
-
 class DatabaseAccessBoundaryCheckFailed extends Schema.TaggedError<DatabaseAccessBoundaryCheckFailed>()(
   'DatabaseAccessBoundaryCheckFailed',
   { violationCount: Schema.Number },
@@ -438,7 +428,7 @@ class DatabaseAccessBoundaryCheckFailed extends Schema.TaggedError<DatabaseAcces
 
 const main = Effect.gen(function* databaseAccessBoundaryMain() {
   const path = yield* Path.Path;
-  const violations = yield* checkDatabaseAccessBoundariesEffect(path.resolve(process.cwd()));
+  const violations = yield* checkDatabaseAccessBoundaries(path.resolve(process.cwd()));
   if (violations.length > 0) {
     yield* Effect.all(
       violations.map((violation) =>
@@ -455,6 +445,7 @@ const main = Effect.gen(function* databaseAccessBoundaryMain() {
 
 const [, invokedPath] = process.argv;
 if (invokedPath === import.meta.filename) {
+  const databaseAccessBoundaryRuntime = ManagedRuntime.make(NodeServices.layer);
   const exit = await databaseAccessBoundaryRuntime.runPromiseExit(main);
   process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
 }

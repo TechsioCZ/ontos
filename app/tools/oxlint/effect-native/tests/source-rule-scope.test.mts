@@ -1,52 +1,58 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { isSourceRuleInScope } from '../shared/source-rule-scope.ts';
 
 const defaults = {
-  includePaths: ['apps/**', 'packages/**', 'verticals/**'],
   ignore: [],
+  includePaths: ['apps/**', 'packages/**', 'verticals/**'],
   includeScripts: false,
   includeTests: false,
 };
 
-test('source rule scope applies include and ignore gates before opt-ins', () => {
-  assert.equal(isSourceRuleInScope('apps/example/src/main.ts', defaults), true);
-  assert.equal(isSourceRuleInScope('tools/example.ts', defaults), false);
-  assert.equal(
-    isSourceRuleInScope('apps/example/src/main.ts', { ...defaults, ignore: ['apps/**'] }),
-    false,
-  );
-  assert.equal(
-    isSourceRuleInScope('scripts/main.ts', { ...defaults, includeScripts: true }),
-    false,
-  );
+it('source rule scope applies include and ignore gates before opt-ins', () => {
+  expect(isSourceRuleInScope('apps/example/src/main.ts', defaults)).toBe(true);
+  expect(isSourceRuleInScope('tools/example.ts', defaults)).toBe(false);
+  expect(
+    isSourceRuleInScope('apps/example/src/main.ts', {
+      ...defaults,
+      ignore: ['apps/**'],
+    }),
+  ).toBe(false);
+  expect(
+    isSourceRuleInScope('scripts/main.ts', {
+      ...defaults,
+      includeScripts: true,
+    }),
+  ).toBe(false);
 });
 
-test('source rule scope independently gates scripts and tests', () => {
-  const defaults = {
-    includePaths: ['apps/**', 'scripts/**'],
+it('source rule scope independently gates scripts and tests', () => {
+  const scriptDefaults = {
     ignore: [],
+    includePaths: ['apps/**', 'scripts/**'],
     includeScripts: false,
     includeTests: false,
   };
   const script = 'scripts/main.ts';
   const testFile = 'apps/example/src/main.test.ts';
   const scriptTest = 'scripts/main.test.ts';
-  assert.equal(isSourceRuleInScope(script, defaults), false);
-  assert.equal(isSourceRuleInScope(script, { ...defaults, includeScripts: true }), true);
-  assert.equal(isSourceRuleInScope(testFile, defaults), false);
-  assert.equal(isSourceRuleInScope(testFile, { ...defaults, includeTests: true }), true);
-  assert.equal(isSourceRuleInScope(scriptTest, { ...defaults, includeScripts: true }), false);
-  assert.equal(isSourceRuleInScope(scriptTest, { ...defaults, includeTests: true }), false);
-  assert.equal(
-    isSourceRuleInScope(scriptTest, { ...defaults, includeScripts: true, includeTests: true }),
-    true,
-  );
+  expect(isSourceRuleInScope(script, scriptDefaults)).toBe(false);
+  expect(isSourceRuleInScope(script, { ...scriptDefaults, includeScripts: true })).toBe(true);
+  expect(isSourceRuleInScope(testFile, scriptDefaults)).toBe(false);
+  expect(isSourceRuleInScope(testFile, { ...scriptDefaults, includeTests: true })).toBe(true);
+  expect(isSourceRuleInScope(scriptTest, { ...scriptDefaults, includeScripts: true })).toBe(false);
+  expect(isSourceRuleInScope(scriptTest, { ...scriptDefaults, includeTests: true })).toBe(false);
+  expect(
+    isSourceRuleInScope(scriptTest, {
+      ...scriptDefaults,
+      includeScripts: true,
+      includeTests: true,
+    }),
+  ).toBe(true);
 });
 
-test('source rule scope preserves fixture path normalization', () => {
+it('source rule scope preserves fixture path normalization', () => {
   const prefix = 'tools/oxlint/effect-native/tests/fixtures/no-dependency-parameters/invalid/';
-  assert.equal(isSourceRuleInScope(`${prefix}apps/example/src/main.ts`, defaults), true);
-  assert.equal(isSourceRuleInScope(`${prefix}apps/example/src/main.test.ts`, defaults), false);
+  expect(isSourceRuleInScope(`${prefix}apps/example/src/main.ts`, defaults)).toBe(true);
+  expect(isSourceRuleInScope(`${prefix}apps/example/src/main.test.ts`, defaults)).toBe(false);
 });

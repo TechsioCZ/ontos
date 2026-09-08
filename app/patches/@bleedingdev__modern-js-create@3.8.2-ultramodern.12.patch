@@ -3200,7 +3200,6 @@ index 04820fd4264e7df2d2fa5c803df181e3e1401a34..3eb4b2387a43ba4a163f93b3dc309df3
 -  },
 +  }),
 diff --git a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
-index d606a2265cb438d32a612cfdd6ebb9561529d4f5..624bf77fa44f720c9ee394f138273b2461e906ba 100644
 --- a/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
 +++ b/templates/workspace-scripts/check-ultramodern-api-boundaries.mts
 @@ -1,6 +1,10 @@
@@ -3222,10 +3221,14 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..624bf77fa44f720c9ee394f138273b24
    'node_modules',
    'repos',
  ]);
-@@ -182,11 +187,1184 @@ for (const file of textFiles) {
+@@ -181,12 +186,1187 @@ for (const file of textFiles) {
+   );
  }
  
- const verticalDirectories = listDirectories('verticals');
+-const verticalDirectories = listDirectories('verticals');
++const verticalDirectories = listDirectories('verticals').filter(verticalPath =>
++  exists(`${verticalPath}/package.json`),
++);
 +const topology = exists('topology/reference-topology.json')
 +  ? JSON.parse(readText('topology/reference-topology.json'))
 +  : { verticals: [] };
@@ -4407,7 +4410,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..624bf77fa44f720c9ee394f138273b24
  function assertApiSurface(appPath) {
    const apiEntry = `${appPath}/api/index.ts`;
    const backendEffectExpose = `${appPath}/api/effect-api.ts`;
-@@ -211,30 +1389,28 @@ function assertApiSurface(appPath) {
+@@ -211,30 +1391,28 @@ function assertApiSurface(appPath) {
  
    if (exists(apiEntry)) {
      const entry = readText(apiEntry);
@@ -4452,7 +4455,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..624bf77fa44f720c9ee394f138273b24
    }
   if (exists(backendEffectExpose)) {
   const backendExpose = readText(backendEffectExpose);
-@@ -300,6 +1476,62 @@ function assertApiSurface(appPath) {
+@@ -300,6 +1478,62 @@ function assertApiSurface(appPath) {
        /\bSchema\./u,
        'must use Schema for request, response and error shapes.',
      );
@@ -4515,7 +4518,7 @@ index d606a2265cb438d32a612cfdd6ebb9561529d4f5..624bf77fa44f720c9ee394f138273b24
    }
  
    if (exists(modernConfig)) {
-@@ -373,7 +1605,6 @@ if (exists('package.json')) {
+@@ -373,7 +1607,6 @@ if (exists('package.json')) {
  }
  
  if (exists('topology/reference-topology.json')) {

@@ -4,17 +4,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
-import {
-  Effect,
-  Exit,
-  FileSystem,
-  flow,
-  ManagedRuntime,
-  Path,
-  Predicate,
-  Schema,
-  Stream,
-} from 'effect';
+import { Effect, Exit, FileSystem, ManagedRuntime, Path, Predicate, Schema, Stream } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { HttpApi } from 'effect/unstable/httpapi';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
@@ -28,7 +18,6 @@ import {
   extractVerticalRuntimeSafeDescriptors,
 } from '../packages/core-runtime/src/index.ts';
 import type {
-  OntosModuleDeploymentContract,
   OntosModuleManifest,
   VerticalRuntimeRegistration,
 } from '../packages/core-runtime/src/index.ts';
@@ -134,7 +123,6 @@ const outputRootByTarget: Readonly<Record<OntosModuleContractTarget, string>> = 
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 const require = createRequire(import.meta.url);
-const moduleContractRuntime = ManagedRuntime.make(NodeServices.layer);
 
 const failure = (message: string, cause?: unknown): OntosModuleContractGenerationError =>
   new OntosModuleContractGenerationError({ cause, message });
@@ -478,7 +466,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
     );
   });
 
-const deriveOntosModuleDeploymentContractEffect = (input: DeriveOntosModuleContractInput) =>
+export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleContractInput) =>
   Effect.gen(function* deriveDeploymentContractProgram() {
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(
@@ -492,14 +480,8 @@ const deriveOntosModuleDeploymentContractEffect = (input: DeriveOntosModuleContr
   });
 
 /** Derives and validates one contract without writing deployment output. */
-export const deriveOntosModuleDeploymentContract: (
-  input: DeriveOntosModuleContractInput,
-) => Promise<OntosModuleDeploymentContract> = flow(
-  deriveOntosModuleDeploymentContractEffect,
-  moduleContractRuntime.runPromise,
-);
 
-const generateOntosModuleContractEffect = (input: GenerateInput) =>
+export const generateOntosModuleContract = (input: GenerateInput) =>
   Effect.gen(function* generateContractProgram() {
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
@@ -511,7 +493,7 @@ const generateOntosModuleContractEffect = (input: GenerateInput) =>
       input.target,
     ).pipe(Effect.mapError(() => failure('target must be dist or cloudflare-dist')));
     const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
-    const contract = yield* deriveOntosModuleDeploymentContractEffect({ vertical, workspaceRoot });
+    const contract = yield* deriveOntosModuleDeploymentContract({ vertical, workspaceRoot });
     const encodedContract = yield* Schema.encodeEffect(ContractJsonTextSchema)(contract).pipe(
       Effect.mapError((cause) => failure('unable to encode the OntOS module contract', cause)),
     );
@@ -564,20 +546,13 @@ const generateOntosModuleContractEffect = (input: GenerateInput) =>
     return { bytes, etag, path: outputPath };
   });
 
-export const generateOntosModuleContract: (
-  input: GenerateInput,
-) => Promise<{ readonly bytes: number; readonly etag: string; readonly path: string }> = flow(
-  generateOntosModuleContractEffect,
-  moduleContractRuntime.runPromise,
-);
-
 const verticalFlag = Flag.string('vertical');
 const targetFlag = Flag.choice('target', ['cloudflare-dist', 'dist']);
 const cli = Command.make(
   'generate-ontos-module-contract',
   { target: targetFlag, vertical: verticalFlag },
   ({ target, vertical }) =>
-    generateOntosModuleContractEffect({ target, vertical }).pipe(
+    generateOntosModuleContract({ target, vertical }).pipe(
       Effect.flatMap((result) =>
         Effect.logInfo(`Generated ${result.path} (${result.bytes} bytes, ETag ${result.etag})`),
       ),
@@ -588,6 +563,7 @@ if (
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
+  const moduleContractRuntime = ManagedRuntime.make(NodeServices.layer);
   const exit = await moduleContractRuntime.runPromiseExit(
     Command.run({ version: '1.0.0' })(cli).pipe(Effect.tapError((error) => Effect.logError(error))),
   );

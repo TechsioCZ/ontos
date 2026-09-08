@@ -8,7 +8,7 @@ import {
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { NodeFileSystem, NodePath } from '@effect/platform-node';
+import { NodeServices } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
@@ -336,14 +336,14 @@ export const deriveActivatedModuleIds = (
     const contracts = yield* Effect.forEach(
       activatedVerticals,
       (vertical) =>
-        Effect.tryPromise({
-          catch: () =>
+        deriveContract({ vertical, workspaceRoot }).pipe(
+          Effect.mapError(() =>
             failure(
               'local_contract_invalid',
               `The ${vertical} deployment contract could not be derived`,
             ),
-          try: async () => await deriveContract({ vertical, workspaceRoot }),
-        }),
+          ),
+        ),
       { concurrency: 'unbounded' },
     );
     const moduleIds = contracts.map((contract) => contract.manifest.module.id);
@@ -756,7 +756,7 @@ export const initializeLocalDevelopment = (
 ): Effect.Effect<
   LocalDevelopmentInitializationResult,
   LocalDevelopmentInitializationError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > =>
   Effect.gen(function* initialize() {
     const configuration =
@@ -833,9 +833,7 @@ if (
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
   const succeeded = await Effect.runPromise(
-    runLocalDevelopmentInitialization.pipe(
-      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
-    ),
+    runLocalDevelopmentInitialization.pipe(Effect.provide(NodeServices.layer)),
   );
   if (!succeeded) {
     process.exitCode = 1;

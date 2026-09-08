@@ -1,12 +1,13 @@
 /** The blessed driver edge: every Promise lives inside Effect.tryPromise / Effect.promise. */
 import { Effect } from "effect";
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as Eff from "effect/Effect";
 import * as E from "effect";
 import { tryPromise } from "effect/Effect";
 
 const executor = { insert: (rows: readonly string[]) => Promise.resolve(rows) };
 const pool = { end: () => Promise.resolve() };
-const db = { transaction: <A>(run: (tx: unknown) => Promise<A>) => run({}) };
+const db = drizzle();
 const decodeFailure = (cause: unknown) => cause;
 
 export const insertAll = (rows: readonly string[]) =>

@@ -5,7 +5,7 @@ import { Effect, Predicate } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ApprovedVerticalPageComponent } from '../../../../api/vertical-clients.ts';
 import { findApprovedVerticalPageClient } from '../../../../api/vertical-clients.ts';
-import { runBrowserEffect } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   resolveThenLoadModuleTarget,
   settleModuleEntrypointLoad,
@@ -38,7 +38,7 @@ const ResolvedTarget = ({
       return;
     }
     let current = true;
-    void runBrowserEffect(
+    void browserRuntime.runPromise(
       resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
         settleModuleEntrypointLoad(
           client.load,

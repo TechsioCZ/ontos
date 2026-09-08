@@ -66,7 +66,6 @@ export type LiveOperationFixtureConfiguration =
 class LiveOperationFixtureError extends Schema.TaggedError<LiveOperationFixtureError>()(
   'LiveOperationFixtureError',
   {
-    commitIndeterminate: Schema.optional(Schema.Literal(true)),
     reason: Schema.String,
   },
 ) {}

@@ -1,3 +1,4 @@
+import { rs } from 'effect-rstest';
 import { Effect } from 'effect';
 import type {
   SupportAuthProvider,
@@ -7,10 +8,6 @@ import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 
 const unconfiguredEffect = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
-const unconfiguredPromise = async (operation: string) => {
-  throw new Error(`${operation} is not configured in this test`);
-};
-
 const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
   createFixtureUser: () => unconfiguredEffect('createFixtureUser'),
@@ -24,9 +21,15 @@ const authenticationDefaults: AuthenticationServiceContract = {
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {
-  getSession: async () => await unconfiguredPromise('getSession'),
-  impersonateUser: async () => await unconfiguredPromise('impersonateUser'),
-  stopImpersonating: async () => await unconfiguredPromise('stopImpersonating'),
+  getSession: rs
+    .fn<SupportAuthProvider['api']['getSession']>()
+    .mockRejectedValue(new Error('getSession is not configured in this test')),
+  impersonateUser: rs
+    .fn<SupportAuthProvider['api']['impersonateUser']>()
+    .mockRejectedValue(new Error('impersonateUser is not configured in this test')),
+  stopImpersonating: rs
+    .fn<SupportAuthProvider['api']['stopImpersonating']>()
+    .mockRejectedValue(new Error('stopImpersonating is not configured in this test')),
 };
 
 const storeDefaults: SupportImpersonationStore = {

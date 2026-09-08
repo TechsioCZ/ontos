@@ -1,4 +1,4 @@
-// expect-count: 4
+// expect-count: 5
 /** Evasion: the Promise-shaped service record is built anywhere inside a driver-callback subtree,
  *  which `atDriverEdge` blesses to an unbounded depth. Only the callback itself is forced. */
 const ready = Promise.resolve({ delete: (_id: string) => Promise.resolve(), load: (_id: string) => Promise.resolve("x") });

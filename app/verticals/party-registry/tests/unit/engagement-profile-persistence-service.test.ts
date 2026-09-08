@@ -1,15 +1,12 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-/* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
-import { DateTime, Effect } from 'effect';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import {
   organizationEngagementProfiles,
   personEngagementProfiles,
 } from '../../src/db/engagement-schema.ts';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { assert, expect, it } from 'effect-rstest';
+/* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
+import { DateTime, Effect, Match, Predicate } from 'effect';
 import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
 import {
   createOrganizationEngagementProfile,
@@ -56,35 +53,34 @@ const rejectingMutationTransaction = <Failure>(failure: Failure) =>
     }),
   }) as unknown as Parameters<typeof createOrganizationEngagementProfile>[0];
 
-test('reconstructs typed references from the owner-local persistence record', () => {
+it('reconstructs typed references from the owner-local persistence record', () => {
   const result = organizationEngagementProfileFromRecord(row);
-  assert.deepEqual(result.partyRef, refs.partyRef);
-  assert.deepEqual(result.counterpartyRef, refs.counterpartyRef);
-  assert.equal('name' in result, false);
-  assert.equal('ico' in result, false);
-  assert.equal(
+  expect(result.partyRef).toEqual(refs.partyRef);
+  expect(result.counterpartyRef).toEqual(refs.counterpartyRef);
+  expect('name' in result).toBe(false);
+  expect('ico' in result).toBe(false);
+  expect(
     organizationEngagementProfileFromRecord({ ...row, counterpartyResourceId: null })
       .counterpartyRef,
-    null,
-  );
+  ).toBe(null);
 });
 
-test('fails closed when a caller-supplied ref crosses the trusted tenant', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('fails closed when a caller-supplied ref crosses the trusted tenant', () =>
+  Effect.gen(function* verifyCase2() {
+    const failure = yield* Effect.flip(
       ensureReferencesBelongToTenant(tenantId, {
         ...refs,
         partyRef: { ...refs.partyRef, tenantId: 'c9000000-0000-4000-8000-000000000001' },
       }),
-    ),
-  );
-  assert.equal(failure._tag, 'EngagementProfileConflict');
-  assert.equal(failure.code, 'contacts_party_counterparty_mismatch');
-});
+    );
+    expect(Predicate.isTagged(failure, 'EngagementProfileConflict')).toBe(true);
+    expect(failure.code).toBe('contacts_party_counterparty_mismatch');
+  }),
+);
 
-test('maps a wrapped owner uniqueness constraint to the declared engagement conflict', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('maps a wrapped owner uniqueness constraint to the declared engagement conflict', () =>
+  Effect.gen(function* verifyCase3() {
+    const failure = yield* Effect.flip(
       createOrganizationEngagementProfile(
         rejectingMutationTransaction({
           cause: {
@@ -96,20 +92,19 @@ test('maps a wrapped owner uniqueness constraint to the declared engagement conf
         }),
         { ...refs, tenantId },
       ),
-    ),
-  );
+    );
 
-  assert.equal(failure._tag, 'EngagementProfileConflict');
-  assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
-  assert.equal(
-    failure.reason,
-    'An engagement profile already exists for these canonical references',
-  );
-});
+    expect(Predicate.isTagged(failure, 'EngagementProfileConflict')).toBe(true);
+    expect(failure.code).toBe('contacts_engagement_profile_already_exists');
+    expect(failure.reason).toBe(
+      'An engagement profile already exists for these canonical references',
+    );
+  }),
+);
 
-test('continues past an unrelated wrapper code to the owner uniqueness constraint', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('continues past an unrelated wrapper code to the owner uniqueness constraint', () =>
+  Effect.gen(function* verifyCase4() {
+    const failure = yield* Effect.flip(
       createOrganizationEngagementProfile(
         rejectingMutationTransaction({
           code: 'ERR_QUERY_FAILED',
@@ -120,16 +115,16 @@ test('continues past an unrelated wrapper code to the owner uniqueness constrain
         }),
         { ...refs, tenantId },
       ),
-    ),
-  );
+    );
 
-  assert.equal(failure._tag, 'EngagementProfileConflict');
-  assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
-});
+    expect(Predicate.isTagged(failure, 'EngagementProfileConflict')).toBe(true);
+    expect(failure.code).toBe('contacts_engagement_profile_already_exists');
+  }),
+);
 
-test('maps an unrelated uniqueness constraint to the existing persistence fallback', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('maps an unrelated uniqueness constraint to the existing persistence fallback', () =>
+  Effect.gen(function* verifyCase5() {
+    const failure = yield* Effect.flip(
       createOrganizationEngagementProfile(
         rejectingMutationTransaction({
           code: '23505',
@@ -137,16 +132,15 @@ test('maps an unrelated uniqueness constraint to the existing persistence fallba
         }),
         { ...refs, tenantId },
       ),
-    ),
-  );
+    );
 
-  assert.equal(failure._tag, 'EngagementProfilePersistenceUnavailable');
-  assert.equal(failure.code, 'contacts_engagement_profile_persistence_unavailable');
-  assert.equal(
-    failure.reason,
-    'Contacts engagement profile persistence is temporarily unavailable',
-  );
-});
+    expect(Predicate.isTagged(failure, 'EngagementProfilePersistenceUnavailable')).toBe(true);
+    expect(failure.code).toBe('contacts_engagement_profile_persistence_unavailable');
+    expect(failure.reason).toBe(
+      'Contacts engagement profile persistence is temporarily unavailable',
+    );
+  }),
+);
 
 const profileKinds = [
   {
@@ -166,8 +160,9 @@ const profileKinds = [
 ] as const;
 
 for (const kind of profileKinds) {
-  test(`${kind.resourceType} binds creation, lookup and lifecycle to its own tenant-qualified table`, () =>
-    runEffectTestPromise(
+  it.effect(
+    `${kind.resourceType} binds creation, lookup and lifecycle to its own tenant-qualified table`,
+    () =>
       Effect.gen(function* verifyProfilePersistence() {
         let current: OrganizationEngagementProfileRecord | undefined = row;
         let writes = 0;
@@ -234,13 +229,26 @@ for (const kind of profileKinds) {
         } as unknown as Parameters<typeof createOrganizationEngagementProfile>[0];
         const created = yield* kind.create(transaction, { ...refs, tenantId });
         assert.equal(created.profileRef.resourceType, kind.resourceType);
-        assert.deepEqual(yield* kind.find(transaction, tenantId, row.engagementProfileId), {
-          _tag: 'found',
-          value: created,
-        });
+        const found = yield* kind.find(transaction, tenantId, row.engagementProfileId);
         assert.deepEqual(
-          yield* kind.transition(transaction, tenantId, row.engagementProfileId, 'active'),
-          { _tag: 'conflict', value: created },
+          Match.value(found).pipe(
+            Match.tag('found', ({ value }) => value),
+            Match.orElse(() => expect.unreachable('Expected found profile')),
+          ),
+          created,
+        );
+        const conflict = yield* kind.transition(
+          transaction,
+          tenantId,
+          row.engagementProfileId,
+          'active',
+        );
+        assert.deepEqual(
+          Match.value(conflict).pipe(
+            Match.tag('conflict', ({ value }) => value),
+            Match.orElse(() => expect.unreachable('Expected conflicting profile')),
+          ),
+          created,
         );
         assert.equal(writes, 0);
         const archived = yield* kind.transition(
@@ -258,15 +266,20 @@ for (const kind of profileKinds) {
         assert.equal(current?.archivedAt, null);
         assert.equal(writes, 2);
         current = undefined;
-        assert.deepEqual(yield* kind.find(transaction, tenantId, row.engagementProfileId), {
-          _tag: 'not_found',
-        });
-        assert.deepEqual(
-          yield* kind.transition(transaction, tenantId, row.engagementProfileId, 'archived'),
-          { _tag: 'not_found' },
-        );
+        expect(
+          Predicate.isTagged(
+            yield* kind.find(transaction, tenantId, row.engagementProfileId),
+            'not_found',
+          ),
+        ).toBe(true);
+        expect(
+          Predicate.isTagged(
+            yield* kind.transition(transaction, tenantId, row.engagementProfileId, 'archived'),
+            'not_found',
+          ),
+        ).toBe(true);
         assert.equal(writes, 2);
         assert.equal(locks, 4);
       }),
-    ));
+  );
 }

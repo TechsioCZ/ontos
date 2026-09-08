@@ -1,7 +1,5 @@
-// @effect-diagnostics asyncFunction:off strictEffectProvide:off -- Node test and logger capture entrypoints; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { runEffectTestPromise } from '../../src/testing/effect-runtime.ts';
+// @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
+import { expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { ModuleStateCheckUnavailableError } from '../../src/modules/module-state-check-unavailable-error.ts';
@@ -105,15 +103,15 @@ const coreFailures: readonly [
   [new ReadResultValidationError({ code: 'read_result_invalid', reason }), problems.internal()],
 ];
 
-test('classifies every Core governed-read failure through the endpoint problem set', () => {
+it('classifies every Core governed-read failure through the endpoint problem set', () => {
   for (const [failure, expected] of coreFailures) {
     const actual = classifyReadCoreError(failure, problems);
-    assert.equal(actual.kind, expected.kind, failure._tag);
-    assert.equal(actual.status, expected.status, failure._tag);
+    expect(actual.kind, JSON.stringify(failure)).toBe(expected.kind);
+    expect(actual.status, JSON.stringify(failure)).toBe(expected.status);
   }
 });
 
-test('preserves the explicit Policy denial HTTP status', () => {
+it('preserves the explicit Policy denial HTTP status', () => {
   for (const [httpStatus, expected] of [
     [409, 'policy-conflict'],
     [422, 'policy-ineligible'],
@@ -125,8 +123,8 @@ test('preserves the explicit Policy denial HTTP status', () => {
       reason,
     });
     const actual = classifyReadCoreError(failure, problems);
-    assert.equal(actual.kind, expected);
-    assert.equal(actual.status, httpStatus);
+    expect(actual.kind).toBe(expected);
+    expect(actual.status).toBe(httpStatus);
   }
 });
 
@@ -178,18 +176,18 @@ const readRuntime = {
 } as ReadRuntimeService;
 const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
 
-test('validates correlation before authentication or ReadRuntime acquisition', async () => {
-  let authenticationCalls = 0;
-  const handler = makeGovernedReadHttpHandler({
-    authenticatePrincipal: () => {
-      authenticationCalls += 1;
-      return Effect.succeed(principal);
-    },
-    problems,
-    registration,
-  });
-  const exit = await runEffectTestPromise(
-    Effect.exit(
+it.effect('validates correlation before authentication or ReadRuntime acquisition', () =>
+  Effect.gen(function* validateCorrelationFirst() {
+    let authenticationCalls = 0;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => {
+        authenticationCalls += 1;
+        return Effect.succeed(principal);
+      },
+      problems,
+      registration,
+    });
+    const exit = yield* Effect.exit(
       handler({
         payload: { query: 'fixture' },
         request: {
@@ -202,116 +200,120 @@ test('validates correlation before authentication or ReadRuntime acquisition', a
     ).pipe(
       Effect.provideService(ReadRuntime, readRuntime),
       Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-    ),
-  );
-  assert.equal(authenticationCalls, 0);
-  assert.equal(Exit.isFailure(exit), true);
-  if (Exit.isFailure(exit)) {
-    assert.deepEqual(Cause.squash(exit.cause), problems.invalid());
-  }
-});
+    );
+    expect(authenticationCalls).toBe(0);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toEqual(problems.invalid());
+    }
+  }),
+);
 
-test('sanitizes synchronous defects across correlation validation and authentication', async () => {
-  const cases = [
-    {
-      handler: makeGovernedReadHttpHandler({
-        authenticatePrincipal: () => Effect.succeed(principal),
-        problems: {
-          ...problems,
-          invalid: () => {
-            throw new Error('private invalid-problem factory detail');
+it.effect('sanitizes synchronous defects across correlation validation and authentication', () =>
+  Effect.gen(function* sanitizeSynchronousDefects() {
+    const cases = [
+      {
+        handler: makeGovernedReadHttpHandler({
+          authenticatePrincipal: () => Effect.succeed(principal),
+          problems: {
+            ...problems,
+            invalid: () => {
+              throw new Error('private invalid-problem factory detail');
+            },
           },
-        },
-        registration,
-      }),
-      headers: Headers.empty,
-    },
-    {
-      handler: makeGovernedReadHttpHandler({
-        authenticatePrincipal: (): Effect.Effect<typeof principal> => {
-          throw new Error('private authentication adapter detail');
+          registration,
+        }),
+        headers: Headers.empty,
+      },
+      {
+        handler: makeGovernedReadHttpHandler({
+          authenticatePrincipal: (): Effect.Effect<typeof principal> => {
+            throw new Error('private authentication adapter detail');
+          },
+          problems,
+          registration,
+        }),
+        headers: Headers.fromInput({ 'x-correlation-id': 'synchronous-defect' }),
+      },
+    ];
+    const exits = yield* Effect.forEach(
+      cases,
+      ({ handler, headers }) =>
+        Effect.exit(handler({ payload: { query: 'fixture' }, request: { headers } })).pipe(
+          Effect.provideService(ReadRuntime, readRuntime),
+          Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+        ),
+      { concurrency: 'unbounded' },
+    );
+    for (const exit of exits) {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const publicFailure = Cause.squash(exit.cause);
+        expect(publicFailure).toEqual(problems.internal());
+        expect(
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure),
+        ).not.toMatch(/private/u);
+      }
+    }
+  }),
+);
+
+it.effect(
+  'passes only payload, trusted principal, registration, and correlation to ReadRuntime',
+  () =>
+    Effect.gen(function* forwardTrustedReadInputs() {
+      const payload = { query: 'fixture' };
+      observed.length = 0;
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: (authorization) => {
+          expect(Redacted.value(authorization)).toBe('Bearer private');
+          return Effect.succeed(principal);
         },
         problems,
         registration,
-      }),
-      headers: Headers.fromInput({ 'x-correlation-id': 'synchronous-defect' }),
-    },
-  ];
-  const exits = await Promise.all(
-    cases.map(
-      async ({ handler, headers }) =>
-        await runEffectTestPromise(
-          Effect.exit(handler({ payload: { query: 'fixture' }, request: { headers } })).pipe(
-            Effect.provideService(ReadRuntime, readRuntime),
-            Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-          ),
-        ),
-    ),
-  );
-  for (const exit of exits) {
-    assert.equal(Exit.isFailure(exit), true);
-    if (Exit.isFailure(exit)) {
-      const publicFailure = Cause.squash(exit.cause);
-      assert.deepEqual(publicFailure, problems.internal());
-      assert.doesNotMatch(JSON.stringify(publicFailure), /private/u);
-    }
-  }
-});
+      });
+      const assertDecodedPayloadInput = () =>
+        // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
+        handler({ payload: { query: 123 }, request: { headers: Headers.empty } });
+      void assertDecodedPayloadInput;
+      const result = yield* handler({
+        payload,
+        request: {
+          headers: Headers.fromInput({
+            authorization: 'Bearer private',
+            'x-correlation-id': 'correlation-test',
+          }),
+        },
+      }).pipe(
+        Effect.provideService(ReadRuntime, readRuntime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+      );
+      expect(result).toEqual({ ok: true });
+      expect(observed).toEqual([
+        {
+          input: payload,
+          principal,
+          registration,
+          transport: { correlationId: 'correlation-test' },
+        },
+      ]);
+    }),
+);
 
-test('passes only payload, trusted principal, registration, and correlation to ReadRuntime', async () => {
-  const payload = { query: 'fixture' };
-  observed.length = 0;
-  const handler = makeGovernedReadHttpHandler({
-    authenticatePrincipal: (authorization) => {
-      assert.equal(Redacted.value(authorization), 'Bearer private');
-      return Effect.succeed(principal);
-    },
-    problems,
-    registration,
-  });
-  const assertDecodedPayloadInput = () =>
-    // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
-    handler({ payload: { query: 123 }, request: { headers: Headers.empty } });
-  void assertDecodedPayloadInput;
-  const result = await runEffectTestPromise(
-    handler({
-      payload,
-      request: {
-        headers: Headers.fromInput({
-          authorization: 'Bearer private',
-          'x-correlation-id': 'correlation-test',
-        }),
-      },
-    }).pipe(
-      Effect.provideService(ReadRuntime, readRuntime),
-      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
-    ),
-  );
-  assert.deepEqual(result, { ok: true });
-  assert.deepEqual(observed, [
-    {
-      input: payload,
-      principal,
+it.effect('sanitizes unexpected defects at the complete governed handler boundary', () =>
+  Effect.gen(function* sanitizeHandlerDefects() {
+    // SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
+    // other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
+    const defectRuntime = {
+      runRead: () => Effect.die(new Error('private database connection detail')),
+    } as ReadRuntimeService;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => Effect.succeed(principal),
+      problems,
       registration,
-      transport: { correlationId: 'correlation-test' },
-    },
-  ]);
-});
-
-test('sanitizes unexpected defects at the complete governed handler boundary', async () => {
-  // SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
-  // other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
-  const defectRuntime = {
-    runRead: () => Effect.die(new Error('private database connection detail')),
-  } as ReadRuntimeService;
-  const handler = makeGovernedReadHttpHandler({
-    authenticatePrincipal: () => Effect.succeed(principal),
-    problems,
-    registration,
-  });
-  const logEntries: string[] = [];
-  const exit = await runEffectTestPromise(
-    Effect.exit(
+    });
+    const logEntries: string[] = [];
+    const exit = yield* Effect.exit(
       handler({
         payload: { query: 'fixture' },
         request: {
@@ -322,15 +324,17 @@ test('sanitizes unexpected defects at the complete governed handler boundary', a
       Effect.provideService(ReadRuntime, defectRuntime),
       Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
       Effect.provide(capturedLoggerLayer(logEntries)),
-    ),
-  );
-  assert.equal(Exit.isFailure(exit), true);
-  if (Exit.isFailure(exit)) {
-    const publicFailure = Cause.squash(exit.cause);
-    assert.deepEqual(publicFailure, problems.internal());
-    assert.doesNotMatch(JSON.stringify(publicFailure), /private database connection detail/u);
-  }
-  assert.equal(logEntries.length, 1);
-  assert.doesNotMatch(logEntries.join('\n'), /private database connection detail/u);
-  assert.match(logEntries[0] ?? '', /correlation-defect/u);
-});
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const publicFailure = Cause.squash(exit.cause);
+      expect(publicFailure).toEqual(problems.internal());
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure),
+      ).not.toMatch(/private database connection detail/u);
+    }
+    expect(logEntries.length).toBe(1);
+    expect(logEntries.join('\n')).not.toMatch(/private database connection detail/u);
+    expect(logEntries[0] ?? '').toMatch(/correlation-defect/u);
+  }),
+);

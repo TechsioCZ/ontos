@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { assert, it } from 'effect-rstest';
 import { Schema } from 'effect';
 import * as duplicateCase from '../../shared/resources/duplicate-candidate-case.ts';
 import * as correction from '../../shared/resources/party-correction.ts';
@@ -34,7 +33,7 @@ const resources = [
 ];
 
 for (const { descriptor, makeRef, schema, slug } of resources) {
-  test(`${slug} retains its own resource identity and timeline-only capabilities`, () => {
+  it(`${slug} retains its own resource identity and timeline-only capabilities`, () => {
     const tenantId = '10000000-0000-4000-8000-000000000001';
     const reference = makeRef(tenantId, 'resource-1');
     assert.deepEqual(reference, {

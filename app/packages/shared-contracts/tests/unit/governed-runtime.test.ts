@@ -1,12 +1,7 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect, Redacted, Schema, Result, flow } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { Effect, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
 import { FetchHttpClient } from 'effect/unstable/http';
-import {
-  makeEffectTestCallback,
-  runEffectTestPromise,
-} from '../../../core-runtime/src/testing/effect-runtime.ts';
 import { makeGovernedReadProblems } from '../../src/effect-bff-runtime.ts';
 import { makeGovernedEffectBffClient } from '../../src/client-runtime.ts';
 import {
@@ -36,7 +31,7 @@ const statuses = {
   unavailable: 503,
 } as const;
 
-test('shared problem factories preserve concrete schemas, statuses, retryability and sanitized values', () => {
+it('shared problem factories preserve concrete schemas, statuses, retryability and sanitized values', () => {
   for (const key of Object.keys(problems)) {
     // Decode the key rather than casting away the concrete schema/factory contract.
     const kind = Schema.decodeUnknownSync(
@@ -52,16 +47,15 @@ test('shared problem factories preserve concrete schemas, statuses, retryability
       ]),
     )(key);
     const problem = problems[kind]();
-    assert.equal(Schema.is(schemas[kind])(problem), true);
-    assert.equal(problem.status, statuses[kind]);
-    assert.equal('retryable' in problem, kind === 'unavailable');
-    assert.equal(problem.type.startsWith('https://ontos.dev/problems/'), true);
-    assert.notEqual(problems[kind](), problem);
+    expect(Schema.is(schemas[kind])(problem)).toBe(true);
+    expect(problem.status).toBe(statuses[kind]);
+    expect('retryable' in problem).toBe(kind === 'unavailable');
+    expect(problem.type.startsWith('https://ontos.dev/problems/')).toBe(true);
+    expect(problems[kind]()).not.toBe(problem);
   }
   const unavailable: typeof schemas.unavailable.Type = problems.unavailable();
-  assert.equal(unavailable.retryable, true);
-  assert.deepEqual(
-    problems.authentication(),
+  expect(unavailable.retryable).toBe(true);
+  expect(problems.authentication()).toEqual(
     schemas.authentication.make({
       detail: 'A valid audience-scoped Bearer assertion is required.',
       status: 401,
@@ -69,8 +63,7 @@ test('shared problem factories preserve concrete schemas, statuses, retryability
       type: 'https://ontos.dev/problems/operation-authentication-required',
     }),
   );
-  assert.deepEqual(
-    problems.internal(),
+  expect(problems.internal()).toEqual(
     schemas.internal.make({
       detail: 'The governed read could not be completed.',
       status: 500,
@@ -82,7 +75,10 @@ test('shared problem factories preserve concrete schemas, statuses, retryability
 
 const api = HttpApi.make('GovernedTransportTest').add(
   HttpApiGroup.make('read').add(
-    HttpApiEndpoint.get('execute', '/read', { error: schemas.unavailable, success: Schema.String }),
+    HttpApiEndpoint.get('execute', '/read', {
+      error: schemas.unavailable,
+      success: Schema.String,
+    }),
   ),
 );
 const makeClient = (credential: string, requestCorrelation: string, baseUrl: string | URL) =>
@@ -96,19 +92,15 @@ const makeClient = (credential: string, requestCorrelation: string, baseUrl: str
     { baseUrl },
   );
 
-test(
+it.effect(
   'shared transport is lazy and keeps each invocation credential, correlation and trusted URL',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* checkTransport() {
       const requests: Request[] = [];
-      const fetch: typeof globalThis.fetch = flow(
-        (input: RequestInfo | URL, init?: RequestInit) =>
-          Effect.sync(() => {
-            requests.push(new Request(input, init));
-            return Response.json('ok');
-          }),
-        runEffectTestPromise,
-      );
+      const fetch: typeof globalThis.fetch = (input, init) => {
+        requests.push(new Request(input, init));
+        return Promise.resolve(Response.json('ok'));
+      };
       const url = new URL('https://owner.example/custom');
       const first = makeClient('Bearer first', 'first-correlation', url);
       url.protocol = 'ftp:';
@@ -118,58 +110,51 @@ test(
         'second-correlation',
         'https://owner.example/custom',
       );
-      assert.equal(requests.length, 0);
+      expect(requests.length).toBe(0);
       for (const client of [first, second]) {
         const result = yield* client.pipe(
           Effect.flatMap((value) => value.read.execute({})),
           Effect.provideService(FetchHttpClient.Fetch, fetch),
         );
-        assert.equal(result, 'ok');
+        expect(result).toBe('ok');
       }
-      assert.deepEqual(
+      expect(
         requests.map((request) => [
           request.url,
           request.headers.get('authorization'),
           request.headers.get('x-correlation-id'),
         ]),
-        [
-          ['https://owner.example/custom/read', 'Bearer first', 'first-correlation'],
-          ['https://owner.example/custom/read', 'Bearer second', 'second-correlation'],
-        ],
-      );
+      ).toEqual([
+        ['https://owner.example/custom/read', 'Bearer first', 'first-correlation'],
+        ['https://owner.example/custom/read', 'Bearer second', 'second-correlation'],
+      ]);
     }),
-  ),
 );
 
-test(
-  'shared transport retains the concrete retryable backend error union',
-  makeEffectTestCallback(
-    Effect.gen(function* checkTypedFailure() {
-      const fetch: typeof globalThis.fetch = flow(
-        () =>
-          Effect.sync(() =>
-            Response.json(problems.unavailable(), {
-              headers: { 'content-type': 'application/problem+json' },
-              status: 503,
-            }),
-          ),
-        runEffectTestPromise,
+it.effect('shared transport retains the concrete retryable backend error union', () =>
+  Effect.gen(function* checkTypedFailure() {
+    const fetch: typeof globalThis.fetch = () =>
+      Promise.resolve(
+        Response.json(problems.unavailable(), {
+          headers: { 'content-type': 'application/problem+json' },
+          status: 503,
+        }),
       );
-      const result = yield* makeClient(
-        'Bearer proof',
-        'correlation',
-        'https://owner.example/api',
-      ).pipe(
-        Effect.flatMap((client) => client.read.execute({})),
-        Effect.provideService(FetchHttpClient.Fetch, fetch),
-        Effect.result,
-      );
-      assert.equal(Result.isFailure(result), true);
-      if (Result.isFailure(result)) {
-        assert.equal(Schema.is(schemas.unavailable)(result.failure), true);
-      }
-    }),
-  ),
+    const result = yield* makeClient(
+      'Bearer proof',
+      'correlation',
+      'https://owner.example/api',
+    ).pipe(
+      Effect.flatMap((client) => client.read.execute({})),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.flip,
+    );
+    expect(Schema.is(schemas.unavailable)(result)).toBe(true);
+    const problem = yield* Schema.decodeUnknownEffect(schemas.unavailable)(result);
+    expect(yield* Schema.encodeEffect(schemas.unavailable)(problem)).toEqual(
+      yield* Schema.encodeEffect(schemas.unavailable)(problems.unavailable()),
+    );
+  }),
 );
 
 for (const baseUrl of [
@@ -177,33 +162,23 @@ for (const baseUrl of [
   'https://user:password@owner.example/api',
   '//attacker.example/api',
 ]) {
-  test(
-    `shared transport rejects unsafe URL ${baseUrl} before fetch`,
-    makeEffectTestCallback(
-      Effect.gen(function* checkUnsafeUrl() {
-        let calls = 0;
-        const fetch: typeof globalThis.fetch = flow(
-          () =>
-            Effect.sync(() => {
-              calls += 1;
-              return Response.json('unsafe');
-            }),
-          runEffectTestPromise,
-        );
-        const result = yield* makeClient('Bearer secret', 'correlation', baseUrl).pipe(
-          Effect.flatMap((client) => client.read.execute({})),
-          Effect.provideService(FetchHttpClient.Fetch, fetch),
-          Effect.result,
-        );
-        assert.equal(Result.isFailure(result), true);
-        if (Result.isFailure(result)) {
-          assert.equal(Schema.isSchemaError(result.failure), true);
-          if (Schema.isSchemaError(result.failure)) {
-            assert.doesNotMatch(result.failure.message, /password|Bearer secret|owner\.example/u);
-          }
-        }
-        assert.equal(calls, 0);
-      }),
-    ),
+  it.effect(`shared transport rejects unsafe URL ${baseUrl} before fetch`, () =>
+    Effect.gen(function* checkUnsafeUrl() {
+      let calls = 0;
+      const fetch: typeof globalThis.fetch = () => {
+        calls += 1;
+        return Promise.resolve(Response.json('unsafe'));
+      };
+      const result = yield* makeClient('Bearer secret', 'correlation', baseUrl).pipe(
+        Effect.flatMap((client) => client.read.execute({})),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+        Effect.flip,
+      );
+      expect(Schema.isSchemaError(result)).toBe(true);
+      if (Schema.isSchemaError(result)) {
+        expect(result.message).not.toMatch(/password|Bearer secret|owner\.example/u);
+      }
+      expect(calls).toBe(0);
+    }),
   );
 }

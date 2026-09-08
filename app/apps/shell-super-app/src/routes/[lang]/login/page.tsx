@@ -9,7 +9,7 @@ import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { useRef, useState } from 'react';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
-import { runBrowserEffect } from '../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
@@ -109,7 +109,7 @@ const LoginPage = () => {
     }
 
     setSubmitting(true);
-    void runBrowserEffect(
+    void browserRuntime.runPromise(
       signIn(credentials.value, { locale: language }).pipe(
         Effect.matchEffect({
           onFailure: (error) =>

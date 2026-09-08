@@ -1,20 +1,8 @@
-import {
-  makeEffectTestCallback as nativeTestCallback,
-  makeEffectTestCallback,
-} from '@app/core-runtime/testing/effect-runtime';
+import { expect, it } from 'effect-rstest';
 
 import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
-import {
-  Effect,
-  Function as Fn,
-  Exit as NativeExit,
-  Scope as NativeScope,
-  Option,
-  Schema,
-} from 'effect';
-import assert from 'node:assert/strict';
+import { Effect, Option, Schema } from 'effect';
 import { randomUUID } from 'node:crypto';
-import test, { after as afterNativeDatabase } from 'node:test';
 import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
@@ -43,13 +31,7 @@ import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { makeTestDatabaseFromPool } from '../support/database.ts';
-import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
-
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
-);
 
 type DatabaseQueryFailureSelf = typeof DatabaseQueryFailureContract.Type;
 const DatabaseQueryFailureContract = Schema.TaggedStruct('DatabaseQueryFailure', {
@@ -65,30 +47,21 @@ const queryEffect = <Row extends QueryResultRow = QueryResultRow>(
   statement: string,
   parameters?: readonly unknown[],
 ): Effect.Effect<QueryResult<Row>> =>
-  Effect.suspend(() =>
-    Effect.promise(Fn.constant(client.query<Row>(statement, [...(parameters ?? [])]))),
-  );
+  Effect.promise(() => client.query<Row>(statement, [...(parameters ?? [])]));
 const queryTryEffect = <Row extends QueryResultRow = QueryResultRow>(
   client: Pool | PoolClient,
   statement: string,
   parameters?: readonly unknown[],
 ): Effect.Effect<QueryResult<Row>, DatabaseQueryFailureSelf> =>
-  Effect.suspend(() => {
-    const query = client.query<Row>(statement, [...(parameters ?? [])]);
-    return Effect.tryPromise({
-      catch: (error) => {
-        const decoded = Schema.decodeUnknownOption(DatabaseErrorCode)(error);
-        return new DatabaseQueryFailure({
-          code: Option.isSome(decoded) ? decoded.value.code : 'unknown',
-        });
-      },
-      try: Fn.constant(query),
-    });
+  Effect.tryPromise({
+    catch: (error) => {
+      const decoded = Schema.decodeUnknownOption(DatabaseErrorCode)(error);
+      return new DatabaseQueryFailure({
+        code: Option.isSome(decoded) ? decoded.value.code : 'unknown',
+      });
+    },
+    try: () => client.query<Row>(statement, [...(parameters ?? [])]),
   });
-const connectPool = (pool: Pool): Effect.Effect<PoolClient> =>
-  Effect.suspend(() => Effect.promise(Fn.constant(pool.connect())));
-const endPool = (pool: Pool): Effect.Effect<void> =>
-  Effect.suspend(() => Effect.promise(Fn.constant(pool.end())));
 
 const effectAccessor =
   <Value>(effect: Effect.Effect<Value>) =>
@@ -98,11 +71,8 @@ const toReadResult = (rows: readonly { readonly value: string }[]) => ({
   evidence: { resultCount: rows.length },
   result: rows.map((row) => row.value),
 });
-const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
-  test(name, makeEffectTestCallback(effect));
-};
 
-void test('declares the composite same-tenant parent keys used by isolation foreign keys', () => {
+it('declares the composite same-tenant parent keys used by isolation foreign keys', () => {
   const names = new Set(
     [legalEntities, principals, principalAuthBindings, actionInvocations].flatMap((table) =>
       getTableConfig(table)
@@ -110,10 +80,10 @@ void test('declares the composite same-tenant parent keys used by isolation fore
         .map((index) => index.config.name),
     ),
   );
-  assert.ok(names.has('core_legal_entities_tenant_id_uk'));
-  assert.ok(names.has('core_principals_tenant_id_uk'));
-  assert.ok(names.has('core_auth_bindings_tenant_id_uk'));
-  assert.ok(names.has('core_action_invocations_tenant_id_uk'));
+  expect(names.has('core_legal_entities_tenant_id_uk')).toBe(true);
+  expect(names.has('core_principals_tenant_id_uk')).toBe(true);
+  expect(names.has('core_auth_bindings_tenant_id_uk')).toBe(true);
+  expect(names.has('core_action_invocations_tenant_id_uk')).toBe(true);
 
   const tenantQualifiedChildren = [
     principalAuthBindings,
@@ -132,20 +102,26 @@ void test('declares the composite same-tenant parent keys used by isolation fore
     const businessReferences = getTableConfig(table)
       .foreignKeys.map((foreignKey) => foreignKey.reference().columns.map((column) => column.name))
       .filter((columns) => columns.some((column) => column !== 'tenant_id'));
-    assert.ok(businessReferences.length > 0);
-    assert.equal(
+    expect(businessReferences.length > 0).toBe(true);
+    expect(
       businessReferences.every((columns) => columns.length === 2 && columns[0] === 'tenant_id'),
-      true,
-    );
+    ).toBe(true);
   }
 });
 
-effectTest(
-  'runtime RLS isolates tenant and legal-entity rows and never leaks transaction scope',
+it.live('runtime RLS isolates tenant and legal-entity rows and never leaks transaction scope', () =>
   Effect.gen(function* runtimeRlsIsolation() {
     const connections = yield* loadDatabaseConnectionPair();
-    const admin = new Pool({ connectionString: connections.admin.connectionString });
-    const runtime = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
+    const admin = yield* Effect.acquireRelease(
+      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
+      (pool) => Effect.promise(() => pool.end()),
+    );
+    const runtime = yield* Effect.acquireRelease(
+      Effect.sync(
+        () => new Pool({ connectionString: connections.runtime.connectionString, max: 1 }),
+      ),
+      (pool) => Effect.promise(() => pool.end()),
+    );
     const schema = `isolation_${randomUUID().replaceAll('-', '')}`;
     const tenantA = randomUUID();
     const tenantB = randomUUID();
@@ -213,15 +189,15 @@ effectTest(
     `,
         [schema],
       );
-      assert.deepEqual(catalog.rows[0], {
+      expect(catalog.rows[0]).toEqual({
         policy_count: 4,
         relforcerowsecurity: true,
         relrowsecurity: true,
       });
 
       const unscopedRows = yield* queryEffect(runtime, `select * from ${schema}.records`);
-      assert.equal(unscopedRows.rowCount, 0);
-      const client = yield* connectPool(runtime);
+      expect(unscopedRows.rowCount).toBe(0);
+      const client = yield* Effect.promise(() => runtime.connect());
       yield* Effect.gen(function* scopedRuntimeQueries() {
         yield* queryEffect(client, 'begin');
         yield* queryEffect(
@@ -233,17 +209,17 @@ effectTest(
           client,
           `select value from ${schema}.records`,
         );
-        assert.deepEqual(entityARows.rows, [{ value: 'entity-a' }]);
+        expect(entityARows.rows).toEqual([{ value: 'entity-a' }]);
         const foreignUpdate = yield* queryEffect(
           client,
           `update ${schema}.records set value = 'hacked' where value = 'tenant-b'`,
         );
-        assert.equal(foreignUpdate.rowCount, 0);
+        expect(foreignUpdate.rowCount).toBe(0);
         const foreignDelete = yield* queryEffect(
           client,
           `delete from ${schema}.records where value = 'entity-b'`,
         );
-        assert.equal(foreignDelete.rowCount, 0);
+        expect(foreignDelete.rowCount).toBe(0);
         const forbiddenInsert = yield* Effect.flip(
           queryTryEffect(
             client,
@@ -251,7 +227,7 @@ effectTest(
             [tenantB, entityC, randomUUID()],
           ),
         );
-        assert.equal(forbiddenInsert.code, '42501');
+        expect(forbiddenInsert.code).toBe('42501');
         yield* queryEffect(client, 'rollback');
 
         yield* queryEffect(client, 'begin');
@@ -264,41 +240,39 @@ effectTest(
           client,
           `select value from ${schema}.records`,
         );
-        assert.deepEqual(entityBRows.rows, [{ value: 'entity-b' }]);
+        expect(entityBRows.rows).toEqual([{ value: 'entity-b' }]);
         yield* queryEffect(client, 'commit');
       }).pipe(Effect.ensuring(Effect.sync(() => client.release())));
 
       const resetRows = yield* queryEffect(runtime, `select * from ${schema}.records`);
-      assert.equal(resetRows.rowCount, 0);
+      expect(resetRows.rowCount).toBe(0);
       const protectedRows = yield* queryEffect<{ value: string }>(
         admin,
         `select value from ${schema}.records order by value`,
       );
-      assert.deepEqual(protectedRows.rows, [
+      expect(protectedRows.rows).toEqual([
         { value: 'entity-a' },
         { value: 'entity-b' },
         { value: 'tenant-b' },
       ]);
     });
-    const release = endPool(runtime).pipe(
-      Effect.ensuring(
-        queryEffect(admin, `drop schema if exists ${schema} cascade`).pipe(Effect.orDie),
-      ),
-      Effect.ensuring(endPool(admin).pipe(Effect.orDie)),
-    );
+    const release = queryEffect(admin, `drop schema if exists ${schema} cascade`);
     yield* exercise.pipe(Effect.ensuring(release));
   }),
 );
 
-effectTest(
-  'an unscoped owner repository remains isolated inside a governed read transaction',
+it.live('an unscoped owner repository remains isolated inside a governed read transaction', () =>
   Effect.gen(function* governedReadIsolation() {
     const connections = yield* loadDatabaseConnectionPair();
-    const admin = new Pool({ connectionString: connections.admin.connectionString });
-    const runtimePool = new Pool({ connectionString: connections.runtime.connectionString });
-    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
+    const admin = yield* Effect.acquireRelease(
+      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
+      (pool) => Effect.promise(() => pool.end()),
     );
+    const runtimePool = yield* Effect.acquireRelease(
+      Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString })),
+      (pool) => Effect.promise(() => pool.end()),
+    );
+    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
     const schemaName = `governed_isolation_${randomUUID().replaceAll('-', '')}`;
     const ownerSchema = pgSchema(schemaName);
     const records = ownerSchema.table('records', {
@@ -465,7 +439,7 @@ effectTest(
         [tenantA, entityA, entityB, tenantB, entityC, resourceId],
       );
 
-      assert.deepEqual(
+      expect(
         yield* runForScope({
           authBindingId: bindingA,
           authMethod: 'session',
@@ -474,9 +448,8 @@ effectTest(
           principalId: principalA,
           tenantId: tenantA,
         }),
-        ['tenant-a-entity-a'],
-      );
-      assert.deepEqual(
+      ).toEqual(['tenant-a-entity-a']);
+      expect(
         yield* runForScope({
           authBindingId: bindingA,
           authMethod: 'session',
@@ -485,9 +458,8 @@ effectTest(
           principalId: principalA,
           tenantId: tenantA,
         }),
-        ['tenant-a-entity-b'],
-      );
-      assert.deepEqual(
+      ).toEqual(['tenant-a-entity-b']);
+      expect(
         yield* runForScope({
           authBindingId: bindingB,
           authMethod: 'session',
@@ -496,8 +468,7 @@ effectTest(
           principalId: principalB,
           tenantId: tenantB,
         }),
-        ['tenant-b-entity-c'],
-      );
+      ).toEqual(['tenant-b-entity-c']);
     });
     const release = Effect.gen(function* cleanGovernedReadIsolation() {
       yield* queryEffect(admin, 'delete from core.data_access_events where tenant_id in ($1, $2)', [
@@ -522,18 +493,19 @@ effectTest(
         tenantB,
       ]);
       yield* queryEffect(admin, `drop schema if exists ${schemaName} cascade`);
-      yield* Effect.all([endPool(runtimePool), endPool(admin)], { concurrency: 'unbounded' });
     }).pipe(Effect.orDie);
     yield* exercise.pipe(Effect.ensuring(release));
   }),
 );
 
-effectTest(
-  'PostgreSQL rejects cross-tenant entity, principal, and Action references',
+it.live('PostgreSQL rejects cross-tenant entity, principal, and Action references', () =>
   Effect.gen(function* crossTenantForeignKeys() {
     const connections = yield* loadDatabaseConnectionPair();
-    const admin = new Pool({ connectionString: connections.admin.connectionString });
-    const client = yield* connectPool(admin);
+    const admin = yield* Effect.acquireRelease(
+      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
+      (pool) => Effect.promise(() => pool.end()),
+    );
+    const client = yield* Effect.promise(() => admin.connect());
     const tenantA = randomUUID();
     const tenantB = randomUUID();
     const entityA = randomUUID();
@@ -546,7 +518,7 @@ effectTest(
       Effect.gen(function* rejectCrossTenantReference() {
         yield* queryEffect(client, 'savepoint isolation_failure');
         const failure = yield* Effect.flip(queryTryEffect(client, statement, parameters));
-        assert.equal(failure.code, '23503');
+        expect(failure.code).toBe('23503');
         yield* queryEffect(client, 'rollback to savepoint isolation_failure');
       });
 
@@ -589,7 +561,6 @@ effectTest(
     });
     const release = queryEffect(client, 'rollback').pipe(
       Effect.ensuring(Effect.sync(() => client.release())),
-      Effect.ensuring(endPool(admin).pipe(Effect.orDie)),
     );
     yield* exercise.pipe(Effect.ensuring(release));
   }),

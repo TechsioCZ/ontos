@@ -1,6 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -36,8 +34,9 @@ const changes: readonly UpdatePartyOfficialIdentifierPayload['change'][] = [
 ];
 
 for (const change of changes) {
-  test(`${change.type} links one stable-reference outbox message to its committed Domain Event`, () =>
-    runEffectTestPromise(
+  it.effect(
+    `${change.type} links one stable-reference outbox message to its committed Domain Event`,
+    () =>
       Effect.gen(function* successfulUpdate() {
         const collector = createActionCollector(
           updatePartyOfficialIdentifierAction.descriptor.domainEvents,
@@ -92,21 +91,20 @@ for (const change of changes) {
           },
         );
         const snapshot = collector.snapshot();
-        assert.equal(snapshot.domainEvents.length, 1);
-        assert.equal(snapshot.outboxMessages.length, 1);
-        assert.equal(snapshot.outboxMessages[0]?.domainEventIndex, 0);
-        assert.equal(
-          snapshot.outboxMessages[0]?.message.topic,
+        expect(snapshot.domainEvents.length).toBe(1);
+        expect(snapshot.outboxMessages.length).toBe(1);
+        expect(snapshot.outboxMessages[0]?.domainEventIndex).toBe(0);
+        expect(snapshot.outboxMessages[0]?.message.topic).toBe(
           'party.registry.official-identifier-updated.v1',
         );
-        assert.deepEqual(snapshot.outboxMessages[0]?.message.payloadJson, {
+        expect(snapshot.outboxMessages[0]?.message.payloadJson).toEqual({
           officialIdentifierRef,
           partyRef,
         });
-        assert.equal(snapshot.domainEvents[0]?.subjectResourceId, officialIdentifierRef.resourceId);
+        expect(snapshot.domainEvents[0]?.subjectResourceId).toBe(officialIdentifierRef.resourceId);
         const event = snapshot.domainEvents[0]?.payloadJson;
-        assert.ok(event !== undefined);
-        assert.deepEqual(event, {
+        expect(event !== undefined).toBe(true);
+        expect(event).toEqual({
           after,
           before,
           changeType: change.type,
@@ -116,86 +114,87 @@ for (const change of changes) {
           reason: 'Accepted registry evidence',
         });
       }),
-    ));
+  );
 }
 
-test('rejected identifier updates publish neither Domain Event nor outbox message', () =>
-  runEffectTestPromise(
-    Effect.gen(function* rejectedUpdate() {
-      const collector = createActionCollector(
-        updatePartyOfficialIdentifierAction.descriptor.domainEvents,
-        'party.registry',
-        updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy,
-      );
-      const failure = new OfficialIdentifierClaimConflict({
-        code: 'party_identifier_claim_conflict',
-        reason: 'Already claimed by another Party',
-      });
-      const error = yield* getActionHandler(updatePartyOfficialIdentifierAction)(
-        {
-          change: {
-            expectedVerification: 'UNVERIFIED',
-            type: 'SET_VERIFICATION',
-            verification: 'VERIFIED',
-          },
-          evidenceRefs: ['evidence:identifier-update'],
-          officialIdentifierRef,
-          reason: 'Accepted registry evidence',
+it.effect('rejected identifier updates publish neither Domain Event nor outbox message', () =>
+  Effect.gen(function* rejectedUpdate() {
+    const collector = createActionCollector(
+      updatePartyOfficialIdentifierAction.descriptor.domainEvents,
+      'party.registry',
+      updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy,
+    );
+    const failure = new OfficialIdentifierClaimConflict({
+      code: 'party_identifier_claim_conflict',
+      reason: 'Already claimed by another Party',
+    });
+    const error = yield* getActionHandler(updatePartyOfficialIdentifierAction)(
+      {
+        change: {
+          expectedVerification: 'UNVERIFIED',
+          type: 'SET_VERIFICATION',
+          verification: 'VERIFIED',
         },
-        {
-          actionInvocationId: '50000000-0000-4000-8000-000000000001',
-          addDomainEvent: collector.addDomainEvent,
-          addOutboxMessage: collector.addOutboxMessage,
-          recordAuditEvidence: collector.recordAuditEvidence,
-          recordDataAccess: collector.recordDataAccess,
-          scope: {
-            authMethod: 'system',
-            correlationId: 'identifier-outbox-test',
-            principalId: '40000000-0000-4000-8000-000000000001',
-            tenantId,
-          },
-          services: { update: () => Effect.fail(failure) },
-        },
-      ).pipe(Effect.flip);
-      assert.equal(error, failure);
-      assert.equal(collector.snapshot().domainEvents.length, 0);
-      assert.equal(collector.snapshot().outboxMessages.length, 0);
-    }),
-  ));
-
-test('published identifier update payload contains references only', () => {
-  const decode = Schema.decodeUnknownSync(OutboxPayloadSchema, { onExcessProperty: 'error' });
-  assert.deepEqual(decode({ officialIdentifierRef, partyRef }), {
-    officialIdentifierRef,
-    partyRef,
-  });
-  assert.throws(() => decode({ officialIdentifierRef, partyRef, verification: 'VERIFIED' }));
-});
-
-test('identifier update results keep DateTime and Option internally with nullable JSON', () =>
-  runEffectTestPromise(
-    Effect.gen(function* identifierUpdateResultWireRoundTrip() {
-      const wire = {
+        evidenceRefs: ['evidence:identifier-update'],
         officialIdentifierRef,
-        partyRef,
-        state: 'ENDED',
-        validTo: '2026-01-02T00:00:00.000Z',
-        verification: 'VERIFIED',
-      } as const;
-      const decoded = yield* Schema.decodeUnknownEffect(UpdatePartyOfficialIdentifierResultSchema)(
-        wire,
-      );
-      assert.equal(Option.isSome(decoded.validTo), true);
-      assert.equal(
-        Option.match(decoded.validTo, {
-          onNone: () => null,
-          onSome: DateTime.formatIso,
-        }),
-        wire.validTo,
-      );
-      assert.deepEqual(
-        yield* Schema.encodeEffect(UpdatePartyOfficialIdentifierResultSchema)(decoded),
-        wire,
-      );
-    }),
-  ));
+        reason: 'Accepted registry evidence',
+      },
+      {
+        actionInvocationId: '50000000-0000-4000-8000-000000000001',
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope: {
+          authMethod: 'system',
+          correlationId: 'identifier-outbox-test',
+          principalId: '40000000-0000-4000-8000-000000000001',
+          tenantId,
+        },
+        services: { update: () => Effect.fail(failure) },
+      },
+    ).pipe(Effect.flip);
+    expect(error).toBe(failure);
+    expect(collector.snapshot().domainEvents.length).toBe(0);
+    expect(collector.snapshot().outboxMessages.length).toBe(0);
+  }),
+);
+
+it.effect('published identifier update payload contains references only', () =>
+  Effect.gen(function* verifyOutboxPayload() {
+    const decode = Schema.decodeUnknownEffect(OutboxPayloadSchema, { onExcessProperty: 'error' });
+    expect(yield* decode({ officialIdentifierRef, partyRef })).toEqual({
+      officialIdentifierRef,
+      partyRef,
+    });
+    const error = yield* Effect.flip(
+      decode({ officialIdentifierRef, partyRef, verification: 'VERIFIED' }),
+    );
+    expect(error).toBeDefined();
+  }),
+);
+
+it.effect('identifier update results keep DateTime and Option internally with nullable JSON', () =>
+  Effect.gen(function* identifierUpdateResultWireRoundTrip() {
+    const wire = {
+      officialIdentifierRef,
+      partyRef,
+      state: 'ENDED',
+      validTo: '2026-01-02T00:00:00.000Z',
+      verification: 'VERIFIED',
+    } as const;
+    const decoded = yield* Schema.decodeUnknownEffect(UpdatePartyOfficialIdentifierResultSchema)(
+      wire,
+    );
+    expect(Option.isSome(decoded.validTo)).toBe(true);
+    expect(
+      Option.match(decoded.validTo, {
+        onNone: () => null,
+        onSome: DateTime.formatIso,
+      }),
+    ).toBe(wire.validTo);
+    expect(yield* Schema.encodeEffect(UpdatePartyOfficialIdentifierResultSchema)(decoded)).toEqual(
+      wire,
+    );
+  }),
+);

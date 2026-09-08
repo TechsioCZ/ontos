@@ -1,16 +1,17 @@
-import assert from 'node:assert/strict';
+import { expect, it } from 'effect-rstest';
+import { Effect } from 'effect';
+
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const repositoryRoot = path.dirname(appRoot);
 const expectedEnvironmentPath = path.join(appRoot, '.env');
 
-void test('apps contain no environment files that can override the app-root .env', () => {
+it('apps contain no environment files that can override the app-root .env', () => {
   const result = spawnSync(
     '/usr/bin/find',
     [
@@ -26,25 +27,29 @@ void test('apps contain no environment files that can override the app-root .env
     { encoding: 'utf-8' },
   );
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), '');
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stdout.trim()).toBe('');
 });
 
-void test('workspace discovery resolves repository, app, shell, and microvertical directories', async () => {
-  const { resolveAppWorkspaceRoot } =
-    await import('../../packages/core-runtime/src/environment/workspace-environment.ts');
+it.live(
+  'workspace discovery resolves repository, app, shell, and microvertical directories',
+  Effect.fn(function* testEffect1() {
+    const { resolveAppWorkspaceRoot } = yield* Effect.tryPromise(
+      () => import('../../packages/core-runtime/src/environment/workspace-environment.ts'),
+    );
 
-  for (const directory of [
-    repositoryRoot,
-    appRoot,
-    path.join(appRoot, 'apps/shell-super-app'),
-    path.join(appRoot, 'verticals/party-registry'),
-  ]) {
-    assert.equal(resolveAppWorkspaceRoot(directory), appRoot);
-  }
-});
+    for (const directory of [
+      repositoryRoot,
+      appRoot,
+      path.join(appRoot, 'apps/shell-super-app'),
+      path.join(appRoot, 'verticals/party-registry'),
+    ]) {
+      expect(resolveAppWorkspaceRoot(directory)).toBe(appRoot);
+    }
+  }),
+);
 
-void test('all server configuration resolves the app-root .env from any invocation directory', () => {
+it('all server configuration resolves the app-root .env from any invocation directory', () => {
   const probe = new URL('server-environment-paths.fixture.mts', import.meta.url);
   const child = spawnSync(
     '/usr/bin/env',
@@ -61,15 +66,15 @@ void test('all server configuration resolves the app-root .env from any invocati
     },
   );
 
-  assert.equal(child.status, 0, child.stderr);
-  assert.deepEqual(JSON.parse(child.stdout.trim()), [
+  expect(child.status, child.stderr).toBe(0);
+  expect(JSON.parse(child.stdout.trim())).toEqual([
     expectedEnvironmentPath,
     expectedEnvironmentPath,
     expectedEnvironmentPath,
   ]);
 });
 
-void test('Drizzle configuration remains bundleable as CommonJS', () => {
+it('Drizzle configuration remains bundleable as CommonJS', () => {
   const outputDirectory = mkdtempSync(path.join(tmpdir(), 'ontos-drizzle-cjs-'));
   try {
     const result = spawnSync(
@@ -84,7 +89,7 @@ void test('Drizzle configuration remains bundleable as CommonJS', () => {
       ],
       { encoding: 'utf-8' },
     );
-    assert.equal(result.status, 0, result.stderr);
+    expect(result.status, result.stderr).toBe(0);
   } finally {
     rmSync(outputDirectory, { force: true, recursive: true });
   }

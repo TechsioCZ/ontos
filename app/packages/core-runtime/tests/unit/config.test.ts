@@ -1,8 +1,6 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import test from 'node:test';
-import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { Effect, Predicate } from 'effect';
 import { acquirePoolResource } from '../../src/db/client.ts';
 import {
   ROOT_ENV_PATH,
@@ -11,126 +9,117 @@ import {
   parseDatabaseConnectionPair,
 } from '../../src/db/config.ts';
 
-void test('loads the root environment independently of the invocation directory', async () => {
-  const originalDirectory = process.cwd();
-  const rootExamplePath = ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
+it.effect('loads the root environment independently of the invocation directory', () =>
+  Effect.gen(function* migratedTest() {
+    const originalDirectory = process.cwd();
+    const rootExamplePath = ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
 
-  try {
-    process.chdir('/');
-    const configuration = await runEffectTestPromise(
-      loadDatabaseConfig({
-        environment: {},
-        envPath: rootExamplePath,
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        process.chdir(originalDirectory);
       }),
     );
+    process.chdir('/');
+    const configuration = yield* loadDatabaseConfig({
+      environment: {},
+      envPath: rootExamplePath,
+    });
 
-    assert.equal(ROOT_ENV_PATH.endsWith('/app/.env'), true);
-    assert.equal(
-      configuration.connectionString,
+    expect(ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
+    expect(configuration.connectionString).toBe(
       'postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos',
     );
-  } finally {
-    process.chdir(originalDirectory);
-  }
-});
+  }),
+);
 
-void test('parses valid local PostgreSQL connection settings', async () => {
-  const configuration = await runEffectTestPromise(
-    parseDatabaseConfig({
+it.effect('parses valid local PostgreSQL connection settings', () =>
+  Effect.gen(function* migratedTest() {
+    const configuration = yield* parseDatabaseConfig({
       DATABASE_URL: 'postgresql://ontos:ontos@localhost:5433/ontos',
-    }),
-  );
+    });
 
-  assert.deepEqual(configuration, {
-    connectionString: 'postgresql://ontos:ontos@localhost:5433/ontos',
-    database: 'ontos',
-    host: 'localhost',
-    port: 5433,
-    user: 'ontos',
-  });
-});
+    expect(configuration).toEqual({
+      connectionString: 'postgresql://ontos:ontos@localhost:5433/ontos',
+      database: 'ontos',
+      host: 'localhost',
+      port: 5433,
+      user: 'ontos',
+    });
+  }),
+);
 
-void test('keeps missing and malformed configuration in the typed error channel', async () => {
-  const missing = await runEffectTestPromise(Effect.flip(parseDatabaseConfig({})));
-  const malformed = await runEffectTestPromise(
-    Effect.flip(
+it.effect('keeps missing and malformed configuration in the typed error channel', () =>
+  Effect.gen(function* migratedTest() {
+    const missing = yield* Effect.flip(parseDatabaseConfig({}));
+    const malformed = yield* Effect.flip(
       parseDatabaseConfig({
         DATABASE_URL: 'https://localhost/not-postgres',
       }),
-    ),
-  );
+    );
 
-  assert.equal(missing._tag, 'DatabaseConfigError');
-  assert.equal(malformed._tag, 'DatabaseConfigError');
-});
+    expect(Predicate.isTagged(missing, 'DatabaseConfigError')).toBe(true);
+    expect(Predicate.isTagged(malformed, 'DatabaseConfigError')).toBe(true);
+  }),
+);
 
-void test('requires distinct administrative and least-privilege runtime identities', async () => {
-  const valid = await runEffectTestPromise(
-    parseDatabaseConnectionPair({
+it.effect('requires distinct administrative and least-privilege runtime identities', () =>
+  Effect.gen(function* migratedTest() {
+    const valid = yield* parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
       DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
-    }),
-  );
-  const missing = await runEffectTestPromise(
-    Effect.flip(
+    });
+    const missing = yield* Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
       }),
-    ),
-  );
-  const identical = await runEffectTestPromise(
-    Effect.flip(
+    );
+    const identical = yield* Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://ontos:secret@localhost:5433/ontos',
         DATABASE_URL: 'postgresql://ontos:secret@localhost:5433/ontos',
       }),
-    ),
-  );
-  const superuserCompatible = await runEffectTestPromise(
-    Effect.flip(
+    );
+    const superuserCompatible = yield* Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
         DATABASE_URL: 'postgresql://postgres:secret@localhost:5433/ontos',
       }),
-    ),
-  );
-  const queryParameterIdentities = await runEffectTestPromise(
-    parseDatabaseConnectionPair({
+    );
+    const queryParameterIdentities = yield* parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_admin',
       DATABASE_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_runtime',
-    }),
-  );
-  const queryParameterCollision = await runEffectTestPromise(
-    Effect.flip(
+    });
+    const queryParameterCollision = yield* Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://admin-authority@localhost:5433/ontos?user=effective_role',
         DATABASE_URL: 'postgresql://runtime-authority@localhost:5433/ontos?user=effective_role',
       }),
-    ),
-  );
+    );
 
-  assert.equal(valid.admin.user, 'ontos_admin');
-  assert.equal(valid.runtime.user, 'ontos_runtime');
-  assert.equal(queryParameterIdentities.admin.user, 'ontos_admin');
-  assert.equal(queryParameterIdentities.runtime.user, 'ontos_runtime');
-  assert.equal(missing._tag, 'DatabaseConfigError');
-  assert.equal(identical._tag, 'DatabaseConfigError');
-  assert.equal(queryParameterCollision._tag, 'DatabaseConfigError');
-  assert.equal(superuserCompatible._tag, 'DatabaseConfigError');
-});
+    expect(valid.admin.user).toBe('ontos_admin');
+    expect(valid.runtime.user).toBe('ontos_runtime');
+    expect(queryParameterIdentities.admin.user).toBe('ontos_admin');
+    expect(queryParameterIdentities.runtime.user).toBe('ontos_runtime');
+    expect(Predicate.isTagged(missing, 'DatabaseConfigError')).toBe(true);
+    expect(Predicate.isTagged(identical, 'DatabaseConfigError')).toBe(true);
+    expect(Predicate.isTagged(queryParameterCollision, 'DatabaseConfigError')).toBe(true);
+    expect(Predicate.isTagged(superuserCompatible, 'DatabaseConfigError')).toBe(true);
+  }),
+);
 
-void test('finalizes the pool resource when its Effect scope closes', async () => {
-  let finalized = false;
+it.effect('finalizes the pool resource when its Effect scope closes', () =>
+  Effect.gen(function* migratedTest() {
+    let finalized = false;
 
-  await runEffectTestPromise(
-    Effect.scoped(
+    yield* Effect.scoped(
       acquirePoolResource(() => ({
-        end: async () => {
+        end: () => {
           finalized = true;
+          return Promise.resolve();
         },
       })),
-    ),
-  );
+    );
 
-  assert.equal(finalized, true);
-});
+    expect(finalized).toBe(true);
+  }),
+);

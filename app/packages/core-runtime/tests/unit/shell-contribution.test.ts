@@ -1,12 +1,14 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { validateShellContributions } from '../../src/modules/shell-contribution.ts';
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));
 
 const moduleId = 'property.registry';
 const first = <Value>(values: readonly Value[]): Value => {
   const [value] = values;
   if (value === undefined) {
-    assert.fail('Expected a fixture item');
+    throw new Error('Expected a fixture item');
   }
   return value;
 };
@@ -94,7 +96,7 @@ const full = () => ({
   ],
 });
 
-test('accepts exact empty and full Shell contribution contracts with deterministic JSON data', () => {
+it('accepts exact empty and full Shell contribution contracts with deterministic JSON data', () => {
   const empty = {
     mediaAttachments: [],
     navigation: [],
@@ -105,46 +107,46 @@ test('accepts exact empty and full Shell contribution contracts with determinist
     search: [],
     timelines: [],
   };
-  assert.deepEqual(validateShellContributions(empty, references), empty);
+  expect(validateShellContributions(empty, references)).toEqual(empty);
   const decoded = validateShellContributions(full(), references);
-  assert.deepEqual(structuredClone(decoded), decoded);
-  assert.doesNotMatch(JSON.stringify(decoded), /handler|sourcePath|remote|import/iu);
+  expect(structuredClone(decoded)).toEqual(decoded);
+  expect(encodeJson(decoded)).not.toMatch(/handler|sourcePath|remote|import/iu);
 });
 
-test('accepts safe dynamic page templates as plain serialized data', () => {
+it('accepts safe dynamic page templates as plain serialized data', () => {
   const dynamic = full();
   dynamic.pages[0] = {
     ...first(dynamic.pages),
     routePath: '/contacts/customers/:id/edit',
   };
   const decoded = validateShellContributions(dynamic, references);
-  assert.equal(decoded.pages[0]?.routePath, '/contacts/customers/:id/edit');
-  assert.deepEqual(structuredClone(decoded), decoded);
-  assert.doesNotMatch(JSON.stringify(decoded), /handler|loader|sourcePath|remote|import/iu);
+  expect(decoded.pages[0]?.routePath).toBe('/contacts/customers/:id/edit');
+  expect(structuredClone(decoded)).toEqual(decoded);
+  expect(encodeJson(decoded)).not.toMatch(/handler|loader|sourcePath|remote|import/iu);
 });
 
-test('rejects extra keys, duplicates, cross-owner entrypoints, and missing references', () => {
-  assert.throws(() => validateShellContributions({ ...full(), route: '/private' }, references));
+it('rejects extra keys, duplicates, cross-owner entrypoints, and missing references', () => {
+  expect(() => validateShellContributions({ ...full(), route: '/private' }, references)).toThrow();
   const duplicate = full();
   duplicate.publicComponents[0] = {
     ...first(duplicate.publicComponents),
     contributionKey: first(duplicate.pages).contributionKey,
   };
-  assert.throws(() => validateShellContributions(duplicate, references), /duplicate/u);
+  expect(() => validateShellContributions(duplicate, references)).toThrow(/duplicate/u);
   const crossOwner = full();
   crossOwner.pages[0] = {
     ...first(crossOwner.pages),
     entrypoint: { ...first(crossOwner.pages).entrypoint, moduleKey: 'billing.core' },
   };
-  assert.throws(() => validateShellContributions(crossOwner, references), /owner/u);
-  assert.throws(() =>
+  expect(() => validateShellContributions(crossOwner, references)).toThrow(/owner/u);
+  expect(() =>
     validateShellContributions(full(), { ...references, componentKeys: new Set() }),
-  );
+  ).toThrow();
 });
 
-test('rejects incompatible entrypoint roles and arbitrary transport metadata', () => {
+it('rejects incompatible entrypoint roles and arbitrary transport metadata', () => {
   const baseline = full();
-  assert.throws(() =>
+  expect(() =>
     validateShellContributions(
       {
         ...baseline,
@@ -152,8 +154,8 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
       },
       references,
     ),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     validateShellContributions(
       {
         ...baseline,
@@ -166,8 +168,8 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
       },
       references,
     ),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     validateShellContributions(
       {
         ...baseline,
@@ -183,8 +185,8 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
       },
       references,
     ),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     validateShellContributions(
       {
         ...baseline,
@@ -192,13 +194,13 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
       },
       references,
     ),
-  );
+  ).toThrow();
   const withUnsafeRoute = full();
   withUnsafeRoute.pages[0] = {
     ...first(withUnsafeRoute.pages),
     routePath: '/modules/:module-id',
   };
-  assert.throws(() => validateShellContributions(withUnsafeRoute, references));
+  expect(() => validateShellContributions(withUnsafeRoute, references)).toThrow();
 });
 
 for (const routePath of [
@@ -219,9 +221,9 @@ for (const routePath of [
   '/contacts/customers/:1id',
   '/contacts/customers/:id/edit/:id',
 ] as const) {
-  test(`rejects unsafe or ambiguous page route template ${routePath}`, () => {
+  it(`rejects unsafe or ambiguous page route template ${routePath}`, () => {
     const candidate = full();
     candidate.pages[0] = { ...first(candidate.pages), routePath };
-    assert.throws(() => validateShellContributions(candidate, references));
+    expect(() => validateShellContributions(candidate, references)).toThrow();
   });
 }

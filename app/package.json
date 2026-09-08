@@ -24,12 +24,12 @@
     "local:initialize": "node ./scripts/initialize-local-development.mts",
     "test:unit": "pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component",
     "test:integration": "pnpm -r --if-present run test:integration",
-    "test:scripts": "node --test scripts/tests/boundary-source-structure.test.mts scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/generated-slot-entries.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts scripts/tests/ultramodern-command.test.mts scripts/tests/code-tools-i18n.test.mts scripts/tests/dependency-declarations.test.mts",
-    "test:lint-rules": "node --test tools/oxlint/effect-native/tests/*.test.mts",
+    "test:scripts": "rstest --project scripts",
+    "test:lint-rules": "rstest --project lint-rules",
     "typecheck:lint-rules": "tsc -p tools/oxlint/effect-native/tsconfig.json",
     "lint:effect": "node tools/oxlint/effect-native/report.mts",
-    "test:generation": "node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/resource-generator.test.mts scripts/scaffolding/tests/retire-contribution.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts",
-    "test:deployment-impact": "node scripts/generate-outbox-worker-deployment.mjs && node --test scripts/tests/plan-deployment-impact.test.mts scripts/tests/outbox-worker-delivery.test.mts",
+    "test:generation": "rstest --project generation",
+    "test:deployment-impact": "node scripts/generate-outbox-worker-deployment.mjs && rstest --project scripts scripts/tests/plan-deployment-impact scripts/tests/outbox-worker-delivery",
     "deployment-impact:plan": "node ./scripts/plan-deployment-impact.mts",
     "action:test:unit": "pnpm --filter @app/core-runtime action:test:unit",
     "action:test:integration": "pnpm --filter @app/core-runtime action:test:integration",
@@ -71,8 +71,8 @@
     "database-access:check": "node ./scripts/check-database-access-boundaries.mts",
     "format": "oxfmt . '!repos/**'",
     "format:check": "oxfmt --check . '!repos/**'",
-    "lint": "oxlint apps verticals packages scripts",
-    "lint:fix": "oxlint apps verticals packages scripts --fix",
+    "lint": "oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts",
+    "lint:fix": "oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts --fix",
     "skills:install": "node ./scripts/bootstrap-agent-skills.mts",
     "skills:check": "node ./scripts/bootstrap-agent-skills.mts --check",
     "agents:refs:install": "node ./scripts/setup-agent-reference-repos.mts",
@@ -87,7 +87,7 @@
     "quality:audit": "node ./scripts/quality-audit.mts",
     "quality:audit:gate": "node ./scripts/quality-audit-gate.mts",
     "quality:check": "pnpm quality:audit && pnpm quality:audit:gate",
-    "quality:audit:test": "node --test ./scripts/tests/quality-audit.test.mts ./scripts/tests/quality-audit-model.test.mts ./scripts/tests/quality-audit-runtime-model.test.mts ./scripts/tests/quality-audit-gate.test.mts ./scripts/tests/quality-cli-lifecycle.test.mts ./scripts/tests/quality-audit-count-domain.test.mts"
+    "quality:audit:test": "rstest --project scripts scripts/tests/quality-audit.test.mts scripts/tests/quality-audit-model.test.mts scripts/tests/quality-audit-runtime-model.test.mts scripts/tests/quality-audit-gate.test.mts scripts/tests/quality-cli-lifecycle.test.mts scripts/tests/quality-audit-count-domain.test.mts"
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
@@ -97,6 +97,8 @@
     "@effect/sql-pg": "4.0.0-beta.107"
   },
   "devDependencies": {
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc",
+    "@rstest/core": "0.11.11",
     "@effect/platform-node": "4.0.0-beta.107",
     "@effect/tsgo": "0.19.0",
     "@noble/hashes": "2.2.0",
@@ -127,7 +129,9 @@
     "knip": "6.34.0",
     "jscpd": "5.1.2",
     "jsonc-parser": "3.3.1",
-    "fallow": "3.22.0"
+    "fallow": "3.22.0",
+    "@vercel/nft": "0.29.2",
+    "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12"
   },
   "engines": {
     "node": ">=26",

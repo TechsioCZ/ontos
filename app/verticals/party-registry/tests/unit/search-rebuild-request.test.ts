@@ -1,7 +1,5 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { Effect, Schema, Predicate } from 'effect';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
@@ -28,34 +26,37 @@ const request = {
   transport: { correlationId: 'search-rebuild-test', idempotencyKey: 'rebuild-1' },
 };
 
-test('tenant rebuild requests require Party administration and canonical idempotency', () => {
-  const { descriptor } = requestSearchRebuildAction;
-  assert.equal(descriptor.actionKey, 'party.registry.request-search-rebuild');
-  assert.equal(descriptor.tenantPermission?.({}), 'manage_party_identity');
-  assert.equal(descriptor.idempotency, 'required');
-  assert.equal(descriptor.legalEntityScope, 'optional');
-  assert.equal(descriptor.entrypoint.scope, 'tenant');
-  assert.deepEqual(Schema.decodeUnknownSync(descriptor.payloadSchema)({}), {});
-  assert.deepEqual(Object.keys(descriptor.domainEvents), [
-    'party.registry.search-rebuild-requested.v1',
-  ]);
-});
+it.effect('tenant rebuild requests require Party administration and canonical idempotency', () =>
+  Effect.gen(function* rebuildDescriptor() {
+    const { descriptor } = requestSearchRebuildAction;
+    expect(descriptor.actionKey).toBe('party.registry.request-search-rebuild');
+    expect(descriptor.tenantPermission?.({})).toBe('manage_party_identity');
+    expect(descriptor.idempotency).toBe('required');
+    expect(descriptor.legalEntityScope).toBe('optional');
+    expect(descriptor.entrypoint.scope).toBe('tenant');
+    expect(yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)({})).toEqual({});
+    expect(Object.keys(descriptor.domainEvents)).toEqual([
+      'party.registry.search-rebuild-requested.v1',
+    ]);
+  }),
+);
 
-test('authorized rebuild commits one linked request without reading identity or running the projector', () => {
-  const harness = makeActionTestHarness({
-    actionPermission: 'allowed',
-    tenantPermission: 'allowed',
-  });
-  return runEffectTestPromise(
+it.effect(
+  'authorized rebuild commits one linked request without reading identity or running the projector',
+  () =>
     Effect.gen(function* authorizedRebuildRequest() {
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        tenantPermission: 'allowed',
+      });
       const result = yield* harness.runtime.runAction(request);
-      assert.equal(result.status, 'QUEUED');
-      assert.equal(Schema.is(Schema.String.check(Schema.isUUID()))(result.requestId), true);
+      expect(result.status).toBe('QUEUED');
+      expect(Schema.is(Schema.String.check(Schema.isUUID()))(result.requestId)).toBe(true);
       const { committed, permissionDenials } = harness.snapshot();
-      assert.equal(committed.length, 1);
-      assert.deepEqual(permissionDenials, []);
-      assert.deepEqual(committed[0]?.evidence.dataAccessEvents, []);
-      assert.deepEqual(committed[0]?.evidence.domainEvents, [
+      expect(committed.length).toBe(1);
+      expect(permissionDenials).toEqual([]);
+      expect(committed[0]?.evidence.dataAccessEvents).toEqual([]);
+      expect(committed[0]?.evidence.domainEvents).toEqual([
         {
           eventType: 'party.registry.search-rebuild-requested.v1',
           payloadJson: { requestId: result.requestId },
@@ -65,7 +66,7 @@ test('authorized rebuild commits one linked request without reading identity or 
           subjectResourceType: 'tenant',
         },
       ]);
-      assert.deepEqual(committed[0]?.evidence.outboxMessages, [
+      expect(committed[0]?.evidence.outboxMessages).toEqual([
         {
           domainEventIndex: 0,
           message: {
@@ -76,44 +77,41 @@ test('authorized rebuild commits one linked request without reading identity or 
         },
       ]);
     }),
-  );
-});
+);
 
-test('denied Party administration cannot queue a rebuild even with Action execution permission', () => {
-  const harness = makeActionTestHarness({
-    actionPermission: 'allowed',
-    tenantPermission: 'denied',
-  });
-  return runEffectTestPromise(
+it.effect(
+  'denied Party administration cannot queue a rebuild even with Action execution permission',
+  () =>
     Effect.gen(function* deniedRebuildRequest() {
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        tenantPermission: 'denied',
+      });
       const error = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-      assert.equal(error._tag, 'ActionPermissionDenied');
+      expect(Predicate.isTagged(error, 'ActionPermissionDenied')).toBe(true);
       const snapshot = harness.snapshot();
-      assert.deepEqual(snapshot.committed, []);
-      assert.equal(snapshot.permissionDenials.length, 1);
-      assert.equal(snapshot.stages.includes('handler_executed'), false);
+      expect(snapshot.committed).toEqual([]);
+      expect(snapshot.permissionDenials.length).toBe(1);
+      expect(snapshot.stages.includes('handler_executed')).toBe(false);
     }),
-  );
-});
+);
 
-test('replaying the same authorized rebuild request queues only once', () => {
-  const harness = makeActionTestHarness({
-    actionPermission: 'allowed',
-    tenantPermission: 'allowed',
-  });
-  return runEffectTestPromise(
-    Effect.gen(function* replayRebuildRequest() {
-      yield* harness.runtime.runAction(request);
-      const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-      assert.equal(replay._tag, 'ActionAlreadyCommitted');
-      const snapshot = harness.snapshot();
-      assert.equal(snapshot.committed.length, 1);
-      assert.equal(snapshot.committed[0]?.evidence.domainEvents.length, 1);
-      assert.equal(snapshot.committed[0]?.evidence.outboxMessages.length, 1);
-      assert.equal(snapshot.invocations.length, 1);
-    }),
-  );
-});
+it.effect('replaying the same authorized rebuild request queues only once', () =>
+  Effect.gen(function* replayRebuildRequest() {
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
+    yield* harness.runtime.runAction(request);
+    const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
+    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
+    const snapshot = harness.snapshot();
+    expect(snapshot.committed.length).toBe(1);
+    expect(snapshot.committed[0]?.evidence.domainEvents.length).toBe(1);
+    expect(snapshot.committed[0]?.evidence.outboxMessages.length).toBe(1);
+    expect(snapshot.invocations.length).toBe(1);
+  }),
+);
 
 const workerContext: OutboxWorkerHandlerContext = {
   attemptNumber: 1,
@@ -128,29 +126,29 @@ const workerContext: OutboxWorkerHandlerContext = {
   workerKey: 'party.registry.rebuild-search',
 };
 
-test('rebuild worker uses its trusted committed context, and failures remain retryable', () => {
-  const unavailable = new PartySearchProjectionUnavailable({
-    code: 'party_search_projection_unavailable',
-    reason: 'Party search projection is temporarily unavailable',
-  });
-  return runEffectTestPromise(
-    Effect.gen(function* rebuildWorkerFailure() {
+it.effect(
+  'rebuild worker uses its trusted committed context, and failures remain retryable',
+  () => {
+    const unavailable = new PartySearchProjectionUnavailable({
+      code: 'party_search_projection_unavailable',
+      reason: 'Party search projection is temporarily unavailable',
+    });
+    return Effect.gen(function* rebuildWorkerFailure() {
       const failure = yield* handleRebuildSearch({ requestId }, workerContext).pipe(
         Effect.provideService(PartySearchProjector, {
           project: (context, target) => {
-            assert.equal(context, workerContext);
-            assert.deepEqual(target, { rebuild: true });
+            expect(context).toBe(workerContext);
+            expect(target).toEqual({ rebuild: true });
             return Effect.fail(unavailable);
           },
         }),
         Effect.flip,
       );
-      assert.equal(failure, unavailable);
-      assert.equal(rebuildSearchWorker.descriptor.workerKey, 'party.registry.rebuild-search');
-      assert.equal(
-        rebuildSearchWorker.descriptor.topic,
+      expect(failure).toBe(unavailable);
+      expect(rebuildSearchWorker.descriptor.workerKey).toBe('party.registry.rebuild-search');
+      expect(rebuildSearchWorker.descriptor.topic).toBe(
         'party.registry.search-rebuild-requested.v1',
       );
-    }),
-  );
-});
+    });
+  },
+);

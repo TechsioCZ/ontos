@@ -47,7 +47,7 @@ export const verticalClients: readonly ApprovedVerticalPageClient[] = [
 	{ componentKey: "contacts.core.page-contacts", load: async () => await import("node:os") },
 ];
 
-/** A structural narrowing of the Drizzle query builder, converted once by `attempt`. */
+/** A structural narrowing of the Drizzle query builder, converted at the SDK call. */
 interface CustomerInsertTransaction {
 	readonly insert: (table: string) => {
 		readonly values: (values: { readonly name: string }) => {
@@ -56,8 +56,8 @@ interface CustomerInsertTransaction {
 	};
 }
 
-const attempt = <Value>(operation: () => PromiseLike<Value>) =>
-	Effect.tryPromise({ catch: () => "contacts_persistence_unavailable" as const, try: operation });
-
 export const createCustomer = (transaction: CustomerInsertTransaction, name: string) =>
-	attempt(() => transaction.insert("customers").values({ name }).returning());
+    Effect.tryPromise({
+        catch: () => "contacts_persistence_unavailable" as const,
+        try: () => transaction.insert("customers").values({ name }).returning(),
+    });

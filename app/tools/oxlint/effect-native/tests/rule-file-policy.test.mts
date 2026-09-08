@@ -1,44 +1,51 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { acceptsRuleFile, ruleFilePolicyProperties } from '../shared/rule-file-policy.ts';
 
-const policy = { include: ['packages/**'], ignore: [], ignoreTests: false };
+const sourceFile = 'packages/core/src/schema.ts';
 
-test('rule file policy keeps source and test files in scope by default', () => {
-  assert.equal(acceptsRuleFile('packages/core/src/schema.ts', policy), true);
-  assert.equal(acceptsRuleFile('packages/core/tests/schema.test.ts', policy), true);
-  assert.equal(acceptsRuleFile('apps/shell/src/schema.ts', policy), false);
-  assert.equal(acceptsRuleFile('packages/core/src/schema.ts', { ...policy, include: [] }), false);
+const policy = { ignore: [], ignoreTests: false, include: ['packages/**'] };
+
+it('rule file policy keeps source and test files in scope by default', () => {
+  expect(acceptsRuleFile(sourceFile, policy)).toBe(true);
+  expect(acceptsRuleFile('packages/core/tests/schema.test.ts', policy)).toBe(true);
+  expect(acceptsRuleFile('apps/shell/src/schema.ts', policy)).toBe(false);
+  expect(acceptsRuleFile(sourceFile, { ...policy, include: [] })).toBe(false);
 });
 
-test('rule file policy applies ignore and optional test exclusion', () => {
-  assert.equal(
-    acceptsRuleFile('packages/core/src/schema.ts', { ...policy, ignore: ['packages/core/**'] }),
-    false,
-  );
-  assert.equal(
-    acceptsRuleFile('packages/core/tests/schema.test.ts', { ...policy, ignoreTests: true }),
-    false,
-  );
-  assert.equal(
-    acceptsRuleFile('packages/core/src/schema.ts', { ...policy, ignoreTests: true }),
-    true,
-  );
+it('rule file policy applies ignore and optional test exclusion', () => {
+  expect(
+    acceptsRuleFile(sourceFile, {
+      ...policy,
+      ignore: ['packages/core/**'],
+    }),
+  ).toBe(false);
+  expect(
+    acceptsRuleFile('packages/core/tests/schema.test.ts', {
+      ...policy,
+      ignoreTests: true,
+    }),
+  ).toBe(false);
+  expect(
+    acceptsRuleFile(sourceFile, {
+      ...policy,
+      ignoreTests: true,
+    }),
+  ).toBe(true);
 });
 
-test('rule file policy normalizes absolute and fixture paths before filtering', () => {
+it('rule file policy normalizes absolute and fixture paths before filtering', () => {
   for (const filename of [
     '/workspace/app/packages/core/src/schema.ts',
-    'C:\\workspace\\app\\packages\\core\\src\\schema.ts',
+    String.raw`C:\workspace\app\packages\core\src\schema.ts`,
     'tools/oxlint/effect-native/tests/fixtures/no-nullable-schema-field/invalid/packages/core/src/schema.ts',
   ]) {
-    assert.equal(acceptsRuleFile(filename, policy), true, filename);
+    expect(acceptsRuleFile(filename, policy), filename).toBe(true);
   }
 });
 
-test('rule file policy exposes the existing JSON option schemas', () => {
-  assert.deepEqual(ruleFilePolicyProperties, {
+it('rule file policy exposes the existing JSON option schemas', () => {
+  expect(ruleFilePolicyProperties).toStrictEqual({
     ignore: { items: { type: 'string' }, type: 'array' },
     ignoreTests: { type: 'boolean' },
     include: { items: { type: 'string' }, type: 'array' },

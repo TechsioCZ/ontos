@@ -2,7 +2,7 @@ import { Effect, Match, Schema } from 'effect';
 import { ResourceRefSchema } from '../../../../../../../shared/api.ts';
 import type { ShellResourceResponse } from '../../../../../../../shared/api.ts';
 import { resourceDetail } from '../../../../../../api/auth-client.ts';
-import { runBrowserEffect } from '../../../../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../../../../page.data.ts';
 import type { HomePageModel } from '../../../../page.data.ts';
@@ -29,8 +29,8 @@ export type ResourcePageModel =
     };
 
 export const loader = ({ params, request }: ResourceLoaderArguments): Promise<ResourcePageModel> =>
-  runBrowserEffect(
-    Effect.tryPromise(() => loadHomePageModel(request)).pipe(
+  browserRuntime.runPromise(
+    loadHomePageModel(request).pipe(
       Effect.timeout('30 seconds'),
       Effect.flatMap((shell) => {
         if (shell.state !== 'authenticated') {
@@ -79,4 +79,5 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
         );
       }),
     ),
+    { signal: request.signal },
   );

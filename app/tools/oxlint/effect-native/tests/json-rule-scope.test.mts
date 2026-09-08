@@ -1,37 +1,29 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { jsonExpressionSnippet } from '../shared/json-globals.ts';
 import { inJsonRuleScope } from '../shared/json-rule-scope.ts';
 
+const sourceFile = 'apps/example/main.ts';
+const testFile = 'apps/example/main.test.ts';
+
 const includePaths = ['apps/**', 'scripts/**'];
 
-test('JSON rule scope preserves defaults, overrides, and exclusions', () => {
-  assert.equal(inJsonRuleScope('/workspace/apps/example/main.ts', undefined, includePaths), true);
-  assert.equal(inJsonRuleScope('packages/example/main.ts', undefined, includePaths), false);
-  assert.equal(inJsonRuleScope('apps/example/main.test.ts', undefined, includePaths), false);
-  assert.equal(
-    inJsonRuleScope('apps/example/main.test.ts', { ignoreTestFiles: false }, includePaths),
-    true,
-  );
-  assert.equal(
-    inJsonRuleScope('apps/example/main.ts', { allowPaths: ['apps/**'] }, includePaths),
-    false,
-  );
-  assert.equal(inJsonRuleScope('apps/example/main.ts', { includePaths: [] }, includePaths), true);
-  assert.equal(inJsonRuleScope('apps/example/main.ts', { includePaths: [1] }, includePaths), true);
-  assert.equal(
+it('JSON rule scope preserves defaults, overrides, and exclusions', () => {
+  expect(inJsonRuleScope('/workspace/apps/example/main.ts', undefined, includePaths)).toBe(true);
+  expect(inJsonRuleScope('packages/example/main.ts', undefined, includePaths)).toBe(false);
+  expect(inJsonRuleScope(testFile, undefined, includePaths)).toBe(false);
+  expect(inJsonRuleScope(testFile, { ignoreTestFiles: false }, includePaths)).toBe(true);
+  expect(inJsonRuleScope(sourceFile, { allowPaths: ['apps/**'] }, includePaths)).toBe(false);
+  expect(inJsonRuleScope(sourceFile, { includePaths: [] }, includePaths)).toBe(true);
+  expect(inJsonRuleScope(sourceFile, { includePaths: [1] }, includePaths)).toBe(true);
+  expect(
     inJsonRuleScope('packages/example/main.ts', { includePaths: ['packages/**'] }, includePaths),
-    true,
-  );
-  assert.equal(
-    inJsonRuleScope('apps/example/main.test.ts', { ignoreTestFiles: 'false' }, includePaths),
-    false,
-  );
+  ).toBe(true);
+  expect(inJsonRuleScope(testFile, { ignoreTestFiles: 'false' }, includePaths)).toBe(false);
 });
 
-test('JSON snippets retain whitespace normalization, boundary, and ASCII truncation', () => {
-  assert.equal(jsonExpressionSnippet('  JSON.stringify(\n  value  )  '), 'JSON.stringify( value )');
-  assert.equal(jsonExpressionSnippet('x'.repeat(72)), 'x'.repeat(72));
-  assert.equal(jsonExpressionSnippet('x'.repeat(73)), `${'x'.repeat(69)}...`);
+it('JSON snippets retain whitespace normalization, boundary, and ASCII truncation', () => {
+  expect(jsonExpressionSnippet('  JSON.stringify(\n  value  )  ')).toBe('JSON.stringify( value )');
+  expect(jsonExpressionSnippet('x'.repeat(72))).toBe('x'.repeat(72));
+  expect(jsonExpressionSnippet('x'.repeat(73))).toBe(`${'x'.repeat(69)}...`);
 });

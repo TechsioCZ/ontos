@@ -1,3 +1,5 @@
+/// <reference types="node" />
+import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { defineConfig, devices } from '@playwright/test';
@@ -30,7 +32,10 @@ const repositoryRoot = path.resolve(process.cwd(), '../../..');
 const e2eSourceRevision = '0000000000000000000000000000000000000001';
 
 export default defineConfig({
+  // Preserve one native Core module instance and let Node strip its type-only class fields.
+  build: { external: ['**/packages/core-runtime/**'] },
   forbidOnly: continuousIntegration,
+  fullyParallel: true,
   projects: [
     {
       name: 'chromium',
@@ -38,11 +43,11 @@ export default defineConfig({
     },
   ],
   reporter: 'line',
-  retries: continuousIntegration ? 2 : 0,
+  retries: 0,
   testDir: './tests/e2e',
   use: {
     baseURL: origin,
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure',
   },
   webServer: [
     {
@@ -54,7 +59,7 @@ export default defineConfig({
         ULTRAMODERN_SOURCE_REVISION: e2eSourceRevision,
       },
       reuseExistingServer: !continuousIntegration,
-      url: 'http://127.0.0.1:4102/en',
+      url: 'http://127.0.0.1:4102/party-registry-api/party-registry/readiness',
     },
     {
       command: 'pnpm dev',
@@ -62,4 +67,5 @@ export default defineConfig({
       url: `${origin}/en`,
     },
   ],
+  workers: Math.max(1, availableParallelism() - 1),
 });

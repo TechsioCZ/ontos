@@ -1,21 +1,22 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
+import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
+  rstest: 'importActual',
+};
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { Effect, Redacted } from 'effect';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 
-const { navigateMock, runBrowserEffectMock, signInMock } = rstest.hoisted(() => ({
-  navigateMock: rstest.fn(async () => {}),
-  runBrowserEffectMock: rstest.fn(),
+const { browserRunPromiseMock, navigateMock, signInMock } = rstest.hoisted(() => ({
+  browserRunPromiseMock: rstest.fn(),
+  navigateMock: rstest.fn(),
   signInMock: rstest.fn(),
 }));
 
 beforeEach(() => {
-  runBrowserEffectMock.mockImplementation(
-    async (effect: Effect.Effect<unknown, unknown>) => await runEffectTestPromise(effect),
-  );
+  navigateMock.mockImplementation(() => Promise.resolve());
+  browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signInMock.mockReturnValue(
     Effect.succeed({
       identity: {
@@ -65,7 +66,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: runBrowserEffectMock,
+  browserRuntime: { runPromise: browserRunPromiseMock },
 }));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
@@ -81,7 +82,7 @@ afterEach(() => {
   rstest.clearAllMocks();
 });
 
-test('shows the required login controls through the UI kit', () => {
+it('shows the required login controls through the UI kit', () => {
   render(<LoginPage />);
 
   const login = getLogin();
@@ -101,6 +102,20 @@ test('shows the required login controls through the UI kit', () => {
   );
 });
 
+const submitLogin = (login: string, password: string) =>
+  Effect.gen(function* submitLoginEffect() {
+    const user = userEvent.setup();
+    renderLogin();
+    if (login.length > 0) {
+      yield* Effect.promise(() => user.type(getLogin(), login));
+    }
+    if (password.length > 0) {
+      yield* Effect.promise(() => user.type(getPassword(), password));
+    }
+    yield* Effect.promise(() => user.click(getSubmit()));
+    return user;
+  });
+
 interface LoginValidationCase {
   readonly focus: 'login' | 'password' | 'submit';
   readonly login: string;
@@ -114,19 +129,6 @@ const focusTargets = {
   login: getLogin,
   password: getPassword,
   submit: getSubmit,
-};
-
-const submitLogin = async (login: string, password: string) => {
-  const user = userEvent.setup();
-  renderLogin();
-  if (login.length > 0) {
-    await user.type(getLogin(), login);
-  }
-  if (password.length > 0) {
-    await user.type(getPassword(), password);
-  }
-  await user.click(getSubmit());
-  return user;
 };
 
 const validationCases: LoginValidationCase[] = [
@@ -172,70 +174,96 @@ const validationCases: LoginValidationCase[] = [
   },
 ];
 
-test.each(validationCases)(
+it.effect.each(validationCases)(
   'marks, explains and focuses exactly the missing fields when $name',
-  async ({ focus, login, loginInvalid, password, passwordInvalid }) => {
-    await submitLogin(login, password);
+  ({ focus, login, loginInvalid, password, passwordInvalid }) =>
+    Effect.gen(function* marksExplainsAndFocusesTheMissingFields() {
+      yield* submitLogin(login, password);
 
-    const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
-    expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
-    expect(getPassword().getAttribute('aria-invalid')).toBe(passwordInvalid ? 'true' : null);
-    expect(screen.queryAllByText('Enter your login.')).toHaveLength(loginInvalid ? 1 : 0);
-    expect(screen.queryAllByText('Enter your password.')).toHaveLength(passwordInvalid ? 1 : 0);
-    expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(incompleteToasts);
-    expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(incompleteToasts);
-    expect(document.activeElement).toBe(focusTargets[focus]());
-  },
+      const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
+      expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
+      expect(getPassword().getAttribute('aria-invalid')).toBe(passwordInvalid ? 'true' : null);
+      expect(screen.queryAllByText('Enter your login.')).toHaveLength(loginInvalid ? 1 : 0);
+      expect(screen.queryAllByText('Enter your password.')).toHaveLength(passwordInvalid ? 1 : 0);
+      expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(incompleteToasts);
+      expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(incompleteToasts);
+      expect(document.activeElement).toBe(focusTargets[focus]());
+    }),
 );
 
-test('creates one Toast per repeated invalid submission', async () => {
-  const user = await submitLogin('', '');
+it.effect('creates one Toast per repeated invalid submission', () =>
+  Effect.gen(function* createsOneToastPerRepeatedInvalidSubmission() {
+    const user = yield* submitLogin('', '');
 
-  await user.click(getSubmit());
+    yield* Effect.promise(() => user.click(getSubmit()));
+    expect(screen.getAllByText('Login details are incomplete')).toHaveLength(2);
+    expect(screen.getAllByText('Fill in both required fields.')).toHaveLength(2);
+  }),
+);
 
-  expect(screen.getAllByText('Login details are incomplete')).toHaveLength(2);
-  expect(screen.getAllByText('Fill in both required fields.')).toHaveLength(2);
-});
+it.effect('clears stale errors after both fields are corrected', () =>
+  Effect.gen(function* clearsStaleErrorsAfterBothFieldsCorrected() {
+    const user = yield* submitLogin('', '');
 
-test('clears stale errors after both fields are corrected', async () => {
-  const user = await submitLogin('', '');
+    yield* Effect.promise(() => user.type(getLogin(), 'admin'));
+    yield* Effect.promise(() => user.type(getPassword(), 'secret'));
+    yield* Effect.promise(() => user.click(getSubmit()));
+    expect(getLogin().getAttribute('aria-invalid')).toBeNull();
+    expect(getPassword().getAttribute('aria-invalid')).toBeNull();
+    expect(screen.queryByText('Enter your login.')).toBeNull();
+    expect(screen.queryByText('Enter your password.')).toBeNull();
+  }),
+);
 
-  await user.type(getLogin(), 'admin');
-  await user.type(getPassword(), 'secret');
-  await user.click(getSubmit());
+it.effect('runs the same validation when submitted with Enter', () =>
+  Effect.gen(function* runsTheSameValidationWhenSubmittedWithEnter() {
+    const user = userEvent.setup();
+    renderLogin();
 
-  expect(getLogin().getAttribute('aria-invalid')).toBeNull();
-  expect(getPassword().getAttribute('aria-invalid')).toBeNull();
-  expect(screen.queryByText('Enter your login.')).toBeNull();
-  expect(screen.queryByText('Enter your password.')).toBeNull();
-});
+    yield* Effect.promise(() => user.click(getLogin()));
+    yield* Effect.promise(() => user.keyboard('{Enter}'));
+    expect(getLogin().getAttribute('aria-invalid')).toBe('true');
+    expect(getPassword().getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
+    expect(document.activeElement).toBe(getLogin());
+  }),
+);
 
-test('runs the same validation when submitted with Enter', async () => {
-  const user = userEvent.setup();
-  renderLogin();
+it.effect('submits valid values through the Shell authentication client and navigates home', () =>
+  Effect.gen(function* submitsValidValuesThroughShellAuthClient() {
+    yield* submitLogin('admin', 'secret');
 
-  await user.click(getLogin());
-  await user.keyboard('{Enter}');
-
-  expect(getLogin().getAttribute('aria-invalid')).toBe('true');
-  expect(getPassword().getAttribute('aria-invalid')).toBe('true');
-  expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
-  expect(document.activeElement).toBe(getLogin());
-});
-
-test('submits valid values through the Shell authentication client and navigates home', async () => {
-  await submitLogin('admin', 'secret');
-
-  await waitFor(() => {
-    expect(signInMock).toHaveBeenCalledWith(
-      {
-        email: 'admin',
-        password: Redacted.make('secret'),
-      },
-      { locale: 'en' },
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(signInMock).toHaveBeenCalledWith(
+          {
+            email: 'admin',
+            password: Redacted.make('secret'),
+          },
+          { locale: 'en' },
+        );
+        expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(screen.queryByText('shell.login.error.internal')).toBeNull();
+        expect(screen.queryByText('Login details are incomplete')).toBeNull();
+      }),
     );
-    expect(runBrowserEffectMock).toHaveBeenCalledTimes(1);
-    expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
-    expect(screen.queryByText('Login details are incomplete')).toBeNull();
-  });
-});
+  }),
+);
+
+it.effect('reports navigation failure and restores the login form after authentication', () =>
+  Effect.gen(function* reportsNavigationFailure() {
+    navigateMock.mockRejectedValueOnce('Navigation failed');
+    yield* submitLogin('admin', 'secret');
+
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(document.activeElement).toBe(getLogin());
+      }),
+    );
+  }),
+);

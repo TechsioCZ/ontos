@@ -1,6 +1,4 @@
-// @effect-diagnostics asyncFunction:off -- Node's test runner owns this compatibility edge; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
 import {
@@ -11,7 +9,7 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-import { Result } from 'effect';
+import { Predicate, Struct } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 const RepresentativeConflictSchema = Schema.TaggedStruct('RepresentativeConflict', {
@@ -33,10 +31,9 @@ const RepresentativeApi = HttpApi.make('RepresentativeApi').add(
   ),
 );
 
-const controlledTransportFailureFetch: typeof fetch = async () => {
-  throw new TypeError('controlled transport failure');
-};
-const invalidResponseFetch: typeof fetch = async () => Response.json({ value: 358 });
+const controlledTransportFailureFetch: typeof fetch = () =>
+  Promise.reject(new TypeError('controlled transport failure'));
+const invalidResponseFetch: typeof fetch = () => Promise.resolve(Response.json({ value: 358 }));
 
 const representativeClientEffect = makeEffectBffClient({
   api: RepresentativeApi,
@@ -63,98 +60,97 @@ void preserveRepresentativeReadType;
 void preserveRepresentativeSuccessType;
 void preserveRepresentativeErrorType;
 
-test('constructs fresh typed clients lazily as Effect values', async () => {
-  const clientEffect = makeEffectBffClient({
-    api: RepresentativeApi,
-    defaultApiPrefix: 'https://owner.example/representative-api',
-  });
-  assert.equal(Effect.isEffect(clientEffect), true);
+it.effect('constructs fresh typed clients lazily as Effect values', () =>
+  Effect.gen(function* testScenario1() {
+    const clientEffect = makeEffectBffClient({
+      api: RepresentativeApi,
+      defaultApiPrefix: 'https://owner.example/representative-api',
+    });
+    expect(Effect.isEffect(clientEffect)).toBe(true);
 
-  const first = await Effect.runPromise(clientEffect);
-  const second = await Effect.runPromise(clientEffect);
+    const first = yield* clientEffect;
+    const second = yield* clientEffect;
 
-  assert.notEqual(first, second);
-  assert.equal(Effect.isEffect(first.representative.read({})), true);
-});
+    expect(first).not.toBe(second);
+    expect(Effect.isEffect(first.representative.read({}))).toBe(true);
+  }),
+);
 
-test('uses the owner-supplied API prefix by default', async () => {
-  const requests: Request[] = [];
-  const fakeFetch: typeof fetch = async (input, init) => {
-    requests.push(new Request(input, init));
-    return Response.json({ value: 'default-prefix' });
-  };
-  const location = Object.getOwnPropertyDescriptor(globalThis, 'location');
-  Object.defineProperty(globalThis, 'location', {
-    configurable: true,
-    value: { origin: 'https://shell.example', pathname: '/en' },
-  });
+it.effect('uses the owner-supplied API prefix by default', () =>
+  Effect.gen(function* testScenario2() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ value: 'default-prefix' }));
+    };
+    const location = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (location === undefined) {
+          Reflect.deleteProperty(globalThis, 'location');
+        } else {
+          Object.defineProperty(globalThis, 'location', location);
+        }
+      }),
+    );
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: { origin: 'https://shell.example', pathname: '/en' },
+    });
 
-  try {
-    const result = await Effect.runPromise(
-      makeEffectBffClient({
-        api: RepresentativeApi,
-        defaultApiPrefix: '/representative-api',
-      }).pipe(
-        Effect.flatMap((client) => client.representative.read({})),
-        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-      ),
+    const result = yield* makeEffectBffClient({
+      api: RepresentativeApi,
+      defaultApiPrefix: '/representative-api',
+    }).pipe(
+      Effect.flatMap((client) => client.representative.read({})),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
     );
 
-    assert.deepEqual(result, { value: 'default-prefix' });
-    assert.deepEqual(
-      requests.map(({ url }) => url),
-      ['https://shell.example/representative-api/read'],
-    );
-  } finally {
-    if (location === undefined) {
-      Reflect.deleteProperty(globalThis, 'location');
-    } else {
-      Object.defineProperty(globalThis, 'location', location);
-    }
-  }
-});
+    expect(result).toEqual({ value: 'default-prefix' });
+    expect(requests.map(({ url }) => url)).toEqual([
+      'https://shell.example/representative-api/read',
+    ]);
+  }),
+);
 
-test('uses an explicit caller base URL instead of the owner prefix', async () => {
-  const requests: Request[] = [];
-  const fakeFetch: typeof fetch = async (input, init) => {
-    requests.push(new Request(input, init));
-    return Response.json({ value: 'override' });
-  };
+it.effect('uses an explicit caller base URL instead of the owner prefix', () =>
+  Effect.gen(function* testScenario3() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ value: 'override' }));
+    };
 
-  const result = await Effect.runPromise(
-    makeEffectBffClient({
+    const result = yield* makeEffectBffClient({
       api: RepresentativeApi,
       baseUrl: new URL('https://owner.example/custom-api'),
       defaultApiPrefix: '/representative-api',
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
-  );
+    );
 
-  assert.deepEqual(result, { value: 'override' });
-  assert.deepEqual(
-    requests.map(({ url }) => url),
-    ['https://owner.example/custom-api/read'],
-  );
-});
+    expect(result).toEqual({ value: 'override' });
+    expect(requests.map(({ url }) => url)).toEqual(['https://owner.example/custom-api/read']);
+  }),
+);
 
-test('propagates supported request context and resolved transport headers', async () => {
-  const requests: Request[] = [];
-  const fakeFetch: typeof fetch = async (input, init) => {
-    requests.push(new Request(input, init));
-    return Response.json({ value: 'context' });
-  };
-  const operationContext = {
-    method: 'GET',
-    operationId: 'RepresentativeApi:/read',
-    routePath: '/read',
-    source: 'generated-client' as const,
-  };
-  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+it.effect('propagates supported request context and resolved transport headers', () =>
+  Effect.gen(function* testScenario4() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ value: 'context' }));
+    };
+    const operationContext = {
+      method: 'GET',
+      operationId: 'RepresentativeApi:/read',
+      routePath: '/read',
+      source: 'generated-client' as const,
+    };
+    const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
 
-  await Effect.runPromise(
-    makeEffectBffClient({
+    yield* makeEffectBffClient({
       api: RepresentativeApi,
       baseUrl: 'https://owner.example/representative-api',
       defaultApiPrefix: '/representative-api',
@@ -170,31 +166,35 @@ test('propagates supported request context and resolved transport headers', asyn
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
-  );
+    );
 
-  const [request] = requests;
-  assert.ok(request);
-  assert.equal(request.headers.get('accept-language'), 'cs');
-  assert.equal(request.headers.get('traceparent'), traceparent);
-  assert.equal(request.headers.get('x-operation-id'), operationContext.operationId);
-  assert.deepEqual(
-    JSON.parse(request.headers.get('x-modernjs-bff-operation-context') ?? ''),
-    operationContext,
-  );
-  assert.equal(request.headers.get('authorization'), 'Bearer owner-resolved-assertion');
-  assert.equal(request.headers.get('x-correlation-id'), 'correlation-358');
-});
+    const [request] = requests;
+    expect(request).toBeDefined();
+    if (request === undefined) {
+      throw new Error('Expected captured request');
+    }
+    expect(request.headers.get('accept-language')).toBe('cs');
+    expect(request.headers.get('traceparent')).toBe(traceparent);
+    expect(request.headers.get('x-operation-id')).toBe(operationContext.operationId);
+    expect(
+      yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+        request.headers.get('x-modernjs-bff-operation-context') ?? '',
+      ),
+    ).toEqual(operationContext);
+    expect(request.headers.get('authorization')).toBe('Bearer owner-resolved-assertion');
+    expect(request.headers.get('x-correlation-id')).toBe('correlation-358');
+  }),
+);
 
-test('omits absent optional request context and transport header values', async () => {
-  const requests: Request[] = [];
-  const fakeFetch: typeof fetch = async (input, init) => {
-    requests.push(new Request(input, init));
-    return Response.json({ value: 'omitted' });
-  };
+it.effect('omits absent optional request context and transport header values', () =>
+  Effect.gen(function* testScenario5() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ value: 'omitted' }));
+    };
 
-  await Effect.runPromise(
-    makeEffectBffClient({
+    yield* makeEffectBffClient({
       api: RepresentativeApi,
       baseUrl: 'https://owner.example/representative-api',
       defaultApiPrefix: '/representative-api',
@@ -203,67 +203,70 @@ test('omits absent optional request context and transport header values', async 
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
-  );
+    );
 
-  const [request] = requests;
-  assert.ok(request);
-  for (const header of [
-    'accept-language',
-    'traceparent',
-    'x-modernjs-bff-operation-context',
-    'x-operation-id',
-  ]) {
-    assert.equal(request.headers.has(header), false, header);
-  }
-});
+    const [request] = requests;
+    expect(request).toBeDefined();
+    if (request === undefined) {
+      throw new Error('Expected captured request');
+    }
+    for (const header of [
+      'accept-language',
+      'traceparent',
+      'x-modernjs-bff-operation-context',
+      'x-operation-id',
+    ]) {
+      expect(request.headers.has(header), header).toBe(false);
+    }
+  }),
+);
 
-test('keeps declared backend failures in the typed Effect error channel', async () => {
-  const problem = {
-    _tag: 'RepresentativeConflict' as const,
-    detail: 'The representative value changed.',
-    status: 409 as const,
-    title: 'Representative conflict',
-    type: 'urn:ontos:test:representative-conflict',
-  };
-  const fakeFetch: typeof fetch = async () =>
-    Response.json(problem, {
-      headers: { 'content-type': 'application/problem+json' },
-      status: 409,
-    });
+it.effect('keeps declared backend failures in the typed Effect error channel', () =>
+  Effect.gen(function* testScenario6() {
+    const problem = {
+      _tag: 'RepresentativeConflict' as const,
+      detail: 'The representative value changed.',
+      status: 409 as const,
+      title: 'Representative conflict',
+      type: 'urn:ontos:test:representative-conflict',
+    };
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(
+        Response.json(problem, {
+          headers: { 'content-type': 'application/problem+json' },
+          status: 409,
+        }),
+      );
 
-  const outcome = await Effect.runPromise(
-    makeEffectBffClient({
+    const outcome = yield* makeEffectBffClient({
       api: RepresentativeApi,
       defaultApiPrefix: 'https://owner.example/representative-api',
     }).pipe(
       Effect.flatMap((client) => client.representative.read({})),
-      Effect.result,
+      Effect.flip,
       Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-    ),
-  );
+    );
 
-  assert.ok(Result.isFailure(outcome));
-  assert.deepEqual(outcome.failure, problem);
-});
+    expect(Schema.is(RepresentativeConflictSchema)(outcome)).toBe(true);
+    expect(Struct.omit(outcome, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
+  }),
+);
 
 for (const [failureKind, transport, expectedTag] of [
   ['transport', controlledTransportFailureFetch, 'HttpClientError'],
   ['response decoding', invalidResponseFetch, 'SchemaError'],
 ] as const) {
-  test(`keeps ${failureKind} failures in the typed Effect error channel`, async () => {
-    const outcome = await Effect.runPromise(
-      makeEffectBffClient({
+  it.effect(`keeps ${failureKind} failures in the typed Effect error channel`, () =>
+    Effect.gen(function* typedClientFailure() {
+      const outcome = yield* makeEffectBffClient({
         api: RepresentativeApi,
         defaultApiPrefix: 'https://owner.example/representative-api',
       }).pipe(
         Effect.flatMap((client) => client.representative.read({})),
-        Effect.result,
+        Effect.flip,
         Effect.provideService(FetchHttpClient.Fetch, transport),
-      ),
-    );
-
-    assert.ok(Result.isFailure(outcome));
-    assert.equal(outcome.failure._tag, expectedTag);
-  });
+      );
+      expect(Predicate.isTagged(outcome, expectedTag)).toBe(true);
+    }),
+  );
 }
