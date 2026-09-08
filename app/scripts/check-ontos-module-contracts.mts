@@ -2,7 +2,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { NodeFileSystem, NodeRuntime } from '@effect/platform-node';
+import { NodeServices, NodeRuntime } from '@effect/platform-node';
 import { Effect, Equal, FileSystem, Layer, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 
@@ -432,15 +432,14 @@ const checkVertical = (
         `${appId} development module-contract URL is invalid`
       );
     }
-    const derived = yield* Effect.tryPromise({
-      catch: () =>
-        failure(`${appId} authored module contract could not be derived`),
-      try: async () =>
-        await deriveOntosModuleDeploymentContract({
-          vertical: verticalName,
-          workspaceRoot,
-        }),
-    });
+    const derived = yield* deriveOntosModuleDeploymentContract({
+      vertical: verticalName,
+      workspaceRoot,
+    }).pipe(
+      Effect.mapError(() =>
+        failure(`${appId} authored module contract could not be derived`)
+      )
+    );
     if (
       derived.deployment.appId !== appId ||
       derived.manifest.module.id !== manifestModuleId
@@ -523,6 +522,6 @@ if (
     checkOntosModuleContracts().pipe(
       Effect.tap(() => Effect.logInfo('OntOS module contracts validated'))
     )
-  ).pipe(Layer.provide(NodeFileSystem.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
   NodeRuntime.runMain(Effect.scoped(Layer.build(programLayer)));
 }

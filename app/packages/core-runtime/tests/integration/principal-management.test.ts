@@ -1,19 +1,8 @@
-import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test, { after as afterNativeDatabase } from 'node:test';
 
-import {
-  makeEffectTestCallback as nativeTestCallback,
-  runEffectTestPromise,
-} from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { eq } from 'drizzle-orm';
-import {
-  Effect,
-  Exit as NativeExit,
-  Predicate,
-  Scope as NativeScope,
-} from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { Pool } from 'pg';
 
 import {
@@ -31,51 +20,39 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import { makeTestDatabaseFromPool } from '../support/database.ts';
-import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(
-    nativeTestCallback
-  )
-);
-
-void test('persists managed key lifecycle without credential material and enforces global key cardinality', async () => {
-  const tenantId = randomUUID();
-  const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
-  const configuration = await runEffectTestPromise(loadDatabaseConfig());
-  const pool = new Pool({ connectionString: configuration.connectionString });
-  const database = await runEffectTestPromise(
-    makeTestDatabaseFromPool(pool, coreRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope)
-    )
-  );
-  const cleanup = async () => {
-    await runEffectTestPromise(
-      purgeFixtureRows([
+it.live(
+  'persists managed key lifecycle without credential material and enforces global key cardinality',
+  () =>
+    Effect.gen(function* principalManagement1() {
+      const tenantId = randomUUID();
+      const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
+      const configuration = yield* loadDatabaseConfig();
+      const pool = yield* Effect.acquireRelease(
+        Effect.sync(
+          () => new Pool({ connectionString: configuration.connectionString })
+        ),
+        (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie)
+      );
+      const database = yield* makeTestDatabaseFromPool(pool, coreRelations);
+      const cleanup = purgeFixtureRows([
         database
           .delete(principalAuthBindings)
           .where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
         database.delete(principals).where(eq(principals.tenantId, tenantId)),
         database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
-      ])
-    );
-  };
+      ]);
 
-  try {
-    await cleanup();
-    await runEffectTestPromise(
-      database.insert(tenants).values({
+      yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
+      yield* database.insert(tenants).values({
         defaultLocale: 'en',
         name: 'Principal management integration',
         slug: `principal-management-${tenantId}`,
         status: 'active',
         tenantId,
-      })
-    );
-    const first = await runEffectTestPromise(
-      database.transaction((transaction) =>
+      });
+      const first = yield* database.transaction((transaction) =>
         createNonHumanPrincipal({
           displayName: 'Managed integration',
           kind: 'integration',
@@ -86,10 +63,8 @@ void test('persists managed key lifecycle without credential material and enforc
             principalManagementRepositoryFromTransaction(transaction)
           )
         )
-      )
-    );
-    const second = await runEffectTestPromise(
-      database.transaction((transaction) =>
+      );
+      const second = yield* database.transaction((transaction) =>
         createNonHumanPrincipal({
           displayName: 'Managed service',
           kind: 'service',
@@ -100,10 +75,8 @@ void test('persists managed key lifecycle without credential material and enforc
             principalManagementRepositoryFromTransaction(transaction)
           )
         )
-      )
-    );
-    const binding = await runEffectTestPromise(
-      database.transaction((transaction) =>
+      );
+      const binding = yield* database.transaction((transaction) =>
         bindApiKey({
           managed: true,
           principalId: first.principalId,
@@ -115,10 +88,8 @@ void test('persists managed key lifecycle without credential material and enforc
             principalManagementRepositoryFromTransaction(transaction)
           )
         )
-      )
-    );
-    const duplicate = await runEffectTestPromise(
-      database.transaction((transaction) =>
+      );
+      const duplicate = yield* database.transaction((transaction) =>
         Effect.flip(
           bindApiKey({
             managed: true,
@@ -132,12 +103,12 @@ void test('persists managed key lifecycle without credential material and enforc
             )
           )
         )
-      )
-    );
-    assert.ok(Predicate.isTagged(duplicate, 'IdentityLifecycleConflictError'));
+      );
+      expect(
+        Predicate.isTagged(duplicate, 'IdentityLifecycleConflictError')
+      ).toBe(true);
 
-    const missingReason = await runEffectTestPromise(
-      database.transaction((transaction) =>
+      const missingReason = yield* database.transaction((transaction) =>
         Effect.flip(
           setApiKeyBindingStatus({
             authBindingId: binding.authBindingId,
@@ -153,12 +124,12 @@ void test('persists managed key lifecycle without credential material and enforc
             )
           )
         )
-      )
-    );
-    assert.ok(Predicate.isTagged(missingReason, 'IdentityTargetInvalidError'));
+      );
+      expect(
+        Predicate.isTagged(missingReason, 'IdentityTargetInvalidError')
+      ).toBe(true);
 
-    await runEffectTestPromise(
-      database.transaction((transaction) =>
+      yield* database.transaction((transaction) =>
         setApiKeyBindingStatus({
           authBindingId: binding.authBindingId,
           expectedStatus: 'active',
@@ -173,10 +144,8 @@ void test('persists managed key lifecycle without credential material and enforc
             principalManagementRepositoryFromTransaction(transaction)
           )
         )
-      )
-    );
-    const [stored] = await runEffectTestPromise(
-      database
+      );
+      const [stored] = yield* database
         .select()
         .from(principalAuthBindings)
         .where(
@@ -184,12 +153,12 @@ void test('persists managed key lifecycle without credential material and enforc
             principalAuthBindings.principalAuthBindingId,
             binding.authBindingId
           )
-        )
-    );
-    assert.equal(stored?.status, 'revoked');
-    assert.equal(JSON.stringify(stored).includes('secret'), false);
-  } finally {
-    await cleanup();
-    await pool.end();
-  }
-});
+        );
+      expect(stored?.status).toBe('revoked');
+      expect(
+        (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          stored
+        )).includes('secret')
+      ).toBe(false);
+    })
+);

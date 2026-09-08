@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import test, { after as afterNativeDatabase } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -24,31 +22,25 @@ import type {
   TrustedPrincipalContext,
   VerticalRuntimeRegistration,
 } from '@app/core-runtime';
-import {
-  runEffectTestPromise,
-  runEffectTestSync as runNativeSync,
-  makeEffectTestCallback as nativeTestCallback,
-} from '@app/core-runtime/testing/effect-runtime';
 import { v1 } from '@authzed/authzed-node';
+import { NodeServices } from '@effect/platform-node';
 import {
   defineEffectBff,
   HttpApiBuilder,
 } from '@modern-js/plugin-bff/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
 import {
-  Scope as NativeScope,
-  Exit as NativeExit,
   Clock,
   Config,
   ConfigProvider,
   Effect,
   Layer,
   Logger,
-  ManagedRuntime,
   Predicate,
   Redacted,
   Schema,
 } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { HttpApi } from 'effect/unstable/httpapi';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
@@ -110,8 +102,6 @@ import {
   createGeneratedOwnerFixture,
 } from './generated-owner-fixture.ts';
 
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-
 const withOptionalProperty = <
   Base extends object,
   Key extends PropertyKey,
@@ -125,7 +115,6 @@ const withOptionalProperty = <
   trailing: Trailing
 ) =>
   condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
-
 const TestSpiceDbConfig = Config.all({
   endpoint: Config.string('SPICEDB_ENDPOINT').pipe(
     Config.withDefault('localhost:50051')
@@ -143,16 +132,21 @@ const TestSpiceDbConfig = Config.all({
     preSharedKey: Redacted.value(preSharedKey),
   }))
 );
-
 const testGatewayAssertionRedemption: GatewayAssertionRedemption = {
   consume: () => Effect.void,
 };
-
-interface OwnerHttpHandler {
-  readonly dispose: () => Promise<void>;
-  readonly handler: (request: Request) => Promise<Response>;
-}
-
+type OwnerHttpHandler = ReturnType<
+  ReturnType<typeof defineEffectBff>['createHandler']
+>;
+const disposeOwnerHandlers = (handlers: readonly OwnerHttpHandler[]) =>
+  Effect.forEach(
+    handlers,
+    (handler) =>
+      Effect.tryPromise(() => handler.dispose()).pipe(
+        Effect.catchCause(() => Effect.void)
+      ),
+    { concurrency: 'unbounded', discard: true }
+  );
 const OwnerDetailSchema = Schema.Struct({
   fields: Schema.Array(
     Schema.Struct({ label: Schema.String, value: Schema.String })
@@ -172,7 +166,6 @@ const OwnerTimelineSchema = Schema.Struct({
 const OwnerSearchSchema = Schema.Array(
   Schema.Struct({ ref: ResourceRefSchema, title: Schema.String })
 );
-
 interface GeneratedOwnerModules {
   // Generated source is imported from a temporary path, so TypeScript cannot retain the private
   // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
@@ -200,11 +193,9 @@ interface GeneratedOwnerModules {
     readonly searchClient: boolean;
   };
 }
-
 type OwnerApi = HttpApi.Top;
 type OwnerGroupLayer = Layer.Layer<unknown, unknown, unknown>;
 const DynamicModuleSchema = Schema.Record(Schema.String, Schema.Unknown);
-type DynamicModule = typeof DynamicModuleSchema.Type;
 const OwnerApiSchema = Schema.declare<OwnerApi>(HttpApi.isHttpApi);
 const OwnerGroupLayerSchema = Schema.declare<OwnerGroupLayer>(Layer.isLayer);
 const VerticalRuntimeRegistrationSchema =
@@ -227,7 +218,6 @@ const EffectRuntimeLayerSchema = Schema.declare<EffectRuntimeLayer>(
   (value): value is EffectRuntimeLayer => Predicate.isObjectKeyword(value)
 );
 const isEffectRuntimeLayer = Schema.is(EffectRuntimeLayerSchema);
-
 const requiredValue = <Value>(
   value: Value | null | undefined,
   label: string
@@ -237,7 +227,6 @@ const requiredValue = <Value>(
   }
   return value;
 };
-
 const isOperationContextDenied = Schema.is(
   Schema.Struct({ _tag: Schema.Literal('OperationContextDenied') })
 );
@@ -247,7 +236,6 @@ const isCreateRecordRejected = Schema.is(
 const isActionHandlerExecutionError = Schema.is(
   Schema.Struct({ _tag: Schema.Literal('ActionHandlerExecutionError') })
 );
-
 const relationship = (
   resourceType: string,
   resourceId: string,
@@ -268,14 +256,12 @@ const relationship = (
       }),
     }),
   });
-
 const makeCatalog = (
   contract: OntosModuleDeploymentContract
 ): InstalledModuleCatalog =>
   buildInstalledModuleCatalog([
     { contract, expectedAppId: GENERATED_OWNER.appId },
   ]);
-
 const makeOwnerHandler = (
   api: OwnerApi,
   group: OwnerGroupLayer,
@@ -308,15 +294,23 @@ const makeOwnerHandler = (
   const handler: OwnerHttpHandler = bff.createHandler();
   return handler;
 };
-
-const loadClientWiring = async (
+const loadClientWiring = Effect.fnUntraced(function* loadClientWiring(
   entrypoints: ReturnType<typeof getVerticalRuntimeEntrypoints>
-) => {
-  const [detailClient, listClient, searchClient] = await Promise.all([
-    entrypoints.api['resource-detail']?.(),
-    entrypoints.api['resource-list']?.(),
-    entrypoints.search['records']?.(),
-  ]);
+) {
+  const [detailClient, listClient, searchClient] = yield* Effect.all(
+    [
+      Effect.tryPromise(() =>
+        Promise.resolve(entrypoints.api['resource-detail']?.())
+      ),
+      Effect.tryPromise(() =>
+        Promise.resolve(entrypoints.api['resource-list']?.())
+      ),
+      Effect.tryPromise(() =>
+        Promise.resolve(entrypoints.search['records']?.())
+      ),
+    ],
+    { concurrency: 'unbounded' }
+  );
   return {
     action: true,
     detailClient:
@@ -344,20 +338,24 @@ const loadClientWiring = async (
         )?.value
       ),
   };
-};
+});
 
-const loadGeneratedOwner = async (
+const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1(
   verticalRoot: string,
   runtime: ReadRuntimeService,
   loggerLayer: Layer.Layer<never>,
   configLayer: Layer.Layer<TestClock.TestClock>
-): Promise<GeneratedOwnerModules> => {
-  const load = async (relativePath: string): Promise<DynamicModule> => {
-    const importedModule: unknown = await import(
-      pathToFileURL(`${verticalRoot}/${relativePath}`).href
+) {
+  const load = Effect.fnUntraced(function* runIntegration2(
+    relativePath: string
+  ) {
+    const importedModule: unknown = yield* Effect.tryPromise(
+      () => import(pathToFileURL(`${verticalRoot}/${relativePath}`).href)
     );
-    return Schema.decodeUnknownSync(DynamicModuleSchema)(importedModule);
-  };
+    return yield* Schema.decodeUnknownEffect(DynamicModuleSchema)(
+      importedModule
+    );
+  });
   const [
     detailApi,
     detailServer,
@@ -368,23 +366,26 @@ const loadGeneratedOwner = async (
     verifier,
     state,
     registrationOwner,
-  ] = await Promise.all([
-    load('shared/apis/resource-detail.ts'),
-    load('api/resource-detail-read-server.ts'),
-    load('shared/apis/resource-list.ts'),
-    load('api/resource-list-read-server.ts'),
-    load('shared/apis/records-search.ts'),
-    load('api/records-search-server.ts'),
-    load('api/auth/action-principal.ts'),
-    load('src/isolation/instrumentation.ts'),
-    load('vertical.registration.ts'),
-  ]);
-  const registration = Schema.decodeUnknownSync(
+  ] = yield* Effect.all(
+    [
+      load('shared/apis/resource-detail.ts'),
+      load('api/resource-detail-read-server.ts'),
+      load('shared/apis/resource-list.ts'),
+      load('api/resource-list-read-server.ts'),
+      load('shared/apis/records-search.ts'),
+      load('api/records-search-server.ts'),
+      load('api/auth/action-principal.ts'),
+      load('src/isolation/instrumentation.ts'),
+      load('vertical.registration.ts'),
+    ],
+    { concurrency: 'unbounded' }
+  );
+  const registration = yield* Schema.decodeUnknownEffect(
     VerticalRuntimeRegistrationSchema
   )(registrationOwner['isolationOwnerRegistration']);
   const actions = getVerticalRuntimeActions(registration);
   const entrypoints = getVerticalRuntimeEntrypoints(registration);
-  const wiring = await loadClientWiring(entrypoints);
+  const wiring = yield* loadClientWiring(entrypoints);
   const generatedAction = actions.find(
     ({ descriptor }) => descriptor.actionKey === GENERATED_OWNER.actionKey
   );
@@ -395,12 +396,14 @@ const loadGeneratedOwner = async (
   }
   return {
     action: generatedAction,
-    counts: Schema.decodeUnknownSync(OwnerCountsSchema)(
+    counts: yield* Schema.decodeUnknownEffect(OwnerCountsSchema)(
       state['generatedOwnerHandlerCounts']
     ),
     detail: makeOwnerHandler(
-      Schema.decodeUnknownSync(OwnerApiSchema)(detailApi['ResourceDetailApi']),
-      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(
+      yield* Schema.decodeUnknownEffect(OwnerApiSchema)(
+        detailApi['ResourceDetailApi']
+      ),
+      yield* Schema.decodeUnknownEffect(OwnerGroupLayerSchema)(
         detailServer['resourceDetailReadApiLive']
       ),
       runtime,
@@ -408,8 +411,10 @@ const loadGeneratedOwner = async (
       configLayer
     ),
     list: makeOwnerHandler(
-      Schema.decodeUnknownSync(OwnerApiSchema)(listApi['ResourceListApi']),
-      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(
+      yield* Schema.decodeUnknownEffect(OwnerApiSchema)(
+        listApi['ResourceListApi']
+      ),
+      yield* Schema.decodeUnknownEffect(OwnerGroupLayerSchema)(
         listServer['resourceListReadApiLive']
       ),
       runtime,
@@ -417,65 +422,70 @@ const loadGeneratedOwner = async (
       configLayer
     ),
     search: makeOwnerHandler(
-      Schema.decodeUnknownSync(OwnerApiSchema)(searchApi['RecordsSearchApi']),
-      Schema.decodeUnknownSync(OwnerGroupLayerSchema)(
+      yield* Schema.decodeUnknownEffect(OwnerApiSchema)(
+        searchApi['RecordsSearchApi']
+      ),
+      yield* Schema.decodeUnknownEffect(OwnerGroupLayerSchema)(
         searchServer['recordsReadApiLive']
       ),
       runtime,
       loggerLayer,
       configLayer
     ),
-    verifyActionPrincipal: Schema.decodeUnknownSync(OwnerVerifierSchema)(
-      verifier['verifyActionPrincipal']
-    ),
+    verifyActionPrincipal: yield* Schema.decodeUnknownEffect(
+      OwnerVerifierSchema
+    )(verifier['verifyActionPrincipal']),
     wiring,
   };
-};
-
-const requestOwner = async <Payload>(
+});
+const requestOwner = Effect.fnUntraced(function* runIntegration3<Payload>(
   handler: OwnerHttpHandler,
   path: string,
   payload: Payload,
   authorization: string,
   correlationId: string
-): Promise<Response> =>
-  await handler.handler(
-    new Request(`https://isolation-owner.example.test${path}`, {
-      body: JSON.stringify(payload),
-      headers: {
-        authorization,
-        'content-type': 'application/json',
-        'x-correlation-id': correlationId,
-      },
-      method: 'POST',
-    })
+) {
+  return yield* Effect.tryPromise(() =>
+    handler.handler(
+      new Request(`https://isolation-owner.example.test${path}`, {
+        body: JSON.stringify(payload),
+        headers: {
+          authorization,
+          'content-type': 'application/json',
+          'x-correlation-id': correlationId,
+        },
+        method: 'POST',
+      })
+    )
   );
-
-const decodeResponse = async <
+});
+const decodeResponse = Effect.fnUntraced(function* runIntegration4<
   ResponseSchema extends Schema.ConstraintDecoder<unknown>,
->(
-  response: Response,
-  schema: ResponseSchema
-): Promise<ResponseSchema['Type']> =>
-  Schema.decodeUnknownSync(schema)(await response.json());
-
-const createOwnerSchema = async (
+>(response: Response, schema: ResponseSchema) {
+  return yield* Schema.decodeUnknownEffect(schema)(
+    yield* Effect.tryPromise(() => response.json())
+  );
+});
+const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(
   admin: Pool,
   schemaName: string
-): Promise<void> => {
+) {
   const tenantPredicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
   const entityPredicate = `${tenantPredicate} and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   // Dynamic identifiers are generated locally from UUID hex and never accept external input.
-  await admin.query(`create schema ${schemaName}`);
-  await admin.query(`
+  yield* Effect.tryPromise(() => admin.query(`create schema ${schemaName}`));
+  yield* Effect.tryPromise(() =>
+    admin.query(`
     create table ${schemaName}.tenant_records (
       tenant_id uuid not null,
       resource_id uuid not null,
       title text not null,
       primary key (tenant_id, resource_id)
     )
-  `);
-  await admin.query(`
+  `)
+  );
+  yield* Effect.tryPromise(() =>
+    admin.query(`
     create table ${schemaName}.entity_records (
       tenant_id uuid not null,
       legal_entity_id uuid not null,
@@ -483,57 +493,74 @@ const createOwnerSchema = async (
       title text not null,
       primary key (tenant_id, legal_entity_id, resource_id)
     )
-  `);
-  const configureTable = async (
+  `)
+  );
+  const configureTable = Effect.fnUntraced(function* runIntegration6(
     table: string,
     predicate: string
-  ): Promise<void> => {
-    await admin.query(
-      `alter table ${schemaName}.${table} enable row level security`
+  ) {
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `alter table ${schemaName}.${table} enable row level security`
+      )
     );
-    await admin.query(
-      `alter table ${schemaName}.${table} force row level security`
+    yield* Effect.tryPromise(() =>
+      admin.query(`alter table ${schemaName}.${table} force row level security`)
     );
-    await admin.query(
-      `create policy ${table}_select on ${schemaName}.${table} for select to ontos_runtime using (${predicate})`
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `create policy ${table}_select on ${schemaName}.${table} for select to ontos_runtime using (${predicate})`
+      )
     );
-    await admin.query(
-      `create policy ${table}_insert on ${schemaName}.${table} for insert to ontos_runtime with check (${predicate})`
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `create policy ${table}_insert on ${schemaName}.${table} for insert to ontos_runtime with check (${predicate})`
+      )
     );
-    await admin.query(
-      `create policy ${table}_update on ${schemaName}.${table} for update to ontos_runtime using (${predicate}) with check (${predicate})`
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `create policy ${table}_update on ${schemaName}.${table} for update to ontos_runtime using (${predicate}) with check (${predicate})`
+      )
     );
-    await admin.query(
-      `create policy ${table}_delete on ${schemaName}.${table} for delete to ontos_runtime using (${predicate})`
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `create policy ${table}_delete on ${schemaName}.${table} for delete to ontos_runtime using (${predicate})`
+      )
     );
-  };
-  await Promise.all([
-    configureTable('tenant_records', tenantPredicate),
-    configureTable('entity_records', entityPredicate),
-  ]);
-  await admin.query(`grant usage on schema ${schemaName} to ontos_runtime`);
-  await admin.query(
-    `grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`
+  });
+  yield* Effect.all(
+    [
+      configureTable('tenant_records', tenantPredicate),
+      configureTable('entity_records', entityPredicate),
+    ],
+    { concurrency: 'unbounded' }
   );
-};
-
+  yield* Effect.tryPromise(() =>
+    admin.query(`grant usage on schema ${schemaName} to ontos_runtime`)
+  );
+  yield* Effect.tryPromise(() =>
+    admin.query(
+      `grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`
+    )
+  );
+});
 type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
 type RuntimeActionRegistration = ActionRegistration<
   Schema.ConstraintDecoder<unknown>,
   Schema.ConstraintDecoder<unknown>,
-  Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }>,
   DomainEventContractMap,
   string,
   unknown
 >;
-
 const RuntimeActionRegistrationSchema =
   Schema.declare<RuntimeActionRegistration>(
     (value): value is RuntimeActionRegistration =>
       Predicate.isObjectKeyword(value)
   );
 const isRuntimeActionRegistration = Schema.is(RuntimeActionRegistrationSchema);
-
 const failingEvidenceDatabase = (
   database: CoreDatabaseService
 ): CoreDatabaseService => {
@@ -564,19 +591,15 @@ const failingEvidenceDatabase = (
   );
   return { executor };
 };
-
 const capturedLoggerLayer = (entries: string[]) =>
   Logger.layer([
     Logger.make((options) => {
       entries.push(JSON.stringify(Logger.formatStructured.log(options)));
     }),
   ]);
-
-const ignorePromiseFailure = <Value>(
-  operation: () => Promise<Value>
-): Effect.Effect<void> =>
-  Effect.tryPromise({ catch: () => null, try: operation }).pipe(Effect.ignore);
-
+const ignoreOperationFailure = <Value, Failure>(
+  operation: () => Effect.Effect<Value, Failure>
+): Effect.Effect<void> => operation().pipe(Effect.ignore);
 const principal = (
   tenantId: string,
   legalEntityId: string,
@@ -590,178 +613,188 @@ const principal = (
   principalId,
   tenantId,
 });
-
-test('Codesmith composes the disposable owner Action and receiving read BFFs', async () => {
-  const fixture = await createGeneratedOwnerFixture(
-    `generated_owner_${randomUUID().replaceAll('-', '')}`
-  );
-  const contract = await deriveOntosModuleDeploymentContract({
-    vertical: GENERATED_OWNER.slug,
-    workspaceRoot: fixture.root,
-  });
-  const compileRuntime: ReadRuntimeService = {
-    runRead: () =>
-      Effect.die(
-        new Error('The compile fixture must not execute a governed read')
-      ),
-  };
-  const generated = await loadGeneratedOwner(
-    fixture.verticalRoot,
-    compileRuntime,
-    capturedLoggerLayer([]),
-    TestClock.layer()
-  );
-  try {
-    assert.deepEqual(
-      makeCatalog(contract).getByModuleId(GENERATED_OWNER.moduleId),
-      contract
+it.live(
+  'Codesmith composes the disposable owner Action and receiving read BFFs',
+  Effect.fnUntraced(function* runIntegration7() {
+    const fixture = yield* createGeneratedOwnerFixture(
+      `generated_owner_${randomUUID().replaceAll('-', '')}`
+    ).pipe(Effect.provide(NodeServices.layer));
+    const contract = yield* deriveOntosModuleDeploymentContract({
+      vertical: GENERATED_OWNER.slug,
+      workspaceRoot: fixture.root,
+    }).pipe(Effect.provide(NodeServices.layer));
+    const compileRuntime: ReadRuntimeService = {
+      runRead: () =>
+        Effect.die(
+          new Error('The compile fixture must not execute a governed read')
+        ),
+    };
+    const generated = yield* loadGeneratedOwner(
+      fixture.verticalRoot,
+      compileRuntime,
+      capturedLoggerLayer([]),
+      TestClock.layer()
     );
-    assert.equal(
-      generated.action.descriptor.actionKey,
+    yield* Effect.acquireRelease(
+      Effect.void,
+      Effect.fnUntraced(function* integrationEffect8() {
+        yield* disposeOwnerHandlers([
+          generated.detail,
+          generated.list,
+          generated.search,
+        ]);
+      }, Effect.orDie)
+    );
+    expect(
+      makeCatalog(contract).getByModuleId(GENERATED_OWNER.moduleId)
+    ).toEqual(contract);
+    expect(generated.action.descriptor.actionKey).toBe(
       GENERATED_OWNER.actionKey
     );
-    assert.equal(generated.action.descriptor.legalEntityScope, 'required');
-    assert.deepEqual(generated.counts, {
+    expect(generated.action.descriptor.legalEntityScope).toBe('required');
+    expect(generated.counts).toEqual({
       action: 0,
       detail: 0,
       list: 0,
       search: 0,
     });
-    assert.deepEqual(generated.wiring, {
+    expect(generated.wiring).toEqual({
       action: true,
       detailClient: true,
       listClient: true,
       searchClient: true,
     });
-  } finally {
-    await Promise.allSettled([
-      generated.detail.dispose(),
-      generated.list.dispose(),
-      generated.search.dispose(),
-    ]);
-    await fixture.dispose();
-  }
-});
-
-test('generated owner enforces tenant and legal-entity isolation through Shell, BFF, CoreSDK, SpiceDB, and RLS', async () => {
-  const schemaName = `generated_owner_${randomUUID().replaceAll('-', '')}`;
-  const tenantA = randomUUID();
-  const tenantB = randomUUID();
-  const entityA1 = randomUUID();
-  const entityA2 = randomUUID();
-  const entityB1 = randomUUID();
-  const entityB2 = randomUUID();
-  const principalA = randomUUID();
-  const principalB = randomUUID();
-  const bindingA = randomUUID();
-  const bindingB = randomUUID();
-  const collidingResourceId = randomUUID();
-  const deniedResourceId = randomUUID();
-  const testClockLayer = TestClock.layer();
-  const effectRuntime = ManagedRuntime.make(testClockLayer);
-  const connections = await effectRuntime.runPromise(
-    loadDatabaseConnectionPair()
-  );
-  assert.equal(connections.runtime.user, 'ontos_runtime');
-  const admin = new Pool({
-    connectionString: connections.admin.connectionString,
-  });
-  // Shell and the independently deployed owner hold separate nested read transactions in this
-  // in-process fixture, so the shared test pool needs more than one physical connection.
-  const runtimePool = new Pool({
-    connectionString: connections.runtime.connectionString,
-    max: 4,
-  });
-  const runtimeDatabase = await runEffectTestPromise(
-    makeFaultInjectableCoreDatabase(connections.runtime).pipe(
-      NativeScope.provide(nativeDatabaseScope)
-    )
-  );
-  const fixture = await createGeneratedOwnerFixture(schemaName);
-  const contract = await deriveOntosModuleDeploymentContract({
-    vertical: GENERATED_OWNER.slug,
-    workspaceRoot: fixture.root,
-  });
-  const capturedLogs: string[] = [];
-  const loggerLayer = capturedLoggerLayer(capturedLogs);
-  const testSpiceDb = await effectRuntime.runPromise(TestSpiceDbConfig);
-  const spiceAdmin = v1.NewClient(
-    testSpiceDb.preSharedKey,
-    testSpiceDb.endpoint,
-    testSpiceDb.insecureLocal
-      ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-      : v1.ClientSecurity.SECURE
-  );
-  const permissionClient = createSpiceDbPermissionClient(
-    testSpiceDb,
-    SPICEDB_CHECK_TIMEOUT_MS
-  );
-  const contextAccess = makeContextAccess(permissionClient);
-  const moduleStates = makeTenantModuleStateService(runtimeDatabase);
-  const moduleStateGate = makeModuleStateGate(moduleStates);
-  const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
-  const scopeResolver = makeOperationalScopeResolver(
-    makeOperationalScopeRepository(runtimeDatabase),
-    contextAccess
-  );
-  const readRuntime = makeReadRuntime(
-    runtimeDatabase,
-    moduleGateway,
-    scopeResolver,
-    contextAccess
-  );
-  const keyPair = await generateKeyPair('EdDSA', {
-    crv: 'Ed25519',
-    extractable: true,
-  });
-  const privateJwk = await exportJWK(keyPair.privateKey);
-  const publicJwk = await exportJWK(keyPair.publicKey);
-  const issuerConfiguration: GatewayIssuerConfigValue = {
-    issuer: 'https://shell.isolation.test',
-    privateJwk: {
-      alg: 'EdDSA',
-      crv: 'Ed25519',
-      d: requiredValue(privateJwk.d, 'Private JWK scalar'),
-      kid: 'generated-owner-test',
-      kty: 'OKP',
-      use: 'sig',
-      x: requiredValue(privateJwk.x, 'Private JWK public coordinate'),
-    },
-  };
-  const verifierEnvironment = {
-    ONTOS_GATEWAY_ISSUER: issuerConfiguration.issuer,
-    ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-      keys: [
-        {
-          ...publicJwk,
-          alg: 'EdDSA',
-          kid: issuerConfiguration.privateJwk.kid,
-          use: 'sig',
-        },
-      ],
-    }),
-  };
-  const verifierConfigLayer = Layer.merge(
-    testClockLayer,
-    ConfigProvider.layer(ConfigProvider.fromUnknown(verifierEnvironment))
-  );
-  const generated = await loadGeneratedOwner(
-    fixture.verticalRoot,
-    readRuntime,
-    loggerLayer,
-    verifierConfigLayer
-  );
-  const handlers: OwnerHttpHandler[] = [
-    generated.detail,
-    generated.list,
-    generated.search,
-  ];
-  let assertionCount = 0;
-  const issueAuthorization = async (
-    principalContext: TrustedPrincipalContext
-  ) =>
-    await effectRuntime.runPromise(
-      issueGatewayContextAssertion({
+  })
+);
+it.live(
+  'generated owner enforces tenant and legal-entity isolation through Shell, BFF, CoreSDK, SpiceDB, and RLS',
+  Effect.fnUntraced(function* runIntegration9() {
+    const schemaName = `generated_owner_${randomUUID().replaceAll('-', '')}`;
+    const tenantA = randomUUID();
+    const tenantB = randomUUID();
+    const entityA1 = randomUUID();
+    const entityA2 = randomUUID();
+    const entityB1 = randomUUID();
+    const entityB2 = randomUUID();
+    const principalA = randomUUID();
+    const principalB = randomUUID();
+    const bindingA = randomUUID();
+    const bindingB = randomUUID();
+    const collidingResourceId = randomUUID();
+    const deniedResourceId = randomUUID();
+    const testClockLayer = TestClock.layer();
+    const connections = yield* loadDatabaseConnectionPair();
+    expect(connections.runtime.user).toBe('ontos_runtime');
+    const admin = yield* Effect.acquireRelease(
+      Effect.sync(
+        () => new Pool({ connectionString: connections.admin.connectionString })
+      ),
+      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie)
+    );
+    // Shell and the independently deployed owner hold separate nested read transactions in this
+    // in-process fixture, so the shared test pool needs more than one physical connection.
+    const runtimePool = yield* Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new Pool({
+            connectionString: connections.runtime.connectionString,
+            max: 4,
+          })
+      ),
+      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie)
+    );
+    const runtimeDatabase = yield* makeFaultInjectableCoreDatabase(
+      connections.runtime
+    );
+    const fixture = yield* createGeneratedOwnerFixture(schemaName).pipe(
+      Effect.provide(NodeServices.layer)
+    );
+    const contract = yield* deriveOntosModuleDeploymentContract({
+      vertical: GENERATED_OWNER.slug,
+      workspaceRoot: fixture.root,
+    }).pipe(Effect.provide(NodeServices.layer));
+    const capturedLogs: string[] = [];
+    const loggerLayer = capturedLoggerLayer(capturedLogs);
+    const testSpiceDb = yield* TestSpiceDbConfig;
+    const spiceAdmin = v1.NewClient(
+      testSpiceDb.preSharedKey,
+      testSpiceDb.endpoint,
+      testSpiceDb.insecureLocal
+        ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
+        : v1.ClientSecurity.SECURE
+    );
+    const permissionClient = createSpiceDbPermissionClient(
+      testSpiceDb,
+      SPICEDB_CHECK_TIMEOUT_MS
+    );
+    const contextAccess = makeContextAccess(permissionClient);
+    const moduleStates = makeTenantModuleStateService(runtimeDatabase);
+    const moduleStateGate = makeModuleStateGate(moduleStates);
+    const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
+    const scopeResolver = makeOperationalScopeResolver(
+      makeOperationalScopeRepository(runtimeDatabase),
+      contextAccess
+    );
+    const readRuntime = makeReadRuntime(
+      runtimeDatabase,
+      moduleGateway,
+      scopeResolver,
+      contextAccess
+    );
+    const keyPair = yield* Effect.tryPromise(() =>
+      generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true })
+    );
+    const privateJwk = yield* Effect.tryPromise(() =>
+      exportJWK(keyPair.privateKey)
+    );
+    const publicJwk = yield* Effect.tryPromise(() =>
+      exportJWK(keyPair.publicKey)
+    );
+    const issuerConfiguration: GatewayIssuerConfigValue = {
+      issuer: 'https://shell.isolation.test',
+      privateJwk: {
+        alg: 'EdDSA',
+        crv: 'Ed25519',
+        d: requiredValue(privateJwk.d, 'Private JWK scalar'),
+        kid: 'generated-owner-test',
+        kty: 'OKP',
+        use: 'sig',
+        x: requiredValue(privateJwk.x, 'Private JWK public coordinate'),
+      },
+    };
+    const verifierEnvironment = {
+      ONTOS_GATEWAY_ISSUER: issuerConfiguration.issuer,
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+        keys: [
+          {
+            ...publicJwk,
+            alg: 'EdDSA',
+            kid: issuerConfiguration.privateJwk.kid,
+            use: 'sig',
+          },
+        ],
+      }),
+    };
+    const verifierConfigLayer = Layer.merge(
+      testClockLayer,
+      ConfigProvider.layer(ConfigProvider.fromUnknown(verifierEnvironment))
+    );
+    const generated = yield* loadGeneratedOwner(
+      fixture.verticalRoot,
+      readRuntime,
+      loggerLayer,
+      verifierConfigLayer
+    );
+    const handlers: OwnerHttpHandler[] = [
+      generated.detail,
+      generated.list,
+      generated.search,
+    ];
+    let assertionCount = 0;
+    const issueAuthorization = Effect.fnUntraced(function* runIntegration10(
+      principalContext: TrustedPrincipalContext
+    ) {
+      return yield* issueGatewayContextAssertion({
         audience: GENERATED_OWNER.appId,
         principal: principalContext,
       }).pipe(
@@ -778,155 +811,284 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
             loadConfig: Effect.succeed(issuerConfiguration),
           })
         ),
-        Effect.map(({ token }) => `Bearer ${token}`)
-      )
-    );
-  const principalA1 = principal(tenantA, entityA1, principalA, bindingA);
-  const principalB1 = principal(tenantB, entityB1, principalB, bindingB);
-  const issueProviderAuthorization = async (context: TrustedPrincipalContext) =>
-    await issueAuthorization(
-      withOptionalProperty(
-        withOptionalProperty(
+        Effect.map(({ token }) => `Bearer ${token}`),
+        Effect.provide(testClockLayer)
+      );
+    });
+    const principalA1 = principal(tenantA, entityA1, principalA, bindingA);
+    const principalB1 = principal(tenantB, entityB1, principalB, bindingB);
+    const issueProviderAuthorization = Effect.fnUntraced(
+      function* runIntegration11(context: TrustedPrincipalContext) {
+        return yield* issueAuthorization(
           withOptionalProperty(
             withOptionalProperty(
-              {
-                authMethod: context.authMethod,
-                principalId: context.principalId,
-                tenantId: context.tenantId,
-              },
-              context.authBindingId !== undefined,
-              'authBindingId',
-              context.authBindingId,
+              withOptionalProperty(
+                withOptionalProperty(
+                  {
+                    authMethod: context.authMethod,
+                    principalId: context.principalId,
+                    tenantId: context.tenantId,
+                  },
+                  context.authBindingId !== undefined,
+                  'authBindingId',
+                  context.authBindingId,
+                  {}
+                ),
+                context.authContextRef !== undefined,
+                'authContextRef',
+                context.authContextRef,
+                {}
+              ),
+              context.impersonatedByPrincipalId !== undefined,
+              'impersonatedByPrincipalId',
+              context.impersonatedByPrincipalId,
               {}
             ),
-            context.authContextRef !== undefined,
-            'authContextRef',
-            context.authContextRef,
+            context.legalEntityId !== undefined,
+            'legalEntityId',
+            context.legalEntityId,
             {}
-          ),
-          context.impersonatedByPrincipalId !== undefined,
-          'impersonatedByPrincipalId',
-          context.impersonatedByPrincipalId,
-          {}
+          )
+        );
+      }
+    );
+    const resourceRef = yield* Schema.decodeUnknownEffect(ResourceRefSchema)({
+      moduleId: GENERATED_OWNER.moduleId,
+      resourceId: collidingResourceId,
+      resourceType: GENERATED_OWNER.resourceType,
+    });
+    const touchedObjects: readonly [string, string][] = [
+      ['tenant', tenantA],
+      ['tenant', tenantB],
+      [
+        'legal_entity',
+        requiredValue(
+          toLegalEntityAccessObjectId(tenantA, entityA1),
+          'Tenant A legal entity'
         ),
-        context.legalEntityId !== undefined,
-        'legalEntityId',
-        context.legalEntityId,
-        {}
+      ],
+      [
+        'legal_entity',
+        requiredValue(
+          toLegalEntityAccessObjectId(tenantB, entityB1),
+          'Tenant B legal entity'
+        ),
+      ],
+      [
+        'module_access',
+        requiredValue(
+          toModuleAccessObjectId(tenantA, entityA1, GENERATED_OWNER.moduleId),
+          'Tenant A module access'
+        ),
+      ],
+      [
+        'module_access',
+        requiredValue(
+          toModuleAccessObjectId(tenantB, entityB1, GENERATED_OWNER.moduleId),
+          'Tenant B module access'
+        ),
+      ],
+      [
+        'resource',
+        requiredValue(
+          toResourceAccessObjectId(tenantA, entityA1, resourceRef),
+          'Tenant A resource'
+        ),
+      ],
+      [
+        'resource',
+        requiredValue(
+          toResourceAccessObjectId(tenantB, entityB1, resourceRef),
+          'Tenant B resource'
+        ),
+      ],
+      ['action', toSpiceDbActionObjectId(GENERATED_OWNER.actionKey)],
+    ];
+    yield* Effect.acquireRelease(
+      Effect.void,
+      Effect.fnUntraced(function* integrationEffect12() {
+        yield* disposeOwnerHandlers(handlers);
+        yield* Effect.forEach(
+          touchedObjects.toReversed(),
+          ([resourceType, resourceId]) =>
+            Effect.tryPromise(() =>
+              spiceAdmin.promises.deleteRelationships(
+                v1.DeleteRelationshipsRequest.create({
+                  relationshipFilter: v1.RelationshipFilter.create({
+                    optionalResourceId: resourceId,
+                    resourceType,
+                  }),
+                })
+              )
+            ).pipe(Effect.catchCause(() => Effect.void)),
+          { concurrency: 1, discard: true }
+        );
+        permissionClient.close();
+        spiceAdmin.close();
+        const cleanupQueries = [
+          Effect.fnUntraced(function* runIntegration15() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.outbox_messages where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration16() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.domain_events where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration17() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.data_access_events where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration18() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.audit_events where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration19() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.action_invocations where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration20() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.tenant_module_states where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration21() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.principal_auth_bindings where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration22() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.principals where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration23() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.legal_entities where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration24() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(
+                'delete from core.tenants where tenant_id in ($1, $2)',
+                [tenantA, tenantB]
+              )
+            );
+          }),
+          Effect.fnUntraced(function* runIntegration25() {
+            return yield* Effect.tryPromise(() =>
+              admin.query(`drop schema if exists ${schemaName} cascade`)
+            );
+          }),
+        ];
+        yield* Effect.forEach(cleanupQueries, ignoreOperationFailure, {
+          concurrency: 1,
+          discard: true,
+        });
+      }, Effect.orDie)
+    );
+    yield* createOwnerSchema(admin, schemaName);
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $3, 'Generated tenant A', 'active', 'en'), ($2, $4, 'Generated tenant B', 'active', 'en')`,
+        [tenantA, tenantB, `generated-a-${tenantA}`, `generated-b-${tenantB}`]
       )
     );
-  const resourceRef = Schema.decodeUnknownSync(ResourceRefSchema)({
-    moduleId: GENERATED_OWNER.moduleId,
-    resourceId: collidingResourceId,
-    resourceType: GENERATED_OWNER.resourceType,
-  });
-  const touchedObjects: readonly [string, string][] = [
-    ['tenant', tenantA],
-    ['tenant', tenantB],
-    [
-      'legal_entity',
-      requiredValue(
-        toLegalEntityAccessObjectId(tenantA, entityA1),
-        'Tenant A legal entity'
-      ),
-    ],
-    [
-      'legal_entity',
-      requiredValue(
-        toLegalEntityAccessObjectId(tenantB, entityB1),
-        'Tenant B legal entity'
-      ),
-    ],
-    [
-      'module_access',
-      requiredValue(
-        toModuleAccessObjectId(tenantA, entityA1, GENERATED_OWNER.moduleId),
-        'Tenant A module access'
-      ),
-    ],
-    [
-      'module_access',
-      requiredValue(
-        toModuleAccessObjectId(tenantB, entityB1, GENERATED_OWNER.moduleId),
-        'Tenant B module access'
-      ),
-    ],
-    [
-      'resource',
-      requiredValue(
-        toResourceAccessObjectId(tenantA, entityA1, resourceRef),
-        'Tenant A resource'
-      ),
-    ],
-    [
-      'resource',
-      requiredValue(
-        toResourceAccessObjectId(tenantB, entityB1, resourceRef),
-        'Tenant B resource'
-      ),
-    ],
-    ['action', toSpiceDbActionObjectId(GENERATED_OWNER.actionKey)],
-  ];
-
-  try {
-    await createOwnerSchema(admin, schemaName);
-    await admin.query(
-      `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $3, 'Generated tenant A', 'active', 'en'), ($2, $4, 'Generated tenant B', 'active', 'en')`,
-      [tenantA, tenantB, `generated-a-${tenantA}`, `generated-b-${tenantB}`]
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $5, 'A1', 'CZ', $7, 'active'), ($2, $5, 'A2', 'CZ', $8, 'active'), ($3, $6, 'B1', 'CZ', $9, 'active'), ($4, $6, 'B2', 'CZ', $10, 'active')`,
+        [
+          entityA1,
+          entityA2,
+          entityB1,
+          entityB2,
+          tenantA,
+          tenantB,
+          `A1-${entityA1}`,
+          `A2-${entityA2}`,
+          `B1-${entityB1}`,
+          `B2-${entityB2}`,
+        ]
+      )
     );
-    await admin.query(
-      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $5, 'A1', 'CZ', $7, 'active'), ($2, $5, 'A2', 'CZ', $8, 'active'), ($3, $6, 'B1', 'CZ', $9, 'active'), ($4, $6, 'B2', 'CZ', $10, 'active')`,
-      [
-        entityA1,
-        entityA2,
-        entityB1,
-        entityB2,
-        tenantA,
-        tenantB,
-        `A1-${entityA1}`,
-        `A2-${entityA2}`,
-        `B1-${entityB1}`,
-        `B2-${entityB2}`,
-      ]
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Generated principal A', 'active'), ($2, $4, 'human', 'Generated principal B', 'active')`,
+        [principalA, principalB, tenantA, tenantB]
+      )
     );
-    await admin.query(
-      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Generated principal A', 'active'), ($2, $4, 'human', 'Generated principal B', 'active')`,
-      [principalA, principalB, tenantA, tenantB]
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
+        [
+          bindingA,
+          bindingB,
+          tenantA,
+          tenantB,
+          principalA,
+          principalB,
+          `user-${principalA}`,
+          `user-${principalB}`,
+        ]
+      )
     );
-    await admin.query(
-      `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
-      [
-        bindingA,
-        bindingB,
-        tenantA,
-        tenantB,
-        principalA,
-        principalB,
-        `user-${principalA}`,
-        `user-${principalB}`,
-      ]
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `insert into core.tenant_module_states (tenant_id, module_key, state) values ($1, $3, 'active'), ($2, $3, 'active')`,
+        [tenantA, tenantB, GENERATED_OWNER.moduleId]
+      )
     );
-    await admin.query(
-      `insert into core.tenant_module_states (tenant_id, module_key, state) values ($1, $3, 'active'), ($2, $3, 'active')`,
-      [tenantA, tenantB, GENERATED_OWNER.moduleId]
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `insert into ${schemaName}.tenant_records (tenant_id, resource_id, title) values ($1, $3, 'Tenant A list'), ($2, $3, 'Tenant B list')`,
+        [tenantA, tenantB, collidingResourceId]
+      )
     );
-    await admin.query(
-      `insert into ${schemaName}.tenant_records (tenant_id, resource_id, title) values ($1, $3, 'Tenant A list'), ($2, $3, 'Tenant B list')`,
-      [tenantA, tenantB, collidingResourceId]
+    yield* Effect.tryPromise(() =>
+      admin.query(
+        `insert into ${schemaName}.entity_records (tenant_id, legal_entity_id, resource_id, title) values ($1, $2, $7, 'A1 searchable'), ($1, $3, $7, 'A2 searchable'), ($4, $5, $7, 'B1 searchable'), ($4, $6, $7, 'B2 searchable')`,
+        [
+          tenantA,
+          entityA1,
+          entityA2,
+          tenantB,
+          entityB1,
+          entityB2,
+          collidingResourceId,
+        ]
+      )
     );
-    await admin.query(
-      `insert into ${schemaName}.entity_records (tenant_id, legal_entity_id, resource_id, title) values ($1, $2, $7, 'A1 searchable'), ($1, $3, $7, 'A2 searchable'), ($4, $5, $7, 'B1 searchable'), ($4, $6, $7, 'B2 searchable')`,
-      [
-        tenantA,
-        entityA1,
-        entityA2,
-        tenantB,
-        entityB1,
-        entityB2,
-        collidingResourceId,
-      ]
-    );
-
     const legalA = requiredValue(
       toLegalEntityAccessObjectId(tenantA, entityA1),
       'Tenant A legal entity'
@@ -994,201 +1156,200 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       relationship('action', actionId, 'restriction', 'action', actionId),
       relationship('action', actionId, 'executor', 'principal', principalA),
     ];
-    await spiceAdmin.promises.writeRelationships(
-      v1.WriteRelationshipsRequest.create({
-        updates: relationships.map((item) =>
-          v1.RelationshipUpdate.create({
-            operation: v1.RelationshipUpdate_Operation.TOUCH,
-            relationship: item,
-          })
-        ),
-      })
+    yield* Effect.tryPromise(() =>
+      spiceAdmin.promises.writeRelationships(
+        v1.WriteRelationshipsRequest.create({
+          updates: relationships.map((item) =>
+            v1.RelationshipUpdate.create({
+              operation: v1.RelationshipUpdate_Operation.TOUCH,
+              relationship: item,
+            })
+          ),
+        })
+      )
     );
-
-    const ownerSearchProbe = await requestOwner(
+    const ownerSearchProbe = yield* requestOwner(
       generated.search,
       `/${GENERATED_OWNER.moduleId}/search/records`,
       { query: 'searchable' },
-      await issueAuthorization(principalA1),
+      yield* issueAuthorization(principalA1),
       randomUUID()
     );
-    const ownerSearchProbeBody = await decodeResponse(
+    const ownerSearchProbeBody = yield* decodeResponse(
       ownerSearchProbe,
       OwnerSearchSchema
     );
-    assert.equal(
-      ownerSearchProbe.status,
-      200,
-      JSON.stringify(ownerSearchProbeBody)
+    expect(ownerSearchProbe.status, JSON.stringify(ownerSearchProbeBody)).toBe(
+      200
     );
-    assert.deepEqual(
-      ownerSearchProbeBody.map(({ title }) => title),
-      ['A1 searchable']
-    );
-
+    expect(ownerSearchProbeBody.map(({ title }) => title)).toEqual([
+      'A1 searchable',
+    ]);
     const catalog = makeCatalog(contract);
     const gateway = {
       resource: {
-        detail: ({
-          authorization,
-          correlationId,
-          ref,
-        }: Parameters<ShellResourceGateways['resource']['detail']>[0]) =>
-          Effect.tryPromise({
-            catch: () => new ShellProviderUnavailableError(),
-            try: async () => {
-              const response = await requestOwner(
-                generated.detail,
-                '/reads/resource-detail',
-                { resourceId: ref.resourceId },
-                authorization,
-                correlationId
-              );
-              if (!response.ok) {
-                throw new Error('Owner detail request failed');
-              }
-              return await decodeResponse(response, OwnerDetailSchema);
-            },
-          }),
-        timeline: ({
-          authorization,
-          correlationId,
-          ref,
-        }: Parameters<ShellResourceGateways['resource']['timeline']>[0]) =>
-          Effect.tryPromise({
-            catch: () => new ShellProviderUnavailableError(),
-            try: async () => {
-              const response = await requestOwner(
-                generated.list,
-                '/reads/resource-list',
-                { resourceId: ref.resourceId },
-                authorization,
-                correlationId
-              );
-              if (!response.ok) {
-                throw new Error('Owner list request failed');
-              }
-              const timeline = await decodeResponse(
-                response,
-                OwnerTimelineSchema
-              );
-              return Schema.encodeSync(OwnerTimelineSchema)(timeline);
-            },
-          }),
+        detail: Effect.fnUntraced(
+          function* integrationEffect26({
+            authorization,
+            correlationId,
+            ref,
+          }: Parameters<ShellResourceGateways['resource']['detail']>[0]) {
+            const response = yield* requestOwner(
+              generated.detail,
+              '/reads/resource-detail',
+              { resourceId: ref.resourceId },
+              authorization,
+              correlationId
+            );
+            if (!response.ok) {
+              throw new Error('Owner detail request failed');
+            }
+            return yield* decodeResponse(response, OwnerDetailSchema);
+          },
+          Effect.catchCause(() =>
+            Effect.fail(new ShellProviderUnavailableError())
+          )
+        ),
+        timeline: Effect.fnUntraced(
+          function* integrationEffect27({
+            authorization,
+            correlationId,
+            ref,
+          }: Parameters<ShellResourceGateways['resource']['timeline']>[0]) {
+            const response = yield* requestOwner(
+              generated.list,
+              '/reads/resource-list',
+              { resourceId: ref.resourceId },
+              authorization,
+              correlationId
+            );
+            if (!response.ok) {
+              throw new Error('Owner list request failed');
+            }
+            const timeline = yield* decodeResponse(
+              response,
+              OwnerTimelineSchema
+            );
+            return Schema.encodeSync(OwnerTimelineSchema)(timeline);
+          },
+          Effect.catchCause(() =>
+            Effect.fail(new ShellProviderUnavailableError())
+          )
+        ),
       },
       search: {
-        search: ({
-          authorization,
-          correlationId,
-          query,
-        }: Parameters<ShellResourceGateways['search']['search']>[0]) =>
-          Effect.tryPromise({
-            catch: () => new ShellProviderUnavailableError(),
-            try: async () => {
-              const response = await requestOwner(
-                generated.search,
-                `/${GENERATED_OWNER.moduleId}/search/records`,
-                { query },
-                authorization,
-                correlationId
-              );
-              if (!response.ok) {
-                throw new Error('Owner search request failed');
-              }
-              return await decodeResponse(response, OwnerSearchSchema);
-            },
-          }),
+        search: Effect.fnUntraced(
+          function* integrationEffect28({
+            authorization,
+            correlationId,
+            query,
+          }: Parameters<ShellResourceGateways['search']['search']>[0]) {
+            const response = yield* requestOwner(
+              generated.search,
+              `/${GENERATED_OWNER.moduleId}/search/records`,
+              { query },
+              authorization,
+              correlationId
+            );
+            if (!response.ok) {
+              throw new Error('Owner search request failed');
+            }
+            return yield* decodeResponse(response, OwnerSearchSchema);
+          },
+          Effect.catchCause(() =>
+            Effect.fail(new ShellProviderUnavailableError())
+          )
+        ),
       },
     } satisfies ShellResourceGateways;
-    assert.deepEqual(
-      await effectRuntime.runPromise(
-        moduleStates.getTenantModuleStates(tenantA, [GENERATED_OWNER.moduleId])
-      ),
-      [{ moduleKey: GENERATED_OWNER.moduleId, state: 'active' }]
-    );
-    assert.deepEqual(
-      await effectRuntime.runPromise(
-        contextAccess.modules({
-          legalEntityId: entityA1,
-          moduleIds: [GENERATED_OWNER.moduleId],
-          principalId: principalA,
-          tenantId: tenantA,
-        })
-      ),
-      [{ decision: 'allowed', key: GENERATED_OWNER.moduleId }]
-    );
-    assert.deepEqual(
-      await effectRuntime.runPromise(
-        contextAccess.resources({
-          legalEntityId: entityA1,
-          principalId: principalA,
-          resources: [resourceRef],
-          tenantId: tenantA,
-        })
-      ),
-      [
-        {
-          decision: 'allowed',
-          key: `${GENERATED_OWNER.moduleId}:${GENERATED_OWNER.resourceType}:${collidingResourceId}`,
-        },
-      ]
-    );
-    assert.deepEqual(
-      await effectRuntime.runPromise(
-        gateway.search.search({
-          appId: GENERATED_OWNER.appId,
-          authorization: await issueAuthorization(principalA1),
-          correlationId: randomUUID(),
-          query: 'searchable',
-          searchKey: `${GENERATED_OWNER.moduleId}.records`,
-        })
-      ),
-      [
-        {
-          ref: resourceRef,
-          title: 'A1 searchable',
-        },
-      ]
-    );
+    expect(
+      yield* moduleStates.getTenantModuleStates(tenantA, [
+        GENERATED_OWNER.moduleId,
+      ])
+    ).toEqual([{ moduleKey: GENERATED_OWNER.moduleId, state: 'active' }]);
+    expect(
+      yield* contextAccess.modules({
+        legalEntityId: entityA1,
+        moduleIds: [GENERATED_OWNER.moduleId],
+        principalId: principalA,
+        tenantId: tenantA,
+      })
+    ).toEqual([{ decision: 'allowed', key: GENERATED_OWNER.moduleId }]);
+    expect(
+      yield* contextAccess.resources({
+        legalEntityId: entityA1,
+        principalId: principalA,
+        resources: [resourceRef],
+        tenantId: tenantA,
+      })
+    ).toEqual([
+      {
+        decision: 'allowed',
+        key: `${GENERATED_OWNER.moduleId}:${GENERATED_OWNER.resourceType}:${collidingResourceId}`,
+      },
+    ]);
+    expect(
+      yield* gateway.search.search({
+        appId: GENERATED_OWNER.appId,
+        authorization: yield* issueAuthorization(principalA1),
+        correlationId: randomUUID(),
+        query: 'searchable',
+        searchKey: `${GENERATED_OWNER.moduleId}.records`,
+      })
+    ).toEqual([
+      {
+        ref: resourceRef,
+        title: 'A1 searchable',
+      },
+    ]);
     const directShellSearch = makeShellSearch(
       {
         catalog: Effect.succeed(catalog),
         contextAccess,
-        issueAssertion: ({ context }) =>
-          Effect.tryPromise({
-            catch: () => new ShellProviderUnavailableError(),
-            try: async () => await issueProviderAuthorization(context),
-          }),
+        issueAssertion: Effect.fnUntraced(
+          function* integrationEffect29({
+            context,
+          }: {
+            readonly context: TrustedPrincipalContext;
+          }) {
+            return yield* issueProviderAuthorization(context);
+          },
+          Effect.catchCause(() =>
+            Effect.fail(new ShellProviderUnavailableError())
+          )
+        ),
         moduleStates,
       },
       gateway.search
     );
-    assert.deepEqual(
-      await effectRuntime.runPromise(
-        directShellSearch.search(
-          {
-            ...principalA1,
-            correlationId: randomUUID(),
-            legalEntityId: entityA1,
-          },
-          'searchable'
-        )
-      ),
-      {
-        partial: false,
-        results: [
-          { kind: 'resource', ref: resourceRef, title: 'A1 searchable' },
-        ],
-      }
-    );
+    expect(
+      yield* directShellSearch.search(
+        {
+          ...principalA1,
+          correlationId: randomUUID(),
+          legalEntityId: entityA1,
+        },
+        'searchable'
+      )
+    ).toEqual({
+      partial: false,
+      results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
+    });
     const shellLayer = createShellGovernedReadsLayer(
       gateway,
       {
-        issueAssertion: ({ context }) =>
-          Effect.tryPromise({
-            catch: () => new ShellProviderUnavailableError(),
-            try: async () => await issueProviderAuthorization(context),
-          }),
+        issueAssertion: Effect.fnUntraced(
+          function* integrationEffect30({
+            context,
+          }: {
+            readonly context: TrustedPrincipalContext;
+          }) {
+            return yield* issueProviderAuthorization(context);
+          },
+          Effect.catchCause(() =>
+            Effect.fail(new ShellProviderUnavailableError())
+          )
+        ),
       },
       (transaction) => makeTenantModuleStateService({ executor: transaction })
     ).pipe(
@@ -1205,135 +1366,124 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         )
       )
     );
-    const shellReads = await effectRuntime.runPromise(
-      ShellGovernedReads.pipe(Effect.provide(shellLayer))
+    const shellReads = yield* ShellGovernedReads.pipe(
+      Effect.provide(shellLayer)
     );
-
-    const searchA = await effectRuntime.runPromise(
-      shellReads.search({
-        correlationId: randomUUID(),
-        principal: principalA1,
-        query: 'searchable',
-      })
-    );
-    const detailA = await effectRuntime.runPromise(
-      shellReads.resourceDetail({
-        correlationId: randomUUID(),
-        principal: principalA1,
-        ref: resourceRef,
-      })
-    );
-    const searchB = await effectRuntime.runPromise(
-      shellReads.search({
-        correlationId: randomUUID(),
-        principal: principalB1,
-        query: 'searchable',
-      })
-    );
-    const detailB = await effectRuntime.runPromise(
-      shellReads.resourceDetail({
-        correlationId: randomUUID(),
-        principal: principalB1,
-        ref: resourceRef,
-      })
-    );
-    assert.deepEqual(
-      searchA.results.map(({ title }) => title),
-      ['A1 searchable']
-    );
-    assert.equal(detailA.detail.title, 'A1 searchable');
-    assert.deepEqual(
-      detailA.timeline.map(({ summary }) => summary),
-      ['Tenant A list']
-    );
-    assert.deepEqual(
-      searchB.results.map(({ title }) => title),
-      ['B1 searchable']
-    );
-    assert.equal(detailB.detail.title, 'B1 searchable');
-    assert.deepEqual(
-      detailB.timeline.map(({ summary }) => summary),
-      ['Tenant B list']
-    );
-    assert.equal(
+    const searchA = yield* shellReads.search({
+      correlationId: randomUUID(),
+      principal: principalA1,
+      query: 'searchable',
+    });
+    const detailA = yield* shellReads.resourceDetail({
+      correlationId: randomUUID(),
+      principal: principalA1,
+      ref: resourceRef,
+    });
+    const searchB = yield* shellReads.search({
+      correlationId: randomUUID(),
+      principal: principalB1,
+      query: 'searchable',
+    });
+    const detailB = yield* shellReads.resourceDetail({
+      correlationId: randomUUID(),
+      principal: principalB1,
+      ref: resourceRef,
+    });
+    expect(searchA.results.map(({ title }) => title)).toEqual([
+      'A1 searchable',
+    ]);
+    expect(detailA.detail.title).toBe('A1 searchable');
+    expect(detailA.timeline.map(({ summary }) => summary)).toEqual([
+      'Tenant A list',
+    ]);
+    expect(searchB.results.map(({ title }) => title)).toEqual([
+      'B1 searchable',
+    ]);
+    expect(detailB.detail.title).toBe('B1 searchable');
+    expect(detailB.timeline.map(({ summary }) => summary)).toEqual([
+      'Tenant B list',
+    ]);
+    expect(
       assertionCount,
-      9,
       'every provider attempt must receive a fresh assertion'
-    );
-
+    ).toBe(9);
     capturedLogs.length = 0;
     const beforeForgedShell = { ...generated.counts };
-    await assert.rejects(
-      effectRuntime.runPromise(
-        shellReads.resourceDetail({
-          correlationId: randomUUID(),
-          principal: principal(tenantA, entityA2, principalA, bindingA),
-          ref: resourceRef,
-        })
-      ),
-      isOperationContextDenied
-    );
-    await assert.rejects(
-      effectRuntime.runPromise(
-        shellReads.resourceDetail({
-          correlationId: randomUUID(),
-          principal: principal(tenantB, entityB1, principalA, bindingA),
-          ref: resourceRef,
-        })
-      ),
-      isOperationContextDenied
-    );
-    assert.deepEqual(generated.counts, beforeForgedShell);
-    assert.equal(assertionCount, 9);
-
-    await Promise.all(
+    expect(
+      isOperationContextDenied(
+        yield* Effect.flip(
+          shellReads.resourceDetail({
+            correlationId: randomUUID(),
+            principal: principal(tenantA, entityA2, principalA, bindingA),
+            ref: resourceRef,
+          })
+        )
+      )
+    ).toBe(true);
+    expect(
+      isOperationContextDenied(
+        yield* Effect.flip(
+          shellReads.resourceDetail({
+            correlationId: randomUUID(),
+            principal: principal(tenantB, entityB1, principalA, bindingA),
+            ref: resourceRef,
+          })
+        )
+      )
+    ).toBe(true);
+    expect(generated.counts).toEqual(beforeForgedShell);
+    expect(assertionCount).toBe(9);
+    yield* Effect.all(
       [
         principal(tenantA, entityA2, principalA, bindingA),
         principal(tenantB, entityB1, principalA, bindingA),
-      ].map(async (forgedPrincipal) => {
-        const authorization = await issueAuthorization(forgedPrincipal);
-        const response = await requestOwner(
-          generated.detail,
-          '/reads/resource-detail',
-          { resourceId: collidingResourceId },
-          authorization,
-          randomUUID()
-        );
-        assert.equal(response.status, 403);
-        const problem = JSON.stringify(await response.json());
-        assert.doesNotMatch(
-          problem,
-          new RegExp([tenantA, tenantB, entityA2, entityB1].join('|'), 'u')
-        );
-        assert.doesNotMatch(
-          problem,
-          /postgres|spicedb|permission check|row-level/iu
-        );
-      })
+      ].map(
+        Effect.fnUntraced(function* runIntegration31(forgedPrincipal) {
+          const authorization = yield* issueAuthorization(forgedPrincipal);
+          const response = yield* requestOwner(
+            generated.detail,
+            '/reads/resource-detail',
+            { resourceId: collidingResourceId },
+            authorization,
+            randomUUID()
+          );
+          expect(response.status).toBe(403);
+          const problem = JSON.stringify(
+            yield* Effect.tryPromise(() => response.json())
+          );
+          expect(problem).not.toMatch(
+            new RegExp([tenantA, tenantB, entityA2, entityB1].join('|'), 'u')
+          );
+          expect(problem).not.toMatch(
+            /postgres|spicedb|permission check|row-level/iu
+          );
+        })
+      )
     );
-    assert.deepEqual(generated.counts, beforeForgedShell);
-
+    expect(generated.counts).toEqual(beforeForgedShell);
     const deniedBefore = generated.counts.detail;
-    const deniedAuthorization = await issueAuthorization(principalA1);
-    const deniedResponse = await requestOwner(
+    const deniedAuthorization = yield* issueAuthorization(principalA1);
+    const deniedResponse = yield* requestOwner(
       generated.detail,
       '/reads/resource-detail',
       { resourceId: deniedResourceId },
       deniedAuthorization,
       randomUUID()
     );
-    assert.equal(deniedResponse.status, 403);
-    assert.equal(generated.counts.detail, deniedBefore);
-    const deniedEvidence = await admin.query<{
-      outcome: string;
-      outcome_code: string;
-      query_hash: null;
-      result_count: number;
-    }>(
-      `select outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and target_resource_id = $2`,
-      [tenantA, deniedResourceId]
+    expect(deniedResponse.status).toBe(403);
+    expect(generated.counts.detail).toBe(deniedBefore);
+    const deniedEvidence = yield* Effect.tryPromise(() =>
+      admin.query<{
+        outcome: string;
+        outcome_code: string;
+        query_hash: null;
+        result_count: number;
+      }>(
+        `select outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and target_resource_id = $2`,
+        [tenantA, deniedResourceId]
+      )
     );
-    assert.deepEqual(deniedEvidence.rows, [
+    expect(deniedEvidence.rows).toEqual([
       {
         outcome: 'denied',
         outcome_code: 'spicedb_permission_denied',
@@ -1341,7 +1491,6 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         result_count: 0,
       },
     ]);
-
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService =
       makeOperationalScopeResolver(
@@ -1354,7 +1503,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       unavailableResolver,
       unavailableContextAccess
     );
-    const unavailableOwner = await loadGeneratedOwner(
+    const unavailableOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
       unavailableRuntime,
       loggerLayer,
@@ -1366,27 +1515,25 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       unavailableOwner.search
     );
     const unavailableBefore = generated.counts.detail;
-    const unavailableResponse = await requestOwner(
+    const unavailableResponse = yield* requestOwner(
       unavailableOwner.detail,
       '/reads/resource-detail',
       { resourceId: collidingResourceId },
-      await issueAuthorization(principalA1),
+      yield* issueAuthorization(principalA1),
       randomUUID()
     );
-    assert.equal(unavailableResponse.status, 503);
-    assert.equal(generated.counts.detail, unavailableBefore);
-    assert.doesNotMatch(
-      JSON.stringify(await unavailableResponse.json()),
-      /postgres|spicedb|permission check|row-level/iu
-    );
-
+    expect(unavailableResponse.status).toBe(503);
+    expect(generated.counts.detail).toBe(unavailableBefore);
+    expect(
+      JSON.stringify(yield* Effect.tryPromise(() => unavailableResponse.json()))
+    ).not.toMatch(/postgres|spicedb|permission check|row-level/iu);
     const evidenceFailureRuntime = makeReadRuntime(
       failingEvidenceDatabase(runtimeDatabase),
       moduleGateway,
       scopeResolver,
       contextAccess
     );
-    const evidenceFailureOwner = await loadGeneratedOwner(
+    const evidenceFailureOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
       evidenceFailureRuntime,
       loggerLayer,
@@ -1397,19 +1544,19 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       evidenceFailureOwner.list,
       evidenceFailureOwner.search
     );
-    const evidenceFailureResponse = await requestOwner(
+    const evidenceFailureResponse = yield* requestOwner(
       evidenceFailureOwner.detail,
       '/reads/resource-detail',
       { resourceId: collidingResourceId },
-      await issueAuthorization(principalA1),
+      yield* issueAuthorization(principalA1),
       randomUUID()
     );
-    assert.equal(evidenceFailureResponse.status, 503);
-    assert.doesNotMatch(
-      JSON.stringify(await evidenceFailureResponse.json()),
-      /A1 searchable/u
-    );
-
+    expect(evidenceFailureResponse.status).toBe(503);
+    expect(
+      JSON.stringify(
+        yield* Effect.tryPromise(() => evidenceFailureResponse.json())
+      )
+    ).not.toMatch(/A1 searchable/u);
     const actionRuntime = makeActionRuntime(
       runtimeDatabase,
       makeActionRepository(),
@@ -1423,7 +1570,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       );
     }
     const actionRegistration = generated.action;
-    const invokeAction = async (
+    const invokeAction = Effect.fnUntraced(function* runIntegration32(
       trustedPrincipal: TrustedPrincipalContext,
       payload: {
         readonly legalEntityId: string;
@@ -1432,34 +1579,32 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         readonly title: string;
       },
       idempotencyKey: string
-    ) => {
-      const authorization = await issueAuthorization(trustedPrincipal);
-      const verified = await effectRuntime.runPromise(
-        generated.verifyActionPrincipal(authorization, {
+    ) {
+      const authorization = yield* issueAuthorization(trustedPrincipal);
+      const verified = yield* generated
+        .verifyActionPrincipal(authorization, {
           environment: verifierEnvironment,
           redemption: testGatewayAssertionRedemption,
         })
-      );
-      return await effectRuntime.runPromise(
-        actionRuntime
-          .runAction({
-            payload,
-            principal: verified,
-            registration: actionRegistration,
-            transport: {
-              correlationId: randomUUID(),
-              idempotencyKey,
-              targetModuleKey: GENERATED_OWNER.moduleId,
-              targetResourceId: payload.resourceId,
-              targetResourceType: GENERATED_OWNER.resourceType,
-            },
-          })
-          .pipe(Effect.provide(loggerLayer))
-      );
-    };
+        .pipe(Effect.provide(testClockLayer));
+      return yield* actionRuntime
+        .runAction({
+          payload,
+          principal: verified,
+          registration: actionRegistration,
+          transport: {
+            correlationId: randomUUID(),
+            idempotencyKey,
+            targetModuleKey: GENERATED_OWNER.moduleId,
+            targetResourceId: payload.resourceId,
+            targetResourceType: GENERATED_OWNER.resourceType,
+          },
+        })
+        .pipe(Effect.provide(loggerLayer));
+    });
     const validWriteId = randomUUID();
-    assert.deepEqual(
-      await invokeAction(
+    expect(
+      yield* invokeAction(
         principalA1,
         {
           legalEntityId: entityA1,
@@ -1468,10 +1613,9 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           title: 'A1 action write',
         },
         randomUUID()
-      ),
-      { created: true }
-    );
-    await Promise.all(
+      )
+    ).toEqual({ created: true });
+    yield* Effect.all(
       [
         {
           legalEntityId: entityA2,
@@ -1486,98 +1630,101 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           title: 'forbidden tenant write',
         },
       ].map(
-        async (payload) =>
-          await assert.rejects(
-            invokeAction(principalA1, payload, randomUUID()),
-            isCreateRecordRejected
-          )
+        Effect.fnUntraced(function* runIntegration33(payload) {
+          expect(
+            isCreateRecordRejected(
+              yield* Effect.flip(
+                invokeAction(principalA1, payload, randomUUID())
+              )
+            )
+          ).toBe(true);
+        })
       )
     );
     const beforeForgedAction = generated.counts.action;
-    await assert.rejects(
-      invokeAction(
-        principal(tenantA, entityA2, principalA, bindingA),
-        {
-          legalEntityId: entityA2,
-          resourceId: randomUUID(),
-          tenantId: tenantA,
-          title: 'forged action scope',
-        },
-        randomUUID()
-      ),
-      isOperationContextDenied
+    expect(
+      isOperationContextDenied(
+        yield* Effect.flip(
+          invokeAction(
+            principal(tenantA, entityA2, principalA, bindingA),
+            {
+              legalEntityId: entityA2,
+              resourceId: randomUUID(),
+              tenantId: tenantA,
+              title: 'forged action scope',
+            },
+            randomUUID()
+          )
+        )
+      )
+    ).toBe(true);
+    expect(generated.counts.action).toBe(beforeForgedAction);
+    expect(
+      isActionHandlerExecutionError(
+        yield* Effect.flip(
+          invokeAction(
+            principalA1,
+            {
+              legalEntityId: entityA1,
+              resourceId: randomUUID(),
+              tenantId: tenantA,
+              title: 'trigger safe logging defect',
+            },
+            randomUUID()
+          )
+        )
+      )
+    ).toBe(true);
+    const ownerRows = yield* Effect.tryPromise(() =>
+      admin.query<{
+        legal_entity_id: string;
+        tenant_id: string;
+        title: string;
+      }>(
+        `select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`
+      )
     );
-    assert.equal(generated.counts.action, beforeForgedAction);
-
-    await assert.rejects(
-      invokeAction(
-        principalA1,
-        {
-          legalEntityId: entityA1,
-          resourceId: randomUUID(),
-          tenantId: tenantA,
-          title: 'trigger safe logging defect',
-        },
-        randomUUID()
-      ),
-      isActionHandlerExecutionError
+    expect(
+      ownerRows.rows.some(({ title }) => title === 'A1 action write')
+    ).toBe(true);
+    expect(
+      ownerRows.rows.some(({ title }) => title.startsWith('forbidden'))
+    ).toBe(false);
+    const allowedEvidence = yield* Effect.tryPromise(() =>
+      admin.query<{
+        evidence_policy_key: string;
+        outcome: string;
+        query_hash: null;
+      }>(
+        `select evidence_policy_key, outcome, query_hash from core.data_access_events where tenant_id in ($1, $2) and outcome = 'allowed' order by evidence_policy_key`,
+        [tenantA, tenantB]
+      )
     );
-
-    const ownerRows = await admin.query<{
-      legal_entity_id: string;
-      tenant_id: string;
-      title: string;
-    }>(
-      `select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`
+    expect(allowedEvidence.rows.length >= 10).toBe(true);
+    expect(
+      allowedEvidence.rows.every(({ outcome }) => outcome === 'allowed')
+    ).toBe(true);
+    expect(
+      allowedEvidence.rows.every(({ query_hash }) => query_hash === null)
+    ).toBe(true);
+    const unscopedEntityRows = yield* Effect.tryPromise(() =>
+      runtimePool.query(`select * from ${schemaName}.entity_records`)
     );
-    assert.equal(
-      ownerRows.rows.some(({ title }) => title === 'A1 action write'),
-      true
-    );
-    assert.equal(
-      ownerRows.rows.some(({ title }) => title.startsWith('forbidden')),
-      false
-    );
-
-    const allowedEvidence = await admin.query<{
-      evidence_policy_key: string;
-      outcome: string;
-      query_hash: null;
-    }>(
-      `select evidence_policy_key, outcome, query_hash from core.data_access_events where tenant_id in ($1, $2) and outcome = 'allowed' order by evidence_policy_key`,
-      [tenantA, tenantB]
-    );
-    assert.ok(allowedEvidence.rows.length >= 10);
-    assert.equal(
-      allowedEvidence.rows.every(({ outcome }) => outcome === 'allowed'),
-      true
-    );
-    assert.equal(
-      allowedEvidence.rows.every(({ query_hash }) => query_hash === null),
-      true
-    );
-
-    const unscopedEntityRows = await runtimePool.query(
-      `select * from ${schemaName}.entity_records`
-    );
-    assert.equal(
+    expect(
       unscopedEntityRows.rowCount,
-      0,
       'a reused pooled connection must not retain transaction-local scope'
+    ).toBe(0);
+    const unscopedTenantRows = yield* Effect.tryPromise(() =>
+      runtimePool.query(`select * from ${schemaName}.tenant_records`)
     );
-    const unscopedTenantRows = await runtimePool.query(
-      `select * from ${schemaName}.tenant_records`
-    );
-    assert.equal(unscopedTenantRows.rowCount, 0);
-
-    assert.ok(
+    expect(unscopedTenantRows.rowCount).toBe(0);
+    expect(
       capturedLogs.length > 0,
       'the generated-owner path must capture runtime logs'
-    );
+    ).toBe(true);
     const capturedLogText = capturedLogs.join('\n');
-    assert.match(capturedLogText, /Unexpected Action execution defect/u);
-    assert.doesNotMatch(
-      capturedLogText,
+    expect(capturedLogText).toMatch(/Unexpected Action execution defect/u);
+    expect(capturedLogText).not.toMatch(
       new RegExp(
         [
           tenantB,
@@ -1591,123 +1738,30 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         'u'
       )
     );
-    assert.doesNotMatch(
-      capturedLogText,
+    expect(capturedLogText).not.toMatch(
       /postgres|spicedb|row-level|database operation scope|permission check/iu
     );
-
-    const generatedActionSource = await readFile(
-      `${fixture.verticalRoot}/src/actions/create-record.action.ts`,
-      'utf-8'
-    );
-    const generatedServerSource = await readFile(
-      `${fixture.verticalRoot}/api/resource-detail-read-server.ts`,
-      'utf-8'
-    );
-    assert.match(
-      generatedActionSource,
-      /@generated by OntOS Codesmith Action/u
-    );
-    assert.match(generatedActionSource, /legalEntityScope: 'required'/u);
-    assert.match(generatedServerSource, /authenticateOperationPrincipal/u);
-    assert.match(generatedServerSource, /makeGovernedReadHttpHandler\(\{/u);
-    assert.match(generatedServerSource, /registration: resourceDetailRead/u);
-    assert.doesNotMatch(
-      generatedServerSource,
-      /yield\* ReadRuntime|\.runRead\(/u
-    );
-  } finally {
-    await Promise.allSettled(
-      handlers.map(async ({ dispose }) => await dispose())
-    );
-    await effectRuntime.runPromise(
-      Effect.forEach(
-        touchedObjects.toReversed(),
-        ([resourceType, resourceId]) =>
-          ignorePromiseFailure(
-            async () =>
-              await spiceAdmin.promises.deleteRelationships(
-                v1.DeleteRelationshipsRequest.create({
-                  relationshipFilter: v1.RelationshipFilter.create({
-                    optionalResourceId: resourceId,
-                    resourceType,
-                  }),
-                })
-              )
-          ),
-        { concurrency: 1, discard: true }
+    const generatedActionSource = yield* Effect.tryPromise(() =>
+      readFile(
+        `${fixture.verticalRoot}/src/actions/create-record.action.ts`,
+        'utf-8'
       )
     );
-    permissionClient.close();
-    spiceAdmin.close();
-    const cleanupQueries = [
-      async () =>
-        await admin.query(
-          'delete from core.outbox_messages where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.domain_events where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.data_access_events where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.audit_events where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.action_invocations where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.tenant_module_states where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.principal_auth_bindings where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.principals where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.legal_entities where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(
-          'delete from core.tenants where tenant_id in ($1, $2)',
-          [tenantA, tenantB]
-        ),
-      async () =>
-        await admin.query(`drop schema if exists ${schemaName} cascade`),
-    ];
-    await effectRuntime.runPromise(
-      Effect.forEach(cleanupQueries, ignorePromiseFailure, {
-        concurrency: 1,
-        discard: true,
-      })
+    const generatedServerSource = yield* Effect.tryPromise(() =>
+      readFile(
+        `${fixture.verticalRoot}/api/resource-detail-read-server.ts`,
+        'utf-8'
+      )
     );
-    await runtimePool.end();
-    await admin.end();
-    await fixture.dispose();
-    await effectRuntime.dispose();
-  }
-});
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(
-    nativeTestCallback
-  )
+    expect(generatedActionSource).toMatch(
+      /@generated by OntOS Codesmith Action/u
+    );
+    expect(generatedActionSource).toMatch(/legalEntityScope: 'required'/u);
+    expect(generatedServerSource).toMatch(/authenticateOperationPrincipal/u);
+    expect(generatedServerSource).toMatch(/makeGovernedReadHttpHandler\(\{/u);
+    expect(generatedServerSource).toMatch(/registration: resourceDetailRead/u);
+    expect(generatedServerSource).not.toMatch(
+      /yield\* ReadRuntime|\.runRead\(/u
+    );
+  })
 );

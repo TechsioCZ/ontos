@@ -1,8 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
@@ -16,7 +13,6 @@ import { OutboxWorkerDescriptorError } from '../../src/outbox/errors.ts';
 
 const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
 const payloadSchema = Schema.Struct({ messageKey: MessageKey });
-
 const makeWorker = (workerKey = 'consumer.message-logger') =>
   defineOutboxWorker(
     {
@@ -42,17 +38,15 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
     },
     (payload) =>
       Effect.sync(() =>
-        assert.equal(Predicate.isString(payload.messageKey), true)
+        expect(Predicate.isString(payload.messageKey)).toBe(true)
       )
   );
-
-void test(
+it.effect(
   'defines an exact immutable registration while keeping the handler opaque',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* immutableRegistration() {
       const worker = makeWorker();
-
-      assert.deepEqual(worker.descriptor, {
+      expect(worker.descriptor).toEqual({
         consumerModuleKey: 'consumer',
         entrypoint: {
           access: 'background',
@@ -74,12 +68,11 @@ void test(
         topic: 'producer.message-created',
         workerKey: 'consumer.message-logger',
       });
-      assert.equal(Object.isFrozen(worker), true);
-      assert.equal(Object.isFrozen(worker.descriptor), true);
-      assert.equal(Object.isFrozen(worker.descriptor.retryPolicy), true);
-      assert.equal('handler' in worker, false);
-      assert.deepEqual(Object.keys(worker), ['descriptor']);
-
+      expect(Object.isFrozen(worker)).toBe(true);
+      expect(Object.isFrozen(worker.descriptor)).toBe(true);
+      expect(Object.isFrozen(worker.descriptor.retryPolicy)).toBe(true);
+      expect('handler' in worker).toBe(false);
+      expect(Object.keys(worker)).toEqual(['descriptor']);
       const payload = yield* Schema.decodeEffect(payloadSchema)({
         messageKey: 'message-1',
       });
@@ -96,10 +89,8 @@ void test(
         workerKey: 'consumer.message-logger',
       });
     })
-  )
 );
-
-void test('preserves schema inference for a typed handler payload', () => {
+it('preserves schema inference for a typed handler payload', () => {
   defineOutboxWorker(
     {
       consumerModuleKey: 'consumer',
@@ -124,12 +115,11 @@ void test('preserves schema inference for a typed handler payload', () => {
     },
     (payload) => {
       const key: string = payload.messageKey;
-      return Effect.sync(() => assert.equal(key, payload.messageKey));
+      return Effect.sync(() => expect(key).toBe(payload.messageKey));
     }
   );
 });
-
-void test('rejects invalid identities, retry policies, and lease policies', () => {
+it('rejects invalid identities, retry policies, and lease policies', () => {
   const valid = makeWorker().descriptor;
   const invalidDescriptors = [
     { ...valid, workerKey: 'producer.foreign-worker' },
@@ -152,28 +142,26 @@ void test('rejects invalid identities, retry policies, and lease policies', () =
     },
     { ...valid, retryPolicy: { ...valid.retryPolicy, multiplier: 0 } },
   ];
-
   for (const descriptor of invalidDescriptors) {
-    assert.throws(
-      () => defineOutboxWorker(descriptor, () => Effect.void),
-      Schema.is(OutboxWorkerDescriptorError)
+    expect(() => defineOutboxWorker(descriptor, () => Effect.void)).toThrow(
+      OutboxWorkerDescriptorError
     );
   }
 });
-
-void test('rejects duplicate worker keys and calculates bounded exponential backoff', () => {
+it('rejects duplicate worker keys and calculates bounded exponential backoff', () => {
   const worker = makeWorker();
-  assert.throws(() => validateOutboxWorkerRegistrations([worker, worker]), {
-    name: 'OutboxWorkerDescriptorError',
-    reason: /duplicate Outbox Worker key/u,
-  });
-  assert.deepEqual(validateOutboxWorkerRegistrations([worker]), [worker]);
-  assert.equal(retryBackoffMs(worker.descriptor.retryPolicy, 1), 1000);
-  assert.equal(retryBackoffMs(worker.descriptor.retryPolicy, 3), 4000);
-  assert.equal(retryBackoffMs(worker.descriptor.retryPolicy, 10), 10_000);
+  expect(() => validateOutboxWorkerRegistrations([worker, worker])).toThrow(
+    expect.objectContaining({
+      name: 'OutboxWorkerDescriptorError',
+      reason: expect.stringMatching(/duplicate Outbox Worker key/u),
+    })
+  );
+  expect(validateOutboxWorkerRegistrations([worker])).toEqual([worker]);
+  expect(retryBackoffMs(worker.descriptor.retryPolicy, 1)).toBe(1000);
+  expect(retryBackoffMs(worker.descriptor.retryPolicy, 3)).toBe(4000);
+  expect(retryBackoffMs(worker.descriptor.retryPolicy, 10)).toBe(10_000);
 });
-
-void test('validates and freezes the schema-free installed subscription catalog', () => {
+it('validates and freezes the schema-free installed subscription catalog', () => {
   const worker = makeWorker();
   const subscription = {
     consumerModuleKey: worker.descriptor.consumerModuleKey,
@@ -183,14 +171,15 @@ void test('validates and freezes the schema-free installed subscription catalog'
     workerKey: worker.descriptor.workerKey,
   };
   const validated = validateOutboxWorkerSubscriptions([subscription]);
-  assert.deepEqual(validated, [subscription]);
-  assert.equal(Object.isFrozen(validated), true);
-  assert.equal(Object.isFrozen(validated[0]), true);
-  assert.throws(
-    () => validateOutboxWorkerSubscriptions([subscription, subscription]),
-    {
+  expect(validated).toEqual([subscription]);
+  expect(Object.isFrozen(validated)).toBe(true);
+  expect(Object.isFrozen(validated[0])).toBe(true);
+  expect(() =>
+    validateOutboxWorkerSubscriptions([subscription, subscription])
+  ).toThrow(
+    expect.objectContaining({
       name: 'OutboxWorkerDescriptorError',
-      reason: /duplicate Outbox Worker key/u,
-    }
+      reason: expect.stringMatching(/duplicate Outbox Worker key/u),
+    })
   );
 });

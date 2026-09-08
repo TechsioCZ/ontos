@@ -1,7 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { test } from 'node:test';
+import nodePath from 'node:path';
+
+import { expect, it } from 'effect-rstest';
 
 import { runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
@@ -26,10 +26,10 @@ export const makeOutboxProcessor = (dependencies: OutboxProcessorDependencies) =
 ];
 
 for (const { rule, source } of cases) {
-  test(`${rule} excludes nested scripts by default and honors includeScripts`, () => {
+  it(`${rule} excludes nested scripts by default and honors includeScripts`, () => {
     withTemporaryWorkspace((root) => {
-      const directory = join(root, 'workspace');
-      const alias = join(root, 'workspace-link');
+      const directory = nodePath.join(root, 'workspace');
+      const alias = nodePath.join(root, 'workspace-link');
       mkdirSync(directory);
       symlinkSync(directory, alias, 'dir');
       const workspaces = [
@@ -45,22 +45,22 @@ for (const { rule, source } of cases) {
       );
       const paths = [...sources, ...scripts];
       for (const path of paths) {
-        const file = join(directory, path);
-        mkdirSync(dirname(file), { recursive: true });
+        const file = nodePath.join(directory, path);
+        mkdirSync(nodePath.dirname(file), { recursive: true });
         writeFileSync(file, source);
       }
-      const config = join(directory, '.oxlintrc.json');
+      const config = nodePath.join(directory, '.oxlintrc.json');
       for (const includeScripts of [false, true]) {
         writeFileSync(
           config,
           JSON.stringify({
+            categories: { correctness: 'off' },
             jsPlugins: [
               {
                 name: 'effect-native',
-                specifier: join(testsDirectory, 'fixture-plugin.ts'),
+                specifier: nodePath.join(testsDirectory, 'fixture-plugin.ts'),
               },
             ],
-            categories: { correctness: 'off' },
             rules: {
               [`effect-native/${rule}`]: includeScripts
                 ? ['error', { includeScripts: true }]
@@ -74,37 +74,40 @@ for (const { rule, source } of cases) {
             pathMode === 'relative'
               ? paths
               : paths.map((path) =>
-                  join(pathMode === 'symlink' ? alias : directory, path)
+                  nodePath.join(
+                    pathMode === 'symlink' ? alias : directory,
+                    path
+                  )
                 ),
             directory,
             rule
           );
-          assert.equal(
+          expect(
             run.numberOfFiles,
-            paths.length,
             `${rule}: every staged file must be linted`
-          );
-          assert.equal(
+          ).toBe(paths.length);
+          expect(
             run.exitCode,
-            1,
             `${rule}: ordinary source must still report`
-          );
-          for (const diagnostic of run.diagnostics)
-            assert.equal(diagnostic.code, `effect-native(${rule})`);
+          ).toBe(1);
+          for (const diagnostic of run.diagnostics) {
+            expect(diagnostic.code).toBe(`effect-native(${rule})`);
+          }
           const reported = [
             ...new Set(
               // Oxlint may retain absolute spellings when input paths cross a symlink.
               run.diagnostics.map((diagnostic) =>
-                realpathSync(resolve(directory, diagnostic.filename))
+                realpathSync(nodePath.resolve(directory, diagnostic.filename))
               )
             ),
           ];
-          assert.deepEqual(
-            reported.sort(),
-            (includeScripts ? paths : sources)
-              .map((path) => realpathSync(join(directory, path)))
-              .toSorted(),
+          expect(
+            reported.toSorted(),
             `${rule}: includeScripts=${includeScripts}, pathMode=${pathMode}`
+          ).toEqual(
+            (includeScripts ? paths : sources)
+              .map((path) => realpathSync(nodePath.join(directory, path)))
+              .toSorted()
           );
         }
       }

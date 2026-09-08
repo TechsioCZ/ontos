@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,8 +8,10 @@ export const testsDirectory = dirname(fileURLToPath(import.meta.url));
 export const pluginDirectory = resolve(testsDirectory, '..');
 export const appRoot = resolve(pluginDirectory, '..', '..', '..');
 export const fixturesDirectory = join(testsDirectory, 'fixtures');
-const oxlintEntryPoint = fileURLToPath(
-  new URL('bin/oxlint', import.meta.resolve('oxlint/package.json'))
+// Rstest bundles this harness through Rspack, which has no `import.meta.resolve`.
+const oxlintEntryPoint = join(
+  dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
+  'bin/oxlint'
 );
 
 interface Diagnostic {

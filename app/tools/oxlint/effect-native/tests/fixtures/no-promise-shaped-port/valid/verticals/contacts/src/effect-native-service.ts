@@ -15,8 +15,8 @@ export const persistence: CustomerContactPersistence = {
 	loadAll: () => Effect.succeed([]),
 };
 
-/** Callback parameters that accept a Promise-shaped third-party continuation are not ports. */
-export function withRetry(run: (attempt: number) => Promise<void>): void {
+/** First-party callbacks accept native Effect operations. */
+export function withRetry(run: (attempt: number) => Effect.Effect<void>): void {
 	void run;
 }
 

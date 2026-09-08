@@ -1,10 +1,7 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned HTTP application entrypoint; expires: 2026-12-31.
 import { NodeHttpServer } from '@effect/platform-node';
-import { Effect, Match, Redacted, Schema } from 'effect';
+import { Effect, Match, Redacted, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 import {
   FetchHttpClient,
   HttpClient,
@@ -29,10 +26,10 @@ const principal = {
 const verificationFailure = (
   _tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']
 ) =>
-  Schema.decodeSync(OperationPrincipalVerificationErrorSchema)({
+  Schema.decodeEffect(OperationPrincipalVerificationErrorSchema)({
     _tag,
     reason: 'Private verifier diagnostic',
-  });
+  }).pipe(Effect.orDie);
 
 const authenticationProblem = () => ({
   _tag: 'FixtureAuthenticationProblem' as const,
@@ -68,122 +65,115 @@ const respondWithProblem = (
   error: ReturnType<typeof authenticationProblem | typeof unavailableProblem>
 ) => Effect.succeed(problemResponse(error));
 
-// oxlint-disable-next-line typescript/promise-function-async -- Effect is the test's async control flow; expires: 2026-12-31.
-test('mounted HTTP authentication maps verifier classes, challenges unusable credentials, and stops before private logic', () => {
-  let privateOperationReached = 0;
-  const failureByCredential = new Map<
-    string | undefined,
-    (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']
-  >([
-    [undefined, 'ActionPrincipalMissingError'],
-    ['Bearer malformed', 'ActionPrincipalInvalidError'],
-    ['Bearer expired', 'ActionPrincipalExpiredError'],
-    ['Bearer wrong-scope', 'ActionPrincipalScopeError'],
-    ['Bearer misconfigured', 'ActionPrincipalConfigurationError'],
-    ['Bearer unavailable', 'ActionPrincipalUnavailableError'],
-  ]);
-  const authenticate = makeMicroverticalHttpPrincipalAuthentication(
-    (authorization) => {
-      const raw = Redacted.value(authorization);
-      const failure = failureByCredential.get(raw);
-      return failure === undefined
-        ? Effect.succeed(principal)
-        : Effect.fail(verificationFailure(failure));
-    }
-  );
+it.live(
+  'mounted HTTP authentication maps verifier classes, challenges unusable credentials, and stops before private logic',
+  () => {
+    let privateOperationReached = 0;
+    const failureByCredential = new Map<
+      string | undefined,
+      (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']
+    >([
+      [undefined, 'ActionPrincipalMissingError'],
+      ['Bearer malformed', 'ActionPrincipalInvalidError'],
+      ['Bearer expired', 'ActionPrincipalExpiredError'],
+      ['Bearer wrong-scope', 'ActionPrincipalScopeError'],
+      ['Bearer misconfigured', 'ActionPrincipalConfigurationError'],
+      ['Bearer unavailable', 'ActionPrincipalUnavailableError'],
+    ]);
+    const authenticate = makeMicroverticalHttpPrincipalAuthentication(
+      (authorization) => {
+        const raw = Redacted.value(authorization);
+        const failure = failureByCredential.get(raw);
+        return failure === undefined
+          ? Effect.succeed(principal)
+          : verificationFailure(failure).pipe(Effect.flatMap(Effect.fail));
+      }
+    );
 
-  return runEffectTestPromise(
-    Effect.scoped(
-      Effect.gen(function* mountedAuthenticationHandler() {
-        const server = yield* NodeHttpServer.make(
-          () => process.getBuiltinModule('http').createServer(),
-          { host: '127.0.0.1', port: 0 }
+    return Effect.gen(function* mountedAuthenticationHandler() {
+      const server = yield* NodeHttpServer.make(
+        () => process.getBuiltinModule('http').createServer(),
+        { host: '127.0.0.1', port: 0 }
+      );
+      const application = HttpServerRequest.HttpServerRequest.use((request) =>
+        authenticate(Redacted.make(request.headers['authorization']), {
+          authentication: authenticationProblem,
+          unavailable: unavailableProblem,
+        }).pipe(
+          Effect.flatMap((trustedPrincipal) =>
+            Effect.sync(() => {
+              privateOperationReached += 1;
+              return HttpServerResponse.jsonUnsafe({
+                principal: trustedPrincipal,
+              });
+            })
+          ),
+          Effect.catch(respondWithProblem)
+        )
+      );
+      yield* server.serve(application);
+      const address = yield* Match.value(server.address).pipe(
+        Match.tag('TcpAddress', (tcpAddress) => Effect.succeed(tcpAddress)),
+        Match.orElse(() =>
+          Effect.die('HTTP authentication fixture did not bind to TCP')
+        )
+      );
+      const client = yield* HttpClient.HttpClient;
+      const url = `http://127.0.0.1:${address.port}/operation`;
+      for (const [authorization, expectedStatus] of [
+        [undefined, 401],
+        ['Bearer malformed', 401],
+        ['Bearer expired', 401],
+        ['Bearer wrong-scope', 401],
+        ['Bearer misconfigured', 503],
+        ['Bearer unavailable', 503],
+      ] as const) {
+        const request =
+          authorization === undefined
+            ? HttpClientRequest.get(url)
+            : HttpClientRequest.get(url).pipe(
+                HttpClientRequest.setHeader('authorization', authorization)
+              );
+        const response = yield* client.execute(request);
+        expect(response.status).toBe(expectedStatus);
+        expect(response.headers['content-type']).toBe(
+          'application/problem+json'
         );
-        const application = HttpServerRequest.HttpServerRequest.use((request) =>
-          authenticate(Redacted.make(request.headers['authorization']), {
-            authentication: authenticationProblem,
-            unavailable: unavailableProblem,
-          }).pipe(
-            Effect.flatMap((trustedPrincipal) =>
-              Effect.sync(() => {
-                privateOperationReached += 1;
-                return HttpServerResponse.jsonUnsafe({
-                  principal: trustedPrincipal,
-                });
-              })
-            ),
-            Effect.catch(respondWithProblem)
-          )
+        expect(response.headers['www-authenticate']).toBe(
+          expectedStatus === 401 ? 'Bearer' : undefined
         );
-        yield* server.serve(application);
-        const address = yield* Match.value(server.address).pipe(
-          Match.tag('TcpAddress', (tcpAddress) => Effect.succeed(tcpAddress)),
-          Match.orElse(() =>
-            Effect.die('HTTP authentication fixture did not bind to TCP')
-          )
+        const rawBody = yield* response.json;
+        expect(rawBody).toEqual(
+          expectedStatus === 401
+            ? authenticationProblem()
+            : unavailableProblem()
         );
-        const client = yield* HttpClient.HttpClient;
-        const url = `http://127.0.0.1:${address.port}/operation`;
-        for (const [authorization, expectedStatus] of [
-          [undefined, 401],
-          ['Bearer malformed', 401],
-          ['Bearer expired', 401],
-          ['Bearer wrong-scope', 401],
-          ['Bearer misconfigured', 503],
-          ['Bearer unavailable', 503],
-        ] as const) {
-          const request =
-            authorization === undefined
-              ? HttpClientRequest.get(url)
-              : HttpClientRequest.get(url).pipe(
-                  HttpClientRequest.setHeader('authorization', authorization)
-                );
-          const response = yield* client.execute(request);
-          assert.equal(response.status, expectedStatus);
-          assert.equal(
-            response.headers['content-type'],
-            'application/problem+json'
-          );
-          assert.equal(
-            response.headers['www-authenticate'],
-            expectedStatus === 401 ? 'Bearer' : undefined
-          );
-          const rawBody = yield* response.json;
-          assert.deepEqual(
-            rawBody,
+        const body = yield* Schema.decodeUnknownEffect(ProblemResponseSchema)(
+          rawBody
+        );
+        expect(
+          Predicate.isTagged(
+            body,
             expectedStatus === 401
-              ? authenticationProblem()
-              : unavailableProblem()
-          );
-          const body = yield* Schema.decodeEffect(ProblemResponseSchema)(
-            rawBody
-          );
-          assert.ok(
-            Schema.is(
-              Schema.TaggedStruct(
-                expectedStatus === 401
-                  ? 'FixtureAuthenticationProblem'
-                  : 'FixtureUnavailableProblem',
-                {}
-              )
-            )(body)
-          );
-          assert.equal(body.status, expectedStatus);
-        }
-        assert.equal(privateOperationReached, 0);
-
-        const success = yield* client.execute(
-          HttpClientRequest.get(url).pipe(
-            HttpClientRequest.setHeader('authorization', 'Bearer valid')
+              ? 'FixtureAuthenticationProblem'
+              : 'FixtureUnavailableProblem'
           )
-        );
-        assert.equal(success.status, 200);
-        const successBody = yield* success.json.pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema))
-        );
-        assert.deepEqual(successBody.principal, principal);
-        assert.equal(privateOperationReached, 1);
-      })
-    ).pipe(Effect.provide(FetchHttpClient.layer))
-  );
-});
+        ).toBe(true);
+        expect(body.status).toBe(expectedStatus);
+      }
+      expect(privateOperationReached).toBe(0);
+
+      const success = yield* client.execute(
+        HttpClientRequest.get(url).pipe(
+          HttpClientRequest.setHeader('authorization', 'Bearer valid')
+        )
+      );
+      expect(success.status).toBe(200);
+      const successBody = yield* success.json.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema))
+      );
+      expect(successBody.principal).toEqual(principal);
+      expect(privateOperationReached).toBe(1);
+    }).pipe(Effect.provide(FetchHttpClient.layer));
+  }
+);

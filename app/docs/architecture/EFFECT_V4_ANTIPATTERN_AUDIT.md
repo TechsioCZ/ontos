@@ -1,5 +1,7 @@
 # Effect v4 anti-pattern audit
 
+> Historical findings from the original audit. Implementation has changed since this snapshot. [Database Architecture](DATABASE.md) owns the current native Effect database and transaction model; the Promise bridge proposals below are superseded. Use focused architecture documents and executable policy checks to assess current behavior.
+
 ## Verdict
 
 OntOS is **Effect-aware, but not yet Effect-native end to end**.

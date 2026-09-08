@@ -153,6 +153,14 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm test:integration
 
+      - name: Install Chromium and its runtime dependencies
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+
+      - name: Run parallel authenticated browser tests without retries
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/shell-super-app test:e2e
+
       - name: Show bounded service diagnostics after failure
         if: failure()
         working-directory: app
@@ -298,7 +306,7 @@ jobs:
         env:
           BEFORE_SHA: ${{ github.event.before }}
         run: >-
-          mise exec -- pnpm deployment-impact:plan --
+          mise exec -- pnpm deployment-impact:plan
           --authorization-environment stage
           --base "$BEFORE_SHA"
           --head "$GITHUB_SHA"

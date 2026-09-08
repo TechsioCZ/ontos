@@ -1,17 +1,15 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import {
   partyRegistryCorsAllowedOrigins,
   resolvePartyRegistryShellOrigin,
 } from '../../api/read-server-support.ts';
 
-test('Party CORS accepts only the configured nonlocal Shell origin without a localhost fallback', () => {
+it('Party CORS accepts only the configured nonlocal Shell origin without a localhost fallback', () => {
   const shellOrigin = 'https://operations.example.test';
-  assert.deepEqual(
+  expect(
     partyRegistryCorsAllowedOrigins(
       resolvePartyRegistryShellOrigin(shellOrigin)
-    ),
-    [shellOrigin]
-  );
+    )
+  ).toEqual([shellOrigin]);
 });

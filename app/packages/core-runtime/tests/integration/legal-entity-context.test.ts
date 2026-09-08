@@ -1,9 +1,6 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { eq } from 'drizzle-orm';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -17,25 +14,26 @@ const activeTwo = '21000000-0000-4000-8000-000000000002';
 const suspended = '21000000-0000-4000-8000-000000000003';
 const foreign = '21000000-0000-4000-8000-000000000004';
 
-test(
+it.live(
   'lists and validates only active legal entities inside the exact tenant',
-  Effect.gen(function* legalEntityContextIntegration() {
-    const configuration = yield* loadDatabaseConfig();
-    const { executor: database } = yield* makeCoreDatabase(configuration);
-    const context = makeLegalEntityContext({ executor: database });
-    const cleanup = Effect.gen(function* cleanLegalEntityContextFixtures() {
-      yield* database
-        .delete(legalEntities)
-        .where(eq(legalEntities.tenantId, tenantOne));
-      yield* database
-        .delete(legalEntities)
-        .where(eq(legalEntities.tenantId, tenantTwo));
-      yield* database.delete(tenants).where(eq(tenants.tenantId, tenantOne));
-      yield* database.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
-    });
+  () =>
+    Effect.gen(function* legalEntityContextIntegration() {
+      const configuration = yield* loadDatabaseConfig();
+      const { executor: database } = yield* makeCoreDatabase(configuration);
+      const context = makeLegalEntityContext({ executor: database });
+      const cleanup = Effect.gen(function* cleanLegalEntityContextFixtures() {
+        yield* database
+          .delete(legalEntities)
+          .where(eq(legalEntities.tenantId, tenantOne));
+        yield* database
+          .delete(legalEntities)
+          .where(eq(legalEntities.tenantId, tenantTwo));
+        yield* database.delete(tenants).where(eq(tenants.tenantId, tenantOne));
+        yield* database.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
+      });
 
-    yield* cleanup;
-    yield* Effect.gen(function* exerciseLegalEntityContext() {
+      yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
+
       yield* database.insert(tenants).values([
         {
           defaultLocale: 'en',
@@ -87,22 +85,25 @@ test(
         },
       ]);
 
-      assert.deepEqual(yield* context.listActiveForTenant(tenantOne), [
+      expect(yield* context.listActiveForTenant(tenantOne)).toEqual([
         { legalEntityId: activeTwo, legalName: 'Alpha entity' },
         { legalEntityId: activeOne, legalName: 'Zeta entity' },
       ]);
-      assert.deepEqual(yield* context.validateSelection(tenantOne, activeOne), {
+      expect(yield* context.validateSelection(tenantOne, activeOne)).toEqual({
         legalEntityId: activeOne,
         legalName: 'Zeta entity',
       });
       const inactiveError = yield* Effect.flip(
         context.validateSelection(tenantOne, suspended)
       );
-      assert.equal(inactiveError._tag, 'LegalEntityContextInactiveError');
+      expect(
+        Predicate.isTagged(inactiveError, 'LegalEntityContextInactiveError')
+      ).toBe(true);
       const missingError = yield* Effect.flip(
         context.validateSelection(tenantOne, foreign)
       );
-      assert.equal(missingError._tag, 'LegalEntityContextMissingError');
-    }).pipe(Effect.ensuring(cleanup.pipe(Effect.orDie)));
-  }).pipe(Effect.scoped, makeEffectTestCallback)
+      expect(
+        Predicate.isTagged(missingError, 'LegalEntityContextMissingError')
+      ).toBe(true);
+    })
 );

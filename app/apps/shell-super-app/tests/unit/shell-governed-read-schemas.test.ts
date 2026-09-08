@@ -1,5 +1,5 @@
-import { describe, expect, test } from '@rstest/core';
 import { Schema } from 'effect';
+import { describe, expect, test } from 'effect-rstest';
 
 import {
   GovernedResolvedModuleTargetSchema,

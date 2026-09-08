@@ -10,7 +10,6 @@ type Equal<Left, Right> =
   >() => Value extends Right ? 1 : 2
     ? true
     : false;
-type Expect<Value extends true> = Value;
 type EffectChannels<Value> =
   Value extends Effect.Effect<infer Success, infer Failure, infer Requirements>
     ? readonly [Success, Failure, Requirements]
@@ -41,18 +40,16 @@ type InventoryIssuer = OperationGatewayIssuer<
 >;
 type InventoryAudience = Parameters<InventoryIssuer>[0]['audience'];
 
-export type OperationGatewayAudienceTypeTest = Expect<
-  Equal<InventoryAudience, 'inventory-stock'>
->;
-export type OperationGatewayFailureChannelsTypeTest = Expect<
-  Equal<
-    EffectChannels<typeof failedInvocation>,
-    readonly [never, typeof acquisitionFailure | typeof attemptFailure, never]
-  >
->;
-export type OperationGatewaySuccessChannelsTypeTest = Expect<
-  Equal<
-    EffectChannels<typeof successfulInvocation>,
-    readonly ['completed', never, never]
-  >
->;
+const audienceIsExact: Equal<InventoryAudience, 'inventory-stock'> = true;
+const failureChannelsAreExact: Equal<
+  EffectChannels<typeof failedInvocation>,
+  readonly [never, typeof acquisitionFailure | typeof attemptFailure, never]
+> = true;
+const successChannelsAreExact: Equal<
+  EffectChannels<typeof successfulInvocation>,
+  readonly ['completed', never, never]
+> = true;
+
+void audienceIsExact;
+void failureChannelsAreExact;
+void successChannelsAreExact;

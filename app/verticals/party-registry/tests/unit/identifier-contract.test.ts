@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   OfficialIdentifierInputSchema,
@@ -18,22 +16,21 @@ import {
 
 const decode = Schema.decodeUnknownSync;
 
-test('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
+it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
   const ico = decode(OfficialIdentifierInputSchema)({
     identifierType: 'ICO',
     value: '27074358',
     verification: 'VERIFIED',
   });
-  assert.equal(normalizeOfficialIdentifier(ico).normalizedValue, '27074358');
-  assert.equal(normalizeOfficialIdentifier(ico).namespace, 'CZ:ICO');
+  expect(normalizeOfficialIdentifier(ico).normalizedValue).toBe('27074358');
+  expect(normalizeOfficialIdentifier(ico).namespace).toBe('CZ:ICO');
 
   const legacyShortIco = decode(OfficialIdentifierInputSchema)({
     identifierType: 'ICO',
     value: '1000004',
     verification: 'VERIFIED',
   });
-  assert.equal(
-    normalizeOfficialIdentifier(legacyShortIco).normalizedValue,
+  expect(normalizeOfficialIdentifier(legacyShortIco).normalizedValue).toBe(
     '01000004'
   );
 
@@ -42,60 +39,59 @@ test('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
     value: 'cz27074358',
     verification: 'VERIFIED',
   });
-  assert.equal(normalizeOfficialIdentifier(dic).normalizedValue, 'CZ27074358');
-  assert.equal(normalizeOfficialIdentifier(dic).namespace, 'CZ:DIC');
+  expect(normalizeOfficialIdentifier(dic).normalizedValue).toBe('CZ27074358');
+  expect(normalizeOfficialIdentifier(dic).namespace).toBe('CZ:DIC');
 
-  assert.throws(() =>
+  expect(() =>
     decode(OfficialIdentifierInputSchema)({
       identifierType: 'ICO',
       namespace: 'caller-controlled',
       value: '27074358',
       verification: 'VERIFIED',
     })
-  );
+  ).toThrow();
 
-  assert.throws(() =>
+  expect(() =>
     decode(OfficialIdentifierInputSchema)({
       identifierType: 'ICO',
       value: '270 74 358',
       verification: 'VERIFIED',
     })
-  );
+  ).toThrow();
 
-  assert.throws(() =>
+  expect(() =>
     decode(OfficialIdentifierInputSchema)({
       identifierType: 'VAT_ID',
       value: 'CZ27074358',
       verification: 'VERIFIED',
     })
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     decode(OfficialIdentifierInputSchema)({
       identifierType: 'OTHER',
       value: '1',
       verification: 'VERIFIED',
     })
-  );
+  ).toThrow();
 });
 
-test('Official Identifier writes require tenant Party identity authority and idempotency', () => {
+it('Official Identifier writes require tenant Party identity authority and idempotency', () => {
   for (const action of [
     addPartyOfficialIdentifierAction,
     endPartyOfficialIdentifierAction,
     updatePartyOfficialIdentifierAction,
   ]) {
-    assert.equal(action.descriptor.legalEntityScope, 'optional');
-    assert.equal(action.descriptor.idempotency, 'required');
+    expect(action.descriptor.legalEntityScope).toBe('optional');
+    expect(action.descriptor.idempotency).toBe('required');
     // SAFETY: these permission selectors are payload-independent; no handler receives this sentinel.
-    assert.equal(
-      action.descriptor.tenantPermission?.({} as never),
+    expect(action.descriptor.tenantPermission?.({} as never)).toBe(
       'manage_party_identity'
     );
   }
 });
 
-test('only verified, formally valid identifiers create deterministic exclusive claim keys', () => {
-  assert.equal(
+it('only verified, formally valid identifiers create deterministic exclusive claim keys', () => {
+  expect(
     qualifyingClaimKey(
       {
         identifierType: 'ICO',
@@ -104,10 +100,9 @@ test('only verified, formally valid identifiers create deterministic exclusive c
       },
       'ORGANIZATION',
       'party-exact-claims.v1'
-    ),
-    'ICO\u0000CZ:ICO\u000027074358'
-  );
-  assert.equal(
+    )
+  ).toBe('ICO\u0000CZ:ICO\u000027074358');
+  expect(
     qualifyingClaimKey(
       {
         identifierType: 'ICO',
@@ -116,10 +111,9 @@ test('only verified, formally valid identifiers create deterministic exclusive c
       },
       'ORGANIZATION',
       'party-exact-claims.v1'
-    ),
-    undefined
-  );
-  assert.equal(
+    )
+  ).toBe(undefined);
+  expect(
     qualifyingClaimKey(
       {
         identifierType: 'ICO',
@@ -128,10 +122,9 @@ test('only verified, formally valid identifiers create deterministic exclusive c
       },
       'PERSON',
       'party-exact-claims.v1'
-    ),
-    undefined
-  );
-  assert.equal(
+    )
+  ).toBe(undefined);
+  expect(
     qualifyingClaimKey(
       {
         identifierType: 'CZ_DIC',
@@ -140,9 +133,8 @@ test('only verified, formally valid identifiers create deterministic exclusive c
       },
       'PERSON',
       'party-exact-claims.v1'
-    ),
-    undefined
-  );
+    )
+  ).toBe(undefined);
 });
 
 const identifierRef = {
@@ -152,7 +144,7 @@ const identifierRef = {
   tenantId: '10000000-0000-4000-8000-000000000001',
 } as const;
 
-test('Identifier Update is a closed evidence-backed metadata or validity command, never an identity patch', () => {
+it('Identifier Update is a closed evidence-backed metadata or validity command, never an identity patch', () => {
   const command = {
     change: {
       expectedVerification: 'UNVERIFIED',
@@ -163,17 +155,15 @@ test('Identifier Update is a closed evidence-backed metadata or validity command
     officialIdentifierRef: identifierRef,
     reason: 'Registry confirmed the existing identifier',
   };
-  assert.equal(
-    decode(UpdatePartyOfficialIdentifierPayloadSchema)(command).change.type,
-    'SET_VERIFICATION'
-  );
-  assert.equal(
+  expect(
+    decode(UpdatePartyOfficialIdentifierPayloadSchema)(command).change.type
+  ).toBe('SET_VERIFICATION');
+  expect(
     decode(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       change: { type: 'END_VALIDITY', validTo: '2026-01-01T00:00:00.000Z' },
-    }).change.type,
-    'END_VALIDITY'
-  );
+    }).change.type
+  ).toBe('END_VALIDITY');
   for (const forbidden of [
     'value',
     'normalizedValue',
@@ -181,28 +171,28 @@ test('Identifier Update is a closed evidence-backed metadata or validity command
     'namespace',
     'partyRef',
   ]) {
-    assert.throws(() =>
+    expect(() =>
       decode(UpdatePartyOfficialIdentifierPayloadSchema)({
         ...command,
         [forbidden]: 'changed-identity',
       })
-    );
+    ).toThrow();
   }
-  assert.throws(() =>
+  expect(() =>
     decode(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       evidenceRefs: [],
     })
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     decode(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       change: { type: 'REPLACE_VALUE', value: '12345678' },
     })
-  );
+  ).toThrow();
 });
 
-test('Identifier Update event retains before and after verification evidence', () => {
+it('Identifier Update event retains before and after verification evidence', () => {
   const before = {
     state: 'ACTIVE',
     validTo: null,
@@ -226,6 +216,6 @@ test('Identifier Update event retains before and after verification evidence', (
     partyRef: { ...identifierRef, resourceType: 'party.registry.party' },
     reason: 'New evidence superseded the previous verification',
   });
-  assert.deepEqual(event.before, before);
-  assert.deepEqual(event.after, after);
+  expect(event.before).toEqual(before);
+  expect(event.after).toEqual(after);
 });

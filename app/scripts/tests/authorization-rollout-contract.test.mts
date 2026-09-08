@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { validateAuthorizationRolloutContract } from '../authorization/rollout-contract.mts';
 
@@ -23,78 +22,65 @@ const context = {
   nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
 };
 
-await test('rollout contract accepts an active configuration bound to the classified inventory', () => {
-  assert.deepEqual(
-    validateAuthorizationRolloutContract(contract, context),
+it('rollout contract accepts an active configuration bound to the classified inventory', () => {
+  expect(validateAuthorizationRolloutContract(contract, context)).toEqual(
     contract
   );
 });
 
-await test('the historical baseline revision does not have to equal the self-referential current commit', () => {
-  assert.deepEqual(
+it('the historical baseline revision does not have to equal the self-referential current commit', () => {
+  expect(
     validateAuthorizationRolloutContract(
       { ...contract, baselineSourceRevision: 'historical-baseline-revision' },
       context
-    ).baselineSourceRevision,
-    'historical-baseline-revision'
-  );
+    ).baselineSourceRevision
+  ).toEqual('historical-baseline-revision');
 });
 
-await test('enforced rollout remains active after the report-only deadline', () => {
-  assert.equal(
+it('enforced rollout remains active after the report-only deadline', () => {
+  expect(
     validateAuthorizationRolloutContract(
       { ...contract, mode: 'enforced' },
       { ...context, nowEpochMs: Date.parse('2026-11-01T00:00:00.000Z') }
-    ).mode,
-    'enforced'
-  );
+    ).mode
+  ).toBe('enforced');
 });
 
-await test('rollout contract rejects expiry, stale inventory binding, extra fields, and duplicate baseline entries', () => {
-  assert.throws(
-    () =>
-      validateAuthorizationRolloutContract(contract, {
-        ...context,
-        nowEpochMs: Date.parse(expiry),
-      }),
-    /inactive or expired/u
-  );
-  assert.throws(
-    () =>
-      validateAuthorizationRolloutContract(contract, {
-        ...context,
-        inventoryHash: 'other',
-      }),
-    /does not match/u
-  );
-  assert.throws(
-    () =>
-      validateAuthorizationRolloutContract(
-        { ...contract, arbitrary: true },
-        context
-      ),
-    /malformed/u
-  );
-  assert.throws(
-    () =>
-      validateAuthorizationRolloutContract(
-        {
-          ...contract,
-          compatibilityEligibleEntrypoints: [entrypointKey, entrypointKey],
-        },
-        context
-      ),
-    /duplicates/u
-  );
-  assert.throws(
-    () =>
-      validateAuthorizationRolloutContract(
-        {
-          ...contract,
-          compatibilityEligibleEntrypoints: ['contacts.new-action'],
-        },
-        context
-      ),
-    /unknown entrypoint/u
-  );
+it('rollout contract rejects expiry, stale inventory binding, extra fields, and duplicate baseline entries', () => {
+  expect(() =>
+    validateAuthorizationRolloutContract(contract, {
+      ...context,
+      nowEpochMs: Date.parse(expiry),
+    })
+  ).toThrow(/inactive or expired/u);
+  expect(() =>
+    validateAuthorizationRolloutContract(contract, {
+      ...context,
+      inventoryHash: 'other',
+    })
+  ).toThrow(/does not match/u);
+  expect(() =>
+    validateAuthorizationRolloutContract(
+      { ...contract, arbitrary: true },
+      context
+    )
+  ).toThrow(/malformed/u);
+  expect(() =>
+    validateAuthorizationRolloutContract(
+      {
+        ...contract,
+        compatibilityEligibleEntrypoints: [entrypointKey, entrypointKey],
+      },
+      context
+    )
+  ).toThrow(/duplicates/u);
+  expect(() =>
+    validateAuthorizationRolloutContract(
+      {
+        ...contract,
+        compatibilityEligibleEntrypoints: ['contacts.new-action'],
+      },
+      context
+    )
+  ).toThrow(/unknown entrypoint/u);
 });

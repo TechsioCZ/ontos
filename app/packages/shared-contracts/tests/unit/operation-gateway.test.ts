@@ -1,8 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { makeOperationGateway } from '../../src/operation-gateway.ts';
 
@@ -23,9 +20,9 @@ const options = {
 
 const expectType = <Expected>(value: Expected): Expected => value;
 
-void test(
+it.effect(
   'preserves the literal audience and success and failure inference',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* inferenceEffect() {
       const gateway = makeOperationGateway(
         audience,
@@ -49,12 +46,11 @@ void test(
         ).invoke(() => Effect.succeed('completed' as const))
       );
     })
-  )
 );
 
-void test(
+it.effect(
   'acquires one audience-scoped assertion and forwards options unchanged',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* audienceAssertionEffect() {
       const issuerCalls: {
         readonly audience: typeof audience;
@@ -65,7 +61,7 @@ void test(
         audience,
         (payload, receivedOptions) =>
           Effect.sync(() => {
-            assert.equal(receivedOptions, options);
+            expect(receivedOptions).toBe(options);
             issuerCalls.push({ audience: payload.audience, options });
             return {
               expiresAt: 1_700_000_300,
@@ -79,16 +75,15 @@ void test(
         return Effect.succeed('completed' as const);
       }, options);
 
-      assert.equal(result, 'completed');
-      assert.deepEqual(issuerCalls, [{ audience, options }]);
-      assert.deepEqual(authorizations, ['Bearer header.payload.signature']);
+      expect(result).toBe('completed');
+      expect(issuerCalls).toEqual([{ audience, options }]);
+      expect(authorizations).toEqual(['Bearer header.payload.signature']);
     })
-  )
 );
 
-void test(
+it.effect(
   'acquires a fresh assertion whenever an invocation Effect is executed',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* freshAssertionEffect() {
       let acquisitions = 0;
       const gateway = makeOperationGateway(audience, () =>
@@ -107,18 +102,14 @@ void test(
       yield* invocation;
       yield* invocation;
 
-      assert.equal(acquisitions, 2);
-      assert.deepEqual(authorizations, [
-        'Bearer attempt-1',
-        'Bearer attempt-2',
-      ]);
+      expect(acquisitions).toBe(2);
+      expect(authorizations).toEqual(['Bearer attempt-1', 'Bearer attempt-2']);
     })
-  )
 );
 
-void test(
+it.effect(
   'preserves issuer failure and does not construct the attempted Effect',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* issuerFailureEffect() {
       let attemptCalls = 0;
       const gateway = makeOperationGateway(audience, () =>
@@ -132,25 +123,21 @@ void test(
         })
         .pipe(Effect.flip);
 
-      assert.equal(received, gatewayAcquisitionFailure);
-      assert.equal(attemptCalls, 0);
+      expect(received).toBe(gatewayAcquisitionFailure);
+      expect(attemptCalls).toBe(0);
     })
-  )
 );
 
-void test(
-  'preserves the attempted-operation failure without translation',
-  makeEffectTestCallback(
-    Effect.gen(function* attemptFailureEffect() {
-      const gateway = makeOperationGateway(audience, () =>
-        Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' })
-      );
+it.effect('preserves the attempted-operation failure without translation', () =>
+  Effect.gen(function* attemptFailureEffect() {
+    const gateway = makeOperationGateway(audience, () =>
+      Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' })
+    );
 
-      const received = yield* gateway
-        .invoke(() => Effect.fail(operationAttemptFailure))
-        .pipe(Effect.flip);
+    const received = yield* gateway
+      .invoke(() => Effect.fail(operationAttemptFailure))
+      .pipe(Effect.flip);
 
-      assert.equal(received, operationAttemptFailure);
-    })
-  )
+    expect(received).toBe(operationAttemptFailure);
+  })
 );

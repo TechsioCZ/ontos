@@ -1,7 +1,6 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen } from '@testing-library/react';
 import { Effect, Schema } from 'effect';
+import { afterEach, beforeEach, expect, rstest, test } from 'effect-rstest';
 
 import {
   AppIdSchema,
@@ -15,6 +14,9 @@ import {
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
 import type { SearchPageModel } from '../../../../src/routes/[lang]/search/page.data.ts';
 import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
+import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
+  rstest: 'importActual',
+};
 import type {
   LocalizedLinkCall,
   LocalizedLinkDoubleProps,
@@ -22,10 +24,10 @@ import type {
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
 const {
+  browserRunPromiseMock,
   languageState,
   localizedLinkCalls,
   navigateMock,
-  runBrowserEffectMock,
   signOutMock,
   switchLegalEntityMock,
   switchTenantMock,
@@ -33,10 +35,10 @@ const {
 } = rstest.hoisted(() => {
   const recordedLinkCalls: LocalizedLinkCall[] = [];
   return {
+    browserRunPromiseMock: rstest.fn(),
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
     navigateMock: rstest.fn(async () => {}),
-    runBrowserEffectMock: rstest.fn(),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
@@ -95,7 +97,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: runBrowserEffectMock,
+  browserRuntime: { runPromise: browserRunPromiseMock },
 }));
 
 const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)(
@@ -178,10 +180,7 @@ const resourceLinkCalls = () =>
   localizedLinkCalls.filter((call) => call.to.startsWith('/resources'));
 
 beforeEach(() => {
-  runBrowserEffectMock.mockImplementation(
-    async (effect: Effect.Effect<unknown, unknown>) =>
-      await runEffectTestPromise(effect)
-  );
+  browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(
     Effect.succeed({ selectedTenantId: tenantId })

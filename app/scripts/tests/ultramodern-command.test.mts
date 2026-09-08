@@ -1,15 +1,11 @@
-/// <reference types="node" />
-
-import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
-import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, ManagedRuntime, Stream } from 'effect';
+import { Effect, Stream } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -26,96 +22,111 @@ const wrappers = [
   ['verify-cloudflare-output', 'cloudflare-output-verify'],
 ] as const;
 
-const fixtureDirectory = (context: TestContext) => {
-  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-command-'));
-  context.after(() => rmSync(directory, { force: true, recursive: true }));
-  return directory;
-};
+const fixtureDirectory = () =>
+  Effect.acquireRelease(
+    Effect.sync(() => mkdtempSync(path.join(os.tmpdir(), 'ontos-command-'))),
+    (directory) =>
+      Effect.sync(() => rmSync(directory, { force: true, recursive: true }))
+  );
 
-const wrapperRuntime = ManagedRuntime.make(NodeServices.layer);
-test.after(async () => {
-  await wrapperRuntime.dispose();
-});
-
-const invokeWrapper = async (
+const invokeWrapper = (
   script: string,
   environment: Readonly<Record<string, string>>,
   args: readonly string[] = []
 ) =>
-  await wrapperRuntime.runPromise(
-    Effect.gen(function* invokeWrapperEffect() {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const child = yield* spawner.spawn(
-        ChildProcess.make(
-          process.execPath,
-          [path.join(workspaceRoot, 'scripts', `${script}.mts`), ...args],
-          {
-            cwd: workspaceRoot,
-            env: environment,
-            extendEnv: true,
-            stderr: 'pipe',
-            stdin: 'ignore',
-            stdout: 'pipe',
-          }
-        )
-      );
-      return yield* Effect.all(
+  Effect.gen(function* invokeWrapperEffect() {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        process.execPath,
+        [path.join(workspaceRoot, 'scripts', `${script}.mts`), ...args],
         {
-          status: child.exitCode.pipe(Effect.map(Number)),
-          stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
-          stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-        },
-        { concurrency: 'unbounded' }
-      );
-    }).pipe(Effect.scoped)
-  );
+          cwd: workspaceRoot,
+          env: environment,
+          extendEnv: true,
+          stderr: 'pipe',
+          stdin: 'ignore',
+          stdout: 'pipe',
+        }
+      )
+    );
+    return yield* Effect.all(
+      {
+        status: child.exitCode.pipe(Effect.map(Number)),
+        stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+        stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      },
+      { concurrency: 'unbounded' }
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 for (const [script, command] of wrappers) {
-  void test(`${script} forwards arguments, workspace and child exit status`, async (context) => {
-    const fixture = fixtureDirectory(context);
-    const createBin = path.join(fixture, createFilename);
-    writeFileSync(
-      createBin,
-      'console.log(process.argv.slice(2).join("|")); console.log(process.env.ULTRAMODERN_WORKSPACE_ROOT); process.exitCode = 7;'
-    );
-    const result = await invokeWrapper(
-      script,
-      {
-        ULTRAMODERN_CREATE_BIN: createBin,
-        ULTRAMODERN_WORKSPACE_ROOT: fixture,
-      },
-      ['--probe', 'argument with spaces']
-    );
-    assert.equal(result.status, 7, result.stderr);
-    assert.equal(
-      result.stdout,
-      `ultramodern|${command}|--probe|argument with spaces\n${fixture}\n`
-    );
-  });
+  it.live(
+    `${script} forwards arguments, workspace and child exit status`,
+    Effect.fn(function* mergedScenario1() {
+      const fixture = yield* fixtureDirectory();
+      const createBin = path.join(fixture, createFilename);
+      writeFileSync(
+        createBin,
+        'console.log(process.argv.slice(2).join("|")); console.log(process.env.ULTRAMODERN_WORKSPACE_ROOT); process.exitCode = 7;'
+      );
+      const result = yield* invokeWrapper(
+        script,
+        {
+          ULTRAMODERN_CREATE_BIN: createBin,
+          ULTRAMODERN_WORKSPACE_ROOT: fixture,
+        },
+        ['--probe', 'argument with spaces']
+      );
+      expect(result.status, result.stderr).toBe(7);
+      expect(result.stdout).toBe(
+        `ultramodern|${command}|--probe|argument with spaces\n${fixture}\n`
+      );
+    })
+  );
 }
 
-void test('route generation fails closed on a nonzero framework exit', async (context) => {
-  const fixture = fixtureDirectory(context);
-  const createBin = path.join(fixture, createFilename);
-  writeFileSync(createBin, 'process.exitCode = 7;');
-  mkdirSync(path.join(fixture, '.modernjs'));
-  writeFileSync(
-    path.join(fixture, '.modernjs/ultramodern.json'),
-    '{"topology":{"apps":[]}}'
-  );
-  const result = await invokeWrapper(routeGeneratorScript, {
-    ULTRAMODERN_CREATE_BIN: createBin,
-    ULTRAMODERN_WORKSPACE_ROOT: fixture,
-  });
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(
-    result.stderr,
-    /Framework route-artifact generation failed: exit 7/u
-  );
-});
+it.live(
+  'route generation fails closed on a nonzero framework exit',
+  Effect.fn(function* mergedScenario2() {
+    const fixture = yield* fixtureDirectory();
+    const createBin = path.join(fixture, createFilename);
+    writeFileSync(createBin, 'process.exitCode = 7;');
+    mkdirSync(path.join(fixture, '.modernjs'));
+    writeFileSync(
+      path.join(fixture, '.modernjs/ultramodern.json'),
+      '{"topology":{"apps":[]}}'
+    );
+    const result = yield* invokeWrapper(routeGeneratorScript, {
+      ULTRAMODERN_CREATE_BIN: createBin,
+      ULTRAMODERN_WORKSPACE_ROOT: fixture,
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toMatch(
+      /Framework route-artifact generation failed: exit 7/u
+    );
+  })
+);
 
-const routeFixture = (context: TestContext, scope = 'tenant') => {
-  const fixture = fixtureDirectory(context);
+it.live(
+  'missing PATH launcher reports a typed launch failure and exits one',
+  Effect.fn(function* mergedScenario3() {
+    const fixture = yield* fixtureDirectory();
+    const result = yield* invokeWrapper('assert-mf-types', {
+      PATH: fixture,
+      ULTRAMODERN_CREATE_BIN: '',
+      ULTRAMODERN_WORKSPACE_ROOT: fixture,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(
+      /Failed to launch ultramodern-create from PATH/u
+    );
+    expect(result.stderr).toMatch(/UltraModern command "mf-types"/u);
+  })
+);
+
+const routeFixture = Effect.fn(function* routeFixture(scope: string) {
+  const fixture = yield* fixtureDirectory();
   const ownerPath = 'verticals/inventory';
   mkdirSync(path.join(fixture, '.modernjs'));
   mkdirSync(path.join(fixture, ownerPath, 'src/routes/items'), {
@@ -173,42 +184,37 @@ console.log('framework observed canonical-only metadata');
 `
   );
   return { createBin, fixture };
-};
-
-void test('route metadata precedes framework generation and keeps canonical-only locale keys', async (context) => {
-  const { createBin, fixture } = routeFixture(context);
-  const result = await invokeWrapper(routeGeneratorScript, {
-    PATH: path.join(fixture, 'bin'),
-    ULTRAMODERN_CREATE_BIN: createBin,
-    ULTRAMODERN_WORKSPACE_ROOT: fixture,
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /framework observed canonical-only metadata/u);
 });
 
-void test('route metadata with the wrong owner scope fails before framework launch', async (context) => {
-  const { createBin, fixture } = routeFixture(context, 'system');
-  const result = await invokeWrapper(routeGeneratorScript, {
-    PATH: path.join(fixture, 'bin'),
-    ULTRAMODERN_CREATE_BIN: createBin,
-    ULTRAMODERN_WORKSPACE_ROOT: fixture,
-  });
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(
-    result.stderr,
-    /must declare one governed tenant page entrypoint owned by inventory/u
-  );
-  assert.doesNotMatch(result.stdout, /framework observed/u);
-});
+it.live(
+  'route metadata precedes framework generation and keeps canonical-only locale keys',
+  Effect.fn(function* canonicalRouteMetadata() {
+    const { createBin, fixture } = yield* routeFixture('tenant');
+    const result = yield* invokeWrapper(routeGeneratorScript, {
+      PATH: path.join(fixture, 'bin'),
+      ULTRAMODERN_CREATE_BIN: createBin,
+      ULTRAMODERN_WORKSPACE_ROOT: fixture,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toMatch(
+      /framework observed canonical-only metadata/u
+    );
+  })
+);
 
-void test('missing PATH launcher reports a typed launch failure and exits one', async (context) => {
-  const fixture = fixtureDirectory(context);
-  const result = await invokeWrapper('assert-mf-types', {
-    PATH: fixture,
-    ULTRAMODERN_CREATE_BIN: '',
-    ULTRAMODERN_WORKSPACE_ROOT: fixture,
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Failed to launch ultramodern-create from PATH/u);
-  assert.match(result.stderr, /UltraModern command "mf-types"/u);
-});
+it.live(
+  'route metadata with the wrong owner scope fails before framework launch',
+  Effect.fn(function* invalidRouteScope() {
+    const { createBin, fixture } = yield* routeFixture('system');
+    const result = yield* invokeWrapper(routeGeneratorScript, {
+      PATH: path.join(fixture, 'bin'),
+      ULTRAMODERN_CREATE_BIN: createBin,
+      ULTRAMODERN_WORKSPACE_ROOT: fixture,
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toMatch(
+      /must declare one governed tenant page entrypoint owned by inventory/u
+    );
+    expect(result.stdout).not.toMatch(/framework observed/u);
+  })
+);

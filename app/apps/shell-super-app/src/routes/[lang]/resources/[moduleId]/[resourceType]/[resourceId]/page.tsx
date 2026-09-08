@@ -7,7 +7,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
-import { runBrowserEffect } from '../../../../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
 import type { ResourcePageModel } from './page.data.ts';
@@ -19,6 +19,7 @@ const MediaStateSchema = Schema.Literals([
   'success',
 ]);
 type MediaState = typeof MediaStateSchema.Type;
+type ReadyResourceModel = Extract<ResourcePageModel, { state: 'ready' }>;
 
 const ResourceDetails = ({
   mediaState,
@@ -26,8 +27,8 @@ const ResourceDetails = ({
   onAttach,
 }: {
   readonly mediaState: MediaState;
-  readonly model: Extract<ResourcePageModel, { state: 'ready' }>;
-  readonly onAttach: () => Promise<void>;
+  readonly model: ReadyResourceModel;
+  readonly onAttach: () => void;
 }) => {
   const { t } = useModernI18n();
   return (
@@ -59,9 +60,7 @@ const ResourceDetails = ({
           disabled={!model.resource.media.enabled || mediaState === 'pending'}
           isLoading={mediaState === 'pending'}
           loadingText={t('shell.resource.media.pending')}
-          onClick={() => {
-            void onAttach();
-          }}
+          onClick={onAttach}
           type="button"
         >
           {t('shell.resource.media.attach')}
@@ -124,13 +123,12 @@ const ResourcePage = () => {
   const controls = useShellControls(
     model.shell.state === 'authenticated' ? model.shell : undefined
   );
-  const handleMediaAttachment = (): Promise<void> => {
-    if (model.state !== 'ready') {
-      return Promise.resolve();
-    }
+  const handleMediaAttachment = (
+    ref: ReadyResourceModel['resource']['ref']
+  ) => {
     setMediaState('pending');
-    return runBrowserEffect(
-      attachResourceMedia(model.resource.ref).pipe(
+    void browserRuntime.runPromise(
+      attachResourceMedia(ref).pipe(
         Effect.matchEffect({
           onFailure: (error) =>
             Effect.sync(() => {
@@ -164,7 +162,7 @@ const ResourcePage = () => {
       <ResourceDetails
         mediaState={mediaState}
         model={model}
-        onAttach={handleMediaAttachment}
+        onAttach={() => handleMediaAttachment(model.resource.ref)}
       />
     );
   return (

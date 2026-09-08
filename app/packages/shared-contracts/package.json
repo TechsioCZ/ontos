@@ -13,7 +13,7 @@
   },
   "scripts": {
     "test:types": "node ../../scripts/ultramodern-typecheck.mts --project tests/tsconfig.json && node ../../scripts/ultramodern-typecheck.mts --project tests/client-runtime-types.tsconfig.json",
-    "test:unit": "node --test tests/unit/*.test.ts && pnpm test:types",
+    "test:unit": "rstest --project unit && pnpm test:types",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
@@ -23,6 +23,8 @@
     "@effect/opentelemetry": "4.0.0-rc.112"
   },
   "devDependencies": {
-    "@types/node": "^26.4.1"
+    "@types/node": "^26.4.1",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc",
+    "@rstest/core": "0.11.11"
   }
 }

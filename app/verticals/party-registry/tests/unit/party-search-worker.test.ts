@@ -1,10 +1,7 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+import { assert, it } from 'effect-rstest';
 
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { PartySearchProjector } from '../../src/services/party-search-projection.service.ts';
@@ -35,8 +32,9 @@ const entrypoint = defineTenantModuleEntrypoint({
 });
 
 for (const targetField of ['partyId', 'counterpartyId'] as const) {
-  test(`search worker forwards ${targetField}, trusted context, and typed retryable failure`, () =>
-    runEffectTestPromise(
+  it.effect(
+    `search worker forwards ${targetField}, trusted context, and typed retryable failure`,
+    () =>
       Effect.gen(function* forwardsSearchProjection() {
         const { handle, worker } = definePartySearchWorker(
           {
@@ -84,7 +82,12 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
             project: (receivedContext, target) => {
               calls += 1;
               assert.equal(receivedContext, context);
-              assert.deepEqual(target, { [targetField]: 'target' });
+              assert.deepEqual(
+                target,
+                targetField === 'partyId'
+                  ? { partyId: 'target' }
+                  : { counterpartyId: 'target' }
+              );
               return Effect.fail(failure);
             },
           }),
@@ -95,5 +98,5 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
         assert.equal(result, failure);
         assert.equal(calls, 1);
       })
-    ));
+  );
 }

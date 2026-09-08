@@ -1,10 +1,7 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { CoreSearchProjectionHitSchema } from '@app/core-runtime';
 import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { makePartySearchProjectionGateway } from '../../src/search/parties.provider.ts';
 
@@ -65,8 +62,9 @@ const wrongResourceHit = Schema.decodeUnknownSync(
   title: 'Wrong',
 });
 
-test('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
-  runEffectTestPromise(
+it.effect(
+  'Party adapter queries only the Core-owned Party projection and maps alias context',
+  () =>
     Effect.gen(function* partyAdapterQuery() {
       const calls: unknown[] = [];
       const core: CoreSearchQueryRuntimeService = {
@@ -83,7 +81,7 @@ test('Party adapter queries only the Core-owned Party projection and maps alias 
         tenantId,
       });
 
-      assert.deepEqual(calls, [
+      expect(calls).toEqual([
         {
           includeArchived: true,
           moduleId: 'party.registry',
@@ -92,7 +90,7 @@ test('Party adapter queries only the Core-owned Party projection and maps alias 
           tenantId,
         },
       ]);
-      assert.deepEqual(hits, [
+      expect(hits).toEqual([
         {
           archived: false,
           canonicalPartyRef: partyRef('survivor'),
@@ -101,10 +99,11 @@ test('Party adapter queries only the Core-owned Party projection and maps alias 
         },
       ]);
     })
-  ));
+);
 
-test('Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods', () =>
-  runEffectTestPromise(
+it.effect(
+  'Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods',
+  () =>
     Effect.gen(function* counterpartyAdapterQuery() {
       const calls: unknown[] = [];
       const core: CoreSearchQueryRuntimeService = {
@@ -126,7 +125,7 @@ test('Counterparty adapter uses trusted Legal Entity, effective time, role facet
         tenantId,
       });
 
-      assert.deepEqual(calls, [
+      expect(calls).toEqual([
         {
           effectiveAt,
           facets: [{ key: 'current-role', values: ['CUSTOMER'] }],
@@ -138,7 +137,7 @@ test('Counterparty adapter uses trusted Legal Entity, effective time, role facet
           tenantId,
         },
       ]);
-      assert.deepEqual(hits, [
+      expect(hits).toEqual([
         {
           canonicalPartyRef: partyRef('survivor'),
           counterpartyRef: counterpartyRef('cp-1'),
@@ -156,10 +155,11 @@ test('Counterparty adapter uses trusted Legal Entity, effective time, role facet
         },
       ]);
     })
-  ));
+);
 
-test('Party adapter fails closed when a generic projection returns the wrong resource contract', () =>
-  runEffectTestPromise(
+it.effect(
+  'Party adapter fails closed when a generic projection returns the wrong resource contract',
+  () =>
     Effect.gen(function* invalidProjectionContract() {
       const core: CoreSearchQueryRuntimeService = {
         search: () => Effect.succeed([wrongResourceHit]),
@@ -172,6 +172,6 @@ test('Party adapter fails closed when a generic projection returns the wrong res
           tenantId,
         })
       );
-      assert.equal(failure._tag, 'Failure');
+      expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();
     })
-  ));
+);

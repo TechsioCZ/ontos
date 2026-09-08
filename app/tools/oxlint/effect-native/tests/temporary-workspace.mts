@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const owned = new Set<string>();
 const release = (directory: string): void => {
   if (!owned.has(directory)) return;
-  rmSync(directory, { recursive: true, force: true });
+  rmSync(directory, { force: true, recursive: true });
   owned.delete(directory);
 };
 
@@ -26,7 +26,8 @@ export function withTemporaryWorkspace<T>(
   run: (directory: string) => T,
   root = process.env.EFFECT_NATIVE_TEST_TMPDIR ?? tmpdir()
 ): T {
-  const directory = mkdtempSync(join(root, 'effect-policy-'));
+  // macOS tmpdir() is a symlink; Oxlint canonicalizes file paths before matching override globs.
+  const directory = mkdtempSync(join(realpathSync(root), 'effect-policy-'));
   owned.add(directory);
   let result: T;
   try {

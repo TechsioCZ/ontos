@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { DateTime, Match } from 'effect';
+import { DateTime, Match, Struct, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import type { PartyRef } from '../../shared/resources/party.ts';
 import { analyzeMergeCollisions } from '../../src/merge/merge-collision-analysis.ts';
@@ -15,7 +13,7 @@ const party = (resourceId: string): PartyRef => ({
   tenantId,
 });
 
-test('blocks authoritative non-strong identifier conflicts without unrelated relationship blockers', () => {
+it('blocks authoritative non-strong identifier conflicts without unrelated relationship blockers', () => {
   const collisions = analyzeMergeCollisions({
     absorbedPartyRefs: [party('party-b')],
     connectorCorrelations: [],
@@ -43,13 +41,12 @@ test('blocks authoritative non-strong identifier conflicts without unrelated rel
     })),
     survivorPartyRef: party('party-a'),
   });
-  assert.deepEqual(
-    collisions.map(({ code }) => code),
-    ['STRONG_IDENTIFIER_CONFLICT']
-  );
+  expect(collisions.map(({ code }) => code)).toEqual([
+    'STRONG_IDENTIFIER_CONFLICT',
+  ]);
 });
 
-test('requires reconciliation for Counterparty and consumer uniqueness collisions', () => {
+it('requires reconciliation for Counterparty and consumer uniqueness collisions', () => {
   const collisions = analyzeMergeCollisions({
     absorbedPartyRefs: [party('party-b')],
     connectorCorrelations: [
@@ -96,22 +93,19 @@ test('requires reconciliation for Counterparty and consumer uniqueness collision
     survivorPartyRef: party('party-a'),
   });
 
-  assert.deepEqual(
-    collisions.map(({ code, ownerKey }) => ({ code, ownerKey })),
-    [
-      { code: 'COUNTERPARTY_COLLISION', ownerKey: 'party.registry' },
-      { code: 'CONSUMER_PROFILE_COLLISION', ownerKey: 'engagement' },
-      { code: 'CONNECTOR_CORRELATION_COLLISION', ownerKey: 'erp' },
-    ]
-  );
-  assert.ok(
+  expect(collisions.map(({ code, ownerKey }) => ({ code, ownerKey }))).toEqual([
+    { code: 'COUNTERPARTY_COLLISION', ownerKey: 'party.registry' },
+    { code: 'CONSUMER_PROFILE_COLLISION', ownerKey: 'engagement' },
+    { code: 'CONNECTOR_CORRELATION_COLLISION', ownerKey: 'erp' },
+  ]);
+  expect(
     collisions.every(
       ({ resolution }) => resolution === 'RECONCILIATION_REQUIRED'
     )
-  );
+  ).toBe(true);
 });
 
-test('blocks strong identifier conflicts and flags forbidden relationship and role overlaps', () => {
+it('blocks strong identifier conflicts and flags forbidden relationship and role overlaps', () => {
   const collisions = analyzeMergeCollisions({
     absorbedPartyRefs: [party('party-b')],
     connectorCorrelations: [],
@@ -171,23 +165,22 @@ test('blocks strong identifier conflicts and flags forbidden relationship and ro
     survivorPartyRef: party('party-a'),
   });
 
-  assert.deepEqual(
-    collisions.map(({ code, resolution }) => ({ code, resolution })),
-    [
-      { code: 'STRONG_IDENTIFIER_CONFLICT', resolution: 'CORRECTION_REQUIRED' },
-      {
-        code: 'RELATIONSHIP_SELF_REFERENCE',
-        resolution: 'RECONCILIATION_REQUIRED',
-      },
-      {
-        code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION',
-        resolution: 'RECONCILIATION_REQUIRED',
-      },
-    ]
-  );
+  expect(
+    collisions.map(({ code, resolution }) => ({ code, resolution }))
+  ).toEqual([
+    { code: 'STRONG_IDENTIFIER_CONFLICT', resolution: 'CORRECTION_REQUIRED' },
+    {
+      code: 'RELATIONSHIP_SELF_REFERENCE',
+      resolution: 'RECONCILIATION_REQUIRED',
+    },
+    {
+      code: 'COUNTERPARTY_ROLE_PERIOD_COLLISION',
+      resolution: 'RECONCILIATION_REQUIRED',
+    },
+  ]);
 });
 
-test('plans canonical resolution for supported refs without rewriting historical snapshots', () => {
+it('plans canonical resolution for supported refs without rewriting historical snapshots', () => {
   const snapshot = Object.freeze({
     address: 'Historical street 1',
     name: 'Historical Party B',
@@ -263,22 +256,24 @@ test('plans canonical resolution for supported refs without rewriting historical
   const planned = Match.value(result).pipe(
     Match.tag('ReferencePreservationPlanned', (value) => value),
     Match.tag('ReferencePreservationBlocked', ({ blockers }) =>
-      assert.fail(
-        `Expected a reference plan, but planning was blocked: ${String(blockers)}`
-      )
+      (() => {
+        throw new Error(
+          `Expected a reference plan, but planning was blocked: ${String(blockers)}`
+        );
+      })()
     ),
     Match.exhaustive
   );
-  assert.ok(
+  expect(
     planned.references.every(
       ({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a'
     )
-  );
-  assert.deepEqual(planned.references.at(-1)?.historicalSnapshot, snapshot);
-  assert.equal(planned.requiresPhysicalRewrite, false);
+  ).toBe(true);
+  expect(planned.references.at(-1)?.historicalSnapshot).toEqual(snapshot);
+  expect(planned.requiresPhysicalRewrite).toBe(false);
 });
 
-test('detects overlapping resolved relationship periods but permits adjacent role periods', () => {
+it('detects overlapping resolved relationship periods but permits adjacent role periods', () => {
   const collisions = analyzeMergeCollisions({
     absorbedPartyRefs: [party('party-b')],
     connectorCorrelations: [],
@@ -326,7 +321,7 @@ test('detects overlapping resolved relationship periods but permits adjacent rol
     survivorPartyRef: party('party-a'),
   });
 
-  assert.deepEqual(collisions, [
+  expect(collisions).toEqual([
     {
       code: 'RELATIONSHIP_PERIOD_COLLISION',
       ownerKey: 'party.registry',
@@ -336,7 +331,7 @@ test('detects overlapping resolved relationship periods but permits adjacent rol
   ]);
 });
 
-test('blocks readiness for unsupported references and incomplete retry contracts', () => {
+it('blocks readiness for unsupported references and incomplete retry contracts', () => {
   const result = planReferencePreservation({
     aliases: [],
     consumerReconciliation: [
@@ -362,8 +357,8 @@ test('blocks readiness for unsupported references and incomplete retry contracts
     ],
   });
 
-  assert.deepEqual(result, {
-    _tag: 'ReferencePreservationBlocked',
+  expect(Predicate.isTagged(result, 'ReferencePreservationBlocked')).toBe(true);
+  expect(Struct.omit(result, ['_tag'])).toEqual({
     blockers: [
       { code: 'UNSUPPORTED_REFERENCE_CLASS', ownerKey: 'custom-module' },
       { code: 'CONSUMER_PARTIAL_RETRY_UNPROVEN', ownerKey: 'engagement' },
@@ -371,7 +366,7 @@ test('blocks readiness for unsupported references and incomplete retry contracts
   });
 });
 
-test('blocks every external reference owner without reconciliation evidence', () => {
+it('blocks every external reference owner without reconciliation evidence', () => {
   const result = planReferencePreservation({
     aliases: [],
     references: [
@@ -383,8 +378,8 @@ test('blocks every external reference owner without reconciliation evidence', ()
     ],
   });
 
-  assert.deepEqual(result, {
-    _tag: 'ReferencePreservationBlocked',
+  expect(Predicate.isTagged(result, 'ReferencePreservationBlocked')).toBe(true);
+  expect(Struct.omit(result, ['_tag'])).toEqual({
     blockers: [
       { code: 'CONSUMER_RECONCILIATION_UNPROVEN', ownerKey: 'commerce' },
     ],

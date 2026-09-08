@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { reduceAuthorizationImpact } from '../report-fail-closed-authorization-impact.mts';
 
@@ -32,64 +31,50 @@ const event = (changed: EvidenceFixtureOverride = {}) => ({
   ...changed,
 });
 
-await test('impact reduction is deterministic and aggregates sanitized evidence', () => {
+it('impact reduction is deterministic and aggregates sanitized evidence', () => {
   const report = reduceAuthorizationImpact([
     event({ timestamp: observationEndedAt }),
     event(),
   ]);
-  assert.equal(report.totalWouldDeny, 2);
-  assert.equal(report.aggregates[0]?.count, 2);
-  assert.deepEqual(report.observation, {
+  expect(report.totalWouldDeny).toBe(2);
+  expect(report.aggregates[0]?.count).toBe(2);
+  expect(report.observation).toEqual({
     endedAt: observationEndedAt,
     startedAt: observationStartedAt,
   });
 });
 
-await test('impact reduction rejects mixed build evidence and sensitive extra fields', () => {
-  assert.throws(
-    () =>
-      reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })]),
-    /mixes/u
-  );
-  assert.throws(
-    () => reduceAuthorizationImpact([event({ principalId: 'secret' })]),
-    /prohibited/u
-  );
-  assert.throws(
-    () => reduceAuthorizationImpact([event({ tenantId: 'secret' })]),
-    /prohibited/u
-  );
+it('impact reduction rejects mixed build evidence and sensitive extra fields', () => {
+  expect(() =>
+    reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })])
+  ).toThrow(/mixes/u);
+  expect(() =>
+    reduceAuthorizationImpact([event({ principalId: 'secret' })])
+  ).toThrow(/prohibited/u);
+  expect(() =>
+    reduceAuthorizationImpact([event({ tenantId: 'secret' })])
+  ).toThrow(/prohibited/u);
 });
 
-await test('a bounded empty observation produces a zero-impact report', () => {
+it('a bounded empty observation produces a zero-impact report', () => {
   const report = reduceAuthorizationImpact([], {
     endedAt: '2026-09-10T00:00:00.000Z',
     inventoryHash,
     sourceRevision,
     startedAt: observationStartedAt,
   });
-  assert.equal(report.totalWouldDeny, 0);
-  assert.deepEqual(report.aggregates, []);
+  expect(report.totalWouldDeny).toBe(0);
+  expect(report.aggregates).toEqual([]);
 });
 
-await test('impact reduction rejects sensitive values smuggled into allowed evidence fields', () => {
-  assert.throws(
-    () =>
-      reduceAuthorizationImpact([
-        event({ entrypointKey: 'tenant@example.com' }),
-      ]),
-    prohibitedValuePattern
-  );
-  assert.throws(
-    () =>
-      reduceAuthorizationImpact([
-        event({ denialReason: 'principal-a2000000' }),
-      ]),
-    prohibitedValuePattern
-  );
-  assert.throws(
-    () =>
-      reduceAuthorizationImpact([event({ policyClass: 'raw-relation-tuple' })]),
-    prohibitedValuePattern
-  );
+it('impact reduction rejects sensitive values smuggled into allowed evidence fields', () => {
+  expect(() =>
+    reduceAuthorizationImpact([event({ entrypointKey: 'tenant@example.com' })])
+  ).toThrow(prohibitedValuePattern);
+  expect(() =>
+    reduceAuthorizationImpact([event({ denialReason: 'principal-a2000000' })])
+  ).toThrow(prohibitedValuePattern);
+  expect(() =>
+    reduceAuthorizationImpact([event({ policyClass: 'raw-relation-tuple' })])
+  ).toThrow(prohibitedValuePattern);
 });

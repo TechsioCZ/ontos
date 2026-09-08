@@ -194,6 +194,7 @@ type ScopedProofEffect<Value> = Effect.Effect<
   ProofFailure,
   FileSystem.FileSystem | Scope
 >;
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Miniflare requires this foreign SDK service-binding callback.
 type ServiceBindingHandler = (
   request: MiniflareRequest,
   miniflare: Miniflare

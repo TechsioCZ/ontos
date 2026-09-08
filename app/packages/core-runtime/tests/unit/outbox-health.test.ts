@@ -1,10 +1,5 @@
-/* oxlint-disable typescript/return-await -- Existing compatibility boundary; expires: 2026-12-31. */
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { ConfigProvider, Effect, Layer, Result } from 'effect';
+import { ConfigProvider, Effect, Layer, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
 
 import {
@@ -14,90 +9,87 @@ import {
 import { runOutboxWorkerProcess } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 
-test('production health binds all IPv4 interfaces for external-container probes', async () =>
-  runEffectTestPromise(
-    Effect.scoped(
-      Effect.gen(function* externallyReachableHealth() {
-        const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
-        const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
-        assert.equal(server.hostname, '0.0.0.0');
-      })
-    )
-  ));
+it.live(
+  'production health binds all IPv4 interfaces for external-container probes',
+  () =>
+    Effect.gen(function* externallyReachableHealth() {
+      const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
+      const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
+      expect(server.hostname).toBe('0.0.0.0');
+    })
+);
 
-test('readiness starts false, follows successful/failing cycles, expires, and closes on shutdown', async () => {
-  let now = 1000;
-  return runEffectTestPromise(
-    Effect.scoped(
-      Effect.gen(function* healthLifecycle() {
-        const services = yield* Layer.build(FetchHttpClient.layer);
-        const client = yield* Effect.provide(HttpClient.HttpClient, services);
-        const health = yield* createOutboxWorkerHealth({
-          now: Effect.sync(() => now),
-          staleAfterMs: 100,
-        });
-        const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
-        const ready = client.get(`http://127.0.0.1:${server.port}/ready`);
-        const startingResponse = yield* ready;
-        assert.equal(startingResponse.status, 503);
-        assert.deepEqual(yield* startingResponse.json, { ready: false });
-        assert.equal(
-          (yield* client.get(`http://127.0.0.1:${server.port}/unknown`)).status,
-          404
-        );
-        yield* health.cycleSucceeded;
-        const readyResponse = yield* ready;
-        assert.equal(readyResponse.status, 200);
-        assert.deepEqual(yield* readyResponse.json, { ready: true });
-        now = 1101;
-        assert.equal((yield* ready).status, 503);
-        yield* health.cycleSucceeded;
-        yield* health.cycleFailed;
-        assert.equal((yield* ready).status, 503);
-        yield* health.cycleSucceeded;
-        yield* health.shuttingDown;
-        assert.equal((yield* ready).status, 503);
-      })
-    )
-  );
-});
+it.live(
+  'readiness starts false, follows successful/failing cycles, expires, and closes on shutdown',
+  () => {
+    let now = 1000;
+    return Effect.gen(function* healthLifecycle() {
+      const services = yield* Layer.build(FetchHttpClient.layer);
+      const client = yield* Effect.provide(HttpClient.HttpClient, services);
+      const health = yield* createOutboxWorkerHealth({
+        now: Effect.sync(() => now),
+        staleAfterMs: 100,
+      });
+      const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
+      const ready = client.get(`http://127.0.0.1:${server.port}/ready`);
+      const startingResponse = yield* ready;
+      expect(startingResponse.status).toBe(503);
+      expect(yield* startingResponse.json).toEqual({ ready: false });
+      expect(
+        (yield* client.get(`http://127.0.0.1:${server.port}/unknown`)).status
+      ).toBe(404);
+      yield* health.cycleSucceeded;
+      const readyResponse = yield* ready;
+      expect(readyResponse.status).toBe(200);
+      expect(yield* readyResponse.json).toEqual({ ready: true });
+      now = 1101;
+      expect((yield* ready).status).toBe(503);
+      yield* health.cycleSucceeded;
+      yield* health.cycleFailed;
+      expect((yield* ready).status).toBe(503);
+      yield* health.cycleSucceeded;
+      yield* health.shuttingDown;
+      expect((yield* ready).status).toBe(503);
+    });
+  }
+);
 
-test('closing the health scope marks it unavailable and releases its dynamically allocated port', async () =>
-  runEffectTestPromise(
+it.live(
+  'closing the health scope marks it unavailable and releases its dynamically allocated port',
+  () =>
     Effect.gen(function* releasedPort() {
       const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
       yield* health.cycleSucceeded;
       const server = yield* Effect.scoped(
         serveOutboxWorkerHealth(health, { port: 0 })
       );
-      assert.equal(yield* health.isReady, false);
+      expect(yield* health.isReady).toBe(false);
       const rebound = yield* Effect.scoped(
         serveOutboxWorkerHealth(health, { port: server.port })
       );
-      assert.equal(rebound.port, server.port);
+      expect(rebound.port).toBe(server.port);
     })
-  ));
+);
 
-test('a health port already in use produces a typed server startup failure', async () =>
-  runEffectTestPromise(
-    Effect.scoped(
-      Effect.gen(function* occupiedPort() {
-        const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
-        const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
-        const result = yield* Effect.result(
-          Effect.scoped(serveOutboxWorkerHealth(health, { port: server.port }))
-        );
-        assert.ok(Result.isFailure(result));
-        assert.equal(result.failure._tag, 'ServeError');
-      })
-    )
-  ));
+it.live(
+  'a health port already in use produces a typed server startup failure',
+  () =>
+    Effect.gen(function* occupiedPort() {
+      const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
+      const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
+      const failure = yield* Effect.flip(
+        Effect.scoped(serveOutboxWorkerHealth(health, { port: server.port }))
+      );
+      expect(Predicate.isTagged(failure, 'ServeError')).toBe(true);
+    })
+);
 
-test('invalid configured health ports fail startup with a typed configuration error before polling', async () =>
-  runEffectTestPromise(
+it.effect(
+  'invalid configured health ports fail startup with a typed configuration error before polling',
+  () =>
     Effect.gen(function* invalidPortConfiguration() {
       for (const port of ['0', '65536', '4102.5', 'invalid']) {
-        const result = yield* Effect.result(
+        const failure = yield* Effect.flip(
           runOutboxWorkerProcess({
             claimOwnerPrefix: 'health-config-test',
             health: true,
@@ -116,8 +108,7 @@ test('invalid configured health ports fail startup with a typed configuration er
             })
           )
         );
-        assert.ok(Result.isFailure(result));
-        assert.equal(result.failure._tag, 'ConfigError');
+        expect(Predicate.isTagged(failure, 'ConfigError')).toBe(true);
       }
     })
-  ));
+);

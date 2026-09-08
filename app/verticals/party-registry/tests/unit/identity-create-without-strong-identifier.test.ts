@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { DateTime } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import type {
@@ -41,12 +39,13 @@ const candidate = (
 });
 const decide = (value: PartyCandidate) =>
   decideCreateWithoutStrongIdentifier(value, { requireIdentityReview: false });
-test('concrete subject evidence needs neither a name nor an official ID', () => {
-  assert.equal(decide(candidate()).decision, 'ALLOW');
-  assert.equal(decide(candidate({ displayName: 'A' })).decision, 'ALLOW');
-  assert.equal(decide(candidate({ displayName: 'Unknown' })).decision, 'ALLOW');
+it('concrete subject evidence needs neither a name nor an official ID', () => {
+  expect(decide(candidate()).decision).toBe('ALLOW');
+  expect(decide(candidate({ displayName: 'A' })).decision).toBe('ALLOW');
+  expect(decide(candidate({ displayName: 'Unknown' })).decision).toBe('ALLOW');
 });
-test('names, reference prefixes and identifiers never substitute for subject evidence', () => {
+
+it('names, reference prefixes and identifiers never substitute for subject evidence', () => {
   for (const input of [
     candidate({ displayName: 'Jane Smith', subjectEvidence: [] }),
     candidate({
@@ -60,38 +59,36 @@ test('names, reference prefixes and identifiers never substitute for subject evi
       subjectEvidence: [],
     }),
   ]) {
-    assert.equal(decide(input).decision, 'DENY');
+    expect(decide(input).decision).toBe('DENY');
   }
 });
-test('type support is separate from evidence of a concrete subject', () => {
+
+it('type support is separate from evidence of a concrete subject', () => {
   for (const partyType of ['PERSON', 'ORGANIZATION'] as const) {
-    assert.equal(
-      decide(candidate({ partyType })).reasonCode,
+    expect(decide(candidate({ partyType })).reasonCode).toBe(
       'party_type_evidence_required'
     );
-    assert.equal(
+    expect(
       decide(candidate({ partyType, subjectEvidence: [evidence(partyType)] }))
-        .decision,
-      'ALLOW'
-    );
+        .decision
+    ).toBe('ALLOW');
   }
-  assert.equal(
+  expect(
     decide(
       candidate({
         subjectEvidence: [evidence('PERSON'), evidence('ORGANIZATION')],
       })
-    ).reasonCode,
-    'conflicting_type_evidence'
-  );
+    ).reasonCode
+  ).toBe('conflicting_type_evidence');
 });
-test('technical records, managed Legal Entities and multiple subjects fail closed', () => {
+
+it('technical records, managed Legal Entities and multiple subjects fail closed', () => {
   for (const kind of ['TECHNICAL_RECORD', 'MANAGED_LEGAL_ENTITY'] as const) {
-    assert.equal(
-      decide(candidate({ subjectEvidence: [evidence(kind)] })).decision,
-      'DENY'
-    );
+    expect(
+      decide(candidate({ subjectEvidence: [evidence(kind)] })).decision
+    ).toBe('DENY');
   }
-  assert.equal(
+  expect(
     decide(
       candidate({
         subjectEvidence: [
@@ -102,42 +99,39 @@ test('technical records, managed Legal Entities and multiple subjects fail close
           },
         ],
       })
-    ).reasonCode,
-    'one_concrete_subject_required'
-  );
+    ).reasonCode
+  ).toBe('one_concrete_subject_required');
 });
-test('review configuration cannot waive evidence and eligible review remains atomic', () => {
-  assert.deepEqual(createPartyAction.descriptor.policies, []);
-  assert.equal(
-    decideAtomicCreateWithoutStrongIdentifier(candidate(), false).decision,
-    'REVIEW_REQUIRED'
-  );
-  assert.equal(
-    decideAtomicCreateWithoutStrongIdentifier(candidate(), true).decision,
-    'ALLOW'
-  );
-  assert.equal(
+
+it('review configuration cannot waive evidence and eligible review remains atomic', () => {
+  expect(createPartyAction.descriptor.policies).toEqual([]);
+  expect(
+    decideAtomicCreateWithoutStrongIdentifier(candidate(), false).decision
+  ).toBe('REVIEW_REQUIRED');
+  expect(
+    decideAtomicCreateWithoutStrongIdentifier(candidate(), true).decision
+  ).toBe('ALLOW');
+  expect(
     decideAtomicCreateWithoutStrongIdentifier(
       candidate({ subjectEvidence: [] }),
       true
-    ).decision,
-    'DENY'
-  );
+    ).decision
+  ).toBe('DENY');
 });
-test('reference spelling is neutral; meaningful evidence and independent versions are retained', () => {
+
+it('reference spelling is neutral; meaningful evidence and independent versions are retained', () => {
   const original = candidate();
   const arbitrary = candidate({
     subjectEvidence: [
       { ...evidence('CONCRETE_SUBJECT'), evidenceRef: 'anything' },
     ],
   });
-  assert.equal(decide(arbitrary).decision, 'ALLOW');
-  assert.notEqual(
-    candidateFingerprint(original),
+  expect(decide(arbitrary).decision).toBe('ALLOW');
+  expect(candidateFingerprint(original)).not.toBe(
     candidateFingerprint(arbitrary)
   );
   const result = evaluatePartySubjectEvidence(original);
-  assert.equal(result.subjectEligibilityVersion, 'party-concrete-subject.v1');
-  assert.equal(result.typeRuleVersion, 'party-subject-type.v1');
-  assert.deepEqual(result.evidence, original.subjectEvidence);
+  expect(result.subjectEligibilityVersion).toBe('party-concrete-subject.v1');
+  expect(result.typeRuleVersion).toBe('party-subject-type.v1');
+  expect(result.evidence).toEqual(original.subjectEvidence);
 });

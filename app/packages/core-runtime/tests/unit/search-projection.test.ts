@@ -1,14 +1,12 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import {
   CoreSearchProjectionInvalid,
-  CoreSearchProjectionStore,
   CoreSearchProjectionUnavailable,
   CoreSearchQueryRuntime,
+  CoreSearchProjectionStore,
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
@@ -16,15 +14,6 @@ import type {
   CoreSearchProjectionHit,
   CoreSearchProjectionStoreService,
 } from '../../src/search/projection.ts';
-
-const effectTest = <A, E>(
-  name: string,
-  body: () => Effect.Effect<A, E>
-): void => {
-  void test(name, () => {
-    void runEffectTestSync(body());
-  });
-};
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));
 
@@ -72,15 +61,10 @@ const party = (overrides: PartyOverrides = {}) => ({
   ...overrides,
 });
 
-effectTest(
+it.effect(
   'a projection rebuild floor prevents unseen stale resources and rejects divergent equal-version rebuilds',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
     const rebuild = {
       documents: [],
       moduleId: partyRef.moduleId,
@@ -89,6 +73,9 @@ effectTest(
       tenantId,
     };
     return Effect.gen(function* testProjectionRebuildFloor() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       yield* store.replace(rebuild);
       yield* store.apply({ document: party(), kind: 'upsert' });
       yield* store.replace({
@@ -96,21 +83,22 @@ effectTest(
         documents: [party()],
         rebuildVersion: '1',
       });
-      assert.deepEqual(
+      expect(
         yield* runtime.search({
           includeArchived: false,
           moduleId: partyRef.moduleId,
           query: 'acme',
           resourceType: partyRef.resourceType,
           tenantId,
-        }),
-        []
-      );
+        })
+      ).toEqual([]);
       yield* store.replace(rebuild);
       const divergent = yield* Effect.flip(
         store.replace({ ...rebuild, documents: [party()] })
       );
-      assert.equal(divergent._tag, 'CoreSearchProjectionInvalid');
+      expect(Predicate.isTagged(divergent, 'CoreSearchProjectionInvalid')).toBe(
+        true
+      );
       yield* store.apply({
         document: party({ projectionVersion: '3' }),
         kind: 'upsert',
@@ -123,21 +111,19 @@ effectTest(
         resourceType: partyRef.resourceType,
         tenantId,
       });
-      assert.equal(searchResults.length, 1);
+      expect(searchResults.length).toBe(1);
     });
   }
 );
 
-effectTest(
+it.effect(
   'Core Search identifies alias-only matches while canonical evidence takes precedence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
     return Effect.gen(function* testAliasMatches() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       yield* store.apply({
         document: party({
           aliases: [
@@ -160,21 +146,20 @@ effectTest(
           tenantId,
         });
       const aliasHits = yield* search('former');
-      assert.equal(aliasHits.length, 1);
-      assert.deepEqual(aliasHits[0]?.ref, partyRef);
-      assert.deepEqual(aliasHits[0]?.matchedRef, aliasRef);
-      assert.equal(aliasHits[0]?.matchedSubjectRef, undefined);
-      assert.doesNotMatch(
-        encodeJson(aliasHits),
+      expect(aliasHits.length).toBe(1);
+      expect(aliasHits[0]?.ref).toEqual(partyRef);
+      expect(aliasHits[0]?.matchedRef).toEqual(aliasRef);
+      expect(aliasHits[0]?.matchedSubjectRef).toBe(undefined);
+      expect(encodeJson(aliasHits)).not.toMatch(
         /Former Company|searchableText|aliases/u
       );
       const canonicalHits = yield* search('acme');
-      assert.equal(canonicalHits[0]?.matchedRef, undefined);
+      expect(canonicalHits[0]?.matchedRef).toBe(undefined);
     });
   }
 );
 
-effectTest(
+it.effect(
   'Core Search rejects cross-tenant aliases and malformed or oversized temporal evidence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -226,33 +211,33 @@ effectTest(
         })),
       },
     ];
-    return Effect.forEach(
-      invalidEvidence,
-      (evidence) =>
-        Effect.flip(store.apply({ document: party(evidence), kind: 'upsert' })),
-      { concurrency: 'unbounded' }
-    ).pipe(
-      Effect.tap((failures) =>
-        Effect.sync(() => {
-          for (const failure of failures) {
-            assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
-          }
-        })
-      )
-    );
+    return Effect.gen(function* testInvalidEvidence() {
+      const failures = yield* Effect.forEach(
+        invalidEvidence,
+        (evidence) =>
+          Effect.flip(
+            store.apply({ document: party(evidence), kind: 'upsert' })
+          ),
+        { concurrency: 'unbounded' }
+      );
+      for (const failure of failures) {
+        expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(
+          true
+        );
+      }
+    });
   }
 );
 
-effectTest(
+it.effect(
   'Core Search honors half-open evidence periods for canonical and subject aliases',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
     return Effect.gen(function* testHalfOpenEvidencePeriods() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
+      yield* TestClock.setTime(Date.parse('2026-09-03T00:00:00Z'));
       yield* store.apply({
         document: party({
           aliases: [
@@ -299,39 +284,32 @@ effectTest(
         'old-private',
         '2026-01-01T00:00:00Z'
       );
-      assert.deepEqual(historicalHits[0]?.matchedSubjectRef, aliasRef);
-      assert.deepEqual(
-        yield* search('old-private', '2026-02-01T00:00:00Z'),
-        []
-      );
-      assert.deepEqual(
-        yield* search('current-private', '2026-01-31T23:59:59Z'),
+      expect(historicalHits[0]?.matchedSubjectRef).toEqual(aliasRef);
+      expect(yield* search('old-private', '2026-02-01T00:00:00Z')).toEqual([]);
+      expect(yield* search('current-private', '2026-01-31T23:59:59Z')).toEqual(
         []
       );
       const current = yield* search('current-private', '2026-02-01T00:00:00Z');
-      assert.equal(current.length, 1);
-      assert.equal(current[0]?.matchedSubjectRef, undefined);
-      assert.doesNotMatch(
-        encodeJson(current),
+      expect(current.length).toBe(1);
+      expect(current[0]?.matchedSubjectRef).toBe(undefined);
+      expect(encodeJson(current)).not.toMatch(
         /private@example|temporalSearchableText/u
       );
       const longLivedHits = yield* search('long-lived');
-      assert.equal(longLivedHits.length, 1);
+      expect(longLivedHits.length).toBe(1);
     });
   }
 );
 
-effectTest(
+it.effect(
   'Core Search rebuilds one owned projection atomically and isolates tenants',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
 
     return Effect.gen(function* testOwnedProjectionRebuild() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       yield* store.replace({
         documents: [party()],
         moduleId: 'party.registry',
@@ -359,7 +337,7 @@ effectTest(
         resourceType: 'party.registry.party',
         tenantId,
       });
-      assert.deepEqual(result, [
+      expect(result).toEqual([
         {
           archived: false,
           facets: [],
@@ -370,7 +348,7 @@ effectTest(
           title: 'Acme, s.r.o.',
         },
       ]);
-      assert.doesNotMatch(encodeJson(result), /private@example\.test/u);
+      expect(encodeJson(result)).not.toMatch(/private@example\.test/u);
 
       yield* store.replace({
         documents: [
@@ -392,20 +370,15 @@ effectTest(
         resourceType: 'party.registry.party',
         tenantId,
       });
-      assert.deepEqual(hits, []);
+      expect(hits).toEqual([]);
     });
   }
 );
 
-effectTest(
+it.effect(
   'Core Search applies typed Legal Entity and role facets without returning match evidence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
     const counterpartyRef = {
       moduleId: 'party.registry',
       resourceId: '40000000-0000-4000-8000-000000000001',
@@ -413,6 +386,9 @@ effectTest(
       tenantId,
     } as const;
     return Effect.gen(function* testTypedLegalEntityAndRoleFacets() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       yield* store.replace({
         documents: [
           {
@@ -462,7 +438,7 @@ effectTest(
         selectedLegalEntityId: legalEntityId,
         tenantId,
       });
-      assert.deepEqual(result, [
+      expect(result).toEqual([
         {
           archived: false,
           facets: [],
@@ -492,31 +468,28 @@ effectTest(
           title: 'Acme',
         },
       ]);
-      assert.doesNotMatch(encodeJson(result), /private@example\.test/u);
-      assert.deepEqual(
+      expect(encodeJson(result)).not.toMatch(/private@example\.test/u);
+      expect(
         yield* runtime.search({
           includeArchived: false,
           moduleId: 'party.registry',
           query: 'acme',
           resourceType: 'party.registry.counterparty',
           tenantId,
-        }),
-        []
-      );
+        })
+      ).toEqual([]);
     });
   }
 );
 
-effectTest(
+it.effect(
   'Core Search rejects malformed or cross-owner rebuild documents without partial replacement',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
     return Effect.gen(function* testMalformedRebuildDocuments() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       yield* store.replace({
         documents: [party()],
         moduleId: 'party.registry',
@@ -536,7 +509,9 @@ effectTest(
           tenantId,
         })
       );
-      assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+      expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(
+        true
+      );
       const result = yield* runtime.search({
         includeArchived: false,
         moduleId: 'party.registry',
@@ -544,25 +519,23 @@ effectTest(
         resourceType: 'party.registry.party',
         tenantId,
       });
-      assert.equal(result.length, 1);
+      expect(result.length).toBe(1);
     });
   }
 );
 
-effectTest(
+it.effect(
   'Core Search makes duplicate and out-of-order lifecycle observations harmless',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
     const versionTwo = party({
       projectionVersion: '2',
       title: 'Current title',
     });
     return Effect.gen(function* testDuplicateLifecycleObservations() {
+      const runtime = yield* createCoreSearchQueryRuntime.pipe(
+        Effect.provideService(CoreSearchProjectionStore, store)
+      );
       yield* store.apply({ document: versionTwo, kind: 'upsert' });
       yield* store.apply({ document: versionTwo, kind: 'upsert' });
       yield* store.apply({
@@ -576,48 +549,42 @@ effectTest(
       });
       yield* store.apply({ document: versionTwo, kind: 'upsert' });
 
-      assert.deepEqual(
+      expect(
         yield* runtime.search({
           includeArchived: true,
           moduleId: 'party.registry',
           query: 'current',
           resourceType: 'party.registry.party',
           tenantId,
-        }),
-        []
-      );
+        })
+      ).toEqual([]);
     });
   }
 );
 
-effectTest(
+it.effect(
   'native projection services preserve keys and provided identity',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = runEffectTestSync(
-      createCoreSearchQueryRuntime.pipe(
-        Effect.provideService(CoreSearchProjectionStore, store)
-      )
-    );
     return Effect.gen(function* testNativeServiceIdentity() {
-      assert.equal(
-        CoreSearchProjectionStore.key,
+      const runtime = yield* createCoreSearchQueryRuntime;
+      expect(CoreSearchProjectionStore.key).toBe(
         '@app/core-runtime/search/projection/CoreSearchProjectionStore'
       );
-      assert.equal(
-        CoreSearchQueryRuntime.key,
+      expect(CoreSearchQueryRuntime.key).toBe(
         '@app/core-runtime/search/projection/CoreSearchQueryRuntime'
       );
-      assert.strictEqual(yield* CoreSearchProjectionStore, store);
-      assert.strictEqual(yield* CoreSearchQueryRuntime, runtime);
-    }).pipe(
-      Effect.provideService(CoreSearchProjectionStore, store),
-      Effect.provideService(CoreSearchQueryRuntime, runtime)
-    );
+      expect(yield* CoreSearchProjectionStore).toBe(store);
+      expect(
+        yield* CoreSearchQueryRuntime.pipe(
+          Effect.provideService(CoreSearchQueryRuntime, runtime)
+        )
+      ).toBe(runtime);
+    }).pipe(Effect.provideService(CoreSearchProjectionStore, store));
   }
 );
 
-effectTest(
+it.effect(
   'native projection services compose store writes with query reads',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -632,8 +599,8 @@ effectTest(
         resourceType: partyRef.resourceType,
         tenantId,
       });
-      assert.equal(hits.length, 1);
-      assert.deepEqual(hits[0]?.ref, partyRef);
+      expect(hits.length).toBe(1);
+      expect(hits[0]?.ref).toEqual(partyRef);
     }).pipe(
       Effect.provideServiceEffect(
         CoreSearchQueryRuntime,
@@ -657,7 +624,7 @@ const searchThroughNativeService = (
     return yield* runtime.search(input);
   });
 
-effectTest(
+it.effect(
   'native projection services retain invalid and unavailable failures',
   () => {
     const unavailable = new CoreSearchProjectionUnavailable({
@@ -673,9 +640,9 @@ effectTest(
       const invalid = yield* Effect.flip(
         providedStore.apply({ kind: 'invalid' })
       );
-      assert.ok(Schema.is(CoreSearchProjectionInvalid)(invalid));
+      expect(Schema.is(CoreSearchProjectionInvalid)(invalid)).toBe(true);
       const invalidQuery = yield* Effect.flip(searchThroughNativeService({}));
-      assert.ok(Schema.is(CoreSearchProjectionInvalid)(invalidQuery));
+      expect(Schema.is(CoreSearchProjectionInvalid)(invalidQuery)).toBe(true);
       const failedQuery = yield* Effect.flip(
         searchThroughNativeService({
           includeArchived: false,
@@ -685,7 +652,7 @@ effectTest(
           tenantId,
         })
       );
-      assert.strictEqual(failedQuery, unavailable);
+      expect(failedQuery).toBe(unavailable);
     }).pipe(
       Effect.provideServiceEffect(
         CoreSearchQueryRuntime,

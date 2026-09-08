@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
-import { Console, Effect, flow, Option, Predicate, Schema } from 'effect';
+import { Console, Effect, Option, Predicate, Schema } from 'effect';
 import {
   Argument,
   CliConfig,
@@ -15,7 +15,6 @@ import {
 } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
-import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
 import actionGenerator from './action/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
@@ -133,7 +132,7 @@ type TypedGeneratorContext<Config> = Omit<GeneratorContext, 'config'> & {
 type LocalGenerator<Config, Result extends GeneratorResult> = (
   context: TypedGeneratorContext<Config>,
   core: GeneratorCore
-) => Promise<Result>;
+) => Effect.Effect<Result, unknown, NodeServices.NodeServices>;
 
 export interface RouteRefreshInput {
   readonly appId: string;
@@ -142,7 +141,7 @@ export interface RouteRefreshInput {
 
 export type RouteRefreshExecutor = (
   input: RouteRefreshInput
-) => void | Promise<void>;
+) => Effect.Effect<void, ScaffoldingError>;
 
 export interface RunScaffoldOptions {
   readonly routeRefresh?: RouteRefreshExecutor;
@@ -191,7 +190,11 @@ interface CommandDefinition {
   readonly generate: (
     flags: ParsedScaffoldFlags,
     workspaceRoot: string
-  ) => Effect.Effect<GeneratorResult, ScaffoldingError>;
+  ) => Effect.Effect<
+    GeneratorResult,
+    ScaffoldingError,
+    NodeServices.NodeServices
+  >;
   readonly help: string;
   readonly requiredFlags: readonly string[];
 }
@@ -235,7 +238,7 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
     generator: LocalGenerator<Config, Result>,
     workspaceRoot: string,
     config: Config
-  ): Effect.fn.Return<Result, ScaffoldingError> {
+  ): Effect.fn.Return<Result, ScaffoldingError, NodeServices.NodeServices> {
     const prepared = yield* Effect.try({
       catch: (cause) =>
         new ScaffoldingError({
@@ -261,18 +264,29 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(
         return { core, generatorContext };
       },
     });
-    const result = yield* Effect.tryPromise({
-      catch: (cause) =>
-        new ScaffoldingError({
-          cause,
-          message:
-            cause instanceof Error
+    const result = yield* generator(
+      prepared.generatorContext,
+      prepared.core
+    ).pipe(
+      Effect.catchDefect((cause) =>
+        Effect.fail(
+          new ScaffoldingError({
+            cause,
+            message: Predicate.isError(cause)
               ? cause.message
               : 'Codesmith generation failed',
-        }),
-      try: async () =>
-        await generator(prepared.generatorContext, prepared.core),
-    }).pipe(
+          })
+        )
+      ),
+      Effect.mapError(
+        (cause) =>
+          new ScaffoldingError({
+            cause,
+            message: Predicate.isError(cause)
+              ? cause.message
+              : 'Codesmith generation failed',
+          })
+      ),
       Effect.ensuring(
         Effect.sync(() => (prepared.core._context.current = null))
       )
@@ -550,16 +564,7 @@ Options:
           if (options.routeRefresh === undefined) {
             return defaultRouteRefresh(input);
           }
-          return Effect.tryPromise({
-            catch: (cause) =>
-              new ScaffoldingError({
-                cause,
-                message: Predicate.isError(cause)
-                  ? cause.message
-                  : 'route refresh failed',
-              }),
-            try: async () => await options.routeRefresh?.(input),
-          });
+          return options.routeRefresh(input);
         };
         yield* refresh({ appId: result.appId, workspaceRoot });
         yield* refresh({ appId: 'shell-super-app', workspaceRoot });
@@ -1038,7 +1043,7 @@ const parseFlags = (
     };
   });
 
-const runScaffoldEffect = Effect.fn('runScaffold')(
+export const runScaffoldEffect = Effect.fn('runScaffold')(
   function* runScaffoldEffectGenerator(
     command: ScaffoldCommand,
     rawArguments: readonly string[],
@@ -1046,7 +1051,7 @@ const runScaffoldEffect = Effect.fn('runScaffold')(
   ): Effect.fn.Return<
     RunScaffoldResult,
     ScaffoldingError,
-    ChildProcessSpawner.ChildProcessSpawner
+    NodeServices.NodeServices
   > {
     const argumentsList = normalizeForwardedArguments(rawArguments);
     if (argumentsList.length === 1 && argumentsList[0] === '--help') {
@@ -1061,15 +1066,6 @@ const runScaffoldEffect = Effect.fn('runScaffold')(
     }
     return { kind: 'generated', result };
   }
-);
-
-export const runScaffold: (
-  command: ScaffoldCommand,
-  rawArguments: readonly string[],
-  options?: RunScaffoldOptions
-) => Promise<RunScaffoldResult> = flow(
-  runScaffoldEffect,
-  scaffoldingRuntime.runPromise
 );
 
 const optionalTextFlag = (name: string) =>
@@ -1179,6 +1175,6 @@ if (
     }),
     CliConfig.CliConfig,
     () => CliConfig.make({ builtIns: [customHelp] })
-  ).pipe(Effect.ensuring(scaffoldingRuntime.disposeEffect));
+  );
   await Effect.runPromise(cliProgram.pipe(Effect.provide(NodeServices.layer)));
 }

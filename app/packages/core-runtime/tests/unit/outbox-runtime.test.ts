@@ -1,8 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { Context, Effect, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
@@ -168,32 +165,29 @@ const run = (
     subscriptions: [registration.descriptor],
   });
 
-void test(
-  'owner-local cycles do not perform global matching',
-  makeEffectTestCallback(
-    Effect.gen(function* ownerLocalCycle() {
-      const controlled = repository({
-        match: { deliveriesCreated: 0, messagesMatched: 2 },
-      });
+it.effect('owner-local cycles do not perform global matching', () =>
+  Effect.gen(function* ownerLocalCycle() {
+    const controlled = repository({
+      match: { deliveriesCreated: 0, messagesMatched: 2 },
+    });
 
-      assert.deepEqual(yield* run(controlled.service), {
-        claimed: 0,
-        dead: 0,
-        deliveriesCreated: 0,
-        failed: 0,
-        messagesMatched: 0,
-        retried: 0,
-        succeeded: 0,
-      });
-      assert.deepEqual(controlled.probe.completed, []);
-      assert.deepEqual(controlled.probe.failed, []);
-    })
-  )
+    expect(yield* run(controlled.service)).toEqual({
+      claimed: 0,
+      dead: 0,
+      deliveriesCreated: 0,
+      failed: 0,
+      messagesMatched: 0,
+      retried: 0,
+      succeeded: 0,
+    });
+    expect(controlled.probe.completed).toEqual([]);
+    expect(controlled.probe.failed).toEqual([]);
+  })
 );
 
-void test(
+it.effect(
   'matches messages only through the explicit Core matcher snapshot',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* explicitMatcherSnapshot() {
       const controlled = repository({
         match: { deliveriesCreated: 3, messagesMatched: 2 },
@@ -205,14 +199,13 @@ void test(
         }
       );
 
-      assert.deepEqual(result, { deliveriesCreated: 3, messagesMatched: 2 });
+      expect(result).toEqual({ deliveriesCreated: 3, messagesMatched: 2 });
     })
-  )
 );
 
-void test(
+it.effect(
   'rejects an owner-local worker missing from the installed subscription catalog',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* missingInstalledSubscription() {
       const controlled = repository();
       const registration = worker(() => Effect.void);
@@ -224,18 +217,16 @@ void test(
         })
       );
 
-      assert.equal(Schema.is(OutboxWorkerDescriptorError)(error), true);
-      assert.match(
-        error.reason,
+      expect(Schema.is(OutboxWorkerDescriptorError)(error)).toBe(true);
+      expect(error.reason).toMatch(
         /absent from the installed subscription catalog/u
       );
     })
-  )
 );
 
-void test(
+it.effect(
   'rejects deployed owner descriptors without a matching local worker registration',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* missingLocalRegistration() {
       const controlled = repository();
       const registration = worker(() => Effect.void);
@@ -260,18 +251,16 @@ void test(
         })
       );
 
-      assert.equal(Schema.is(OutboxWorkerDescriptorError)(error), true);
-      assert.match(
-        error.reason,
+      expect(Schema.is(OutboxWorkerDescriptorError)(error)).toBe(true);
+      expect(error.reason).toMatch(
         /contradicts its deployed descriptor snapshot/u
       );
     })
-  )
 );
 
-void test(
+it.effect(
   'decodes a published payload, supplies exact context, and completes success',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* successfulDelivery() {
       const selected = claim();
       const controlled = repository({ claims: [selected] });
@@ -284,10 +273,10 @@ void test(
 
       const result = yield* run(controlled.service, registration);
 
-      assert.equal(result.succeeded, 1);
-      assert.deepEqual(controlled.probe.completed, [selected]);
-      assert.deepEqual(controlled.probe.failed, []);
-      assert.deepEqual(observed, {
+      expect(result.succeeded).toBe(1);
+      expect(controlled.probe.completed).toEqual([selected]);
+      expect(controlled.probe.failed).toEqual([]);
+      expect(observed).toEqual({
         context: {
           attemptNumber: 1,
           claimId: 'runtime:claim-1',
@@ -304,12 +293,11 @@ void test(
         payload: { messageKey: 'message-1' },
       });
     })
-  )
 );
 
-void test(
+it.effect(
   'runs a worker with Effect services provided by its owning MicroVertical host',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* ownerProvidedServices() {
       const selected = { ...claim(), workerKey: 'consumer.layered-logger' };
       const controlled = repository({ claims: [selected] });
@@ -351,15 +339,14 @@ void test(
           })
         );
 
-      assert.equal(result.succeeded, 1);
-      assert.deepEqual(observed, ['message-1']);
+      expect(result.succeeded).toBe(1);
+      expect(observed).toEqual(['message-1']);
     })
-  )
 );
 
-void test(
+it.effect(
   'records decode failures as retries without calling the handler or completion',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* decodeFailure() {
       const controlled = repository({
         claims: [claim(1, { messageKey: 42 })],
@@ -372,21 +359,19 @@ void test(
         worker(() => Effect.sync(() => (calls += 1)))
       );
 
-      assert.equal(calls, 0);
-      assert.equal(result.failed, 1);
-      assert.equal(result.retried, 1);
-      assert.deepEqual(controlled.probe.completed, []);
-      assert.equal(
-        controlled.probe.failed[0]?.message,
+      expect(calls).toBe(0);
+      expect(result.failed).toBe(1);
+      expect(result.retried).toBe(1);
+      expect(controlled.probe.completed).toEqual([]);
+      expect(controlled.probe.failed[0]?.message).toBe(
         'The Outbox Message payload does not match its published schema'
       );
     })
-  )
 );
 
-void test(
+it.effect(
   'classifies declared failures, defects, retry exhaustion, and never completes them',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* failureClassification() {
       const declared = repository({
         claims: [claim()],
@@ -398,9 +383,8 @@ void test(
           Effect.fail(new TestHandlerFailure({ reason: 'secret typed detail' }))
         )
       );
-      assert.equal(declaredResult.retried, 1);
-      assert.equal(
-        declared.probe.failed[0]?.message,
+      expect(declaredResult.retried).toBe(1);
+      expect(declared.probe.failed[0]?.message).toBe(
         'The Outbox Worker handler returned a declared failure'
       );
 
@@ -414,21 +398,19 @@ void test(
           Effect.die(new Error('database password must not be stored'))
         )
       );
-      assert.equal(defectResult.dead, 1);
-      assert.equal(
-        defect.probe.failed[0]?.message,
+      expect(defectResult.dead).toBe(1);
+      expect(defect.probe.failed[0]?.message).toBe(
         'The Outbox Worker handler failed unexpectedly'
       );
-      assert.doesNotMatch(defect.probe.failed[0]?.message ?? '', /password/u);
-      assert.deepEqual(declared.probe.completed, []);
-      assert.deepEqual(defect.probe.completed, []);
+      expect(defect.probe.failed[0]?.message ?? '').not.toMatch(/password/u);
+      expect(declared.probe.completed).toEqual([]);
+      expect(defect.probe.completed).toEqual([]);
     })
-  )
 );
 
-void test(
+it.effect(
   'surfaces stale-claim finalization and leaves checkpoint responsibility with the repository',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* staleClaimFinalization() {
       const controlled = repository({
         claims: [claim()],
@@ -439,8 +421,7 @@ void test(
       });
 
       const error = yield* Effect.flip(run(controlled.service));
-      assert.equal(Schema.is(OutboxClaimLostError)(error), true);
-      assert.deepEqual(controlled.probe.failed, []);
+      expect(Schema.is(OutboxClaimLostError)(error)).toBe(true);
+      expect(controlled.probe.failed).toEqual([]);
     })
-  )
 );

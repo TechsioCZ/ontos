@@ -1,9 +1,8 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import test from 'node:test';
 
 import { Effect, Schema } from 'effect';
+// @effect-diagnostics nodeBuiltinImport:off -- Verifies package source files via the Node filesystem boundary; expires: 2026-12-31.
+import { expect, it } from 'effect-rstest';
 
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
@@ -13,8 +12,7 @@ import {
 
 const modulePermissionTarget = () =>
   ({ kind: 'module', moduleId: 'core.shell' }) as const;
-
-void test('defines immutable read metadata while keeping handler and service factory private', () => {
+it('defines immutable read metadata while keeping handler and service factory private', () => {
   const registration = defineRead(
     {
       accessKind: 'list',
@@ -45,13 +43,12 @@ void test('defines immutable read metadata while keeping handler and service fac
     () => Effect.succeed(Object.freeze({})),
     modulePermissionTarget
   );
-  assert.deepEqual(Object.keys(registration), ['descriptor']);
-  assert.equal(Object.isFrozen(registration.descriptor), true);
-  assert.equal(Object.isFrozen(registration.descriptor.policies), true);
+  expect(Object.keys(registration)).toEqual(['descriptor']);
+  expect(Object.isFrozen(registration.descriptor)).toBe(true);
+  expect(Object.isFrozen(registration.descriptor.policies)).toBe(true);
 });
-
-void test('requires an explicit valid owner-scoped read entrypoint', () => {
-  assert.throws(() =>
+it('requires an explicit valid owner-scoped read entrypoint', () => {
+  expect(() =>
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
@@ -66,10 +63,9 @@ void test('requires an explicit valid owner-scoped read entrypoint', () => {
       legalEntityScope: 'forbidden',
       owningModuleKey: 'core.shell',
     })
-  );
+  ).toThrow();
 });
-
-void test('supports every governed access kind and rejects forged scope metadata', () => {
+it('supports every governed access kind and rejects forged scope metadata', () => {
   for (const accessKind of [
     'detail',
     'download',
@@ -78,7 +74,7 @@ void test('supports every governed access kind and rejects forged scope metadata
     'report',
     'search',
   ] as const) {
-    assert.doesNotThrow(() =>
+    expect(() =>
       defineRead(
         {
           accessKind,
@@ -111,9 +107,9 @@ void test('supports every governed access kind and rejects forged scope metadata
         modulePermissionTarget,
         accessKind === 'search' ? () => [] : undefined
       )
-    );
+    ).not.toThrow();
   }
-  assert.throws(() =>
+  expect(() =>
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
@@ -128,14 +124,24 @@ void test('supports every governed access kind and rejects forged scope metadata
       legalEntityScope: 'implicit',
       owningModuleKey: 'core.shell',
     })
-  );
+  ).toThrow();
 });
-
-void test('keeps low-level read runtime construction and Core schema out of package exports', async () => {
-  const [indexSource, packageSource] = await Promise.all([
-    readFile(new URL('../../src/index.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
-  ]);
-  assert.doesNotMatch(indexSource, /\bmakeReadRuntime,?$/mu);
-  assert.doesNotMatch(packageSource, /"\.\/db\/schema"/u);
-});
+it.effect(
+  'keeps low-level read runtime construction and Core schema out of package exports',
+  () =>
+    Effect.gen(function* migratedTest1() {
+      const [indexSource, packageSource] = yield* Effect.all(
+        [
+          Effect.promise(() =>
+            readFile(new URL('../../src/index.ts', import.meta.url), 'utf-8')
+          ),
+          Effect.promise(() =>
+            readFile(new URL('../../package.json', import.meta.url), 'utf-8')
+          ),
+        ],
+        { concurrency: 'unbounded' }
+      );
+      expect(indexSource).not.toMatch(/\bmakeReadRuntime,?$/mu);
+      expect(packageSource).not.toMatch(/"\.\/db\/schema"/u);
+    })
+);

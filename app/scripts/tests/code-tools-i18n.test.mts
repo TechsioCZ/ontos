@@ -1,15 +1,10 @@
-/// <reference types="node" />
-
-import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Layer, Path, Schema, Stream } from 'effect';
+import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-
-import { makeEffectTestCallback } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -17,10 +12,10 @@ const codeToolsPackage = '@modern-js/code-tools';
 const malformedPluginCase = 'malformed plugin';
 const cleanOutput =
   /^(?:Found 0 warnings and 0 errors\.\r?\nFinished in \d+(?:\.\d+)?(?:ms|s) on [1-9]\d* files? with \d+ rules using [1-9]\d* threads?\.\r?\n)?$/u;
-const packageRoot = fileURLToPath(
-  new URL('../..', import.meta.resolve(codeToolsPackage))
-);
-const packageRequire = createRequire(import.meta.resolve(codeToolsPackage));
+const require = createRequire(import.meta.url);
+const packageEntry = pathToFileURL(require.resolve(codeToolsPackage));
+const packageRoot = fileURLToPath(new URL('../..', packageEntry));
+const packageRequire = createRequire(packageEntry);
 
 const cases = [
   {
@@ -126,41 +121,32 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
       );
       const output = result.stdout + result.stderr;
       if (fixture.diagnostic === null) {
-        assert.equal(result.status, 0, output);
-        assert.match(output, cleanOutput);
+        expect(result.status, output).toBe(0);
+        expect(output).toMatch(cleanOutput);
       } else {
-        assert.equal(result.status, 1, output);
-        assert.match(output, fixture.diagnostic);
-        assert.match(output, /fixture\.tsx/u);
+        expect(result.status, output).toBe(1);
+        expect(output).toMatch(fixture.diagnostic);
+        expect(output).toMatch(/fixture\.tsx/u);
         if (fixture.name === malformedPluginCase) {
-          assert.match(output, /Error running JS plugin/u);
-          assert.doesNotMatch(output, /:0:0: {2}\[Warning\]/u);
+          expect(output).toMatch(/Error running JS plugin/u);
+          expect(output).not.toMatch(/:0:0: {2}\[Warning\]/u);
         } else {
-          assert.match(output, /fixture\.tsx:1:\d+/u);
-          assert.doesNotMatch(output, /Error running JS plugin/u);
+          expect(output).toMatch(/fixture\.tsx:1:\d+/u);
+          expect(output).not.toMatch(/Error running JS plugin/u);
         }
       }
     });
-    void test(
-      `code-tools ${format}: ${fixture.name}`,
-      makeEffectTestCallback(
-        Effect.scoped(
-          Layer.build(
-            Layer.effectDiscard(testEffect).pipe(
-              Layer.provide(NodeServices.layer)
-            )
-          )
-        )
-      )
+    it.live(`code-tools ${format}: ${fixture.name}`, () =>
+      testEffect.pipe(Effect.provide(NodeServices.layer))
     );
   }
 }
 
-void test('clean i18n output accepts only silence or a zero-diagnostic summary', () => {
+it('clean i18n output accepts only silence or a zero-diagnostic summary', () => {
   const summary =
     'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
-  assert.match('', cleanOutput);
-  assert.match(summary, cleanOutput);
+  expect('').toMatch(cleanOutput);
+  expect(summary).toMatch(cleanOutput);
   for (const output of [
     summary.replace('0 errors', '1 error'),
     summary.replace('0 warnings', '1 warning'),
@@ -168,6 +154,6 @@ void test('clean i18n output accepts only silence or a zero-diagnostic summary',
     `${summary}Error running JS plugin\n`,
     `fixture.tsx:1:1: unexpected diagnostic\n${summary}`,
   ]) {
-    assert.doesNotMatch(output, cleanOutput);
+    expect(output).not.toMatch(cleanOutput);
   }
 });

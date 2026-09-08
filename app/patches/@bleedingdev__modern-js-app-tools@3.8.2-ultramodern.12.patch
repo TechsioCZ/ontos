@@ -367,3 +367,18 @@ index 5a5b418c5d28a5ebec5c11c272f537c58fb59bb4..3e233f2812fbb5247a9aebf1a035631b
      }).join(';\n');
  const getPluginsCode = (plugins)=>`[${plugins.map(([, options], index)=>`plugin_${index}(${options ? JSON.stringify(options) : ''})`).join(',')}]`;
  const getServerConfigPath = (meta)=>`path.join(__dirname, "${SERVER_DIR}", "${meta}.server")`;
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -72,6 +72,11 @@
+     "./bundle-docs": {
+       "types": "./dist/types/bundleDocs.d.ts",
+       "default": "./dist/esm-node/bundleDocs.mjs"
++    },
++    "./release-envelope": {
++      "types": "./dist/types/ultramodern-release-envelope/framework-output.d.ts",
++      "import": "./dist/esm-node/ultramodern-release-envelope/framework-output.mjs",
++      "require": "./dist/cjs/ultramodern-release-envelope/framework-output.js"
+     }
+   },
+   "engines": {

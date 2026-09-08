@@ -3,7 +3,6 @@ import type { GeneratorCore } from '@modern-js/codesmith';
 import {
   Effect,
   FileSystem,
-  flow,
   Option,
   Path,
   Predicate,
@@ -1009,14 +1008,6 @@ export const readJsonEffect = (filePath: string, label: string) =>
     return { content, value: asJsonObject(parsed.success, label) };
   });
 
-export const readJson: (
-  filePath: string,
-  label: string
-) => Promise<{ content: string; value: JsonObject }> = flow(
-  readJsonEffect,
-  scaffoldingRuntime.runPromise
-);
-
 interface JsonPropertySpan {
   readonly key: string;
   readonly keyStart: number;
@@ -1531,14 +1522,6 @@ export const discoverOntosModuleEffect = (
     };
   });
 
-export const discoverOntosModule: (
-  workspaceRoot: string,
-  requestedVertical: string
-) => Promise<OntosVerticalMetadata> = flow(
-  discoverOntosModuleEffect,
-  scaffoldingRuntime.runPromise
-);
-
 const formatGeneratedMutationContent = (
   filePath: string,
   content: string
@@ -1618,14 +1601,6 @@ export const createOrAcceptGeneratedMutationEffect = (
       `refusing to overwrite existing business file: ${filePath}`
     );
   });
-
-export const createMutation: (
-  filePath: string,
-  content: string
-) => Promise<Mutation> = flow(
-  createMutationEffect,
-  scaffoldingRuntime.runPromise
-);
 
 export const updateMutation = (
   filePath: string,
@@ -1791,7 +1766,7 @@ export const applyMutationPlanEffect = <Result,>(
               mutation.content,
               'utf-8'
             ),
-        }),
+        }).pipe(Effect.uninterruptible),
       { concurrency: 'unbounded', discard: true }
     );
     const fileSystem = yield* FileSystem.FileSystem;

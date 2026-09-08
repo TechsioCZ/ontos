@@ -1,8 +1,8 @@
 # Effect-native Oxlint rules
 
-71 custom diagnostic rules derived from [`EFFECT_V4_ANTIPATTERN_AUDIT.md`](../../../docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md). All are explicitly registered and configured at **error** severity. There are **no autofixers or suggestions**. This change introduces enforcement, not an application migration.
+Custom diagnostic rules derived from [`EFFECT_V4_ANTIPATTERN_AUDIT.md`](../../../docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md). All are explicitly registered and configured at **error** severity. There are **no autofixers or suggestions**. This change introduces enforcement, not an application migration.
 
-See the [audit-to-rule catalog and diagnostic snapshot](../../../docs/architecture/EFFECT_V4_LINT_ENFORCEMENT.md) for all 71 rule counts, primary audit mappings, and intentionally non-static guarantees.
+See the [audit-to-rule catalog and diagnostic snapshot](../../../docs/architecture/EFFECT_V4_LINT_ENFORCEMENT.md) for the original rule counts, primary audit mappings, and intentionally non-static guarantees.
 
 ## Run from the app workspace
 
@@ -19,7 +19,7 @@ pnpm lint:effect
 pnpm lint:effect --json
 
 # One rule's fixtures while developing it.
-RULE=no-nested-effect-run node --test tools/oxlint/effect-native/tests/fixtures.test.mts
+RULE=no-nested-effect-run pnpm exec rstest --project lint-rules tools/oxlint/effect-native/tests/fixtures.test.mts
 
 # Development probe: uses FIXTURE options, which may differ from production.
 node tools/oxlint/effect-native/tests/run-on-repo.mts no-nested-effect-run
@@ -33,7 +33,7 @@ Both reporting commands scan `apps verticals packages scripts`. In report totals
 
 Rules use AST, import identity, lexical scopes, and explicit path/option policies. They do not have a TypeScript checker, even though the workspace retains `typeAware`, `typeCheck`, and `denyWarnings` for its other lint rules. Each rule's source documents its audit mapping, default scope, options, exceptions, and limitations. Configured re-export barrels are explicit trust assumptions, not cross-file resolution.
 
-The audit remains authoritative. Preserve forced outer process/framework Promise adapters, correct Drizzle JSONB and HttpApi encoding, external test-body JSON serialization, deliberate malformed rejection fixtures, legitimate `as const`/`satisfies`, line-preserving `.env` editing, native collection operations, and correctly scoped fibers. Startup `Layer.orDie` requires the deliberate outer seam and typed-cause logging; it is not a blanket library escape hatch. Operational success output is not an observability failure.
+The audit records the original findings; focused architecture documents own current behavior. Preserve forced outer process/framework Promise adapters, correct Drizzle JSONB and HttpApi encoding, external test-body JSON serialization, deliberate malformed rejection fixtures, legitimate `as const`/`satisfies`, line-preserving `.env` editing, native collection operations, and correctly scoped fibers. Startup `Layer.orDie` requires the deliberate outer seam and typed-cause logging; it is not a blanket library escape hatch. Operational success output is not an observability failure.
 
 Some checks are **review heuristics**, not semantic proofs. In particular, adjacent yields without lexical data dependencies do not prove safe concurrency, local timeout proximity does not prove a whole-program deadline, and identifiers/schema names cannot establish complete business semantics. Never mechanically parallelize effects or change wire formats just to silence a diagnostic. Prefer an audit-grounded detector correction for false positives; use a narrow, justified rule option for a real architectural exception. Do not hide existing debt with blanket disables or zero-count "invalid" fixtures.
 
@@ -74,3 +74,17 @@ Fixture config template:
 ```
 
 Place examples under `invalid/` and `valid/`; `// expect-count: N` at the start of a positive fixture pins its positive diagnostic count. False-positive repairs need negative regressions. Preserve existing test evidence unless its expectation conflicts with the audit, and explain such corrections.
+
+## Native interface and operator policy
+
+`no-promise-shaped-port` covers application packages, scripts, tests, and TSX. Owned interfaces return Effect, including generic aliases, overloads, and callback parameters. Real SDK and test runner callbacks keep their required Promise boundary. Private helpers qualify only when lexical references establish that boundary; an exported Promise helper remains an owned interface.
+
+`repository-policy.config.ts` checks all repository source for `instanceof` and manual `_tag` comparisons, switches, and assertions. Negative lint fixtures are excluded because they deliberately contain forbidden syntax. Use Schema, native predicates, and Effect failure combinators to inspect values; full serialized-object assertions and diagnostic tag output remain valid.
+
+## Test runtime policy
+
+`no-effect-run-in-tests` rejects references, calls, imports, re-exports, and dynamic imports of `Effect.run*` inside tests, including test support and harness directories. Use `it.effect`, `it.live`, and `it.layer` from `effect-rstest` so the runner owns services, scopes, test time, and configuration. The external package owns the runner boundary; there is no repository-owned implementation or harness-path allowlist. The immutable upstream canary currently uses a temporary pnpm patch for [effect-rstest PR #4](https://github.com/ScriptedAlchemy/effect-rstest/pull/4). [OntOS #507](https://github.com/TechsioCZ/ontos/issues/507) tracks replacing it with a published upstream package and deleting the patch; do not add a local runner alias or wrapper.
+
+Playwright/e2e adapters remain exempt through `ignorePaths`. Type-only imports, non-Effect bindings, and ManagedRuntime instance methods are not Effect root-function violations. Nested Effect re-entry is diagnosed by `no-nested-effect-run`. Additional rule options are `testPaths`, `effectModules`, and `effectModuleSources`; there is no fixer or suggestion.
+
+The workspace import policy rejects `node:test`, `node:assert`, `node:assert/strict`, and `@rstest/core` in application, package, vertical, script, and tooling tests, with `tests/e2e/**` exempt for Playwright. Test files disable Sonar's hard-coded runner detector and the async-Promise-function rule because Effect-native test APIs and `Effect.promise`/`Effect.tryPromise` thunks are intentional.

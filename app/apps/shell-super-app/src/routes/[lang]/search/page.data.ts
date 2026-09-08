@@ -3,7 +3,7 @@ import { Url, UrlParams } from 'effect/unstable/http';
 
 import type { ShellSearchResponse } from '../../../../shared/api.ts';
 import { searchResources } from '../../../api/auth-client.ts';
-import { runBrowserEffect } from '../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../page.data.ts';
 import type { HomePageModel } from '../page.data.ts';
@@ -45,8 +45,8 @@ export const loader = ({
   request,
 }: SearchLoaderArguments): Promise<SearchPageModel> => {
   const query = (searchFromRequest(request).q ?? '').trim();
-  return runBrowserEffect(
-    Effect.tryPromise(() => loadHomePageModel(request)).pipe(
+  return browserRuntime.runPromise(
+    loadHomePageModel(request).pipe(
       Effect.timeout('30 seconds'),
       Effect.flatMap((shell) => {
         if (shell.state !== 'authenticated') {
@@ -115,6 +115,7 @@ export const loader = ({
           })
         );
       })
-    )
+    ),
+    { signal: request.signal }
   );
 };

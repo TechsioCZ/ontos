@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   MicroVerticalBuildMarkerSchema,
@@ -36,40 +34,42 @@ const marker = {
   version: generatedBuildMetadata.version,
 };
 
-test('marker and readiness schemas preserve the generated wire representation', () => {
-  const readiness = {
-    checks: {
-      api: 'ready' as const,
-      moduleFederation: 'ready' as const,
-      ssr: 'ready' as const,
-      translations: 'ready' as const,
-    },
-    marker,
-    status: 'ready' as const,
-    versionSkew: 'none' as const,
-  };
+it.effect(
+  'marker and readiness schemas preserve the generated wire representation',
+  () =>
+    Effect.gen(function* wireRepresentationEffect() {
+      const readiness = {
+        checks: {
+          api: 'ready' as const,
+          moduleFederation: 'ready' as const,
+          ssr: 'ready' as const,
+          translations: 'ready' as const,
+        },
+        marker,
+        status: 'ready' as const,
+        versionSkew: 'none' as const,
+      };
 
-  assert.deepEqual(
-    Schema.decodeUnknownSync(MicroVerticalBuildMarkerSchema)(
-      generatedBuildMetadata
-    ),
-    marker
-  );
-  assert.deepEqual(
-    Schema.encodeSync(MicroVerticalBuildMarkerSchema)(marker),
-    marker
-  );
-  assert.deepEqual(
-    Schema.decodeUnknownSync(MicroVerticalReadinessSchema)(readiness),
-    readiness
-  );
-  assert.deepEqual(
-    Schema.encodeSync(MicroVerticalReadinessSchema)(readiness),
-    readiness
-  );
-});
+      expect(
+        yield* Schema.decodeUnknownEffect(MicroVerticalBuildMarkerSchema)(
+          generatedBuildMetadata
+        )
+      ).toEqual(marker);
+      expect(
+        yield* Schema.encodeEffect(MicroVerticalBuildMarkerSchema)(marker)
+      ).toEqual(marker);
+      expect(
+        yield* Schema.decodeUnknownEffect(MicroVerticalReadinessSchema)(
+          readiness
+        )
+      ).toEqual(readiness);
+      expect(
+        yield* Schema.encodeEffect(MicroVerticalReadinessSchema)(readiness)
+      ).toEqual(readiness);
+    })
+);
 
-test('constructs generated-client operation metadata with and without trace identity', () => {
+it('constructs generated-client operation metadata with and without trace identity', () => {
   const inputWithSensitiveExtras = {
     credential: 'must-not-pass',
     method: 'GET',
@@ -79,8 +79,7 @@ test('constructs generated-client operation metadata with and without trace iden
     routePath: '/inventory/readiness',
     tenantId: 'must-not-pass',
   };
-  assert.deepEqual(
-    createMicroVerticalOperationContext(inputWithSensitiveExtras),
+  expect(createMicroVerticalOperationContext(inputWithSensitiveExtras)).toEqual(
     {
       method: 'GET',
       operationId: 'InventoryApi:inventory:readiness',
@@ -88,24 +87,23 @@ test('constructs generated-client operation metadata with and without trace iden
       source: 'generated-client',
     }
   );
-  assert.deepEqual(
+  expect(
     createMicroVerticalOperationContext({
       method: 'POST',
       operationId: 'InventoryApi:inventory:create',
       routePath: '/inventory',
       traceId: 'trace-123',
-    }),
-    {
-      method: 'POST',
-      operationId: 'InventoryApi:inventory:create',
-      routePath: '/inventory',
-      source: 'generated-client',
-      traceId: 'trace-123',
-    }
-  );
+    })
+  ).toEqual({
+    method: 'POST',
+    operationId: 'InventoryApi:inventory:create',
+    routePath: '/inventory',
+    source: 'generated-client',
+    traceId: 'trace-123',
+  });
 });
 
-test('projects only standard operation telemetry attributes', () => {
+it('projects only standard operation telemetry attributes', () => {
   const operationContext = {
     ...createMicroVerticalOperationContext({
       method: 'POST',
@@ -121,26 +119,25 @@ test('projects only standard operation telemetry attributes', () => {
     tenantId: 'must-not-pass',
   };
 
-  assert.deepEqual(microVerticalOperationAttributes(operationContext), {
+  expect(microVerticalOperationAttributes(operationContext)).toEqual({
     'modernjs.operation.id': 'InventoryApi:inventory:create',
     'modernjs.operation.method': 'POST',
     'modernjs.operation.route': '/inventory',
     'modernjs.operation.source': 'generated-client',
     'modernjs.trace.id': 'trace-123',
   });
-  assert.deepEqual(
+  expect(
     microVerticalOperationAttributes(
       createMicroVerticalOperationContext({
         method: 'GET',
         operationId: 'InventoryApi:inventory:list',
         routePath: '/inventory',
       })
-    ),
-    {
-      'modernjs.operation.id': 'InventoryApi:inventory:list',
-      'modernjs.operation.method': 'GET',
-      'modernjs.operation.route': '/inventory',
-      'modernjs.operation.source': 'generated-client',
-    }
-  );
+    )
+  ).toEqual({
+    'modernjs.operation.id': 'InventoryApi:inventory:list',
+    'modernjs.operation.method': 'GET',
+    'modernjs.operation.route': '/inventory',
+    'modernjs.operation.source': 'generated-client',
+  });
 });

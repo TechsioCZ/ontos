@@ -1,4 +1,3 @@
-import { afterEach, expect, rstest, test } from '@rstest/core';
 import { Menu as ActualMenu } from '@techsio/ui-kit/molecules/menu' with {
   rstest: 'importActual',
 };
@@ -7,6 +6,8 @@ import { Select as ActualSelect } from '@techsio/ui-kit/molecules/select' with {
 };
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Effect } from 'effect';
+import { afterEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
 
 import { AppIdSchema } from '../../shared/api';
@@ -316,112 +317,128 @@ test('shows failed installed deployments as disabled identities with typed reaso
   expect(screen.queryByRole('link', { name: 'legacy-center' })).toBeNull();
 });
 
-test('renders the account Menu last and dispatches only the logout command by keyboard', async () => {
-  const onLogout = rstest.fn();
-  const user = userEvent.setup();
-  render(
-    <AuthenticatedDashboardLayout
-      {...tenantProps}
-      identity={identity}
-      logoutPending={false}
-      navigation={navigation}
-      onLogout={onLogout}
-      title={homeTitle}
-    >
-      Content
-    </AuthenticatedDashboardLayout>
-  );
+it.effect(
+  'renders the account Menu last and dispatches only the logout command by keyboard',
+  () =>
+    Effect.gen(function* accountKeyboardLogout() {
+      const onLogout = rstest.fn();
+      const user = userEvent.setup();
+      render(
+        <AuthenticatedDashboardLayout
+          {...tenantProps}
+          identity={identity}
+          logoutPending={false}
+          navigation={navigation}
+          onLogout={onLogout}
+          title={homeTitle}
+        >
+          Content
+        </AuthenticatedDashboardLayout>
+      );
 
-  const header = document.querySelector(
-    'header[aria-label="Dashboard header"]'
-  );
-  const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
-  expect(header?.lastElementChild?.contains(trigger)).toBe(true);
-  const accountMenu = header?.lastElementChild;
-  expect(
-    accountMenu instanceof HTMLElement
-      ? accountMenu.dataset['position']
-      : undefined
-  ).toBe('end');
+      const header = document.querySelector(
+        'header[aria-label="Dashboard header"]'
+      );
+      const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
+      expect(header?.lastElementChild?.contains(trigger)).toBe(true);
+      const accountMenu = header?.querySelector<HTMLElement>(
+        ':scope > :last-child'
+      );
+      expect(accountMenu?.dataset['position']).toBe('end');
 
-  trigger.focus();
-  await user.keyboard('{Enter}');
-  const commands = await screen.findAllByRole('menuitem');
-  expect(commands).toHaveLength(1);
-  expect(commands[0]?.textContent).toBe('Logout');
-  await user.keyboard('{ArrowDown}{Enter}');
-  expect(onLogout).toHaveBeenCalledTimes(1);
+      trigger.focus();
+      yield* Effect.promise(() => user.keyboard('{Enter}'));
+      const commands = yield* Effect.promise(() =>
+        screen.findAllByRole('menuitem')
+      );
+      expect(commands).toHaveLength(1);
+      expect(commands[0]?.textContent).toBe('Logout');
+      yield* Effect.promise(() => user.keyboard('{ArrowDown}{Enter}'));
+      expect(onLogout).toHaveBeenCalledTimes(1);
 
-  accountMenuSelectHandlers.at(-1)?.({ value: 'unexpected' });
-  expect(onLogout).toHaveBeenCalledTimes(1);
-});
+      accountMenuSelectHandlers.at(-1)?.({ value: 'unexpected' });
+      expect(onLogout).toHaveBeenCalledTimes(1);
+    })
+);
 
-test('retains the account trigger and disables the sole command while logout is pending', async () => {
-  const onLogout = rstest.fn();
-  const user = userEvent.setup();
-  render(
-    <AuthenticatedDashboardLayout
-      {...tenantProps}
-      identity={identity}
-      logoutPending
-      navigation={navigation}
-      onLogout={onLogout}
-      title={homeTitle}
-    >
-      Content
-    </AuthenticatedDashboardLayout>
-  );
+it.effect(
+  'retains the account trigger and disables the sole command while logout is pending',
+  () =>
+    Effect.gen(function* pendingLogoutCommand() {
+      const onLogout = rstest.fn();
+      const user = userEvent.setup();
+      render(
+        <AuthenticatedDashboardLayout
+          {...tenantProps}
+          identity={identity}
+          logoutPending
+          navigation={navigation}
+          onLogout={onLogout}
+          title={homeTitle}
+        >
+          Content
+        </AuthenticatedDashboardLayout>
+      );
 
-  const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
-  await user.click(trigger);
-  const command = await screen.findByRole('menuitem', { name: 'Logging out…' });
-  expect(command.getAttribute('aria-disabled')).toBe('true');
-  await user.click(command);
-  expect(onLogout).not.toHaveBeenCalled();
-});
+      const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
+      yield* Effect.promise(() => user.click(trigger));
+      const command = yield* Effect.promise(() =>
+        screen.findByRole('menuitem', { name: 'Logging out…' })
+      );
+      expect(command.getAttribute('aria-disabled')).toBe('true');
+      yield* Effect.promise(() => user.click(command));
+      expect(onLogout).not.toHaveBeenCalled();
+    })
+);
 
-test('renders complete ordered tenant items and dispatches keyboard selection once', async () => {
-  const onTenantChange = rstest.fn();
-  const user = userEvent.setup();
-  render(
-    <AuthenticatedDashboardLayout
-      {...tenantProps}
-      identity={identity}
-      logoutPending={false}
-      navigation={navigation}
-      onLogout={noopLogout}
-      onTenantChange={onTenantChange}
-      title={homeTitle}
-    >
-      Content
-    </AuthenticatedDashboardLayout>
-  );
+it.effect(
+  'renders complete ordered tenant items and dispatches keyboard selection once',
+  () =>
+    Effect.gen(function* tenantKeyboardSelection() {
+      const onTenantChange = rstest.fn();
+      const user = userEvent.setup();
+      render(
+        <AuthenticatedDashboardLayout
+          {...tenantProps}
+          identity={identity}
+          logoutPending={false}
+          navigation={navigation}
+          onLogout={noopLogout}
+          onTenantChange={onTenantChange}
+          title={homeTitle}
+        >
+          Content
+        </AuthenticatedDashboardLayout>
+      );
 
-  const trigger = screen.getByRole('combobox', { name: 'Current tenant' });
-  await user.click(trigger);
-  const options = await screen.findAllByRole('option');
-  expect(options.map((option) => option.textContent)).toEqual([
-    'Alpha tenant',
-    'Zeta tenant',
-  ]);
-  expect(options.map((option) => option.dataset['value'])).toEqual([
-    'tenant-1',
-    'tenant-2',
-  ]);
-  expect(options.every((option) => option.querySelector('span') !== null)).toBe(
-    true
-  );
-  await user.keyboard('{ArrowDown}{Enter}');
-  expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
-  expect(onTenantChange).toHaveBeenCalledTimes(1);
+      const trigger = screen.getByRole('combobox', { name: 'Current tenant' });
+      yield* Effect.promise(() => user.click(trigger));
+      const options = yield* Effect.promise(() =>
+        screen.findAllByRole('option')
+      );
+      expect(options.map((option) => option.textContent)).toEqual([
+        'Alpha tenant',
+        'Zeta tenant',
+      ]);
+      expect(options.map((option) => option.dataset['value'])).toEqual([
+        'tenant-1',
+        'tenant-2',
+      ]);
+      expect(
+        options.every((option) => option.querySelector('span') !== null)
+      ).toBe(true);
+      yield* Effect.promise(() => user.keyboard('{ArrowDown}{Enter}'));
+      expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
+      expect(onTenantChange).toHaveBeenCalledTimes(1);
 
-  tenantValueChangeHandlers.at(-1)?.({
-    items: [tenantProps.tenantChoices[0]],
-    value: ['tenant-1'],
-  });
-  tenantValueChangeHandlers.at(-1)?.({ items: [], value: [] });
-  expect(onTenantChange).toHaveBeenCalledTimes(1);
-});
+      tenantValueChangeHandlers.at(-1)?.({
+        items: [tenantProps.tenantChoices[0]],
+        value: ['tenant-1'],
+      });
+      tenantValueChangeHandlers.at(-1)?.({ items: [], value: [] });
+      expect(onTenantChange).toHaveBeenCalledTimes(1);
+    })
+);
 
 test('disables unavailable, one-choice, and pending tenant states with associated feedback', () => {
   const { rerender } = render(

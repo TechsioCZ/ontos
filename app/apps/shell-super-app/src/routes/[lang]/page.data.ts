@@ -18,7 +18,7 @@ import type {
   AvailableTenantsClientError,
   ShellCompositionClientError,
 } from '../../api/auth-client.ts';
-import { runBrowserEffect } from '../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
 interface HomeLoaderArguments {
@@ -107,129 +107,130 @@ const tenantRead = (
   );
 
 export const loadHomePageModel = (request: Request) =>
-  runBrowserEffect(
-    shellAuthenticationClientOptionsFromRequest(request).pipe(
-      Effect.flatMap((options) =>
-        currentSession(options).pipe(
-          Effect.flatMap((session) => {
-            if (session.state === 'anonymous') {
-              return Effect.succeed<HomePageModel>(anonymousModel);
-            }
-            const legalEntities =
-              session.state === 'authenticated'
-                ? availableLegalEntities(options).pipe(
-                    Effect.map((response) => ({
-                      items: response.legalEntities,
-                      state: 'available' as const,
-                    })),
-                    Effect.orElseSucceed(() => ({
-                      items: [] as const,
-                      state: 'unavailable' as const,
-                    }))
-                  )
-                : Effect.succeed({
+  shellAuthenticationClientOptionsFromRequest(request).pipe(
+    Effect.flatMap((options) =>
+      currentSession(options).pipe(
+        Effect.flatMap((session) => {
+          if (session.state === 'anonymous') {
+            return Effect.succeed<HomePageModel>(anonymousModel);
+          }
+          const legalEntities =
+            session.state === 'authenticated'
+              ? availableLegalEntities(options).pipe(
+                  Effect.map((response) => ({
+                    items: response.legalEntities,
+                    state: 'available' as const,
+                  })),
+                  Effect.orElseSucceed(() => ({
+                    items: [] as const,
+                    state: 'unavailable' as const,
+                  }))
+                )
+              : Effect.succeed({
+                  items:
+                    session.state === 'selection_required'
+                      ? session.availableLegalEntities
+                      : ([] as const),
+                  state: 'available' as const,
+                });
+          const navigation =
+            session.state === 'authenticated'
+              ? shellComposition(options).pipe(
+                  Effect.map((composition) => ({
                     items:
-                      session.state === 'selection_required'
-                        ? session.availableLegalEntities
+                      composition.state === 'available'
+                        ? composition.navigation
                         : ([] as const),
                     state: 'available' as const,
-                  });
-            const navigation =
-              session.state === 'authenticated'
-                ? shellComposition(options).pipe(
-                    Effect.map((composition) => ({
-                      items:
-                        composition.state === 'available'
-                          ? composition.navigation
-                          : ([] as const),
-                      state: 'available' as const,
-                      unavailableDeployments:
-                        composition.state === 'available'
-                          ? composition.unavailableDeployments
-                          : ([] as const),
-                    })),
-                    Effect.matchEffect({
-                      onFailure: (error) =>
-                        Effect.succeed(unavailableNavigation(error)),
-                      onSuccess: Effect.succeed,
-                    })
-                  )
-                : Effect.succeed({
-                    items: [] as const,
-                    state: 'available' as const,
-                    unavailableDeployments: [] as const,
-                  });
-            return Effect.all(
-              {
-                legalEntities,
-                navigation,
-                tenants: availableTenants(options).pipe(
-                  Effect.map(({ tenants }) => ({
-                    items: tenants,
-                    state: 'available' as const,
+                    unavailableDeployments:
+                      composition.state === 'available'
+                        ? composition.unavailableDeployments
+                        : ([] as const),
                   })),
                   Effect.matchEffect({
                     onFailure: (error) =>
-                      Effect.succeed(
-                        tenantRead(error, session.identity.tenantId)
-                      ),
+                      Effect.succeed(unavailableNavigation(error)),
                     onSuccess: Effect.succeed,
                   })
-                ),
-              },
-              { concurrency: 3 }
-            ).pipe(
-              Effect.map(
-                ({
+                )
+              : Effect.succeed({
+                  items: [] as const,
+                  state: 'available' as const,
+                  unavailableDeployments: [] as const,
+                });
+          return Effect.all(
+            {
+              legalEntities,
+              navigation,
+              tenants: availableTenants(options).pipe(
+                Effect.map(({ tenants }) => ({
+                  items: tenants,
+                  state: 'available' as const,
+                })),
+                Effect.matchEffect({
+                  onFailure: (error) =>
+                    Effect.succeed(
+                      tenantRead(error, session.identity.tenantId)
+                    ),
+                  onSuccess: Effect.succeed,
+                })
+              ),
+            },
+            { concurrency: 3 }
+          ).pipe(
+            Effect.map(
+              ({
+                legalEntities: choices,
+                navigation: items,
+                tenants,
+              }): HomePageModel => {
+                if (tenants.state === 'stale') {
+                  return anonymousModel;
+                }
+                const model = {
+                  contextState: session.state,
+                  identity: session.identity,
                   legalEntities: choices,
                   navigation: items,
+                  state: 'authenticated' as const,
                   tenants,
-                }): HomePageModel => {
-                  if (tenants.state === 'stale') {
-                    return anonymousModel;
-                  }
-                  const model = {
-                    contextState: session.state,
-                    identity: session.identity,
-                    legalEntities: choices,
-                    navigation: items,
-                    state: 'authenticated' as const,
-                    tenants,
-                  };
-                  return session.state === 'authenticated'
-                    ? {
-                        ...model,
-                        selectedLegalEntityId: session.identity.legalEntityId,
-                      }
-                    : model;
-                }
-              )
-            );
-          })
-        )
-      ),
-      Effect.matchEffect({
-        onFailure: (error) =>
-          Effect.succeed<HomePageModel>(
-            Match.value(error).pipe(
-              Match.tag('InvalidCredentialsProblem', () => anonymousModel),
-              Match.tag(
-                'AuthenticationInternalProblem',
-                'AuthenticationUnavailableProblem',
-                'ConfigError',
-                'HttpClientError',
-                'OntosIdentityForbiddenProblem',
-                'SchemaError',
-                () => unavailableModel
-              ),
-              Match.exhaustive
+                };
+                return session.state === 'authenticated'
+                  ? {
+                      ...model,
+                      selectedLegalEntityId: session.identity.legalEntityId,
+                    }
+                  : model;
+              }
             )
-          ),
-        onSuccess: Effect.succeed,
-      })
-    )
+          );
+        })
+      )
+    ),
+    Effect.matchEffect({
+      onFailure: (error) =>
+        Effect.succeed<HomePageModel>(
+          Match.value(error).pipe(
+            Match.tag('InvalidCredentialsProblem', () => anonymousModel),
+            Match.tag(
+              'AuthenticationInternalProblem',
+              'AuthenticationUnavailableProblem',
+              'ConfigError',
+              'HttpClientError',
+              'OntosIdentityForbiddenProblem',
+              'SchemaError',
+              () => unavailableModel
+            ),
+            Match.exhaustive
+          )
+        ),
+      onSuccess: Effect.succeed,
+    })
   );
 
 export const loader = ({
   request,
-}: HomeLoaderArguments): Promise<HomePageModel> => loadHomePageModel(request);
+}: HomeLoaderArguments): Promise<HomePageModel> =>
+  browserRuntime.runPromise(loadHomePageModel(request), {
+    signal: request.signal,
+  });

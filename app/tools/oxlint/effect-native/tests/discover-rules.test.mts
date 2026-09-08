@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
@@ -7,50 +6,65 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
-import { test } from 'node:test';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { Effect, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { discoverRules } from '../shared/discover-rules.ts';
 import { pluginDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
-test('rule discovery loads the selected production rule and rejects unknown names', async () => {
-  const rules = await discoverRules(['no-native-timers']);
-  assert.deepEqual(Object.keys(rules), ['no-native-timers']);
-  assert.equal(typeof rules['no-native-timers']?.create, 'function');
-  await assert.rejects(
-    discoverRules(['not-a-rule']),
-    /Unknown fixture rule: not-a-rule/u
-  );
-});
+it.effect(
+  'rule discovery loads the selected production rule and rejects unknown names',
+  () =>
+    Effect.gen(function* ruleDiscoveryEffect() {
+      const rules = yield* Effect.tryPromise(() =>
+        discoverRules(['no-native-timers'])
+      );
+      expect(Object.keys(rules)).toEqual(['no-native-timers']);
+      expect(Predicate.isFunction(rules['no-native-timers']?.create)).toBe(
+        true
+      );
+      const error = yield* Effect.flip(
+        Effect.tryPromise(() => discoverRules(['not-a-rule']))
+      );
+      const message: unknown = expect.stringMatching(
+        /Unknown fixture rule: not-a-rule/u
+      );
+      expect(error.cause).toMatchObject({ message });
+    })
+);
 
-test('rule discovery uses file URLs in workspaces containing spaces, URL delimiters, and Unicode', () => {
+it('rule discovery uses file URLs in workspaces containing spaces, URL delimiters, and Unicode', () => {
   withTemporaryWorkspace((directory) => {
-    const workspace = join(directory, 'workspace #rules % café');
-    const shared = join(workspace, 'shared');
-    const rules = join(workspace, 'rules');
+    const workspace = path.join(directory, 'workspace #rules % café');
+    const shared = path.join(workspace, 'shared');
+    const rules = path.join(workspace, 'rules');
+    const selectedFile = 'selected.ts';
+    const discoveryFile = 'discover-rules.ts';
     mkdirSync(shared, { recursive: true });
     mkdirSync(rules, { recursive: true });
     writeFileSync(
-      join(workspace, 'package.json'),
+      path.join(workspace, 'package.json'),
       JSON.stringify({ type: 'module' })
     );
     copyFileSync(
-      join(pluginDirectory, 'shared', 'discover-rules.ts'),
-      join(shared, 'discover-rules.ts')
+      path.join(pluginDirectory, 'shared', discoveryFile),
+      path.join(shared, discoveryFile)
     );
     writeFileSync(
-      join(rules, 'selected.ts'),
+      path.join(rules, selectedFile),
       'export const rule = { marker: "selected" };'
     );
     writeFileSync(
-      join(rules, 'unselected.ts'),
+      path.join(rules, 'unselected.ts'),
       'throw new Error("unselected rule must not load"); export const rule = {};'
     );
-    const alias = join(directory, 'workspace-link');
+    const alias = path.join(directory, 'workspace-link');
     symlinkSync(workspace, alias, 'dir');
-    const modulePath = join(alias, 'shared', 'discover-rules.ts');
+    const modulePath = path.join(alias, 'shared', 'discover-rules.ts');
     const moduleUrl = pathToFileURL(modulePath).href;
     // Node resolves symlinked workspace roots before exposing the import's parent URL.
     const resolvedModuleUrl = pathToFileURL(realpathSync(modulePath)).href;
@@ -83,10 +97,10 @@ test('rule discovery uses file URLs in workspaces containing spaces, URL delimit
         }
       `,
       ],
-      { cwd: workspace, encoding: 'utf8', timeout: 30_000 }
+      { cwd: workspace, encoding: 'utf-8', timeout: 30_000 }
     );
-    assert.equal(result.error, undefined);
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(result.stderr, '');
+    expect(result.error).toBe(undefined);
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.stderr).toBe('');
   });
 });

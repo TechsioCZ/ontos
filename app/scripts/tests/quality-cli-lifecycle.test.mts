@@ -1,11 +1,7 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Layer, Schema, Stream } from 'effect';
+import { Effect, Schema, Stream } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-
-import { makeEffectTestCallback } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -40,26 +36,12 @@ const verifyImports = Effect.gen(function* verifyInertImports() {
       return `import ${encodeJson(url)};`;
     })
     .join('\n');
-  assert.deepEqual(yield* runChild(imports), {
-    code: 0,
-    stderr: '',
-    stdout: '',
-  });
+  expect(yield* runChild(imports)).toEqual({ code: 0, stderr: '', stdout: '' });
 });
 
-void test(
-  'CLI modules are inert when imported',
-  makeEffectTestCallback(
-    Effect.scoped(
-      Layer.build(
-        Layer.effectDiscard(verifyImports).pipe(
-          Layer.provide(NodeServices.layer)
-        )
-      )
-    )
-  )
+it.live('CLI modules are inert when imported', () =>
+  verifyImports.pipe(Effect.provide(NodeServices.layer))
 );
-
 const verifyFinalization = Effect.fn('verifyFinalization')(
   function* verifyCliFinalization(fails: boolean) {
     const result = yield* runChild(`
@@ -71,33 +53,15 @@ const verifyFinalization = Effect.fn('verifyFinalization')(
         yield* ${fails ? "Effect.fail(new CliFailure({ message: 'expected failure' }))" : 'Effect.void'};
       }));
     `);
-    assert.equal(result.code, fails ? 1 : 0);
-    assert.equal(result.stdout, 'acquired\nreleased\n');
-    assert.equal(result.stderr, fails ? 'CliFailure: expected failure\n' : '');
+    expect(result.code).toBe(fails ? 1 : 0);
+    expect(result.stdout).toBe('acquired\nreleased\n');
+    expect(result.stderr).toBe(fails ? 'CliFailure: expected failure\n' : '');
   }
 );
 
-void test(
-  'CLI success finalizes scope and exits zero',
-  makeEffectTestCallback(
-    Effect.scoped(
-      Layer.build(
-        Layer.effectDiscard(verifyFinalization(false)).pipe(
-          Layer.provide(NodeServices.layer)
-        )
-      )
-    )
-  )
+it.live('CLI success finalizes scope and exits zero', () =>
+  verifyFinalization(false).pipe(Effect.provide(NodeServices.layer))
 );
-void test(
-  'CLI failure finalizes scope, logs once and exits one',
-  makeEffectTestCallback(
-    Effect.scoped(
-      Layer.build(
-        Layer.effectDiscard(verifyFinalization(true)).pipe(
-          Layer.provide(NodeServices.layer)
-        )
-      )
-    )
-  )
+it.live('CLI failure finalizes scope, logs once and exits one', () =>
+  verifyFinalization(true).pipe(Effect.provide(NodeServices.layer))
 );

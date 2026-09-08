@@ -262,7 +262,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(
     const runtimeEndpoint = getEffectiveDatabaseEndpoint(runtime);
     yield* Effect.try({
       catch: (cause) =>
-        cause instanceof DatabaseTargetMismatchError
+        Schema.is(DatabaseTargetMismatchError)(cause)
           ? cause
           : new DatabaseTrustBoundarySnapshotError({
               code: 'database_target_identity_unavailable',
@@ -286,7 +286,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(
     });
     yield* Effect.try({
       catch: (cause) =>
-        cause instanceof DatabaseSessionIdentityError
+        Schema.is(DatabaseSessionIdentityError)(cause)
           ? cause
           : new DatabaseTrustBoundarySnapshotError({
               code: 'database_session_identity_unavailable',

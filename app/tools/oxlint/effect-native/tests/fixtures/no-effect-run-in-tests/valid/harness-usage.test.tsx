@@ -1,21 +1,23 @@
 import { Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
-import { itEffect, itLayer } from "./tests/support/effect-harness.ts";
+import { it } from "effect-rstest";
 
 declare const ContactsLayer: Layer.Layer<never>;
 declare const resolve: (id: string) => Effect.Effect<string>;
 
-itEffect(
+it.effect(
 	"resolves through the harness",
-	Effect.gen(function* () {
+	() => Effect.gen(function* () {
 		yield* TestClock.adjust("1 second");
 		const value = yield* resolve("x");
 		return Schema.decodeUnknownSync(Schema.String)(value);
 	}),
 );
 
-itLayer("resolves with an explicit layer", ContactsLayer, resolve("y"));
+it.layer(ContactsLayer)("contacts", (it) => {
+	it.effect("resolves with an explicit layer", () => resolve("y"));
+});
 
 // A long-lived ManagedRuntime instance is the A1 target, not an ad hoc Effect.run* entry point.
 const runtime = ManagedRuntime.make(ContactsLayer);

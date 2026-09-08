@@ -1,9 +1,5 @@
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -53,23 +49,22 @@ const lifecycleAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  (payload, context) =>
-    Effect.gen(function* lifecycleHandler() {
-      const event = yield* context.addDomainEvent({
-        eventType: 'test.counter.incremented.v1',
-        payloadJson: { amount: payload.amount },
-        producerModuleKey: 'test.counter',
-        subjectModuleKey: 'test.counter',
-        subjectResourceId: 'primary',
-        subjectResourceType: 'counter',
-      });
-      yield* context.addOutboxMessage(event, {
-        payloadJson: { amount: payload.amount },
-        producerModuleKey: 'test.counter',
-        topic: 'test.counter.incremented.v1',
-      });
-      return { total: payload.amount };
-    })
+  Effect.fn(function* lifecycleHandler(payload, context) {
+    const event = yield* context.addDomainEvent({
+      eventType: 'test.counter.incremented.v1',
+      payloadJson: { amount: payload.amount },
+      producerModuleKey: 'test.counter',
+      subjectModuleKey: 'test.counter',
+      subjectResourceId: 'primary',
+      subjectResourceType: 'counter',
+    });
+    yield* context.addOutboxMessage(event, {
+      payloadJson: { amount: payload.amount },
+      producerModuleKey: 'test.counter',
+      topic: 'test.counter.incremented.v1',
+    });
+    return { total: payload.amount };
+  })
 );
 
 const request = {
@@ -82,103 +77,104 @@ const request = {
   },
 } as const;
 
-test('runs the real Action lifecycle and preserves committed replay semantics', async () => {
-  const harness = makeActionTestHarness({
-    actionPermission: 'allowed',
-    tenantPermission: 'allowed',
-  });
+it.effect(
+  'runs the real Action lifecycle and preserves committed replay semantics',
+  Effect.fn(function* testProgram1() {
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
 
-  assert.deepEqual(
-    await runEffectTestPromise(harness.runtime.runAction(request)),
-    { total: 2 }
-  );
-  const replay = await runEffectTestPromise(
-    harness.runtime.runAction(request).pipe(Effect.flip)
-  );
-  const snapshot = harness.snapshot();
+    expect(yield* harness.runtime.runAction(request)).toEqual({ total: 2 });
+    const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
+    const snapshot = harness.snapshot();
 
-  assert.equal(replay._tag, 'ActionAlreadyCommitted');
-  assert.deepEqual(
-    snapshot.stages.slice(0, ACTION_RUNTIME_STAGES.length),
-    ACTION_RUNTIME_STAGES
-  );
-  assert.equal(snapshot.invocations.length, 1);
-  assert.equal(snapshot.invocations[0]?.status, 'succeeded');
-  assert.equal(snapshot.transactionCount, 1);
-  assert.equal(snapshot.committed.length, 1);
-  assert.equal(snapshot.committed[0]?.evidence.domainEvents.length, 1);
-  assert.equal(snapshot.committed[0]?.evidence.outboxMessages.length, 1);
-});
+    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
 
-test('defaults authorization closed and never starts a transaction for a denial', async () => {
-  const harness = makeActionTestHarness();
-  const denied = await runEffectTestPromise(
-    harness.runtime.runAction(request).pipe(Effect.flip)
-  );
-  const snapshot = harness.snapshot();
+    expect(snapshot.stages.slice(0, ACTION_RUNTIME_STAGES.length)).toEqual(
+      ACTION_RUNTIME_STAGES
+    );
+    expect(snapshot.invocations.length).toBe(1);
+    expect(snapshot.invocations[0]?.status).toBe('succeeded');
+    expect(snapshot.transactionCount).toBe(1);
+    expect(snapshot.committed.length).toBe(1);
+    expect(snapshot.committed[0]?.evidence.domainEvents.length).toBe(1);
+    expect(snapshot.committed[0]?.evidence.outboxMessages.length).toBe(1);
+  })
+);
 
-  assert.equal(denied._tag, 'ActionPermissionDenied');
-  assert.equal(snapshot.invocations.length, 1);
-  assert.equal(snapshot.invocations[0]?.status, 'rejected');
-  assert.equal(snapshot.permissionDenials.length, 1);
-  assert.equal(snapshot.policyDenials.length, 0);
-  assert.equal(snapshot.invocations[0]?.completedAt?.getTime(), 0);
-  assert.equal(snapshot.transactionCount, 0);
-  assert.equal(snapshot.stages.includes('handler_executed'), false);
-});
+it.effect(
+  'defaults authorization closed and never starts a transaction for a denial',
+  Effect.fn(function* testProgram2() {
+    const harness = yield* makeActionTestHarness();
+    const denied = yield* harness.runtime.runAction(request).pipe(Effect.flip);
+    const snapshot = harness.snapshot();
 
-test('substitutes typed owner services without replacing the private handler', async () => {
-  interface CounterServices {
-    readonly increment: (amount: number) => Effect.Effect<number>;
-  }
-  const serviceAction = defineAction(
-    {
-      accessEvidencePolicy: {
-        captureMode: 'metadata_only',
-        policyKey: 'test.service.read.v1',
-      },
-      actionKey: 'test.service.increment',
-      auditProfile: 'minimal',
-      domainErrorSchema: Schema.Never,
-      domainEvents: {},
-      entrypoint: defineTenantModuleEntrypoint({
-        access: 'write',
-        authorization: {
-          kind: 'action_execution',
-          provisioning: 'tenant_membership_default',
+    expect(Predicate.isTagged(denied, 'ActionPermissionDenied')).toBe(true);
+
+    expect(snapshot.invocations.length).toBe(1);
+    expect(snapshot.invocations[0]?.status).toBe('rejected');
+    expect(snapshot.permissionDenials.length).toBe(1);
+    expect(snapshot.policyDenials.length).toBe(0);
+    expect(snapshot.invocations[0]?.completedAt?.getTime()).toBe(0);
+    expect(snapshot.transactionCount).toBe(0);
+    expect(snapshot.stages.includes('handler_executed')).toBe(false);
+  })
+);
+
+it.effect(
+  'substitutes typed owner services without replacing the private handler',
+  Effect.fn(function* testProgram3() {
+    interface CounterServices {
+      readonly increment: (amount: number) => Effect.Effect<number>;
+    }
+    const serviceAction = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'test.service.read.v1',
         },
-        entrypointKey: 'test.service.increment',
-        moduleKey: 'test.service',
-        role: 'action',
-      }),
-      idempotency: 'required',
-      legalEntityScope: 'optional',
-      owningModuleKey: 'test.service',
-      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
-      policies: [],
-      resultSchema: Schema.Finite,
-      schemaVersion: '1',
-    },
-    (payload, context) => context.services.increment(payload.amount),
-    (): Effect.Effect<CounterServices> =>
-      Effect.die('production owner services must not run in this test')
-  );
-  let calls = 0;
-  const harness = makeActionTestHarness({
-    actionPermission: 'allowed',
-    services: [
-      bindActionTestServices(serviceAction, {
-        increment: (amount) =>
-          Effect.sync(() => {
-            calls += 1;
-            return amount + 1;
-          }),
-      } satisfies CounterServices),
-    ],
-  });
+        actionKey: 'test.service.increment',
+        auditProfile: 'minimal',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
+          entrypointKey: 'test.service.increment',
+          moduleKey: 'test.service',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'optional',
+        owningModuleKey: 'test.service',
+        payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+        policies: [],
+        resultSchema: Schema.Finite,
+        schemaVersion: '1',
+      },
+      (payload, context) => context.services.increment(payload.amount),
+      (): Effect.Effect<CounterServices> =>
+        Effect.die('production owner services must not run in this test')
+    );
+    let calls = 0;
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      services: [
+        bindActionTestServices(serviceAction, {
+          increment: (amount) =>
+            Effect.sync(() => {
+              calls += 1;
+              return amount + 1;
+            }),
+        } satisfies CounterServices),
+      ],
+    });
 
-  const result = await runEffectTestPromise(
-    harness.runtime.runAction({
+    const result = yield* harness.runtime.runAction({
       payload: { amount: 4 },
       principal,
       registration: serviceAction,
@@ -186,36 +182,41 @@ test('substitutes typed owner services without replacing the private handler', a
         correlationId: 'service-test',
         idempotencyKey: 'service-once',
       },
-    })
-  );
+    });
 
-  assert.equal(result, 5);
-  assert.equal(calls, 1);
-  assert.equal(harness.snapshot().committed.length, 1);
-});
+    expect(result).toBe(5);
+    expect(calls).toBe(1);
+    expect(harness.snapshot().committed.length).toBe(1);
+  })
+);
 
-test('rejects missing idempotency before creating an invocation', async () => {
-  const harness = makeActionTestHarness({
-    actionPermission: 'allowed',
-    tenantPermission: 'allowed',
-  });
-  const failure = await runEffectTestPromise(
-    harness.runtime
+it.effect(
+  'rejects missing idempotency before creating an invocation',
+  Effect.fn(function* testProgram4() {
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
+    const failure = yield* harness.runtime
       .runAction({
         payload: { amount: 2 },
         principal,
         registration: lifecycleAction,
         transport: { correlationId: 'missing-idempotency' },
       })
-      .pipe(Effect.flip)
-  );
+      .pipe(Effect.flip);
 
-  assert.equal(failure._tag, 'ActionIdempotencyKeyRequired');
-  assert.equal(harness.snapshot().invocations.length, 0);
-});
+    expect(Predicate.isTagged(failure, 'ActionIdempotencyKeyRequired')).toBe(
+      true
+    );
 
-test('persists policy denials separately from permission denials before handler execution', async () =>
-  await runEffectTestPromise(
+    expect(harness.snapshot().invocations.length).toBe(0);
+  })
+);
+
+it.effect(
+  'persists policy denials separately from permission denials before handler execution',
+  () =>
     Effect.gen(function* policyDenialSnapshot() {
       const registration = defineAction(
         {
@@ -230,7 +231,7 @@ test('persists policy denials separately from permission denials before handler 
         },
         () => Effect.die('A denied policy must not execute the handler')
       );
-      const harness = makeActionTestHarness({
+      const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
       });
@@ -238,16 +239,15 @@ test('persists policy denials separately from permission denials before handler 
         .runAction({ ...request, registration })
         .pipe(Effect.flip);
       const snapshot = harness.snapshot();
-      assert.equal(snapshot.policyDenials.length, 1);
-      assert.equal(snapshot.permissionDenials.length, 0);
-      assert.equal(snapshot.invocations[0]?.status, 'rejected');
-      assert.equal(snapshot.invocations[0]?.completedAt?.getTime(), 0);
-      assert.equal(
-        snapshot.policyDenials[0]?.actionInvocationId,
+      expect(snapshot.policyDenials.length).toBe(1);
+      expect(snapshot.permissionDenials.length).toBe(0);
+      expect(snapshot.invocations[0]?.status).toBe('rejected');
+      expect(snapshot.invocations[0]?.completedAt?.getTime()).toBe(0);
+      expect(snapshot.policyDenials[0]?.actionInvocationId).toBe(
         snapshot.invocations[0]?.actionInvocationId
       );
-      assert.equal(snapshot.transactionCount, 0);
-      assert.equal(snapshot.committed.length, 0);
-      assert.equal(snapshot.stages.includes('handler_executed'), false);
+      expect(snapshot.transactionCount).toBe(0);
+      expect(snapshot.committed.length).toBe(0);
+      expect(snapshot.stages.includes('handler_executed')).toBe(false);
     })
-  ));
+);

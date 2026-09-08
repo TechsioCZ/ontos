@@ -21,8 +21,8 @@
     "serve": "modern serve",
     "stage:bootstrap-demo": "sh scripts/bootstrap-stage-demo.sh",
     "test:e2e": "playwright test",
-    "test:integration": "node --test tests/integration/*.test.ts",
-    "test:unit": "rstest",
+    "test:integration": "rstest --project integration",
+    "test:unit": "rstest --project unit",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
@@ -57,7 +57,7 @@
     "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.2",
     "@playwright/test": "1.61.0",
     "@rsbuild/plugin-tailwindcss": "^2.0.3",
-    "@rstest/core": "0.11.10",
+    "@rstest/core": "0.11.11",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",
@@ -72,6 +72,7 @@
     "typescript": "7.0.2",
     "wrangler": "4.116.0",
     "zephyr-rspack-plugin": "1.2.4",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc",
     "cross-env": "10.1.0"
   },
   "modernjs": {

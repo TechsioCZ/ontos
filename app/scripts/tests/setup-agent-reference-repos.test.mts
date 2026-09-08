@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
@@ -10,8 +9,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 const script = fileURLToPath(
   new URL('../setup-agent-reference-repos.mts', import.meta.url)
@@ -35,16 +36,21 @@ const config = {
   strategy: 'git-subtree-squash',
 };
 
-const withFixture = (run: (root: string) => void): void => {
-  const root = mkdtempSync(path.join(tmpdir(), 'ontos-agent-reference-'));
-  try {
-    mkdirSync(path.join(root, '.agents'));
-    mkdirSync(path.join(root, 'bin'));
-    writeFileSync(path.join(root, configPath), JSON.stringify(config));
-    // No real Git mutation or network access: record the exact native child-process contract.
-    writeFileSync(
-      path.join(root, 'bin/git'),
-      `#!/bin/sh
+const fixtureDirectory = Effect.gen(function* fixtureDirectory() {
+  const root = yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      mkdtempSync(path.join(tmpdir(), 'ontos-agent-reference-'))
+    ),
+    (directory) =>
+      Effect.sync(() => rmSync(directory, { force: true, recursive: true }))
+  );
+  mkdirSync(path.join(root, '.agents'));
+  mkdirSync(path.join(root, 'bin'));
+  writeFileSync(path.join(root, configPath), JSON.stringify(config));
+  // No real Git mutation or network access: record the exact native child-process contract.
+  writeFileSync(
+    path.join(root, 'bin/git'),
+    `#!/bin/sh
 printf '%s\\n' "$*" >> git-calls.txt
 case "$*" in
   '--version') printf 'git version fixture\\n' ;;
@@ -59,13 +65,10 @@ case "$*" in
   *) printf 'Unexpected git invocation: %s\\n' "$*" >&2; exit 91 ;;
 esac
 `,
-      { mode: 0o755 }
-    );
-    run(root);
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-};
+    { mode: 0o755 }
+  );
+  return root;
+});
 const runSetup = (
   root: string,
   args: readonly string[] = [],
@@ -77,141 +80,152 @@ const runSetup = (
     env: { PATH: path.join(root, 'bin'), ...env },
     timeout: 15_000,
   });
-  assert.ifError(result.error);
+  expect(result.error).toBeUndefined();
   return result;
 };
 
-void test('optional reference setup warns, while check and required modes fail closed', () => {
-  withFixture((root) => {
-    rmSync(path.join(root, configPath));
-    for (const [args, env, status] of [
-      [[], {}, 0],
-      [['--check'], {}, 1],
-      [[], { ULTRAMODERN_AGENT_REPOS_REQUIRED: 'true' }, 1],
-    ] as const) {
-      const result = runSetup(root, args, env);
-      assert.equal(result.status, status, result.stdout + result.stderr);
-      assert.match(
-        result.stdout + result.stderr,
-        /Missing \.agents\/agent-reference-repos\.json/u
-      );
-      assert.equal(existsSync(path.join(root, gitCallsPath)), false);
-    }
-  });
-});
+it.live(
+  'optional reference setup warns, while check and required modes fail closed',
+  () =>
+    Effect.gen(function* referenceScenario() {
+      const root = yield* fixtureDirectory;
+      rmSync(path.join(root, configPath));
+      for (const [args, env, status] of [
+        [[], {}, 0],
+        [['--check'], {}, 1],
+        [[], { ULTRAMODERN_AGENT_REPOS_REQUIRED: 'true' }, 1],
+      ] as const) {
+        const result = runSetup(root, args, env);
+        expect(result.status, result.stdout + result.stderr).toBe(status);
+        expect(result.stdout + result.stderr).toMatch(
+          /Missing \.agents\/agent-reference-repos\.json/u
+        );
+        expect(existsSync(path.join(root, gitCallsPath))).toBe(false);
+      }
+    })
+);
 
-void test('disabled reference setup never invokes Git or writes a manifest', () => {
-  withFixture((root) => {
+it.live('disabled reference setup never invokes Git or writes a manifest', () =>
+  Effect.gen(function* referenceScenario() {
+    const root = yield* fixtureDirectory;
     const disabledEnvironments: readonly Record<string, string>[] = [
       { ULTRAMODERN_SKIP_AGENT_REPOS: 'YES' },
       { ULTRAMODERN_AGENT_REPOS: 'OFF' },
     ];
     for (const env of disabledEnvironments) {
       const result = runSetup(root, [], env);
-      assert.equal(result.status, 0, result.stdout + result.stderr);
-      assert.match(result.stdout + result.stderr, /setup skipped/u);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/setup skipped/u);
     }
     writeFileSync(
       path.join(root, configPath),
       JSON.stringify({ ...config, defaultEnabled: false })
     );
-    assert.equal(runSetup(root).status, 0);
-    assert.equal(existsSync(path.join(root, gitCallsPath)), false);
-    assert.equal(existsSync(path.join(root, manifestPath)), false);
-  });
-});
+    expect(runSetup(root).status).toBe(0);
+    expect(existsSync(path.join(root, gitCallsPath))).toBe(false);
+    expect(existsSync(path.join(root, manifestPath))).toBe(false);
+  })
+);
 
-void test('reference setup rejects malformed configuration and unsafe paths before Git', () => {
-  withFixture((root) => {
-    writeFileSync(path.join(root, configPath), '{invalid');
-    const malformed = runSetup(root, ['--check']);
-    assert.equal(malformed.status, 1);
-    assert.match(
-      malformed.stdout + malformed.stderr,
-      /Invalid reference repository configuration/u
-    );
-    for (const unsafePath of [
-      '../outside',
-      'repos/../outside',
-      String.raw`repos\..\outside`,
-      '/repos/fixture',
-      'repos/.',
-      'repos/',
-      'repos//.',
-    ]) {
-      writeFileSync(
-        path.join(root, configPath),
-        JSON.stringify({
-          ...config,
-          repositories: [{ ...repository, path: unsafePath }],
-        })
+it.live(
+  'reference setup rejects malformed configuration and unsafe paths before Git',
+  () =>
+    Effect.gen(function* referenceScenario() {
+      const root = yield* fixtureDirectory;
+      writeFileSync(path.join(root, configPath), '{invalid');
+      const malformed = runSetup(root, ['--check']);
+      expect(malformed.status).toBe(1);
+      expect(malformed.stdout + malformed.stderr).toMatch(
+        /Invalid reference repository configuration/u
       );
-      const result = runSetup(root, ['--check']);
-      assert.equal(result.status, 1, result.stdout + result.stderr);
-      assert.match(
-        result.stdout + result.stderr,
-        /Unsafe reference repository path/u
+      for (const unsafePath of [
+        '../outside',
+        'repos/../outside',
+        String.raw`repos\..\outside`,
+        '/repos/fixture',
+        'repos/.',
+        'repos/',
+        'repos//.',
+      ]) {
+        writeFileSync(
+          path.join(root, configPath),
+          JSON.stringify({
+            ...config,
+            repositories: [{ ...repository, path: unsafePath }],
+          })
+        );
+        const result = runSetup(root, ['--check']);
+        expect(result.status, result.stdout + result.stderr).toBe(1);
+        expect(result.stdout + result.stderr).toMatch(
+          /Unsafe reference repository path/u
+        );
+      }
+      expect(existsSync(path.join(root, gitCallsPath))).toBe(false);
+    })
+);
+
+it.live(
+  'reference check requires subtree evidence and never mutates Git or the manifest',
+  () =>
+    Effect.gen(function* referenceScenario() {
+      const root = yield* fixtureDirectory;
+      const missing = runSetup(root, ['--check']);
+      expect(missing.status, missing.stdout + missing.stderr).toBe(1);
+      expect(missing.stdout + missing.stderr).toMatch(
+        /repos\/fixture is missing/u
       );
-    }
-    assert.equal(existsSync(path.join(root, gitCallsPath)), false);
-  });
-});
+      mkdirSync(path.join(root, repository.path), { recursive: true });
+      const present = runSetup(root, ['--check']);
+      expect(present.status, present.stdout + present.stderr).toBe(0);
+      const calls = readFileSync(path.join(root, gitCallsPath), 'utf-8');
+      expect(calls).toMatch(/log --grep git-subtree-dir: repos\/fixture/u);
+      expect(calls).not.toMatch(/^(?:fetch|add|commit|init|subtree add)\b/mu);
+      expect(existsSync(path.join(root, manifestPath))).toBe(false);
+    })
+);
 
-void test('reference check requires subtree evidence and never mutates Git or the manifest', () => {
-  withFixture((root) => {
-    const missing = runSetup(root, ['--check']);
-    assert.equal(missing.status, 1, missing.stdout + missing.stderr);
-    assert.match(missing.stdout + missing.stderr, /repos\/fixture is missing/u);
-    mkdirSync(path.join(root, repository.path), { recursive: true });
-    const present = runSetup(root, ['--check']);
-    assert.equal(present.status, 0, present.stdout + present.stderr);
-    const calls = readFileSync(path.join(root, gitCallsPath), 'utf-8');
-    assert.match(calls, /log --grep git-subtree-dir: repos\/fixture/u);
-    assert.doesNotMatch(calls, /^(?:fetch|add|commit|init|subtree add)\b/mu);
-    assert.equal(existsSync(path.join(root, manifestPath)), false);
-  });
-});
+it.live(
+  'reference installation defaults check off and preserves commit hooks',
+  () =>
+    Effect.gen(function* referenceScenario() {
+      const root = yield* fixtureDirectory;
+      const result = runSetup(root, [], {
+        ULTRAMODERN_AGENT_REPOS_REQUIRED: 'true',
+      });
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const manifest = readFileSync(path.join(root, manifestPath), 'utf-8');
+      expect(manifest).toMatch(/"status": "installed"/u);
+      expect(manifest).toMatch(/"commit": "a{40}"/u);
+      expect(manifest).toMatch(/"installedAt": "\d{4}-\d{2}-\d{2}T/u);
+      const calls = readFileSync(path.join(root, gitCallsPath), 'utf-8');
+      expect(calls).toMatch(
+        /fetch --depth 1 https:\/\/example.invalid\/fixture.git main/u
+      );
+      expect(calls).toMatch(
+        /subtree add --prefix repos\/fixture FETCH_HEAD --squash/u
+      );
+      expect(calls).toMatch(/commit -m Record agent reference repo manifest/u);
+      expect(calls).not.toMatch(/--no-verify/u);
+    })
+);
 
-void test('reference installation defaults check off and preserves commit hooks', () => {
-  withFixture((root) => {
-    const result = runSetup(root, [], {
-      ULTRAMODERN_AGENT_REPOS_REQUIRED: 'true',
-    });
-    assert.equal(result.status, 0, result.stdout + result.stderr);
-    const manifest = readFileSync(path.join(root, manifestPath), 'utf-8');
-    assert.match(manifest, /"status": "installed"/u);
-    assert.match(manifest, /"commit": "a{40}"/u);
-    assert.match(manifest, /"installedAt": "\d{4}-\d{2}-\d{2}T/u);
-    const calls = readFileSync(path.join(root, gitCallsPath), 'utf-8');
-    assert.match(
-      calls,
-      /fetch --depth 1 https:\/\/example.invalid\/fixture.git main/u
-    );
-    assert.match(
-      calls,
-      /subtree add --prefix repos\/fixture FETCH_HEAD --squash/u
-    );
-    assert.match(calls, /commit -m Record agent reference repo manifest/u);
-    assert.doesNotMatch(calls, /--no-verify/u);
-  });
-});
-
-void test('reference refresh refuses existing subtrees without fetching or overwriting', () => {
-  withFixture((root) => {
-    mkdirSync(path.join(root, repository.path), { recursive: true });
-    const result = runSetup(root, [], {
-      ULTRAMODERN_AGENT_REPOS_REFRESH: 'true',
-      ULTRAMODERN_AGENT_REPOS_REQUIRED: 'true',
-    });
-    assert.equal(result.status, 1, result.stdout + result.stderr);
-    assert.match(
-      result.stdout + result.stderr,
-      /refresh for subtree references is intentionally manual/u
-    );
-    assert.doesNotMatch(
-      readFileSync(path.join(root, gitCallsPath), 'utf-8'),
-      /^(?:fetch|subtree add)\b/mu
-    );
-    assert.equal(existsSync(path.join(root, manifestPath)), false);
-  });
-});
+it.live(
+  'reference refresh refuses existing subtrees without fetching or overwriting',
+  () =>
+    Effect.gen(function* referenceScenario() {
+      const root = yield* fixtureDirectory;
+      mkdirSync(path.join(root, repository.path), { recursive: true });
+      const result = runSetup(root, [], {
+        ULTRAMODERN_AGENT_REPOS_REFRESH: 'true',
+        ULTRAMODERN_AGENT_REPOS_REQUIRED: 'true',
+      });
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stdout + result.stderr).toMatch(
+        /refresh for subtree references is intentionally manual/u
+      );
+      expect(readFileSync(path.join(root, gitCallsPath), 'utf-8')).not.toMatch(
+        /^(?:fetch|subtree add)\b/mu
+      );
+      expect(existsSync(path.join(root, manifestPath))).toBe(false);
+    })
+);

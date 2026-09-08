@@ -1,7 +1,7 @@
-import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
-import { test } from 'node:test';
+import path from 'node:path';
+
+import { expect, it } from 'effect-rstest';
 
 import {
   fixtureConfigPath,
@@ -17,39 +17,41 @@ const rules = listFixtureRules().filter(
 );
 
 if (rules.length === 0) {
-  test('fixtures exist', () =>
-    assert.fail(
-      `No fixture directories found${onlyRule ? ` for ${onlyRule}` : ''}.`
-    ));
+  it('fixtures exist', () => {
+    const suffix =
+      onlyRule === undefined || onlyRule === '' ? '' : ` for ${onlyRule}`;
+    expect(rules, `No fixture directories found${suffix}.`).not.toHaveLength(0);
+  });
 }
 
-function appendValidFailures(
+const appendValidFailures = (
   fixtureDirectory: string,
   valid: readonly string[],
   byFile: ReadonlyMap<string, number>,
   failures: string[]
-): void {
+): void => {
   for (const file of valid) {
-    const key = relative(fixtureDirectory, file).replaceAll('\\', '/');
+    const key = path.relative(fixtureDirectory, file).replaceAll('\\', '/');
     const count = byFile.get(key) ?? 0;
-    if (count !== 0)
+    if (count !== 0) {
       failures.push(`${key} must not report (false positive: ${count})`);
+    }
   }
-}
+};
 
-function fixtureFailures(
+const fixtureFailures = (
   fixtureDirectory: string,
   invalid: readonly string[],
   valid: readonly string[],
   byFile: ReadonlyMap<string, number>
-): string[] {
+): string[] => {
   const failures: string[] = [];
   for (const file of invalid) {
-    const key = relative(fixtureDirectory, file).replaceAll('\\', '/');
+    const key = path.relative(fixtureDirectory, file).replaceAll('\\', '/');
     const count = byFile.get(key) ?? 0;
-    const expected = /^\/\/\s*expect-count:\s*(\d+)/u.exec(
-      readFileSync(file, 'utf8')
-    )?.[1];
+    const expected = /^\/\/\s*expect-count:\s*(?<count>\d+)/u.exec(
+      readFileSync(file, 'utf-8')
+    )?.groups?.count;
     if (expected !== undefined) {
       if (Number(expected) <= 0 || count !== Number(expected)) {
         failures.push(
@@ -62,48 +64,49 @@ function fixtureFailures(
   }
   appendValidFailures(fixtureDirectory, valid, byFile, failures);
   return failures;
-}
+};
 
 for (const rule of rules) {
-  test(`effect-native/${rule} fixtures`, () => {
-    const fixtureDirectory = join(fixturesDirectory, rule);
-    const invalid = listFilesRecursively(join(fixtureDirectory, 'invalid'));
-    const valid = listFilesRecursively(join(fixtureDirectory, 'valid'));
+  it(`effect-native/${rule} fixtures`, () => {
+    const fixtureDirectory = path.join(fixturesDirectory, rule);
+    const invalid = listFilesRecursively(
+      path.join(fixtureDirectory, 'invalid')
+    );
+    const valid = listFilesRecursively(path.join(fixtureDirectory, 'valid'));
     const paths = [...invalid, ...valid].map((file) =>
-      relative(fixtureDirectory, file)
+      path.relative(fixtureDirectory, file)
     );
     const run = runOxlint(fixtureConfigPath(rule), paths, fixtureDirectory);
-    assert.ok(
+    expect(
       !run.stderr.includes('Failed to') && !run.stderr.includes('Error'),
       `oxlint failed for ${rule}:\n${run.stderr}`
-    );
+    ).toBe(true);
     const code = `effect-native(${rule})`;
     const byFile = new Map<string, number>();
     for (const diagnostic of run.diagnostics) {
-      assert.equal(
+      expect(
         diagnostic.code,
-        code,
         `unexpected diagnostic ${diagnostic.code} in ${diagnostic.filename}`
-      );
+      ).toBe(code);
       const key = diagnostic.filename.replaceAll('\\', '/');
       byFile.set(key, (byFile.get(key) ?? 0) + 1);
     }
-    assert.ok(
-      invalid.length > 0,
+    expect(
+      invalid.length,
       `${rule}: add at least one file under invalid/`
-    );
-    assert.ok(valid.length > 0, `${rule}: add at least one file under valid/`);
-    assert.equal(
+    ).toBeGreaterThan(0);
+    expect(
+      valid.length,
+      `${rule}: add at least one file under valid/`
+    ).toBeGreaterThan(0);
+    expect(
       run.exitCode,
-      1,
       `${rule}: invalid fixtures must make Oxlint fail`
-    );
-    assert.equal(
-      run.numberOfFiles,
-      invalid.length + valid.length,
-      `${rule}: not every fixture was linted`
+    ).toBe(1);
+    expect(run.numberOfFiles, `${rule}: not every fixture was linted`).toBe(
+      invalid.length + valid.length
     );
     const failures = fixtureFailures(fixtureDirectory, invalid, valid, byFile);
-    assert.deepEqual(failures, [], `${rule}:\n${failures.join('\n')}`);
+    expect(failures, `${rule}:\n${failures.join('\n')}`).toStrictEqual([]);
   });
 }

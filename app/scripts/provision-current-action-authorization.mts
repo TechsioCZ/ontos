@@ -10,9 +10,7 @@ import {
   Duration,
   Effect,
   FileSystem,
-  flow,
   Layer,
-  ManagedRuntime,
   Option,
   Order,
   Path,
@@ -175,13 +173,13 @@ const decodeRepositoryInventory = (workspaceRoot: string) =>
     return { ownership, topology };
   });
 
-const discoverCurrentActionsEffect = (
+export const discoverCurrentActions = (
   workspaceRoot: string,
   deriveContract: DeriveContract = deriveOntosModuleDeploymentContract
 ): Effect.Effect<
   readonly ActionAuthorizationProvisioningAction[],
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > =>
   Effect.gen(function* discoverCurrentActionsEffectGenerator() {
     const path = yield* Path.Path;
@@ -215,11 +213,10 @@ const discoverCurrentActionsEffect = (
     const contracts = yield* Effect.forEach(
       verticals,
       ({ id }) =>
-        Effect.tryPromise({
-          catch: discoveryFailure,
-          try: async () =>
-            await deriveContract({ vertical: id, workspaceRoot }),
-        }).pipe(Effect.map((contract) => ({ contract, id }))),
+        deriveContract({ vertical: id, workspaceRoot }).pipe(
+          Effect.mapError(discoveryFailure),
+          Effect.map((contract) => ({ contract, id }))
+        ),
       { concurrency: 'unbounded' }
     );
     const collectVerticalActions = Effect.gen(
@@ -273,38 +270,17 @@ const discoverCurrentActionsEffect = (
     return actions;
   }).pipe(Effect.catchDefect(discoveryFailure));
 
-const repositoryRuntime = ManagedRuntime.make(NodeServices.layer);
-
-const discoverCurrentActionsProgram = (
-  workspaceRoot: string,
-  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract
-): Effect.Effect<
-  readonly ActionAuthorizationProvisioningAction[],
-  ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
-> => discoverCurrentActionsEffect(workspaceRoot, deriveContract);
-
-export const discoverCurrentActions = flow(
-  discoverCurrentActionsProgram,
-  repositoryRuntime.runPromise
-);
-
-const discoverCurrentActionKeysProgram = (
+export const discoverCurrentActionKeys = (
   workspaceRoot: string,
   deriveContract: DeriveContract = deriveOntosModuleDeploymentContract
 ): Effect.Effect<
   readonly string[],
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > =>
-  discoverCurrentActionsEffect(workspaceRoot, deriveContract).pipe(
+  discoverCurrentActions(workspaceRoot, deriveContract).pipe(
     Effect.map((actions) => actions.map(({ actionKey }) => actionKey))
   );
-
-export const discoverCurrentActionKeys = flow(
-  discoverCurrentActionKeysProgram,
-  repositoryRuntime.runPromise
-);
 
 interface CloseableProvisioningClient extends ActionAuthorizationProvisioningClient {
   readonly close: () => void;
@@ -380,7 +356,7 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
     readonly environment: 'development' | 'stage';
   },
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > =>
   Effect.gen(function* runCurrentActionAuthorizationProvisioningEffect() {
     if (commandArguments.length > 0) {
@@ -399,7 +375,7 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
     );
     const target =
       yield* selectActionAuthorizationProvisioningTarget(configuration);
-    const actions = yield* discoverCurrentActionsEffect(workspaceRoot);
+    const actions = yield* discoverCurrentActions(workspaceRoot);
     const client = yield* acquireProvisioningClient(target.configuration);
     const result = yield* provisionActionAuthorization(client, {
       actions,
@@ -424,7 +400,7 @@ export function runCurrentActionAuthorizationProvisioning(
     readonly environment: 'development' | 'stage';
   },
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 >;
 export function runCurrentActionAuthorizationProvisioning(
   workspaceRoot: string,
@@ -434,7 +410,7 @@ export function runCurrentActionAuthorizationProvisioning(
     readonly environment: 'development' | 'stage';
   },
   ActionAuthorizationProvisioningError,
-  FileSystem.FileSystem | Path.Path
+  NodeServices.NodeServices
 > {
   return runCurrentActionAuthorizationProvisioningWithServices(
     workspaceRoot,

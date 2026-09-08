@@ -1,5 +1,5 @@
-import { expect, test } from '@rstest/core';
 import { getColumns } from 'drizzle-orm';
+import { expect, test } from 'effect-rstest';
 
 import {
   compareAuthCatalog,

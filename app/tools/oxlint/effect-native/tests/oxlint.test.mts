@@ -1,32 +1,31 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { parseOxlintOutput } from './oxlint.mts';
 
 const diagnostic = {
   code: 'effect-native(example)',
   filename: 'invalid/example.ts',
+  labels: [],
   message: 'Example violation',
   severity: 'error',
-  labels: [],
 };
 const report = (diagnostics: unknown[] = [], files = 1) =>
   JSON.stringify({ diagnostics, number_of_files: files });
 
-test('accepts a successful clean lint run', () => {
+it('accepts a successful clean lint run', () => {
   const run = parseOxlintOutput(report(), '', 0);
-  assert.equal(run.numberOfFiles, 1);
-  assert.deepEqual(run.diagnostics, []);
-  assert.equal(run.exitCode, 0);
+  expect(run.numberOfFiles).toBe(1);
+  expect(run.diagnostics).toEqual([]);
+  expect(run.exitCode).toBe(0);
 });
 
-test('accepts actual lint failures as diagnostics, not a loader crash', () => {
+it('accepts actual lint failures as diagnostics, not a loader crash', () => {
   const run = parseOxlintOutput(report([diagnostic]), '', 1);
-  assert.deepEqual(run.diagnostics, [diagnostic]);
-  assert.equal(run.exitCode, 1);
+  expect(run.diagnostics).toEqual([diagnostic]);
+  expect(run.exitCode).toBe(1);
 });
 
-test('rejects loader failures on stdout, including a JSON-looking suffix', () => {
+it('rejects loader failures on stdout, including a JSON-looking suffix', () => {
   for (const stdout of [
     'Failed to load plugin',
     `Failed to load plugin\n${report()}`,
@@ -34,11 +33,11 @@ test('rejects loader failures on stdout, including a JSON-looking suffix', () =>
     '{bad',
     'null',
   ]) {
-    assert.throws(() => parseOxlintOutput(stdout, '', 1));
+    expect(() => parseOxlintOutput(stdout, '', 1)).toThrow();
   }
 });
 
-test('rejects empty-file runs and missing report fields', () => {
+it('rejects empty-file runs and missing report fields', () => {
   for (const stdout of [
     report([], 0),
     report([], -1),
@@ -46,40 +45,35 @@ test('rejects empty-file runs and missing report fields', () => {
     '{}',
     '{"diagnostics":[]}',
   ]) {
-    assert.throws(
-      () => parseOxlintOutput(stdout, '', 0),
-      /incomplete or empty-file/
+    expect(() => parseOxlintOutput(stdout, '', 0)).toThrow(
+      /incomplete or empty-file/u
     );
   }
 });
 
-test('rejects crashes, stderr failures, and inconsistent exit statuses', () => {
-  assert.throws(
-    () => parseOxlintOutput(report(), '', null),
-    /did not complete/
+it('rejects crashes, stderr failures, and inconsistent exit statuses', () => {
+  expect(() => parseOxlintOutput(report(), '', null)).toThrow(
+    /did not complete/u
   );
-  assert.throws(() => parseOxlintOutput(report(), '', 2), /did not complete/);
-  assert.throws(
-    () => parseOxlintOutput(report(), 'plugin crashed', 0),
-    /stderr/
+  expect(() => parseOxlintOutput(report(), '', 2)).toThrow(/did not complete/u);
+  expect(() => parseOxlintOutput(report(), 'plugin crashed', 0)).toThrow(
+    /stderr/u
   );
-  assert.throws(() => parseOxlintOutput(report(), '', 1), /contradicts/);
-  assert.throws(
-    () => parseOxlintOutput(report([diagnostic]), '', 0),
-    /contradicts/
+  expect(() => parseOxlintOutput(report(), '', 1)).toThrow(/contradicts/u);
+  expect(() => parseOxlintOutput(report([diagnostic]), '', 0)).toThrow(
+    /contradicts/u
   );
 });
 
-test('rejects malformed diagnostics rather than hiding them', () => {
+it('rejects malformed diagnostics rather than hiding them', () => {
   for (const entry of [
     null,
     {},
     { ...diagnostic, severity: 'unknown' },
     { ...diagnostic, labels: null },
   ]) {
-    assert.throws(
-      () => parseOxlintOutput(report([entry]), '', 1),
-      /malformed diagnostic/
+    expect(() => parseOxlintOutput(report([entry]), '', 1)).toThrow(
+      /malformed diagnostic/u
     );
   }
 });

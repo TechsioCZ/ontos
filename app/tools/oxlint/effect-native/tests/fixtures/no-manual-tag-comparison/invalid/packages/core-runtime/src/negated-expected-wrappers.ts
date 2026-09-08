@@ -1,0 +1,21 @@
+// expect-count: 10
+import { expect } from 'effect-rstest';
+import { expect as check } from '@rstest/core';
+import * as testing from 'vitest';
+import jestExpect from 'expect';
+import { expect as jestCheck } from '@jest/globals';
+declare const error: unknown;
+expect(error).toEqual(expect.not.objectContaining({ _tag: 'Missing' }));
+check(error).toEqual(check.not.arrayContaining([{ _tag: 'Missing' }]));
+testing.expect(error).toStrictEqual(testing.expect.not.objectContaining({ _tag: 'Missing' }));
+jestExpect(error).toEqual(jestExpect.not.objectContaining({ _tag: 'Missing' }));
+jestCheck(error).toEqual(jestCheck.not.arrayContaining([{ _tag: 'Missing' }]));
+const negative = expect.not;
+expect(error).toEqual(negative.objectContaining({ _tag: 'Missing' }));
+const { not: namespaceNegative } = testing.expect;
+expect(error).toEqual(namespaceNegative.arrayContaining([{ _tag: 'Missing' }]));
+const { objectContaining: absent } = expect.not;
+expect(error).toEqual(absent({ _tag: 'Missing' }));
+const missing = expect['not']['arrayContaining']([expect.not.objectContaining({ _tag: 'Missing' })]);
+expect(error).toEqual(missing);
+expect(error).not.toEqual(expect.not.objectContaining({ _tag: 'Missing' }));

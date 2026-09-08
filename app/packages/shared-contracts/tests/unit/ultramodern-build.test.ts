@@ -1,9 +1,7 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
-
 import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
+import { expect, it } from 'effect-rstest';
 
-test('injected build identity updates all surfaces without mutating generated metadata', () => {
+it('injected build identity updates all surfaces without mutating generated metadata', () => {
   const deliveryUnit = {
     appId: 'build-identity-test',
     build: 'generated-build',
@@ -30,7 +28,7 @@ test('injected build identity updates all surfaces without mutating generated me
     buildMarker: 'injected-build',
     sourceRevision: 'source-revision',
   };
-  assert.deepEqual(result, {
+  expect(result).toEqual({
     ...artifact,
     deliveryUnit: expectedIdentity,
     surfaces: {
@@ -38,7 +36,7 @@ test('injected build identity updates all surfaces without mutating generated me
       ui: { ...expectedIdentity, surface: 'ui' },
     },
   });
-  assert.equal(artifact.deliveryUnit.build, 'generated-build');
-  assert.equal(artifact.surfaces.api.sourceRevision, 'workspace');
-  assert.equal(artifact.surfaces.ui.buildMarker, 'generated-build');
+  expect(artifact.deliveryUnit.build).toBe('generated-build');
+  expect(artifact.surfaces.api.sourceRevision).toBe('workspace');
+  expect(artifact.surfaces.ui.buildMarker).toBe('generated-build');
 });

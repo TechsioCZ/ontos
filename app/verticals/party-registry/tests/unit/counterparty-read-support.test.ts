@@ -1,9 +1,6 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Schema } from 'effect';
+import { assert, it } from 'effect-rstest';
 
 import { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
 import { resolveCounterpartyRead } from '../../src/api/counterparty-read-support.ts';
@@ -16,8 +13,9 @@ const ref = {
 } as const;
 const reason = 'Counterparty persistence is temporarily unavailable';
 
-test('cross-tenant counterparty reads never resolve the persistence service', () =>
-  runEffectTestPromise(
+it.effect(
+  'cross-tenant counterparty reads never resolve the persistence service',
+  () =>
     Effect.gen(function* rejectCrossTenant() {
       let calls = 0;
       const failure = yield* resolveCounterpartyRead<never>(
@@ -36,10 +34,11 @@ test('cross-tenant counterparty reads never resolve the persistence service', ()
         'The Counterparty does not exist in the trusted Tenant'
       );
     })
-  ));
+);
 
-test('counterparty lookup preserves found values and authorized-context absence', () =>
-  runEffectTestPromise(
+it.effect(
+  'counterparty lookup preserves found values and authorized-context absence',
+  () =>
     Effect.gen(function* preserveLookupResult() {
       const value = [{ role: 'CUSTOMER' }];
       const found = yield* resolveCounterpartyRead(
@@ -64,10 +63,11 @@ test('counterparty lookup preserves found values and authorized-context absence'
         'The Counterparty does not exist in the authorized context'
       );
     })
-  ));
+);
 
-test('counterparty failures preserve the per-read reason and nonenumerable cause', () =>
-  runEffectTestPromise(
+it.effect(
+  'counterparty failures preserve the per-read reason and nonenumerable cause',
+  () =>
     Effect.gen(function* preserveFailureCause() {
       const cause = new CounterpartyPersistenceUnavailable({
         code: 'counterparty_persistence_unavailable',
@@ -89,4 +89,4 @@ test('counterparty failures preserve the per-read reason and nonenumerable cause
         false
       );
     })
-  ));
+);

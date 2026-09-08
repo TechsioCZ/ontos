@@ -121,7 +121,7 @@ The audit column is the **primary** section, not an exclusive mapping. Cross-cut
 - Effect-shaped port checks cannot create transaction affinity or prove rollback behavior. S1 still needs transactional integration evidence; a syntactically clean port is insufficient.
 - A7 shared contract authority, vocabulary reuse, and schema equivalence remain cross-file architecture work beyond the local structural/document and schema detectors.
 - A8 template checks are lexical: arbitrary generated/dynamically assembled source and real scaffold quality still need generator tests and emitted-project gates.
-- B2 flags raw runners/time control but does not install or certify an Effect test harness. `@effect/vitest` was not added.
+- B2 uses the upstream `effect-rstest` harness (`it.effect`/`it.live`/`it.layer`), enforced by the `no-effect-run-in-tests` and restricted-imports gates.
 
 ## Audit exceptions preserved
 

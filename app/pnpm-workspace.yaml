@@ -58,13 +58,11 @@ strictDepBuilds: true
 peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
-    '@effect/vitest>effect': 4.0.0-rc.112
 overrides:
   react-server-dom-rspack: 0.1.0
   '@tanstack/react-router': 1.170.33
   '@tanstack/router-core': 1.171.28
   '@effect/opentelemetry': 4.0.0-rc.112
-  '@effect/vitest': 4.0.0-rc.112
   effect: 4.0.0-rc.112
   node-fetch: ^3.3.2
   '@tanstack/history': 1.162.2
@@ -81,6 +79,7 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  effect-rstest@0.1.0: patches/effect-rstest@0.1.0.patch
   'effect@4.0.0-rc.112': patches/effect-cli-metadata@4.0.0-rc.112.patch
   'eslint-plugin-perfectionist@5.10.1': patches/eslint-plugin-perfectionist@5.10.1.patch
   '@vercel/nft@0.29.2': patches/@vercel__nft@0.29.2.patch

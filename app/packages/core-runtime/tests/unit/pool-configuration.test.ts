@@ -1,8 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   DEFAULT_DATABASE_POOL_DEADLINES,
@@ -11,47 +8,40 @@ import {
 
 const runtimeUrl = 'postgresql://runtime:secret@localhost:5432/ontos';
 
-test(
+it.effect(
   'uses acquisition and statement deadlines without opting into a lock deadline',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* verifyDefaults() {
       const connectionString = Redacted.make(`${runtimeUrl}?sslmode=require`);
       const configuration = yield* configureDatabasePool(connectionString);
 
-      assert.equal(
-        configuration.connectionTimeoutMillis,
+      expect(configuration.connectionTimeoutMillis).toBe(
         DEFAULT_DATABASE_POOL_DEADLINES.connectionTimeoutMillis
       );
-      assert.equal(
-        configuration.statement_timeout,
+      expect(configuration.statement_timeout).toBe(
         DEFAULT_DATABASE_POOL_DEADLINES.statement_timeout
       );
-      assert.equal(Object.hasOwn(configuration, 'lock_timeout'), false);
-      assert.equal(
-        configuration.connectionString,
+      expect(Object.hasOwn(configuration, 'lock_timeout')).toBe(false);
+      expect(configuration.connectionString).toBe(
         `${runtimeUrl}?sslmode=require`
       );
     })
-  )
 );
 
-test(
-  'includes an explicitly opted-in lock deadline',
-  makeEffectTestCallback(
-    Effect.gen(function* verifyLockDeadline() {
-      const connectionString = Redacted.make(runtimeUrl);
-      const configuration = yield* configureDatabasePool(connectionString, {
-        lock_timeout: 250,
-      });
+it.effect('includes an explicitly opted-in lock deadline', () =>
+  Effect.gen(function* verifyLockDeadline() {
+    const connectionString = Redacted.make(runtimeUrl);
+    const configuration = yield* configureDatabasePool(connectionString, {
+      lock_timeout: 250,
+    });
 
-      assert.equal(configuration.lock_timeout, 250);
-    })
-  )
+    expect(configuration.lock_timeout).toBe(250);
+  })
 );
 
-test(
+it.effect(
   'rejects URL deadline overrides with a typed configuration failure',
-  makeEffectTestCallback(
+  () =>
     Effect.forEach(
       [
         'connectionTimeoutMillis=1',
@@ -67,31 +57,29 @@ test(
           const error = yield* Effect.flip(
             configureDatabasePool(connectionString)
           );
-          assert.equal(error._tag, 'DatabaseConnectionError');
-          assert.equal(
-            error.reason,
+          expect(Predicate.isTagged(error, 'DatabaseConnectionError')).toBe(
+            true
+          );
+          expect(error.reason).toBe(
             'Database URL deadline parameters and startup options are unsupported; use poolDeadlines'
           );
         }),
       { concurrency: 'unbounded' }
     )
-  )
 );
 
-test(
+it.effect(
   'rejects invalid deadline values with a typed configuration failure',
-  makeEffectTestCallback(
+  () =>
     Effect.gen(function* verifyInvalidDeadline() {
       const connectionString = Redacted.make(runtimeUrl);
       const error = yield* Effect.flip(
         configureDatabasePool(connectionString, { statement_timeout: 0 })
       );
 
-      assert.equal(error._tag, 'DatabaseConnectionError');
-      assert.equal(
-        error.reason,
+      expect(Predicate.isTagged(error, 'DatabaseConnectionError')).toBe(true);
+      expect(error.reason).toBe(
         'Database pool deadlines must be positive 32-bit millisecond integers'
       );
     })
-  )
 );

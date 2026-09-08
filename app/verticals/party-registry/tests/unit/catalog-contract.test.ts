@@ -1,29 +1,27 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { assert, expect, it } from 'effect-rstest';
 
 import {
   comparePartyCatalog,
   expectedPartyTableCatalog,
 } from '../../src/db/catalog.ts';
 
-test('reports exact Party Registry catalog differences', () => {
-  assert.equal(expectedPartyTableCatalog.length, 17);
-  assert.equal(expectedPartyTableCatalog[0], 'party.counterparties');
-  assert.equal(expectedPartyTableCatalog.at(-1), 'party.party_relationships');
-  assert.deepEqual(comparePartyCatalog(expectedPartyTableCatalog.slice(1)), {
+it('reports exact Party Registry catalog differences', () => {
+  expect(expectedPartyTableCatalog.length).toBe(17);
+  expect(expectedPartyTableCatalog[0]).toBe('party.counterparties');
+  expect(expectedPartyTableCatalog.at(-1)).toBe('party.party_relationships');
+  expect(comparePartyCatalog(expectedPartyTableCatalog.slice(1))).toEqual({
     missing: ['party.counterparties'],
     unexpected: [],
   });
-  assert.deepEqual(
-    comparePartyCatalog([...expectedPartyTableCatalog, 'party.unexpected']),
-    {
-      missing: [],
-      unexpected: ['party.unexpected'],
-    }
-  );
+  expect(
+    comparePartyCatalog([...expectedPartyTableCatalog, 'party.unexpected'])
+  ).toEqual({
+    missing: [],
+    unexpected: ['party.unexpected'],
+  });
 });
 
-test('compares catalog sets without input order, duplicates, or previous results affecting differences', () => {
+it('compares catalog sets without input order, duplicates, or previous results affecting differences', () => {
   const actual = ['party.z_extra', 'party.a_extra', 'party.z_extra'];
   const difference = comparePartyCatalog(actual);
   assert.deepEqual(difference, {

@@ -1,8 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
+import { assert, it } from 'effect-rstest';
 
 import {
   readDetailResult,
@@ -10,26 +7,25 @@ import {
   requireReadValue,
 } from '../../src/api/read-outcome.ts';
 
-test('detail lookup preserves the value and one-result evidence', () => {
+it.effect('detail lookup preserves the value and one-result evidence', () => {
   const value = { revision: 7 };
-  return runEffectTestPromise(
-    requireReadValue('Missing record')({ _tag: 'found', value }).pipe(
-      Effect.map(readDetailResult),
-      Effect.tap((output) =>
-        Effect.sync(() => {
-          assert.equal(output.result, value);
-          assert.deepEqual(output.evidence, { resultCount: 1 });
-        })
-      ),
-      Effect.asVoid
-    )
+  return requireReadValue('Missing record')({ _tag: 'found', value }).pipe(
+    Effect.map(readDetailResult),
+    Effect.tap((output) =>
+      Effect.sync(() => {
+        assert.equal(output.result, value);
+        assert.deepEqual(output.evidence, { resultCount: 1 });
+      })
+    ),
+    Effect.asVoid
   );
 });
 
-test('missing detail produces the caller-specific typed failure without result evidence', () => {
-  const reason = 'The Official Identifier does not exist';
-  return runEffectTestPromise(
-    requireReadValue(reason)({ _tag: 'not_found' }).pipe(
+it.effect(
+  'missing detail produces the caller-specific typed failure without result evidence',
+  () => {
+    const reason = 'The Official Identifier does not exist';
+    return requireReadValue(reason)({ _tag: 'not_found' }).pipe(
       Effect.map(() => assert.fail('Missing lookup must not succeed')),
       Effect.catchTag('ReadHandlerNotFound', (failure) =>
         Effect.sync(() => {
@@ -37,11 +33,11 @@ test('missing detail produces the caller-specific typed failure without result e
           assert.equal(failure.reason, reason);
         })
       )
-    )
-  );
-});
+    );
+  }
+);
 
-test('unavailable mapping retains hidden diagnostic cause and descriptor policy', () => {
+it('unavailable mapping retains hidden diagnostic cause and descriptor policy', () => {
   const cause = { diagnostic: 'private' };
   for (const configurable of [false, true]) {
     const failure = readUnavailable(

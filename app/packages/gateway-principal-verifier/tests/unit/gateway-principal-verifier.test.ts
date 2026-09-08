@@ -1,13 +1,9 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import {
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
 } from '@app/core-runtime';
-// @effect-diagnostics asyncFunction:off -- Node test callbacks and JOSE fixture creation are Promise APIs. remove-when: Effect test adapters support async Node callbacks.
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Redacted, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
 
@@ -19,7 +15,6 @@ import {
   GatewayPrincipalVerifierConfiguration,
   bindGatewayPrincipalVerifier,
 } from '../../src/server.ts';
-import type { ActionPrincipalError } from '../../src/server.ts';
 
 const currentTimeSeconds = 1_700_000_001;
 const issuer = 'https://shell.ontos.test';
@@ -31,241 +26,286 @@ const principal = {
   tenantId: '50000000-0000-4000-8000-000000000001',
 };
 
-const makeFixture = async (audience: string, version = 1) => {
-  const { privateKey, publicKey } = await generateKeyPair('Ed25519');
-  const publicJwk = {
-    ...(await exportJWK(publicKey)),
-    alg: 'EdDSA',
-    kid: 'shared-verifier-test',
-    use: 'sig',
-  };
-  const token = await new SignJWT({ principal, ver: version })
-    .setProtectedHeader({
+const makeFixture = (audience: string, version = 1) =>
+  Effect.gen(function* createFixture() {
+    const { privateKey, publicKey } = yield* Effect.promise(() =>
+      generateKeyPair('Ed25519')
+    );
+    const publicJwk = {
+      ...(yield* Effect.promise(() => exportJWK(publicKey))),
       alg: 'EdDSA',
       kid: 'shared-verifier-test',
-      typ: 'JWT',
-    })
-    .setIssuer(issuer)
-    .setAudience(audience)
-    .setSubject(principal.principalId)
-    .setIssuedAt(1_700_000_000)
-    .setExpirationTime(1_700_000_300)
-    .setJti('60000000-0000-4000-8000-000000000001')
-    .sign(privateKey);
-  return {
-    environment: {
-      ONTOS_GATEWAY_ISSUER: issuer,
-      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
-    },
-    publicJwk,
-    token,
-  };
-};
+      use: 'sig',
+    };
+    const token = yield* Effect.promise(() =>
+      new SignJWT({ principal, ver: version })
+        .setProtectedHeader({
+          alg: 'EdDSA',
+          kid: 'shared-verifier-test',
+          typ: 'JWT',
+        })
+        .setIssuer(issuer)
+        .setAudience(audience)
+        .setSubject(principal.principalId)
+        .setIssuedAt(1_700_000_000)
+        .setExpirationTime(1_700_000_300)
+        .setJti('60000000-0000-4000-8000-000000000001')
+        .sign(privateKey)
+    );
+    return {
+      environment: {
+        ONTOS_GATEWAY_ISSUER: issuer,
+        ONTOS_GATEWAY_PUBLIC_JWKS: yield* Schema.encodeEffect(
+          Schema.fromJsonString(Schema.Unknown)
+        )({
+          keys: [publicJwk],
+        }),
+      },
+      publicJwk,
+      token,
+    };
+  });
 
 const isConfigurationError = Schema.is(ActionPrincipalConfigurationErrorSchema);
 const isInvalidError = Schema.is(ActionPrincipalInvalidErrorSchema);
 const isScopeError = Schema.is(ActionPrincipalScopeErrorSchema);
 const isUnavailableError = Schema.is(ActionPrincipalUnavailableErrorSchema);
 const failingKeySet = Object.assign(
-  async () => {
-    throw new Error('fixture verifier details must be discarded');
-  },
+  () => Promise.reject(new Error('fixture verifier details must be discarded')),
   { jwks: () => ({ keys: [] }) }
 ) satisfies LocalJWKSet;
 
-test('an audience-bound verifier accepts only its exact topology app ID', async () => {
-  const partyFixture = await makeFixture('party-registry');
-  const billingFixture = await makeFixture('billing');
-  const verifier = bindGatewayPrincipalVerifier('party-registry');
-  const verify = async (
-    token: string,
-    environment: typeof partyFixture.environment
-  ) =>
-    await runEffectTestPromise(
-      verifier.verify(Redacted.make(`Bearer ${token}`), {
-        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-        environment,
-      })
-    );
-
-  assert.deepEqual(
-    await verify(partyFixture.token, partyFixture.environment),
-    principal
-  );
-  await assert.rejects(
-    verify(billingFixture.token, billingFixture.environment),
-    isScopeError
-  );
-});
-
-test('Bearer scheme matching is case insensitive without changing the signed token', async () => {
-  const fixture = await makeFixture('party-registry');
-  const verifier = bindGatewayPrincipalVerifier('party-registry');
-
-  await Promise.all(
-    ['Bearer', 'bearer', 'BEARER', 'bEaReR'].map(async (scheme) => {
-      const verified = await runEffectTestPromise(
-        verifier.verify(Redacted.make(`${scheme} ${fixture.token}`), {
+it.effect(
+  'an audience-bound verifier accepts only its exact topology app ID',
+  () =>
+    Effect.gen(function* verifyAudienceBinding() {
+      const partyFixture = yield* makeFixture('party-registry');
+      const billingFixture = yield* makeFixture('billing');
+      const verifier = bindGatewayPrincipalVerifier('party-registry');
+      const verify = (
+        token: string,
+        environment: typeof partyFixture.environment
+      ) =>
+        verifier.verify(Redacted.make(`Bearer ${token}`), {
           currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-          environment: fixture.environment,
-        })
-      );
-      assert.deepEqual(verified, principal);
-    })
-  );
-});
+          environment,
+        });
 
-test('case insensitive Bearer matching still rejects malformed authorization headers', async () => {
-  const fixture = await makeFixture('party-registry');
-  const verifier = bindGatewayPrincipalVerifier('party-registry');
-
-  await Promise.all(
-    [
-      ` bearer ${fixture.token}`,
-      `bearer  ${fixture.token}`,
-      `bearer\t${fixture.token}`,
-      `bearer ${fixture.token} `,
-      `bearer ${fixture.token} extra`,
-      'bearer ',
-      `Basic ${fixture.token}`,
-    ].map(
-      async (authorization) =>
-        await assert.rejects(
-          runEffectTestPromise(
-            verifier.verify(Redacted.make(authorization), {
-              currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-              environment: fixture.environment,
-            })
-          ),
-          isInvalidError
+      expect(
+        yield* verify(partyFixture.token, partyFixture.environment)
+      ).toEqual(principal);
+      expect(
+        isScopeError(
+          yield* Effect.flip(
+            verify(billingFixture.token, billingFixture.environment)
+          )
         )
-    )
-  );
-});
+      ).toBe(true);
+    })
+);
 
-test('empty and malformed audience bindings fail closed as configuration errors', async () => {
-  const fixture = await makeFixture('party-registry');
-  await Promise.all(
-    ['', 'Party Registry', 'party/registry'].map(
-      async (audience) =>
-        await assert.rejects(
-          runEffectTestPromise(
-            bindGatewayPrincipalVerifier(audience).verify(
-              Redacted.make(`Bearer ${fixture.token}`),
+it.effect(
+  'Bearer scheme matching is case insensitive without changing the signed token',
+  () =>
+    Effect.gen(function* verifyBearerCaseVariants() {
+      const fixture = yield* makeFixture('party-registry');
+      const verifier = bindGatewayPrincipalVerifier('party-registry');
+      yield* Effect.forEach(
+        ['Bearer', 'bearer', 'BEARER', 'bEaReR'],
+        (scheme) =>
+          Effect.gen(function* verifyBearerScheme() {
+            const verified = yield* verifier.verify(
+              Redacted.make(`${scheme} ${fixture.token}`),
               {
                 currentTimeSeconds: Effect.succeed(currentTimeSeconds),
                 environment: fixture.environment,
               }
-            )
-          ),
-          isConfigurationError
-        )
-    )
-  );
-});
+            );
+            expect(verified).toEqual(principal);
+          }),
+        { concurrency: 'unbounded' }
+      );
+    })
+);
 
-test('redemption failures remain sanitized and distinguish replay from unavailability', async () => {
-  const fixture = await makeFixture('party-registry');
-  const verifier = bindGatewayPrincipalVerifier('party-registry');
-  const verify = async (
-    redemption: Parameters<typeof verifier.verifyAndRedeem>[1]['redemption']
-  ) =>
-    await runEffectTestPromise(
-      verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
-        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-        environment: fixture.environment,
-        redemption,
-      })
-    );
+it.effect(
+  'case insensitive Bearer matching still rejects malformed authorization headers',
+  () =>
+    Effect.gen(function* rejectMalformedBearerHeaders() {
+      const fixture = yield* makeFixture('party-registry');
+      const verifier = bindGatewayPrincipalVerifier('party-registry');
+      yield* Effect.forEach(
+        [
+          ` bearer ${fixture.token}`,
+          `bearer  ${fixture.token}`,
+          `bearer\t${fixture.token}`,
+          `bearer ${fixture.token} `,
+          `bearer ${fixture.token} extra`,
+          'bearer ',
+          `Basic ${fixture.token}`,
+        ],
+        (authorization) =>
+          Effect.gen(function* rejectMalformedBearerHeader() {
+            const failure = yield* Effect.flip(
+              verifier.verify(Redacted.make(authorization), {
+                currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+                environment: fixture.environment,
+              })
+            );
+            expect(isInvalidError(failure)).toBe(true);
+          }),
+        { concurrency: 'unbounded' }
+      );
+    })
+);
 
-  await assert.rejects(
-    verify({
-      consume: () =>
-        Effect.fail(
-          new GatewayAssertionReplayError({
-            reason: 'fixture replay details must be discarded',
-          })
-        ),
-    }),
-    (failure: ActionPrincipalError) => {
-      assert.equal(isInvalidError(failure), true);
-      assert.doesNotMatch(JSON.stringify(failure), /fixture|eyJ/u);
-      return true;
-    }
-  );
-  await assert.rejects(
-    verify({
-      consume: () =>
-        Effect.fail(
-          new GatewayAssertionRedemptionUnavailableError({
-            reason: 'fixture storage details must be discarded',
-          })
-        ),
-    }),
-    (failure: ActionPrincipalError) => {
-      assert.equal(isUnavailableError(failure), true);
-      assert.doesNotMatch(JSON.stringify(failure), /fixture|eyJ/u);
-      return true;
-    }
-  );
-});
+it.effect(
+  'empty and malformed audience bindings fail closed as configuration errors',
+  () =>
+    Effect.gen(function* rejectMalformedBindings() {
+      const fixture = yield* makeFixture('party-registry');
+      yield* Effect.forEach(
+        ['', 'Party Registry', 'party/registry'],
+        (audience) =>
+          Effect.gen(function* checkMalformedBinding() {
+            const failure = yield* Effect.flip(
+              bindGatewayPrincipalVerifier(audience).verify(
+                Redacted.make(`Bearer ${fixture.token}`),
+                {
+                  currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+                  environment: fixture.environment,
+                }
+              )
+            );
+            expect(isConfigurationError(failure)).toBe(true);
+          }),
+        { concurrency: 'unbounded' }
+      );
+    })
+);
 
-test('unsupported assertion versions and unexpected verifier failures fail closed', async () => {
-  const unsupportedVersion = await makeFixture('party-registry', 2);
-  const verifier = bindGatewayPrincipalVerifier('party-registry');
-  await assert.rejects(
-    runEffectTestPromise(
-      verifier.verify(Redacted.make(`Bearer ${unsupportedVersion.token}`), {
-        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-        environment: unsupportedVersion.environment,
-      })
-    ),
-    isInvalidError
-  );
-
-  const fixture = await makeFixture('party-registry');
-  await assert.rejects(
-    runEffectTestPromise(
-      verifier
-        .verify(Redacted.make(`Bearer ${fixture.token}`), {
+it.effect(
+  'redemption failures remain sanitized and distinguish replay from unavailability',
+  () =>
+    Effect.gen(function* verifyRedemptionFailures() {
+      const fixture = yield* makeFixture('party-registry');
+      const verifier = bindGatewayPrincipalVerifier('party-registry');
+      const verify = (
+        redemption: Parameters<typeof verifier.verifyAndRedeem>[1]['redemption']
+      ) =>
+        verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
           currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+          environment: fixture.environment,
+          redemption,
+        });
+
+      const replayFailure = yield* Effect.flip(
+        verify({
+          consume: () =>
+            Effect.fail(
+              new GatewayAssertionReplayError({
+                reason: 'fixture replay details must be discarded',
+              })
+            ),
         })
-        .pipe(
-          Effect.provideService(GatewayPrincipalVerifierConfiguration, {
-            configuration: Effect.succeed({ issuer, keySet: failingKeySet }),
-          })
+      );
+      expect(isInvalidError(replayFailure)).toBe(true);
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          replayFailure
         )
-    ),
-    (failure: ActionPrincipalError) => {
-      assert.equal(isUnavailableError(failure), true);
-      assert.doesNotMatch(JSON.stringify(failure), /fixture|eyJ/u);
-      return true;
-    }
-  );
-});
+      ).not.toMatch(/fixture|eyJ/u);
+      const unavailableFailure = yield* Effect.flip(
+        verify({
+          consume: () =>
+            Effect.fail(
+              new GatewayAssertionRedemptionUnavailableError({
+                reason: 'fixture storage details must be discarded',
+              })
+            ),
+        })
+      );
+      expect(isUnavailableError(unavailableFailure)).toBe(true);
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          unavailableFailure
+        )
+      ).not.toMatch(/fixture|eyJ/u);
+    })
+);
 
-test('malformed Ed25519 public keys fail during configuration acquisition', async () => {
-  const fixture = await makeFixture('party-registry');
-  const verifier = bindGatewayPrincipalVerifier('party-registry');
-  const verifyWithKey = async (key: JWK) =>
-    await runEffectTestPromise(
-      verifier.verify(Redacted.make(`Bearer ${fixture.token}`), {
-        currentTimeSeconds: Effect.succeed(currentTimeSeconds),
-        environment: {
-          ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [key] }),
-        },
-      })
-    );
+it.effect(
+  'unsupported assertion versions and unexpected verifier failures fail closed',
+  () =>
+    Effect.gen(function* rejectUnsupportedAndUnexpectedFailures() {
+      const unsupportedVersion = yield* makeFixture('party-registry', 2);
+      const verifier = bindGatewayPrincipalVerifier('party-registry');
+      const versionFailure = yield* Effect.flip(
+        verifier.verify(Redacted.make(`Bearer ${unsupportedVersion.token}`), {
+          currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+          environment: unsupportedVersion.environment,
+        })
+      );
+      expect(isInvalidError(versionFailure)).toBe(true);
 
-  await Promise.all([
-    assert.rejects(
-      verifyWithKey({ ...fixture.publicJwk, key_ops: [] }),
-      isConfigurationError
-    ),
-    assert.rejects(
-      verifyWithKey({ ...fixture.publicJwk, x: '!!!' }),
-      isConfigurationError
-    ),
-  ]);
-});
+      const fixture = yield* makeFixture('party-registry');
+      const failure = yield* Effect.flip(
+        verifier
+          .verify(Redacted.make(`Bearer ${fixture.token}`), {
+            currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+          })
+          .pipe(
+            Effect.provideService(GatewayPrincipalVerifierConfiguration, {
+              configuration: Effect.succeed({ issuer, keySet: failingKeySet }),
+            })
+          )
+      );
+      expect(isUnavailableError(failure)).toBe(true);
+      expect(
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          failure
+        )
+      ).not.toMatch(/fixture|eyJ/u);
+    })
+);
+
+it.effect(
+  'malformed Ed25519 public keys fail during configuration acquisition',
+  () =>
+    Effect.gen(function* rejectMalformedPublicKeys() {
+      const fixture = yield* makeFixture('party-registry');
+      const verifier = bindGatewayPrincipalVerifier('party-registry');
+      const verifyWithKey = (key: JWK) =>
+        Effect.gen(function* verifyPublicKey() {
+          const jwks = yield* Schema.encodeEffect(
+            Schema.fromJsonString(Schema.Unknown)
+          )({
+            keys: [key],
+          });
+          return yield* verifier.verify(
+            Redacted.make(`Bearer ${fixture.token}`),
+            {
+              currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+              environment: {
+                ONTOS_GATEWAY_ISSUER: issuer,
+                ONTOS_GATEWAY_PUBLIC_JWKS: jwks,
+              },
+            }
+          );
+        });
+
+      yield* Effect.forEach(
+        [
+          { ...fixture.publicJwk, key_ops: [] },
+          { ...fixture.publicJwk, x: '!!!' },
+        ],
+        (key) =>
+          Effect.gen(function* checkMalformedPublicKey() {
+            expect(
+              isConfigurationError(yield* Effect.flip(verifyWithKey(key)))
+            ).toBe(true);
+          }),
+        { concurrency: 'unbounded' }
+      );
+    })
+);

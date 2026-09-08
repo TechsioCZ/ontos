@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   EntrypointAuthorizationSchema,
@@ -12,7 +10,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
 
-test('decodes every closed authorization classification', () => {
+it('decodes every closed authorization classification', () => {
   const classifications = [
     { kind: 'public' },
     { kind: 'authenticated_principal' },
@@ -25,14 +23,13 @@ test('decodes every closed authorization classification', () => {
   ] as const;
 
   for (const classification of classifications) {
-    assert.deepEqual(
-      decodeEntrypointAuthorization(classification),
+    expect(decodeEntrypointAuthorization(classification)).toEqual(
       classification
     );
   }
 });
 
-test('rejects omitted, unknown, excessive, and incompatible authorization fields', () => {
+it('rejects omitted, unknown, excessive, and incompatible authorization fields', () => {
   const invalid = [
     undefined,
     { kind: 'unknown' },
@@ -44,15 +41,15 @@ test('rejects omitted, unknown, excessive, and incompatible authorization fields
   ];
 
   for (const value of invalid) {
-    assert.throws(() =>
+    expect(() =>
       Schema.decodeUnknownSync(EntrypointAuthorizationSchema, {
         onExcessProperty: 'error',
       })(value)
-    );
+    ).toThrow();
   }
 });
 
-test('requires role-compatible authorization and freezes nested classification', () => {
+it('requires role-compatible authorization and freezes nested classification', () => {
   const action = defineTenantModuleEntrypoint({
     access: 'write',
     authorization: {
@@ -71,9 +68,9 @@ test('requires role-compatible authorization and freezes nested classification',
     role: 'page',
   });
 
-  assert.equal(Object.isFrozen(action.authorization), true);
-  assert.equal(Object.isFrozen(route.authorization), true);
-  assert.throws(() =>
+  expect(Object.isFrozen(action.authorization)).toBe(true);
+  expect(Object.isFrozen(route.authorization)).toBe(true);
+  expect(() =>
     defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'authenticated_principal' },
@@ -81,8 +78,8 @@ test('requires role-compatible authorization and freezes nested classification',
       moduleKey: 'inventory.stock',
       role: 'action',
     })
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     defineTenantModuleEntrypoint({
       access: 'background',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -90,10 +87,10 @@ test('requires role-compatible authorization and freezes nested classification',
       moduleKey: 'inventory.stock',
       role: 'worker',
     })
-  );
+  ).toThrow();
 });
 
-test('keeps discovery metadata independent from authorization', () => {
+it('keeps discovery metadata independent from authorization', () => {
   const route = {
     entrypoint: defineSystemModuleEntrypoint({
       access: 'read',
@@ -106,7 +103,7 @@ test('keeps discovery metadata independent from authorization', () => {
     public: false,
   } as const;
 
-  assert.equal(route.entrypoint.authorization.kind, 'public');
-  assert.equal(route.public, false);
-  assert.equal(route.indexable, false);
+  expect(route.entrypoint.authorization.kind).toBe('public');
+  expect(route.public).toBe(false);
+  expect(route.indexable).toBe(false);
 });

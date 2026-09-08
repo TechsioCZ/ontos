@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { Schema } from 'effect';
+import { Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   ACTION_CORE_ERROR_TAGS,
@@ -28,7 +26,7 @@ import {
   ModuleStateDeniedError,
 } from '../../src/modules/module-state-gate-errors.ts';
 
-void test('publishes the exhaustive stable Core Action error tags', () => {
+it('publishes the exhaustive stable Core Action error tags', () => {
   const errors = [
     new ActionPayloadValidationError({
       code: 'action_payload_invalid',
@@ -111,18 +109,18 @@ void test('publishes the exhaustive stable Core Action error tags', () => {
     }),
   ];
 
-  assert.deepEqual(
-    errors.map((error) => error._tag),
-    ACTION_CORE_ERROR_TAGS
-  );
+  expect(errors.length).toBe(ACTION_CORE_ERROR_TAGS.length);
+  for (const [index, tag] of ACTION_CORE_ERROR_TAGS.entries()) {
+    expect(Predicate.isTagged(errors[index], tag)).toBe(true);
+  }
   for (const error of errors) {
-    assert.equal(error.reason.includes('postgresql://'), false);
-    assert.equal(error.reason.includes('ontos-local-development-key'), false);
-    assert.equal('status' in error, false);
+    expect(error.reason.includes('postgresql://')).toBe(false);
+    expect(error.reason.includes('ontos-local-development-key')).toBe(false);
+    expect('status' in error).toBe(false);
   }
   const denial = errors.find(Schema.is(ActionPolicyDenied));
-  assert.equal(denial?.reason, 'This tenant is suspended');
-  assert.equal(denial?.policyReasonCode, 'tenant_suspended');
-  assert.equal('payload' in (denial ?? {}), false);
-  assert.equal('cause' in (denial ?? {}), false);
+  expect(denial?.reason).toBe('This tenant is suspended');
+  expect(denial?.policyReasonCode).toBe('tenant_suspended');
+  expect('payload' in (denial ?? {})).toBe(false);
+  expect('cause' in (denial ?? {})).toBe(false);
 });

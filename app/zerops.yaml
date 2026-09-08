@@ -40,7 +40,7 @@ zerops:
       envVariables:
         BETTER_AUTH_SECRET: ${shellsuperapp_BETTER_AUTH_SECRET}
         BETTER_AUTH_URL: ${shellsuperapp_BETTER_AUTH_URL}
-        DATABASE_ADMIN_URL: postgresql://${db_superUser}:${db_superUserPassword}@${db_hostname}:${db_port}/${db_dbName}
+        DATABASE_ADMIN_URL: postgresql://${db18_superUser}:${db18_superUserPassword}@${db18_hostname}:${db18_port}/${db18_dbName}
         MIGRATOR_PORT: '8080'
         NODE_ENV: production
         SPICEDB_ENDPOINT: 'spicedb:50051'
@@ -72,7 +72,7 @@ zerops:
       base: 'alpine/docker@26.1'
       prepareCommands:
         - docker image pull authzed/spicedb:v1.56.0
-        - docker image pull postgres:17-alpine
+        - docker image pull postgres:18.6-alpine
       ports:
         - port: 50051
           protocol: tcp
@@ -216,7 +216,7 @@ zerops:
         NODE_ENV: production
         PORT: '4102'
         OUTBOX_WORKER_HEALTH_PORT: '4102'
-        DATABASE_URL: ${party-registry_DATABASE_URL}
+        DATABASE_URL: ${partyregistry_DATABASE_URL}
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage

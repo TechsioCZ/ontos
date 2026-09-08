@@ -14,7 +14,7 @@ import { useRef, useState } from 'react';
 import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
-import { runBrowserEffect } from '../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 interface LoginValidation {
@@ -126,7 +126,7 @@ const LoginPage = () => {
     }
 
     setSubmitting(true);
-    void runBrowserEffect(
+    void browserRuntime.runPromise(
       signIn(credentials.value, { locale: language }).pipe(
         Effect.matchEffect({
           onFailure: (error) =>

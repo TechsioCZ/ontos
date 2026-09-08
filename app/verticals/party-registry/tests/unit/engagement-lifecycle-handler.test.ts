@@ -1,8 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect } from 'effect';
+import { assert, it } from 'effect-rstest';
 
 import { EngagementProfilePersistenceUnavailable } from '../../shared/domain/engagement-profile.ts';
 import { handleEngagementLifecycle } from '../../src/actions/engagement-lifecycle-handler.ts';
@@ -14,8 +11,9 @@ const payload = {
 for (const state of ['active', 'archived'] as const) {
   const handle = handleEngagementLifecycle<typeof payload, string>(state);
 
-  test(`engagement transition to ${state} forwards the reference and returns the persisted value`, () =>
-    runEffectTestPromise(
+  it.effect(
+    `engagement transition to ${state} forwards the reference and returns the persisted value`,
+    () =>
       Effect.gen(function* verifyTransition() {
         const value = yield* handle(payload, {
           services: {
@@ -30,27 +28,27 @@ for (const state of ['active', 'archived'] as const) {
         });
         assert.equal(value, 'persisted-profile');
       })
-    ));
+  );
 
-  test(`engagement conflict reports the requested ${state} state`, () =>
-    runEffectTestPromise(
-      Effect.gen(function* verifyConflict() {
-        const reason = yield* handle(payload, {
-          services: {
-            transition: () =>
-              Effect.succeed({ _tag: 'conflict', value: 'existing-profile' }),
-          },
-        }).pipe(
-          Effect.catchTag('EngagementProfileConflict', (error) =>
-            Effect.succeed(error.reason)
-          )
-        );
-        assert.equal(reason, `The engagement profile is already ${state}`);
-      })
-    ));
+  it.effect(`engagement conflict reports the requested ${state} state`, () =>
+    Effect.gen(function* verifyConflict() {
+      const reason = yield* handle(payload, {
+        services: {
+          transition: () =>
+            Effect.succeed({ _tag: 'conflict', value: 'existing-profile' }),
+        },
+      }).pipe(
+        Effect.catchTag('EngagementProfileConflict', (error) =>
+          Effect.succeed(error.reason)
+        )
+      );
+      assert.equal(reason, `The engagement profile is already ${state}`);
+    })
+  );
 
-  test(`engagement transition to ${state} retains the missing profile identity`, () =>
-    runEffectTestPromise(
+  it.effect(
+    `engagement transition to ${state} retains the missing profile identity`,
+    () =>
       Effect.gen(function* verifyMissing() {
         const profileId = yield* handle(payload, {
           services: { transition: () => Effect.succeed({ _tag: 'not_found' }) },
@@ -61,10 +59,11 @@ for (const state of ['active', 'archived'] as const) {
         );
         assert.equal(profileId, payload.profileRef.resourceId);
       })
-    ));
+  );
 
-  test(`engagement transition to ${state} preserves the typed persistence failure`, () =>
-    runEffectTestPromise(
+  it.effect(
+    `engagement transition to ${state} preserves the typed persistence failure`,
+    () =>
       Effect.gen(function* verifyPersistenceFailure() {
         const failure = new EngagementProfilePersistenceUnavailable({
           code: 'contacts_engagement_profile_persistence_unavailable',
@@ -79,5 +78,5 @@ for (const state of ['active', 'archived'] as const) {
         );
         assert.equal(result, failure);
       })
-    ));
+  );
 }

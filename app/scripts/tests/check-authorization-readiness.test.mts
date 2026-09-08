@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import type { ProtectedEntrypointInventory } from '../authorization/protected-entrypoint-inventory.mts';
 import {
@@ -147,113 +146,95 @@ const ready: AuthorizationReadinessInput = {
   spiceDbSchemaHash: 'e'.repeat(64),
 };
 
-void test('readiness emits deterministic evidence bound to the fixed context and exact build', () => {
+it('readiness emits deterministic evidence bound to the fixed context and exact build', () => {
   const evidence = checkAuthorizationReadiness(ready);
-  assert.equal(evidence.status, 'ready');
-  assert.equal(evidence.inventoryHash, inventory.inventoryHash);
-  assert.equal(evidence.fixedContextHash, ready.contextHash);
-  assert.equal(evidence.negativeSmokeHash, negativeSmokeHash);
+  expect(evidence.status).toBe('ready');
+  expect(evidence.inventoryHash).toBe(inventory.inventoryHash);
+  expect(evidence.fixedContextHash).toBe(ready.contextHash);
+  expect(evidence.negativeSmokeHash).toBe(negativeSmokeHash);
 });
 
-void test('readiness rejects unapproved contexts and unresolved or stale impact evidence', () => {
-  assert.throws(
-    () =>
-      checkAuthorizationReadiness({
-        ...ready,
-        context: { ...ready.context, approvalStatus: 'pending' },
-      }),
-    /unapproved/u
-  );
-  assert.throws(
-    () =>
-      checkAuthorizationReadiness({
-        ...ready,
-        impact: { ...ready.impact, totalWouldDeny: 1 },
-      }),
-    /stale or unresolved/u
-  );
-  assert.throws(
-    () =>
-      checkAuthorizationReadiness({
-        ...ready,
-        impact: { ...ready.impact, sourceRevision: 'other' },
-      }),
-    /stale or unresolved/u
-  );
+it('readiness rejects unapproved contexts and unresolved or stale impact evidence', () => {
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      context: { ...ready.context, approvalStatus: 'pending' },
+    })
+  ).toThrow(/unapproved/u);
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      impact: { ...ready.impact, totalWouldDeny: 1 },
+    })
+  ).toThrow(/stale or unresolved/u);
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      impact: { ...ready.impact, sourceRevision: 'other' },
+    })
+  ).toThrow(/stale or unresolved/u);
 });
 
-void test('readiness rejects missing relationships, module state, worker ownership, and replay migration', () => {
+it('readiness rejects missing relationships, module state, worker ownership, and replay migration', () => {
   for (const key of [
     'verifiedActionEntrypoints',
     'verifiedActiveModuleEntrypoints',
     'verifiedContextPermissionEntrypoints',
     'verifiedWorkerEntrypoints',
   ] as const) {
-    assert.throws(
-      () =>
-        checkAuthorizationReadiness({
-          ...ready,
-          observation: { ...ready.observation, [key]: [] },
-        }),
-      /incomplete/u
-    );
-  }
-  assert.throws(
-    () =>
+    expect(() =>
       checkAuthorizationReadiness({
         ...ready,
-        observation: {
-          ...ready.observation,
-          replayMigrationHash: 'f'.repeat(64),
-        },
-      }),
-    /stale/u
-  );
+        observation: { ...ready.observation, [key]: [] },
+      })
+    ).toThrow(/incomplete/u);
+  }
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      observation: {
+        ...ready.observation,
+        replayMigrationHash: 'f'.repeat(64),
+      },
+    })
+  ).toThrow(/stale/u);
 });
 
-void test('readiness rejects incorrect issuer/audience topology, short observations, and smoke gaps', () => {
-  assert.throws(
-    () =>
-      checkAuthorizationReadiness({
-        ...ready,
-        observation: { ...ready.observation, gatewayAudiences: ['other'] },
-      }),
-    /issuer or audience/u
-  );
-  assert.throws(
-    () =>
-      checkAuthorizationReadiness({
-        ...ready,
+it('readiness rejects incorrect issuer/audience topology, short observations, and smoke gaps', () => {
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      observation: { ...ready.observation, gatewayAudiences: ['other'] },
+    })
+  ).toThrow(/issuer or audience/u);
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      observation: {
+        ...ready.observation,
+        gatewayIssuer: 'http://insecure.test',
+      },
+    })
+  ).toThrow(/issuer or audience/u);
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      impact: {
+        ...ready.impact,
         observation: {
-          ...ready.observation,
-          gatewayIssuer: 'http://insecure.test',
+          endedAt: '2026-09-02T00:00:01.000Z',
+          startedAt: '2026-09-02T00:00:00.000Z',
         },
-      }),
-    /issuer or audience/u
-  );
-  assert.throws(
-    () =>
-      checkAuthorizationReadiness({
-        ...ready,
-        impact: {
-          ...ready.impact,
-          observation: {
-            endedAt: '2026-09-02T00:00:01.000Z',
-            startedAt: '2026-09-02T00:00:00.000Z',
-          },
-        },
-      }),
-    /observation/u
-  );
-  assert.throws(
-    () =>
-      checkAuthorizationReadiness({
-        ...ready,
-        negativeSmoke: {
-          ...negativeSmoke,
-          scenarios: negativeSmoke.scenarios.slice(1),
-        },
-      }),
-    /smoke evidence is incomplete/u
-  );
+      },
+    })
+  ).toThrow(/observation/u);
+  expect(() =>
+    checkAuthorizationReadiness({
+      ...ready,
+      negativeSmoke: {
+        ...negativeSmoke,
+        scenarios: negativeSmoke.scenarios.slice(1),
+      },
+    })
+  ).toThrow(/smoke evidence is incomplete/u);
 });

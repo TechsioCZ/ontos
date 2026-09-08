@@ -21,6 +21,7 @@ import { rule as noHandBuiltProblemDetails } from './rules/no-hand-built-problem
 import { rule as noHandParsedEnvironmentValue } from './rules/no-hand-parsed-environment-value.ts';
 import { rule as noHandRolledTaggedUnion } from './rules/no-hand-rolled-tagged-union.ts';
 import { rule as noImperativeLoopInEffectGen } from './rules/no-imperative-loop-in-effect-gen.ts';
+import { rule as noInstanceof } from './rules/no-instanceof.ts';
 import { rule as noInterfaceFirstCodec } from './rules/no-interface-first-codec.ts';
 import { rule as noJsonSchemaAsDocumentContract } from './rules/no-json-schema-as-document-contract.ts';
 import { rule as noLayerFresh } from './rules/no-layer-fresh.ts';
@@ -76,6 +77,7 @@ import { rule as requireTimeoutOnExternalEffect } from './rules/require-timeout-
 const effectNativePlugin = eslintCompatPlugin({
   meta: { name: 'effect-native' },
   rules: {
+    'no-instanceof': noInstanceof,
     'no-ad-hoc-argv-in-scripts': noAdHocArgvInScripts,
     'no-ambient-date': noAmbientDate,
     'no-ambient-process-env': noAmbientProcessEnv,

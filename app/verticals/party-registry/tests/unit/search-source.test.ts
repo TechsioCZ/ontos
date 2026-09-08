@@ -1,16 +1,13 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotService,
   OutboxWorkerHandlerContext,
 } from '@app/core-runtime';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import type { AnyColumn, Query, SQL, Table } from 'drizzle-orm';
 import { getTableName } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Result } from 'effect';
+import { DateTime, Effect, Result, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { makePartySearchProjectionSource } from '../../src/services/party-search-projection-source.service.ts';
 
@@ -91,8 +88,9 @@ const harness = (
   };
 };
 
-test('canonical snapshot preserves alias identity and legal-entity Counterparty context', () =>
-  runEffectTestPromise(
+it.effect(
+  'canonical snapshot preserves alias identity and legal-entity Counterparty context',
+  () =>
     Effect.gen(function* canonicalAliasSnapshot() {
       const { source } = harness({
         counterparties: [
@@ -135,7 +133,7 @@ test('canonical snapshot preserves alias identity and legal-entity Counterparty 
         ],
       });
       const result = yield* source.load(context, { partyId: aliasId });
-      assert.deepEqual(result, {
+      expect(result).toEqual({
         counterparties: [
           {
             legalEntityId,
@@ -182,10 +180,11 @@ test('canonical snapshot preserves alias identity and legal-entity Counterparty 
         tenantId,
       });
     })
-  ));
+);
 
-test('source exposes only current public email and phone search evidence, never ADDRESS or raw contact fields', () =>
-  runEffectTestPromise(
+it.effect(
+  'source exposes only current public email and phone search evidence, never ADDRESS or raw contact fields',
+  () =>
     Effect.gen(function* privateSearchEvidence() {
       const contact = {
         isCurrent: true,
@@ -222,7 +221,7 @@ test('source exposes only current public email and phone search evidence, never 
         ],
       });
       const result = yield* source.load(context, { partyId });
-      assert.deepEqual(result.parties[0]?.contacts, [
+      expect(result.parties[0]?.contacts).toEqual([
         {
           privacy: 'PUBLIC',
           state: 'ACTIVE',
@@ -238,8 +237,8 @@ test('source exposes only current public email and phone search evidence, never 
           value: '+420123456789',
         },
       ]);
-      assert.equal(result.parties[0]?.displayName, null);
-      assert.deepEqual(filters['party_contact_points']?.params, [
+      expect(result.parties[0]?.displayName).toBe(null);
+      expect(filters['party_contact_points']?.params).toEqual([
         tenantId,
         partyId,
         'EMAIL',
@@ -248,12 +247,10 @@ test('source exposes only current public email and phone search evidence, never 
         'ACTIVE',
         true,
       ]);
-      assert.match(
-        filters['party_contact_points']?.sql ?? '',
+      expect(filters['party_contact_points']?.sql ?? '').toMatch(
         /privacy_classification/u
       );
-      assert.deepEqual(
-        columns['party_contact_points']?.toSorted(),
+      expect(columns['party_contact_points']?.toSorted()).toEqual(
         [
           'partyId',
           'tenantId',
@@ -267,29 +264,31 @@ test('source exposes only current public email and phone search evidence, never 
         ].toSorted()
       );
     })
-  ));
+);
 
-test('missing Party and Counterparty targets produce explicit versioned tombstone refs', () =>
-  runEffectTestPromise(
+it.effect(
+  'missing Party and Counterparty targets produce explicit versioned tombstone refs',
+  () =>
     Effect.gen(function* missingTargetTombstones() {
       const { source } = harness({});
       const party = yield* source.load(context, { partyId });
       const counterparty = yield* source.load(context, { counterpartyId });
-      assert.deepEqual(party, {
+      expect(party).toEqual({
         counterparties: [],
         parties: [],
         projectionVersion: '9',
         removedRefs: [ref(partyId)],
         tenantId,
       });
-      assert.deepEqual(counterparty.removedRefs, [
+      expect(counterparty.removedRefs).toEqual([
         { ...ref(counterpartyId), resourceType: 'party.registry.counterparty' },
       ]);
     })
-  ));
+);
 
-test('full rebuild reads each Core-enumerated legal entity in the same snapshot and keeps distinct Counterparties', () =>
-  runEffectTestPromise(
+it.effect(
+  'full rebuild reads each Core-enumerated legal entity in the same snapshot and keeps distinct Counterparties',
+  () =>
     Effect.gen(function* rebuildSnapshot() {
       const secondLegalEntityId = '30000000-0000-4000-8000-000000000002';
       const secondCounterpartyId = '40000000-0000-4000-8000-000000000002';
@@ -316,23 +315,24 @@ test('full rebuild reads each Core-enumerated legal entity in the same snapshot 
         [legalEntityId, secondLegalEntityId]
       );
       const result = yield* source.load(context, { rebuild: true });
-      assert.deepEqual(scopes, [
+      expect(scopes).toEqual([
         undefined,
         legalEntityId,
         secondLegalEntityId,
         undefined,
       ]);
-      assert.deepEqual(
-        result.counterparties.map((row) => row.ref.resourceId),
-        [counterpartyId, secondCounterpartyId]
-      );
-      assert.equal(result.parties[0]?.archived, true);
-      assert.equal(result.projectionVersion, '9');
+      expect(result.counterparties.map((row) => row.ref.resourceId)).toEqual([
+        counterpartyId,
+        secondCounterpartyId,
+      ]);
+      expect(result.parties[0]?.archived).toBe(true);
+      expect(result.projectionVersion).toBe('9');
     })
-  ));
+);
 
-test('Counterparty-only refresh emits only its canonical family and selected Counterparty', () =>
-  runEffectTestPromise(
+it.effect(
+  'Counterparty-only refresh emits only its canonical family and selected Counterparty',
+  () =>
     Effect.gen(function* targetedCounterpartySnapshot() {
       const otherId = '20000000-0000-4000-8000-000000000009';
       const { source } = harness({
@@ -356,19 +356,18 @@ test('Counterparty-only refresh emits only its canonical family and selected Cou
         ],
       });
       const result = yield* source.load(context, { counterpartyId });
-      assert.deepEqual(
-        result.parties.map((party) => party.ref.resourceId),
-        [partyId]
-      );
-      assert.deepEqual(
-        result.counterparties.map((row) => row.ref.resourceId),
-        [counterpartyId]
-      );
+      expect(result.parties.map((party) => party.ref.resourceId)).toEqual([
+        partyId,
+      ]);
+      expect(result.counterparties.map((row) => row.ref.resourceId)).toEqual([
+        counterpartyId,
+      ]);
     })
-  ));
+);
 
-test('alias cycles and cross-tenant source rows fail closed with sanitized typed failures', () =>
-  runEffectTestPromise(
+it.effect(
+  'alias cycles and cross-tenant source rows fail closed with sanitized typed failures',
+  () =>
     Effect.gen(function* rejectedSourceSnapshot() {
       for (const rows of [
         {
@@ -392,17 +391,18 @@ test('alias cycles and cross-tenant source rows fail closed with sanitized typed
         const outcome = yield* source
           .load(context, { rebuild: true })
           .pipe(Effect.result);
-        assert.ok(Result.isFailure(outcome));
+        expect(Result.isFailure(outcome)).toBe(true);
         if (Result.isFailure(outcome)) {
-          assert.equal(
-            outcome.failure._tag,
-            'PartySearchProjectionUnavailable'
-          );
-          assert.doesNotMatch(
-            outcome.failure.reason,
+          expect(
+            Predicate.isTagged(
+              outcome.failure,
+              'PartySearchProjectionUnavailable'
+            )
+          ).toBe(true);
+          expect(outcome.failure.reason).not.toMatch(
             /Secret name|foreign-tenant/u
           );
         }
       }
     })
-  ));
+);

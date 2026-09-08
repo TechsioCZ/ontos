@@ -1,14 +1,11 @@
-/// <reference types="node" />
-
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { test as registerNodeTest } from 'node:test';
 
 import { NodeServices } from '@effect/platform-node';
-import { ManagedRuntime } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import {
@@ -19,6 +16,19 @@ import type {
   AuthorizationPromotionGateInput,
   PlanDeploymentImpactOptions,
 } from '../plan-deployment-impact.mts';
+
+const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
+  effect.pipe(
+    Effect.exit,
+    Effect.map(
+      Exit.match({
+        onFailure: Cause.pretty,
+        onSuccess: () => {
+          throw new Error('Expected planning failure');
+        },
+      })
+    )
+  );
 
 interface FixtureOptions {
   readonly includeContactOwner?: boolean;
@@ -79,125 +89,157 @@ const SHELL_OWNER = {
 const OWNERSHIP_PATH = 'topology/ownership.json';
 const DOCUMENTATION_PATH = 'docs/README.md';
 
-const test = (name: string, run: () => void | Promise<void>): void => {
-  void registerNodeTest(name, run);
-};
+const planDeploymentImpact = (options: PlanDeploymentImpactOptions) =>
+  planDeploymentImpactEffect(options).pipe(Effect.provide(NodeServices.layer));
 
-const deploymentImpactRuntime = ManagedRuntime.make(NodeServices.layer);
-const planDeploymentImpact = async (options: PlanDeploymentImpactOptions) =>
-  await deploymentImpactRuntime.runPromise(planDeploymentImpactEffect(options));
-
-registerNodeTest.after(async () => {
-  await deploymentImpactRuntime.dispose();
-});
-
-const writeJson = async (
+const writeJson = (
   root: string,
   relativePath: string,
   value: FixtureDocument
-): Promise<void> => {
-  const target = path.join(root, relativePath);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8');
-};
+) =>
+  Effect.gen(function* testEffect1() {
+    const target = path.join(root, relativePath);
+    yield* Effect.tryPromise(() =>
+      mkdir(path.dirname(target), { recursive: true })
+    );
+    yield* Effect.tryPromise(() =>
+      writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8')
+    );
+  });
 
-const makeFixture = async (options: FixtureOptions = {}): Promise<string> => {
-  const root = await mkdtemp(
-    path.join(os.tmpdir(), 'ontos-deployment-impact-')
-  );
-  const verticalId = options.verticalId ?? 'contacts';
-  const verticalPackage = `@app/${verticalId}`;
-  const verticalPath = `verticals/${verticalId}`;
-  await writeJson(root, 'topology/reference-topology.json', {
-    schemaVersion: 1,
-    sharedPackages: [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER],
-    shell: {
-      id: SHELL_ID,
-      package: SHELL_PACKAGE,
-      verticalRefs: [verticalId],
-    },
-    verticals: [
-      {
-        id: verticalId,
-        moduleFederation: { remotes: [], verticalRefs: [] },
-        package: verticalPackage,
-        path: verticalPath,
+const makeFixture = (options: FixtureOptions = {}) =>
+  Effect.gen(function* testEffect2() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() =>
+        mkdtemp(path.join(os.tmpdir(), 'ontos-deployment-impact-'))
+      ),
+      (directory) =>
+        Effect.tryPromise(() =>
+          rm(directory, { force: true, recursive: true })
+        ).pipe(Effect.orDie)
+    );
+    const verticalId = options.verticalId ?? 'contacts';
+    const verticalPackage = `@app/${verticalId}`;
+    const verticalPath = `verticals/${verticalId}`;
+    yield* writeJson(root, 'topology/reference-topology.json', {
+      schemaVersion: 1,
+      sharedPackages: [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER],
+      shell: {
+        id: SHELL_ID,
+        package: SHELL_PACKAGE,
+        verticalRefs: [verticalId],
       },
-    ],
-  });
-  await writeJson(root, OWNERSHIP_PATH, {
-    owners: [
-      CORE_RUNTIME_OWNER,
-      SHARED_CONTRACTS_OWNER,
-      SHELL_OWNER,
-      ...(options.includeContactOwner === false
-        ? []
-        : [{ id: verticalId, package: verticalPackage, path: verticalPath }]),
-    ],
-    schemaVersion: 1,
-  });
-  if (options.includeWorker === true) {
-    const workerRoot = path.join(root, verticalPath);
-    await mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true });
-    await writeFile(
-      path.join(workerRoot, 'package.json'),
-      `${JSON.stringify({ name: verticalPackage, scripts: { 'worker:start': 'node --experimental-strip-types ./src/worker-host/main.ts' } })}\n`
+      verticals: [
+        {
+          id: verticalId,
+          moduleFederation: { remotes: [], verticalRefs: [] },
+          package: verticalPackage,
+          path: verticalPath,
+        },
+      ],
+    });
+    yield* writeJson(root, OWNERSHIP_PATH, {
+      owners: [
+        CORE_RUNTIME_OWNER,
+        SHARED_CONTRACTS_OWNER,
+        SHELL_OWNER,
+        ...(options.includeContactOwner === false
+          ? []
+          : [{ id: verticalId, package: verticalPackage, path: verticalPath }]),
+      ],
+      schemaVersion: 1,
+    });
+    if (options.includeWorker === true) {
+      const workerRoot = path.join(root, verticalPath);
+      yield* Effect.tryPromise(() =>
+        mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true })
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          path.join(workerRoot, 'package.json'),
+          `${JSON.stringify({ name: verticalPackage, scripts: { 'worker:start': 'node --experimental-strip-types ./src/worker-host/main.ts' } })}\n`
+        )
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          path.join(workerRoot, 'src/worker-host/main.ts'),
+          '// @generated by scaffold:outbox-worker worker-host\n'
+        )
+      );
+    }
+    const setups = options.setupIds ?? [
+      'migrator',
+      'spicedb',
+      verticalId,
+      ...(options.includeWorker === true ? [`${verticalId}-worker`] : []),
+      'shellsuperapp',
+    ];
+    const setupLines = setups
+      .map((setup) => `  - setup: '${setup}'`)
+      .join('\n');
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, 'zerops.yaml'),
+        `zerops:\n${setupLines}\n`,
+        'utf-8'
+      )
     );
-    await writeFile(
-      path.join(workerRoot, 'src/worker-host/main.ts'),
-      '// @generated by scaffold:outbox-worker worker-host\n'
-    );
-  }
-  const setups = options.setupIds ?? [
-    'migrator',
-    'spicedb',
-    verticalId,
-    ...(options.includeWorker === true ? [`${verticalId}-worker`] : []),
-    'shellsuperapp',
-  ];
-  const setupLines = setups.map((setup) => `  - setup: '${setup}'`).join('\n');
-  await writeFile(
-    path.join(root, 'zerops.yaml'),
-    `zerops:\n${setupLines}\n`,
-    'utf-8'
-  );
-  return root;
-};
+    return root;
+  });
 
-const withFixture = async (
-  run: (root: string) => void | Promise<void>,
+const withFixture = (
+  run: (root: string) => Effect.Effect<void, unknown>,
   options?: FixtureOptions
-): Promise<void> => {
-  const root = await makeFixture(options);
-  try {
-    await run(root);
-  } finally {
-    await rm(root, { force: true, recursive: true });
-  }
-};
+) =>
+  Effect.gen(function* testEffect3() {
+    const root = yield* makeFixture(options);
+    yield* run(root);
+  }).pipe(Effect.scoped);
 
-test('deploys a generated owner worker immediately after its provider', async () => {
-  await withFixture(
-    async (root) => {
-      const plan = await planDeploymentImpact({
-        changedPaths: [
-          'verticals/contacts/src/workers/project-contact.worker.ts',
-        ],
-        rootDirectory: root,
-      });
-      assert.deepEqual(plan.units.providers, ['contacts', 'contacts-worker']);
-      assert.deepEqual(
-        plan.phases.map((phase) => phase.id),
-        ['contacts', 'contacts-worker']
-      );
-      assert.equal(
-        plan.phases[1]?.serviceIdEnv,
-        'ZEROPS_CONTACTS_WORKER_SERVICE_ID'
-      );
-    },
-    { includeWorker: true }
+for (const termination of ['failure', 'interruption'] as const) {
+  it.live(`removes the fixture after ${termination}`, () =>
+    Effect.gen(function* verifiesFixtureCleanup() {
+      let fixtureRoot = '';
+      const outcome = yield* withFixture((root) => {
+        fixtureRoot = root;
+        return termination === 'failure'
+          ? Effect.fail('fixture failure')
+          : Effect.interrupt;
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(outcome)).toBe(true);
+      expect(fixtureRoot).not.toBe('');
+      const remaining = yield* Effect.tryPromise(() =>
+        access(fixtureRoot)
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(remaining)).toBe(true);
+    })
   );
-});
+}
+
+it.live('deploys a generated owner worker immediately after its provider', () =>
+  Effect.gen(function* testEffect4() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* testEffect5() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: [
+              'verticals/contacts/src/workers/project-contact.worker.ts',
+            ],
+            rootDirectory: root,
+          });
+          expect(plan.units.providers).toEqual(['contacts', 'contacts-worker']);
+          expect(plan.phases.map((phase) => phase.id)).toEqual([
+            'contacts',
+            'contacts-worker',
+          ]);
+          expect(plan.phases[1]?.serviceIdEnv).toBe(
+            'ZEROPS_CONTACTS_WORKER_SERVICE_ID'
+          );
+        }),
+      { includeWorker: true }
+    );
+  })
+);
 
 const runGit = (root: string, argumentsList: readonly string[]): string =>
   execFileSync(
@@ -215,124 +257,164 @@ const runGit = (root: string, argumentsList: readonly string[]): string =>
     }
   ).trim();
 
-test('plans current Contacts owner-local changes without a hard-coded owner registry', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: [
-        'app/verticals/contacts/src/features/customers/customer-form.tsx',
-      ],
-      rootDirectory: root,
-    });
-    assert.deepEqual(plan.units, {
-      migrator: false,
-      providers: ['contacts'],
-      shell: false,
-      spicedb: false,
-    });
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      ['contacts']
-    );
-  });
-});
+it.live(
+  'plans current Contacts owner-local changes without a hard-coded owner registry',
+  () =>
+    Effect.gen(function* testEffect6() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect7() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: [
+              'app/verticals/contacts/src/features/customers/customer-form.tsx',
+            ],
+            rootDirectory: root,
+          });
+          expect(plan.units).toEqual({
+            migrator: false,
+            providers: ['contacts'],
+            shell: false,
+            spicedb: false,
+          });
+          expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts']);
+        })
+      );
+    })
+);
 
-test('orders authorization schema and replay migration before every affected consumer', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: ['app/scripts/authorization/rollout-contract.mts'],
-      rootDirectory: root,
-    });
-    assert.deepEqual(
-      plan.phases.map(({ id }) => id),
-      ['migrator', 'spicedb', 'contacts', SHELL_ID]
-    );
-  });
-});
+it.live(
+  'orders authorization schema and replay migration before every affected consumer',
+  () =>
+    Effect.gen(function* testEffect8() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect9() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: ['app/scripts/authorization/rollout-contract.mts'],
+            rootDirectory: root,
+          });
+          expect(plan.phases.map(({ id }) => id)).toEqual([
+            'migrator',
+            'spicedb',
+            'contacts',
+            SHELL_ID,
+          ]);
+        })
+      );
+    })
+);
 
-test('plans Shell-only changes for the topology-derived Shell owner', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
-      rootDirectory: root,
-    });
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      [SHELL_ID]
+it.live('plans Shell-only changes for the topology-derived Shell owner', () =>
+  Effect.gen(function* testEffect10() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffect11() {
+        const plan = yield* planDeploymentImpact({
+          changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
+          rootDirectory: root,
+        });
+        expect(plan.phases.map((phase) => phase.id)).toEqual([SHELL_ID]);
+        expect(plan.units.shell).toBe(true);
+      })
     );
-    assert.equal(plan.units.shell, true);
-  });
-});
+  })
+);
 
-test('adds the migrator before an owner whose schema or migration contract changed', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: ['verticals/contacts/drizzle/0003_add_customer.sql'],
-      rootDirectory: root,
-    });
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      ['migrator', 'contacts']
-    );
-  });
-});
+it.live(
+  'adds the migrator before an owner whose schema or migration contract changed',
+  () =>
+    Effect.gen(function* testEffect12() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect13() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: ['verticals/contacts/drizzle/0003_add_customer.sql'],
+            rootDirectory: root,
+          });
+          expect(plan.phases.map((phase) => phase.id)).toEqual([
+            'migrator',
+            'contacts',
+          ]);
+        })
+      );
+    })
+);
 
 for (const changedPath of [
   'scripts/run-zerops-migrator.mjs',
   'scripts/verify-application-db-schema.mts',
   'scripts/postgres/bootstrap-runtime-role.mts',
 ]) {
-  test(`includes the migrator for root migration contract ${changedPath}`, async () => {
-    await withFixture(async (root) => {
-      const plan = await planDeploymentImpact({
-        changedPaths: [changedPath],
-        rootDirectory: root,
-      });
-      assert.deepEqual(
-        plan.phases.map((phase) => phase.id),
-        ['migrator']
-      );
-    });
-  });
+  it.live(
+    `includes the migrator for root migration contract ${changedPath}`,
+    () =>
+      Effect.gen(function* testEffect14() {
+        yield* withFixture((root) =>
+          Effect.gen(function* testEffect15() {
+            const plan = yield* planDeploymentImpact({
+              changedPaths: [changedPath],
+              rootDirectory: root,
+            });
+            expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator']);
+          })
+        );
+      })
+  );
 }
 
-test('expands shared-package changes to every consumer in dependency order', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: ['packages/shared-contracts/src/gateway-context.ts'],
-      rootDirectory: root,
-    });
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      ['contacts', SHELL_ID]
-    );
-  });
-});
+it.live(
+  'expands shared-package changes to every consumer in dependency order',
+  () =>
+    Effect.gen(function* testEffect18() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect19() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: ['packages/shared-contracts/src/gateway-context.ts'],
+            rootDirectory: root,
+          });
+          expect(plan.phases.map((phase) => phase.id)).toEqual([
+            'contacts',
+            SHELL_ID,
+          ]);
+        })
+      );
+    })
+);
 
-test('expands a provider public-contract change to the dependent Shell', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: ['verticals/contacts/shared/api.ts'],
-      rootDirectory: root,
-    });
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      ['contacts', SHELL_ID]
-    );
-  });
-});
+it.live(
+  'expands a provider public-contract change to the dependent Shell',
+  () =>
+    Effect.gen(function* testEffect20() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect21() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: ['verticals/contacts/shared/api.ts'],
+            rootDirectory: root,
+          });
+          expect(plan.phases.map((phase) => phase.id)).toEqual([
+            'contacts',
+            SHELL_ID,
+          ]);
+        })
+      );
+    })
+);
 
-test('orders SpiceDB before all consumers for authorization runtime changes', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: ['packages/core-runtime/spicedb/bootstrap.yaml'],
-      rootDirectory: root,
-    });
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      ['spicedb', 'contacts', SHELL_ID]
-    );
-  });
-});
+it.live(
+  'orders SpiceDB before all consumers for authorization runtime changes',
+  () =>
+    Effect.gen(function* testEffect22() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect23() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: ['packages/core-runtime/spicedb/bootstrap.yaml'],
+            rootDirectory: root,
+          });
+          expect(plan.phases.map((phase) => phase.id)).toEqual([
+            'spicedb',
+            'contacts',
+            SHELL_ID,
+          ]);
+        })
+      );
+    })
+);
 
 for (const changedPath of [
   'scripts/postgres/bootstrap-spicedb-database.mts',
@@ -348,204 +430,273 @@ for (const changedPath of [
   'zerops.yaml',
   'topology/reference-topology.json',
 ]) {
-  test(`conservatively deploys every phase for ${changedPath}`, async () => {
-    await withFixture(async (root) => {
-      const plan = await planDeploymentImpact({
-        changedPaths: [changedPath],
-        rootDirectory: root,
-      });
-      assert.deepEqual(
-        plan.phases.map((phase) => phase.id),
-        ['migrator', 'spicedb', 'contacts', SHELL_ID]
+  it.live(`conservatively deploys every phase for ${changedPath}`, () =>
+    Effect.gen(function* testEffect24() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect25() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: [changedPath],
+            rootDirectory: root,
+          });
+          expect(plan.phases.map((phase) => phase.id)).toEqual([
+            'migrator',
+            'spicedb',
+            'contacts',
+            SHELL_ID,
+          ]);
+        })
       );
-    });
-  });
+    })
+  );
 }
 
-test('produces a reviewed no-op for documentation-only changes', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      changedPaths: ['docs/architecture/DEPLOYMENT.md'],
-      rootDirectory: root,
-    });
-    assert.equal(plan.any, false);
-    assert.deepEqual(plan.phases, []);
-  });
-});
-
-test('fails closed for the unknown destination of a renamed application directory', async () => {
-  await withFixture(async (root) => {
-    await assert.rejects(
-      planDeploymentImpact({
-        changedPaths: [
-          'verticals/contacts/src/index.ts',
-          'verticals/relationships/src/index.ts',
-        ],
-        rootDirectory: root,
-      }),
-      /unknown changed path "verticals\/relationships\/src\/index\.ts" in application area "verticals"/u
-    );
-  });
-});
-
-test('fails closed when a topology delivery unit has no ownership entry', async () => {
-  await withFixture(
-    async (root) => {
-      await assert.rejects(
-        planDeploymentImpact({
-          changedPaths: [DOCUMENTATION_PATH],
+it.live('produces a reviewed no-op for documentation-only changes', () =>
+  Effect.gen(function* testEffect26() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffect27() {
+        const plan = yield* planDeploymentImpact({
+          changedPaths: ['docs/architecture/DEPLOYMENT.md'],
           rootDirectory: root,
-        }),
-        /topology delivery unit "contacts" is missing from topology\/ownership\.json/u
+        });
+        expect(plan.any).toBe(false);
+        expect(plan.phases).toEqual([]);
+      })
+    );
+  })
+);
+
+it.live(
+  'fails closed for the unknown destination of a renamed application directory',
+  () =>
+    Effect.gen(function* testEffect28() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect29() {
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({
+                changedPaths: [
+                  'verticals/contacts/src/index.ts',
+                  'verticals/relationships/src/index.ts',
+                ],
+                rootDirectory: root,
+              })
+            )
+          ).toMatch(
+            /unknown changed path "verticals\/relationships\/src\/index\.ts" in application area "verticals"/u
+          );
+        })
       );
-    },
-    { includeContactOwner: false }
-  );
-});
+    })
+);
 
-test('fails closed when topology and ownership identities disagree', async () => {
-  await withFixture(async (root) => {
-    await writeJson(root, OWNERSHIP_PATH, {
-      owners: [
-        CORE_RUNTIME_OWNER,
-        SHARED_CONTRACTS_OWNER,
-        SHELL_OWNER,
-        {
-          id: 'contacts',
-          package: '@app/contacts-old',
-          path: 'verticals/contacts-old',
-        },
-      ],
-    });
-    await assert.rejects(
-      planDeploymentImpact({
-        changedPaths: [DOCUMENTATION_PATH],
-        rootDirectory: root,
-      }),
-      /topology and ownership disagree for "contacts"/u
+it.live(
+  'fails closed when a topology delivery unit has no ownership entry',
+  () =>
+    Effect.gen(function* testEffect30() {
+      yield* withFixture(
+        (root) =>
+          Effect.gen(function* testEffect31() {
+            expect(
+              yield* planningFailure(
+                planDeploymentImpact({
+                  changedPaths: [DOCUMENTATION_PATH],
+                  rootDirectory: root,
+                })
+              )
+            ).toMatch(
+              /topology delivery unit "contacts" is missing from topology\/ownership\.json/u
+            );
+          }),
+        { includeContactOwner: false }
+      );
+    })
+);
+
+it.live('fails closed when topology and ownership identities disagree', () =>
+  Effect.gen(function* testEffect32() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffect33() {
+        yield* writeJson(root, OWNERSHIP_PATH, {
+          owners: [
+            CORE_RUNTIME_OWNER,
+            SHARED_CONTRACTS_OWNER,
+            SHELL_OWNER,
+            {
+              id: 'contacts',
+              package: '@app/contacts-old',
+              path: 'verticals/contacts-old',
+            },
+          ],
+        });
+        expect(
+          yield* planningFailure(
+            planDeploymentImpact({
+              changedPaths: [DOCUMENTATION_PATH],
+              rootDirectory: root,
+            })
+          )
+        ).toMatch(/topology and ownership disagree for "contacts"/u);
+      })
     );
-  });
-});
+  })
+);
 
-test('fails closed when shared-package topology and ownership identities disagree', async () => {
-  await withFixture(async (root) => {
-    await writeJson(root, OWNERSHIP_PATH, {
-      owners: [
-        { ...CORE_RUNTIME_OWNER, path: 'packages/core-runtime-old' },
-        SHARED_CONTRACTS_OWNER,
-        SHELL_OWNER,
-        {
-          id: 'contacts',
-          package: '@app/contacts',
-          path: 'verticals/contacts',
-        },
-      ],
-    });
-    await assert.rejects(
-      planDeploymentImpact({
-        changedPaths: [DOCUMENTATION_PATH],
-        rootDirectory: root,
-      }),
-      /topology and ownership disagree for shared package "core-runtime"/u
+it.live(
+  'fails closed when shared-package topology and ownership identities disagree',
+  () =>
+    Effect.gen(function* testEffect34() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect35() {
+          yield* writeJson(root, OWNERSHIP_PATH, {
+            owners: [
+              { ...CORE_RUNTIME_OWNER, path: 'packages/core-runtime-old' },
+              SHARED_CONTRACTS_OWNER,
+              SHELL_OWNER,
+              {
+                id: 'contacts',
+                package: '@app/contacts',
+                path: 'verticals/contacts',
+              },
+            ],
+          });
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({
+                changedPaths: [DOCUMENTATION_PATH],
+                rootDirectory: root,
+              })
+            )
+          ).toMatch(
+            /topology and ownership disagree for shared package "core-runtime"/u
+          );
+        })
+      );
+    })
+);
+
+it.live('fails closed when a topology unit has no supported stage setup', () =>
+  Effect.gen(function* testEffect36() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* testEffect37() {
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({
+                changedPaths: [DOCUMENTATION_PATH],
+                rootDirectory: root,
+              })
+            )
+          ).toMatch(
+            /topology delivery unit "contacts" has unsupported stage setup "contacts"/u
+          );
+        }),
+      { setupIds: ['migrator', 'spicedb', 'shellsuperapp'] }
     );
-  });
-});
+  })
+);
 
-test('fails closed when a topology unit has no supported stage setup', async () => {
-  await withFixture(
-    async (root) => {
-      await assert.rejects(
-        planDeploymentImpact({
-          changedPaths: [DOCUMENTATION_PATH],
+it.live('uses a safe full deployment for an all-zero comparison base', () =>
+  Effect.gen(function* testEffect38() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffect39() {
+        const plan = yield* planDeploymentImpact({
+          baseRevision: '0000000000000000000000000000000000000000',
+          headRevision: 'HEAD',
           rootDirectory: root,
-        }),
-        /topology delivery unit "contacts" has unsupported stage setup "contacts"/u
-      );
-    },
-    { setupIds: ['migrator', 'spicedb', 'shellsuperapp'] }
-  );
-});
-
-test('uses a safe full deployment for an all-zero comparison base', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      baseRevision: '0000000000000000000000000000000000000000',
-      headRevision: 'HEAD',
-      rootDirectory: root,
-    });
-    assert.equal(plan.comparison.mode, 'full');
-    assert.match(plan.comparison.reason ?? '', /all-zero/u);
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      ['migrator', 'spicedb', 'contacts', SHELL_ID]
+        });
+        expect(plan.comparison.mode).toBe('full');
+        expect(plan.comparison.reason ?? '').toMatch(/all-zero/u);
+        expect(plan.phases.map((phase) => phase.id)).toEqual([
+          'migrator',
+          'spicedb',
+          'contacts',
+          SHELL_ID,
+        ]);
+      })
     );
-  });
-});
+  })
+);
 
-test('uses a safe full deployment for an unavailable comparison base', async () => {
-  await withFixture(async (root) => {
-    const plan = await planDeploymentImpact({
-      baseRevision: 'missing-base-revision',
-      headRevision: 'HEAD',
-      rootDirectory: root,
-    });
-    assert.equal(plan.comparison.mode, 'full');
-    assert.match(
-      plan.comparison.reason ?? '',
-      /comparison base "missing-base-revision" is unavailable/u
+it.live('uses a safe full deployment for an unavailable comparison base', () =>
+  Effect.gen(function* testEffect40() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffect41() {
+        const plan = yield* planDeploymentImpact({
+          baseRevision: 'missing-base-revision',
+          headRevision: 'HEAD',
+          rootDirectory: root,
+        });
+        expect(plan.comparison.mode).toBe('full');
+        expect(plan.comparison.reason ?? '').toMatch(
+          /comparison base "missing-base-revision" is unavailable/u
+        );
+      })
     );
-  });
-});
+  })
+);
 
-test('uses a safe full deployment when the comparison base is not an ancestor', async () => {
-  await withFixture(async (root) => {
-    runGit(root, ['init']);
-    runGit(root, ['add', '.']);
-    runGit(root, ['commit', '-m', 'fixture root']);
-    const rootRevision = runGit(root, ['rev-parse', 'HEAD']);
-    await writeFile(path.join(root, 'main-marker.txt'), 'main\n', 'utf-8');
-    runGit(root, ['add', 'main-marker.txt']);
-    runGit(root, ['commit', '-m', 'main change']);
-    const rewrittenBase = runGit(root, ['rev-parse', 'HEAD']);
-    runGit(root, ['checkout', '-b', 'rewritten', rootRevision]);
-    await writeFile(
-      path.join(root, 'rewritten-marker.txt'),
-      'rewritten\n',
-      'utf-8'
-    );
-    runGit(root, ['add', 'rewritten-marker.txt']);
-    runGit(root, ['commit', '-m', 'rewritten change']);
+it.live(
+  'uses a safe full deployment when the comparison base is not an ancestor',
+  () =>
+    Effect.gen(function* testEffect42() {
+      yield* withFixture((root) =>
+        Effect.gen(function* testEffect43() {
+          runGit(root, ['init']);
+          runGit(root, ['add', '.']);
+          runGit(root, ['commit', '-m', 'fixture root']);
+          const rootRevision = runGit(root, ['rev-parse', 'HEAD']);
+          yield* Effect.tryPromise(() =>
+            writeFile(path.join(root, 'main-marker.txt'), 'main\n', 'utf-8')
+          );
+          runGit(root, ['add', 'main-marker.txt']);
+          runGit(root, ['commit', '-m', 'main change']);
+          const rewrittenBase = runGit(root, ['rev-parse', 'HEAD']);
+          runGit(root, ['checkout', '-b', 'rewritten', rootRevision]);
+          yield* Effect.tryPromise(() =>
+            writeFile(
+              path.join(root, 'rewritten-marker.txt'),
+              'rewritten\n',
+              'utf-8'
+            )
+          );
+          runGit(root, ['add', 'rewritten-marker.txt']);
+          runGit(root, ['commit', '-m', 'rewritten change']);
 
-    const plan = await planDeploymentImpact({
-      baseRevision: rewrittenBase,
-      headRevision: 'HEAD',
-      rootDirectory: root,
-    });
-    assert.equal(plan.comparison.mode, 'full');
-    assert.match(plan.comparison.reason ?? '', /is not an ancestor/u);
-  });
-});
-
-test('changing a topology identity changes the plan without editing planner source', async () => {
-  await withFixture(
-    async (root) => {
-      const plan = await planDeploymentImpact({
-        changedPaths: ['verticals/relationships/src/index.ts'],
-        rootDirectory: root,
-      });
-      assert.deepEqual(plan.units.providers, ['relationships']);
-      assert.deepEqual(
-        plan.phases.map((phase) => phase.id),
-        ['relationships']
+          const plan = yield* planDeploymentImpact({
+            baseRevision: rewrittenBase,
+            headRevision: 'HEAD',
+            rootDirectory: root,
+          });
+          expect(plan.comparison.mode).toBe('full');
+          expect(plan.comparison.reason ?? '').toMatch(/is not an ancestor/u);
+        })
       );
-      assert.equal(
-        plan.phases[0]?.serviceIdEnv,
-        'ZEROPS_RELATIONSHIPS_SERVICE_ID'
+    })
+);
+
+it.live(
+  'changing a topology identity changes the plan without editing planner source',
+  () =>
+    Effect.gen(function* testEffect44() {
+      yield* withFixture(
+        (root) =>
+          Effect.gen(function* testEffect45() {
+            const plan = yield* planDeploymentImpact({
+              changedPaths: ['verticals/relationships/src/index.ts'],
+              rootDirectory: root,
+            });
+            expect(plan.units.providers).toEqual(['relationships']);
+            expect(plan.phases.map((phase) => phase.id)).toEqual([
+              'relationships',
+            ]);
+            expect(plan.phases[0]?.serviceIdEnv).toBe(
+              'ZEROPS_RELATIONSHIPS_SERVICE_ID'
+            );
+          }),
+        { verticalId: 'relationships' }
       );
-    },
-    { verticalId: 'relationships' }
-  );
-});
+    })
+);
 
 const promotionFixture = (): AuthorizationPromotionGateInput => {
   const inventory = {
@@ -620,7 +771,7 @@ const withoutImpactEvidence = (
   input: AuthorizationPromotionGateInput
 ): AuthorizationPromotionGateInput => {
   const { impact, ...remaining } = input;
-  assert.ok(impact);
+  expect(impact !== undefined).toBe(true);
   return remaining;
 };
 
@@ -628,7 +779,7 @@ const withoutNegativeSmokeEvidence = (
   input: AuthorizationPromotionGateInput
 ): AuthorizationPromotionGateInput => {
   const { negativeSmoke, ...remaining } = input;
-  assert.ok(negativeSmoke);
+  expect(negativeSmoke !== undefined).toBe(true);
   return remaining;
 };
 
@@ -636,12 +787,12 @@ const withoutReadinessEvidence = (
   input: AuthorizationPromotionGateInput
 ): AuthorizationPromotionGateInput => {
   const { readiness, ...remaining } = input;
-  assert.ok(readiness);
+  expect(readiness !== undefined).toBe(true);
   return remaining;
 };
 
-test('requires exact impact, readiness, and negative-smoke evidence for enforced promotion', () => {
-  assert.deepEqual(validateAuthorizationPromotionGate(promotionFixture()), {
+it('requires exact impact, readiness, and negative-smoke evidence for enforced promotion', () => {
+  expect(validateAuthorizationPromotionGate(promotionFixture())).toEqual({
     environment: 'stage',
     mode: 'enforced',
     status: 'ready',
@@ -651,25 +802,25 @@ test('requires exact impact, readiness, and negative-smoke evidence for enforced
     withoutNegativeSmokeEvidence(promotionFixture()),
     withoutReadinessEvidence(promotionFixture()),
   ]) {
-    assert.throws(
-      () => validateAuthorizationPromotionGate(changed),
+    expect(() => validateAuthorizationPromotionGate(changed)).toThrow(
       /requires impact/u
     );
   }
   const stale = promotionFixture();
   const staleReadiness = stale.readiness;
-  assert.ok(staleReadiness);
-  assert.throws(
-    () =>
-      validateAuthorizationPromotionGate({
-        ...stale,
-        readiness: { ...staleReadiness, inventoryHash: 'f'.repeat(64) },
-      }),
-    /stale, mismatched/u
-  );
+  expect(staleReadiness).toBeDefined();
+  if (staleReadiness === undefined) {
+    throw new Error('Expected readiness evidence');
+  }
+  expect(() =>
+    validateAuthorizationPromotionGate({
+      ...stale,
+      readiness: { ...staleReadiness, inventoryHash: 'f'.repeat(64) },
+    })
+  ).toThrow(/stale, mismatched/u);
 });
 
-test('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
+it('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
   const enforced = promotionFixture();
   const withoutRequiredEvidence = withoutReadinessEvidence(
     withoutNegativeSmokeEvidence(withoutImpactEvidence(enforced))
@@ -679,35 +830,28 @@ test('report-only promotion is bounded, explicit-baseline-only, and never allowe
     nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
     rollout: { ...enforced.rollout, mode: 'report_only' as const },
   };
-  assert.equal(
-    validateAuthorizationPromotionGate(reportOnly).status,
+  expect(validateAuthorizationPromotionGate(reportOnly).status).toBe(
     'observing'
   );
-  assert.throws(
-    () =>
-      validateAuthorizationPromotionGate({
-        ...reportOnly,
-        environment: 'production',
-      }),
-    /production.*report-only/u
-  );
-  assert.throws(
-    () =>
-      validateAuthorizationPromotionGate({
-        ...reportOnly,
-        nowEpochMs: Date.parse(reportOnly.rollout.expiresAt),
-      }),
-    /inactive or expired/u
-  );
-  assert.throws(
-    () =>
-      validateAuthorizationPromotionGate({
-        ...reportOnly,
-        rollout: {
-          ...reportOnly.rollout,
-          compatibilityEligibleEntrypoints: ['contacts.route.new'],
-        },
-      }),
-    /unknown entrypoint/u
-  );
+  expect(() =>
+    validateAuthorizationPromotionGate({
+      ...reportOnly,
+      environment: 'production',
+    })
+  ).toThrow(/production.*report-only/u);
+  expect(() =>
+    validateAuthorizationPromotionGate({
+      ...reportOnly,
+      nowEpochMs: Date.parse(reportOnly.rollout.expiresAt),
+    })
+  ).toThrow(/inactive or expired/u);
+  expect(() =>
+    validateAuthorizationPromotionGate({
+      ...reportOnly,
+      rollout: {
+        ...reportOnly.rollout,
+        compatibilityEligibleEntrypoints: ['contacts.route.new'],
+      },
+    })
+  ).toThrow(/unknown entrypoint/u);
 });

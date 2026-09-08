@@ -2,7 +2,6 @@ import {
   findPostgresFailure,
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { Effect, Option } from 'effect';
 import { Pool } from 'pg';
 
@@ -12,35 +11,30 @@ export const hasPostgreSqlCode =
   (error: Parameters<typeof findPostgresFailure>[0]): boolean =>
     Option.exists(findPostgresFailure(error), ({ code }) => code === expected);
 
-/**
- * A database boundary proves two roles against one schema: an admin connection that seeds and
- * purges fixtures, and a deliberately narrow runtime connection that shows what the runtime role
- * may actually do. The caller owns the schema binding and the scope that closes both pools.
- */
-export const openBoundaryDatabases = <Database>(
-  openDatabase: (pool: Pool) => Promise<Database>,
+/** Binds both roles to one schema; the test scope closes databases before their owned pools. */
+export const openBoundaryDatabases = <Database, E, R>(
+  openDatabase: (pool: Pool) => Effect.Effect<Database, E, R>,
   runtimeConnections = 1
-): Promise<{
-  readonly admin: Database;
-  readonly adminPool: Pool;
-  readonly runtime: Database;
-  readonly runtimePool: Pool;
-}> =>
-  runEffectTestPromise(
-    Effect.gen(function* openDatabases() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = new Pool({
-        connectionString: connections.admin.connectionString,
-      });
-      const runtimePool = new Pool({
-        connectionString: connections.runtime.connectionString,
-        max: runtimeConnections,
-      });
-      return {
-        admin: yield* Effect.promise(() => openDatabase(adminPool)),
-        adminPool,
-        runtime: yield* Effect.promise(() => openDatabase(runtimePool)),
-        runtimePool,
-      };
-    })
-  );
+) =>
+  Effect.gen(function* openDatabases() {
+    const connections = yield* loadDatabaseConnectionPair();
+    const adminPool = yield* Effect.acquireRelease(
+      Effect.sync(
+        () => new Pool({ connectionString: connections.admin.connectionString })
+      ),
+      (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie)
+    );
+    const runtimePool = yield* Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new Pool({
+            connectionString: connections.runtime.connectionString,
+            max: runtimeConnections,
+          })
+      ),
+      (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie)
+    );
+    const admin = yield* openDatabase(adminPool);
+    const runtime = yield* openDatabase(runtimePool);
+    return { admin, runtime };
+  });

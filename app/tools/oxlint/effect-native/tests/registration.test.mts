@@ -1,99 +1,163 @@
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { test } from 'node:test';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Rule } from '@oxlint/plugins';
+import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
+import plugin from '../index.ts';
 import { listRuleNames } from '../shared/discover-rules.ts';
-import { appRoot, listFixtureRules, pluginDirectory } from './oxlint.mts';
+import {
+  appRoot,
+  listFixtureRules,
+  pluginDirectory,
+  runOxlint,
+} from './oxlint.mts';
+import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
-const pluginModule = await import(
-  pathToFileURL(join(pluginDirectory, 'index.ts')).href
+const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
+// The production config is typed against oxlint's own definitions; only the fields this suite
+// asserts on are decoded here, at the module boundary.
+const ProductionConfigModule = Schema.Struct({
+  default: Schema.Struct({
+    jsPlugins: Schema.optional(Schema.Array(Schema.Unknown)),
+    options: Schema.optional(
+      Schema.Struct({
+        denyWarnings: Schema.optional(Schema.Boolean),
+        typeAware: Schema.optional(Schema.Boolean),
+        typeCheck: Schema.optional(Schema.Boolean),
+      })
+    ),
+    overrides: Schema.Array(
+      Schema.Struct({
+        excludeFiles: Schema.optional(Schema.Array(Schema.String)),
+        files: Schema.Array(Schema.String),
+        rules: Schema.Record(Schema.String, RuleSetting),
+      })
+    ),
+    rules: Schema.optional(Schema.Record(Schema.String, RuleSetting)),
+  }),
+});
+const FixtureConfig = Schema.fromJsonString(
+  Schema.Struct({
+    ignorePatterns: Schema.optional(Schema.Array(Schema.String)),
+    rules: Schema.Record(Schema.String, RuleSetting),
+  })
 );
-const configModule = await import(
-  pathToFileURL(join(appRoot, 'oxlint.config.ts')).href
+const NamedPluginEntry = Schema.Struct({
+  name: Schema.String,
+  specifier: Schema.String,
+});
+const isNamedPluginEntry = Schema.is(NamedPluginEntry);
+const decodeFixtureConfig = Schema.decodeUnknownSync(FixtureConfig);
+const { default: config } = Schema.decodeUnknownSync(ProductionConfigModule)(
+  await import(pathToFileURL(nodePath.join(appRoot, 'oxlint.config.ts')).href)
 );
-const plugin: { rules: Record<string, Rule> } = pluginModule.default;
-const config: {
-  rules: Record<string, unknown>;
-  options: { typeAware?: boolean; typeCheck?: boolean; denyWarnings?: boolean };
-  jsPlugins: unknown[];
-} = configModule.default;
+const configuredRules = config.rules ?? {};
 const rules = listRuleNames();
 
-test('every rule is actually exported, enabled at error severity, and covered by fixtures', () => {
-  assert.ok(rules.length > 0, 'the plugin cannot be empty');
-  assert.deepEqual(Object.keys(plugin.rules).sort(), rules);
-  assert.deepEqual([...listFixtureRules()].sort(), rules);
-  const configured = Object.keys(config.rules).filter((name) =>
+it('every rule is actually exported, enabled at error severity, and covered by fixtures', () => {
+  expect(rules.length > 0, 'the plugin cannot be empty').toBe(true);
+  expect(Object.keys(plugin.rules).toSorted()).toEqual(rules);
+  expect([...listFixtureRules()].toSorted()).toEqual(rules);
+  const configured = Object.keys(configuredRules).filter((name) =>
     name.startsWith('effect-native/')
   );
-  assert.deepEqual(
-    configured.sort(),
+  expect(configured.toSorted()).toEqual(
     rules.map((name) => `effect-native/${name}`)
   );
   for (const rule of rules) {
-    const setting = config.rules[`effect-native/${rule}`];
-    assert.equal(
+    const setting = configuredRules[`effect-native/${rule}`];
+    expect(
       Array.isArray(setting) ? setting[0] : setting,
-      'error',
       `${rule} must be an error`
-    );
+    ).toBe('error');
   }
 });
 
-test('production configuration loads the plugin and preserves strict typed linting', () => {
-  assert.ok(
-    config.jsPlugins.some(
-      (plugin) =>
-        typeof plugin === 'object' &&
-        plugin !== null &&
-        'name' in plugin &&
-        plugin.name === 'effect-native' &&
-        'specifier' in plugin &&
-        plugin.specifier === './tools/oxlint/effect-native/index.ts'
+it('production configuration loads the plugin and preserves strict typed linting', () => {
+  expect(
+    (config.jsPlugins ?? []).some(
+      (entry) =>
+        isNamedPluginEntry(entry) &&
+        entry.name === 'effect-native' &&
+        entry.specifier === './tools/oxlint/effect-native/index.ts'
     )
-  );
-  assert.equal(config.options.typeAware, true);
-  assert.equal(config.options.typeCheck, true);
-  assert.equal(config.options.denyWarnings, true);
+  ).toBe(true);
+  expect(config.options?.typeAware).toBe(true);
+  expect(config.options?.typeCheck).toBe(true);
+  expect(config.options?.denyWarnings).toBe(true);
 });
 
-test('every rule is reporting-only and declares diagnostic metadata', () => {
+it('every rule is reporting-only and declares diagnostic metadata', () => {
   for (const [name, rule] of Object.entries(plugin.rules)) {
-    assert.ok(rule.meta, `${name} needs metadata`);
-    assert.ok(
+    expect(rule.meta, `${name} needs metadata`).toBeDefined();
+    if (rule.meta === undefined) {
+      throw new Error(`${name} needs metadata`);
+    }
+    expect(
       Object.keys(rule.meta.messages ?? {}).length > 0,
       `${name} needs messages`
+    ).toBe(true);
+    expect(rule.meta.fixable, `${name} must not advertise fixes`).toBe(
+      undefined
     );
-    assert.equal(
-      rule.meta.fixable,
-      undefined,
-      `${name} must not advertise fixes`
-    );
-    assert.ok(
-      !rule.meta.hasSuggestions,
+    expect(
+      !(rule.meta.hasSuggestions ?? false),
       `${name} must not advertise suggestions`
-    );
+    ).toBe(true);
   }
 });
 
-test('fixture configs enable only their owned rule without file-ignore shortcuts', () => {
+it('fixture configs enable only their owned rule without file-ignore shortcuts', () => {
   for (const rule of rules) {
-    const fixture = JSON.parse(
+    const fixture = decodeFixtureConfig(
       readFileSync(
-        join(pluginDirectory, 'tests', 'fixtures', rule, '.oxlintrc.json'),
-        'utf8'
+        nodePath.join(
+          pluginDirectory,
+          'tests',
+          'fixtures',
+          rule,
+          '.oxlintrc.json'
+        ),
+        'utf-8'
       )
     );
-    assert.deepEqual(Object.keys(fixture.rules), [`effect-native/${rule}`]);
+    expect(Object.keys(fixture.rules)).toEqual([`effect-native/${rule}`]);
     const setting = fixture.rules[`effect-native/${rule}`];
-    assert.equal(Array.isArray(setting) ? setting[0] : setting, 'error');
-    assert.ok(
-      !fixture.ignorePatterns?.length,
+    expect(Array.isArray(setting) ? setting[0] : setting).toBe('error');
+    expect(
+      (fixture.ignorePatterns ?? []).length === 0,
       `${rule} must exercise fixtures, not ignore them`
-    );
+    ).toBe(true);
   }
+});
+
+it('production import policy rejects node:test in application tests but not e2e adapters', () => {
+  withTemporaryWorkspace((directory) => {
+    const overrides = config.overrides.filter(
+      (override) => 'eslint/no-restricted-imports' in override.rules
+    );
+    expect(overrides.length).toBe(1);
+    const configPath = nodePath.join(directory, '.oxlintrc.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({ categories: { correctness: 'off' }, overrides })
+    );
+    const paths = ['apps/x/tests/y.test.ts', 'apps/x/tests/e2e/y.test.ts'];
+    for (const file of paths) {
+      const fullPath = nodePath.join(directory, file);
+      mkdirSync(nodePath.dirname(fullPath), { recursive: true });
+      writeFileSync(
+        fullPath,
+        "import { test } from 'node:test';\ntest('example', () => {});\n"
+      );
+    }
+    const run = runOxlint(configPath, paths, directory);
+    expect(run.numberOfFiles).toBe(2);
+    expect(run.exitCode).toBe(1);
+    expect(
+      run.diagnostics.map(({ code, filename }) => ({ code, filename }))
+    ).toEqual([{ code: 'eslint(no-restricted-imports)', filename: paths[0] }]);
+  });
 });

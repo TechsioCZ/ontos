@@ -1,9 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
@@ -24,137 +20,140 @@ const resolverFor = (record: {
     load: () => Effect.succeedSome(record),
   });
 
-void test('constructs one immutable trusted system context from a branded registration', async () => {
-  const registration = registerSystemWorkload({
-    jobKey: 'inventory-reconcile',
-  });
-  const context = await runEffectTestPromise(
-    resolverFor({
-      kind: 'system',
-      principalStatus: 'active',
-      tenantStatus: 'active',
-    }).resolve({
-      principalId,
-      registration,
-      runReference: 'run-42',
-      tenantId,
+it.effect(
+  'constructs one immutable trusted system context from a branded registration',
+  () =>
+    Effect.gen(function* testScenario1() {
+      const registration = registerSystemWorkload({
+        jobKey: 'inventory-reconcile',
+      });
+      const context = yield* resolverFor({
+        kind: 'system',
+        principalStatus: 'active',
+        tenantStatus: 'active',
+      }).resolve({
+        principalId,
+        registration,
+        runReference: 'run-42',
+        tenantId,
+      });
+
+      expect(Object.isFrozen(registration)).toBe(true);
+      expect(Object.isFrozen(context)).toBe(true);
+      expect(context).toEqual({
+        authContextRef: 'job:inventory-reconcile:run:run-42',
+        authMethod: 'system',
+        principalId,
+        tenantId,
+      });
+      expect(
+        yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(context)
+      ).toEqual(context);
+      expect(yield* decodeTrustedPrincipalContext(context)).toEqual(context);
+      expect(
+        yield* Effect.flip(decodeTrustedPrincipalContext({ ...context }))
+      ).toBeDefined();
     })
-  );
+);
 
-  assert.equal(Object.isFrozen(registration), true);
-  assert.equal(Object.isFrozen(context), true);
-  assert.deepEqual(context, {
-    authContextRef: 'job:inventory-reconcile:run:run-42',
-    authMethod: 'system',
-    principalId,
-    tenantId,
-  });
-  assert.deepEqual(
-    Schema.decodeSync(TrustedPrincipalContextSchema)(context),
-    context
-  );
-  assert.deepEqual(
-    await runEffectTestPromise(decodeTrustedPrincipalContext(context)),
-    context
-  );
-  await assert.rejects(
-    runEffectTestPromise(decodeTrustedPrincipalContext({ ...context }))
-  );
-});
+it.effect(
+  'rejects forged registrations, unsafe refs, wrong kinds, and inactive state',
+  () =>
+    Effect.gen(function* testScenario2() {
+      const registration = registerSystemWorkload({
+        jobKey: 'inventory-reconcile',
+      });
+      const forged = { ...registration };
+      const invalid = yield* Effect.flip(
+        resolverFor({
+          kind: 'system',
+          principalStatus: 'active',
+          tenantStatus: 'active',
+        }).resolve({
+          principalId,
+          registration: forged,
+          runReference: 'run-42',
+          tenantId,
+        })
+      );
+      const wrongKind = yield* Effect.flip(
+        resolverFor({
+          kind: 'human',
+          principalStatus: 'active',
+          tenantStatus: 'active',
+        }).resolve({
+          principalId,
+          registration,
+          runReference: 'run-42',
+          tenantId,
+        })
+      );
+      const inactive = yield* Effect.flip(
+        resolverFor({
+          kind: 'system',
+          principalStatus: 'disabled',
+          tenantStatus: 'active',
+        }).resolve({
+          principalId,
+          registration,
+          runReference: 'run-42',
+          tenantId,
+        })
+      );
 
-void test('rejects forged registrations, unsafe refs, wrong kinds, and inactive state', async () => {
-  const registration = registerSystemWorkload({
-    jobKey: 'inventory-reconcile',
-  });
-  const forged = { ...registration };
-  const invalid = await runEffectTestPromise(
-    Effect.flip(
-      resolverFor({
-        kind: 'system',
-        principalStatus: 'active',
-        tenantStatus: 'active',
-      }).resolve({
-        principalId,
-        registration: forged,
-        runReference: 'run-42',
-        tenantId,
-      })
-    )
-  );
-  const wrongKind = await runEffectTestPromise(
-    Effect.flip(
-      resolverFor({
-        kind: 'human',
-        principalStatus: 'active',
-        tenantStatus: 'active',
-      }).resolve({
-        principalId,
-        registration,
-        runReference: 'run-42',
-        tenantId,
-      })
-    )
-  );
-  const inactive = await runEffectTestPromise(
-    Effect.flip(
-      resolverFor({
-        kind: 'system',
-        principalStatus: 'disabled',
-        tenantStatus: 'active',
-      }).resolve({
-        principalId,
-        registration,
-        runReference: 'run-42',
-        tenantId,
-      })
-    )
-  );
+      expect(
+        Predicate.isTagged(invalid, 'SystemPrincipalContextInvalidError')
+      ).toBe(true);
+      expect(
+        Predicate.isTagged(wrongKind, 'SystemPrincipalContextDeniedError')
+      ).toBe(true);
+      expect(
+        Predicate.isTagged(inactive, 'SystemPrincipalContextDeniedError')
+      ).toBe(true);
+      expect(() => registerSystemWorkload({ jobKey: 'unsafe:key' })).toThrow(
+        TypeError
+      );
+    })
+);
 
-  assert.equal(invalid._tag, 'SystemPrincipalContextInvalidError');
-  assert.equal(wrongKind._tag, 'SystemPrincipalContextDeniedError');
-  assert.equal(inactive._tag, 'SystemPrincipalContextDeniedError');
-  assert.throws(
-    () => registerSystemWorkload({ jobKey: 'unsafe:key' }),
-    TypeError
-  );
-});
-
-void test('permits service principals only when the trusted registration opts in', async () => {
-  const denied = await runEffectTestPromise(
-    Effect.flip(
-      resolverFor({
+it.effect(
+  'permits service principals only when the trusted registration opts in',
+  () =>
+    Effect.gen(function* testScenario3() {
+      const denied = yield* Effect.flip(
+        resolverFor({
+          kind: 'service',
+          principalStatus: 'active',
+          tenantStatus: 'active',
+        }).resolve({
+          principalId,
+          registration: registerSystemWorkload({ jobKey: 'service-job' }),
+          runReference: 'run-1',
+          tenantId,
+        })
+      );
+      const allowed = yield* resolverFor({
         kind: 'service',
         principalStatus: 'active',
         tenantStatus: 'active',
       }).resolve({
         principalId,
-        registration: registerSystemWorkload({ jobKey: 'service-job' }),
+        registration: registerSystemWorkload({
+          allowServicePrincipal: true,
+          jobKey: 'service-job',
+        }),
         runReference: 'run-1',
         tenantId,
-      })
-    )
-  );
-  const allowed = await runEffectTestPromise(
-    resolverFor({
-      kind: 'service',
-      principalStatus: 'active',
-      tenantStatus: 'active',
-    }).resolve({
-      principalId,
-      registration: registerSystemWorkload({
-        allowServicePrincipal: true,
-        jobKey: 'service-job',
-      }),
-      runReference: 'run-1',
-      tenantId,
+      });
+
+      expect(
+        Predicate.isTagged(denied, 'SystemPrincipalContextDeniedError')
+      ).toBe(true);
+      expect(allowed.authMethod).toBe('system');
     })
-  );
+);
 
-  assert.equal(denied._tag, 'SystemPrincipalContextDeniedError');
-  assert.equal(allowed.authMethod, 'system');
-});
-
-void test('enforces mode-specific trusted context cross-field invariants', () => {
+it('enforces mode-specific trusted context cross-field invariants', () => {
   const binding = '30000000-0000-4000-8000-000000000001';
   const original = '40000000-0000-4000-8000-000000000001';
   const valid = [
@@ -182,19 +181,19 @@ void test('enforces mode-specific trusted context cross-field invariants', () =>
     },
   ];
   for (const context of valid) {
-    assert.doesNotThrow(() =>
+    expect(() =>
       Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(context)
-    );
+    ).not.toThrow();
   }
-  assert.throws(() =>
+  expect(() =>
     Schema.decodeSync(TrustedPrincipalContextSchema)({
       authContextRef: 'better-auth-api-key:key-id',
       authMethod: 'api_key',
       principalId,
       tenantId,
     })
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     Schema.decodeSync(TrustedPrincipalContextSchema)({
       authBindingId: binding,
       authContextRef: 'better-auth-session:nested',
@@ -203,5 +202,5 @@ void test('enforces mode-specific trusted context cross-field invariants', () =>
       principalId,
       tenantId,
     })
-  );
+  ).toThrow();
 });

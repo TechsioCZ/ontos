@@ -222,6 +222,42 @@ const objectValue = (
   return property?.type === 'Property' ? property.value : undefined;
 };
 
+const rstestEnvironmentEvidence = (
+  facts: SourceFacts,
+  workspace: string
+): KnipModelEvidence[] => {
+  if (!/rstest\.config\.[cm]?[jt]s$/u.test(facts.file)) {
+    return [];
+  }
+  const config = exportedObject(facts);
+  const projects = unwrap(objectValue(config, 'projects'), facts.variables);
+  const configurations = [config];
+  if (projects?.type === 'ArrayExpression') {
+    for (const element of projects.elements) {
+      const project = unwrap(element ?? undefined, facts.variables);
+      if (project?.type === 'ObjectExpression') {
+        configurations.push(project);
+      }
+    }
+  }
+  return configurations.flatMap((object) => {
+    const environment = objectValue(object, 'testEnvironment');
+    const target = staticString(environment, facts.variables);
+    return target === undefined || target === 'node'
+      ? []
+      : [
+          evidenceAt(
+            facts,
+            workspace,
+            'dependency',
+            target,
+            environment?.start ?? 0,
+            'Rstest testEnvironment consumer'
+          ),
+        ];
+  });
+};
+
 const exportLeaves = (
   value: typeof ExportsSchema.Type | undefined
 ): string[] => {
@@ -668,6 +704,19 @@ const isChildProcessMake = (node: Node): boolean =>
   node.object.name === 'ChildProcess' &&
   propertyName(node.property) === 'make';
 
+const isJoinedSourceSpecifier = (
+  node: Node | undefined,
+  directory: string,
+  file: string,
+  variables: ReadonlyMap<string, Node>
+): boolean =>
+  node?.type === 'CallExpression' &&
+  node.callee.type === 'MemberExpression' &&
+  propertyName(node.callee.property) === 'join' &&
+  node.arguments[0]?.type === 'Identifier' &&
+  node.arguments[0].name === directory &&
+  staticString(node.arguments[1], variables) === file;
+
 const sourceEvidence = (
   facts: SourceFacts,
   workspace: string,
@@ -772,64 +821,91 @@ const sourceEvidence = (
   const recordLintConfig = (
     node: Extract<Node, { type: 'CallExpression' }>
   ) => {
+    const consumers = new Map([
+      ['tools/oxlint/effect-native/report.mts', 'report.config.ts'],
+      [
+        'tools/oxlint/effect-native/tests/repository-policy.test.mts',
+        'repository-policy.config.ts',
+      ],
+    ]);
+    const config = consumers.get(facts.file);
+    const [joined] = node.arguments;
     if (
-      facts.file === 'tools/oxlint/effect-native/report.mts' &&
-      node.callee.type === 'Identifier' &&
-      node.callee.name === 'runOxlint'
+      config === undefined ||
+      node.callee.type !== 'Identifier' ||
+      node.callee.name !== 'runOxlint' ||
+      joined?.type !== 'CallExpression' ||
+      staticString(joined.arguments[1], facts.variables) !== config
     ) {
-      const [joined] = node.arguments;
-      if (
-        joined?.type === 'CallExpression' &&
-        staticString(joined.arguments[1], facts.variables) ===
-          'report.config.ts'
-      ) {
-        result.push(
-          evidenceAt(
-            facts,
-            workspace,
-            'file',
-            'tools/oxlint/effect-native/report.config.ts',
-            node.start,
-            'Lint report subprocess configuration'
-          ),
-          evidenceAt(
-            facts,
-            workspace,
-            'export',
-            'tools/oxlint/effect-native/report.config.ts#default',
-            node.start,
-            'Oxlint loader consumes the configuration default export'
-          )
-        );
-      }
+      return;
     }
+    const target = `tools/oxlint/effect-native/${config}`;
+    result.push(
+      evidenceAt(
+        facts,
+        workspace,
+        'file',
+        target,
+        node.start,
+        'Lint subprocess configuration'
+      ),
+      evidenceAt(
+        facts,
+        workspace,
+        'export',
+        `${target}#default`,
+        node.start,
+        'Oxlint loader consumes the configuration default export'
+      )
+    );
+  };
+  const recordLintPlugin = (node: ObjectExpression) => {
+    const specifier = objectValue(node, 'specifier');
+    if (
+      facts.file !==
+        'tools/oxlint/effect-native/tests/shared-helpers.test.mts' ||
+      staticString(objectValue(node, 'name'), facts.variables) !==
+        'shared-helpers-probe' ||
+      !isJoinedSourceSpecifier(
+        specifier,
+        'testsDirectory',
+        'shared-helpers-probe.ts',
+        facts.variables
+      )
+    ) {
+      return;
+    }
+    const target = 'tools/oxlint/effect-native/tests/shared-helpers-probe.ts';
+    result.push(
+      evidenceAt(
+        facts,
+        workspace,
+        'file',
+        target,
+        node.start,
+        'Oxlint jsPlugins source specifier'
+      ),
+      evidenceAt(
+        facts,
+        workspace,
+        'export',
+        `${target}#default`,
+        node.start,
+        'Oxlint jsPlugins loader consumes only the plugin default export'
+      )
+    );
   };
   const recordCall = (node: Extract<Node, { type: 'CallExpression' }>) => {
     recordSubprocess(node);
     recordConfiguredFile(node);
     recordLintConfig(node);
   };
-  new Visitor({ CallExpression: recordCall, NewExpression: recordUrl }).visit(
-    facts.program
-  );
-  if (/rstest\.config\.[cm]?[jt]s$/u.test(facts.file)) {
-    const target = staticString(
-      objectValue(exportedObject(facts), 'testEnvironment'),
-      facts.variables
-    );
-    if (target !== undefined && target !== 'node') {
-      result.push(
-        evidenceAt(
-          facts,
-          workspace,
-          'dependency',
-          target,
-          0,
-          'Rstest testEnvironment consumer'
-        )
-      );
-    }
-  }
+  new Visitor({
+    CallExpression: recordCall,
+    NewExpression: recordUrl,
+    ObjectExpression: recordLintPlugin,
+  }).visit(facts.program);
+  result.push(...rstestEnvironmentEvidence(facts, workspace));
   if (facts.file === 'scripts/quality-audit.mts') {
     const recordAuditStep = (node: ObjectExpression) => {
       const tool = staticString(objectValue(node, 'tool'), facts.variables);

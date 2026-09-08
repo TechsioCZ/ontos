@@ -37,8 +37,8 @@
  *
  * ## What is deliberately allowed
  *
- * - The repository-owned harness itself (`harnessPaths`): `itEffect`/`itLayer` must be free to call
- *   `Effect.runPromise` exactly once, in one place, on an effect that already has its test Layer.
+ * - The external `effect-rstest` runner owns the Effect.run* boundary.
+ *   Test support and harness directories have no exemption.
  * - D-tier Promise adapters forced by the framework: Playwright / e2e specs (`ignorePaths`).
  * - Type-only imports and type-only specifiers (`import type { runPromise } from "effect/Effect"`,
  *   `import { type runSync } …`): erased before runtime, so they cannot open a fiber.
@@ -79,12 +79,6 @@ const ERASED_WRAPPERS = new Set([
 /** Guard against pathological alias chains / cycles when resolving `const E = Effect`. */
 const MAX_ALIAS_HOPS = 8;
 
-const DEFAULT_HARNESS_PATHS: readonly string[] = [
-  '**/tests/support/effect-harness.{ts,mts}',
-  '**/tests/support/it-effect.{ts,mts}',
-  '**/tests/harness/**',
-];
-
 /** D-tier: Promise adapters forced by Playwright and other browser drivers. */
 const DEFAULT_IGNORE_PATHS: readonly string[] = [
   '**/tests/e2e/**',
@@ -102,10 +96,10 @@ const DEFAULT_EFFECT_MODULE_SOURCES: readonly string[] = [
   'effect',
   'effect/**',
   '@modern-js/plugin-bff/effect-edge',
+  '@modern-js/plugin-bff/effect-client',
 ];
 
 interface RuleOptions {
-  readonly harnessPaths?: readonly string[];
   readonly ignorePaths?: readonly string[];
   readonly testPaths?: readonly string[];
   readonly effectModules?: readonly string[];
@@ -125,7 +119,6 @@ interface Range {
 function readOptions(context: Context): Required<RuleOptions> {
   const raw = (context.options[0] ?? {}) as RuleOptions;
   return {
-    harnessPaths: raw.harnessPaths ?? DEFAULT_HARNESS_PATHS,
     ignorePaths: raw.ignorePaths ?? DEFAULT_IGNORE_PATHS,
     testPaths: raw.testPaths ?? [],
     effectModules: raw.effectModules ?? DEFAULT_EFFECT_MODULES,
@@ -220,34 +213,33 @@ export const rule = defineRule({
     docs: {
       description:
         'Audit B2 + A1: tests must not call Effect.run* directly. Route every test program through the ' +
-        'repository-owned itEffect/itLayer harness (effect/testing, TestClock, scoped Layer, ' +
+        'upstream effect-rstest it.effect/it.layer harness (effect/testing, TestClock, scoped Layer, ' +
         'ConfigProvider.fromMap) instead of building an ad hoc runtime per assertion.',
     },
     messages: {
       effectRunInTest:
-        'Do not call Effect.{{member}} in a test. Run through the shared itEffect/itLayer harness ' +
+        'Do not call Effect.{{member}} in a test. Run through the shared effect-rstest it.effect/it.layer harness ' +
         '(effect/testing, TestClock, scoped Layer, ConfigProvider.fromMap) so services, time and ' +
         'configuration are substitutable.',
       effectRunReferenceInTest:
         'Do not hand Effect.{{member}} around in a test (point-free, mock factory or destructured ' +
-        'reference). Expose the effect and let the shared itEffect/itLayer harness run it with ' +
+        'reference). Expose the effect and let the shared effect-rstest it.effect/it.layer harness run it with ' +
         'effect/testing, TestClock, a scoped Layer and ConfigProvider.fromMap.',
       effectRunImportInTest:
-        'Do not import "{{member}}" from effect/Effect into a test. Import the shared itEffect/itLayer ' +
+        'Do not import "{{member}}" from effect/Effect into a test. Import the shared effect-rstest it.effect/it.layer ' +
         'harness instead, so services, time and configuration stay substitutable.',
       effectRunReexportInTest:
         'Do not re-export "{{member}}" from effect/Effect out of a test module. A re-export hands every ' +
-        'importing test an ad hoc root fiber; export the shared itEffect/itLayer harness ' +
+        'importing test an ad hoc root fiber; export the shared effect-rstest it.effect/it.layer harness ' +
         '(effect/testing, TestClock, scoped Layer, ConfigProvider.fromMap) instead.',
       effectRunDynamicImportInTest:
         'Do not reach Effect.{{member}} through `await import("effect/Effect")` in a test. Import the ' +
-        'shared itEffect/itLayer harness so services, time and configuration stay substitutable.',
+        'shared effect-rstest it.effect/it.layer harness so services, time and configuration stay substitutable.',
     },
     schema: [
       {
         type: 'object',
         properties: {
-          harnessPaths: { type: 'array', items: { type: 'string' } },
           ignorePaths: { type: 'array', items: { type: 'string' } },
           testPaths: { type: 'array', items: { type: 'string' } },
           effectModules: { type: 'array', items: { type: 'string' } },
@@ -258,7 +250,6 @@ export const rule = defineRule({
     ],
     defaultOptions: [
       {
-        harnessPaths: [...DEFAULT_HARNESS_PATHS],
         ignorePaths: [...DEFAULT_IGNORE_PATHS],
         testPaths: [],
         effectModules: [...DEFAULT_EFFECT_MODULES],
@@ -269,11 +260,7 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context);
     const filename = context.filename;
-    if (
-      matchesAny(filename, options.harnessPaths) ||
-      matchesAny(filename, options.ignorePaths)
-    )
-      return {};
+    if (matchesAny(filename, options.ignorePaths)) return {};
     if (!isTestFile(filename) && !matchesAny(filename, options.testPaths))
       return {};
 

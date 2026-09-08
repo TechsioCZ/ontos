@@ -54,7 +54,6 @@ export const isAdt = (value: { readonly _tag: string }): boolean =>
   ADT_TAGS.includes(value._tag) || ["Success", "Failure"].includes(value._tag);
 
 /** `Object.is` between two discriminants is identity, not case analysis. */
-export const sameTag = (a: Failure, b: Failure): boolean => Object.is(a._tag, b._tag);
 
 /** A shadowed `Object` global is not the shape probe. */
 export const shadowedGlobal = (value: { readonly _tag: string }): boolean => {

@@ -16,7 +16,7 @@ import type {
   SwitchLegalEntityClientError,
   SwitchTenantClientError,
 } from '../api/auth-client.ts';
-import { runBrowserEffect } from '../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/page.data.ts';
 
 const SwitchFailureStateSchema = Schema.Literals([
@@ -87,7 +87,7 @@ export const useShellControls = (
     }
     setLogoutPending(true);
     setLogoutFailed(false);
-    void runBrowserEffect(
+    void browserRuntime.runPromise(
       signOut({ locale: language }).pipe(
         Effect.andThen(
           Effect.tryPromise(() =>
@@ -115,7 +115,7 @@ export const useShellControls = (
   ) => {
     setPending(true);
     setFailed(false);
-    void runBrowserEffect(
+    void browserRuntime.runPromise(
       switching.pipe(
         Effect.matchEffect({
           onFailure: (error) => Effect.succeed(switchFailureState(error)),

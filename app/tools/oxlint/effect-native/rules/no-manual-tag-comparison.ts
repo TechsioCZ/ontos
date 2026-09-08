@@ -62,13 +62,9 @@
  * - **Effect's built-in ADT tags** (`Some`, `None`, `Success`, `Failure`, `Left`, `Right` —
  *   `adtTags`). `exit._tag === 'Failure'` is the sibling rule `no-raw-effect-adt-tag-check`'s
  *   concern; reporting it here too would double-report the same span.
- * - **`switch (error._tag)`** — switch exhaustiveness belongs to `prefer-match-over-tag-switch`;
- *   this rule never looks at a `SwitchStatement` discriminant or its `case` tests.
  * - **Type-level `_tag`** — `Extract<P, { readonly _tag: 'X' }>`, `P['_tag']`,
  *   `Failure extends { readonly _tag: infer Tag }`. Type positions contain no `BinaryExpression` or
  *   `CallExpression`, so they are structurally unreachable from these visitors.
- * - **Tag-to-tag equality** (`a._tag === b._tag`, and the same through aliases) — comparing two
- *   discriminants is an identity test, not a hand-written case analysis over a closed vocabulary.
  * - **Reading, building and annotating a tag** — `{ _tag: tag }`, `{ failureTag: error._tag }`,
  *   `const { _tag } = error` on its own. Only narrowing reports.
  * - **The Effect-native forms themselves**: `Effect.catchTag(s)`, `Match.tag`/`Match.tags`/
@@ -272,14 +268,12 @@ function isNamedIdentifier(node: ESTree.Node, name: string): boolean {
   return node.type === 'Identifier' && node.name === name;
 }
 
-/** Single-assignment `const NAME = <expr>` initialiser for an identifier reference, or null. */
-function constInitialiser(
+/** A single-assignment variable declarator, resolved at the identifier's lexical scope. */
+function immutableDeclarator(
   context: Context,
-  node: ESTree.Node
-): ESTree.Node | null {
-  const expression = unwrap(node);
-  if (expression.type !== 'Identifier') return null;
-  const variable = resolveVariable(context, expression.name, expression);
+  node: Extract<ESTree.Node, { type: 'Identifier' }>
+): ESTree.VariableDeclarator | null {
+  const variable = resolveVariable(context, node.name, node);
   if (variable === null || variable.defs.length !== 1) return null;
   if (
     variable.references.some(
@@ -290,9 +284,307 @@ function constInitialiser(
   const def = variable.defs[0];
   if (def === undefined || def.type !== 'Variable') return null;
   const declarator = def.node as ESTree.Node;
-  if (declarator.type !== 'VariableDeclarator') return null;
-  if (!isNamedIdentifier(declarator.id, expression.name)) return null;
+  return declarator.type === 'VariableDeclarator' ? declarator : null;
+}
+
+/** Single-assignment `const NAME = <expr>` initialiser for an identifier reference, or null. */
+function constInitialiser(
+  context: Context,
+  node: ESTree.Node
+): ESTree.Node | null {
+  const expression = unwrap(node);
+  if (expression.type !== 'Identifier') return null;
+  const declarator = immutableDeclarator(context, expression);
+  if (declarator === null || !isNamedIdentifier(declarator.id, expression.name))
+    return null;
   return declarator.init ?? null;
+}
+
+function assertionPropertyName(
+  context: Context,
+  property: { readonly key: ESTree.Node; readonly computed: boolean }
+): string | null {
+  return !property.computed && property.key.type === 'Identifier'
+    ? property.key.name
+    : staticString(context, property.key);
+}
+
+/** Trace a simple immutable destructured method without losing the source binding's scope. */
+function destructuredMethod(
+  context: Context,
+  node: ESTree.Node
+): { source: ESTree.Node; method: string } | null {
+  if (node.type !== 'Identifier') return null;
+  const declarator = immutableDeclarator(context, node);
+  if (
+    declarator === null ||
+    declarator.id.type !== 'ObjectPattern' ||
+    declarator.init === null ||
+    declarator.parent.type !== 'VariableDeclaration' ||
+    declarator.parent.kind !== 'const'
+  )
+    return null;
+  const property = declarator.id.properties.find(
+    (entry) =>
+      entry.type === 'Property' && isNamedIdentifier(entry.value, node.name)
+  );
+  if (property?.type !== 'Property') return null;
+  const method = assertionPropertyName(context, property);
+  return method === null ? null : { source: declarator.init, method };
+}
+
+interface AssertionCall {
+  readonly method: string;
+  readonly subject: ESTree.CallExpression | null;
+  readonly expectedWrapper?: boolean;
+}
+
+/** Node assertions allow strict/default namespace prefixes but never an expect subject. */
+function nodeAssertion(
+  members: string[],
+  subject: ESTree.CallExpression | null
+): AssertionCall | null {
+  if (subject !== null) return null;
+  while (members[0] === 'strict' || members[0] === 'default') members.shift();
+  const method = members[0];
+  return members.length === 1 && method !== undefined
+    ? { method, subject: null }
+    : null;
+}
+
+/** Static expect helpers are expected values, never subject-bearing assertions. */
+function staticAssertion(members: string[]): AssertionCall | null {
+  const index = members[0] === 'expect' && members[1] === 'not' ? 2 : 1;
+  const method = members[index];
+  if (members.length !== index + 1 || method === undefined) return null;
+  if (members[0] === 'assert') return { method, subject: null };
+  return members[0] === 'expect' && EXPECTED_WRAPPERS.has(method)
+    ? { method, subject: null, expectedWrapper: true }
+    : null;
+}
+
+/** Match the supported assertion APIs only after proving the import's lexical identity. */
+function importedAssertion(
+  source: string,
+  members: string[],
+  subject: ESTree.CallExpression | null
+): AssertionCall | null {
+  if (/^(?:node:)?assert(?:\/strict)?$/u.test(source))
+    return nodeAssertion(members, subject);
+  if (
+    ![
+      '@rstest/core',
+      'effect-rstest',
+      'vitest',
+      '@jest/globals',
+      'expect',
+    ].includes(source)
+  )
+    return null;
+  if (subject === null) return staticAssertion(members);
+  if (members.shift() !== 'expect') return null;
+  const method = members.pop();
+  if (
+    method === undefined ||
+    !members.every((member) => ['not', 'resolves', 'rejects'].includes(member))
+  )
+    return null;
+  return { method, subject };
+}
+
+function assertionImport(
+  context: Context,
+  expression: ESTree.Node,
+  members: string[],
+  subject: ESTree.CallExpression | null
+): AssertionCall | null {
+  if (expression.type !== 'Identifier') return null;
+  const variable = resolveVariable(context, expression.name, expression);
+  const definition = variable?.defs.find(
+    (entry) => entry.type === 'ImportBinding'
+  );
+  const specifier = definition?.node as ESTree.Node | undefined;
+  if (specifier === undefined) return null;
+  const declaration = context.sourceCode.ast.body.find(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.specifiers.some((entry) => entry === specifier)
+  );
+  if (declaration?.type !== 'ImportDeclaration') return null;
+  const path = [...members];
+  if (specifier.type === 'ImportSpecifier')
+    members.unshift(
+      specifier.imported.type === 'Identifier'
+        ? specifier.imported.name
+        : specifier.imported.value
+    );
+  const source = declaration.source.value;
+  if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect')
+    members.unshift('expect');
+  return stableAssertion(
+    context,
+    expression,
+    path,
+    importedAssertion(source, members, subject)
+  );
+}
+
+function assertionAlias(
+  context: Context,
+  expression: ESTree.Node,
+  members: string[]
+): ESTree.Node | null {
+  const destructured = destructuredMethod(context, expression);
+  if (destructured === null) return constInitialiser(context, expression);
+  members.unshift(destructured.method);
+  return destructured.source;
+}
+
+/** Writes through a receiver alias invalidate only the corresponding helper path. */
+function assertionPathWrite(node: ESTree.Node): boolean {
+  const parent = node.parent;
+  switch (parent?.type) {
+    case 'AssignmentExpression':
+      return parent.left === node;
+    case 'UpdateExpression':
+      return parent.argument === node;
+    case 'UnaryExpression':
+      return parent.operator === 'delete' && parent.argument === node;
+    default:
+      return false;
+  }
+}
+
+function assertionAliasTarget(
+  context: Context,
+  pattern: ESTree.Node,
+  members: readonly string[]
+): { node: ESTree.Node; members: readonly string[] } | null {
+  if (pattern.type === 'Identifier')
+    return immutableDeclarator(context, pattern) === null
+      ? null
+      : { node: pattern, members };
+  if (pattern.type !== 'ObjectPattern') return null;
+  const property = pattern.properties.find(
+    (entry) =>
+      entry.type === 'Property' &&
+      assertionPropertyName(context, entry) === members[0]
+  );
+  return property?.type === 'Property'
+    ? assertionAliasTarget(context, property.value, members.slice(1))
+    : null;
+}
+
+function assertionMemberTail(
+  node: ESTree.Node,
+  members: readonly string[]
+): readonly string[] | null {
+  const parent = node.parent;
+  if (
+    members.length === 0 ||
+    parent?.type !== 'MemberExpression' ||
+    parent.object !== node
+  )
+    return null;
+  const member = memberPropertyName(parent);
+  return member === null || member === members[0] ? members.slice(1) : null;
+}
+
+function assertionReferenceWrite(
+  context: Context,
+  node: ESTree.Node,
+  members: readonly string[],
+  seen: Map<Variable, Set<string>>
+): boolean {
+  let current = node;
+  for (let depth = 0; depth < MAX_DEPTH; depth += 1) {
+    if (assertionPathWrite(current)) return true;
+    const parent = current.parent;
+    if (parent === null) return false;
+    if (unwrap(parent) === current) {
+      current = parent;
+      continue;
+    }
+    if (parent.type === 'VariableDeclarator' && parent.init === current) {
+      const alias = assertionAliasTarget(context, parent.id, members);
+      return (
+        alias !== null &&
+        assertionBindingWrite(context, alias.node, alias.members, seen)
+      );
+    }
+    const tail = assertionMemberTail(current, members);
+    if (tail === null) return false;
+    members = tail;
+    current = parent;
+  }
+  return true;
+}
+
+/** Follow local receiver aliases too, so `alias.objectContaining = fake` is not trusted. */
+function assertionBindingWrite(
+  context: Context,
+  node: ESTree.Node,
+  members: readonly string[],
+  seen = new Map<Variable, Set<string>>()
+): boolean {
+  if (node.type !== 'Identifier') return false;
+  const variable = resolveVariable(context, node.name, node);
+  if (variable === null) return false;
+  const path = members.join('.');
+  const paths = seen.get(variable) ?? new Set<string>();
+  if (paths.has(path)) return false;
+  if (seen.size >= MAX_DEPTH) return true;
+  seen.set(variable, paths.add(path));
+  return variable.references.some(
+    (reference) =>
+      (reference.isWrite() && !reference.init) ||
+      assertionReferenceWrite(context, reference.identifier, members, seen)
+  );
+}
+
+/** Apply mutation checks only to the newly recognized expected-value helpers. */
+function stableAssertion(
+  context: Context,
+  expression: ESTree.Node,
+  members: readonly string[],
+  assertion: AssertionCall | null
+): AssertionCall | null {
+  return assertion?.expectedWrapper === true &&
+    assertionBindingWrite(context, expression, members)
+    ? null
+    : assertion;
+}
+
+/** Resolve assertion imports through lexical bindings, aliases, and matcher modifiers. */
+function assertionCall(
+  context: Context,
+  call: ESTree.CallExpression
+): AssertionCall | null {
+  let expression = unwrap(call.callee);
+  const members: string[] = [];
+  const seen = new Set<ESTree.Node>();
+  let subject: ESTree.CallExpression | null = null;
+  for (let depth = 0; depth < MAX_DEPTH && !seen.has(expression); depth += 1) {
+    seen.add(expression);
+    const alias = assertionAlias(context, expression, members);
+    if (alias !== null) {
+      expression = unwrap(alias);
+      continue;
+    }
+    if (expression.type === 'MemberExpression') {
+      const member = memberPropertyName(expression);
+      if (member === null) return null;
+      members.unshift(member);
+      expression = unwrap(expression.object as ESTree.Node);
+      continue;
+    }
+    if (expression.type !== 'CallExpression')
+      return assertionImport(context, expression, members, subject);
+    if (subject !== null) return null;
+    subject = expression;
+    expression = unwrap(expression.callee);
+  }
+  return null;
 }
 
 /**
@@ -310,6 +602,44 @@ function staticString(context: Context, node: ESTree.Node): string | null {
   }
   const initialiser = constInitialiser(context, expression);
   return initialiser === null ? null : asStringLiteral(initialiser);
+}
+
+/** Array paths permit static strings and numeric indexes, but never holes or spreads. */
+function validTagPathSegment(
+  context: Context,
+  element: ESTree.Node | null
+): boolean {
+  if (element === null || element.type === 'SpreadElement') return false;
+  if (staticString(context, element) !== null) return true;
+  const value = unwrap(element);
+  return value.type === 'Literal' && typeof value.value === 'number';
+}
+
+/** Resolve only the asserted property: dotted strings and literal array-path segments. */
+function tagPropertyPath(context: Context, node: ESTree.Node): boolean {
+  const path = staticString(context, node);
+  if (path !== null) {
+    const segments = path.split('.');
+    return segments.length <= MAX_DEPTH && segments.at(-1) === TAG_PROPERTY;
+  }
+  const expression = unwrap(node);
+  if (
+    expression.type !== 'ArrayExpression' ||
+    expression.elements.length > MAX_DEPTH
+  )
+    return false;
+  if (
+    !expression.elements.every((element) =>
+      validTagPathSegment(context, element)
+    )
+  )
+    return false;
+  const last = expression.elements.at(-1);
+  return (
+    last !== undefined &&
+    last !== null &&
+    staticString(context, last) === TAG_PROPERTY
+  );
 }
 
 /** The `_tag` member access itself (`x._tag`, `x?._tag`, `x!._tag`, `x["_tag"]`, `x[KEY]`), or null. */
@@ -687,6 +1017,175 @@ function containerElements(
   return first.type === 'ArrayExpression' ? first.elements : null;
 }
 
+/** Only map callback results propagate tag values; arbitrary callback reads do not. */
+function mappedTagValues(
+  context: Context,
+  expression: ESTree.CallExpression
+): readonly ESTree.Node[] {
+  const callee = unwrap(expression.callee);
+  if (
+    callee.type !== 'MemberExpression' ||
+    memberPropertyName(callee) !== 'map'
+  )
+    return [];
+  const first = firstArgument(expression);
+  if (first === null) return [];
+  const callback = unwrap(constInitialiser(context, first) ?? first);
+  if (
+    callback.type !== 'ArrowFunctionExpression' &&
+    callback.type !== 'FunctionExpression'
+  )
+    return [];
+  return callback.body === null ? [] : [callback.body];
+}
+
+/** Follow values reaching a comparison, without descending into unrelated predicates or fields. */
+function comparedValues(
+  context: Context,
+  expression: ESTree.Node
+): readonly ESTree.Node[] {
+  switch (expression.type) {
+    case 'ArrayExpression':
+      return expression.elements.filter((element) => element !== null);
+    case 'SpreadElement':
+      return [expression.argument];
+    case 'LogicalExpression':
+      return [expression.left, expression.right];
+    case 'ConditionalExpression':
+      return [expression.consequent, expression.alternate];
+    case 'SequenceExpression':
+      return expression.expressions.slice(-1);
+    case 'CallExpression':
+      return mappedTagValues(context, expression);
+    default:
+      return returnedTagValues(expression);
+  }
+}
+
+/** Statement bodies expose return values, not conditions or arbitrary expression statements. */
+function returnedTagValues(expression: ESTree.Node): readonly ESTree.Node[] {
+  switch (expression.type) {
+    case 'BlockStatement':
+      return expression.body;
+    case 'ReturnStatement':
+      return expression.argument === null ? [] : [expression.argument];
+    case 'IfStatement':
+      return expression.alternate === null
+        ? [expression.consequent]
+        : [expression.consequent, expression.alternate];
+    default:
+      return [];
+  }
+}
+
+const ASSERTION_METHODS = new Set([
+  'equal',
+  'strictEqual',
+  'notEqual',
+  'notStrictEqual',
+  'deepEqual',
+  'deepStrictEqual',
+  'notDeepEqual',
+  'notDeepStrictEqual',
+  'toBe',
+  'toEqual',
+  'toStrictEqual',
+  'toContain',
+  'toContainEqual',
+  'toMatch',
+  'toMatchObject',
+  'match',
+  'doesNotMatch',
+]);
+
+const OBJECT_ASSERTION_METHODS = new Set([
+  'toMatchObject',
+  'toEqual',
+  'toStrictEqual',
+  'toContainEqual',
+  'deepEqual',
+  'deepStrictEqual',
+  'notDeepEqual',
+  'notDeepStrictEqual',
+]);
+
+const EXPECTED_WRAPPERS = new Set(['objectContaining', 'arrayContaining']);
+
+type ExpectedShapeVisits = readonly [Set<ESTree.Node>, Set<ESTree.Node>];
+
+/** An object's payload is not another discriminant: inspect only its own `_tag`. */
+function expectedObjectTags(
+  context: Context,
+  shape: ESTree.Node
+): readonly ESTree.Node[] {
+  if (shape.type !== 'ObjectExpression') return [];
+  const tag = shape.properties.find(
+    (property) =>
+      property.type === 'Property' &&
+      assertionPropertyName(context, property) === TAG_PROPERTY
+  );
+  return tag?.type === 'Property' ? [tag.value] : [];
+}
+
+/** Only a proven arrayContaining opens an array's contained expected shapes. */
+function expectedContainedTags(
+  context: Context,
+  shape: ESTree.Node,
+  depth: number,
+  seen: ExpectedShapeVisits
+): readonly ESTree.Node[] {
+  if (shape.type !== 'ArrayExpression') return [];
+  return shape.elements.flatMap((element) =>
+    element === null
+      ? []
+      : expectedShapeTags(context, element, false, depth + 1, seen)
+  );
+}
+
+/** Bounded immutable aliases and framework wrappers; never walk arbitrary payload properties. */
+function expectedShapeTags(
+  context: Context,
+  expected: ESTree.Node,
+  contained = false,
+  depth = 0,
+  seen: ExpectedShapeVisits = [new Set(), new Set()]
+): readonly ESTree.Node[] {
+  const shape = unwrap(expected);
+  const visited = seen[contained ? 1 : 0];
+  if (depth > MAX_DEPTH || visited.has(shape)) return [];
+  visited.add(shape);
+  const initialiser = constInitialiser(context, shape);
+  if (initialiser !== null)
+    return expectedShapeTags(context, initialiser, contained, depth + 1, seen);
+  if (contained) return expectedContainedTags(context, shape, depth, seen);
+  if (shape.type !== 'CallExpression')
+    return expectedObjectTags(context, shape);
+  const wrapper = assertionCall(context, shape);
+  const argument = firstArgument(shape);
+  return wrapper?.expectedWrapper === true && argument !== null
+    ? expectedShapeTags(
+        context,
+        argument,
+        wrapper.method === 'arrayContaining',
+        depth + 1,
+        seen
+      )
+    : [];
+}
+
+/** Resolve callable aliases without applying object-shape depth limits to the original walk. */
+function assertionCallee(context: Context, node: ESTree.Node): ESTree.Node {
+  let callee = unwrap(node);
+  const seen = new Set<ESTree.Node>();
+  while (callee.type === 'Identifier' && !seen.has(callee)) {
+    seen.add(callee);
+    const initialiser = constInitialiser(context, callee);
+    if (initialiser === null) break;
+    callee = unwrap(initialiser);
+  }
+  return callee;
+}
+
 const REPLACEMENTS =
   "`Match.value(x).pipe(Match.tag('Tag', onTag), Match.exhaustive)`, `Schema.is(TaggedError)(x)`, or " +
   '`Effect.catchTag`/`Effect.catchTags` on the error channel';
@@ -706,6 +1205,8 @@ export const rule = defineRule({
         '`Schema.is(TaggedError)`, or `Effect.catchTag(s)`.',
     },
     messages: {
+      tagSwitch:
+        'Manual `_tag` switching must use Effect Match.tag/Match.tags or typed error handlers.',
       tagEquality:
         "Manual `_tag` comparison on `{{text}}` (`{{operator}} '{{tag}}'`) re-implements pattern matching by " +
         'hand and silently stops matching when the tag vocabulary moves (audit A4 / C2). Use ' +
@@ -784,6 +1285,25 @@ export const rule = defineRule({
     const tagOf = (node: ESTree.Node): TagReference | null =>
       tagReference(context, node, options);
 
+    const comparedTag = (
+      node: ESTree.Node,
+      seen = new Set<ESTree.Node>()
+    ): TagReference | null => {
+      if (seen.has(node)) return null;
+      seen.add(node);
+      const direct = tagOf(node);
+      if (direct !== null) return direct;
+      const expression = unwrap(node);
+      const initialiser = constInitialiser(context, expression);
+      if (initialiser !== null) return comparedTag(initialiser, seen);
+      const values = comparedValues(context, expression);
+      for (const value of values) {
+        const found = comparedTag(value, seen);
+        if (found !== null) return found;
+      }
+      return null;
+    };
+
     /** `[…]`/`new Set([…])` of nothing but Effect's own ADT tags — the sibling rule's territory. */
     const containerIsAdtOnly = (node: ESTree.Node): boolean => {
       const expression = unwrap(node);
@@ -833,7 +1353,7 @@ export const rule = defineRule({
       const left = tagOf(first);
       const reference = left ?? tagOf(second);
       const other = left === null ? first : second;
-      if (reference === null || tagOf(other) !== null) return null;
+      if (reference === null) return null;
       const tag = asStringLiteral(other);
       if (tag !== null && exempt.has(tag)) return null;
       return { reference, other, tag };
@@ -998,18 +1518,162 @@ export const rule = defineRule({
         });
       }
     }
-    function checkCall(node: ESTree.CallExpression) {
-      if (checkShape(node) || checkEqualityCall(node)) return;
-      const callee = unwrap(node.callee);
-      if (callee.type !== 'MemberExpression') return;
-      const method = memberPropertyName(callee);
-      if (method === null) return;
-      const receiver = callee.object as ESTree.Node;
+    function reportAssertion(node: ESTree.CallExpression, text: string) {
+      context.report({
+        node,
+        messageId: 'tagEqualityCall',
+        data: { callee: describe(context, node.callee), text },
+      });
+    }
 
+    function exemptStaticTag(node: ESTree.Node | undefined): boolean {
+      if (node === undefined) return false;
+      const literal = staticString(context, node);
+      return literal !== null && exempt.has(literal);
+    }
+
+    function checkPropertyAssertion(
+      node: ESTree.CallExpression,
+      subject: ESTree.CallExpression
+    ) {
+      const assertedPath = firstArgument(node);
+      const target = firstArgument(subject);
+      if (
+        assertedPath === null ||
+        target === null ||
+        !tagPropertyPath(context, assertedPath) ||
+        suppressed(node)
+      )
+        return;
+      const expected = node.arguments[1];
+      if (expected?.type === 'SpreadElement') return;
+      if (exemptStaticTag(expected)) return;
+      context.report({
+        node,
+        messageId:
+          expected === undefined ? 'tagPresenceCheck' : 'tagEqualityCall',
+        data: {
+          callee: describe(context, node.callee),
+          text: describe(context, target),
+        },
+      });
+    }
+
+    /** Object matchers inspect only the expected top-level discriminant, never payload fields. */
+    function checkObjectAssertion(
+      node: ESTree.CallExpression,
+      assertion: AssertionCall
+    ): boolean {
+      if (!OBJECT_ASSERTION_METHODS.has(assertion.method)) return false;
+      const expected = node.arguments[assertion.subject === null ? 1 : 0];
+      if (expected === undefined || expected.type === 'SpreadElement')
+        return false;
+      const tags = expectedShapeTags(context, expected);
+      if (!tags.some((tag) => !exemptStaticTag(tag))) return false;
+      if (suppressed(node)) return false;
+      reportAssertion(
+        node,
+        describe(
+          context,
+          assertion.subject?.arguments[0] ?? node.arguments[0] ?? node
+        )
+      );
+      return true;
+    }
+
+    function exemptAssertionValue(other: ESTree.Node | undefined): boolean {
+      if (other === undefined || other.type === 'SpreadElement') return false;
+      const literal = asStringLiteral(other);
+      return (
+        (literal !== null && exempt.has(literal)) || containerIsAdtOnly(other)
+      );
+    }
+
+    function checkAssertionValues(
+      node: ESTree.CallExpression,
+      assertion: AssertionCall
+    ): boolean {
+      const compared =
+        assertion.subject === null
+          ? node.arguments.slice(0, 2)
+          : [
+              ...assertion.subject.arguments.slice(0, 1),
+              ...node.arguments.slice(0, 1),
+            ];
+      for (const [index, argument] of compared.entries()) {
+        if (argument.type === 'SpreadElement') continue;
+        const reference = comparedTag(argument);
+        if (
+          reference === null ||
+          exemptAssertionValue(compared[index === 0 ? 1 : 0])
+        )
+          continue;
+        if (suppressed(node)) return true;
+        reportAssertion(node, referenceText(context, reference));
+        return true;
+      }
+      return false;
+    }
+
+    function checkAssertion(
+      node: ESTree.CallExpression,
+      assertion: AssertionCall | null
+    ): boolean {
+      if (assertion === null) return false;
+      // Property assertions are shape/equality probes only on a proven `expect(subject)` chain.
+      if (assertion.method === 'toHaveProperty' && assertion.subject !== null) {
+        checkPropertyAssertion(node, assertion.subject);
+        return true;
+      }
+      if (!ASSERTION_METHODS.has(assertion.method)) return false;
+      return (
+        checkObjectAssertion(node, assertion) ||
+        checkAssertionValues(node, assertion)
+      );
+    }
+    function checkReceiverProbes(
+      node: ESTree.CallExpression,
+      receiver: ESTree.Node,
+      method: string
+    ) {
       if (checkStringProbe(node, receiver, method)) return;
       if (checkRegexProbe(node, receiver, method)) return;
       checkMembership(node, receiver, method);
     }
-    return { BinaryExpression: checkBinary, CallExpression: checkCall };
+
+    function checkCall(node: ESTree.CallExpression) {
+      if (checkShape(node) || checkEqualityCall(node)) return;
+      const callee = assertionCallee(context, node.callee);
+      const assertion = assertionCall(context, node);
+      const method =
+        callee.type === 'MemberExpression'
+          ? memberPropertyName(callee)
+          : assertion?.method;
+      const receiver =
+        callee.type === 'MemberExpression' ? callee.object : null;
+      if (method === null || method === undefined) return;
+      if (checkAssertion(node, assertion) || receiver === null) return;
+
+      checkReceiverProbes(node, receiver, method);
+    }
+    return {
+      SwitchStatement(node) {
+        if (tagOf(node.discriminant) === null || suppressed(node)) return;
+        const labels = node.cases.flatMap((branch) =>
+          branch.test === null ? [] : [branch.test]
+        );
+        if (
+          labels.length > 0 &&
+          labels.every((label) => {
+            const literal = asStringLiteral(label);
+            return literal !== null && exempt.has(literal);
+          })
+        )
+          return;
+        context.report({ node, messageId: 'tagSwitch' });
+      },
+      BinaryExpression: checkBinary,
+      CallExpression: checkCall,
+    };
   },
 });

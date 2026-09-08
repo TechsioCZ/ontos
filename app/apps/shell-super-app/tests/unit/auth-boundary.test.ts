@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
-import { expect, test } from '@rstest/core';
 import { Schema } from 'effect';
+import { expect, test } from 'effect-rstest';
 
 const workspaceRoot = new URL('../../../../', import.meta.url);
 const readJson = <JsonSchema extends Schema.ConstraintDecoder<unknown>>(

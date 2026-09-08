@@ -1,12 +1,12 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Cause, Effect, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
@@ -20,15 +20,14 @@ import type {
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permissions/config.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
-import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
-import { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
+import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
 import { LOCAL_DEVELOPMENT_CONTEXT } from '../initialize-local-development.mts';
 import {
-  discoverCurrentActionKeys,
   formatActionAuthorizationProvisioningFailure,
   runCurrentActionAuthorizationProvisioning,
   selectActionAuthorizationProvisioningTarget,
 } from '../provision-current-action-authorization.mts';
+import type { discoverCurrentActionKeys as DiscoverCurrentActionKeys } from '../provision-current-action-authorization.mts';
 
 const attachPersonEngagementAction = 'party.registry.attach-person-engagement';
 const restrictedAction = 'core.identity.restricted';
@@ -101,173 +100,184 @@ const stageConfiguration: SpiceDbConfigValue = {
 const response = (permissionship: v1.CheckPermissionResponse_Permissionship) =>
   v1.CheckPermissionResponse.create({ permissionship });
 
-const failureOf = async <Value,>(
+const failureOf = <Value,>(
   effect: Effect.Effect<Value, ActionAuthorizationProvisioningError>
-) => await runEffectTestPromise(Effect.flip(effect));
+) =>
+  Effect.gen(function* testEffect1() {
+    return yield* Effect.flip(effect);
+  });
 
-const rejectionOf = async <Value,>(promise: Promise<Value>): Promise<Error> => {
-  try {
-    await promise;
-  } catch (error) {
-    if (Predicate.isError(error)) {
-      return error;
-    }
-    return assert.fail('Expected the Promise to reject with an Error');
-  }
-  return assert.fail('Expected the Promise to reject');
-};
-
-void test('selects only exact source-controlled development and stage targets', async () => {
-  const development = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
+const rejectionOf = <Value, Failure, Requirements>(
+  effect: Effect.Effect<Value, Failure, Requirements>
+) =>
+  effect.pipe(
+    Effect.matchCause({
+      onFailure: Cause.squash,
+      onSuccess: () => {
+        throw new Error('Expected the Effect to fail');
+      },
+    })
   );
-  assert.equal(development.environment, 'development');
-  assert.deepEqual(development.contexts, [
-    {
-      principalId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-      tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-    },
-  ]);
 
-  const stage = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(stageConfiguration)
-  );
-  assert.equal(stage.environment, 'stage');
-  assert.equal(stage.contexts.length, 2);
+it.effect(
+  'selects only exact source-controlled development and stage targets',
+  Effect.fn(function* testEffect2() {
+    const development = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    expect(development.environment).toBe('development');
+    expect(development.contexts).toEqual([
+      {
+        principalId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+      },
+    ]);
 
-  const { deploymentEnvironment: _environment, ...withoutEnvironment } =
-    developmentConfiguration;
-  const implicitDevelopment = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(withoutEnvironment)
-  );
-  assert.deepEqual(implicitDevelopment.contexts, development.contexts);
-  assert.equal(implicitDevelopment.environment, 'development');
+    const stage =
+      yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    expect(stage.environment).toBe('stage');
+    expect(stage.contexts.length).toBe(2);
 
-  const ipv6Development = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget({
+    const { deploymentEnvironment: _environment, ...withoutEnvironment } =
+      developmentConfiguration;
+    const implicitDevelopment =
+      yield* selectActionAuthorizationProvisioningTarget(withoutEnvironment);
+    expect(implicitDevelopment.contexts).toEqual(development.contexts);
+    expect(implicitDevelopment.environment).toBe('development');
+
+    const ipv6Development = yield* selectActionAuthorizationProvisioningTarget({
       ...withoutEnvironment,
       endpoint: '[::1]:50051',
-    })
-  );
-  assert.equal(ipv6Development.environment, 'development');
+    });
+    expect(ipv6Development.environment).toBe('development');
 
-  await Promise.all(
-    [
-      { ...developmentConfiguration, deploymentEnvironment: 'production' },
-      {
-        ...developmentConfiguration,
-        endpoint: 'spicedb.example.com:50051',
-        insecureLocal: false,
-      },
-      { ...withoutEnvironment, endpoint: 'spicedb.example.com:50051' },
-      { ...withoutEnvironment, endpoint: 'spicedb:50051' },
-      { ...stageConfiguration, endpoint: 'localhost:50051' },
-      { ...stageConfiguration, insecureLocal: false },
-    ].map(async (configuration) => {
-      const error = await failureOf(
-        selectActionAuthorizationProvisioningTarget(configuration)
-      );
-      assert.equal(error.code, 'action_authorization_configuration_invalid');
-      assert.doesNotMatch(error.reason, new RegExp(testPreSharedKey, 'u'));
-    })
-  );
-});
-
-void test('reports expected provisioning failures and sanitizes unexpected Promise rejections', async () => {
-  const expected = new ActionAuthorizationProvisioningError({
-    code: 'action_authorization_configuration_invalid',
-    reason: 'The SpiceDB provisioning configuration is invalid',
-  });
-  const expectedRejection = await rejectionOf(
-    runEffectTestPromise(Effect.fail(expected))
-  );
-  assert.equal(
-    formatActionAuthorizationProvisioningFailure(expectedRejection),
-    `${expected.code}: ${expected.reason}`
-  );
-
-  const unexpectedMessage =
-    'action_authorization_service_unavailable: Unexpected Action authorization provisioning failure';
-  for (const error of [
-    undefined,
-    null,
-    testPreSharedKey,
-    new Error(testPreSharedKey),
-    {},
-  ]) {
-    assert.equal(
-      formatActionAuthorizationProvisioningFailure(error),
-      unexpectedMessage
+    yield* Effect.all(
+      [
+        { ...developmentConfiguration, deploymentEnvironment: 'production' },
+        {
+          ...developmentConfiguration,
+          endpoint: 'spicedb.example.com:50051',
+          insecureLocal: false,
+        },
+        { ...withoutEnvironment, endpoint: 'spicedb.example.com:50051' },
+        { ...withoutEnvironment, endpoint: 'spicedb:50051' },
+        { ...stageConfiguration, endpoint: 'localhost:50051' },
+        { ...stageConfiguration, insecureLocal: false },
+      ].map((configuration) =>
+        Effect.gen(function* testEffect3() {
+          const error = yield* failureOf(
+            selectActionAuthorizationProvisioningTarget(configuration)
+          );
+          expect(error.code).toBe('action_authorization_configuration_invalid');
+          expect(error.reason).not.toMatch(new RegExp(testPreSharedKey, 'u'));
+        })
+      ),
+      { concurrency: 'unbounded' }
     );
-  }
-  const unexpectedRejection = await rejectionOf(
-    runEffectTestPromise(
+  })
+);
+
+it.effect(
+  'reports expected provisioning failures and sanitizes unexpected Promise rejections',
+  Effect.fn(function* testEffect4() {
+    const expected = new ActionAuthorizationProvisioningError({
+      code: 'action_authorization_configuration_invalid',
+      reason: 'The SpiceDB provisioning configuration is invalid',
+    });
+    const expectedRejection = yield* rejectionOf(Effect.fail(expected));
+    expect(
+      formatActionAuthorizationProvisioningFailure(expectedRejection)
+    ).toBe(`${expected.code}: ${expected.reason}`);
+
+    const unexpectedMessage =
+      'action_authorization_service_unavailable: Unexpected Action authorization provisioning failure';
+    for (const error of [
+      undefined,
+      null,
+      testPreSharedKey,
+      new Error(testPreSharedKey),
+      {},
+    ]) {
+      expect(formatActionAuthorizationProvisioningFailure(error)).toBe(
+        unexpectedMessage
+      );
+    }
+    const unexpectedRejection = yield* rejectionOf(
       Effect.acquireUseRelease(
         Effect.void,
         () => Effect.void,
         () =>
           Effect.die(new Error(`client.close failed with ${testPreSharedKey}`))
       )
-    )
-  );
-  assert.equal(
-    formatActionAuthorizationProvisioningFailure(unexpectedRejection),
-    unexpectedMessage
-  );
-});
-
-void test('workspace validation rejects both provisioning spellings in every automatic startup path', async () => {
-  const source = await readFile(
-    new URL('../validate-ultramodern-workspace.mts', import.meta.url),
-    'utf-8'
-  );
-  // Execute the actual validator block with controlled inputs, without loading the full workspace.
-  const start = source.indexOf(
-    'const actionAuthorizationProvisioningCommand ='
-  );
-  const end = source.indexOf('if (hasBackendSurfaces)', start);
-  assert.ok(start !== -1 && end > start);
-  const block = source.slice(start, end);
-  const scripts = {
-    'authorization:provision-current-actions':
-      'node ./scripts/provision-current-action-authorization.mts',
-    'local:initialize': 'node ./scripts/initialize-local-development.mts',
-  };
-  const validationRoot = await mkdtemp(
-    path.join(os.tmpdir(), 'ontos-workspace-validation-')
-  );
-  let validationIndex = 0;
-  const validate = async (
-    sources: Readonly<Record<string, string>>,
-    overrides: Readonly<Record<string, string>> = {}
-  ): Promise<void> => {
-    const modulePath = path.join(
-      validationRoot,
-      `validation-${validationIndex}.mjs`
     );
-    validationIndex += 1;
-    await writeFile(
-      modulePath,
-      [
-        "import assert from 'node:assert/strict';",
-        `const sources = ${JSON.stringify(sources)};`,
-        "const readText = (file) => sources[file] ?? '';",
-        `const rootPackage = ${JSON.stringify({ scripts: { ...scripts, ...overrides } })};`,
-        "const SHARED_VALIDATOR_STRING_053 = 'authorization:provision-current-actions';",
-        "const SHARED_VALIDATOR_STRING_059 = 'cloudflare:build';",
-        "const SHARED_VALIDATOR_STRING_060 = 'cloudflare:deploy';",
-        "const SHARED_VALIDATOR_STRING_106 = 'provision-current-action-authorization';",
-        'const valueForKey = (entries, key) => entries.find(([candidate]) => candidate === key)?.[1];',
-        block,
-      ].join('\n'),
-      'utf-8'
-    );
-    await import(pathToFileURL(modulePath).href);
-  };
+    expect(
+      formatActionAuthorizationProvisioningFailure(unexpectedRejection)
+    ).toBe(unexpectedMessage);
+  })
+);
 
-  try {
-    await validate({});
-    const validationPromises: Promise<void>[] = [];
+it.effect(
+  'workspace validation rejects both provisioning spellings in every automatic startup path',
+  Effect.fn(function* testEffect5() {
+    const source = yield* Effect.tryPromise(() =>
+      readFile(
+        new URL('../validate-ultramodern-workspace.mts', import.meta.url),
+        'utf-8'
+      )
+    );
+    // Execute the actual validator block with controlled inputs, without loading the full workspace.
+    const start = source.indexOf(
+      'const actionAuthorizationProvisioningCommand ='
+    );
+    const end = source.indexOf('if (hasBackendSurfaces)', start);
+    expect(start !== -1 && end > start).toBe(true);
+    const block = source.slice(start, end);
+    const scripts = {
+      'authorization:provision-current-actions':
+        'node ./scripts/provision-current-action-authorization.mts',
+      'local:initialize': 'node ./scripts/initialize-local-development.mts',
+    };
+    const validationRoot = yield* Effect.acquireRelease(
+      Effect.tryPromise(() =>
+        mkdtemp(path.join(os.tmpdir(), 'ontos-workspace-validation-'))
+      ),
+      (directory) =>
+        Effect.promise(() => rm(directory, { force: true, recursive: true }))
+    );
+    let validationIndex = 0;
+    const validate = (
+      sources: Readonly<Record<string, string>>,
+      overrides: Readonly<Record<string, string>> = {}
+    ) =>
+      Effect.gen(function* testEffect6() {
+        const modulePath = path.join(
+          validationRoot,
+          `validation-${validationIndex}.mjs`
+        );
+        validationIndex += 1;
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            modulePath,
+            [
+              "import assert from 'node:assert/strict';",
+              `const sources = ${JSON.stringify(sources)};`,
+              "const readText = (file) => sources[file] ?? '';",
+              `const rootPackage = ${JSON.stringify({ scripts: { ...scripts, ...overrides } })};`,
+              "const SHARED_VALIDATOR_STRING_053 = 'authorization:provision-current-actions';",
+              "const SHARED_VALIDATOR_STRING_059 = 'cloudflare:build';",
+              "const SHARED_VALIDATOR_STRING_060 = 'cloudflare:deploy';",
+              "const SHARED_VALIDATOR_STRING_106 = 'provision-current-action-authorization';",
+              'const valueForKey = (entries, key) => entries.find(([candidate]) => candidate === key)?.[1];',
+              block,
+            ].join('\n'),
+            'utf-8'
+          )
+        );
+        yield* Effect.tryPromise(() => import(pathToFileURL(modulePath).href));
+      });
+
+    yield* validate({});
+    const validations: Effect.Effect<void, void>[] = [];
     for (const command of [
       'node ./scripts/provision-current-action-authorization.mts',
       'pnpm authorization:provision-current-actions',
@@ -278,10 +288,14 @@ void test('workspace validation rejects both provisioning spellings in every aut
         'docker-compose.yml',
         'scripts/run-zerops-spicedb.sh',
       ]) {
-        validationPromises.push(
-          assert.rejects(
-            validate({ [file]: command }),
-            /must not provision Action authorization/u
+        validations.push(
+          validate({ [file]: command }).pipe(
+            Effect.flip,
+            Effect.map((error) =>
+              expect(() => {
+                throw error.cause;
+              }).toThrow(/must not provision Action authorization/u)
+            )
           )
         );
       }
@@ -291,97 +305,119 @@ void test('workspace validation rejects both provisioning spellings in every aut
         'cloudflare:build',
         'cloudflare:deploy',
       ]) {
-        validationPromises.push(
-          assert.rejects(
-            validate({}, { [automaticScript]: command }),
-            /must not invoke Action authorization provisioning/u
+        validations.push(
+          validate({}, { [automaticScript]: command }).pipe(
+            Effect.flip,
+            Effect.map((error) =>
+              expect(() => {
+                throw error.cause;
+              }).toThrow(/must not invoke Action authorization provisioning/u)
+            )
           )
         );
       }
-      validationPromises.push(
-        assert.rejects(
-          validate(
-            {},
-            {
-              'local:initialize': `${scripts['local:initialize']} && ${command}`,
-            }
-          ),
-          /must not provision Action authorization/u
+      validations.push(
+        validate(
+          {},
+          {
+            'local:initialize': `${scripts['local:initialize']} && ${command}`,
+          }
+        ).pipe(
+          Effect.flip,
+          Effect.map((error) =>
+            expect(() => {
+              throw error.cause;
+            }).toThrow(/must not provision Action authorization/u)
+          )
         )
       );
     }
-    await Promise.all(validationPromises);
-  } finally {
-    await rm(validationRoot, { recursive: true });
-  }
-});
+    yield* Effect.all(validations, { concurrency: 'unbounded' });
+  })
+);
 
-void test('discovers exactly the current generated Core and Party Registry Action baseline', async () => {
-  const workspaceRoot = path.resolve(import.meta.dirname, '../..');
-  assert.deepEqual(
-    await discoverCurrentActionKeys(workspaceRoot),
-    currentActionKeys
-  );
-  assert.equal(new Set(currentActionKeys).size, 38);
-  assert.equal(
-    currentActionKeys.filter((key) => key.startsWith('core.')).length,
-    8
-  );
-  assert.equal(
-    currentActionKeys.filter((key) => key.startsWith('party.registry.')).length,
-    30
-  );
-});
+it.effect(
+  'discovers exactly the current generated Core and Party Registry Action baseline',
+  Effect.fn(function* testEffect7() {
+    const workspaceRoot = path.resolve(import.meta.dirname, '../..');
+    const { discoverCurrentActionKeys } = yield* Effect.promise(
+      (): Promise<{
+        readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys;
+      }> =>
+        import(
+          pathToFileURL(
+            path.resolve(
+              import.meta.dirname,
+              '../provision-current-action-authorization.mts'
+            )
+          ).href
+        )
+    );
+    expect(
+      yield* discoverCurrentActionKeys(workspaceRoot).pipe(
+        Effect.provide(NodeServices.layer)
+      )
+    ).toEqual(currentActionKeys);
+    expect(new Set(currentActionKeys).size).toBe(38);
+    expect(
+      currentActionKeys.filter((key) => key.startsWith('core.')).length
+    ).toBe(8);
+    expect(
+      currentActionKeys.filter((key) => key.startsWith('party.registry.'))
+        .length
+    ).toBe(30);
+  })
+);
 
-void test('builds lossless, deterministic Tenant-membership grants for development and stage', async () => {
-  const development = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  const stage = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(stageConfiguration)
-  );
-  const developmentRelationships = buildActionAuthorizationRelationships(
-    currentActionKeys,
-    development.contexts
-  );
-  const stageRelationships = buildActionAuthorizationRelationships(
-    currentActionKeys,
-    stage.contexts
-  );
+it.effect(
+  'builds lossless, deterministic Tenant-membership grants for development and stage',
+  Effect.fn(function* testEffect8() {
+    const development = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    const stage =
+      yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const developmentRelationships = buildActionAuthorizationRelationships(
+      currentActionKeys,
+      development.contexts
+    );
+    const stageRelationships = buildActionAuthorizationRelationships(
+      currentActionKeys,
+      stage.contexts
+    );
 
-  assert.equal(developmentRelationships.length, 38);
-  assert.equal(stageRelationships.length, 76);
-  for (const relationship of [
-    ...developmentRelationships,
-    ...stageRelationships,
-  ]) {
-    assert.equal(relationship.relation, 'executor');
-    assert.equal(relationship.resource?.objectType, 'action');
-    assert.equal(relationship.subject?.object?.objectType, 'tenant');
-    assert.equal(relationship.subject?.optionalRelation, 'member');
-  }
-  const identifiers = stageRelationships.map(
-    ({ resource, subject }) =>
-      `${resource?.objectId}:${subject?.object?.objectId}`
-  );
-  assert.ok(
-    identifiers.every(
-      (identifier, index) =>
-        index === 0 || identifiers[index - 1]?.localeCompare(identifier) <= 0
-    )
-  );
-  assert.equal(
-    Buffer.from(
-      toSpiceDbActionObjectId(attachPersonEngagementAction).slice(3),
-      'base64url'
-    ).toString('utf-8'),
-    attachPersonEngagementAction
-  );
-  assert.notEqual(
-    toSpiceDbActionObjectId(attachPersonEngagementAction),
-    toSpiceDbActionObjectId('contacts-core-attach-person-engagement')
-  );
-});
+    expect(developmentRelationships.length).toBe(38);
+    expect(stageRelationships.length).toBe(76);
+    for (const relationship of [
+      ...developmentRelationships,
+      ...stageRelationships,
+    ]) {
+      expect(relationship.relation).toBe('executor');
+      expect(relationship.resource?.objectType).toBe('action');
+      expect(relationship.subject?.object?.objectType).toBe('tenant');
+      expect(relationship.subject?.optionalRelation).toBe('member');
+    }
+    const identifiers = stageRelationships.map(
+      ({ resource, subject }) =>
+        `${resource?.objectId}:${subject?.object?.objectId}`
+    );
+    expect(
+      identifiers.every(
+        (identifier, index) =>
+          index === 0 || identifiers[index - 1]?.localeCompare(identifier) <= 0
+      )
+    ).toBe(true);
+    expect(
+      Buffer.from(
+        toSpiceDbActionObjectId(attachPersonEngagementAction).slice(3),
+        'base64url'
+      ).toString('utf-8')
+    ).toBe(attachPersonEngagementAction);
+    expect(toSpiceDbActionObjectId(attachPersonEngagementAction)).not.toBe(
+      toSpiceDbActionObjectId('contacts-core-attach-person-engagement')
+    );
+  })
+);
 
 interface ProvisioningClientState {
   readonly grants: Set<string>;
@@ -465,56 +501,56 @@ const makeProvisioningClient = (
   };
 };
 
-void test('provisions with TOUCH, verifies both outcomes, and is safe to rerun', async () => {
-  const target = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  const { client, state } = makeProvisioningClient(target.contexts);
-  const input = { actions: currentActions, contexts: target.contexts };
+it.effect(
+  'provisions with TOUCH, verifies both outcomes, and is safe to rerun',
+  Effect.fn(function* testEffect9() {
+    const target = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    const { client, state } = makeProvisioningClient(target.contexts);
+    const input = { actions: currentActions, contexts: target.contexts };
 
-  const first = await runEffectTestPromise(
-    provisionActionAuthorization(client, input)
-  );
-  const second = await runEffectTestPromise(
-    provisionActionAuthorization(client, input)
-  );
+    const first = yield* provisionActionAuthorization(client, input);
+    const second = yield* provisionActionAuthorization(client, input);
 
-  assert.deepEqual(first, { actionCount: 38, grantCount: 38, tenantCount: 1 });
-  assert.deepEqual(second, first);
-  assert.equal(state.schemaWriteCount, 2);
-  assert.equal(state.relationshipWriteCount, 2);
-  assert.equal(state.grants.size, 38);
-  assert.equal(state.updates.length, 76);
-  assert.ok(
-    state.updates.every(
-      ({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH
-    )
-  );
-  assert.ok(
-    ![...state.grants].some((grant) =>
-      grant.includes(ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID)
-    )
-  );
-});
+    expect(first).toEqual({ actionCount: 38, grantCount: 38, tenantCount: 1 });
+    expect(second).toEqual(first);
+    expect(state.schemaWriteCount).toBe(2);
+    expect(state.relationshipWriteCount).toBe(2);
+    expect(state.grants.size).toBe(38);
+    expect(state.updates.length).toBe(76);
+    expect(
+      state.updates.every(
+        ({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH
+      )
+    ).toBe(true);
+    expect(
+      ![...state.grants].some((grant) =>
+        grant.includes(ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID)
+      )
+    ).toBe(true);
+  })
+);
 
-void test('never grants explicit Actions through Tenant membership and verifies recorded policy outcomes', async () => {
-  const target = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  const [context] = target.contexts;
-  assert.ok(context !== undefined);
-  const deniedContext = {
-    principalId: '00000000-0000-4000-8000-000000000020',
-    tenantId: '00000000-0000-4000-8000-000000000021',
-  };
-  const contexts = [...target.contexts, deniedContext];
-  const { client, state } = makeProvisioningClient(contexts);
-  state.grants.add(
-    `${toSpiceDbActionObjectId(restrictedAction)}:${context.principalId}`
-  );
+it.effect(
+  'never grants explicit Actions through Tenant membership and verifies recorded policy outcomes',
+  Effect.fn(function* testEffect10() {
+    const target = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    const [context] = target.contexts;
+    expect(context !== undefined).toBe(true);
+    const deniedContext = {
+      principalId: '00000000-0000-4000-8000-000000000020',
+      tenantId: '00000000-0000-4000-8000-000000000021',
+    };
+    const contexts = [...target.contexts, deniedContext];
+    const { client, state } = makeProvisioningClient(contexts);
+    state.grants.add(
+      `${toSpiceDbActionObjectId(restrictedAction)}:${context.principalId}`
+    );
 
-  const result = await runEffectTestPromise(
-    provisionActionAuthorization(client, {
+    const result = yield* provisionActionAuthorization(client, {
       actions: [
         {
           actionKey: attachPersonEngagementAction,
@@ -532,228 +568,307 @@ void test('never grants explicit Actions through Tenant membership and verifies 
           ],
         },
       ],
-    })
-  );
+    });
 
-  assert.deepEqual(result, { actionCount: 2, grantCount: 2, tenantCount: 2 });
-  assert.equal(state.updates.length, 2);
-  assert.equal(
-    state.updates[0]?.relationship?.resource?.objectId,
-    toSpiceDbActionObjectId(attachPersonEngagementAction)
-  );
-});
+    expect(result).toEqual({ actionCount: 2, grantCount: 2, tenantCount: 2 });
+    expect(state.updates.length).toBe(2);
+    expect(state.updates[0]?.relationship?.resource?.objectId).toBe(
+      toSpiceDbActionObjectId(attachPersonEngagementAction)
+    );
+  })
+);
 
-void test('rejects missing or mismatched explicit Action verification assertions', async () => {
-  const target = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  await Promise.all(
-    [
-      undefined,
-      [],
+it.effect(
+  'rejects missing or mismatched explicit Action verification assertions',
+  Effect.fn(function* testEffect11() {
+    const target = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    yield* Effect.all(
       [
-        {
-          actionKey: restrictedAction,
-          assertions: [
-            {
-              expected: 'allowed' as const,
-              principalId: target.contexts[0]?.principalId ?? '',
-            },
-          ],
-        },
-      ],
-      [
-        {
-          actionKey: 'core.identity.unknown',
-          assertions: [
-            {
-              expected: 'allowed' as const,
-              principalId: target.contexts[0]?.principalId ?? '',
-            },
-            {
-              expected: 'denied' as const,
-              principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
-            },
-          ],
-        },
-      ],
-    ].map(async (explicitActionAssertions) => {
-      const { client, state } = makeProvisioningClient(target.contexts);
-      const error = await failureOf(
-        provisionActionAuthorization(client, {
-          actions: [{ actionKey: restrictedAction, provisioning: 'explicit' }],
-          contexts: target.contexts,
-          explicitActionAssertions,
-        })
-      );
-      assert.equal(error.code, 'action_authorization_input_invalid');
-      assert.equal(state.schemaWriteCount, 0);
-      assert.equal(state.relationshipWriteCount, 0);
-    })
-  );
-});
-
-void test('fails promotion when an explicit Action policy contradicts a recorded assertion', async () => {
-  const target = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  const [context] = target.contexts;
-  assert.ok(context !== undefined);
-  const deniedPrincipalId = ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID;
-  const assertions = [
-    { expected: 'allowed' as const, principalId: context.principalId },
-    { expected: 'denied' as const, principalId: deniedPrincipalId },
-  ];
-
-  await Promise.all(
-    [[], [context.principalId, deniedPrincipalId]].map(
-      async (actualAllowedPrincipalIds) => {
-        const { client, state } = makeProvisioningClient(target.contexts);
-        for (const principalId of actualAllowedPrincipalIds) {
-          state.grants.add(
-            `${toSpiceDbActionObjectId(restrictedAction)}:${principalId}`
+        undefined,
+        [],
+        [
+          {
+            actionKey: restrictedAction,
+            assertions: [
+              {
+                expected: 'allowed' as const,
+                principalId: target.contexts[0]?.principalId ?? '',
+              },
+            ],
+          },
+        ],
+        [
+          {
+            actionKey: 'core.identity.unknown',
+            assertions: [
+              {
+                expected: 'allowed' as const,
+                principalId: target.contexts[0]?.principalId ?? '',
+              },
+              {
+                expected: 'denied' as const,
+                principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
+              },
+            ],
+          },
+        ],
+      ].map((explicitActionAssertions) =>
+        Effect.gen(function* testEffect12() {
+          const { client, state } = makeProvisioningClient(target.contexts);
+          const error = yield* failureOf(
+            provisionActionAuthorization(client, {
+              actions: [
+                { actionKey: restrictedAction, provisioning: 'explicit' },
+              ],
+              contexts: target.contexts,
+              explicitActionAssertions,
+            })
           );
-        }
-        const error = await failureOf(
-          provisionActionAuthorization(client, {
-            actions: [
-              { actionKey: restrictedAction, provisioning: 'explicit' },
-            ],
-            contexts: target.contexts,
-            explicitActionAssertions: [
-              { actionKey: restrictedAction, assertions },
-            ],
-          })
-        );
-        assert.equal(error.code, 'action_authorization_verification_failed');
-        assert.equal(state.updates.length, 0);
-      }
-    )
-  );
-});
-
-void test('rejects invalid input and missing membership before writing grants', async () => {
-  const target = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  const { client, state } = makeProvisioningClient([]);
-  const missingMembership = await failureOf(
-    provisionActionAuthorization(client, {
-      actions: currentActions,
-      contexts: target.contexts,
-    })
-  );
-  assert.equal(
-    missingMembership.code,
-    'action_authorization_membership_missing'
-  );
-  assert.equal(state.schemaWriteCount, 1);
-  assert.equal(state.relationshipWriteCount, 0);
-
-  const duplicate = await failureOf(
-    provisionActionAuthorization(client, {
-      actions: [
-        {
-          actionKey: attachPersonEngagementAction,
-          provisioning: 'tenant_membership_default',
-        },
-        {
-          actionKey: attachPersonEngagementAction,
-          provisioning: 'tenant_membership_default',
-        },
-      ],
-      contexts: target.contexts,
-    })
-  );
-  assert.equal(duplicate.code, 'action_authorization_input_invalid');
-  assert.equal(state.schemaWriteCount, 1);
-});
-
-void test('fails closed when authorization returns no permission response', async () => {
-  const target = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  const { client } = makeProvisioningClient(target.contexts);
-  const noResponseClient: ActionAuthorizationProvisioningClient = {
-    ...client,
-    checkPermission: () => Effect.succeed(Option.none()),
-  };
-  const error = await failureOf(
-    provisionActionAuthorization(noResponseClient, {
-      actions: currentActions,
-      contexts: target.contexts,
-    })
-  );
-  assert.equal(error.code, 'action_authorization_membership_missing');
-});
-
-void test('sanitizes authorization service failures', async () => {
-  const secret = 'super-secret-credential';
-  const upstreamFailure = new Error(secret);
-  const target = await runEffectTestPromise(
-    selectActionAuthorizationProvisioningTarget(developmentConfiguration)
-  );
-  const unavailable: ActionAuthorizationProvisioningClient = {
-    checkPermission: () =>
-      Effect.succeed(
-        Option.some(
-          response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)
-        )
+          expect(error.code).toBe('action_authorization_input_invalid');
+          expect(state.schemaWriteCount).toBe(0);
+          expect(state.relationshipWriteCount).toBe(0);
+        })
       ),
-    writeRelationships: () =>
-      Effect.succeed(v1.WriteRelationshipsResponse.create({})),
-    writeSchema: () => Effect.fail(upstreamFailure),
-  };
-  const error = await failureOf(
-    provisionActionAuthorization(unavailable, {
-      actions: currentActions,
-      contexts: target.contexts,
-    })
-  );
-  assert.equal(error.code, 'action_authorization_service_unavailable');
-  assert.doesNotMatch(error.reason, new RegExp(secret, 'u'));
-  assert.equal(decodeProvisioningFailureCause(error).cause, upstreamFailure);
-});
+      { concurrency: 'unbounded' }
+    );
+  })
+);
 
-const writeInventory = async (
+it.effect(
+  'fails promotion when an explicit Action policy contradicts a recorded assertion',
+  Effect.fn(function* testEffect13() {
+    const target = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    const [context] = target.contexts;
+    expect(context !== undefined).toBe(true);
+    const deniedPrincipalId = ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID;
+    const assertions = [
+      { expected: 'allowed' as const, principalId: context.principalId },
+      { expected: 'denied' as const, principalId: deniedPrincipalId },
+    ];
+
+    yield* Effect.all(
+      [[], [context.principalId, deniedPrincipalId]].map(
+        (actualAllowedPrincipalIds) =>
+          Effect.gen(function* testEffect14() {
+            const { client, state } = makeProvisioningClient(target.contexts);
+            for (const principalId of actualAllowedPrincipalIds) {
+              state.grants.add(
+                `${toSpiceDbActionObjectId(restrictedAction)}:${principalId}`
+              );
+            }
+            const error = yield* failureOf(
+              provisionActionAuthorization(client, {
+                actions: [
+                  { actionKey: restrictedAction, provisioning: 'explicit' },
+                ],
+                contexts: target.contexts,
+                explicitActionAssertions: [
+                  { actionKey: restrictedAction, assertions },
+                ],
+              })
+            );
+            expect(error.code).toBe('action_authorization_verification_failed');
+            expect(state.updates.length).toBe(0);
+          })
+      ),
+      { concurrency: 'unbounded' }
+    );
+  })
+);
+
+it.effect(
+  'rejects invalid input and missing membership before writing grants',
+  Effect.fn(function* testEffect15() {
+    const target = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    const { client, state } = makeProvisioningClient([]);
+    const missingMembership = yield* failureOf(
+      provisionActionAuthorization(client, {
+        actions: currentActions,
+        contexts: target.contexts,
+      })
+    );
+    expect(missingMembership.code).toBe(
+      'action_authorization_membership_missing'
+    );
+    expect(state.schemaWriteCount).toBe(1);
+    expect(state.relationshipWriteCount).toBe(0);
+
+    const duplicate = yield* failureOf(
+      provisionActionAuthorization(client, {
+        actions: [
+          {
+            actionKey: attachPersonEngagementAction,
+            provisioning: 'tenant_membership_default',
+          },
+          {
+            actionKey: attachPersonEngagementAction,
+            provisioning: 'tenant_membership_default',
+          },
+        ],
+        contexts: target.contexts,
+      })
+    );
+    expect(duplicate.code).toBe('action_authorization_input_invalid');
+    expect(state.schemaWriteCount).toBe(1);
+  })
+);
+
+it.effect(
+  'fails closed when authorization returns no permission response',
+  Effect.fn(function* testEffect16() {
+    const target = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    const { client } = makeProvisioningClient(target.contexts);
+    const noResponseClient: ActionAuthorizationProvisioningClient = {
+      ...client,
+      checkPermission: () => Effect.succeed(Option.none()),
+    };
+    const error = yield* failureOf(
+      provisionActionAuthorization(noResponseClient, {
+        actions: currentActions,
+        contexts: target.contexts,
+      })
+    );
+    expect(error.code).toBe('action_authorization_membership_missing');
+  })
+);
+
+it.effect(
+  'sanitizes authorization service failures',
+  Effect.fn(function* testEffect17() {
+    const secret = 'super-secret-credential';
+    const upstreamFailure = new Error(secret);
+    const target = yield* selectActionAuthorizationProvisioningTarget(
+      developmentConfiguration
+    );
+    const unavailable: ActionAuthorizationProvisioningClient = {
+      checkPermission: () =>
+        Effect.succeed(
+          Option.some(
+            response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)
+          )
+        ),
+      writeRelationships: () =>
+        Effect.succeed(v1.WriteRelationshipsResponse.create({})),
+      writeSchema: () => Effect.fail(upstreamFailure),
+    };
+    const error = yield* failureOf(
+      provisionActionAuthorization(unavailable, {
+        actions: currentActions,
+        contexts: target.contexts,
+      })
+    );
+    expect(error.code).toBe('action_authorization_service_unavailable');
+    expect(error.reason).not.toMatch(new RegExp(secret, 'u'));
+    expect(decodeProvisioningFailureCause(error).cause).toBe(upstreamFailure);
+  })
+);
+
+const writeInventory = (
   root: string,
   verticals: readonly {
     readonly id: string;
     readonly package: string;
     readonly path: string;
   }[]
-) => {
-  await mkdir(path.join(root, 'topology'), { recursive: true });
-  await Promise.all([
-    writeFile(
-      path.join(root, 'topology/reference-topology.json'),
-      JSON.stringify({ verticals })
-    ),
-    writeFile(
-      path.join(root, 'topology/ownership.json'),
-      JSON.stringify({ owners: verticals })
-    ),
-  ]);
-};
-
-void test('rejects incomplete and duplicate public Action discovery', async () => {
-  const workspaceRoot = path.resolve(import.meta.dirname, '../..');
-  const currentContract = await deriveOntosModuleDeploymentContract({
-    vertical: 'party-registry',
-    workspaceRoot,
+) =>
+  Effect.gen(function* testEffect18() {
+    yield* Effect.tryPromise(() =>
+      mkdir(path.join(root, 'topology'), { recursive: true })
+    );
+    yield* Effect.all(
+      [
+        Effect.promise(() =>
+          writeFile(
+            path.join(root, 'topology/reference-topology.json'),
+            JSON.stringify({ verticals })
+          )
+        ),
+        Effect.promise(() =>
+          writeFile(
+            path.join(root, 'topology/ownership.json'),
+            JSON.stringify({ owners: verticals })
+          )
+        ),
+      ],
+      { concurrency: 'unbounded' }
+    );
   });
-  const [currentPublicAction] = currentContract.manifest.publicSurface.actions;
-  assert.ok(currentPublicAction !== undefined);
-  const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-'));
-  try {
+
+it.effect(
+  'rejects incomplete and duplicate public Action discovery',
+  Effect.fn(function* testEffect19() {
+    const workspaceRoot = path.resolve(import.meta.dirname, '../..');
+    // Native discovery imports registrations dynamically; keep its private registry in one module instance.
+    const { discoverCurrentActionKeys } = yield* Effect.promise(
+      (): Promise<{
+        readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys;
+      }> =>
+        import(
+          pathToFileURL(
+            path.resolve(
+              import.meta.dirname,
+              '../provision-current-action-authorization.mts'
+            )
+          ).href
+        )
+    );
+    const { deriveOntosModuleDeploymentContract } = yield* Effect.promise(
+      (): Promise<{
+        readonly deriveOntosModuleDeploymentContract: typeof DeriveModuleContract;
+      }> =>
+        import(
+          pathToFileURL(
+            path.resolve(
+              import.meta.dirname,
+              '../generate-ontos-module-contract.mts'
+            )
+          ).href
+        )
+    );
+    const { ActionAuthorizationProvisioningError: NativeProvisioningError } =
+      yield* Effect.promise(
+        (): Promise<{
+          readonly ActionAuthorizationProvisioningError: typeof ActionAuthorizationProvisioningError;
+        }> =>
+          import(
+            pathToFileURL(
+              path.resolve(
+                import.meta.dirname,
+                '../../packages/core-runtime/src/install/action-authorization-provisioning.ts'
+              )
+            ).href
+          )
+      );
+    const currentContract = yield* deriveOntosModuleDeploymentContract({
+      vertical: 'party-registry',
+      workspaceRoot,
+    }).pipe(Effect.provide(NodeServices.layer));
+    const [currentPublicAction] =
+      currentContract.manifest.publicSurface.actions;
+    expect(currentPublicAction !== undefined).toBe(true);
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() =>
+        mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-'))
+      ),
+      (directory) =>
+        Effect.promise(() => rm(directory, { force: true, recursive: true }))
+    );
     const vertical = {
       id: 'example',
       package: '@app/example',
       path: 'verticals/example',
     };
-    await writeInventory(root, [vertical]);
-    const incomplete: typeof deriveOntosModuleDeploymentContract =
-      async () => ({
+    yield* writeInventory(root, [vertical]);
+    const incomplete: typeof deriveOntosModuleDeploymentContract = () =>
+      Effect.succeed({
         ...currentContract,
         deployment: { ...currentContract.deployment, appId: 'example' },
         manifest: {
@@ -764,51 +879,67 @@ void test('rejects incomplete and duplicate public Action discovery', async () =
           },
         },
       });
-    const incompleteError = await rejectionOf(
-      discoverCurrentActionKeys(root, incomplete)
+    const incompleteError = yield* rejectionOf(
+      discoverCurrentActionKeys(root, incomplete).pipe(
+        Effect.provide(NodeServices.layer)
+      )
     );
-    assert.ok(incompleteError instanceof ActionAuthorizationProvisioningError);
-    assert.equal(incompleteError.code, 'action_authorization_discovery_failed');
+    expect(Schema.is(NativeProvisioningError)(incompleteError)).toBe(true);
+    expect(
+      Schema.decodeUnknownSync(NativeProvisioningError)(incompleteError).code
+    ).toBe('action_authorization_discovery_failed');
 
-    const duplicate: typeof deriveOntosModuleDeploymentContract = async () => ({
-      ...currentContract,
-      deployment: { ...currentContract.deployment, appId: 'example' },
-      manifest: {
-        ...currentContract.manifest,
-        publicSurface: {
-          ...currentContract.manifest.publicSurface,
-          actions: [
-            {
-              ...currentPublicAction,
-              actionKey: 'core.identity.bind-managed-api-key',
-            },
-          ],
+    const duplicate: typeof deriveOntosModuleDeploymentContract = () =>
+      Effect.succeed({
+        ...currentContract,
+        deployment: { ...currentContract.deployment, appId: 'example' },
+        manifest: {
+          ...currentContract.manifest,
+          publicSurface: {
+            ...currentContract.manifest.publicSurface,
+            actions: [
+              {
+                ...currentPublicAction,
+                actionKey: 'core.identity.bind-managed-api-key',
+              },
+            ],
+          },
         },
-      },
-    });
-    const duplicateError = await rejectionOf(
-      discoverCurrentActionKeys(root, duplicate)
+      });
+    const duplicateError = yield* rejectionOf(
+      discoverCurrentActionKeys(root, duplicate).pipe(
+        Effect.provide(NodeServices.layer)
+      )
     );
-    assert.ok(duplicateError instanceof ActionAuthorizationProvisioningError);
-    assert.equal(duplicateError.code, 'action_authorization_discovery_failed');
+    expect(Schema.is(NativeProvisioningError)(duplicateError)).toBe(true);
+    expect(
+      Schema.decodeUnknownSync(NativeProvisioningError)(duplicateError).code
+    ).toBe('action_authorization_discovery_failed');
 
-    await writeInventory(root, [vertical, vertical]);
-    await assert.rejects(
-      discoverCurrentActionKeys(root, duplicate),
-      ActionAuthorizationProvisioningError
+    yield* writeInventory(root, [vertical, vertical]);
+    const duplicateInventoryError = yield* discoverCurrentActionKeys(
+      root,
+      duplicate
+    ).pipe(Effect.provide(NodeServices.layer), Effect.flip);
+    expect(Schema.is(NativeProvisioningError)(duplicateInventoryError)).toBe(
+      true
     );
-  } finally {
-    await rm(root, { recursive: true });
-  }
-});
+    expect(duplicateInventoryError.code).toBe(
+      'action_authorization_discovery_failed'
+    );
+  })
+);
 
-void test('the operator entrypoint rejects every command-line argument before loading configuration', async () => {
-  const error = await failureOf(
-    runCurrentActionAuthorizationProvisioning(
-      path.resolve(import.meta.dirname, '../..'),
-      ['--tenant', 'arbitrary']
-    )
-  );
-  assert.equal(error.code, 'action_authorization_configuration_invalid');
-  assert.match(error.reason, /no command-line arguments/u);
-});
+it.effect(
+  'the operator entrypoint rejects every command-line argument before loading configuration',
+  Effect.fn(function* testEffect20() {
+    const error = yield* failureOf(
+      runCurrentActionAuthorizationProvisioning(
+        path.resolve(import.meta.dirname, '../..'),
+        ['--tenant', 'arbitrary']
+      )
+    );
+    expect(error.code).toBe('action_authorization_configuration_invalid');
+    expect(error.reason).toMatch(/no command-line arguments/u);
+  })
+);

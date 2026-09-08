@@ -1,8 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { DateTime, Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -51,9 +48,9 @@ const replacement: PartyContactPoint = {
   },
   verification: { state: 'UNVERIFIED' },
 };
-
-test('correction publishes the corrected stable ref while returning the validated replacement', () =>
-  runEffectTestPromise(
+it.effect(
+  'correction publishes the corrected stable ref while returning the validated replacement',
+  () =>
     Effect.gen(function* correctionScenario() {
       const collector = createActionCollector(
         updateContactPointAction.descriptor.domainEvents,
@@ -98,21 +95,20 @@ test('correction publishes the corrected stable ref while returning the validate
           services: { update: () => Effect.succeed(replacement) },
         }
       );
-      assert.deepEqual(result.contactPointRef, replacement.contactPointRef);
+      expect(result.contactPointRef).toEqual(replacement.contactPointRef);
       const snapshot = collector.snapshot();
-      assert.equal(snapshot.domainEvents.length, 1);
-      assert.equal(
-        snapshot.domainEvents[0]?.subjectResourceId,
+      expect(snapshot.domainEvents.length).toBe(1);
+      expect(snapshot.domainEvents[0]?.subjectResourceId).toBe(
         originalContactPointRef.resourceId
       );
-      assert.deepEqual(snapshot.domainEvents[0]?.payloadJson, {
+      expect(snapshot.domainEvents[0]?.payloadJson).toEqual({
         contactPointRef: originalContactPointRef,
         partyRef,
         revision: 3,
       });
-      assert.deepEqual(snapshot.outboxMessages[0]?.message.payloadJson, {
+      expect(snapshot.outboxMessages[0]?.message.payloadJson).toEqual({
         contactPointRef: originalContactPointRef,
         partyRef,
       });
     })
-  ));
+);

@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   PartySubjectEvidenceSchema,
@@ -13,7 +11,7 @@ import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-de
 
 const tenant = '11111111-1111-4111-8111-111111111111';
 const id = '22222222-2222-4222-8222-222222222222';
-test('typed subject evidence accepts arbitrary reference spelling, rejects unsupported authority', () => {
+it('typed subject evidence accepts arbitrary reference spelling, rejects unsupported authority', () => {
   const evidence = {
     basis: 'DIRECT_INTERACTION',
     evidenceRef: 'meeting/42',
@@ -22,24 +20,23 @@ test('typed subject evidence accepts arbitrary reference spelling, rejects unsup
     statement: 'Met the human who submitted this request',
     subjectKey: 'request-subject',
   };
-  assert.deepEqual(
-    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)(evidence),
-    evidence
-  );
-  assert.throws(() =>
+  expect(
+    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)(evidence)
+  ).toEqual(evidence);
+  expect(() =>
     Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
       ...evidence,
       kind: 'AUTHORITATIVE_REGISTRY',
     })
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
       ...evidence,
       statement: '',
     })
-  );
+  ).toThrow();
 });
-test('Create recovery distinguishes matching outcome and enforces reference invariants', () => {
+it('Create recovery distinguishes matching outcome and enforces reference invariants', () => {
   const record = {
     caseRef: null,
     committedCreateOutcome: 'MATCHED_EXISTING',
@@ -52,35 +49,35 @@ test('Create recovery distinguishes matching outcome and enforces reference inva
     partyRef: makePartyRef(tenant, id),
   };
   const decode = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema);
-  assert.equal(decode(record).committedCreateOutcome, 'MATCHED_EXISTING');
-  assert.equal(decode(record).decidedAt, '2026-09-04T00:00:00.000Z');
-  assert.throws(() => decode({ ...record, decidedAt: 'September 4, 2026' }));
-  assert.throws(() => decode({ ...record, committedCreateOutcome: 'MATCHED' }));
-  assert.throws(() => decode({ ...record, operation: 'MATCH' }));
-  assert.throws(() =>
+  expect(decode(record).committedCreateOutcome).toBe('MATCHED_EXISTING');
+  expect(decode(record).decidedAt).toBe('2026-09-04T00:00:00.000Z');
+  expect(() => decode({ ...record, decidedAt: 'September 4, 2026' })).toThrow();
+  expect(() =>
+    decode({ ...record, committedCreateOutcome: 'MATCHED' })
+  ).toThrow();
+  expect(() => decode({ ...record, operation: 'MATCH' })).toThrow();
+  expect(() =>
     decode({ ...record, caseRef: makeDuplicateCandidateCaseRef(tenant, id) })
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     decode({
       ...record,
       committedCreateOutcome: null,
       outcome: 'NO_MATCH',
       partyRef: null,
     })
-  );
-  assert.equal(
+  ).toThrow();
+  expect(
     decode({
       ...record,
       committedCreateOutcome: null,
       operation: 'MATCH',
       outcome: 'NO_MATCH',
       partyRef: null,
-    }).outcome,
-    'NO_MATCH'
-  );
+    }).outcome
+  ).toBe('NO_MATCH');
 });
-
-test('matching decision JSON keeps nullable and optional wire fields compatible', () => {
+it('matching decision JSON keeps nullable and optional wire fields compatible', () => {
   const record = {
     caseRef: null,
     committedCreateOutcome: null,
@@ -99,8 +96,7 @@ test('matching decision JSON keeps nullable and optional wire fields compatible'
   const encoded = Schema.encodeUnknownSync(
     Schema.toCodecJson(PartyMatchDecisionRecordSchema)
   )(decoded);
-  assert.deepEqual(encoded, record);
-
+  expect(encoded).toEqual(record);
   const omitted = {
     caseRef: record.caseRef,
     decidedAt: record.decidedAt,
@@ -117,6 +113,6 @@ test('matching decision JSON keeps nullable and optional wire fields compatible'
   const omittedEncodedObject = Schema.decodeUnknownSync(
     Schema.Record(Schema.String, Schema.Json)
   )(omittedEncoded);
-  assert.equal('committedCreateOutcome' in omittedEncodedObject, false);
-  assert.equal('evidenceEvaluation' in omittedEncodedObject, false);
+  expect('committedCreateOutcome' in omittedEncodedObject).toBe(false);
+  expect('evidenceEvaluation' in omittedEncodedObject).toBe(false);
 });

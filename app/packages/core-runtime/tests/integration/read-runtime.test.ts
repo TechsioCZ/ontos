@@ -1,26 +1,13 @@
-import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test, { after as afterNativeDatabase } from 'node:test';
 
-import {
-  makeEffectTestCallback as nativeTestCallback,
-  runEffectTestPromise,
-} from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import {
-  Effect,
-  Exit as NativeExit,
-  Scope as NativeScope,
-  Schema,
-} from 'effect';
-import { Pool } from 'pg';
+import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
 
 import {
   makeSystemPrincipalContextResolver,
   registerSystemWorkload,
 } from '../../src/auth/system-principal-context.ts';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, dataAccessEvents } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
@@ -29,153 +16,153 @@ import {
 } from '../../src/operations/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
-import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
+import {
+  makeTestDatabaseFromPool,
+  testDatabasePools,
+} from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(
-    nativeTestCallback
-  )
-);
-
-void test('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
+it('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
   const config = getTableConfig(dataAccessEvents);
   const column = (name: string) =>
     config.columns.find((candidate) => candidate.name === name);
-  assert.equal(column('action_invocation_id')?.notNull, false);
-  assert.equal(column('outcome')?.notNull, true);
-  assert.equal(column('outcome_stage')?.notNull, true);
-  assert.equal(column('outcome_code')?.notNull, true);
+  expect(column('action_invocation_id')?.notNull).toBe(false);
+  expect(column('outcome')?.notNull).toBe(true);
+  expect(column('outcome_stage')?.notNull).toBe(true);
+  expect(column('outcome_code')?.notNull).toBe(true);
 });
 
-void test('commits live allowed evidence before releasing a governed read result', async () => {
-  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
-  const admin = new Pool({
-    connectionString: connections.admin.connectionString,
-  });
-  const runtimePool = new Pool({
-    connectionString: connections.runtime.connectionString,
-  });
-  const runtimeDatabase = await runEffectTestPromise(
-    makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope)
-    )
-  );
-  const tenantId = randomUUID();
-  const principalId = randomUUID();
-  const readKey = `core.shell.integration.${randomUUID()}`;
-  const correlationId = randomUUID();
-  const registration = defineRead(
-    {
-      accessKind: 'list',
-      entrypoint: defineSystemModuleEntrypoint({
-        access: 'read',
-        authorization: {
-          kind: 'context_permission',
-          permission: 'module.access',
-        },
-        entrypointKey: readKey,
-        moduleKey: 'core.shell',
-        role: 'api',
-      }),
-      evidencePolicy: {
-        captureMode: 'metadata_only',
-        policyKey: `${readKey}.v1`,
-      },
-      inputSchema: Schema.Struct({}),
-      legalEntityScope: 'forbidden',
-      owningModuleKey: 'core.shell',
-      permissionTarget: 'module',
-      policies: [],
-      readKey,
-      resultSchema: Schema.Array(Schema.String),
-      schemaVersion: '1',
-    },
-    () => Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] }),
-    () => Effect.succeed({}),
-    () => ({ kind: 'module', moduleId: 'core.shell' })
-  );
-
-  try {
-    await admin.query(
-      `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Read runtime tenant', 'active', 'en')`,
-      [tenantId, `read-runtime-${tenantId}`]
-    );
-    await admin.query(
-      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, 'system', 'Read runtime principal', 'active')`,
-      [principalId, tenantId]
-    );
-    const contextAccess = {
-      legalEntities: () => Effect.succeed([]),
-      modules: () => Effect.succeed([]),
-      resources: () => Effect.succeed([]),
-      tenants: () => Effect.succeed([]),
-    };
-    const principal = await runEffectTestPromise(
-      makeSystemPrincipalContextResolver({ executor: runtimeDatabase }).resolve(
+it.live(
+  'commits live allowed evidence before releasing a governed read result',
+  () =>
+    Effect.gen(function* readRuntime1() {
+      const { admin, runtimePool } = yield* testDatabasePools;
+      const runtimeDatabase = yield* makeTestDatabaseFromPool(
+        runtimePool,
+        coreRelations
+      );
+      const tenantId = randomUUID();
+      const principalId = randomUUID();
+      const readKey = `core.shell.integration.${randomUUID()}`;
+      const correlationId = randomUUID();
+      const registration = defineRead(
         {
-          principalId,
-          registration: registerSystemWorkload({
-            jobKey: 'read-runtime-integration',
+          accessKind: 'list',
+          entrypoint: defineSystemModuleEntrypoint({
+            access: 'read',
+            authorization: {
+              kind: 'context_permission',
+              permission: 'module.access',
+            },
+            entrypointKey: readKey,
+            moduleKey: 'core.shell',
+            role: 'api',
           }),
-          runReference: readKey,
-          tenantId,
-        }
-      )
-    );
-    const runtime = makeReadRuntime(
-      { executor: runtimeDatabase },
-      openModuleEntrypointGateway,
-      makeOperationalScopeResolver(
-        makeOperationalScopeRepository({ executor: runtimeDatabase }),
+          evidencePolicy: {
+            captureMode: 'metadata_only',
+            policyKey: `${readKey}.v1`,
+          },
+          inputSchema: Schema.Struct({}),
+          legalEntityScope: 'forbidden',
+          owningModuleKey: 'core.shell',
+          permissionTarget: 'module',
+          policies: [],
+          readKey,
+          resultSchema: Schema.Array(Schema.String),
+          schemaVersion: '1',
+        },
+        () =>
+          Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] }),
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'core.shell' })
+      );
+
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* readRuntime2() {
+          yield* Effect.promise(() =>
+            admin.query(
+              'delete from core.data_access_events where tenant_id = $1',
+              [tenantId]
+            )
+          );
+          yield* Effect.promise(() =>
+            admin.query('delete from core.principals where tenant_id = $1', [
+              tenantId,
+            ])
+          );
+          yield* Effect.promise(() =>
+            admin.query('delete from core.tenants where tenant_id = $1', [
+              tenantId,
+            ])
+          );
+        }).pipe(Effect.orDie)
+      );
+
+      yield* Effect.promise(() =>
+        admin.query(
+          `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Read runtime tenant', 'active', 'en')`,
+          [tenantId, `read-runtime-${tenantId}`]
+        )
+      );
+      yield* Effect.promise(() =>
+        admin.query(
+          `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, 'system', 'Read runtime principal', 'active')`,
+          [principalId, tenantId]
+        )
+      );
+      const contextAccess = {
+        legalEntities: () => Effect.succeed([]),
+        modules: () => Effect.succeed([]),
+        resources: () => Effect.succeed([]),
+        tenants: () => Effect.succeed([]),
+      };
+      const principal = yield* makeSystemPrincipalContextResolver({
+        executor: runtimeDatabase,
+      }).resolve({
+        principalId,
+        registration: registerSystemWorkload({
+          jobKey: 'read-runtime-integration',
+        }),
+        runReference: readKey,
+        tenantId,
+      });
+      const runtime = makeReadRuntime(
+        { executor: runtimeDatabase },
+        openModuleEntrypointGateway,
+        makeOperationalScopeResolver(
+          makeOperationalScopeRepository({ executor: runtimeDatabase }),
+          contextAccess
+        ),
         contextAccess
-      ),
-      contextAccess
-    );
-    assert.deepEqual(
-      await runEffectTestPromise(
-        runtime.runRead({
+      );
+      expect(
+        yield* runtime.runRead({
           input: {},
           principal,
           registration,
           transport: { correlationId },
         })
-      ),
-      ['visible']
-    );
-    const evidence = await admin.query<{
-      action_invocation_id: null;
-      outcome: string;
-      outcome_code: string;
-      query_hash: null;
-      result_count: number;
-    }>(
-      `select action_invocation_id, outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and evidence_policy_key = $2`,
-      [tenantId, `${readKey}.v1`]
-    );
-    assert.deepEqual(evidence.rows, [
-      {
-        action_invocation_id: null,
-        outcome: 'allowed',
-        outcome_code: 'read_allowed',
-        query_hash: null,
-        result_count: 1,
-      },
-    ]);
-  } finally {
-    await admin.query(
-      'delete from core.data_access_events where tenant_id = $1',
-      [tenantId]
-    );
-    await admin.query('delete from core.principals where tenant_id = $1', [
-      tenantId,
-    ]);
-    await admin.query('delete from core.tenants where tenant_id = $1', [
-      tenantId,
-    ]);
-    await runtimePool.end();
-    await admin.end();
-  }
-});
+      ).toEqual(['visible']);
+      const evidence = yield* Effect.promise(() =>
+        admin.query<{
+          action_invocation_id: null;
+          outcome: string;
+          outcome_code: string;
+          query_hash: null;
+          result_count: number;
+        }>(
+          `select action_invocation_id, outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and evidence_policy_key = $2`,
+          [tenantId, `${readKey}.v1`]
+        )
+      );
+      expect(evidence.rows).toEqual([
+        {
+          action_invocation_id: null,
+          outcome: 'allowed',
+          outcome_code: 'read_allowed',
+          query_hash: null,
+          result_count: 1,
+        },
+      ]);
+    })
+);

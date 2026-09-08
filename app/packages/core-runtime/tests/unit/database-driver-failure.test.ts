@@ -1,8 +1,6 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Cause, Option, Schema } from 'effect';
+import { Cause, Option, Schema, Predicate } from 'effect';
+import { expect, it } from 'effect-rstest';
 import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
 
 import {
@@ -17,7 +15,7 @@ interface MutableCause {
   cause?: unknown;
 }
 
-void test('finds sanitized PostgreSQL metadata on the root failure', () => {
+it('finds sanitized PostgreSQL metadata on the root failure', () => {
   const failure = findPostgresFailure({
     code: '23505',
     constraint: 'principals_tenant_provider_subject_uk',
@@ -26,14 +24,14 @@ void test('finds sanitized PostgreSQL metadata on the root failure', () => {
   });
 
   const metadata = Option.getOrThrow(failure);
-  assert.deepEqual(metadata, {
+  expect(metadata).toEqual({
     code: '23505',
     constraint: 'principals_tenant_provider_subject_uk',
   });
-  assert.equal(Object.isFrozen(metadata), true);
+  expect(Object.isFrozen(metadata)).toBe(true);
 });
 
-void test('finds PostgreSQL metadata through Error and plain-object cause wrappers', () => {
+it('finds PostgreSQL metadata through Error and plain-object cause wrappers', () => {
   const failure = new Error('outer wrapper', {
     cause: {
       cause: {
@@ -45,25 +43,24 @@ void test('finds PostgreSQL metadata through Error and plain-object cause wrappe
     },
   });
 
-  assert.deepEqual(Option.getOrThrow(findPostgresFailure(failure)), {
+  expect(Option.getOrThrow(findPostgresFailure(failure))).toEqual({
     code: '23505',
     constraint: 'principal_auth_bindings_provider_subject_uk',
   });
 });
 
-void test('ignores a non-string constraint while retaining a valid code', () => {
-  assert.deepEqual(
+it('ignores a non-string constraint while retaining a valid code', () => {
+  expect(
     Option.getOrThrow(
       findPostgresFailure({
         code: '23505',
         constraint: { private: 'diagnostic object' },
       })
-    ),
-    { code: '23505' }
-  );
+    )
+  ).toEqual({ code: '23505' });
 });
 
-void test('returns no PostgreSQL metadata for non-objects and unrelated objects', () => {
+it('returns no PostgreSQL metadata for non-objects and unrelated objects', () => {
   for (const failure of [
     null,
     undefined,
@@ -75,55 +72,53 @@ void test('returns no PostgreSQL metadata for non-objects and unrelated objects'
     () => ({ code: '23505' }),
     new Error('unrelated'),
   ]) {
-    assert.equal(Option.isNone(findPostgresFailure(failure)), true);
+    expect(Option.isNone(findPostgresFailure(failure))).toBe(true);
   }
 });
 
-void test('requires a string code and treats the string constraint as optional', () => {
+it('requires a string code and treats the string constraint as optional', () => {
   for (const failure of [{}, { code: 23_505 }, { cause: { code: false } }]) {
-    assert.equal(Option.isNone(findPostgresFailure(failure)), true);
+    expect(Option.isNone(findPostgresFailure(failure))).toBe(true);
   }
 
-  assert.deepEqual(Option.getOrThrow(findPostgresFailure({ code: '23505' })), {
+  expect(Option.getOrThrow(findPostgresFailure({ code: '23505' }))).toEqual({
     code: '23505',
   });
 });
 
-void test('returns the first recognizable PostgreSQL metadata in root-to-cause order', () => {
-  assert.deepEqual(
+it('returns the first recognizable PostgreSQL metadata in root-to-cause order', () => {
+  expect(
     Option.getOrThrow(
       findPostgresFailure({
         cause: { code: '23505', constraint: 'nested_constraint' },
         code: '40001',
         constraint: 'root_constraint',
       })
-    ),
-    { code: '40001', constraint: 'root_constraint' }
-  );
+    )
+  ).toEqual({ code: '40001', constraint: 'root_constraint' });
 });
 
-void test('supports owner-local matching without changing default root precedence', () => {
+it('supports owner-local matching without changing default root precedence', () => {
   const failure = {
     cause: { code: '23505', constraint: 'owner_constraint' },
     code: 'ERR_QUERY_FAILED',
   };
 
-  assert.deepEqual(Option.getOrThrow(findPostgresFailure(failure)), {
+  expect(Option.getOrThrow(findPostgresFailure(failure))).toEqual({
     code: 'ERR_QUERY_FAILED',
   });
-  assert.deepEqual(
+  expect(
     Option.getOrThrow(
       findPostgresFailure(
         failure,
         ({ code, constraint }) =>
           code === '23505' && constraint === 'owner_constraint'
       )
-    ),
-    { code: '23505', constraint: 'owner_constraint' }
-  );
+    )
+  ).toEqual({ code: '23505', constraint: 'owner_constraint' });
 });
 
-void test('terminates on cyclic cause graphs with a first match or no match', () => {
+it('terminates on cyclic cause graphs with a first match or no match', () => {
   const matched: MutableCause & { readonly code: string } = { code: '23505' };
   matched.cause = matched;
 
@@ -132,53 +127,60 @@ void test('terminates on cyclic cause graphs with a first match or no match', ()
   first.cause = second;
   second.cause = first;
 
-  assert.deepEqual(Option.getOrThrow(findPostgresFailure(matched)), {
+  expect(Option.getOrThrow(findPostgresFailure(matched))).toEqual({
     code: '23505',
   });
-  assert.equal(Option.isNone(findPostgresFailure(first)), true);
+  expect(Option.isNone(findPostgresFailure(first))).toBe(true);
 });
 
-void test('classifies unavailable PostgreSQL SQLSTATE classes', () => {
+it('classifies unavailable PostgreSQL SQLSTATE classes', () => {
   for (const code of ['08006', '40001', '53100', '55P03', '57P01', '58030']) {
     const decoded = decodeDatabaseDriverFailure({ code });
-    assert.equal(Option.isSome(decoded), true);
+    expect(Option.isSome(decoded)).toBe(true);
     if (Option.isSome(decoded)) {
-      assert.equal(decoded.value.kind, 'sqlstate');
-      assert.equal(decoded.value.code, code);
-      assert.equal(Schema.is(DatabaseDriverFailureSchema)(decoded.value), true);
+      expect(decoded.value.kind).toBe('sqlstate');
+      expect(decoded.value.code).toBe(code);
+      expect(Schema.is(DatabaseDriverFailureSchema)(decoded.value)).toBe(true);
     }
-    assert.equal(isDatabaseUnavailableFailure({ code }), true);
+    expect(isDatabaseUnavailableFailure({ code })).toBe(true);
   }
 });
 
-void test('distinguishes commit ambiguity from definite transaction failures', () => {
+it('distinguishes commit ambiguity from definite transaction failures', () => {
   const connectionFailure = decodeDatabaseDriverFailure({ code: '08006' });
   const administrativeShutdown = decodeDatabaseDriverFailure({ code: '57P01' });
   const serializationFailure = decodeDatabaseDriverFailure({ code: '40001' });
 
-  assert.equal(
-    Option.isSome(connectionFailure) && connectionFailure.value._tag,
-    'DatabaseCommitAcknowledgementAmbiguous'
-  );
-  assert.equal(
-    Option.isSome(administrativeShutdown) && administrativeShutdown.value._tag,
-    'DatabaseCommitAcknowledgementAmbiguous'
-  );
-  assert.equal(
-    Option.isSome(serializationFailure) && serializationFailure.value._tag,
-    'DatabaseTransactionFailure'
-  );
-  assert.equal(
-    isDatabaseCommitAcknowledgementAmbiguous({ code: '40001' }),
+  expect(
+    Option.isSome(connectionFailure) &&
+      Predicate.isTagged(
+        connectionFailure.value,
+        'DatabaseCommitAcknowledgementAmbiguous'
+      )
+  ).toBe(true);
+  expect(
+    Option.isSome(administrativeShutdown) &&
+      Predicate.isTagged(
+        administrativeShutdown.value,
+        'DatabaseCommitAcknowledgementAmbiguous'
+      )
+  ).toBe(true);
+  expect(
+    Option.isSome(serializationFailure) &&
+      Predicate.isTagged(
+        serializationFailure.value,
+        'DatabaseTransactionFailure'
+      )
+  ).toBe(true);
+  expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '40001' })).toBe(
     false
   );
-  assert.equal(
-    isDatabaseCommitAcknowledgementAmbiguous({ code: '57014' }),
+  expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '57014' })).toBe(
     false
   );
 });
 
-void test('classifies the exact commit-acknowledgement socket vocabulary', () => {
+it('classifies the exact commit-acknowledgement socket vocabulary', () => {
   const commitCodes = [
     'ECONNABORTED',
     'ECONNRESET',
@@ -191,44 +193,43 @@ void test('classifies the exact commit-acknowledgement socket vocabulary', () =>
     'ETIMEDOUT',
   ];
   for (const code of commitCodes) {
-    assert.equal(isDatabaseCommitAcknowledgementAmbiguous({ code }), true);
+    expect(isDatabaseCommitAcknowledgementAmbiguous({ code })).toBe(true);
   }
 
-  assert.equal(
-    isDatabaseCommitAcknowledgementAmbiguous({ code: 'ECONNREFUSED' }),
-    false
-  );
+  expect(
+    isDatabaseCommitAcknowledgementAmbiguous({ code: 'ECONNREFUSED' })
+  ).toBe(false);
 });
 
-void test('preserves the auth-facing unavailable socket vocabulary', () => {
+it('preserves the auth-facing unavailable socket vocabulary', () => {
   for (const code of ['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT']) {
-    assert.equal(isDatabaseUnavailableFailure({ code }), true);
+    expect(isDatabaseUnavailableFailure({ code })).toBe(true);
   }
   for (const code of ['ECONNABORTED', 'EHOSTDOWN', 'ENETRESET']) {
-    assert.equal(isDatabaseUnavailableFailure({ code }), false);
+    expect(isDatabaseUnavailableFailure({ code })).toBe(false);
   }
 });
 
-void test('classifies unavailable driver metadata found through the shared cause-chain seam', () => {
+it('classifies unavailable driver metadata found through the shared cause-chain seam', () => {
   const nestedFailure = {
     cause: { cause: { cause: { cause: { code: 'ECONNRESET' } } } },
   };
 
-  assert.equal(isDatabaseUnavailableFailure(nestedFailure), true);
-  assert.equal(isDatabaseCommitAcknowledgementAmbiguous(nestedFailure), true);
+  expect(isDatabaseUnavailableFailure(nestedFailure)).toBe(true);
+  expect(isDatabaseCommitAcknowledgementAmbiguous(nestedFailure)).toBe(true);
 });
 
-void test('continues past an unrelated wrapper code when classifying a nested driver failure', () => {
+it('continues past an unrelated wrapper code when classifying a nested driver failure', () => {
   const nestedFailure = {
     cause: { code: 'ECONNRESET' },
     code: 'ERR_QUERY_FAILED',
   };
 
-  assert.equal(isDatabaseUnavailableFailure(nestedFailure), true);
-  assert.equal(isDatabaseCommitAcknowledgementAmbiguous(nestedFailure), true);
+  expect(isDatabaseUnavailableFailure(nestedFailure)).toBe(true);
+  expect(isDatabaseCommitAcknowledgementAmbiguous(nestedFailure)).toBe(true);
 });
 
-void test('does not classify unrelated or malformed failures as unavailable', () => {
+it('does not classify unrelated or malformed failures as unavailable', () => {
   for (const failure of [
     null,
     'ECONNRESET',
@@ -237,19 +238,19 @@ void test('does not classify unrelated or malformed failures as unavailable', ()
     { code: 'ENOTFOUND' },
     { cause: { code: 'not-a-driver-code' } },
   ]) {
-    assert.equal(isDatabaseUnavailableFailure(failure), false);
-    assert.equal(Option.isNone(decodeDatabaseDriverFailure(failure)), true);
+    expect(isDatabaseUnavailableFailure(failure)).toBe(false);
+    expect(Option.isNone(decodeDatabaseDriverFailure(failure))).toBe(true);
   }
 });
 
-void test('terminates safely when a cause chain contains a cycle', () => {
+it('terminates safely when a cause chain contains a cycle', () => {
   const cyclic: MutableCause = {};
   cyclic.cause = cyclic;
 
-  assert.equal(isDatabaseUnavailableFailure(cyclic), false);
+  expect(isDatabaseUnavailableFailure(cyclic)).toBe(false);
 });
 
-void test('decodes native Drizzle and Effect SQL causes without exposing query data', () => {
+it('decodes native Drizzle and Effect SQL causes without exposing query data', () => {
   const constraint = 'principal_auth_bindings_provider_subject_uk';
   const driver = { code: '23505', constraint, detail: 'private detail' };
   const sqlError = new SqlError({
@@ -260,31 +261,27 @@ void test('decodes native Drizzle and Effect SQL causes without exposing query d
     params: ['private parameter'],
     query: 'private SQL',
   });
-  assert.deepEqual(Option.getOrThrow(findPostgresFailure(failure)), {
+  expect(Option.getOrThrow(findPostgresFailure(failure))).toEqual({
     code: '23505',
     constraint,
   });
-  assert.deepEqual(
-    Option.getOrThrow(findPostgresFailure(Cause.die(sqlError))),
-    {
-      code: '23505',
-      constraint,
-    }
-  );
+  expect(Option.getOrThrow(findPostgresFailure(Cause.die(sqlError)))).toEqual({
+    code: '23505',
+    constraint,
+  });
 });
 
-void test('walks native mixed Causes in order and skips unrelated failures', () => {
+it('walks native mixed Causes in order and skips unrelated failures', () => {
   const failure = Cause.combine(
     Cause.fail({ code: '40001' }),
     Cause.die({ code: '23505', constraint: 'owned_unique' })
   );
-  assert.deepEqual(
+  expect(
     Option.getOrThrow(
       findPostgresFailure(failure, ({ code }) => code === '23505')
-    ),
-    {
-      code: '23505',
-      constraint: 'owned_unique',
-    }
-  );
+    )
+  ).toEqual({
+    code: '23505',
+    constraint: 'owned_unique',
+  });
 });

@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import { planContactsAuthorizationContext } from '../migrate-contacts-authorization.mts';
 import type { ContactsAuthorizationRelationship } from '../migrate-contacts-authorization.mts';
@@ -17,74 +16,70 @@ const verifyMode = 'verify';
 const finalizeMode = 'finalize';
 const alreadyPreparedState = 'already_prepared';
 
-await test('prepare creates Contacts relationships from a legacy-only context', () => {
-  assert.deepEqual(
-    planContactsAuthorizationContext(prepareMode, legacyRelationships, []),
-    {
-      deleteLegacy: false,
-      state: 'legacy_only',
-      touchContacts: true,
-    }
-  );
+it('prepare creates Contacts relationships from a legacy-only context', () => {
+  expect(
+    planContactsAuthorizationContext(prepareMode, legacyRelationships, [])
+  ).toEqual({
+    deleteLegacy: false,
+    state: 'legacy_only',
+    touchContacts: true,
+  });
 });
 
-await test('prepare and verify accept an exactly prepared context', () => {
+it('prepare and verify accept an exactly prepared context', () => {
   const reordered = [legacyRelationships[1], legacyRelationships[0]] as const;
-  assert.equal(
+  expect(
     planContactsAuthorizationContext(
       prepareMode,
       legacyRelationships,
       reordered
-    ).state,
-    alreadyPreparedState
-  );
-  assert.equal(
+    ).state
+  ).toBe(alreadyPreparedState);
+  expect(
     planContactsAuthorizationContext(verifyMode, legacyRelationships, reordered)
-      .state,
-    alreadyPreparedState
-  );
+      .state
+  ).toBe(alreadyPreparedState);
 });
 
-await test('finalize removes only an exactly matched legacy context', () => {
-  assert.deepEqual(
+it('finalize removes only an exactly matched legacy context', () => {
+  expect(
     planContactsAuthorizationContext(
       finalizeMode,
       legacyRelationships,
       legacyRelationships
-    ),
-    { deleteLegacy: true, state: alreadyPreparedState, touchContacts: false }
-  );
+    )
+  ).toEqual({
+    deleteLegacy: true,
+    state: alreadyPreparedState,
+    touchContacts: false,
+  });
 });
 
-await test('all modes are idempotent after legacy relationships are gone', () => {
+it('all modes are idempotent after legacy relationships are gone', () => {
   for (const mode of [prepareMode, verifyMode, finalizeMode] as const) {
-    assert.deepEqual(
-      planContactsAuthorizationContext(mode, [], legacyRelationships),
-      {
-        deleteLegacy: false,
-        state: 'already_finalized',
-        touchContacts: false,
-      }
-    );
+    expect(
+      planContactsAuthorizationContext(mode, [], legacyRelationships)
+    ).toEqual({
+      deleteLegacy: false,
+      state: 'already_finalized',
+      touchContacts: false,
+    });
   }
 });
 
-await test('verify and finalize fail closed when Contacts relationships are missing', () => {
+it('verify and finalize fail closed when Contacts relationships are missing', () => {
   for (const mode of [verifyMode, finalizeMode] as const) {
-    assert.throws(
-      () => planContactsAuthorizationContext(mode, legacyRelationships, []),
-      /Contacts authorization is missing/u
-    );
+    expect(() =>
+      planContactsAuthorizationContext(mode, legacyRelationships, [])
+    ).toThrow(/Contacts authorization is missing/u);
   }
 });
 
-await test('every mode rejects partial or divergent relationship sets', () => {
+it('every mode rejects partial or divergent relationship sets', () => {
   const partial = legacyRelationships.slice(0, 1);
   for (const mode of [prepareMode, verifyMode, finalizeMode] as const) {
-    assert.throws(
-      () =>
-        planContactsAuthorizationContext(mode, legacyRelationships, partial),
-      /relationships differ/u
-    );
+    expect(() =>
+      planContactsAuthorizationContext(mode, legacyRelationships, partial)
+    ).toThrow(/relationships differ/u);
   }
 });
