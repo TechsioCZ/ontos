@@ -929,7 +929,7 @@ it.live(
             '--input-type=module',
             '--eval',
             `
-      import { Effect } from 'effect';
+      import { Effect, Match, Result } from 'effect';
       import { FetchHttpClient } from 'effect/unstable/http';
       import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
       import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
@@ -962,6 +962,40 @@ it.live(
           calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
           return Response.json(response);
         })));
+      }
+      const generatedProblem = {
+        _tag: 'ResourceDetailUnavailableProblem',
+        detail: 'Temporarily unavailable.',
+        retryable: true,
+        status: 503,
+        title: 'Unavailable',
+        type: 'urn:ontos:test:generated-problem',
+      };
+      const generatedFailure = await Effect.runPromise(
+        executeResourceDetailWithAuthorization(
+          {},
+          'Bearer proof',
+          'correlation-proof',
+          { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' },
+        ).pipe(
+          Effect.result,
+          Effect.provideService(FetchHttpClient.Fetch, async () =>
+            Response.json(generatedProblem, {
+              headers: { 'content-type': 'application/problem+json' },
+              status: 503,
+            }),
+          ),
+        ),
+      );
+      if (!Result.isFailure(generatedFailure)) throw new Error('Expected generated client failure');
+      const preservesProblemDetails = Match.value(generatedFailure.failure).pipe(
+        Match.tag('ResourceDetailUnavailableProblem', ({ status, retryable }) =>
+          status === generatedProblem.status && retryable === true,
+        ),
+        Match.orElse(() => false),
+      );
+      if (!preservesProblemDetails) {
+        throw new Error('Generated client did not preserve the concrete Problem Details error');
       }
       console.log(JSON.stringify(calls));
     `,
@@ -1144,7 +1178,8 @@ it.live(
         expect(moduleApiRead).toMatch(/defineRead\(/u);
         expect(moduleApiRead).toMatch(/legalEntityScope: 'required'/u);
         for (const server of [moduleApiServer, searchServer, reportServer]) {
-          expect(server).toMatch(/verifyOperationPrincipal\(\s*request\.headers\.authorization,/u);
+          expect(server).toMatch(/authenticateOperationPrincipal\(/u);
+          expect(server).toMatch(/Redacted\.make\(request\.headers\.authorization\)/u);
           expect(server).toMatch(/yield\* ReadRuntime/u);
           expect(server).toMatch(/\.runRead\(\{/u);
           expect(server).toMatch(/HttpEffect\.appendPreResponseHandler/u);
@@ -1154,21 +1189,35 @@ it.live(
           expect(server).toMatch(
             /ReadPolicyDenied: \(failure\) => policyProblem\(failure\.httpStatus\)/u,
           );
-          expect(server).toMatch(/Effect\.catchTags\(\{/u);
+          expect(server).not.toMatch(/ActionPrincipal(?:Missing|Invalid|Expired|Scope)Error/u);
           expect(server).not.toMatch(/switch \(error\._tag\)|error\._tag ===/u);
           expect(server).toMatch(/problem\.status === 401\s+\?\s+bearerChallenge/u);
           expect(server).not.toMatch(/tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
         }
         expect(operationBoundary).toMatch(
-          /export const verifyOperationPrincipal = verifyActionPrincipal/u,
+          /export const authenticateOperationPrincipal\s*=\s*makeMicroverticalHttpPrincipalAuthentication/u,
         );
         const searchContract = yield* readFixtureFile(fixture.root, inventorySearchContractFile);
+        const reportContract = yield* readFixtureFile(
+          fixture.root,
+          'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
+        );
+        for (const contract of [moduleApiContract, searchContract, reportContract]) {
+          expect(contract).toMatch(
+            /import \{\s*makeProblemDetailsSchema,\s*makeRetryableProblemDetailsSchema,?\s*\} from '@app\/shared-contracts\/problem-details';/u,
+          );
+          expect(contract).toMatch(/makeProblemDetailsSchema\([^)]*,\s*409,?\s*\)/u);
+          expect(contract).toMatch(/makeRetryableProblemDetailsSchema\([^)]*,\s*503,?\s*\)/u);
+          expect(contract).not.toMatch(/application\/problem\+json|HttpApiSchema/u);
+        }
         expect(searchContract).toMatch(
           /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
         );
         expect(searchContract).not.toMatch(/tenantId|legalEntityId|principalId/u);
         expect(searchContract).toMatch(/PolicyConflictProblem/u);
-        expect(searchContract).toMatch(/Schema\.Literal\(409\)/u);
+        expect(searchContract).toMatch(
+          /makeProblemDetailsSchema\(\s*'InventoryItemsProviderPolicyConflictProblem',\s*409,?\s*\)/u,
+        );
 
         const beforeRepeat = yield* snapshotTree(fixture.root);
         yield* expectFailure(
@@ -1554,6 +1603,80 @@ export const ownerCode = true;
 );
 
 it.live(
+  'governed generators reject legacy principal boundaries before writing files',
+  Effect.fn(function* rejectLegacyPrincipalBoundaries() {
+    yield* withFixture(
+      Effect.fn(function* rejectLegacyPrincipalFixture(fixture) {
+        yield* addInventoryItemResourceType(fixture);
+        yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+        ]);
+        const generated = yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+        const legacy = generated.replace(
+          /const verifyOperationPrincipal =[\s\S]*$/u,
+          'export const verifyOperationPrincipal = verifyActionPrincipal;\n',
+        );
+        expect(legacy).not.toMatch(/export const authenticateOperationPrincipal/u);
+        yield* writeFixtureFile(fixture.root, inventoryActionPrincipalFile, legacy);
+        const before = yield* snapshotTree(fixture.root);
+        const calls: readonly [ScaffoldCommand, readonly string[]][] = [
+          [scaffoldCommand.microverticalActionBoundary, []],
+          [scaffoldCommand.moduleApi, ['--name', fixtureName.resourceDetail]],
+          [
+            scaffoldCommand.searchProvider,
+            ['--name', fixtureName.inventoryItems, scaffoldFlag.resource, 'item'],
+          ],
+          ['report', ['--name', fixtureName.stockLevels, scaffoldFlag.resource, 'item']],
+        ];
+        yield* Effect.all(
+          calls.map(
+            Effect.fn(function* rejectLegacyPrincipalCommand([command, args]) {
+              yield* expectFailure(
+                run(fixture, command, [scaffoldFlag.vertical, inventorySlug, ...args]),
+                (error) =>
+                  expect(String(error)).toMatch(
+                    /incompatible generated Action boundary:.*export authenticateOperationPrincipal.*provide ActionPrincipalVerifierLive/u,
+                  ),
+              );
+              expect(yield* snapshotTree(fixture.root)).toEqual(before);
+            }),
+          ),
+          { concurrency: 'unbounded' },
+        );
+      }),
+    );
+  }),
+);
+
+it.live(
+  'governed generation preserves compatible owner principal adaptations',
+  Effect.fn(function* preserveOwnerPrincipalAdaptations() {
+    yield* withFixture(
+      Effect.fn(function* preserveOwnerPrincipalFixture(fixture) {
+        yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+        ]);
+        const adapted = `${yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile)}\n// Owner-specific diagnostics remain private to this adapter.\n`;
+        yield* writeFixtureFile(fixture.root, inventoryActionPrincipalFile, adapted);
+        yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+        ]);
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+        ]);
+        expect(yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile)).toBe(adapted);
+      }),
+    );
+  }),
+);
+
+it.live(
   'generated verifier executes real Shell assertions and overlapping Ed25519 rotation',
   Effect.fn(function* scenario33() {
     yield* withFixture(
@@ -1632,9 +1755,8 @@ it.live(
             JSON.parse(yield* Effect.promise(() => readFile(edgeMetafile, 'utf-8'))),
           ).inputs,
         ).join('\n');
-        expect(edgeInputs).not.toMatch(
-          /core-runtime\/src\/(?:auth|db)|node:(?:crypto|path)|\/pg\//u,
-        );
+        expect(edgeInputs).toMatch(/core-runtime\/src\/auth\/gateway-assertion-redemption\.ts/u);
+        expect(edgeInputs).not.toMatch(/core-runtime\/src\/db|node:(?:crypto|path)|\/pg\//u);
         const generatedModule = Schema.decodeUnknownSync(GeneratedPrincipalModuleSchema)(
           yield* Effect.promise(
             () => import(pathToFileURL(path.join(fixture.root, inventoryActionPrincipalFile)).href),
@@ -5259,6 +5381,18 @@ it.live(
                   '@app/core-runtime/actions/principal-context': [
                     path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
                   ],
+                  '@app/core-runtime/auth/gateway-assertion-redemption': [
+                    path.join(
+                      appRoot,
+                      'packages/core-runtime/src/auth/gateway-assertion-redemption.ts',
+                    ),
+                  ],
+                  '@app/core-runtime/http/principal-authentication': [
+                    path.join(
+                      appRoot,
+                      'packages/core-runtime/src/http/principal-authentication.ts',
+                    ),
+                  ],
                   '@app/core-runtime/outbox/worker': [
                     path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
                   ],
@@ -5270,6 +5404,9 @@ it.live(
                   ],
                   '@app/shared-contracts': [
                     path.join(appRoot, 'packages/shared-contracts/src/index.ts'),
+                  ],
+                  '@app/shared-contracts/problem-details': [
+                    path.join(appRoot, 'packages/shared-contracts/src/problem-details.ts'),
                   ],
                 },
                 resolveJsonModule: true,

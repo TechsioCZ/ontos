@@ -2,13 +2,16 @@ import { expect, it } from '@app/effect-rstest';
 import { randomUUID } from 'node:crypto';
 import { ConfigProvider, Context, Effect, Layer, Schema, Predicate } from 'effect';
 import {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionRedemptionUnavailableError,
+  GatewayAssertionReplayError,
   ReadRuntime,
   ReadHandlerNotFound,
   ReadPermissionDenied,
   ReadResultValidationError,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import type { ReadRuntimeService } from '@app/core-runtime';
+import type { GatewayAssertionRedemption, ReadRuntimeService } from '@app/core-runtime';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -127,7 +130,10 @@ const endpointNames = [
   'updatePartyRelationship',
 ] as const;
 
-const makeAssertion = (audience = 'party-registry') =>
+const makeAssertion = (
+  audience = 'party-registry',
+  options: { readonly expiresAt?: number; readonly tokenIssuer?: string } = {},
+) =>
   Effect.gen(function* signPrincipalAssertions() {
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
@@ -139,11 +145,11 @@ const makeAssertion = (audience = 'party-registry') =>
     const token = yield* Effect.promise(() =>
       new SignJWT({ principal, ver: 1 })
         .setProtectedHeader({ alg: 'EdDSA', kid: 'party-command-test', typ: 'JWT' })
-        .setIssuer(issuer)
+        .setIssuer(options.tokenIssuer ?? issuer)
         .setAudience(audience)
         .setSubject(principal.principalId)
         .setIssuedAt()
-        .setExpirationTime('5m')
+        .setExpirationTime(options.expiresAt ?? '5m')
         .setJti(randomUUID())
         .sign(privateKey),
     );
@@ -173,10 +179,13 @@ const makeAssertion = (audience = 'party-registry') =>
     };
   });
 
+const nonPersistingRedemption: GatewayAssertionRedemption = { consume: () => Effect.void };
+
 const mounted = (
   harness: Effect.Success<ReturnType<typeof makeActionTestHarness>>,
   environment: Readonly<Record<string, string>>,
   readRuntime?: ReadRuntimeService,
+  redemption: GatewayAssertionRedemption = nonPersistingRedemption,
 ) => {
   const resolvedReadRuntime = readRuntime ?? {
     runRead: () =>
@@ -190,6 +199,7 @@ const mounted = (
     .add(partyRegistryApi.groups.partyCommandRecovery)
     .add(partyRegistryApi.groups.partyMatchDecision);
   const readLayer = Layer.succeed(ReadRuntime, resolvedReadRuntime);
+  const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, redemption);
   const handlers = Layer.mergeAll(
     partyRegistryCommandsLive,
     partyRegistryCommandRecoveryLive,
@@ -198,6 +208,7 @@ const mounted = (
     Layer.provide(ActionPrincipalVerifierLive),
     Layer.provide(harness.layer),
     Layer.provide(readLayer),
+    Layer.provide(redemptionLayer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
   );
   return HttpRouter.toWebHandler(
@@ -205,6 +216,7 @@ const mounted = (
       Layer.provide(handlers),
       Layer.provideMerge(harness.layer),
       Layer.provideMerge(readLayer),
+      Layer.provideMerge(redemptionLayer),
       Layer.provide(HttpServer.layerServices),
     ),
     { disableLogger: true },
@@ -215,11 +227,31 @@ const mountApp = (
   harness: Effect.Success<ReturnType<typeof makeActionTestHarness>>,
   environment: Readonly<Record<string, string>>,
   readRuntime?: ReadRuntimeService,
+  redemption: GatewayAssertionRedemption = nonPersistingRedemption,
 ) =>
   Effect.acquireRelease(
-    Effect.sync(() => mounted(harness, environment, readRuntime)),
+    Effect.sync(() => mounted(harness, environment, readRuntime, redemption)),
     (app) => Effect.promise(() => app.dispose()).pipe(Effect.orDie),
   );
+
+const makeSingleUseRedemption = (): GatewayAssertionRedemption => {
+  const redeemed = new Set<string>();
+  return {
+    consume: ({ audience, issuer: assertionIssuer, jti }) =>
+      Effect.suspend(() => {
+        const key = `${assertionIssuer}\u0000${audience}\u0000${jti}`;
+        if (redeemed.has(key)) {
+          return Effect.fail(
+            new GatewayAssertionReplayError({
+              reason: 'The Bearer assertion is no longer usable',
+            }),
+          );
+        }
+        redeemed.add(key);
+        return Effect.void;
+      }),
+  };
+};
 
 // The mounted layers provide every runtime service; the handler's conservative unknown requirement
 // still requires an explicitly empty per-request context.
@@ -354,63 +386,261 @@ it.live(
 );
 
 it.live(
-  'missing, malformed, and wrong-audience assertions are challenged without creating invocations',
+  'missing, malformed, expired, tampered, wrong-audience, and wrong-issuer assertions are challenged without creating invocations',
   () =>
-    forEachSequential(['party-registry', 'contacts'], (audience) =>
-      Effect.gen(function* challengeInvalidAudienceAssertions() {
-        const assertion = yield* makeAssertion(audience);
-        const harness = yield* makeActionTestHarness();
-        const app = yield* mountApp(harness, assertion.environment);
-
-        const tokens = audience === 'contacts' ? [assertion.token] : [undefined, 'not-a-jwt'];
-        yield* forEachSequential(tokens, (token) =>
-          Effect.gen(function* challengeInvalidToken() {
+    Effect.gen(function* rejectInvalidAssertions() {
+      const expired = yield* makeAssertion('party-registry', {
+        expiresAt: 1,
+      });
+      const wrongAudience = yield* makeAssertion('contacts');
+      const wrongIssuer = yield* makeAssertion('party-registry', {
+        tokenIssuer: 'https://untrusted-shell.ontos.test',
+      });
+      const valid = yield* makeAssertion();
+      const signatureStart = valid.token.lastIndexOf('.') + 1;
+      const signatureFirstCharacter = valid.token.at(signatureStart);
+      expect(signatureFirstCharacter).not.toBe(undefined);
+      const tampered = `${valid.token.slice(0, signatureStart)}${signatureFirstCharacter === 'A' ? 'B' : 'A'}${valid.token.slice(signatureStart + 1)}`;
+      const cases = [
+        { assertion: valid, token: undefined },
+        { assertion: valid, token: 'not-a-jwt' },
+        { assertion: expired, token: expired.token },
+        { assertion: valid, token: tampered },
+        { assertion: wrongAudience, token: wrongAudience.token },
+        { assertion: wrongIssuer, token: wrongIssuer.token },
+      ];
+      yield* forEachSequential(cases, ({ assertion, token }) =>
+        Effect.gen(function* rejectInvalidAssertionCase() {
+          const harness = yield* makeActionTestHarness();
+          const app = yield* mountApp(harness, assertion.environment);
+          const response = yield* handle(
+            app,
+            commandRequest('request-search-rebuild', {}, token, {
+              'idempotency-key': 'authentication-test',
+            }),
+          );
+          expect(response.status).toBe(401);
+          expect(response.headers.get('www-authenticate')).toBe('Bearer');
+          expect(response.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
+          const body = yield* Effect.promise(() => response.json());
+          expect(Predicate.isTagged(body, 'PartyCommandAuthenticationProblem')).toBe(true);
+          expect(body.status).toBe(401);
+          expect(
+            (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).includes(
+              assertion.token,
+            ),
+          ).toBe(false);
+          expect(harness.snapshot().invocations.length).toBe(0);
+        }),
+      );
+    }),
+);
+it.live(
+  'missing and malformed verification configuration are retryable and never reach the lifecycle',
+  () =>
+    Effect.gen(function* rejectInvalidVerificationConfiguration() {
+      const assertion = yield* makeAssertion();
+      yield* forEachSequential(
+        [
+          {},
+          { ...assertion.environment, ONTOS_GATEWAY_ISSUER: 'not-an-absolute-http-url' },
+          { ...assertion.environment, ONTOS_GATEWAY_PUBLIC_JWKS: '{malformed' },
+        ],
+        (environment) =>
+          Effect.gen(function* rejectInvalidConfigurationCase() {
+            const harness = yield* makeActionTestHarness();
+            const app = yield* mountApp(harness, environment);
             const response = yield* handle(
               app,
-              commandRequest('request-search-rebuild', {}, token, {
-                'idempotency-key': 'authentication-test',
+              commandRequest('request-search-rebuild', {}, assertion.token, {
+                'idempotency-key': 'configuration-test',
               }),
             );
-            expect(response.status).toBe(401);
-            expect(response.headers.get('www-authenticate')).toBe('Bearer');
+            expect(response.status).toBe(503);
+            expect(response.headers.get('www-authenticate')).toBe(null);
             expect(response.headers.get('content-type') ?? '').toMatch(
               /application\/problem\+json/u,
             );
             const body = yield* Effect.promise(() => response.json());
-            expect(Predicate.isTagged(body, 'PartyCommandAuthenticationProblem')).toBe(true);
-            expect(body.status).toBe(401);
-            expect(
-              (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(body)).includes(
-                assertion.token,
-              ),
-            ).toBe(false);
+            expect(Predicate.isTagged(body, 'PartyCommandUnavailableProblem')).toBe(true);
+            expect(body.retryable).toBe(true);
+            expect(harness.snapshot().invocations.length).toBe(0);
           }),
-        );
-        expect(harness.snapshot().invocations.length).toBe(0);
-      }),
-    ),
+      );
+    }),
 );
-
 it.live(
-  'verification configuration unavailability is retryable and never reaches the lifecycle',
+  'redemption storage outages return safe retryable problems before Action and Read lifecycles',
   () =>
-    Effect.gen(function* reportUnavailableVerificationConfiguration() {
+    Effect.gen(function* reportRedemptionOutages() {
       const assertion = yield* makeAssertion();
       const harness = yield* makeActionTestHarness();
-      const app = yield* mountApp(harness, {});
-
-      const response = yield* handle(
-        app,
-        commandRequest('request-search-rebuild', {}, assertion.token, {
-          'idempotency-key': 'configuration-test',
+      let reads = 0;
+      const readRuntime: ReadRuntimeService = {
+        runRead: () =>
+          Effect.sync(() => {
+            reads += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ReadHandlerNotFound({
+                  code: 'read_handler_not_found',
+                  reason: 'No fixture decision',
+                }),
+              ),
+            ),
+          ),
+      };
+      const app = yield* mountApp(harness, assertion.environment, readRuntime, {
+        consume: () =>
+          Effect.fail(
+            new GatewayAssertionRedemptionUnavailableError({
+              reason: 'private redemption storage diagnostic',
+            }),
+          ),
+      });
+      const before = harness.snapshot();
+      yield* forEachSequential(
+        [
+          {
+            request: commandRequest('request-search-rebuild', {}, assertion.token, {
+              'idempotency-key': 'redemption-unavailable',
+            }),
+            tag: 'PartyCommandUnavailableProblem',
+          },
+          {
+            request: decisionRequest(randomUUID(), assertion.token),
+            tag: 'PartyMatchDecisionUnavailableProblem',
+          },
+        ],
+        ({ request, tag }) =>
+          Effect.gen(function* reportRedemptionOutageCase() {
+            const response = yield* handle(app, request);
+            expect(response.status).toBe(503);
+            expect(response.headers.get('www-authenticate')).toBe(null);
+            expect(response.headers.get('content-type') ?? '').toMatch(
+              /application\/problem\+json/u,
+            );
+            const body = yield* Effect.promise(() => response.json());
+            expect(Predicate.isTagged(body, tag)).toBe(true);
+            expect(body.status).toBe(503);
+            expect(body.retryable).toBe(true);
+            const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(body);
+            expect(encoded.includes('private redemption')).toBe(false);
+            expect(encoded.includes(assertion.token)).toBe(false);
+            expect(encoded.includes(principal.principalId)).toBe(false);
+            expect(encoded.includes(principal.tenantId)).toBe(false);
+            expect(reads).toBe(0);
+            expect(harness.snapshot()).toEqual(before);
+          }),
+      );
+    }),
+);
+it.live(
+  'generated governed reads authenticate through the shared adapter before starting ReadRuntime',
+  () =>
+    Effect.gen(function* authenticateGovernedReads() {
+      const assertion = yield* makeAssertion();
+      const harness = yield* makeActionTestHarness();
+      let reads = 0;
+      const receivedPrincipals: unknown[] = [];
+      const readRuntime: ReadRuntimeService = {
+        runRead: (input) =>
+          Effect.sync(() => {
+            reads += 1;
+            receivedPrincipals.push(input.principal);
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ReadHandlerNotFound({
+                  code: 'read_handler_not_found',
+                  reason: 'No fixture decision',
+                }),
+              ),
+            ),
+          ),
+      };
+      const app = yield* mountApp(harness, assertion.environment, readRuntime);
+      yield* forEachSequential([undefined, 'not-a-jwt'], (token) =>
+        Effect.gen(function* rejectUnsignedRead() {
+          const response = yield* handle(app, decisionRequest(randomUUID(), token));
+          expect(response.status).toBe(401);
+          expect(response.headers.get('www-authenticate')).toBe('Bearer');
+          expect(response.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
+          const body = yield* Effect.promise(() => response.json());
+          expect(Predicate.isTagged(body, 'PartyMatchDecisionAuthenticationProblem')).toBe(true);
+          expect(reads).toBe(0);
         }),
       );
-      expect(response.status).toBe(503);
-      expect(response.headers.get('www-authenticate')).toBe(null);
-      const body = yield* Effect.promise(() => response.json());
-      expect(Predicate.isTagged(body, 'PartyCommandUnavailableProblem')).toBe(true);
-      expect(body.retryable).toBe(true);
-      expect(harness.snapshot().invocations.length).toBe(0);
+      const valid = yield* handle(app, decisionRequest(randomUUID(), assertion.token));
+      expect(valid.status).toBe(404);
+      expect(reads).toBe(1);
+      expect(receivedPrincipals).toEqual([principal]);
+    }),
+);
+it.live(
+  'replayed assertions are challenged before a second Action or generated Read lifecycle',
+  () =>
+    Effect.gen(function* rejectAssertionReplays() {
+      const assertion = yield* makeAssertion();
+      const harness = yield* makeActionTestHarness();
+      let reads = 0;
+      const readRuntime: ReadRuntimeService = {
+        runRead: () =>
+          Effect.sync(() => {
+            reads += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ReadHandlerNotFound({
+                  code: 'read_handler_not_found',
+                  reason: 'No fixture decision',
+                }),
+              ),
+            ),
+          ),
+      };
+      const app = yield* mountApp(
+        harness,
+        assertion.environment,
+        readRuntime,
+        makeSingleUseRedemption(),
+      );
+      const firstAction = yield* handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'first-redemption',
+        }),
+      );
+      expect(firstAction.status).not.toBe(401);
+      expect(harness.snapshot().invocations.length).toBe(1);
+      const replayedAction = yield* handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'second-redemption',
+        }),
+      );
+      expect(replayedAction.status).toBe(401);
+      expect(replayedAction.headers.get('www-authenticate')).toBe('Bearer');
+      expect(replayedAction.headers.get('content-type') ?? '').toMatch(
+        /application\/problem\+json/u,
+      );
+      expect(harness.snapshot().invocations.length).toBe(1);
+      const actionAssertionReadReplay = yield* handle(
+        app,
+        decisionRequest(randomUUID(), assertion.token),
+      );
+      expect(actionAssertionReadReplay.status).toBe(401);
+      expect(actionAssertionReadReplay.headers.get('www-authenticate')).toBe('Bearer');
+      expect(reads).toBe(0);
+      const firstRead = yield* handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+      expect(firstRead.status).toBe(404);
+      expect(reads).toBe(1);
+      const replayedRead = yield* handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+      expect(replayedRead.status).toBe(401);
+      expect(replayedRead.headers.get('www-authenticate')).toBe('Bearer');
+      expect(replayedRead.headers.get('content-type') ?? '').toMatch(/application\/problem\+json/u);
+      expect(reads).toBe(1);
     }),
 );
 

@@ -352,6 +352,10 @@ function assertionCall(
       return null;
     if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect')
       members.unshift('expect');
+    if (subject === null && members.length === 2 && members[0] === 'assert') {
+      const method = members[1];
+      return method === undefined ? null : { method, subject: null };
+    }
     if (subject === null || members.shift() !== 'expect') return null;
     const method = members.pop();
     if (
@@ -784,17 +788,56 @@ export const rule = defineRule({
       const expression = unwrap(node);
       const initialiser = constInitialiser(context, expression);
       if (initialiser !== null) return comparedTag(initialiser, seen);
-      // Follow projections and boolean guards; object literals remain complete contract assertions.
-      if (expression.type === 'ObjectExpression' || expression.type === 'TemplateLiteral')
-        return null;
-      for (const [key, value] of Object.entries(expression)) {
-        if (key === 'parent' || key === 'typeAnnotation') continue;
-        const children = Array.isArray(value) ? value : [value];
-        for (const child of children) {
-          if (typeof child !== 'object' || child === null || !('type' in child)) continue;
-          const found = comparedTag(child as ESTree.Node, seen);
-          if (found !== null) return found;
+      // Follow values that reach the comparison. Reading a tag inside an arbitrary
+      // callback or predicate does not make that function or its result a tag value.
+      let values: readonly ESTree.Node[];
+      switch (expression.type) {
+        case 'ArrayExpression':
+          values = expression.elements.filter((element) => element !== null);
+          break;
+        case 'SpreadElement':
+          values = [expression.argument];
+          break;
+        case 'LogicalExpression':
+          values = [expression.left, expression.right];
+          break;
+        case 'ConditionalExpression':
+          values = [expression.consequent, expression.alternate];
+          break;
+        case 'SequenceExpression':
+          values = expression.expressions.slice(-1);
+          break;
+        case 'CallExpression': {
+          const callee = unwrap(expression.callee);
+          if (callee.type !== 'MemberExpression' || memberPropertyName(callee) !== 'map')
+            return null;
+          const first = expression.arguments[0];
+          if (first === undefined || first.type === 'SpreadElement') return null;
+          const callback = unwrap(constInitialiser(context, first) ?? first);
+          if (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression')
+            return null;
+          if (callback.body === null) return null;
+          values = [callback.body];
+          break;
         }
+        case 'BlockStatement':
+          values = expression.body;
+          break;
+        case 'ReturnStatement':
+          values = expression.argument === null ? [] : [expression.argument];
+          break;
+        case 'IfStatement':
+          values =
+            expression.alternate === null
+              ? [expression.consequent]
+              : [expression.consequent, expression.alternate];
+          break;
+        default:
+          return null;
+      }
+      for (const value of values) {
+        const found = comparedTag(value, seen);
+        if (found !== null) return found;
       }
       return null;
     };

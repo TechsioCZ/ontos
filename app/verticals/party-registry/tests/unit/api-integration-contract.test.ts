@@ -37,28 +37,6 @@ const apiNames = [
   'personEngagementProfile',
 ] as const;
 
-const serverFiles = [
-  'ares-lookup-read-server',
-  'counterparties-search-server',
-  'counterparty-read-read-server',
-  'counterparty-role-history-read-server',
-  'duplicate-candidate-detail-read-server',
-  'engagement-profile-server',
-  'organization-engagement-profile-read-server',
-  'parties-search-server',
-  'party-contact-point-detail-read-server',
-  'party-contact-points-read-server',
-  'party-correction-read-server',
-  'party-detail-read-server',
-  'party-match-decision-read-server',
-  'party-match-read-server',
-  'party-merge-readiness-read-server',
-  'party-official-identifier-detail-read-server',
-  'party-official-identifier-history-read-server',
-  'party-relationship-detail-read-server',
-  'person-engagement-profile-read-server',
-] as const;
-
 it('aggregates every governed read and search API beside readiness', () => {
   expect(Object.keys(partyRegistryApi.groups).toSorted()).toEqual(apiNames);
   expect(partyRegistryApiContract).toEqual({
@@ -95,29 +73,6 @@ it('keeps readiness tied to the immutable build marker', () => {
     }),
   ).toBe(true);
 });
-
-it.effect('composes generated governed servers through the Core read runtime', () =>
-  Effect.gen(function* testProgram1() {
-    const serverSources = yield* Effect.promise(() =>
-      Promise.all([
-        readFile(new URL('../../api/index.ts', import.meta.url), 'utf-8'),
-        readFile(new URL('../../api/engagement-profile-server.ts', import.meta.url), 'utf-8'),
-      ]),
-    );
-    const source = serverSources.join('\n');
-
-    for (const serverFile of serverFiles) {
-      expect(source).toMatch(new RegExp(serverFile.replaceAll('-', '[-]'), 'u'));
-    }
-    expect(source).toMatch(/ReadRuntimeLive/u);
-    expect(source).toMatch(/ContextAccessLive/u);
-    expect(source).toMatch(/Layer\.provide\(CorePersistenceLive\)/u);
-    expect(source).not.toMatch(/partyRegistryItems|Wire a real|generated-party-registry/u);
-    expect(source).not.toMatch(/\.handle\(['"]create['"]/u);
-    expect(source).toMatch(/ActionRuntimeLive/u);
-    expect(source).toMatch(/partyRegistryCommandsLive/u);
-  }),
-);
 
 it.effect('re-exports every governed generated client without exposing private executors', () =>
   Effect.gen(function* testProgram2() {

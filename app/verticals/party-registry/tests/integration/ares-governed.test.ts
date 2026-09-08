@@ -1,6 +1,6 @@
 import { assert, expect, it } from '@app/effect-rstest';
 
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/plugin-bff/effect-edge';
@@ -24,6 +24,10 @@ import { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from '../../api/auth/gateway-assertion-redemption.ts';
 import { partyRegistryCommandsLive } from '../../api/party-command-server.ts';
 import { partyContactPointsReadApiLive } from '../../api/party-contact-points-read-server.ts';
 import { partyDetailReadApiLive } from '../../api/party-detail-read-server.ts';
@@ -140,8 +144,8 @@ it.live(
             .setJti(randomUUID())
             .sign(privateKey),
         );
-      const token = yield* sign(fixture.manager);
-      const authorization = `Bearer ${token}`;
+      const authorization = () =>
+        sign(fixture.manager).pipe(Effect.map((token) => `Bearer ${token}`));
       const gateway = makeActionGateway(() =>
         sign(fixture.manager).pipe(
           Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken })),
@@ -158,6 +162,10 @@ it.live(
       const upstream = AresSubjectServiceLive.pipe(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)),
       );
+      const redemption = GatewayAssertionRedemptionLive.pipe(
+        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+        Layer.provide(Layer.succeed(DatabaseConfig, connections.runtime)),
+      );
       const api = HttpApi.make('PartyRegistryApi')
         .add(partyRegistryApi.groups.partyCommands)
         .add(partyRegistryApi.groups.aresLookup)
@@ -172,6 +180,7 @@ it.live(
         aresLookupReadApiLive.pipe(Layer.provide(upstream)),
       ).pipe(
         Layer.provide(ActionPrincipalVerifierLive),
+        Layer.provide(redemption),
         Layer.provide(fixture.layer),
         Layer.provide(
           ConfigProvider.layer(
@@ -222,7 +231,7 @@ it.live(
                 validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
               },
             },
-            authorization,
+            yield* authorization(),
             options(),
           ),
         );
@@ -236,7 +245,7 @@ it.live(
               expectedRevision: 1,
               reason: 'Reviewed concrete organization without a strong identifier',
             },
-            authorization,
+            yield* authorization(),
             options(),
           ),
         );
@@ -244,21 +253,28 @@ it.live(
 
         return reviewed.partyRef;
       });
-      const lookup = () =>
-        runHttpEffect(
-          executeAresLookupWithAuthorization({ ico: lookupIco }, authorization, randomUUID(), {
-            baseUrl,
-          }),
-        );
-      const detail = (partyRef: PartyRef) =>
-        runHttpEffect(
-          executePartyDetailWithAuthorization(
-            { partyRef, includeFactHistory: true },
-            authorization,
+      const lookup = Effect.fn('AresGovernedTest.lookup')(function* lookupEffect() {
+        return yield* runHttpEffect(
+          executeAresLookupWithAuthorization(
+            { ico: lookupIco },
+            yield* authorization(),
             randomUUID(),
             { baseUrl },
           ),
         );
+      });
+      const detail = Effect.fn('AresGovernedTest.detail')(function* detailEffect(
+        partyRef: PartyRef,
+      ) {
+        return yield* runHttpEffect(
+          executePartyDetailWithAuthorization(
+            { partyRef, includeFactHistory: true },
+            yield* authorization(),
+            randomUUID(),
+            { baseUrl },
+          ),
+        );
+      });
       const state = Effect.fn('AresGovernedTest.state')(() =>
         Effect.all(
           {
@@ -466,7 +482,7 @@ it.live(
             provenanceSource: 'ARES',
             externalEvidence: makeAresAppliedEvidence(logical, decision),
           },
-          authorization,
+          yield* authorization(),
           options(),
         ),
       );
@@ -517,7 +533,7 @@ it.live(
       const afterReview = yield* state();
       expect(afterReview.core.invocations.length).toBe(beforeReview.core.invocations.length);
       yield* runHttpEffect(
-        correctPartyFactWithAuthorization(correctionPayload, authorization, options()),
+        correctPartyFactWithAuthorization(correctionPayload, yield* authorization(), options()),
       );
       const corrected = yield* detail(erroneousParty);
       expect(Option.getOrUndefined(corrected.party.displayName)).toBe(rawSubject.obchodniJmeno);

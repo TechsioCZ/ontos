@@ -3,7 +3,10 @@ import { NodeFileSystem, NodePath, NodeRuntime } from '@effect/platform-node';
 import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { hasCompleteGeneratedModuleApiSeam } from './generated-module-api-boundary.mts';
-import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
+import {
+  privateOwnerImportViolation,
+  unconstrainedHttpApiContractSchemaViolation,
+} from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()(
   'ApiBoundaryCheckFailed',
@@ -232,10 +235,19 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       /\.(?:[cm]?[jt]sx?|json|md|mjs|mts|cts)$/u.test(file),
     );
 
+    const sources = new Map<string, string>();
     for (const file of textFiles) {
-      const content = yield* readText(file);
+      sources.set(file, yield* readText(file));
+    }
 
+    for (const [file, content] of sources) {
       assertPrivateOwnerImports(file, content);
+      const unconstrainedContractSchema = file.includes('/tests/')
+        ? undefined
+        : unconstrainedHttpApiContractSchemaViolation(content, { file, sources });
+      if (unconstrainedContractSchema !== undefined) {
+        fail(`${file}: ${unconstrainedContractSchema}.`);
+      }
       assertNotContains(
         file,
         content,

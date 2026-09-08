@@ -1,6 +1,7 @@
 import { expect, it } from '@app/effect-rstest';
-import { DateTime, Effect, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Schema, SchemaAST, Predicate } from 'effect';
 import {
+  AuthenticationUnavailableProblemSchema,
   CurrentSessionSchema,
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
@@ -14,6 +15,8 @@ import {
   SwitchTenantResponseSchema,
   SwitchLegalEntityPayloadSchema,
   SetApiKeyStatusPayloadSchema,
+  ShellRateLimitedProblemSchema,
+  TenantCapabilityUnavailableProblemSchema,
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
 
@@ -25,6 +28,19 @@ const statuses = (endpoint: TenantEndpoint) =>
   [...endpoint.error]
     .map((schema) => schema.ast.annotations?.['httpApiStatus'])
     .toSorted((left, right) => Number(left) - Number(right));
+
+const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
+  expect(SchemaAST.isObjects(schema.ast)).toBe(true);
+  if (!SchemaAST.isObjects(schema.ast)) {
+    throw new Error('Expected an object problem schema');
+  }
+  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
+  expect(tag !== undefined && SchemaAST.isLiteral(tag)).toBe(true);
+  if (tag === undefined || !SchemaAST.isLiteral(tag)) {
+    throw new Error('Expected a literal problem tag');
+  }
+  return tag.literal;
+};
 
 it('publishes authentication, identity lifecycle, and gateway operations', () => {
   const authenticationEndpoints = Object.keys(
@@ -94,6 +110,52 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
     /testing|actionKey/u,
   );
+});
+
+it('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {
+  const unavailable = {
+    _tag: 'AuthenticationUnavailableProblem',
+    detail: 'Authentication is temporarily unavailable. Please retry.',
+    status: 503,
+    title: 'Authentication unavailable',
+    type: 'https://ontos.dev/problems/authentication-unavailable',
+  } as const;
+  const retryable = {
+    _tag: 'TenantCapabilityUnavailableProblem',
+    detail: 'Tenant capability is temporarily unavailable.',
+    retryable: true,
+    status: 503,
+    title: 'Tenant capability unavailable',
+    type: 'https://ontos.dev/problems/tenant-capability-unavailable',
+  } as const;
+  const rateLimited = {
+    _tag: 'ShellRateLimitedProblem',
+    detail: 'Retry after the published delay.',
+    retryAfterSeconds: 15,
+    status: 429,
+    title: 'Rate limited',
+    type: 'https://ontos.dev/problems/shell-rate-limited',
+  } as const;
+  expect(Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(unavailable)).toEqual(
+    unavailable,
+  );
+  expect(Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(retryable)).toEqual(
+    retryable,
+  );
+  expect(Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited)).toEqual(rateLimited);
+  expect(() =>
+    Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema, {
+      onExcessProperty: 'error',
+    })({ ...unavailable, retryable: true }),
+  ).toThrow();
+  expect(
+    [...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error].map(problemTag),
+  ).toEqual([
+    'InvalidCredentialsProblem',
+    'OntosIdentityForbiddenProblem',
+    'AuthenticationUnavailableProblem',
+    'AuthenticationInternalProblem',
+  ]);
 });
 
 it.effect('decodes a missing identity idempotency header so handlers can return declared 428', () =>

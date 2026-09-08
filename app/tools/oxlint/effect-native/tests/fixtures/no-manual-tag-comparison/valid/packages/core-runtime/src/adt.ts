@@ -26,3 +26,5 @@ switch (option._tag) {
   case 'None': break;
   default: break;
 }
+
+assert.equal(option._tag === 'Some', true);

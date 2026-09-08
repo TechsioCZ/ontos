@@ -1,6 +1,6 @@
 import { expect, it } from '@app/effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, SchemaAST } from 'effect';
 import {
   ApiKeyGatewayHeadersSchema,
   GatewayContextApiGroup,
@@ -8,7 +8,9 @@ import {
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
+  GatewayRateLimitedProblemSchema,
   GatewayTrustedPrincipalContextSchema,
+  GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
 } from '../../src/gateway-context.ts';
 
@@ -18,6 +20,15 @@ const endpointStatuses = (
   [...endpoint.error]
     .map((schema) => schema.ast.annotations?.['httpApiStatus'])
     .toSorted((left, right) => Number(left) - Number(right));
+
+const problemTag = (schema: Schema.Top) => {
+  expect(SchemaAST.isObjects(schema.ast)).toBe(true);
+  const tag = SchemaAST.isObjects(schema.ast)
+    ? schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type
+    : undefined;
+  expect(tag !== undefined && SchemaAST.isLiteral(tag)).toBe(true);
+  return tag !== undefined && SchemaAST.isLiteral(tag) ? tag.literal : undefined;
+};
 
 const principal = {
   authBindingId: '70000000-0000-4000-8000-000000000001',
@@ -42,7 +53,7 @@ it.effect('decodes the exact versioned public assertion contract', () =>
   Effect.gen(function* testScenario1() {
     expect(yield* decodeGatewayContextClaims(claims)).toEqual(claims);
     expect(
-      Schema.decodeUnknownSync(GatewayContextProtectedHeaderSchema)({
+      yield* Schema.decodeUnknownEffect(GatewayContextProtectedHeaderSchema)({
         alg: 'EdDSA',
         kid: 'current-2026-08',
         typ: 'JWT',
@@ -53,12 +64,12 @@ it.effect('decodes the exact versioned public assertion contract', () =>
       typ: 'JWT',
     });
     expect(
-      Schema.decodeUnknownSync(GatewayContextRequestSchema)({
+      yield* Schema.decodeUnknownEffect(GatewayContextRequestSchema)({
         audience: 'inventory-stock',
       }),
     ).toEqual({ audience: 'inventory-stock' });
     expect(
-      Schema.decodeUnknownSync(GatewayContextResponseSchema)({
+      yield* Schema.decodeUnknownEffect(GatewayContextResponseSchema)({
         expiresAt: claims.exp,
         token: 'header.payload.signature',
       }),
@@ -145,5 +156,45 @@ it('publishes the exact API-key credential boundary and failure statuses', () =>
   expect(Object.keys(ApiKeyGatewayHeadersSchema.fields)).toEqual(['x-api-key']);
   expect(endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext)).toEqual([
     400, 401, 403, 429, 500, 503,
+  ]);
+});
+
+it('preserves migrated gateway Problem Details shapes and ordered endpoint membership', () => {
+  const rateLimited = {
+    _tag: 'GatewayRateLimitedProblem',
+    detail: 'Retry after the published delay.',
+    retryAfterSeconds: 30,
+    status: 429,
+    title: 'Gateway rate limited',
+    type: 'https://ontos.dev/problems/gateway-rate-limited',
+  } as const;
+  const unavailable = {
+    _tag: 'GatewayUnavailableProblem',
+    detail: 'The gateway is temporarily unavailable.',
+    retryable: true,
+    status: 503,
+    title: 'Gateway unavailable',
+    type: 'https://ontos.dev/problems/gateway-unavailable',
+  } as const;
+  expect(Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema)(rateLimited)).toEqual(
+    rateLimited,
+  );
+  expect(Schema.decodeUnknownSync(GatewayUnavailableProblemSchema)(unavailable)).toEqual(
+    unavailable,
+  );
+  expect(() =>
+    Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema, { onExcessProperty: 'error' })({
+      ...rateLimited,
+      internalDiagnostic: 'must-not-pass',
+    }),
+  ).toThrow();
+  const actual = [...GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext.error];
+  expect(actual.map(problemTag)).toEqual([
+    'GatewayAuthenticationRequiredProblem',
+    'GatewayAudienceInvalidProblem',
+    'GatewayForbiddenProblem',
+    'GatewayRateLimitedProblem',
+    'GatewayUnavailableProblem',
+    'GatewayInternalProblem',
   ]);
 });

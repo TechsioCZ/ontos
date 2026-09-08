@@ -25,7 +25,7 @@ import {
   PartyOfficialIdentifierDetailUnavailableProblemSchema,
 } from '../shared/apis/party-official-identifier-detail.ts';
 import { partyOfficialIdentifierDetailRead } from '../src/api/party-official-identifier-detail.read.ts';
-import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 const problemStatus = {
   authentication: 401,
@@ -102,17 +102,12 @@ const policyProblem = (status: 409 | 422) =>
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-type VerificationProblem =
-  | ReturnType<typeof problem.authentication>
-  | ReturnType<typeof problem.unavailable>;
 const isAuthenticationProblem = Schema.is(PartyOfficialIdentifierDetailAuthenticationProblemSchema);
 const isInternalReadError = Schema.is(
   Schema.Union([ReadEvidenceValidationError, ReadHandlerExecutionError, ReadResultValidationError]),
 );
 const hasInternalReadFailure = (cause: Cause.Cause<ReadCoreError>) =>
   cause.reasons.some((reason) => Cause.isFailReason(reason) && isInternalReadError(reason.error));
-const failAuthentication = () =>
-  bearerChallenge.pipe(Effect.andThen(Effect.fail<VerificationProblem>(problem.authentication())));
 const readProblem = (error: ReadCoreError) =>
   Match.value(error).pipe(
     Match.tags({
@@ -151,19 +146,12 @@ export const partyOfficialIdentifierDetailReadApiLive = HttpApiBuilder.group(
         if (correlationId === undefined || correlationId.trim().length === 0) {
           return yield* Effect.fail(problem.invalid());
         }
-        const principal = yield* verifyOperationPrincipal(
+        const principal = yield* authenticateOperationPrincipal(
           Redacted.make(request.headers['authorization']),
-        ).pipe(
-          Effect.catchTags({
-            ActionPrincipalConfigurationError: () =>
-              Effect.fail<VerificationProblem>(problem.unavailable()),
-            ActionPrincipalExpiredError: failAuthentication,
-            ActionPrincipalInvalidError: failAuthentication,
-            ActionPrincipalMissingError: failAuthentication,
-            ActionPrincipalScopeError: failAuthentication,
-            ActionPrincipalUnavailableError: () =>
-              Effect.fail<VerificationProblem>(problem.unavailable()),
-          }),
+          {
+            authentication: problem.authentication,
+            unavailable: problem.unavailable,
+          },
         );
         const runtime = yield* ReadRuntime;
         return yield* runtime

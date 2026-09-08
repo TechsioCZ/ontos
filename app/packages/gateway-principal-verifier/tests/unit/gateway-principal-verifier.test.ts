@@ -86,6 +86,54 @@ it.effect('an audience-bound verifier accepts only its exact topology app ID', (
   }),
 );
 
+it.effect('Bearer scheme matching is case insensitive without changing the signed token', () =>
+  Effect.gen(function* verifyBearerCaseVariants() {
+    const fixture = yield* makeFixture('party-registry');
+    const verifier = bindGatewayPrincipalVerifier('party-registry');
+    yield* Effect.forEach(
+      ['Bearer', 'bearer', 'BEARER', 'bEaReR'],
+      (scheme) =>
+        Effect.gen(function* verifyBearerScheme() {
+          const verified = yield* verifier.verify(Redacted.make(`${scheme} ${fixture.token}`), {
+            currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+            environment: fixture.environment,
+          });
+          expect(verified).toEqual(principal);
+        }),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
+
+it.effect('case insensitive Bearer matching still rejects malformed authorization headers', () =>
+  Effect.gen(function* rejectMalformedBearerHeaders() {
+    const fixture = yield* makeFixture('party-registry');
+    const verifier = bindGatewayPrincipalVerifier('party-registry');
+    yield* Effect.forEach(
+      [
+        ` bearer ${fixture.token}`,
+        `bearer  ${fixture.token}`,
+        `bearer\t${fixture.token}`,
+        `bearer ${fixture.token} `,
+        `bearer ${fixture.token} extra`,
+        'bearer ',
+        `Basic ${fixture.token}`,
+      ],
+      (authorization) =>
+        Effect.gen(function* rejectMalformedBearerHeader() {
+          const failure = yield* Effect.flip(
+            verifier.verify(Redacted.make(authorization), {
+              currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+              environment: fixture.environment,
+            }),
+          );
+          expect(isInvalidError(failure)).toBe(true);
+        }),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
+
 it.effect('empty and malformed audience bindings fail closed as configuration errors', () =>
   Effect.gen(function* rejectMalformedBindings() {
     const fixture = yield* makeFixture('party-registry');

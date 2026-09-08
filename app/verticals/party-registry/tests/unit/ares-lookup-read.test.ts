@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Read-only architecture assertions use native filesystem promises. expires: 2026-12-31.
-import { expect, it } from '@app/effect-rstest';
+import { assert, expect, it } from '@app/effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
 
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Schema, SchemaAST, Predicate } from 'effect';
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   AresLookupApi,
@@ -11,6 +11,8 @@ import {
   AresLookupInternalProblemSchema,
   AresLookupInvalidProblemSchema,
   AresLookupNotFoundProblemSchema,
+  AresLookupPolicyConflictProblemSchema,
+  AresLookupPolicyProblemSchema,
   AresLookupRequestSchema,
   AresLookupResponseSchema,
   AresLookupUnavailableProblemSchema,
@@ -45,6 +47,13 @@ const evidenceWire = {
     registeredAddress: null,
   },
 } as const;
+const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
+  assert.isOk(SchemaAST.isObjects(schema.ast));
+  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
+  assert.isOk(tag !== undefined && SchemaAST.isLiteral(tag));
+  return tag.literal;
+};
+
 const evidence = Schema.decodeUnknownSync(AresLookupResponseSchema)(evidenceWire);
 
 const scope = Object.freeze({
@@ -171,6 +180,8 @@ it.effect('publishes safe status-matched Problem Details and no provider payload
       [AresLookupAuthenticationProblemSchema, 'AresLookupAuthenticationProblem', 401],
       [AresLookupForbiddenProblemSchema, 'AresLookupForbiddenProblem', 403],
       [AresLookupNotFoundProblemSchema, 'AresLookupNotFoundProblem', 404],
+      [AresLookupPolicyConflictProblemSchema, 'AresLookupPolicyConflictProblem', 409],
+      [AresLookupPolicyProblemSchema, 'AresLookupPolicyProblem', 422],
       [AresLookupUnavailableProblemSchema, 'AresLookupUnavailableProblem', 503],
       [AresLookupInternalProblemSchema, 'AresLookupInternalProblem', 500],
     ] as const;
@@ -193,7 +204,21 @@ it.effect('publishes safe status-matched Problem Details and no provider payload
               type: 'https://ontos.dev/problems/test',
             };
       expect((yield* Schema.decodeUnknownEffect(schema)(fixture)).status).toBe(status);
+      expect(schema.ast.annotations?.['~httpApiEncoding']).toEqual({
+        _tag: 'Json',
+        contentType: 'application/problem+json',
+      });
     }
+    expect([...AresLookupApi.groups.aresLookup.endpoints.execute.error].map(problemTag)).toEqual([
+      'AresLookupInvalidProblem',
+      'AresLookupAuthenticationProblem',
+      'AresLookupForbiddenProblem',
+      'AresLookupNotFoundProblem',
+      'AresLookupPolicyConflictProblem',
+      'AresLookupPolicyProblem',
+      'AresLookupUnavailableProblem',
+      'AresLookupInternalProblem',
+    ]);
     expect(yield* Schema.decodeUnknownEffect(AresLookupRequestSchema)({ ico: '48039101' })).toEqual(
       {
         ico: '48039101',

@@ -1,6 +1,7 @@
-// expect-count: 17
+// expect-count: 22
 import assert, { strictEqual as equal } from 'node:assert/strict';
-import { expect, expect as check } from '@rstest/core';
+import { assert as rstestAssert, expect, expect as check } from '@rstest/core';
+import { assert as effectAssert } from '@app/effect-rstest';
 import * as testing from '@rstest/core';
 import * as assertions from 'node:assert/strict';
 import { strict as strictAssert } from 'node:assert';
@@ -26,3 +27,11 @@ assertions.deepStrictEqual(error._tag, 'Missing');
 strictAssert.equal(error._tag, 'Missing');
 check(error._tag).not.toBe('Missing');
 testing.expect(error._tag).toEqual('Missing');
+
+rstestAssert.strictEqual(error._tag, 'Missing');
+effectAssert.deepEqual(error._tag, 'Missing');
+
+assert.equal(flag ? error._tag : other._tag, 'Missing');
+assert.deepEqual(errors.map(error => { return error._tag; }), ['Missing']);
+const projectTag = error => { if (flag) return error._tag; return other._tag; };
+assert.deepEqual(errors.map(projectTag), ['Missing']);
