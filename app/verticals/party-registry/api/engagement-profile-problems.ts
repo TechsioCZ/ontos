@@ -1,6 +1,6 @@
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpEffect, HttpServerResponse } from '@modern-js/plugin-bff/effect-edge';
-import { Match, Predicate, Result, Schema } from 'effect';
+import { Match, Result, Schema } from 'effect';
 
 import {
   ContactsAuthenticationProblemSchema,
@@ -121,25 +121,13 @@ export const engagementProblem = {
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
-export const failEngagementProblem = (mapped: ContactsProblem) =>
-  (Predicate.isTagged(mapped, 'ContactsAuthenticationProblem')
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(mapped)));
+export const isEngagementAuthenticationProblem = Schema.is(ContactsAuthenticationProblemSchema);
+export const failEngagementProblem = <Problem extends ContactsProblem>(mapped: Problem) =>
+  (isEngagementAuthenticationProblem(mapped) ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(mapped)),
+  );
 
-const ContactsProblemSchema = Schema.Union([
-  ContactsAuthenticationProblemSchema,
-  ContactsConflictProblemSchema,
-  ContactsForbiddenProblemSchema,
-  ContactsInternalProblemSchema,
-  ContactsInvalidRequestProblemSchema,
-  ContactsNotFoundProblemSchema,
-  ContactsPreconditionRequiredProblemSchema,
-  ContactsUnavailableProblemSchema,
-]);
-const isContactsProblem = Schema.is(ContactsProblemSchema);
-
-const mapEngagementActionProblem = (error: EngagementActionError): ContactsProblem =>
+export const mapEngagementActionProblem = (error: EngagementActionError): ContactsProblem =>
   Match.value(error).pipe(
     Match.tags({
       ActionAlreadyCommitted: () =>
@@ -176,16 +164,5 @@ const mapEngagementActionProblem = (error: EngagementActionError): ContactsProbl
     Match.exhaustive,
   );
 
-export const recoverEngagementFailure = (
-  error: EngagementActionError | ContactsProblem | undefined,
-) => {
-  if (error === undefined) {
-    return failEngagementProblem(engagementProblem.internal());
-  }
-  return failEngagementProblem(
-    isContactsProblem(error) ? error : mapEngagementActionProblem(error),
-  );
-};
-
 export const mapEngagementAttachProblem = (error: ContactsProblem): EngagementAttachProblem =>
-  Predicate.isTagged(error, 'ContactsNotFoundProblem') ? engagementProblem.internal() : error;
+  Schema.is(ContactsNotFoundProblemSchema)(error) ? engagementProblem.internal() : error;

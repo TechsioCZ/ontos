@@ -279,6 +279,7 @@ export interface ActionBoundaryScaffoldResult {
   readonly appId: string;
   readonly clientPath: string;
   readonly redemptionPath: string;
+  readonly runnerPath: string;
   readonly serverPath: string;
 }
 

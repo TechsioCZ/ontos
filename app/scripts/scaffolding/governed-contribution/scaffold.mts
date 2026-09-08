@@ -57,10 +57,7 @@ import {
   updateMutation,
   withExactDependencies,
 } from '../shared.mts';
-import {
-  hasGeneratedGovernedServerContract,
-  hasValidGovernedHttpCompositionRoot,
-} from '../../generated-governed-http-boundary.mts';
+import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { planActionBoundaryScaffold } from '../microvertical-action-boundary/scaffold.mts';
 import {
   hasGeneratedOperationGatewayContract,
@@ -1096,6 +1093,11 @@ const patchSlots = (
       identity === undefined
         ? []
         : allOwnerEntries.filter(({ entry }) => slotEntryIdentity(entry) === identity);
+    if (identityMatches.some((match) => match.start !== start)) {
+      return raiseScaffoldFailure(
+        `generated owner slot contains mismatched identity in the wrong contribution category: ${identity}`,
+      );
+    }
     if (identityMatches.length > 1) {
       return raiseScaffoldFailure(`generated owner slot contains duplicate identity: ${identity}`);
     }
@@ -1385,9 +1387,6 @@ export const planGovernedContributionScaffold = Effect.fn('GovernedContributionS
       const serverMutation = yield* createOrAcceptGeneratedMutationEffect(
         serverPath,
         renderGovernedServer(kind, name),
-        (current) =>
-          current.startsWith(`${generatedHeader(kind)}\n`) &&
-          hasGeneratedGovernedServerContract(current, `${toCamelCase(name)}ReadApiLive`),
       );
       mutations.push(
         ...EffectArray.getSomes([serverMutation]),
