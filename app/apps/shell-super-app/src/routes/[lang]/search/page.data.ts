@@ -1,7 +1,8 @@
-/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- The loader preserves the typed Effect error channel until the framework boundary. */
-import { Effect } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
+import { Url, UrlParams } from 'effect/unstable/http';
 import type { ShellSearchResponse } from '../../../../shared/api.ts';
-import { runEffectRequest, searchResources } from '../../../api/auth-client.ts';
+import { searchResources } from '../../../api/auth-client.ts';
+import { runBrowserEffect } from '../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../page.data.ts';
 import type { HomePageModel } from '../page.data.ts';
@@ -23,43 +24,77 @@ export type SearchPageModel =
       readonly state: 'ready';
     };
 
-export const loader = async ({ request }: SearchLoaderArguments): Promise<SearchPageModel> => {
-  const url = new URL(request.url);
-  const query = url.searchParams.get('q')?.trim() ?? '';
-  const shell = await loadHomePageModel(request);
-  if (shell.state !== 'authenticated') {
-    return {
-      query,
-      shell,
-      state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-    };
-  }
-  if (shell.contextState !== 'authenticated') {
-    return { query, shell, state: 'selection_required' };
-  }
-  if (query.length === 0) {
-    return {
-      query,
-      response: { partial: false, results: [] },
-      shell,
-      state: 'ready',
-    };
-  }
-  return runEffectRequest(
-    shellAuthenticationClientOptionsFromRequest(request).pipe(
-      Effect.flatMap((options) => searchResources({ query }, options)),
-      Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),
-      Effect.catch((error) =>
-        Effect.succeed<SearchPageModel>({
-          query,
-          shell,
-          state:
-            error._tag === 'ShellSelectionRequiredProblem' ||
-            error._tag === 'ShellAuthenticationRequiredProblem'
-              ? 'selection_required'
-              : 'unavailable',
-        }),
-      ),
+export const SearchRouteSearch = Schema.Struct({ q: Schema.optionalKey(Schema.String) });
+export const SearchRouteSearchStandard = Schema.toStandardSchemaV1(SearchRouteSearch);
+
+const searchFromRequest = (request: Request): typeof SearchRouteSearch.Type => {
+  const query = UrlParams.getFirst(Url.urlParams(new URL(request.url)), 'q');
+  return Option.getOrElse(
+    Schema.decodeUnknownOption(SearchRouteSearch)(Option.isSome(query) ? { q: query.value } : {}),
+    () => ({}),
+  );
+};
+
+export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageModel> => {
+  const query = (searchFromRequest(request).q ?? '').trim();
+  return runBrowserEffect(
+    Effect.tryPromise(() => loadHomePageModel(request)).pipe(
+      Effect.timeout('30 seconds'),
+      Effect.flatMap((shell) => {
+        if (shell.state !== 'authenticated') {
+          return Effect.succeed<SearchPageModel>({
+            query,
+            shell,
+            state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+          });
+        }
+        if (shell.contextState !== 'authenticated') {
+          return Effect.succeed<SearchPageModel>({ query, shell, state: 'selection_required' });
+        }
+        if (query.length === 0) {
+          return Effect.succeed<SearchPageModel>({
+            query,
+            response: { partial: false, results: [] },
+            shell,
+            state: 'ready',
+          });
+        }
+        return shellAuthenticationClientOptionsFromRequest(request).pipe(
+          Effect.flatMap((options) => searchResources({ query }, options)),
+          Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.succeed<SearchPageModel>({
+                query,
+                shell,
+                state: Match.value(error).pipe(
+                  Match.tag(
+                    'ShellAuthenticationRequiredProblem',
+                    'ShellSelectionRequiredProblem',
+                    () => 'selection_required' as const,
+                  ),
+                  Match.tag(
+                    'ConfigError',
+                    'HttpClientError',
+                    'SchemaError',
+                    'ShellCapabilityUnavailableProblem',
+                    'ShellInternalProblem',
+                    'ShellInvalidRequestProblem',
+                    'ShellPolicyConflictProblem',
+                    'ShellPolicyUnprocessableProblem',
+                    'ShellPreconditionRequiredProblem',
+                    'ShellRateLimitedProblem',
+                    'ShellTargetForbiddenProblem',
+                    'ShellTargetNotFoundProblem',
+                    () => 'unavailable' as const,
+                  ),
+                  Match.exhaustive,
+                ),
+              }),
+            onSuccess: Effect.succeed,
+          }),
+        );
+      }),
     ),
   );
 };

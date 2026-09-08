@@ -1,0 +1,18 @@
+{
+  "jsPlugins": [{ "name": "effect-native", "specifier": "../../fixture-plugin.ts" }],
+  "categories": { "correctness": "off" },
+  "rules": {
+    "effect-native/no-effect-provide-in-library": [
+      "error",
+      {
+        "includeTests": true,
+        "rootFiles": [
+          "apps/*/api/index.ts",
+          "verticals/*/api/index.ts",
+          "packages/core-runtime/src/outbox/process.ts",
+          "**/valid/allowlisted-composition-root.ts"
+        ]
+      }
+    ]
+  }
+}

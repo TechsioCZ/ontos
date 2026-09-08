@@ -1,57 +1,19 @@
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { matchInstalledOutboxMessagesOnce } from '../../api/modules/installed-outbox-matcher.ts';
 
-const contract = (
-  appId: string,
-  moduleId: string,
-  outboxSubscriptions: readonly object[] = [],
-) => ({
-  deployment: { appId, buildMarker: `${appId}-build` },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: ['inactive', 'active'],
-    },
-    module: {
-      description: `${moduleId} module`,
-      displayName: moduleId,
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions },
-  schemaVersion: '2',
-});
+const contract = (appId: string, moduleId: string, outboxSubscriptions: readonly object[] = []) =>
+  makeModuleContractFixture({ appId, moduleId, outboxSubscriptions });
 
 test('passes a dormant subscription with an absent producer to Core matching', async () => {
   const subscription = {
     consumerModuleKey: 'property.registry',
     entrypoint: {
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'property.registry.document-projector',
       moduleKey: 'property.registry',
       role: 'worker',
@@ -68,7 +30,7 @@ test('passes a dormant subscription with an absent producer to Core matching', a
     },
   ]);
   let received: unknown;
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     matchInstalledOutboxMessagesOnce(catalog, (input) => {
       received = input.subscriptions;
       return Effect.succeed({ deliveriesCreated: 1, messagesMatched: 1 });

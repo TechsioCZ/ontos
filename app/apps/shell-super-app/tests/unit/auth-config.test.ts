@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
 import { parseAuthConfig } from '../../api/auth/config.ts';
@@ -10,8 +11,8 @@ const validEnvironment = {
   DATABASE_URL: 'postgresql://ontos:ontos@localhost:5433/ontos',
 };
 
-test('parses trusted origins and derives local cookie security', () =>
-  Effect.runPromise(parseAuthConfig(validEnvironment)).then((configuration) => {
+test('parses trusted origins and derives local cookie security', async () =>
+  await runEffectTestPromise(parseAuthConfig(validEnvironment)).then((configuration) => {
     expect(configuration.secureCookies).toBe(false);
     expect(configuration.trustedOrigins).toEqual([
       'http://localhost:3020',
@@ -19,9 +20,9 @@ test('parses trusted origins and derives local cookie security', () =>
     ]);
   }));
 
-test('requires a strong secret and PostgreSQL URL in the typed error channel', () =>
-  Promise.all([
-    Effect.runPromise(
+test('requires a strong secret and PostgreSQL URL in the typed error channel', async () =>
+  await Promise.all([
+    runEffectTestPromise(
       Effect.flip(
         parseAuthConfig({
           ...validEnvironment,
@@ -29,7 +30,7 @@ test('requires a strong secret and PostgreSQL URL in the typed error channel', (
         }),
       ),
     ),
-    Effect.runPromise(
+    runEffectTestPromise(
       Effect.flip(
         parseAuthConfig({
           ...validEnvironment,
@@ -43,10 +44,8 @@ test('requires a strong secret and PostgreSQL URL in the typed error channel', (
   }));
 
 test('keeps gateway signing configuration independent from Better Auth configuration', async () => {
-  const authentication = await Effect.runPromise(parseAuthConfig(validEnvironment));
-  const gatewayError = await Effect.runPromise(
-    Effect.flip(parseGatewayIssuerConfig(validEnvironment)),
-  );
+  const authentication = await runEffectTestPromise(parseAuthConfig(validEnvironment));
+  const gatewayError = await runEffectTestPromise(Effect.flip(parseGatewayIssuerConfig({})));
 
   expect(authentication.baseUrl).toBe('http://localhost:3020');
   expect(gatewayError._tag).toBe('GatewayIssuerConfigError');

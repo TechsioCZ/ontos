@@ -1,23 +1,26 @@
-// @effect-diagnostics lazyEffect:off
 import { Context, Effect, Layer } from 'effect';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { decodeTrustedPrincipalContext } from '../auth/system-principal-context-provenance.ts';
 import type { ModuleEntrypointDescriptor } from './module-entrypoint.ts';
-import { ModuleStateGate, ModuleStateGateLive } from './module-state-gate.ts';
+import { ModuleStateGate } from './module-state-gate.ts';
 import type { ModuleStateGateService, ModuleStateSnapshot } from './module-state-gate.ts';
 import { ModuleStateCheckUnavailableError } from './module-state-gate-errors.ts';
 import type { ModuleStateGateError } from './module-state-gate-errors.ts';
 
-const unavailable = () =>
-  new ModuleStateCheckUnavailableError({
+const unavailable = (cause?: unknown) => {
+  const error = new ModuleStateCheckUnavailableError({
     code: 'module_state_check_unavailable',
     reason: 'Module state could not be checked safely',
   });
+  return cause === undefined
+    ? error
+    : Object.defineProperty(error, 'cause', { configurable: true, value: cause });
+};
 
 export interface RunGatedModuleEntrypointInput<Value, AuthorizationError, LoadError, Requirements> {
   readonly authorize: Effect.Effect<void, AuthorizationError, Requirements>;
   readonly entrypoint: ModuleEntrypointDescriptor;
-  readonly load: () => Effect.Effect<Value, LoadError, Requirements>;
+  readonly load: Effect.Effect<Value, LoadError, Requirements>;
   readonly snapshot: ModuleStateSnapshot;
 }
 
@@ -36,8 +39,8 @@ export interface ModuleEntrypointGatewayService {
   ) => Effect.Effect<Value, AuthorizationError | LoadError | ModuleStateGateError, Requirements>;
 }
 
-export const makeModuleEntrypointGateway = (
-  gate: ModuleStateGateService,
+export const makeModuleEntrypointGateway = <Gate extends ModuleStateGateService>(
+  gate: Gate,
 ): ModuleEntrypointGatewayService => {
   const prepareSnapshotInput = <Input>(
     context: Input,
@@ -56,7 +59,7 @@ export const makeModuleEntrypointGateway = (
     run: (input) =>
       gate
         .check(input.snapshot, input.entrypoint)
-        .pipe(Effect.andThen(input.authorize), Effect.andThen(Effect.suspend(input.load))),
+        .pipe(Effect.andThen(input.authorize), Effect.andThen(input.load)),
   };
 };
 
@@ -68,4 +71,4 @@ export class ModuleEntrypointGateway extends Context.Service<
 export const ModuleEntrypointGatewayLive = Layer.effect(
   ModuleEntrypointGateway,
   ModuleStateGate.pipe(Effect.map(makeModuleEntrypointGateway)),
-).pipe(Layer.provide(ModuleStateGateLive));
+);

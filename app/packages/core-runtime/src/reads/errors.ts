@@ -1,55 +1,28 @@
-/* eslint-disable max-classes-per-file -- Closed governed-read error vocabulary. */
-import { Schema } from 'effect';
 import type { OperationContextError } from '../operations/errors.ts';
 import type { ModuleStateGateError } from '../modules/module-state-gate-errors.ts';
+import type { ReadEvidencePersistenceError } from './read-evidence-persistence-error.ts';
+import type { ReadEvidenceValidationError } from './read-evidence-validation-error.ts';
+import type { ReadHandlerExecutionError } from './read-handler-execution-error.ts';
+import type { ReadHandlerNotFound } from './read-handler-not-found.ts';
+import type { ReadHandlerUnavailable } from './read-handler-unavailable.ts';
+import type { ReadInputValidationError } from './read-input-validation-error.ts';
+import type { ReadPermissionDenied } from './read-permission-denied.ts';
+import type { ReadPermissionUnavailable } from './read-permission-unavailable.ts';
+import type { ReadPolicyDenied } from './read-policy-denied.ts';
+import type { ReadPolicyEvaluationError } from './read-policy-evaluation-error.ts';
+import type { ReadResultValidationError } from './read-result-validation-error.ts';
 
-const reason = { reason: Schema.String } as const;
-export class ReadInputValidationError extends Schema.TaggedError<ReadInputValidationError>()(
-  'ReadInputValidationError',
-  { code: Schema.Literal('read_input_invalid'), ...reason },
-) {}
-export class ReadResultValidationError extends Schema.TaggedError<ReadResultValidationError>()(
-  'ReadResultValidationError',
-  { code: Schema.Literal('read_result_invalid'), ...reason },
-) {}
-export class ReadPermissionDenied extends Schema.TaggedError<ReadPermissionDenied>()(
-  'ReadPermissionDenied',
-  { code: Schema.Literal('read_permission_denied'), ...reason },
-) {}
-export class ReadPermissionUnavailable extends Schema.TaggedError<ReadPermissionUnavailable>()(
-  'ReadPermissionUnavailable',
-  { code: Schema.Literal('read_permission_unavailable'), ...reason },
-) {}
-export class ReadPolicyDenied extends Schema.TaggedError<ReadPolicyDenied>()('ReadPolicyDenied', {
-  code: Schema.Literal('read_policy_denied'),
-  httpStatus: Schema.Literals([409, 422]),
-  policyReasonCode: Schema.String,
-  ...reason,
-}) {}
-export class ReadPolicyEvaluationError extends Schema.TaggedError<ReadPolicyEvaluationError>()(
-  'ReadPolicyEvaluationError',
-  { code: Schema.Literal('read_policy_evaluation_failed'), ...reason },
-) {}
-export class ReadEvidencePersistenceError extends Schema.TaggedError<ReadEvidencePersistenceError>()(
-  'ReadEvidencePersistenceError',
-  { code: Schema.Literal('read_evidence_persistence_failed'), ...reason },
-) {}
-export class ReadEvidenceValidationError extends Schema.TaggedError<ReadEvidenceValidationError>()(
-  'ReadEvidenceValidationError',
-  { code: Schema.Literal('read_evidence_invalid'), ...reason },
-) {}
-export class ReadHandlerExecutionError extends Schema.TaggedError<ReadHandlerExecutionError>()(
-  'ReadHandlerExecutionError',
-  { code: Schema.Literal('read_handler_execution_failed'), ...reason },
-) {}
-export class ReadHandlerUnavailable extends Schema.TaggedError<ReadHandlerUnavailable>()(
-  'ReadHandlerUnavailable',
-  { code: Schema.Literal('read_handler_unavailable'), ...reason },
-) {}
-export class ReadHandlerNotFound extends Schema.TaggedError<ReadHandlerNotFound>()(
-  'ReadHandlerNotFound',
-  { code: Schema.Literal('read_handler_not_found'), ...reason },
-) {}
+export { ReadEvidencePersistenceError } from './read-evidence-persistence-error.ts';
+export { ReadEvidenceValidationError } from './read-evidence-validation-error.ts';
+export { ReadHandlerExecutionError } from './read-handler-execution-error.ts';
+export { ReadHandlerNotFound } from './read-handler-not-found.ts';
+export { ReadHandlerUnavailable } from './read-handler-unavailable.ts';
+export { ReadInputValidationError } from './read-input-validation-error.ts';
+export { ReadPermissionDenied } from './read-permission-denied.ts';
+export { ReadPermissionUnavailable } from './read-permission-unavailable.ts';
+export { ReadPolicyDenied } from './read-policy-denied.ts';
+export { ReadPolicyEvaluationError } from './read-policy-evaluation-error.ts';
+export { ReadResultValidationError } from './read-result-validation-error.ts';
 
 export type ReadCoreError =
   | ModuleStateGateError

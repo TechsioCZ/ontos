@@ -1,0 +1,21 @@
+{
+  "patterns": [
+    "{apps,verticals,packages,scripts,tools,quality-audit}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+    "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
+  ],
+  "exclude": [
+    "**/node_modules/**",
+    "**/@mf-types/**",
+    "**/dist/**",
+    "**/dist-cloudflare/**",
+    "**/cloudflare-dist/**",
+    "**/.output/**",
+    "**/.modern/**",
+    "**/.modernjs/**",
+    "**/modern-tanstack/**",
+    "**/routeTree.gen.*",
+    "tools/oxlint/effect-native/tests/fixtures/**",
+    "**/.env",
+    "**/.env.*"
+  ]
+}

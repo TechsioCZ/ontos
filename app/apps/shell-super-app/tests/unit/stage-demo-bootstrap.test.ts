@@ -1,3 +1,4 @@
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { readFile } from 'node:fs/promises';
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
@@ -20,7 +21,7 @@ const validEnvironment = {
 } as const;
 
 test('accepts the complete stage-only demo bootstrap configuration', () => {
-  expect(Effect.runSync(parseStageDemoBootstrapConfig(validEnvironment))).toEqual({
+  expect(runEffectTestSync(parseStageDemoBootstrapConfig(validEnvironment))).toEqual({
     accounts: [
       {
         email: 'demo@test.com',
@@ -56,7 +57,7 @@ test('defines both exact stage accounts without storing their passwords', () => 
 
 test('refuses to provision outside stage or without an operator-supplied password', () => {
   expect(
-    Effect.runSync(
+    runEffectTestSync(
       Effect.flip(
         parseStageDemoBootstrapConfig({
           ...validEnvironment,
@@ -66,7 +67,7 @@ test('refuses to provision outside stage or without an operator-supplied passwor
     ),
   ).toMatchObject({ reason: expect.stringMatching(/stage environment/u) });
   expect(
-    Effect.runSync(
+    runEffectTestSync(
       Effect.flip(
         parseStageDemoBootstrapConfig({
           ...validEnvironment,
@@ -76,7 +77,7 @@ test('refuses to provision outside stage or without an operator-supplied passwor
     ),
   ).toMatchObject({ reason: expect.stringMatching(/STAGE_DEMO_PASSWORD/u) });
   expect(
-    Effect.runSync(
+    runEffectTestSync(
       Effect.flip(
         parseStageDemoBootstrapConfig({
           ...validEnvironment,
@@ -89,14 +90,19 @@ test('refuses to provision outside stage or without an operator-supplied passwor
 
 test('treats an exact record as idempotent and rejects conflicting state', () => {
   const expected = { name: 'Techsio', slug: 'techsio', status: 'active' } as const;
-  expect(classifyExactStageDemoRecord('tenant', undefined, expected)).toBe('create');
-  expect(classifyExactStageDemoRecord('tenant', expected, expected)).toBe('existing');
-  try {
-    classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected);
-    throw new Error('Expected a stage demo conflict');
-  } catch (error) {
-    expect(error).toMatchObject({ reason: expect.stringMatching(/conflicts/u) });
-  }
+  expect(runEffectTestSync(classifyExactStageDemoRecord('tenant', undefined, expected))).toBe(
+    'create',
+  );
+  expect(runEffectTestSync(classifyExactStageDemoRecord('tenant', expected, expected))).toBe(
+    'existing',
+  );
+  expect(
+    runEffectTestSync(
+      Effect.flip(
+        classifyExactStageDemoRecord('tenant', { ...expected, name: 'Other tenant' }, expected),
+      ),
+    ),
+  ).toMatchObject({ reason: expect.stringMatching(/conflicts/u) });
 });
 
 test('keeps the demo bootstrap operator-invoked and excludes its password from source', async () => {

@@ -1,6 +1,5 @@
-// @effect-diagnostics anyUnknownInErrorContext:off catchUnfailableEffect:off effectSucceedWithVoid:off schemaSyncInEffect:off unnecessaryPipeChain:off
-/* eslint-disable complexity, max-classes-per-file, no-negated-condition, promise/prefer-await-to-then, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module. */
 import type {
+  ContextAccessResult,
   ContextAccessService,
   InstalledModuleCatalog,
   TenantModuleState,
@@ -8,31 +7,85 @@ import type {
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
-import { Context, Effect, Exit, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import {
+  ResourceRefSchema as SharedResourceRefSchema,
+  ShellTimelineEntrySchema as SharedShellTimelineEntrySchema,
+} from '../../shared/api.ts';
+import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/api.ts';
+import type { InstalledModuleCatalogError } from './installed-module-catalog.ts';
 
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
+const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
+const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('LegalEntityId'),
+);
+type PartyRole = typeof PartyRoleSchema.Type;
 
-export const ResourceRefSchema = Schema.Struct({
-  moduleId: stableKey,
-  resourceId: stableKey,
-  resourceType: stableKey,
-});
+export const ResourceRefSchema = SharedResourceRefSchema;
 export type ResourceRef = Schema.Schema.Type<typeof ResourceRefSchema>;
 
-export const ShellSearchResultSchema = Schema.Struct({
+const LegacyShellSearchResultSchema = Schema.Struct({
   ref: ResourceRefSchema,
   title: stableKey,
 });
-export type ShellSearchResult = Schema.Schema.Type<typeof ShellSearchResultSchema>;
-
-export const ShellTimelineEntrySchema = Schema.Struct({
-  occurredAt: Schema.String.check(Schema.isMinLength(1)),
-  summary: stableKey,
-  timelineEntryId: stableKey,
+const PartyShellSearchResultSchema = Schema.Struct({
+  archived: Schema.Boolean,
+  matchedViaAlias: Schema.Boolean,
+  ref: ResourceRefSchema.pipe(
+    Schema.check(
+      Schema.makeFilter((ref) =>
+        ref.tenantId === undefined ? 'Party search result requires Tenant identity' : undefined,
+      ),
+    ),
+  ),
+  title: stableKey,
 });
-export type ShellTimelineEntry = Schema.Schema.Type<typeof ShellTimelineEntrySchema>;
+const CounterpartyShellSearchResultSchema = Schema.Struct({
+  collision: Schema.optionalKey(
+    Schema.Struct({
+      counterpartyRefs: Schema.Array(ResourceRefSchema),
+      kind: Schema.Literal('CANONICAL_PARTY_COUNTERPARTY_COLLISION'),
+    }),
+  ),
+  currentRoles: Schema.Array(PartyRoleSchema),
+  legalEntity: Schema.Struct({
+    legalEntityId: LegalEntityIdSchema,
+    tenantId: TenantIdSchema,
+  }),
+  party: Schema.Struct({
+    archived: Schema.Boolean,
+    matchedViaAlias: Schema.Boolean,
+    ref: ResourceRefSchema,
+    title: stableKey,
+  }),
+  ref: ResourceRefSchema.pipe(
+    Schema.check(
+      Schema.makeFilter((ref) =>
+        ref.tenantId === undefined
+          ? 'Counterparty search result requires Tenant identity'
+          : undefined,
+      ),
+    ),
+  ),
+});
+const RawShellSearchResultSchema = Schema.Union([
+  CounterpartyShellSearchResultSchema,
+  PartyShellSearchResultSchema,
+  LegacyShellSearchResultSchema,
+]);
+export type ShellSearchResult = SharedShellSearchResult;
 
-export const ShellResourceDetailSchema = Schema.Struct({
+export interface ShellSearchRequest {
+  readonly includeArchived?: boolean;
+  readonly query: string;
+  readonly role?: PartyRole;
+}
+
+export const ShellTimelineEntrySchema = SharedShellTimelineEntrySchema;
+
+const ShellResourceDetailSchema = Schema.Struct({
   fields: Schema.Array(
     Schema.Struct({
       label: stableKey,
@@ -41,17 +94,19 @@ export const ShellResourceDetailSchema = Schema.Struct({
   ),
   title: stableKey,
 });
-export type ShellResourceDetail = Schema.Schema.Type<typeof ShellResourceDetailSchema>;
+
+const ProviderFailureCauseSchema = Schema.Defect();
 
 export class ShellProviderUnavailableError extends Schema.TaggedError<ShellProviderUnavailableError>()(
   'ShellProviderUnavailableError',
-  {},
+  { cause: Schema.optionalKey(ProviderFailureCauseSchema) },
 ) {}
 
-export interface ShellResourceContext extends TrustedPrincipalContext {
+interface ShellResourceRequest extends TrustedPrincipalContext {
   readonly correlationId: string;
-  readonly legalEntityId: string;
+  readonly legalEntityId?: string;
 }
+export type ShellResourceContext = ShellResourceRequest;
 
 export interface ShellProviderAssertionIssuer {
   readonly issueAssertion: (input: {
@@ -60,48 +115,76 @@ export interface ShellProviderAssertionIssuer {
   }) => Effect.Effect<string, ShellProviderUnavailableError>;
 }
 
-export interface ShellSearchProviderGateway {
-  readonly search: (input: {
-    readonly appId: string;
-    readonly authorization: string;
-    readonly correlationId: string;
-    readonly query: string;
-    readonly searchKey: string;
-  }) => Effect.Effect<readonly unknown[], ShellProviderUnavailableError>;
+interface ShellSearchProviderRequest<Authorization extends string = string> {
+  readonly appId: string;
+  readonly authorization: Authorization;
+  readonly correlationId: string;
+  readonly includeArchived?: boolean;
+  readonly query: string;
+  readonly role?: PartyRole;
+  readonly searchKey: string;
 }
 
-export interface ShellResourceProviderGateway {
-  readonly detail: (input: {
-    readonly apiKey: string;
-    readonly appId: string;
-    readonly authorization: string;
-    readonly correlationId: string;
-    readonly ref: ResourceRef;
-  }) => Effect.Effect<unknown, ShellProviderUnavailableError>;
-  readonly timeline: (input: {
-    readonly apiKey: string;
-    readonly appId: string;
-    readonly authorization: string;
-    readonly correlationId: string;
-    readonly ref: ResourceRef;
-  }) => Effect.Effect<
+interface ShellSearchProviderHandler {
+  readonly search: (
+    input: ShellSearchProviderRequest,
+  ) => Effect.Effect<readonly unknown[], ShellProviderUnavailableError>;
+}
+
+interface ShellResourceProviderRequest<
+  ApiKey extends string = string,
+  Authorization extends string = string,
+> {
+  readonly apiKey: ApiKey;
+  readonly appId: string;
+  readonly authorization: Authorization;
+  readonly correlationId: string;
+  readonly ref: ResourceRef;
+}
+
+interface ShellResourceProviderHandler {
+  readonly detail: (
+    input: ShellResourceProviderRequest,
+  ) => Effect.Effect<unknown, ShellProviderUnavailableError>;
+  readonly timeline: (
+    input: ShellResourceProviderRequest,
+  ) => Effect.Effect<
     { readonly entries: readonly unknown[]; readonly projectionLagging: boolean },
     ShellProviderUnavailableError
   >;
 }
 
 export interface ShellResourceGateways {
-  readonly resource: ShellResourceProviderGateway;
-  readonly search: ShellSearchProviderGateway;
+  readonly resource: ShellResourceProviderHandler;
+  readonly search: ShellSearchProviderHandler;
 }
 
 interface ShellResourceDependencies extends ShellProviderAssertionIssuer {
-  readonly catalog: Effect.Effect<InstalledModuleCatalog, unknown>;
+  readonly catalog: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>;
   readonly contextAccess: ContextAccessService;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 
-const unavailable = () => new ShellProviderUnavailableError();
+type LoadStateArguments = readonly [
+  dependencies: ShellResourceDependencies,
+  context: ShellResourceContext,
+  moduleId: string,
+];
+type ModuleDecisionArguments = readonly [
+  dependencies: ShellResourceDependencies,
+  context: ShellResourceContext,
+  moduleId: string,
+];
+type ResourceDecisionArguments = readonly [
+  dependencies: ShellResourceDependencies,
+  context: ShellResourceContext,
+  ref: ResourceRef,
+];
+
+type ProviderFailureCause = Schema.Schema.Type<typeof ProviderFailureCauseSchema>;
+
+const unavailable = (cause?: ProviderFailureCause) =>
+  new ShellProviderUnavailableError(cause === undefined ? {} : { cause });
 const capture = <Success, Failure, Requirements>(
   effect: Effect.Effect<Success, Failure, Requirements>,
 ): Effect.Effect<
@@ -118,384 +201,376 @@ const resourceKey = ({ moduleId, resourceId, resourceType }: ResourceRef): strin
   `${moduleId}:${resourceType}:${resourceId}`;
 
 const loadState = (
-  dependencies: ShellResourceDependencies,
-  context: ShellResourceContext,
-  moduleId: string,
-): Effect.Effect<TenantModuleState | undefined, ShellProviderUnavailableError> =>
+  ...[dependencies, context, moduleId]: LoadStateArguments
+): Effect.Effect<Option.Option<TenantModuleState>, ShellProviderUnavailableError> =>
   dependencies.moduleStates.getTenantModuleStates(context.tenantId, [moduleId]).pipe(
     Effect.mapError(unavailable),
     Effect.flatMap((records) => {
       const [record, ...unexpected] = records;
       if (record === undefined) {
-        // eslint-disable-next-line unicorn/no-useless-undefined -- The Effect success channel distinguishes a missing state record from a failed acquisition.
-        return Effect.succeed<TenantModuleState | undefined>(undefined);
+        return Effect.succeed(Option.none<TenantModuleState>());
       }
       return unexpected.length === 0 && record.moduleKey === moduleId
-        ? Effect.succeed(record.state)
+        ? Effect.succeed(Option.some(record.state))
         : Effect.fail(unavailable());
     }),
   );
 
-const moduleDecision = (
-  dependencies: ShellResourceDependencies,
-  context: ShellResourceContext,
-  moduleId: string,
-) =>
-  dependencies.contextAccess.modules({
-    legalEntityId: context.legalEntityId,
-    moduleIds: [moduleId],
-    principalId: context.principalId,
-    tenantId: context.tenantId,
-  });
-
-const resourceDecision = (
-  dependencies: ShellResourceDependencies,
-  context: ShellResourceContext,
-  ref: ResourceRef,
-) =>
-  dependencies.contextAccess.resources({
-    legalEntityId: context.legalEntityId,
-    principalId: context.principalId,
-    resources: [ref],
-    tenantId: context.tenantId,
-  });
-
-export const makeShellSearch = (
-  dependencies: ShellResourceDependencies,
-  gateway: ShellSearchProviderGateway,
-) => ({
-  search: (
-    context: ShellResourceContext,
-    query: string,
-  ): Effect.Effect<
-    { readonly partial: boolean; readonly results: readonly ShellSearchResult[] },
-    ShellProviderUnavailableError
-  > =>
-    Effect.gen(function* shellSearchEffect() {
-      const normalizedQuery = query.trim();
-      if (normalizedQuery.length === 0) {
-        return { partial: false, results: [] } as const;
-      }
-      const catalog = yield* dependencies.catalog.pipe(Effect.mapError(unavailable));
-      const providers = catalog.contracts.flatMap((contract) =>
-        contract.manifest.publicSurface.shellContributions.search.map((contribution) => ({
-          appId: contract.deployment.appId,
-          contribution,
-          moduleId: contract.manifest.module.id,
-        })),
-      );
-      const moduleIds = [...new Set(providers.map(({ moduleId }) => moduleId))].toSorted();
-      if (moduleIds.length === 0) {
-        return { partial: false, results: [] } as const;
-      }
-      const [states, permissions] = yield* Effect.all([
-        dependencies.moduleStates
-          .getTenantModuleStates(context.tenantId, moduleIds)
-          .pipe(Effect.mapError(unavailable)),
-        dependencies.contextAccess.modules({
-          legalEntityId: context.legalEntityId,
-          moduleIds,
-          principalId: context.principalId,
-          tenantId: context.tenantId,
-        }),
-      ]);
-      const stateKeys = states.map(({ moduleKey }) => moduleKey);
-      if (
-        new Set(stateKeys).size !== stateKeys.length ||
-        stateKeys.some((moduleId) => !moduleIds.includes(moduleId))
-      ) {
-        return yield* unavailable();
-      }
-      const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
-      const permissionByModule = new Map(permissions.map(({ decision, key }) => [key, decision]));
-      if (
-        permissions.length !== moduleIds.length ||
-        permissions.some(({ key }, index) => key !== moduleIds[index])
-      ) {
-        return yield* unavailable();
-      }
-      const stateEligible = providers.filter(({ contribution, moduleId }) => {
-        const state = stateByModule.get(moduleId);
-        return (
-          state !== undefined &&
-          decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow'
-        );
-      });
-      if (
-        stateEligible.some(({ moduleId }) => permissionByModule.get(moduleId) === 'unavailable')
-      ) {
-        return yield* unavailable();
-      }
-      const eligible = stateEligible.filter(
-        ({ moduleId }) => permissionByModule.get(moduleId) === 'allowed',
-      );
-      if (eligible.length === 0) {
-        return { partial: false, results: [] } as const;
-      }
-      const attempts = yield* Effect.forEach(eligible, (provider) =>
-        dependencies
-          .issueAssertion({ appId: provider.appId, context })
-          .pipe(
-            Effect.flatMap((authorization) =>
-              gateway.search({
-                appId: provider.appId,
-                authorization,
-                correlationId: context.correlationId,
-                query: normalizedQuery,
-                searchKey: provider.contribution.searchKey,
-              }),
-            ),
-          )
-          .pipe(
-            Effect.flatMap((values) =>
-              Effect.try({
-                catch: unavailable,
-                try: () =>
-                  values.map((value) =>
-                    Schema.decodeUnknownSync(ShellSearchResultSchema, {
-                      onExcessProperty: 'error',
-                    })(value),
-                  ),
-              }),
-            ),
-            capture,
-            Effect.map((result) => ({ provider, result })),
-          ),
-      );
-      const succeeded = attempts.filter(({ result }) => result.ok);
-      if (succeeded.length === 0) {
-        return yield* unavailable();
-      }
-      const candidates = succeeded.flatMap(({ provider, result }) =>
-        result.ok
-          ? result.value.filter(
-              ({ ref }) =>
-                ref.moduleId === provider.moduleId &&
-                ref.resourceType ===
-                  catalog
-                    .getByModuleId(provider.moduleId)
-                    ?.manifest.publicSurface.search.find(
-                      ({ key }) => key === provider.contribution.searchKey,
-                    )?.resourceType,
-            )
-          : [],
-      );
-      const uniqueCandidates = [
-        ...new Map(candidates.map((candidate) => [resourceKey(candidate.ref), candidate])).values(),
-      ];
-      if (uniqueCandidates.length === 0) {
-        return { partial: succeeded.length !== attempts.length, results: [] } as const;
-      }
-      const resourcePermissions = yield* dependencies.contextAccess.resources({
+const moduleDecision = (...[dependencies, context, moduleId]: ModuleDecisionArguments) =>
+  context.legalEntityId === undefined
+    ? Effect.succeed([{ decision: 'unavailable' as const, key: moduleId }])
+    : dependencies.contextAccess.modules({
         legalEntityId: context.legalEntityId,
+        moduleIds: [moduleId],
         principalId: context.principalId,
-        resources: uniqueCandidates.map(({ ref }) => ref),
         tenantId: context.tenantId,
       });
-      if (
-        resourcePermissions.length !== uniqueCandidates.length ||
-        resourcePermissions.some(({ decision, key }, index) => {
-          const candidate = uniqueCandidates[index];
-          return (
-            candidate === undefined ||
-            key !== resourceKey(candidate.ref) ||
-            decision === 'unavailable'
-          );
-        })
-      ) {
+
+const resourceDecision = (...[dependencies, context, ref]: ResourceDecisionArguments) =>
+  context.legalEntityId === undefined
+    ? Effect.succeed([{ decision: 'unavailable' as const, key: resourceKey(ref) }])
+    : dependencies.contextAccess.resources({
+        legalEntityId: context.legalEntityId,
+        principalId: context.principalId,
+        resources: [ref],
+        tenantId: context.tenantId,
+      });
+
+interface SearchProviderIdentity {
+  readonly descriptor: { readonly resourceType: string };
+  readonly moduleId: string;
+}
+
+const collisionBelongsToProvider = (
+  context: ShellResourceContext,
+  provider: SearchProviderIdentity,
+  result: Extract<ShellSearchResult, { readonly kind: 'counterparty' }>,
+): boolean =>
+  result.collision?.counterpartyRefs.every(
+    (ref) =>
+      ref.tenantId === context.tenantId &&
+      ref.moduleId === provider.moduleId &&
+      ref.resourceType === provider.descriptor.resourceType,
+  ) ?? true;
+
+const counterpartyBelongsToContext = (
+  context: ShellResourceContext,
+  result: Extract<ShellSearchResult, { readonly kind: 'counterparty' }>,
+): boolean =>
+  context.legalEntityId !== undefined &&
+  result.ref.tenantId === context.tenantId &&
+  result.party.ref.tenantId === context.tenantId &&
+  result.legalEntity.tenantId === context.tenantId &&
+  result.legalEntity.legalEntityId === context.legalEntityId;
+
+const resultBelongsToProvider = (
+  context: ShellResourceContext,
+  provider: SearchProviderIdentity,
+  result: ShellSearchResult,
+): boolean => {
+  if (
+    result.ref.moduleId !== provider.moduleId ||
+    result.ref.resourceType !== provider.descriptor.resourceType ||
+    (result.ref.tenantId !== undefined && result.ref.tenantId !== context.tenantId)
+  ) {
+    return false;
+  }
+  if (result.kind === 'party') {
+    return result.ref.tenantId === context.tenantId;
+  }
+  if (result.kind !== 'counterparty') {
+    return true;
+  }
+  return (
+    counterpartyBelongsToContext(context, result) &&
+    collisionBelongsToProvider(context, provider, result)
+  );
+};
+
+const normalizeProviderResult = (
+  value: Schema.Schema.Type<typeof RawShellSearchResultSchema>,
+): ShellSearchResult => {
+  if (Schema.is(CounterpartyShellSearchResultSchema)(value)) {
+    return {
+      ...value,
+      kind: 'counterparty',
+      legalEntity: value.legalEntity,
+      party: value.party,
+      ref: value.ref,
+      title: value.party.title,
+    };
+  }
+  if (Schema.is(PartyShellSearchResultSchema)(value)) {
+    return { ...value, kind: 'party' };
+  }
+  return { ...value, kind: 'resource' };
+};
+
+const decodeProviderResults = (
+  values: readonly unknown[],
+): Effect.Effect<readonly ShellSearchResult[], ShellProviderUnavailableError> =>
+  Schema.decodeUnknownEffect(Schema.Array(RawShellSearchResultSchema), {
+    onExcessProperty: 'error',
+  })(values).pipe(
+    Effect.map((decoded) => decoded.map(normalizeProviderResult)),
+    Effect.mapError(unavailable),
+  );
+
+const searchProviders = (catalog: InstalledModuleCatalog) =>
+  catalog.contracts.flatMap((contract) =>
+    contract.manifest.publicSurface.shellContributions.search.flatMap((contribution) => {
+      const descriptor = contract.manifest.publicSurface.search.find(
+        ({ key }) => key === contribution.searchKey,
+      );
+      return descriptor === undefined
+        ? []
+        : [
+            {
+              appId: contract.deployment.appId,
+              contribution,
+              descriptor,
+              moduleId: contract.manifest.module.id,
+            },
+          ];
+    }),
+  );
+
+interface SearchCandidate {
+  readonly provider: ReturnType<typeof searchProviders>[number];
+  readonly value: ShellSearchResult;
+}
+
+const authorizeSearchCandidates = Effect.fn('ShellSearch.authorizeCandidates')(
+  function* authorizeSearchCandidates(
+    ...[dependencies, context, uniqueCandidates]: readonly [
+      ShellResourceDependencies,
+      ShellResourceContext,
+      readonly SearchCandidate[],
+    ]
+  ) {
+    const resourceCandidates = uniqueCandidates.filter(
+      ({ provider }) => provider.descriptor.accessFiltering === 'resource_permission',
+    );
+    const candidateResourceRefs = resourceCandidates.flatMap(({ value }) => [
+      value.ref,
+      ...(value.kind === 'counterparty' ? (value.collision?.counterpartyRefs ?? []) : []),
+    ]);
+    const resourcesToAuthorize = [
+      ...new Map(candidateResourceRefs.map((ref) => [resourceKey(ref), ref])).values(),
+    ];
+    let resourcePermissions: readonly ContextAccessResult[] = [];
+    if (resourceCandidates.length > 0) {
+      const { legalEntityId } = context;
+      if (legalEntityId === undefined) {
         return yield* unavailable();
       }
-      const allowedKeys = new Set(
-        resourcePermissions.flatMap(({ decision, key }) => (decision === 'allowed' ? [key] : [])),
-      );
-      const results = uniqueCandidates
-        .filter(({ ref }) => allowedKeys.has(resourceKey(ref)))
-        .toSorted(
-          (left, right) =>
-            left.title.localeCompare(right.title) ||
-            left.ref.resourceId.localeCompare(right.ref.resourceId),
+      resourcePermissions = yield* dependencies.contextAccess.resources({
+        legalEntityId,
+        principalId: context.principalId,
+        resources: resourcesToAuthorize,
+        tenantId: context.tenantId,
+      });
+    }
+    if (
+      resourcePermissions.length !== resourcesToAuthorize.length ||
+      resourcePermissions.some(({ decision, key }, index) => {
+        const candidate = resourcesToAuthorize[index];
+        return (
+          candidate === undefined || key !== resourceKey(candidate) || decision === 'unavailable'
         );
-      return {
-        partial: succeeded.length !== attempts.length,
-        results,
-      } as const;
-    }),
-});
+      })
+    ) {
+      return yield* unavailable();
+    }
+    const allowedKeys = new Set(
+      resourcePermissions.flatMap(({ decision, key }) => (decision === 'allowed' ? [key] : [])),
+    );
+    return allowedKeys;
+  },
+);
 
-export type ShellResourceResolution =
-  | { readonly outcome: 'forbidden' | 'not_found' | 'unavailable' }
-  | {
-      readonly detail: ShellResourceDetail;
-      readonly media: MediaAffordance;
-      readonly outcome: 'resolved';
-      readonly projectionLagging: boolean;
-      readonly timeline: readonly ShellTimelineEntry[];
-    };
-
-export const makeShellResourceDetail = (
+type ShellSearchArguments = readonly [
   dependencies: ShellResourceDependencies,
-  gateway: ShellResourceProviderGateway,
-) => ({
-  resolve: (
+  gateway: ShellSearchProviderHandler,
+];
+
+export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments) => ({
+  search: Effect.fn('ShellSearch.search')(function* shellSearch(
     context: ShellResourceContext,
-    ref: ResourceRef,
-  ): Effect.Effect<ShellResourceResolution> =>
-    Effect.gen(function* shellResourceDetailEffect() {
-      const catalogResult = yield* capture(dependencies.catalog);
-      if (!catalogResult.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const contract = catalogResult.value.getByModuleId(ref.moduleId);
-      const resourceType = contract?.manifest.publicSurface.resourceTypes.find(
-        ({ key }) => key === ref.resourceType,
+    request: ShellSearchRequest | string,
+  ) {
+    const searchRequest = Schema.is(Schema.String)(request) ? { query: request } : request;
+    const normalizedQuery = searchRequest.query.trim();
+    if (normalizedQuery.length === 0) {
+      return { partial: false, results: [] } as const;
+    }
+    const catalog = yield* dependencies.catalog.pipe(Effect.mapError(unavailable));
+    const providers = searchProviders(catalog);
+    const moduleIds = [...new Set(providers.map(({ moduleId }) => moduleId))].toSorted();
+    if (moduleIds.length === 0) {
+      return { partial: false, results: [] } as const;
+    }
+    const states = yield* dependencies.moduleStates
+      .getTenantModuleStates(context.tenantId, moduleIds)
+      .pipe(Effect.mapError(unavailable));
+    const stateKeys = states.map(({ moduleKey }) => moduleKey);
+    const moduleIdSet = new Set(moduleIds);
+    if (
+      new Set(stateKeys).size !== stateKeys.length ||
+      stateKeys.some((moduleId) => !moduleIdSet.has(moduleId))
+    ) {
+      return yield* unavailable();
+    }
+    const stateByModule = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+    const stateEligible = providers.filter(({ contribution, moduleId }) => {
+      const state = stateByModule.get(moduleId);
+      return (
+        state !== undefined &&
+        decideModuleStateAccess(state, contribution.entrypoint.access) === 'allow'
       );
-      if (contract === undefined || resourceType === undefined) {
-        return { outcome: 'not_found' } as const;
-      }
-      const contributions = contract.manifest.publicSurface.shellContributions;
-      const detailBinding = contributions.resourceDetails.find(
-        ({ resourceType: key }) => key === ref.resourceType,
-      );
-      if (detailBinding === undefined) {
-        return { outcome: 'not_found' } as const;
-      }
-      const stateResult = yield* capture(loadState(dependencies, context, ref.moduleId));
-      if (!stateResult.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      if (
-        stateResult.value === undefined ||
-        decideModuleStateAccess(stateResult.value, detailBinding.entrypoint.access) === 'deny'
-      ) {
-        return { outcome: 'not_found' } as const;
-      }
-      const [moduleAccess, ...unexpectedModules] = yield* moduleDecision(
-        dependencies,
-        context,
-        ref.moduleId,
-      );
-      if (
-        unexpectedModules.length > 0 ||
-        moduleAccess?.key !== ref.moduleId ||
-        moduleAccess.decision === 'unavailable'
-      ) {
-        return { outcome: 'unavailable' } as const;
-      }
-      if (moduleAccess.decision === 'denied') {
-        return { outcome: 'forbidden' } as const;
-      }
-      const [resourceAccess, ...unexpectedResources] = yield* resourceDecision(
-        dependencies,
-        context,
-        ref,
-      );
-      if (
-        unexpectedResources.length > 0 ||
-        resourceAccess?.key !== resourceKey(ref) ||
-        resourceAccess.decision === 'unavailable'
-      ) {
-        return { outcome: 'unavailable' } as const;
-      }
-      if (resourceAccess.decision === 'denied') {
-        return { outcome: 'forbidden' } as const;
-      }
-      let media: MediaAffordance = { enabled: false, reason: 'absent' };
-      const mediaBinding = contributions.mediaAttachments.find(
-        ({ resourceType: key }) => key === ref.resourceType,
-      );
-      if (resourceType.capabilities.mediaAttachable && mediaBinding !== undefined) {
-        media =
-          stateResult.value !== 'active'
-            ? { enabled: false, reason: 'read_only' }
-            : { enabled: false, reason: 'unavailable' };
-      }
-      const detailAuthorization = yield* capture(
-        dependencies.issueAssertion({ appId: contract.deployment.appId, context }),
-      );
-      if (!detailAuthorization.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const detailResult = yield* capture(
-        gateway.detail({
-          apiKey: detailBinding.apiKey,
-          appId: contract.deployment.appId,
-          authorization: detailAuthorization.value,
-          correlationId: context.correlationId,
-          ref,
-        }),
-      );
-      if (!detailResult.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const decodedDetail = yield* capture(
-        Effect.try({
-          catch: unavailable,
-          try: () =>
-            Schema.decodeUnknownSync(ShellResourceDetailSchema, {
-              onExcessProperty: 'error',
-            })(detailResult.value),
-        }),
-      );
-      if (!decodedDetail.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const timelineBinding = contributions.timelines.find(
-        ({ resourceType: key }) => key === ref.resourceType,
-      );
-      if (timelineBinding === undefined || !resourceType.capabilities.timelineVisible) {
-        return {
-          detail: decodedDetail.value,
-          media,
-          outcome: 'resolved',
-          projectionLagging: false,
-          timeline: [],
-        } as const;
-      }
-      const timelineAuthorization = yield* capture(
-        dependencies.issueAssertion({ appId: contract.deployment.appId, context }),
-      );
-      if (!timelineAuthorization.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const timelineResult = yield* capture(
-        gateway.timeline({
-          apiKey: timelineBinding.apiKey,
-          appId: contract.deployment.appId,
-          authorization: timelineAuthorization.value,
-          correlationId: context.correlationId,
-          ref,
-        }),
-      );
-      if (!timelineResult.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const timeline = yield* capture(
-        Effect.try({
-          catch: unavailable,
-          try: () =>
-            timelineResult.value.entries
-              .map((entry) =>
-                Schema.decodeUnknownSync(ShellTimelineEntrySchema, {
-                  onExcessProperty: 'error',
-                })(entry),
-              )
-              .toSorted(
-                (left, right) =>
-                  right.occurredAt.localeCompare(left.occurredAt) ||
-                  left.timelineEntryId.localeCompare(right.timelineEntryId),
-              ),
-        }),
-      );
-      return timeline.ok
-        ? ({
-            detail: decodedDetail.value,
-            media,
-            outcome: 'resolved',
-            projectionLagging: timelineResult.value.projectionLagging,
-            timeline: timeline.value,
-          } as const)
-        : ({ outcome: 'unavailable' } as const);
-    }).pipe(Effect.orElseSucceed(() => ({ outcome: 'unavailable' as const }))),
+    });
+    const permissionOutcomes = yield* Effect.forEach(
+      stateEligible,
+      (provider) => {
+        if (provider.descriptor.accessFiltering === 'tenant_scope') {
+          const permission = provider.descriptor.tenantPermission;
+          if (permission === undefined) {
+            return Effect.succeed({ decision: 'unavailable' as const, provider });
+          }
+          return dependencies.contextAccess
+            .tenants({
+              permission,
+              principalId: context.principalId,
+              tenantIds: [context.tenantId],
+            })
+            .pipe(
+              Effect.map((decisions) => ({
+                decision:
+                  decisions.length === 1 && decisions[0]?.key === context.tenantId
+                    ? decisions[0].decision
+                    : ('unavailable' as const),
+                provider,
+              })),
+            );
+        }
+        if (context.legalEntityId === undefined) {
+          return Effect.succeed({ decision: 'denied' as const, provider });
+        }
+        return dependencies.contextAccess
+          .modules({
+            legalEntityId: context.legalEntityId,
+            moduleIds: [provider.moduleId],
+            principalId: context.principalId,
+            tenantId: context.tenantId,
+          })
+          .pipe(
+            Effect.map((decisions) => ({
+              decision:
+                decisions.length === 1 && decisions[0]?.key === provider.moduleId
+                  ? decisions[0].decision
+                  : ('unavailable' as const),
+              provider,
+            })),
+          );
+      },
+      { concurrency: 1 },
+    );
+    if (permissionOutcomes.some(({ decision }) => decision === 'unavailable')) {
+      return yield* unavailable();
+    }
+    const eligible = permissionOutcomes.flatMap(({ decision, provider }) =>
+      decision === 'allowed' ? [provider] : [],
+    );
+    if (eligible.length === 0) {
+      return { partial: false, results: [] } as const;
+    }
+    const attempts = yield* Effect.forEach(
+      eligible,
+      (provider) =>
+        dependencies.issueAssertion({ appId: provider.appId, context }).pipe(
+          Effect.flatMap((authorization) => {
+            const requestFilters = new Set(provider.descriptor.requestFilters);
+            const providerRequest: ShellSearchProviderRequest = {
+              appId: provider.appId,
+              authorization,
+              correlationId: context.correlationId,
+              query: normalizedQuery,
+              searchKey: provider.contribution.searchKey,
+            };
+            const archiveFiltered =
+              requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
+                ? { ...providerRequest, includeArchived: searchRequest.includeArchived }
+                : providerRequest;
+            const roleFiltered =
+              requestFilters.has('role') && searchRequest.role !== undefined
+                ? { ...archiveFiltered, role: searchRequest.role }
+                : archiveFiltered;
+            return gateway.search(roleFiltered);
+          }),
+          Effect.flatMap(decodeProviderResults),
+          capture,
+          Effect.map((result) => ({ provider, result })),
+        ),
+      { concurrency: 1 },
+    );
+    const succeeded = attempts.filter(({ result }) => result.ok);
+    if (succeeded.length === 0) {
+      return yield* unavailable();
+    }
+    const candidates = succeeded.flatMap(({ provider, result }) =>
+      result.ok
+        ? result.value.flatMap((value) =>
+            resultBelongsToProvider(context, provider, value) ? [{ provider, value }] : [],
+          )
+        : [],
+    );
+    const uniqueCandidates = [
+      ...new Map(
+        candidates.map(({ provider, value }) => [
+          `${value.ref.tenantId ?? context.tenantId}:${resourceKey(value.ref)}`,
+          { provider, value },
+        ]),
+      ).values(),
+    ];
+    if (uniqueCandidates.length === 0) {
+      return { partial: succeeded.length !== attempts.length, results: [] } as const;
+    }
+    const allowedKeys = yield* authorizeSearchCandidates(dependencies, context, uniqueCandidates);
+    const results = uniqueCandidates
+      .flatMap<ShellSearchResult>(({ provider, value }) => {
+        if (
+          provider.descriptor.accessFiltering === 'resource_permission' &&
+          !allowedKeys.has(resourceKey(value.ref))
+        ) {
+          return [];
+        }
+        if (value.kind !== 'counterparty' || value.collision === undefined) {
+          return [value];
+        }
+        const { collision, ...visible } = value;
+        const counterpartyRefs = collision.counterpartyRefs.filter((ref) =>
+          allowedKeys.has(resourceKey(ref)),
+        );
+        return [
+          counterpartyRefs.length < 2
+            ? visible
+            : {
+                ...visible,
+                collision: { ...collision, counterpartyRefs },
+              },
+        ];
+      })
+      .toSorted((left, right) => {
+        const titleOrder = left.title.localeCompare(right.title);
+        return titleOrder === 0
+          ? left.ref.resourceId.localeCompare(right.ref.resourceId)
+          : titleOrder;
+      });
+    return {
+      partial: succeeded.length !== attempts.length,
+      results,
+    } as const;
+  }),
 });
 
 export type MediaAffordance =
@@ -504,6 +579,199 @@ export type MediaAffordance =
       readonly enabled: false;
       readonly reason: 'absent' | 'forbidden' | 'read_only' | 'unavailable';
     };
+
+const mediaAffordance = (state: TenantModuleState, attachable: boolean): MediaAffordance => {
+  if (attachable) {
+    return state === 'active'
+      ? { enabled: false, reason: 'unavailable' }
+      : { enabled: false, reason: 'read_only' };
+  }
+  return { enabled: false, reason: 'absent' };
+};
+
+const hasMediaBinding = <Binding>(attachable: boolean, binding: Binding | undefined): boolean =>
+  attachable && binding !== undefined;
+
+const accessOutcome = (decisions: readonly ContextAccessResult[], expectedKey: string) => {
+  const [decision, ...unexpected] = decisions;
+  if (
+    unexpected.length > 0 ||
+    decision?.key !== expectedKey ||
+    decision.decision === 'unavailable'
+  ) {
+    return { outcome: 'unavailable' } as const;
+  }
+  return decision.decision === 'denied'
+    ? ({ outcome: 'forbidden' } as const)
+    : ({ outcome: 'allowed' } as const);
+};
+
+const resourceAccessOutcome = Effect.fn('ShellResourceDetail.accessOutcome')(
+  function* resourceAccessOutcome(...[dependencies, context, ref]: ResourceDecisionArguments) {
+    const moduleAccess = accessOutcome(
+      yield* moduleDecision(dependencies, context, ref.moduleId),
+      ref.moduleId,
+    );
+    if (moduleAccess.outcome !== 'allowed') {
+      return moduleAccess;
+    }
+    return accessOutcome(yield* resourceDecision(dependencies, context, ref), resourceKey(ref));
+  },
+);
+
+type ShellResourceDetailArguments = readonly [
+  dependencies: ShellResourceDependencies,
+  gateway: ShellResourceProviderHandler,
+];
+
+export const makeShellResourceDetail = (
+  ...[dependencies, gateway]: ShellResourceDetailArguments
+) => {
+  const resolveGate = Effect.fn('ShellResourceDetail.resolveGate')(function* shellResourceGate(
+    context: ShellResourceContext,
+    ref: ResourceRef,
+  ) {
+    const catalogResult = yield* capture(dependencies.catalog);
+    if (!catalogResult.ok) {
+      return { outcome: 'unavailable' } as const;
+    }
+    const contract = catalogResult.value.getByModuleId(ref.moduleId);
+    const resourceType = contract?.manifest.publicSurface.resourceTypes.find(
+      ({ key }) => key === ref.resourceType,
+    );
+    if (contract === undefined || resourceType === undefined) {
+      return { outcome: 'not_found' } as const;
+    }
+    const contributions = contract.manifest.publicSurface.shellContributions;
+    const detailBinding = contributions.resourceDetails.find(
+      ({ resourceType: key }) => key === ref.resourceType,
+    );
+    if (detailBinding === undefined) {
+      return { outcome: 'not_found' } as const;
+    }
+    const stateResult = yield* capture(loadState(dependencies, context, ref.moduleId));
+    if (!stateResult.ok) {
+      return { outcome: 'unavailable' } as const;
+    }
+    if (
+      Option.isNone(stateResult.value) ||
+      decideModuleStateAccess(stateResult.value.value, detailBinding.entrypoint.access) === 'deny'
+    ) {
+      return { outcome: 'not_found' } as const;
+    }
+    const access = yield* resourceAccessOutcome(dependencies, context, ref);
+    if (access.outcome !== 'allowed') {
+      return access;
+    }
+    const mediaBinding = contributions.mediaAttachments.find(
+      ({ resourceType: key }) => key === ref.resourceType,
+    );
+    const timelineBinding = contributions.timelines.find(
+      ({ resourceType: key }) => key === ref.resourceType,
+    );
+    const media = mediaAffordance(
+      stateResult.value.value,
+      hasMediaBinding(resourceType.capabilities.mediaAttachable, mediaBinding),
+    );
+    return {
+      appId: contract.deployment.appId,
+      detailApiKey: detailBinding.apiKey,
+      media,
+      outcome: 'allowed',
+      timelineApiKey: timelineBinding?.apiKey,
+      timelineVisible: resourceType.capabilities.timelineVisible,
+    } as const;
+  });
+
+  return {
+    resolve: Effect.fn('ShellResourceDetail.resolve')(function* shellResourceDetail(
+      context: ShellResourceContext,
+      ref: ResourceRef,
+    ) {
+      const gate = yield* resolveGate(context, ref);
+      if (gate.outcome === 'forbidden') {
+        return { outcome: 'forbidden' } as const;
+      }
+      if (gate.outcome === 'not_found') {
+        return { outcome: 'not_found' } as const;
+      }
+      if (gate.outcome === 'unavailable') {
+        return { outcome: 'unavailable' } as const;
+      }
+      const decodedDetail = yield* capture(
+        dependencies.issueAssertion({ appId: gate.appId, context }).pipe(
+          Effect.flatMap((authorization) =>
+            gateway.detail({
+              apiKey: gate.detailApiKey,
+              appId: gate.appId,
+              authorization,
+              correlationId: context.correlationId,
+              ref,
+            }),
+          ),
+          Effect.flatMap((detail) =>
+            Schema.decodeUnknownEffect(ShellResourceDetailSchema, {
+              onExcessProperty: 'error',
+            })(detail).pipe(Effect.mapError(unavailable)),
+          ),
+        ),
+      );
+      if (!decodedDetail.ok) {
+        return { outcome: 'unavailable' } as const;
+      }
+      const { timelineApiKey } = gate;
+      if (timelineApiKey === undefined || !gate.timelineVisible) {
+        return {
+          detail: decodedDetail.value,
+          media: gate.media,
+          outcome: 'resolved',
+          projectionLagging: false,
+          timeline: [],
+        } as const;
+      }
+      const timelineResult = yield* capture(
+        dependencies.issueAssertion({ appId: gate.appId, context }).pipe(
+          Effect.flatMap((authorization) =>
+            gateway.timeline({
+              apiKey: timelineApiKey,
+              appId: gate.appId,
+              authorization,
+              correlationId: context.correlationId,
+              ref,
+            }),
+          ),
+          Effect.flatMap(({ entries, projectionLagging }) =>
+            Schema.decodeUnknownEffect(Schema.Array(ShellTimelineEntrySchema), {
+              onExcessProperty: 'error',
+            })(entries).pipe(
+              Effect.map((timeline) => ({
+                projectionLagging,
+                timeline: timeline.toSorted((left, right) => {
+                  const occurredAtOrder =
+                    DateTime.toEpochMillis(right.occurredAt) -
+                    DateTime.toEpochMillis(left.occurredAt);
+                  return occurredAtOrder === 0
+                    ? left.timelineEntryId.localeCompare(right.timelineEntryId)
+                    : occurredAtOrder;
+                }),
+              })),
+              Effect.mapError(unavailable),
+            ),
+          ),
+        ),
+      );
+      return timelineResult.ok
+        ? ({
+            detail: decodedDetail.value,
+            media: gate.media,
+            outcome: 'resolved',
+            projectionLagging: timelineResult.value.projectionLagging,
+            timeline: timelineResult.value.timeline,
+          } as const)
+        : ({ outcome: 'unavailable' } as const);
+    }),
+  };
+};
 
 export type ShellMediaAttachmentResolution =
   | { readonly outcome: 'forbidden' | 'not_found' | 'unavailable' }
@@ -520,15 +788,17 @@ export interface ShellResourceServicesFactoryService {
   readonly createSearch: typeof makeShellSearch;
 }
 
-export class ShellResourceServicesFactory extends Context.Service<
-  ShellResourceServicesFactory,
-  ShellResourceServicesFactoryService
->()('@app/shell-super-app/api/modules/shell-resources/ShellResourceServicesFactory') {}
+const shellResourceServicesFactory = Object.freeze({
+  createResourceDetail: makeShellResourceDetail,
+  createSearch: makeShellSearch,
+});
+
+export const ShellResourceServicesFactory = Context.Reference<ShellResourceServicesFactoryService>(
+  '@app/shell-super-app/api/modules/shell-resources/ShellResourceServicesFactory',
+  { defaultValue: () => shellResourceServicesFactory },
+);
 
 export const ShellResourceServicesFactoryLive = Layer.succeed(
   ShellResourceServicesFactory,
-  Object.freeze({
-    createResourceDetail: makeShellResourceDetail,
-    createSearch: makeShellSearch,
-  }),
+  shellResourceServicesFactory,
 );

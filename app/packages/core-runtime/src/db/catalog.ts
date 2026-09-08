@@ -34,8 +34,7 @@ export const compareApplicationCatalog = (entries: readonly CatalogEntry[]): Cat
   const missing = [...expectedTables].filter((name) => !actualTables.has(name)).toSorted();
   const unexpectedTables = [...actualTables].filter((name) => !expectedTables.has(name)).toSorted();
   const unexpectedSchemas = entries
-    .filter((entry) => entry.kind === 'schema')
-    .map((entry) => `${entry.schemaName}.*`)
+    .flatMap((entry) => (entry.kind === 'schema' ? [`${entry.schemaName}.*`] : []))
     .toSorted();
 
   return {

@@ -1,8 +1,11 @@
-/* eslint-disable node/no-sync -- This test-only builder adapts generated disposable owner artifacts. */
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runScaffold } from '../../../../scripts/scaffolding/cli.mts';
+import {
+  MODULE_MANIFEST_RESOURCE_SLOT_END,
+  MODULE_MANIFEST_RESOURCE_SLOT_START,
+} from '../../../../scripts/scaffolding/shared.mts';
 
 export const GENERATED_OWNER = {
   actionKey: 'isolation.owner.create-record',
@@ -73,6 +76,26 @@ const createWorkspace = async (root: string): Promise<void> => {
   );
   await writeFixtureFile(
     root,
+    `verticals/${GENERATED_OWNER.slug}/shared/api.ts`,
+    `import { HttpApi } from '@modern-js/plugin-bff/effect-client';
+export const isolationOwnerApi = HttpApi.make('IsolationOwnerApi');
+`,
+  );
+  await writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/api/index.ts`,
+    `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
+import { isolationOwnerApi } from '../shared/api.ts';
+
+const layer = HttpApiBuilder.layer(isolationOwnerApi).pipe(
+  Layer.provide(Layer.empty),
+) satisfies EffectRuntimeLayer;
+export default defineEffectBff({ api: isolationOwnerApi, layer });
+`,
+  );
+  await writeFixtureFile(
+    root,
     `verticals/${GENERATED_OWNER.slug}/src/routes/ultramodern-route-head.tsx`,
     'export const UltramodernRouteHead = () => null;\n',
   );
@@ -110,6 +133,11 @@ const linkRuntimeDependencies = async (root: string): Promise<void> => {
       'dir',
     ),
     symlink(
+      path.join(appRoot, 'packages/gateway-principal-verifier'),
+      path.join(root, 'node_modules/@app/gateway-principal-verifier'),
+      'dir',
+    ),
+    symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
       path.join(root, 'node_modules/@modern-js/plugin-bff'),
       'dir',
@@ -137,8 +165,9 @@ const addResourceType = async (root: string): Promise<void> => {
   const manifest = await readFile(manifestPath, 'utf-8');
   const withResourceType = replaceRequired(
     manifest,
-    '    resourceTypes: [],',
-    `    resourceTypes: [
+    `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
+      ${MODULE_MANIFEST_RESOURCE_SLOT_END}`,
+    `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
       {
         capabilities: {
           graphVisible: false,
@@ -152,7 +181,7 @@ const addResourceType = async (root: string): Promise<void> => {
         label: 'Isolation record',
         owningModuleId: '${GENERATED_OWNER.moduleId}',
       },
-    ],`,
+      ${MODULE_MANIFEST_RESOURCE_SLOT_END}`,
   );
   const withResourceDetail = replaceRequired(
     withResourceType,
@@ -163,6 +192,7 @@ const addResourceType = async (root: string): Promise<void> => {
           contributionKey: '${GENERATED_OWNER.moduleId}.detail.record',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -183,6 +213,7 @@ const addResourceType = async (root: string): Promise<void> => {
           contributionKey: '${GENERATED_OWNER.moduleId}.timeline.record',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -222,7 +253,7 @@ const ownerRepositorySource = (schemaName: string): string => `
 // Test-owned adaptation of Codesmith-generated disposable owner artifacts.
 import { eq } from 'drizzle-orm';
 import { pgSchema, text, uuid } from 'drizzle-orm/pg-core';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 
 const ownerSchema = pgSchema('${schemaName}');
 const tenantRecords = ownerSchema.table('tenant_records', {
@@ -237,7 +268,7 @@ const entityRecords = ownerSchema.table('entity_records', {
   title: text('title').notNull(),
 });
 
-type OwnerExecutor = Pick<NodePgDatabase, 'insert' | 'select'>;
+type OwnerExecutor = Pick<EffectPgDatabase, 'insert' | 'select'>;
 
 export const makeOwnerRepository = (transaction: OwnerExecutor) => ({
   // Deliberately buggy: these reads omit tenant and legal-entity predicates.
@@ -279,6 +310,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -301,10 +333,7 @@ export const resourceDetailRead = defineRead(
   ({ resourceId }, context) =>
     Effect.gen(function* generatedDetail() {
       generatedOwnerHandlerCounts.detail += 1;
-      const rows = yield* Effect.tryPromise({
-        catch: () => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner detail is unavailable' }),
-        try: () => context.services.detail(resourceId),
-      });
+      const rows = yield* context.services.detail(resourceId).pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner detail is unavailable' })));
       const row = rows[0];
       if (row === undefined) {
         return yield* new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Owner record was not found' });
@@ -332,6 +361,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -354,10 +384,7 @@ export const resourceListRead = defineRead(
   ({ resourceId }, context) =>
     Effect.gen(function* generatedList() {
       generatedOwnerHandlerCounts.list += 1;
-      const rows = yield* Effect.tryPromise({
-        catch: () => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner list is unavailable' }),
-        try: () => context.services.listTenant(),
-      });
+      const rows = yield* context.services.listTenant().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner list is unavailable' })));
       return {
         evidence: { resultCount: rows.length },
         result: {
@@ -389,6 +416,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.search.records',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'search',
@@ -411,10 +439,7 @@ export const recordsRead = defineRead(
   ({ query }, context) =>
     Effect.gen(function* generatedSearch() {
       generatedOwnerHandlerCounts.search += 1;
-      const rows = yield* Effect.tryPromise({
-        catch: () => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner search is unavailable' }),
-        try: () => context.services.search(),
-      });
+      const rows = yield* context.services.search().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner search is unavailable' })));
       const normalized = query.toLocaleLowerCase('en');
       const result = rows
         .filter((row: { readonly title: string }) => row.title.toLocaleLowerCase('en').includes(normalized))
@@ -460,6 +485,7 @@ export const createRecordAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: '${GENERATED_OWNER.actionKey}',
       moduleKey: '${GENERATED_OWNER.moduleId}',
       role: 'action',
@@ -478,10 +504,7 @@ export const createRecordAction = defineAction(
       if (payload.title === 'trigger safe logging defect') {
         return yield* Effect.die(new Error('Generated owner safe defect'));
       }
-      yield* Effect.tryPromise({
-        catch: () => new CreateRecordRejected({ code: 'owner_write_rejected', reason: 'The owner write was rejected' }),
-        try: () => context.services.insertEntity(payload),
-      });
+      yield* context.services.insertEntity(payload).pipe(Effect.mapError(() => new CreateRecordRejected({ code: 'owner_write_rejected', reason: 'The owner write was rejected' })));
       return { created: true as const };
     }),
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),
@@ -531,9 +554,9 @@ const adaptGeneratedOwner = async (root: string, schemaName: string): Promise<vo
 };
 
 export interface GeneratedOwnerFixture {
+  readonly dispose: () => Promise<void>;
   readonly root: string;
   readonly verticalRoot: string;
-  readonly dispose: () => Promise<void>;
 }
 
 export const createGeneratedOwnerFixture = async (
@@ -555,30 +578,63 @@ export const createGeneratedOwnerFixture = async (
         GENERATED_OWNER.slug,
         '--action',
         'create-record',
+        '--authorization',
+        'action_execution',
         '--legal-entity-scope',
         'required',
+        '--provisioning',
+        'tenant_membership_default',
       ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'module-api',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-detail'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-detail',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'module-api',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-list'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-list',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'search-provider',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'records', '--resource', 'record'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'records',
+        '--resource',
+        'record',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await adaptGeneratedOwner(root, schemaName);
     await linkRuntimeDependencies(root);
     return {
-      dispose: () => rm(root, { force: true, recursive: true }),
+      dispose: async () => await rm(root, { force: true, recursive: true }),
       root,
       verticalRoot: path.join(root, 'verticals', GENERATED_OWNER.slug),
     };

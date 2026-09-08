@@ -1,10 +1,9 @@
-/* eslint-disable max-classes-per-file -- Private rollback signals preserve typed failures across Drizzle's Promise callback boundary. */
-// @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off
-// Drizzle's transaction/query contract is Promise-based; these narrow bridges
-// keep the exported repository operations in typed Effect error channels.
-import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { Cause, Context, Effect, Layer, Predicate } from 'effect';
+import type { Cause } from 'effect';
+import { Context, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
+import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { createHash, randomUUID } from 'node:crypto';
+import type { ActionInvocationStatus } from '../db/schema.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -13,17 +12,21 @@ import {
   outboxMessages,
   tenants,
 } from '../db/schema.ts';
-import type { ActionInvocationStatus } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import type { ActionAuditProfile } from './definition.ts';
-import type { ActionEvidenceSnapshot } from './events.ts';
+import type { ActionInvocationPersistenceError, ActionTransactionError } from './errors.ts';
 import {
   ActionInvocationNotFound,
-  ActionInvocationPersistenceError,
   ActionInvocationStateError,
-  ActionTransactionError,
+  createActionInvocationPersistenceErrorWithCause,
+  getActionInvocationPersistenceErrorCause,
 } from './errors.ts';
-import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
+import type { ActionEvidenceSnapshot } from './events.ts';
+import {
+  createActionTransactionErrorWithCause,
+  getActionTransactionErrorCause,
+} from './transaction-error.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -61,6 +64,19 @@ type CanonicalValue =
   | readonly ['string', string]
   | readonly ['undefined'];
 
+const CanonicalValueError = Schema.TaggedError<unknown>()('CanonicalValueError', {
+  reason: Schema.String,
+});
+
+const RepositoryInvariantError = Schema.TaggedError<unknown>()('RepositoryInvariantError', {
+  reason: Schema.String,
+});
+
+const canonicalValueCodec = Schema.fromJsonString(Schema.Any);
+
+const encodeCanonicalValue = (value: CanonicalValue): string =>
+  Result.getOrThrow(Schema.encodeResult(canonicalValueCodec)(value));
+
 const compareCodeUnits = (left: string, right: string): number => {
   if (left < right) {
     return -1;
@@ -70,6 +86,47 @@ const compareCodeUnits = (left: string, right: string): number => {
   }
   return 0;
 };
+
+const normalizeObjectForHash = <Value extends object>(
+  value: Value,
+  seen: WeakSet<object>,
+  normalize: <Item>(value: Item, seen: WeakSet<object>) => CanonicalValue,
+): CanonicalValue => {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      throw new CanonicalValueError({
+        reason: 'Action payloads must not contain cyclic values',
+      });
+    }
+    seen.add(value);
+    const normalized = value.map((item) => normalize(item, seen));
+    seen.delete(value);
+    return ['array', normalized];
+  }
+  if (seen.has(value)) {
+    throw new CanonicalValueError({
+      reason: 'Action payloads must not contain cyclic values',
+    });
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new CanonicalValueError({
+      reason: 'Action payloads must contain only canonical data values',
+    });
+  }
+  seen.add(value);
+  const entries = Object.entries(value)
+    .toSorted(([left], [right]) => compareCodeUnits(left, right))
+    .map(([key, item]) => [key, normalize(item, seen)] as const);
+  seen.delete(value);
+  return ['object', entries];
+};
+
+const normalizeNumberForHash = (value: number): CanonicalValue => [
+  'number',
+  Object.is(value, -0) ? '-0' : String(value),
+];
+const isCanonicalDate = Schema.is(Schema.instanceOf(Date));
 
 const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): CanonicalValue => {
   if (value === undefined) {
@@ -85,41 +142,46 @@ const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): Canonical
     return ['string', value];
   }
   if (Predicate.isNumber(value)) {
-    return ['number', Object.is(value, -0) ? '-0' : String(value)];
+    return normalizeNumberForHash(value);
   }
   if (Predicate.isBigInt(value)) {
     return ['bigint', value.toString(10)];
   }
-  if (value instanceof Date) {
+  if (isCanonicalDate(value)) {
     return ['date', value.toISOString()];
   }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) {
-      throw new TypeError('Action payloads must not contain cyclic values');
-    }
-    seen.add(value);
-    const normalized = value.map((item) => normalizeForHash(item, seen));
-    seen.delete(value);
-    return ['array', normalized];
-  }
   if (Predicate.isObjectKeyword(value)) {
-    if (seen.has(value)) {
-      throw new TypeError('Action payloads must not contain cyclic values');
-    }
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('Action payloads must contain only canonical data values');
-    }
-    seen.add(value);
-    const entries = Object.entries(value)
-      .toSorted(([left], [right]) => compareCodeUnits(left, right))
-      .map(([key, item]) => [key, normalizeForHash(item, seen)] as const);
-    seen.delete(value);
-    return ['object', entries];
+    return normalizeObjectForHash(value, seen, normalizeForHash);
   }
   const unsupportedKind = Predicate.isFunction(value) ? 'function' : 'symbol';
-  throw new TypeError(`Action payloads cannot contain ${unsupportedKind} values`);
+  throw new CanonicalValueError({
+    reason: `Action payloads cannot contain ${unsupportedKind} values`,
+  });
 };
+
+const markInvocationRejected = Effect.fnUntraced(function* markInvocationRejected(
+  transaction: CoreTransaction,
+  actionInvocationId: string,
+) {
+  const completedAt = yield* DateTime.nowAsDate;
+  const rejected = yield* transaction
+    .update(actionInvocations)
+    .set({ completedAt, status: 'rejected' })
+    .where(
+      and(
+        eq(actionInvocations.actionInvocationId, actionInvocationId),
+        eq(actionInvocations.status, 'received'),
+        isNull(actionInvocations.completedAt),
+      ),
+    )
+    .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+  if (rejected.length !== 1) {
+    return yield* new RepositoryInvariantError({
+      reason: 'The Action invocation could not be marked rejected',
+    });
+  }
+  return yield* Effect.void;
+});
 
 export const computeActionRequestHash = (input: ActionRequestHashInput): string => {
   const canonicalEnvelope = normalizeForHash(
@@ -138,12 +200,12 @@ export const computeActionRequestHash = (input: ActionRequestHashInput): string 
     new WeakSet(),
   );
 
-  return createHash('sha256').update(JSON.stringify(canonicalEnvelope)).digest('hex');
+  return createHash('sha256').update(encodeCanonicalValue(canonicalEnvelope)).digest('hex');
 };
 
 export const computeCanonicalValueHash = <Value>(value?: Value): string =>
   createHash('sha256')
-    .update(JSON.stringify(normalizeForHash(value, new WeakSet())))
+    .update(encodeCanonicalValue(normalizeForHash(value, new WeakSet())))
     .digest('hex');
 
 export interface PrepareActionInvocationInput {
@@ -154,7 +216,7 @@ export interface PrepareActionInvocationInput {
   readonly transport: ActionTransportMetadata;
 }
 
-export interface ResolveActionInvocationInput {
+interface ResolveActionInvocationInput {
   readonly invocationId: string;
   readonly principal: TrustedPrincipalContext;
 }
@@ -245,32 +307,36 @@ const invocationSelection = {
   status: actionInvocations.status,
 } as const;
 
-const invocationPersistenceFailureCauses = new WeakMap<ActionInvocationPersistenceError, unknown>();
-
 const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = new ActionInvocationPersistenceError({
-    code: 'action_invocation_persistence_failed',
-    reason,
-  });
-  if (cause !== undefined) {
-    invocationPersistenceFailureCauses.set(failure, cause);
-  }
+  const failure = createActionInvocationPersistenceErrorWithCause(
+    {
+      code: 'action_invocation_persistence_failed',
+      reason,
+    },
+    cause,
+  );
   return failure;
 };
 
-/** Internal bridge used by the transaction boundary to preserve the original defect. */
+/**
+ * Bridge used by the transaction boundary to preserve the original defect.
+ *
+ * @internal
+ */
 export const getActionInvocationPersistenceFailureCause = (
   failure: ActionInvocationPersistenceError,
-): Cause.Cause<never> | undefined => {
-  const cause = invocationPersistenceFailureCauses.get(failure);
-  return cause === undefined ? undefined : Cause.die(cause);
-};
+): Cause.Cause<never> | undefined => getActionInvocationPersistenceErrorCause(failure);
 
+/**
+ * Logs the privately retained persistence defect.
+ *
+ * @internal
+ */
 export const logActionInvocationPersistenceFailureCause = (
   failure: ActionInvocationPersistenceError,
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => {
-  const cause = invocationPersistenceFailureCauses.get(failure);
+  const cause = getActionInvocationPersistenceErrorCause(failure);
   return cause === undefined
     ? Effect.void
     : Effect.annotateLogs(
@@ -279,165 +345,173 @@ export const logActionInvocationPersistenceFailureCause = (
       );
 };
 
-const transactionFailureCauses = new WeakMap<ActionTransactionError, unknown>();
-
 const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = new ActionTransactionError({
-    code: 'action_transaction_failed',
-    reason,
-  });
-  if (cause !== undefined) {
-    transactionFailureCauses.set(failure, cause);
-  }
+  const failure = createActionTransactionErrorWithCause(
+    {
+      code: 'action_transaction_failed',
+      reason,
+    },
+    cause,
+  );
   return failure;
 };
 
-class PermissionDenialRollbackSignal {
-  readonly error: ActionInvocationPersistenceError | ActionInvocationStateError;
-
-  constructor(error: ActionInvocationPersistenceError | ActionInvocationStateError) {
-    this.error = error;
-  }
-}
-
-/** Internal bridge used by the transaction boundary to preserve the original defect. */
+/**
+ * Bridge used by the transaction boundary to preserve the original defect.
+ *
+ * @internal
+ */
 export const getActionTransactionFailureCause = (
   failure: ActionTransactionError,
-): Cause.Cause<never> | undefined => {
-  const cause = transactionFailureCauses.get(failure);
-  return cause === undefined ? undefined : Cause.die(cause);
-};
+): Cause.Cause<never> | undefined => getActionTransactionErrorCause(failure);
 
+/**
+ * Logs the privately retained transaction defect.
+ *
+ * @internal
+ */
 export const logActionTransactionFailureCause = (
   failure: ActionTransactionError,
   message: string,
   annotations: Readonly<Record<string, string>>,
 ): Effect.Effect<void> => {
-  const cause = transactionFailureCauses.get(failure);
+  const cause = getActionTransactionErrorCause(failure);
   return cause === undefined
     ? Effect.void
     : Effect.annotateLogs(Effect.logError(message, cause), annotations);
 };
 
 export const makeActionRepository = (): ActionRepositoryService => {
-  const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = (
-    executor,
-    input,
-  ) =>
-    Effect.tryPromise({
-      catch: (cause) =>
-        persistenceFailure('Unable to create or resolve the Action invocation', cause),
-      try: async () => {
-        const inserted = await executor
-          .insert(actionInvocations)
-          .values({
-            actionKey: input.actionKey,
-            authBindingId: input.principal.authBindingId,
-            authContextRef: input.principal.authContextRef,
-            authMethod: input.principal.authMethod,
-            correlationId: input.transport.correlationId,
-            idempotencyKey: input.idempotencyKey,
-            impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-            legalEntityId: input.principal.legalEntityId,
-            principalId: input.principal.principalId,
-            requestHash: input.requestHash,
-            status: 'received',
-            targetModuleKey: input.transport.targetModuleKey,
-            targetResourceId: input.transport.targetResourceId,
-            targetResourceType: input.transport.targetResourceType,
-            tenantId: input.principal.tenantId,
-            traceId: input.transport.traceId,
-          })
-          .onConflictDoNothing()
-          .returning(invocationSelection);
+  const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = Effect.fn(
+    'makeActionRepository.createOrResolveInvocation',
+  )(function* createOrResolveInvocationEffect(
+    executor: CoreDatabaseExecutor,
+    input: PrepareActionInvocationInput,
+  ) {
+    const failureReason = 'Unable to create or resolve the Action invocation';
+    const inserted = yield* executor
+      .insert(actionInvocations)
+      .values({
+        actionKey: input.actionKey,
+        authBindingId: input.principal.authBindingId,
+        authContextRef: input.principal.authContextRef,
+        authMethod: input.principal.authMethod,
+        correlationId: input.transport.correlationId,
+        idempotencyKey: input.idempotencyKey,
+        impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+        legalEntityId: input.principal.legalEntityId,
+        principalId: input.principal.principalId,
+        requestHash: input.requestHash,
+        status: 'received',
+        targetModuleKey: input.transport.targetModuleKey,
+        targetResourceId: input.transport.targetResourceId,
+        targetResourceType: input.transport.targetResourceType,
+        tenantId: input.principal.tenantId,
+        traceId: input.transport.traceId,
+      })
+      .onConflictDoNothing()
+      .returning(invocationSelection)
+      .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
-        const [created] = inserted;
-        if (created !== undefined) {
-          return created;
-        }
+    const [created] = inserted;
+    if (created !== undefined) {
+      return created;
+    }
 
-        if (input.idempotencyKey === undefined) {
-          throw new Error('A non-idempotent invocation insert unexpectedly conflicted');
-        }
+    const { idempotencyKey } = input;
+    if (idempotencyKey === undefined) {
+      return yield* persistenceFailure(
+        failureReason,
+        new RepositoryInvariantError({
+          reason: 'A non-idempotent invocation insert unexpectedly conflicted',
+        }),
+      );
+    }
 
-        const existing = await executor
-          .select(invocationSelection)
-          .from(actionInvocations)
-          .where(
-            and(
-              eq(actionInvocations.tenantId, input.principal.tenantId),
-              eq(actionInvocations.actionKey, input.actionKey),
-              eq(actionInvocations.principalId, input.principal.principalId),
-              eq(actionInvocations.idempotencyKey, input.idempotencyKey),
-            ),
-          )
-          .limit(1);
+    const existing = yield* executor
+      .select(invocationSelection)
+      .from(actionInvocations)
+      .where(
+        and(
+          eq(actionInvocations.tenantId, input.principal.tenantId),
+          eq(actionInvocations.actionKey, input.actionKey),
+          eq(actionInvocations.principalId, input.principal.principalId),
+          eq(actionInvocations.idempotencyKey, idempotencyKey),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
-        const [resolved] = existing;
-        if (resolved === undefined) {
-          throw new Error('The conflicting Action invocation could not be resolved');
-        }
-        return resolved;
-      },
-    });
+    const [resolved] = existing;
+    if (resolved === undefined) {
+      return yield* persistenceFailure(
+        failureReason,
+        new RepositoryInvariantError({
+          reason: 'The conflicting Action invocation could not be resolved',
+        }),
+      );
+    }
+    return resolved;
+  });
 
-  const lockInvocation: ActionRepositoryService['lockInvocation'] = (transaction, invocationId) =>
-    Effect.tryPromise({
-      catch: (cause) => persistenceFailure('Unable to lock the Action invocation', cause),
-      try: async () => {
-        const rows = await transaction
-          .select(invocationSelection)
-          .from(actionInvocations)
-          .where(eq(actionInvocations.actionInvocationId, invocationId))
-          .for('update')
-          .limit(1);
-        const [invocation] = rows;
-        if (invocation === undefined) {
-          throw new Error('The Action invocation no longer exists');
-        }
-        return invocation;
-      },
-    });
+  const lockInvocation: ActionRepositoryService['lockInvocation'] = Effect.fn(
+    'makeActionRepository.lockInvocation',
+  )(function* lockInvocationEffect(transaction: CoreTransaction, invocationId: string) {
+    const failureReason = 'Unable to lock the Action invocation';
+    const rows = yield* transaction
+      .select(invocationSelection)
+      .from(actionInvocations)
+      .where(eq(actionInvocations.actionInvocationId, invocationId))
+      .for('update')
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
+    const [invocation] = rows;
+    if (invocation === undefined) {
+      return yield* persistenceFailure(
+        failureReason,
+        new RepositoryInvariantError({ reason: 'The Action invocation no longer exists' }),
+      );
+    }
+    return invocation;
+  });
 
   const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) =>
-    Effect.tryPromise({
-      catch: (cause) =>
-        persistenceFailure('Unable to resolve the Action invocation commit state', cause),
-      try: () =>
-        executor
-          .select(invocationSelection)
-          .from(actionInvocations)
-          .where(
-            and(
-              eq(actionInvocations.actionInvocationId, input.invocationId),
-              eq(actionInvocations.tenantId, input.principal.tenantId),
-              eq(actionInvocations.principalId, input.principal.principalId),
-            ),
-          )
-          .for('update')
-          .limit(1),
-    }).pipe(
-      Effect.flatMap(([invocation]) =>
-        invocation === undefined
-          ? Effect.fail(
-              new ActionInvocationNotFound({
-                code: 'action_invocation_not_found',
-                reason: 'The Action invocation does not exist in this principal scope',
-              }),
-            )
-          : Effect.succeed(invocation),
-      ),
-    );
+    executor
+      .select(invocationSelection)
+      .from(actionInvocations)
+      .where(
+        and(
+          eq(actionInvocations.actionInvocationId, input.invocationId),
+          eq(actionInvocations.tenantId, input.principal.tenantId),
+          eq(actionInvocations.principalId, input.principal.principalId),
+        ),
+      )
+      .for('update')
+      .limit(1)
+      .pipe(
+        Effect.mapError((cause) =>
+          persistenceFailure('Unable to resolve the Action invocation commit state', cause),
+        ),
+        Effect.flatMap(([invocation]) =>
+          invocation === undefined
+            ? Effect.fail(
+                new ActionInvocationNotFound({
+                  code: 'action_invocation_not_found',
+                  reason: 'The Action invocation does not exist in this principal scope',
+                }),
+              )
+            : Effect.succeed(invocation),
+        ),
+      );
 
-  const transitionInvocationToRunning: ActionRepositoryService['transitionInvocationToRunning'] = (
-    executor,
-    invocationId,
-  ) =>
-    Effect.tryPromise({
-      catch: (cause) =>
-        persistenceFailure('Unable to transition the Action invocation to running', cause),
-      try: async () => {
-        const transitioned = await executor
+  const transitionInvocationToRunning: ActionRepositoryService['transitionInvocationToRunning'] =
+    Effect.fn('makeActionRepository.transitionInvocationToRunning')(
+      function* transitionInvocationToRunningEffect(
+        executor: CoreDatabaseExecutor,
+        invocationId: string,
+      ) {
+        const failureReason = 'Unable to transition the Action invocation to running';
+        const transitioned = yield* executor
           .update(actionInvocations)
           .set({ status: 'running' })
           .where(
@@ -447,68 +521,70 @@ export const makeActionRepository = (): ActionRepositoryService => {
               isNull(actionInvocations.completedAt),
             ),
           )
-          .returning(invocationSelection);
+          .returning(invocationSelection)
+          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
         const [invocation] = transitioned;
         if (invocation !== undefined) {
           return invocation;
         }
-        const current = await executor
+        const current = yield* executor
           .select(invocationSelection)
           .from(actionInvocations)
           .where(eq(actionInvocations.actionInvocationId, invocationId))
-          .limit(1);
+          .limit(1)
+          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
         const [resolved] = current;
         if (resolved === undefined) {
-          throw new Error('The Action invocation no longer exists');
+          return yield* persistenceFailure(
+            failureReason,
+            new RepositoryInvariantError({ reason: 'The Action invocation no longer exists' }),
+          );
         }
         return resolved;
       },
-    });
+    );
 
-  const rejectPermissionDenied: ActionRepositoryService['rejectPermissionDenied'] = (
-    executor,
-    input,
-  ) =>
-    Effect.tryPromise({
-      catch: (cause) =>
-        cause instanceof PermissionDenialRollbackSignal
-          ? cause.error
-          : transactionFailure('Unable to persist Action permission denial evidence', cause),
-      try: () =>
-        executor.transaction(async (transaction) => {
-          const rows = await transaction
-            .select(invocationSelection)
-            .from(actionInvocations)
-            .where(
-              and(
-                eq(actionInvocations.actionInvocationId, input.actionInvocationId),
-                eq(actionInvocations.actionKey, input.actionKey),
-                eq(actionInvocations.principalId, input.principal.principalId),
-                eq(actionInvocations.tenantId, input.principal.tenantId),
-              ),
-            )
-            .for('update')
-            .limit(1);
-          const [invocation] = rows;
-          if (invocation === undefined) {
-            throw new PermissionDenialRollbackSignal(
-              persistenceFailure('The denied Action invocation no longer exists'),
-            );
-          }
+  const rejectPermissionDenied: ActionRepositoryService['rejectPermissionDenied'] = Effect.fn(
+    'makeActionRepository.rejectPermissionDenied',
+  )(function* rejectPermissionDeniedEffect(
+    executor: CoreDatabaseExecutor,
+    input: RejectPermissionDeniedInput,
+  ) {
+    const failureReason = 'Unable to persist Action permission denial evidence';
+    const transactionBody = Effect.fn('rejectPermissionDenied.transactionBody')(
+      function* rejectPermissionDeniedTransaction(transaction: CoreTransaction) {
+        const rows = yield* transaction
+          .select(invocationSelection)
+          .from(actionInvocations)
+          .where(
+            and(
+              eq(actionInvocations.actionInvocationId, input.actionInvocationId),
+              eq(actionInvocations.actionKey, input.actionKey),
+              eq(actionInvocations.principalId, input.principal.principalId),
+              eq(actionInvocations.tenantId, input.principal.tenantId),
+            ),
+          )
+          .for('update')
+          .limit(1)
+          .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+        const [invocation] = rows;
+        if (invocation === undefined) {
+          return yield* persistenceFailure('The denied Action invocation no longer exists');
+        }
 
-          if (invocation.status === 'rejected' && invocation.completedAt !== null) {
-            return;
-          }
-          if (invocation.status !== 'received' || invocation.completedAt !== null) {
-            throw new PermissionDenialRollbackSignal(
-              new ActionInvocationStateError({
-                code: 'action_invocation_state_invalid',
-                reason: 'The Action invocation cannot be rejected from its current state',
-              }),
-            );
-          }
+        if (invocation.status === 'rejected' && invocation.completedAt !== null) {
+          return yield* Effect.void;
+        }
+        if (invocation.status !== 'received' || invocation.completedAt !== null) {
+          return yield* new ActionInvocationStateError({
+            code: 'action_invocation_state_invalid',
+            reason: 'The Action invocation cannot be rejected from its current state',
+          });
+        }
 
-          await transaction.insert(auditEvents).values({
+        yield* transaction
+          .insert(auditEvents)
+          .values({
             actionInvocationId: input.actionInvocationId,
             auditProfile: input.auditProfile,
             authBindingId: input.principal.authBindingId,
@@ -526,283 +602,318 @@ export const makeActionRepository = (): ActionRepositoryService => {
             targetResourceId: input.transport.targetResourceId,
             targetResourceType: input.transport.targetResourceType,
             tenantId: input.principal.tenantId,
-          });
+          })
+          .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
 
-          const rejected = await transaction
-            .update(actionInvocations)
-            .set({ completedAt: new Date(), status: 'rejected' })
-            .where(
-              and(
-                eq(actionInvocations.actionInvocationId, input.actionInvocationId),
-                eq(actionInvocations.status, 'received'),
-                isNull(actionInvocations.completedAt),
-              ),
-            )
-            .returning({ actionInvocationId: actionInvocations.actionInvocationId });
-          if (rejected.length !== 1) {
-            throw new Error('The Action invocation could not be marked rejected');
-          }
-        }),
-    });
+        yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
+          Effect.mapError((cause) => transactionFailure(failureReason, cause)),
+        );
+        return yield* Effect.void;
+      },
+    );
 
-  const finalizePolicyDenial: ActionRepositoryService['finalizePolicyDenial'] = (executor, input) =>
-    Effect.tryPromise({
-      catch: (cause) =>
-        persistenceFailure('Unable to persist the rejected Action invocation', cause),
-      try: () =>
-        executor.transaction(async (transaction) => {
-          const rows = await transaction
-            .select(invocationSelection)
-            .from(actionInvocations)
-            .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
-            .for('update')
-            .limit(1);
-          const [invocation] = rows;
-          if (invocation === undefined) {
-            throw new Error('The Action invocation no longer exists');
-          }
-          if (invocation.status === 'rejected' && invocation.completedAt !== null) {
-            return;
-          }
-          if (invocation.status !== 'received' || invocation.completedAt !== null) {
-            throw new Error('The Action invocation is no longer open for Policy rejection');
-          }
+    yield* executor.transaction(transactionBody).pipe(
+      Effect.catchTag('SqlError', (failure) =>
+        Effect.fail(transactionFailure(failureReason, failure)),
+      ),
+      Effect.catchDefect((defect) =>
+        isSqlError(defect)
+          ? Effect.fail(transactionFailure(failureReason, defect))
+          : Effect.die(defect),
+      ),
+    );
+    return yield* Effect.void;
+  });
 
-          const policyEvidence = withOptionalProperty(
-            {
-              actionKey: input.actionKey,
-            },
-            !(input.policy.owningModuleKey === undefined),
-            'owningModuleKey',
-            input.policy.owningModuleKey,
-            {
-              policyKey: input.policy.policyKey,
-              policyScope: input.policy.scope,
-            },
-          );
-          await transaction.insert(auditEvents).values([
-            {
-              actionInvocationId: input.actionInvocationId,
-              auditProfile: input.auditProfile,
-              authBindingId: input.principal.authBindingId,
-              authContextRef: input.principal.authContextRef,
-              authMethod: input.principal.authMethod,
-              eventType: 'action.policy_checked',
-              evidenceJson: policyEvidence,
-              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-              legalEntityId: input.principal.legalEntityId,
-              outcome: 'denied',
-              outcomeCode: input.reasonCode,
-              outcomeStage: 'policy',
-              principalId: input.principal.principalId,
-              targetModuleKey: input.transport.targetModuleKey,
-              targetResourceId: input.transport.targetResourceId,
-              targetResourceType: input.transport.targetResourceType,
-              tenantId: input.principal.tenantId,
-            },
-            {
-              actionInvocationId: input.actionInvocationId,
-              auditProfile: input.auditProfile,
-              authBindingId: input.principal.authBindingId,
-              authContextRef: input.principal.authContextRef,
-              authMethod: input.principal.authMethod,
-              eventType: 'action.rejected',
-              evidenceJson: policyEvidence,
-              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-              legalEntityId: input.principal.legalEntityId,
-              outcome: 'denied',
-              outcomeCode: input.reasonCode,
-              outcomeStage: 'policy',
-              principalId: input.principal.principalId,
-              targetModuleKey: input.transport.targetModuleKey,
-              targetResourceId: input.transport.targetResourceId,
-              targetResourceType: input.transport.targetResourceType,
-              tenantId: input.principal.tenantId,
-            },
-          ]);
-
-          const rejected = await transaction
-            .update(actionInvocations)
-            .set({ completedAt: new Date(), status: 'rejected' })
-            .where(
-              and(
-                eq(actionInvocations.actionInvocationId, input.actionInvocationId),
-                eq(actionInvocations.status, 'received'),
-                isNull(actionInvocations.completedAt),
-              ),
-            )
-            .returning({ actionInvocationId: actionInvocations.actionInvocationId });
-          if (rejected.length !== 1) {
-            throw new Error('The Action invocation could not be marked rejected');
-          }
-        }),
-    });
-
-  const flushSuccess: ActionRepositoryService['flushSuccess'] = (transaction, input) =>
-    Effect.tryPromise({
-      catch: (cause) => transactionFailure('Unable to persist successful Action evidence', cause),
-      try: async () => {
-        if (input.allowedPolicies.length > 0) {
-          await transaction.insert(auditEvents).values(
-            input.allowedPolicies.map((policy) => ({
-              actionInvocationId: input.actionInvocationId,
-              auditProfile: input.auditProfile,
-              authBindingId: input.principal.authBindingId,
-              authContextRef: input.principal.authContextRef,
-              authMethod: input.principal.authMethod,
-              eventType: 'action.policy_checked',
-              evidenceJson: withOptionalProperty(
-                {
-                  actionKey: input.actionKey,
-                },
-                !(policy.owningModuleKey === undefined),
-                'owningModuleKey',
-                policy.owningModuleKey,
-                {
-                  policyKey: policy.policyKey,
-                  policyScope: policy.scope,
-                },
-              ),
-              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-              legalEntityId: input.principal.legalEntityId,
-              outcome: 'allowed',
-              outcomeCode: 'policy_allowed',
-              outcomeStage: 'policy',
-              principalId: input.principal.principalId,
-              targetModuleKey: input.transport.targetModuleKey,
-              targetResourceId: input.transport.targetResourceId,
-              targetResourceType: input.transport.targetResourceType,
-              tenantId: input.principal.tenantId,
-            })),
+  const finalizePolicyDenial: ActionRepositoryService['finalizePolicyDenial'] = Effect.fn(
+    'makeActionRepository.finalizePolicyDenial',
+  )(function* finalizePolicyDenialEffect(
+    executor: CoreDatabaseExecutor,
+    input: FinalizeActionPolicyDenialInput,
+  ) {
+    const failureReason = 'Unable to persist the rejected Action invocation';
+    const transactionBody = Effect.fn('finalizePolicyDenial.transactionBody')(
+      function* finalizePolicyDenialTransaction(transaction: CoreTransaction) {
+        const rows = yield* transaction
+          .select(invocationSelection)
+          .from(actionInvocations)
+          .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
+          .for('update')
+          .limit(1)
+          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
+        const [invocation] = rows;
+        if (invocation === undefined) {
+          return yield* persistenceFailure(
+            failureReason,
+            new RepositoryInvariantError({
+              reason: 'The Action invocation no longer exists',
+            }),
           );
         }
-
-        await transaction.insert(auditEvents).values({
-          actionInvocationId: input.actionInvocationId,
-          auditProfile: input.auditProfile,
-          authBindingId: input.principal.authBindingId,
-          authContextRef: input.principal.authContextRef,
-          authMethod: input.principal.authMethod,
-          eventType: 'action.executed',
-          evidenceJson: {
-            ...input.evidence.auditEvidence,
-            actionKey: input.actionKey,
-            resultHash: input.resultHash,
-          },
-          impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-          legalEntityId: input.principal.legalEntityId,
-          outcome: 'succeeded',
-          outcomeCode: 'action_executed',
-          outcomeStage: 'execution',
-          principalId: input.principal.principalId,
-          targetModuleKey: input.transport.targetModuleKey,
-          targetResourceId: input.transport.targetResourceId,
-          targetResourceType: input.transport.targetResourceType,
-          tenantId: input.principal.tenantId,
-        });
-
-        if (input.evidence.dataAccessEvents.length > 0) {
-          await transaction.insert(dataAccessEvents).values(
-            input.evidence.dataAccessEvents.map((event) => ({
-              accessKind: event.accessKind,
-              actionInvocationId: input.actionInvocationId,
-              authBindingId: input.principal.authBindingId,
-              authContextRef: input.principal.authContextRef,
-              authMethod: input.principal.authMethod,
-              evidenceCaptureMode: event.evidenceCaptureMode,
-              evidencePayloadJson: event.evidencePayloadJson,
-              evidencePolicyKey: event.evidencePolicyKey,
-              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
-              legalEntityId: input.principal.legalEntityId,
-              occurredAt: event.occurredAt,
-              outcome: 'allowed',
-              outcomeCode: 'action_read_allowed',
-              outcomeStage: 'execution',
-              principalId: input.principal.principalId,
-              queryHash: event.queryHash,
-              redactionProfile: event.redactionProfile,
-              resultCount: event.resultCount,
-              resultFingerprintHash: event.resultFingerprintHash,
-              resultFingerprintSchema: event.resultFingerprintSchema,
-              servingModuleKey: event.servingModuleKey,
-              targetModuleKey: event.targetModuleKey,
-              targetResourceId: event.targetResourceId,
-              targetResourceType: event.targetResourceType,
-              tenantId: input.principal.tenantId,
-            })),
-          );
+        if (invocation.status === 'rejected' && invocation.completedAt !== null) {
+          return yield* Effect.void;
         }
-
-        if (input.evidence.domainEvents.length > 0) {
-          // The tenant row is the existing, typed per-tenant serialization
-          // anchor. Holding this lock until commit ensures sequence allocation
-          // order cannot overtake commit order for one tenant's event stream.
-          const lockedTenant = await transaction
-            .select({ tenantId: tenants.tenantId })
-            .from(tenants)
-            .where(eq(tenants.tenantId, input.principal.tenantId))
-            .for('update')
-            .limit(1);
-          if (lockedTenant.length !== 1) {
-            throw new Error('The Domain Event tenant does not exist');
-          }
-        }
-
-        const persistedDomainEvents = input.evidence.domainEvents.map((event) => ({
-          actionInvocationId: input.actionInvocationId,
-          domainEventId: randomUUID(),
-          eventType: event.eventType,
-          legalEntityId: input.principal.legalEntityId,
-          occurredAt: event.occurredAt,
-          payloadJson: event.payloadJson,
-          producerModuleKey: event.producerModuleKey,
-          subjectModuleKey: event.subjectModuleKey,
-          subjectResourceId: event.subjectResourceId,
-          subjectResourceType: event.subjectResourceType,
-          tenantId: input.principal.tenantId,
-        }));
-
-        if (persistedDomainEvents.length > 0) {
-          await transaction.insert(domainEvents).values(persistedDomainEvents);
-        }
-
-        if (input.evidence.outboxMessages.length > 0) {
-          await transaction.insert(outboxMessages).values(
-            input.evidence.outboxMessages.map((collected) => {
-              const persistedDomainEvent = persistedDomainEvents[collected.domainEventIndex];
-              if (persistedDomainEvent === undefined) {
-                throw new Error('An Outbox Message has no persisted Domain Event');
-              }
-              return {
-                domainEventId: persistedDomainEvent.domainEventId,
-                payloadJson: collected.message.payloadJson,
-                producerModuleKey: collected.message.producerModuleKey,
-                tenantId: input.principal.tenantId,
-                topic: collected.message.topic,
-              };
+        if (invocation.status !== 'received' || invocation.completedAt !== null) {
+          return yield* persistenceFailure(
+            failureReason,
+            new RepositoryInvariantError({
+              reason: 'The Action invocation is no longer open for Policy rejection',
             }),
           );
         }
 
-        const succeeded = await transaction
-          .update(actionInvocations)
-          .set({
-            completedAt: new Date(),
-            status: 'succeeded',
-          })
-          .where(
-            and(
-              eq(actionInvocations.actionInvocationId, input.actionInvocationId),
-              eq(actionInvocations.status, 'running'),
-            ),
+        const policyEvidence = withOptionalProperty(
+          { actionKey: input.actionKey },
+          input.policy.owningModuleKey !== undefined,
+          'owningModuleKey',
+          input.policy.owningModuleKey,
+          { policyKey: input.policy.policyKey, policyScope: input.policy.scope },
+        );
+        yield* transaction
+          .insert(auditEvents)
+          .values(
+            ['action.policy_checked', 'action.rejected'].map((eventType) => ({
+              actionInvocationId: input.actionInvocationId,
+              auditProfile: input.auditProfile,
+              authBindingId: input.principal.authBindingId,
+              authContextRef: input.principal.authContextRef,
+              authMethod: input.principal.authMethod,
+              eventType,
+              evidenceJson: policyEvidence,
+              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+              legalEntityId: input.principal.legalEntityId,
+              outcome: 'denied',
+              outcomeCode: input.reasonCode,
+              outcomeStage: 'policy',
+              principalId: input.principal.principalId,
+              targetModuleKey: input.transport.targetModuleKey,
+              targetResourceId: input.transport.targetResourceId,
+              targetResourceType: input.transport.targetResourceType,
+              tenantId: input.principal.tenantId,
+            })),
           )
-          .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+          .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
-        if (succeeded.length !== 1) {
-          throw new Error('The Action invocation could not be marked succeeded');
-        }
+        yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
+          Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
+        );
+        return yield* Effect.void;
       },
-    });
+    );
+
+    yield* executor.transaction(transactionBody).pipe(
+      Effect.catchTag('SqlError', (failure) =>
+        Effect.fail(persistenceFailure(failureReason, failure)),
+      ),
+      Effect.catchDefect((defect) =>
+        isSqlError(defect)
+          ? Effect.fail(persistenceFailure(failureReason, defect))
+          : Effect.die(defect),
+      ),
+    );
+    return yield* Effect.void;
+  });
+
+  const flushSuccess: ActionRepositoryService['flushSuccess'] = Effect.fn(
+    'makeActionRepository.flushSuccess',
+  )(function* flushSuccessEffect(transaction: CoreTransaction, input: FlushActionSuccessInput) {
+    const failureReason = 'Unable to persist successful Action evidence';
+    if (input.allowedPolicies.length > 0) {
+      yield* transaction
+        .insert(auditEvents)
+        .values(
+          input.allowedPolicies.map((policy) => ({
+            actionInvocationId: input.actionInvocationId,
+            auditProfile: input.auditProfile,
+            authBindingId: input.principal.authBindingId,
+            authContextRef: input.principal.authContextRef,
+            authMethod: input.principal.authMethod,
+            eventType: 'action.policy_checked',
+            evidenceJson: withOptionalProperty(
+              {
+                actionKey: input.actionKey,
+              },
+              policy.owningModuleKey !== undefined,
+              'owningModuleKey',
+              policy.owningModuleKey,
+              {
+                policyKey: policy.policyKey,
+                policyScope: policy.scope,
+              },
+            ),
+            impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+            legalEntityId: input.principal.legalEntityId,
+            outcome: 'allowed',
+            outcomeCode: 'policy_allowed',
+            outcomeStage: 'policy',
+            principalId: input.principal.principalId,
+            targetModuleKey: input.transport.targetModuleKey,
+            targetResourceId: input.transport.targetResourceId,
+            targetResourceType: input.transport.targetResourceType,
+            tenantId: input.principal.tenantId,
+          })),
+        )
+        .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+    }
+
+    yield* transaction
+      .insert(auditEvents)
+      .values({
+        actionInvocationId: input.actionInvocationId,
+        auditProfile: input.auditProfile,
+        authBindingId: input.principal.authBindingId,
+        authContextRef: input.principal.authContextRef,
+        authMethod: input.principal.authMethod,
+        eventType: 'action.executed',
+        evidenceJson: {
+          ...input.evidence.auditEvidence,
+          actionKey: input.actionKey,
+          resultHash: input.resultHash,
+        },
+        impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+        legalEntityId: input.principal.legalEntityId,
+        outcome: 'succeeded',
+        outcomeCode: 'action_executed',
+        outcomeStage: 'execution',
+        principalId: input.principal.principalId,
+        targetModuleKey: input.transport.targetModuleKey,
+        targetResourceId: input.transport.targetResourceId,
+        targetResourceType: input.transport.targetResourceType,
+        tenantId: input.principal.tenantId,
+      })
+      .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+
+    if (input.evidence.dataAccessEvents.length > 0) {
+      yield* transaction
+        .insert(dataAccessEvents)
+        .values(
+          input.evidence.dataAccessEvents.map((event) => ({
+            accessKind: event.accessKind,
+            actionInvocationId: input.actionInvocationId,
+            authBindingId: input.principal.authBindingId,
+            authContextRef: input.principal.authContextRef,
+            authMethod: input.principal.authMethod,
+            evidenceCaptureMode: event.evidenceCaptureMode,
+            evidencePayloadJson: event.evidencePayloadJson,
+            evidencePolicyKey: event.evidencePolicyKey,
+            impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+            legalEntityId: input.principal.legalEntityId,
+            occurredAt: event.occurredAt,
+            outcome: 'allowed',
+            outcomeCode: 'action_read_allowed',
+            outcomeStage: 'execution',
+            principalId: input.principal.principalId,
+            queryHash: event.queryHash,
+            redactionProfile: event.redactionProfile,
+            resultCount: event.resultCount,
+            resultFingerprintHash: event.resultFingerprintHash,
+            resultFingerprintSchema: event.resultFingerprintSchema,
+            servingModuleKey: event.servingModuleKey,
+            targetModuleKey: event.targetModuleKey,
+            targetResourceId: event.targetResourceId,
+            targetResourceType: event.targetResourceType,
+            tenantId: input.principal.tenantId,
+          })),
+        )
+        .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+    }
+
+    if (input.evidence.domainEvents.length > 0) {
+      // The tenant row is the existing, typed per-tenant serialization
+      // anchor. Holding this lock until commit ensures sequence allocation
+      // order cannot overtake commit order for one tenant's event stream.
+      const lockedTenant = yield* transaction
+        .select({ tenantId: tenants.tenantId })
+        .from(tenants)
+        .where(eq(tenants.tenantId, input.principal.tenantId))
+        .for('update')
+        .limit(1)
+        .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+      if (lockedTenant.length !== 1) {
+        return yield* transactionFailure(
+          failureReason,
+          new RepositoryInvariantError({ reason: 'The Domain Event tenant does not exist' }),
+        );
+      }
+    }
+
+    const persistedDomainEvents = input.evidence.domainEvents.map((event) => ({
+      actionInvocationId: input.actionInvocationId,
+      domainEventId: randomUUID(),
+      eventType: event.eventType,
+      legalEntityId: input.principal.legalEntityId,
+      occurredAt: event.occurredAt,
+      payloadJson: event.payloadJson,
+      producerModuleKey: event.producerModuleKey,
+      subjectModuleKey: event.subjectModuleKey,
+      subjectResourceId: event.subjectResourceId,
+      subjectResourceType: event.subjectResourceType,
+      tenantId: input.principal.tenantId,
+    }));
+
+    if (persistedDomainEvents.length > 0) {
+      yield* transaction
+        .insert(domainEvents)
+        .values(persistedDomainEvents)
+        .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+    }
+
+    if (input.evidence.outboxMessages.length > 0) {
+      const persistedOutboxMessages = yield* Effect.all(
+        input.evidence.outboxMessages.map((collected) => {
+          const persistedDomainEvent = persistedDomainEvents[collected.domainEventIndex];
+          if (persistedDomainEvent === undefined) {
+            return Effect.fail(
+              transactionFailure(
+                failureReason,
+                new RepositoryInvariantError({
+                  reason: 'An Outbox Message has no persisted Domain Event',
+                }),
+              ),
+            );
+          }
+          return Effect.succeed({
+            domainEventId: persistedDomainEvent.domainEventId,
+            payloadJson: collected.message.payloadJson,
+            producerModuleKey: collected.message.producerModuleKey,
+            tenantId: input.principal.tenantId,
+            topic: collected.message.topic,
+          });
+        }),
+        { concurrency: 1 },
+      );
+      yield* transaction
+        .insert(outboxMessages)
+        .values(persistedOutboxMessages)
+        .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+    }
+
+    const completedAt = yield* DateTime.nowAsDate;
+    const succeeded = yield* transaction
+      .update(actionInvocations)
+      .set({
+        completedAt,
+        status: 'succeeded',
+      })
+      .where(
+        and(
+          eq(actionInvocations.actionInvocationId, input.actionInvocationId),
+          eq(actionInvocations.status, 'running'),
+        ),
+      )
+      .returning({ actionInvocationId: actionInvocations.actionInvocationId })
+      .pipe(Effect.mapError((cause) => transactionFailure(failureReason, cause)));
+
+    if (succeeded.length !== 1) {
+      return yield* transactionFailure(
+        failureReason,
+        new RepositoryInvariantError({
+          reason: 'The Action invocation could not be marked succeeded',
+        }),
+      );
+    }
+    return yield* Effect.void;
+  });
 
   return Object.freeze({
     createOrResolveInvocation,

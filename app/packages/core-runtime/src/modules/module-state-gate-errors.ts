@@ -1,20 +1,7 @@
-/* eslint-disable max-classes-per-file -- One closed sanitized module-gate failure vocabulary. */
-import { Schema } from 'effect';
+import type { ModuleStateCheckUnavailableError } from './module-state-check-unavailable-error.ts';
+import type { ModuleStateDeniedError } from './module-state-denied-error.ts';
 
-export class ModuleStateDeniedError extends Schema.TaggedError<ModuleStateDeniedError>()(
-  'ModuleStateDeniedError',
-  {
-    code: Schema.Literal('module_state_denied'),
-    reason: Schema.String,
-  },
-) {}
-
-export class ModuleStateCheckUnavailableError extends Schema.TaggedError<ModuleStateCheckUnavailableError>()(
-  'ModuleStateCheckUnavailableError',
-  {
-    code: Schema.Literal('module_state_check_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+export { ModuleStateCheckUnavailableError } from './module-state-check-unavailable-error.ts';
+export { ModuleStateDeniedError } from './module-state-denied-error.ts';
 
 export type ModuleStateGateError = ModuleStateCheckUnavailableError | ModuleStateDeniedError;

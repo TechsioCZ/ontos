@@ -16,44 +16,9 @@ export interface ApprovedVerticalPageClient {
 export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] = [
   // @ontos-codegen-start shell-page-clients
   {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-contact-create',
-    load: () => import('contacts/PageContactCreate'),
-  },
-  {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-contact-detail',
-    load: () => import('contacts/PageContactDetail'),
-  },
-  {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-contact-edit',
-    load: () => import('contacts/PageContactEdit'),
-  },
-  {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-contacts',
-    load: () => import('contacts/PageContacts'),
-  },
-  {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-customer-create',
-    load: () => import('contacts/PageCustomerCreate'),
-  },
-  {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-customer-detail',
-    load: () => import('contacts/PageCustomerDetail'),
-  },
-  {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-customer-edit',
-    load: () => import('contacts/PageCustomerEdit'),
-  },
-  {
-    appId: 'contacts',
-    componentKey: 'contacts.core.page-customers-list',
-    load: () => import('contacts/PageCustomersList'),
+    appId: 'party-registry',
+    componentKey: 'party.registry.page-contacts',
+    load: () => import('partyRegistry/PageContacts'),
   },
   // @ontos-codegen-end shell-page-clients
 ];

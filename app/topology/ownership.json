@@ -21,6 +21,24 @@
       }
     },
     {
+      "id": "gateway-principal-verifier",
+      "package": "@app/gateway-principal-verifier",
+      "path": "packages/gateway-principal-verifier",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/wave2/core-runtime.md",
+        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
+        "blastRadius": {
+          "tier": "tier-0-core-infrastructure",
+          "references": [
+            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
+          ]
+        }
+      }
+    },
+    {
       "id": "shell-super-app",
       "package": "@app/shell-super-app",
       "path": "apps/shell-super-app",
@@ -76,18 +94,20 @@
       }
     },
     {
-      "id": "contacts",
-      "package": "@app/contacts",
-      "path": "verticals/contacts",
+      "id": "party-registry",
+      "package": "@app/party-registry",
+      "path": "verticals/party-registry",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/contacts.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#contacts",
+        "runbookRef": "runbooks/verticals/party-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#contacts"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
+          ]
         }
       }
     }

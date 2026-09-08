@@ -1,73 +1,71 @@
-/* eslint-disable complexity -- One closed mode matrix is clearer than distributed cross-field checks. */
 import { Schema } from 'effect';
+import { decodedStringBrand, nonEmptyString } from './string-schemas.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
-const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
+const AuthBindingIdSchema = decodedStringBrand(uuid, 'AuthBindingId');
+const ImpersonatedByPrincipalIdSchema = decodedStringBrand(uuid, 'ImpersonatedByPrincipalId');
+const LegalEntityIdSchema = decodedStringBrand(uuid, 'LegalEntityId');
+const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
+const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 
-export const TrustedPrincipalContextSchema = Schema.Struct({
-  authBindingId: Schema.optionalKey(uuid),
+const TrustedPrincipalContextFieldsSchema = Schema.Struct({
+  authBindingId: Schema.optionalKey(AuthBindingIdSchema),
   authContextRef: Schema.optionalKey(nonEmptyString),
   authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation']),
-  impersonatedByPrincipalId: Schema.optionalKey(uuid),
-  legalEntityId: Schema.optionalKey(uuid),
-  principalId: uuid,
-  tenantId: uuid,
-}).check(
-  Schema.makeFilter((context) => {
-    const issues: Schema.FilterIssue[] = [];
-    const safeSessionRef = context.authContextRef?.startsWith('better-auth-session:') === true;
-    const safeKeyRef = context.authContextRef?.startsWith('better-auth-api-key:') === true;
-    const safeJobRef =
-      context.authContextRef !== undefined &&
-      /^job:[^:]{1,100}:run:[^:]{1,200}$/u.test(context.authContextRef);
-    if (
-      context.authMethod === 'session' &&
-      (context.authBindingId === undefined ||
-        !safeSessionRef ||
-        context.impersonatedByPrincipalId !== undefined)
-    ) {
-      issues.push({
-        issue: 'session context requires a binding and safe session reference',
-        path: ['authMethod'],
-      });
-    }
-    if (
-      context.authMethod === 'api_key' &&
-      (context.authBindingId === undefined ||
-        !safeKeyRef ||
-        context.impersonatedByPrincipalId !== undefined)
-    ) {
-      issues.push({
-        issue: 'api_key context requires a binding and safe key reference',
-        path: ['authMethod'],
-      });
-    }
-    if (
-      context.authMethod === 'support_impersonation' &&
-      (context.authBindingId === undefined ||
-        !safeSessionRef ||
-        context.impersonatedByPrincipalId === undefined ||
-        context.impersonatedByPrincipalId === context.principalId)
-    ) {
-      issues.push({
-        issue: 'support impersonation requires distinct effective and original principals',
-        path: ['authMethod'],
-      });
-    }
-    if (
-      context.authMethod === 'system' &&
-      (context.authBindingId !== undefined ||
-        context.impersonatedByPrincipalId !== undefined ||
-        context.legalEntityId !== undefined ||
-        !safeJobRef)
-    ) {
-      issues.push({
-        issue: 'system context requires only a safe job/run reference',
-        path: ['authMethod'],
-      });
-    }
-    return issues;
-  }),
+  impersonatedByPrincipalId: Schema.optionalKey(ImpersonatedByPrincipalIdSchema),
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  principalId: PrincipalIdSchema,
+  tenantId: TenantIdSchema,
+});
+
+type TrustedPrincipalContextFields = typeof TrustedPrincipalContextFieldsSchema.Type;
+type PrincipalContextValidator = (
+  context: TrustedPrincipalContextFields,
+) => readonly Schema.FilterIssue[];
+
+const issue = (message: string): readonly Schema.FilterIssue[] => [
+  { issue: message, path: ['authMethod'] },
+];
+
+const validateApiKeyContext: PrincipalContextValidator = (context) =>
+  context.authBindingId === undefined ||
+  context.authContextRef?.startsWith('better-auth-api-key:') !== true ||
+  context.impersonatedByPrincipalId !== undefined
+    ? issue('api_key context requires a binding and safe key reference')
+    : [];
+
+const validateSessionContext: PrincipalContextValidator = (context) =>
+  context.authBindingId === undefined ||
+  context.authContextRef?.startsWith('better-auth-session:') !== true ||
+  context.impersonatedByPrincipalId !== undefined
+    ? issue('session context requires a binding and safe session reference')
+    : [];
+
+const validateSupportImpersonationContext: PrincipalContextValidator = (context) =>
+  context.authBindingId === undefined ||
+  context.authContextRef?.startsWith('better-auth-session:') !== true ||
+  context.impersonatedByPrincipalId === undefined ||
+  context.impersonatedByPrincipalId === context.principalId
+    ? issue('support impersonation requires distinct effective and original principals')
+    : [];
+
+const validateSystemContext: PrincipalContextValidator = (context) =>
+  context.authBindingId !== undefined ||
+  context.impersonatedByPrincipalId !== undefined ||
+  context.legalEntityId !== undefined ||
+  !/^job:[^:]{1,100}:run:[^:]{1,200}$/u.test(context.authContextRef ?? '')
+    ? issue('system context requires only a safe job/run reference')
+    : [];
+
+const principalContextValidators = {
+  api_key: validateApiKeyContext,
+  session: validateSessionContext,
+  support_impersonation: validateSupportImpersonationContext,
+  system: validateSystemContext,
+} satisfies Record<TrustedPrincipalContextFields['authMethod'], PrincipalContextValidator>;
+
+export const TrustedPrincipalContextSchema = TrustedPrincipalContextFieldsSchema.check(
+  Schema.makeFilter((context) => principalContextValidators[context.authMethod](context)),
 );
 
 export type TrustedPrincipalContext = Schema.Schema.Type<typeof TrustedPrincipalContextSchema>;

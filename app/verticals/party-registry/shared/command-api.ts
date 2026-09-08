@@ -1,0 +1,655 @@
+import {
+  makeProblemDetailsSchema,
+  makeRetryableProblemDetailsSchema,
+} from '@app/shared-contracts/problem-details';
+/* eslint-disable import/no-duplicates, no-duplicate-imports -- Canonical public command contracts re-export schema-only Action payloads and results. expires: 2026-12-31. */
+import {
+  HttpApi,
+  HttpApiEndpoint,
+  HttpApiGroup,
+  Schema,
+} from '@modern-js/plugin-bff/effect-client';
+import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { PartyRefSchema } from './resources/party.ts';
+import { ActionInvocationIdSchema } from './domain/correction-contracts.ts';
+import {
+  AddContactPointPayloadSchema,
+  AddContactPointResultSchema,
+} from './actions/add-contact-point.ts';
+import {
+  AddPartyOfficialIdentifierPayloadSchema,
+  AddPartyOfficialIdentifierResultSchema,
+} from './actions/add-party-official-identifier.ts';
+import { ArchivePartyPayloadSchema, ArchivePartyResultSchema } from './actions/archive-party.ts';
+import {
+  ConfirmDuplicatePartiesPayloadSchema,
+  ConfirmDuplicatePartiesResultSchema,
+} from './actions/confirm-duplicate-parties.ts';
+import {
+  CorrectPartyFactPayloadSchema,
+  CorrectPartyFactResultSchema,
+} from './actions/correct-party-fact.ts';
+import {
+  CounterpartyCreatePayloadSchema,
+  CounterpartyCreateResultSchema,
+} from './actions/counterparty-create.ts';
+import {
+  CounterpartyRoleAddPayloadSchema,
+  CounterpartyRoleAddResultSchema,
+} from './actions/counterparty-role-add.ts';
+import {
+  CounterpartyRoleEndPayloadSchema,
+  CounterpartyRoleEndResultSchema,
+} from './actions/counterparty-role-end.ts';
+import {
+  CreatePartyRelationshipPayloadSchema,
+  CreatePartyRelationshipResultSchema,
+} from './domain/relationship-contract.ts';
+import { CreatePartyPayloadJsonSchema, CreatePartyResultSchema } from './actions/create-party.ts';
+import type { CreatePartyPayloadSchema } from './actions/create-party.ts';
+import {
+  DismissDuplicateCandidatePayloadSchema,
+  DismissDuplicateCandidateResultSchema,
+} from './actions/dismiss-duplicate-candidate.ts';
+import {
+  EndContactPointPayloadSchema,
+  EndContactPointResultSchema,
+} from './actions/end-contact-point.ts';
+import {
+  EndPartyOfficialIdentifierPayloadSchema,
+  EndPartyOfficialIdentifierResultSchema,
+} from './actions/end-party-official-identifier.ts';
+import {
+  EndPartyRelationshipPayloadSchema,
+  ChangePartyRelationshipResultSchema as EndPartyRelationshipResultSchema,
+} from './domain/relationship-contract.ts';
+import {
+  MarkDuplicateCandidateNeedsEvidencePayloadSchema,
+  MarkDuplicateCandidateNeedsEvidenceResultSchema,
+} from './actions/mark-duplicate-candidate-needs-evidence.ts';
+import { MatchPartyPayloadSchema, MatchPartyResultSchema } from './actions/match-party.ts';
+import {
+  RequestSearchRebuildPayloadSchema,
+  RequestSearchRebuildResultSchema,
+} from './actions/request-search-rebuild.ts';
+import {
+  ResolveDuplicateCandidateCreatePayloadSchema,
+  ResolveDuplicateCandidateCreateResultSchema,
+} from './actions/resolve-duplicate-candidate-create.ts';
+import {
+  ResolveDuplicateCandidateMatchPayloadSchema,
+  ResolveDuplicateCandidateMatchResultSchema,
+} from './actions/resolve-duplicate-candidate-match.ts';
+import {
+  UnarchivePartyPayloadSchema,
+  UnarchivePartyResultSchema,
+} from './actions/unarchive-party.ts';
+import {
+  UpdateContactPointPayloadSchema,
+  UpdateContactPointResultSchema,
+} from './actions/update-contact-point.ts';
+import {
+  UpdatePartyOfficialIdentifierPayloadSchema,
+  UpdatePartyOfficialIdentifierResultSchema,
+} from './actions/update-party-official-identifier.ts';
+import {
+  UpdatePartyRelationshipPayloadSchema,
+  ChangePartyRelationshipResultSchema as UpdatePartyRelationshipResultSchema,
+} from './domain/relationship-contract.ts';
+import { UpdatePartyPayloadSchema, UpdatePartyResultSchema } from './actions/update-party.ts';
+
+export {
+  AddContactPointPayloadSchema,
+  AddContactPointResultSchema,
+} from './actions/add-contact-point.ts';
+export type AddContactPointPayload = typeof AddContactPointPayloadSchema.Type;
+export {
+  AddPartyOfficialIdentifierPayloadSchema,
+  AddPartyOfficialIdentifierResultSchema,
+} from './actions/add-party-official-identifier.ts';
+export type AddPartyOfficialIdentifierPayload = typeof AddPartyOfficialIdentifierPayloadSchema.Type;
+export { ArchivePartyPayloadSchema, ArchivePartyResultSchema } from './actions/archive-party.ts';
+export type ArchivePartyPayload = typeof ArchivePartyPayloadSchema.Type;
+export {
+  ConfirmDuplicatePartiesPayloadSchema,
+  ConfirmDuplicatePartiesResultSchema,
+} from './actions/confirm-duplicate-parties.ts';
+export type ConfirmDuplicatePartiesPayload = typeof ConfirmDuplicatePartiesPayloadSchema.Type;
+export {
+  CorrectPartyFactPayloadSchema,
+  CorrectPartyFactResultSchema,
+} from './actions/correct-party-fact.ts';
+export type CorrectPartyFactPayload = typeof CorrectPartyFactPayloadSchema.Type;
+export {
+  CounterpartyCreatePayloadSchema,
+  CounterpartyCreateResultSchema,
+} from './actions/counterparty-create.ts';
+export type CounterpartyCreatePayload = typeof CounterpartyCreatePayloadSchema.Type;
+export {
+  CounterpartyRoleAddPayloadSchema,
+  CounterpartyRoleAddResultSchema,
+} from './actions/counterparty-role-add.ts';
+export type CounterpartyRoleAddPayload = typeof CounterpartyRoleAddPayloadSchema.Type;
+export {
+  CounterpartyRoleEndPayloadSchema,
+  CounterpartyRoleEndResultSchema,
+} from './actions/counterparty-role-end.ts';
+export type CounterpartyRoleEndPayload = typeof CounterpartyRoleEndPayloadSchema.Type;
+export {
+  CreatePartyRelationshipPayloadSchema,
+  CreatePartyRelationshipResultSchema,
+} from './domain/relationship-contract.ts';
+export type CreatePartyRelationshipPayload = typeof CreatePartyRelationshipPayloadSchema.Type;
+export {
+  CreatePartyPayloadJsonSchema,
+  CreatePartyPayloadSchema,
+  CreatePartyResultSchema,
+} from './actions/create-party.ts';
+export type CreatePartyPayload = typeof CreatePartyPayloadSchema.Type;
+export {
+  DismissDuplicateCandidatePayloadSchema,
+  DismissDuplicateCandidateResultSchema,
+} from './actions/dismiss-duplicate-candidate.ts';
+export type DismissDuplicateCandidatePayload = typeof DismissDuplicateCandidatePayloadSchema.Type;
+export {
+  EndContactPointPayloadSchema,
+  EndContactPointResultSchema,
+} from './actions/end-contact-point.ts';
+export type EndContactPointPayload = typeof EndContactPointPayloadSchema.Type;
+export {
+  EndPartyOfficialIdentifierPayloadSchema,
+  EndPartyOfficialIdentifierResultSchema,
+} from './actions/end-party-official-identifier.ts';
+export type EndPartyOfficialIdentifierPayload = typeof EndPartyOfficialIdentifierPayloadSchema.Type;
+export {
+  EndPartyRelationshipPayloadSchema,
+  ChangePartyRelationshipResultSchema as EndPartyRelationshipResultSchema,
+} from './domain/relationship-contract.ts';
+export type EndPartyRelationshipPayload = typeof EndPartyRelationshipPayloadSchema.Type;
+export {
+  MarkDuplicateCandidateNeedsEvidencePayloadSchema,
+  MarkDuplicateCandidateNeedsEvidenceResultSchema,
+} from './actions/mark-duplicate-candidate-needs-evidence.ts';
+export type MarkDuplicateCandidateNeedsEvidencePayload =
+  typeof MarkDuplicateCandidateNeedsEvidencePayloadSchema.Type;
+export { MatchPartyPayloadSchema, MatchPartyResultSchema } from './actions/match-party.ts';
+export type MatchPartyPayload = typeof MatchPartyPayloadSchema.Type;
+export {
+  RequestSearchRebuildPayloadSchema,
+  RequestSearchRebuildResultSchema,
+} from './actions/request-search-rebuild.ts';
+export type RequestSearchRebuildPayload = typeof RequestSearchRebuildPayloadSchema.Type;
+export {
+  ResolveDuplicateCandidateCreatePayloadSchema,
+  ResolveDuplicateCandidateCreateResultSchema,
+} from './actions/resolve-duplicate-candidate-create.ts';
+export type ResolveDuplicateCandidateCreatePayload =
+  typeof ResolveDuplicateCandidateCreatePayloadSchema.Type;
+export {
+  ResolveDuplicateCandidateMatchPayloadSchema,
+  ResolveDuplicateCandidateMatchResultSchema,
+} from './actions/resolve-duplicate-candidate-match.ts';
+export type ResolveDuplicateCandidateMatchPayload =
+  typeof ResolveDuplicateCandidateMatchPayloadSchema.Type;
+export {
+  UnarchivePartyPayloadSchema,
+  UnarchivePartyResultSchema,
+} from './actions/unarchive-party.ts';
+export type UnarchivePartyPayload = typeof UnarchivePartyPayloadSchema.Type;
+export {
+  UpdateContactPointPayloadSchema,
+  UpdateContactPointResultSchema,
+} from './actions/update-contact-point.ts';
+export type UpdateContactPointPayload = typeof UpdateContactPointPayloadSchema.Type;
+export {
+  UpdatePartyOfficialIdentifierPayloadSchema,
+  UpdatePartyOfficialIdentifierResultSchema,
+} from './actions/update-party-official-identifier.ts';
+export type UpdatePartyOfficialIdentifierPayload =
+  typeof UpdatePartyOfficialIdentifierPayloadSchema.Type;
+export {
+  UpdatePartyRelationshipPayloadSchema,
+  ChangePartyRelationshipResultSchema as UpdatePartyRelationshipResultSchema,
+} from './domain/relationship-contract.ts';
+export type UpdatePartyRelationshipPayload = typeof UpdatePartyRelationshipPayloadSchema.Type;
+export { UpdatePartyPayloadSchema, UpdatePartyResultSchema } from './actions/update-party.ts';
+export type UpdatePartyPayload = typeof UpdatePartyPayloadSchema.Type;
+
+// Absence reaches the explicit 428 mapping; every typed command client requires a key.
+export const PartyCommandHeadersSchema = Schema.Struct({
+  'idempotency-key': Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  ),
+});
+export const PartyCommandInvalidRequestProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandInvalidRequestProblem',
+  400,
+);
+
+/** Converts framework payload/header decoding failures into the declared RFC 9457 shape. */
+export class PartyCommandSchemaErrorMiddleware extends HttpApiMiddleware.Service<PartyCommandSchemaErrorMiddleware>()(
+  'party-registry/PartyCommandSchemaErrorMiddleware',
+  { error: PartyCommandInvalidRequestProblemSchema },
+) {}
+
+export const PartyCommandAuthenticationProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandAuthenticationProblem',
+  401,
+);
+
+export const PartyCommandForbiddenProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandForbiddenProblem',
+  403,
+);
+
+export const PartyCommandNotFoundProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandNotFoundProblem',
+  404,
+);
+
+export const PartyCommandConflictProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandConflictProblem',
+  409,
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'party_lifecycle_conflict',
+      'party_unarchive_identity_conflict',
+      'party_unarchive_identity_ambiguous',
+      'party_unarchive_review_required',
+      'party_identifier_claim_conflict',
+      'party_official_identifier_update_conflict',
+      'party_contact_point_already_exists',
+      'party_contact_point_revision_conflict',
+      'party_contact_point_lifecycle_conflict',
+      'party_contact_point_correction_required',
+      'party_correction_conflict',
+      'counterparty_party_archived',
+      'counterparty_role_overlap',
+      'counterparty_role_already_ended',
+      'counterparty_temporal_conflict',
+      'duplicate_candidate_conflict',
+      'claim_owned_by_different_party',
+      'party_relationship_overlap_conflict',
+      'party_relationship_revision_conflict',
+      'party_relationship_correction_required',
+    ]),
+  },
+);
+
+export const PartyCommandUnprocessableProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandUnprocessableProblem',
+  422,
+  {
+    code: Schema.Literals([
+      'action_policy_denied',
+      'party_evidence_insufficient',
+      'party_official_identifier_invalid',
+      'party_contact_point_invalid',
+      'counterparty_evidence_insufficient',
+      'party_relationship_endpoint_type_mismatch',
+      'party_relationship_type_unsupported',
+      'party_relationship_invalid_interval',
+    ]),
+  },
+);
+
+export const PartyCommandPreconditionRequiredProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandPreconditionRequiredProblem',
+  428,
+);
+
+export const PartyCommandUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'PartyCommandUnavailableProblem',
+  503,
+);
+
+export const PartyCommandAlreadyCommittedProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandAlreadyCommittedProblem',
+  409,
+  {
+    code: Schema.Literal('action_already_committed'),
+    invocationId: ActionInvocationIdSchema,
+    resolution: Schema.Literal('REFRESH_GOVERNED_READS'),
+    retryCommand: Schema.Literal(false),
+  },
+);
+
+/** Uncertainty is not a retry hint: resolve the durable invocation before any further command. */
+export const PartyCommandCommitIndeterminateProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandCommitIndeterminateProblem',
+  503,
+  {
+    invocationId: ActionInvocationIdSchema,
+    resolution: Schema.Literal('RESOLVE_COMMIT'),
+    retryCommand: Schema.Literal(false),
+  },
+);
+
+export const ResolvePartyCommandCommitPayloadSchema = Schema.Struct({
+  invocationId: ActionInvocationIdSchema,
+});
+export type ResolvePartyCommandCommitPayload = typeof ResolvePartyCommandCommitPayloadSchema.Type;
+
+export const ResolvePartyCommandCommitResultSchema = Schema.TaggedStruct(
+  'PartyCommandCommitResolution',
+  {
+    invocationId: ActionInvocationIdSchema,
+    retryCommand: Schema.Literal(false),
+    state: Schema.Literals(['OPEN', 'COMMITTED']),
+  },
+);
+export type ResolvePartyCommandCommitResult = typeof ResolvePartyCommandCommitResultSchema.Type;
+
+export const PartyCommandInternalProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandInternalProblem',
+  500,
+);
+
+export const PartyCommandAliasWriteRejectedProblemSchema = makeProblemDetailsSchema(
+  'PartyCommandAliasWriteRejectedProblem',
+  409,
+  {
+    aliasPartyRef: PartyRefSchema,
+    canonicalPartyRef: PartyRefSchema,
+    code: Schema.Literal('party_alias_write_rejected'),
+  },
+);
+
+export type PartyCommandProblem =
+  | typeof PartyCommandInvalidRequestProblemSchema.Type
+  | typeof PartyCommandAuthenticationProblemSchema.Type
+  | typeof PartyCommandForbiddenProblemSchema.Type
+  | typeof PartyCommandNotFoundProblemSchema.Type
+  | typeof PartyCommandConflictProblemSchema.Type
+  | typeof PartyCommandUnprocessableProblemSchema.Type
+  | typeof PartyCommandPreconditionRequiredProblemSchema.Type
+  | typeof PartyCommandUnavailableProblemSchema.Type
+  | typeof PartyCommandCommitIndeterminateProblemSchema.Type
+  | typeof PartyCommandAlreadyCommittedProblemSchema.Type
+  | typeof PartyCommandInternalProblemSchema.Type
+  | typeof PartyCommandAliasWriteRejectedProblemSchema.Type;
+
+const commandErrors = [
+  PartyCommandInvalidRequestProblemSchema,
+  PartyCommandAuthenticationProblemSchema,
+  PartyCommandForbiddenProblemSchema,
+  PartyCommandNotFoundProblemSchema,
+  PartyCommandConflictProblemSchema,
+  PartyCommandUnprocessableProblemSchema,
+  PartyCommandPreconditionRequiredProblemSchema,
+  PartyCommandUnavailableProblemSchema,
+  PartyCommandCommitIndeterminateProblemSchema,
+  PartyCommandAlreadyCommittedProblemSchema,
+  PartyCommandInternalProblemSchema,
+  PartyCommandAliasWriteRejectedProblemSchema,
+] as const;
+
+/** One closed, statically named HTTP operation per registered Action; no dynamic dispatch envelope. */
+export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi').add(
+  HttpApiGroup.make('partyCommands')
+    .add(
+      HttpApiEndpoint.post('addContactPoint', '/party-registry/actions/add-contact-point', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: Schema.toEncoded(AddContactPointPayloadSchema),
+        success: AddContactPointResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'addPartyOfficialIdentifier',
+        '/party-registry/actions/add-party-official-identifier',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: Schema.toEncoded(AddPartyOfficialIdentifierPayloadSchema),
+          success: AddPartyOfficialIdentifierResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('archiveParty', '/party-registry/actions/archive-party', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: ArchivePartyPayloadSchema,
+        success: ArchivePartyResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'confirmDuplicateParties',
+        '/party-registry/actions/confirm-duplicate-parties',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: ConfirmDuplicatePartiesPayloadSchema,
+          success: ConfirmDuplicatePartiesResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('correctPartyFact', '/party-registry/actions/correct-party-fact', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: CorrectPartyFactPayloadSchema,
+        success: CorrectPartyFactResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('counterpartyCreate', '/party-registry/actions/counterparty-create', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: CounterpartyCreatePayloadSchema,
+        success: CounterpartyCreateResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('counterpartyRoleAdd', '/party-registry/actions/counterparty-role-add', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: CounterpartyRoleAddPayloadSchema,
+        success: CounterpartyRoleAddResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('counterpartyRoleEnd', '/party-registry/actions/counterparty-role-end', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: CounterpartyRoleEndPayloadSchema,
+        success: CounterpartyRoleEndResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createPartyRelationship',
+        '/party-registry/actions/create-party-relationship',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: CreatePartyRelationshipPayloadSchema,
+          success: CreatePartyRelationshipResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('createParty', '/party-registry/actions/create-party', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: CreatePartyPayloadJsonSchema,
+        success: CreatePartyResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'dismissDuplicateCandidate',
+        '/party-registry/actions/dismiss-duplicate-candidate',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: DismissDuplicateCandidatePayloadSchema,
+          success: DismissDuplicateCandidateResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('endContactPoint', '/party-registry/actions/end-contact-point', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: EndContactPointPayloadSchema,
+        success: EndContactPointResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'endPartyOfficialIdentifier',
+        '/party-registry/actions/end-party-official-identifier',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: EndPartyOfficialIdentifierPayloadSchema,
+          success: EndPartyOfficialIdentifierResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'endPartyRelationship',
+        '/party-registry/actions/end-party-relationship',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: EndPartyRelationshipPayloadSchema,
+          success: EndPartyRelationshipResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'markDuplicateCandidateNeedsEvidence',
+        '/party-registry/actions/mark-duplicate-candidate-needs-evidence',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: MarkDuplicateCandidateNeedsEvidencePayloadSchema,
+          success: MarkDuplicateCandidateNeedsEvidenceResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('matchParty', '/party-registry/actions/match-party', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: MatchPartyPayloadSchema,
+        success: MatchPartyResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'requestSearchRebuild',
+        '/party-registry/actions/request-search-rebuild',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: RequestSearchRebuildPayloadSchema,
+          success: RequestSearchRebuildResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'resolveDuplicateCandidateCreate',
+        '/party-registry/actions/resolve-duplicate-candidate-create',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: ResolveDuplicateCandidateCreatePayloadSchema,
+          success: ResolveDuplicateCandidateCreateResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'resolveDuplicateCandidateMatch',
+        '/party-registry/actions/resolve-duplicate-candidate-match',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: ResolveDuplicateCandidateMatchPayloadSchema,
+          success: ResolveDuplicateCandidateMatchResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('unarchiveParty', '/party-registry/actions/unarchive-party', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: UnarchivePartyPayloadSchema,
+        success: UnarchivePartyResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('updateContactPoint', '/party-registry/actions/update-contact-point', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: UpdateContactPointPayloadSchema,
+        success: UpdateContactPointResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updatePartyOfficialIdentifier',
+        '/party-registry/actions/update-party-official-identifier',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: UpdatePartyOfficialIdentifierPayloadSchema,
+          success: UpdatePartyOfficialIdentifierResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updatePartyRelationship',
+        '/party-registry/actions/update-party-relationship',
+        {
+          error: commandErrors,
+          headers: PartyCommandHeadersSchema,
+          payload: UpdatePartyRelationshipPayloadSchema,
+          success: UpdatePartyRelationshipResultSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('updateParty', '/party-registry/actions/update-party', {
+        error: commandErrors,
+        headers: PartyCommandHeadersSchema,
+        payload: Schema.toEncoded(UpdatePartyPayloadSchema),
+        success: UpdatePartyResultSchema,
+      }),
+    )
+    .middleware(PartyCommandSchemaErrorMiddleware),
+);
+
+/** Resolves only a durable invocation's commit state through Core; never dispatches an Action. */
+export const partyRegistryCommandRecoveryApi = HttpApi.make('PartyRegistryCommandRecoveryApi').add(
+  HttpApiGroup.make('partyCommandRecovery')
+    .add(
+      HttpApiEndpoint.post('resolve', '/party-registry/action-commits/resolve', {
+        error: [
+          PartyCommandInvalidRequestProblemSchema,
+          PartyCommandAuthenticationProblemSchema,
+          PartyCommandForbiddenProblemSchema,
+          PartyCommandNotFoundProblemSchema,
+          PartyCommandConflictProblemSchema,
+          PartyCommandUnavailableProblemSchema,
+          PartyCommandCommitIndeterminateProblemSchema,
+          PartyCommandInternalProblemSchema,
+        ],
+        payload: ResolvePartyCommandCommitPayloadSchema,
+        success: ResolvePartyCommandCommitResultSchema,
+      }),
+    )
+    .middleware(PartyCommandSchemaErrorMiddleware),
+);

@@ -3,4 +3,4 @@ pnpm = "npm:pnpm"
 
 [tools]
 node = "26.5.0"
-pnpm = "11.17.0"
+pnpm = "11.25.0"

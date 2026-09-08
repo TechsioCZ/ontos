@@ -5,8 +5,11 @@ import type { CatalogEntry } from '../../src/db/catalog.ts';
 
 const exactCatalog = expectedCoreTableCatalog.map<CatalogEntry>((qualifiedName) => {
   const [schemaName, tableName] = qualifiedName.split('.');
-  assert.ok(schemaName);
-  assert.ok(tableName);
+  assert.equal((schemaName?.length ?? 0) > 0, true);
+  assert.equal((tableName?.length ?? 0) > 0, true);
+  if (schemaName === undefined || tableName === undefined) {
+    throw new TypeError('Core catalog entries must be schema-qualified');
+  }
 
   return {
     kind: 'table',
@@ -15,14 +18,14 @@ const exactCatalog = expectedCoreTableCatalog.map<CatalogEntry>((qualifiedName) 
   };
 });
 
-test('reports one missing expected Core table', () => {
+void test('reports one missing expected Core table', () => {
   const difference = compareApplicationCatalog(exactCatalog.slice(1));
 
   assert.deepEqual(difference.missing, [expectedCoreTableCatalog[0]]);
   assert.deepEqual(difference.unexpected, []);
 });
 
-test('reports unexpected application tables and schemas', () => {
+void test('reports unexpected application tables and schemas', () => {
   const difference = compareApplicationCatalog([
     ...exactCatalog,
     {

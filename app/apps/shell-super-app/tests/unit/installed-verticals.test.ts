@@ -1,13 +1,16 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import fs from 'node:fs';
 import { expect, test } from '@rstest/core';
 import { Effect, Schema } from 'effect';
 import {
   deriveInstalledVerticalIds,
+  InstalledVerticalTopologyError,
   installedVerticalIds,
 } from '../../api/verticals/installed-verticals.ts';
+import { DeploymentAllowlistTopologySchema } from '../../api/modules/deployment-allowlist.ts';
 
 test('derives installed vertical IDs from the injected topology without hardcoded registrations', async () => {
-  const topology = Schema.decodeUnknownSync(Schema.Json)(
+  const topology = Schema.decodeUnknownSync(DeploymentAllowlistTopologySchema)(
     JSON.parse(
       fs.readFileSync(
         new URL('../../../../topology/reference-topology.json', import.meta.url),
@@ -15,11 +18,14 @@ test('derives installed vertical IDs from the injected topology without hardcode
       ),
     ),
   );
-  const expectedInstalledIds = await Effect.runPromise(deriveInstalledVerticalIds(topology));
+  const expectedInstalledIds = await runEffectTestPromise(deriveInstalledVerticalIds(topology));
 
-  expect([...expectedInstalledIds]).toEqual(['contacts']);
-  expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual([...expectedInstalledIds]);
-  const valid = await Effect.runPromise(
+  expect([...expectedInstalledIds]).toEqual(['party-registry']);
+  expect(expectedInstalledIds.has('party.registry')).toBe(false);
+  expect([...(await runEffectTestPromise(installedVerticalIds))]).toEqual([
+    ...expectedInstalledIds,
+  ]);
+  const valid = await runEffectTestPromise(
     deriveInstalledVerticalIds({
       sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],
       shell: { id: 'shell-super-app', kind: 'shell' },
@@ -46,7 +52,9 @@ test('rejects malformed, non-vertical, invalid, and duplicate installed entries'
     },
   ];
   const errors = await Promise.all(
-    inputs.map((input) => Effect.runPromise(Effect.flip(deriveInstalledVerticalIds(input)))),
+    inputs.map(
+      async (input) => await runEffectTestPromise(Effect.flip(deriveInstalledVerticalIds(input))),
+    ),
   );
-  expect(errors.every((error) => error._tag === 'InstalledVerticalTopologyError')).toBe(true);
+  expect(errors.every(Schema.is(InstalledVerticalTopologyError))).toBe(true);
 });

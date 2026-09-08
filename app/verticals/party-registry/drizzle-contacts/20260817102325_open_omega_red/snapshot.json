@@ -1,0 +1,617 @@
+{
+  "id": "4b41eb1a-a20a-467a-8e15-f5c2d818c619",
+  "prevIds": [
+    "df075bb6-eb20-4b26-876e-5791912cf9da"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "crm",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "contacts",
+      "schema": "crm",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "contact_id"
+      ],
+      "nameExplicit": false,
+      "name": "contacts_pkey",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "contact_id",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_id",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "email",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "phone",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "archived_at",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"name\" = btrim(\"name\") and length(\"name\") > 0",
+      "name": "crm_contacts_name_ck",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "checks"
+    },
+    {
+      "value": "length(btrim(\"email\")) > 0",
+      "name": "crm_contacts_email_ck",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "checks"
+    },
+    {
+      "value": "length(btrim(\"phone\")) > 0",
+      "name": "crm_contacts_phone_ck",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "contact_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "crm_contacts_tenant_id_uk",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "customer_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "name",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"archived_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "crm_contacts_tenant_customer_active_idx",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "customer_id"
+      ],
+      "schemaTo": "crm",
+      "tableTo": "customers",
+      "columnsTo": [
+        "tenant_id",
+        "customer_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "crm_contacts_tenant_customer_fk",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "fks"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "crm_contacts_tenant_select",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "crm_contacts_tenant_insert",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "crm_contacts_tenant_update",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "crm_contacts_tenant_delete",
+      "schema": "crm",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "customers",
+      "schema": "crm",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "customer_id"
+      ],
+      "nameExplicit": false,
+      "name": "customers_pkey",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "customer_id",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ico",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dic",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_form_code",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "date",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "established_on",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "date",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dissolved_on",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "archived_at",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "customer_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "crm_customers_tenant_id_uk",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "uniques"
+    },
+    {
+      "value": "\"name\" = btrim(\"name\") and length(\"name\") > 0",
+      "name": "crm_customers_name_ck",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"ico\" is null or \"ico\" ~ '^[0-9]{8}$'",
+      "name": "crm_customers_ico_ck",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"dic\" is null or (\"dic\" = btrim(\"dic\") and length(\"dic\") between 1 and 20)",
+      "name": "crm_customers_dic_ck",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"legal_form_code\" is null or \"legal_form_code\" ~ '^[0-9]{3}$'",
+      "name": "crm_customers_legal_form_code_ck",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"dissolved_on\" is null or \"established_on\" is null or \"dissolved_on\" >= \"established_on\"",
+      "name": "crm_customers_lifecycle_dates_ck",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "name",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"archived_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "crm_customers_tenant_active_idx",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "ico",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "crm_customers_tenant_ico_uk",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "indexes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "crm_customers_tenant_select",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "crm_customers_tenant_insert",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "crm_customers_tenant_update",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "crm_customers_tenant_delete",
+      "schema": "crm",
+      "table": "customers",
+      "entityType": "policies"
+    }
+  ],
+  "renames": []
+}

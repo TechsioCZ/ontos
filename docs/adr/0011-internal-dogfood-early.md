@@ -1,21 +1,27 @@
 # ADR-0011: Internal dogfooding starts early
 
-Status: Superseded planning decision. Property-first sequencing is stale; current architecture
-proof work is tracked in [OntOS #176](https://github.com/TechsioCZ/ontos/issues/176) and
-[#177](https://github.com/TechsioCZ/ontos/issues/177).
+Status: Historical planning record. Current delivery sequencing belongs in GitHub issues; this ADR
+does not select the next product slice or define current architecture.
 
-## Context
+## Historical context
 
-The system will be used by a customer, but the internal operator also needs an operational slice: clients, projects, tickets, media/documents, and invoices with draft status. This is a low-friction way to validate foundations, but it must not displace the customer-domain dependency root.
+The system was expected to serve a customer while the internal operator also needed a narrow
+operational slice: clients, projects, tickets, media/documents, and draft invoices. The proposal
+used dogfooding to validate foundations without displacing customer-domain work.
 
-## Decision
+## Historical decision
 
-Current planning assumption: `property.registry` is the likely first customer-domain slice after the foundation skeleton. The `internal.delivery` MicroVertical can start early after those rails are proven, validating ResourceRef linking, media attachment, permissions, audit, invoices with `status = draft`, and tenant-level module activation without distracting from committed customer scope.
+At the time of this decision, `property.registry` was expected to be the first customer-domain
+slice after the foundation skeleton. `internal.delivery` could follow early to validate
+ResourceRef linking, media attachment, permissions, audit, draft invoices, and tenant module
+activation on the same rails.
 
-## Consequences
+## Historical consequences
 
-The customer-domain backbone is explored first. The team still experiences its own UX and architecture issues early, but dogfooding follows the same rails instead of setting the initial direction.
+Customer-domain work was intended to prove the backbone first, with internal dogfooding following
+closely enough to expose usability and architecture problems.
 
-## Risks
+## Historical risk
 
-Dogfooding must not distract from committed customer scope. It should remain narrow and foundation-oriented.
+Dogfooding could distract from committed customer scope and therefore had to stay narrow and
+foundation-oriented.

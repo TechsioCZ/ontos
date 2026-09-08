@@ -4,17 +4,20 @@ import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoin
 import { startOutboxWorkerProcess } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 
+const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
+
 const registration = defineOutboxWorker(
   {
     consumerModuleKey: 'process-fixture',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'process-fixture.lifecycle',
       moduleKey: 'process-fixture',
       role: 'worker',
     }),
     leaseDurationMs: 1000,
-    payloadSchema: Schema.Struct({ messageKey: Schema.String }),
+    payloadSchema: Schema.Struct({ messageKey: MessageKey }),
     producerModuleKey: 'producer',
     retryPolicy: {
       initialBackoffMs: 0,

@@ -3,16 +3,73 @@ import { createRequire } from 'node:module';
 
 import { getBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
-import * as Schema from 'effect/Schema';
+import {
+  contains as optionContains,
+  getOrElse as getOptionOrElse,
+  getOrUndefined as getOptionOrUndefined,
+} from 'effect/Option';
+import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
+import {
+  Boolean as BooleanSchema,
+  Literals,
+  OptionFromUndefinedOr,
+  String as StringSchema,
+  Struct,
+  Trim,
+  check,
+  decodeTo,
+  decodeUnknownResult,
+  decodeUnknownSync,
+  isMinLength,
+} from 'effect/Schema';
+import { transform } from 'effect/SchemaTransformation';
 
 import { dependencies } from './package.json';
 
-const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
-const cloudflareWorkersDevSubdomain = getBuildConfigEnvironment(
+const nonEmptyBuildStringSchema = Trim.pipe(check(isMinLength(1)));
+const getOptionalBuildConfig = (name: string): string | undefined => {
+  const decoded = decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
+    getBuildConfigEnvironment(name),
+  );
+  return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
+};
+const cloudflareDeployMode = getResultOrThrow(
+  decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
+    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
+  ),
+);
+const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
+const cloudflareWorkersDevSubdomain = getOptionalBuildConfig(
   'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
-)?.trim();
-const requireCloudflarePublicUrls =
-  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true';
+);
+const BuildBooleanSchema = Literals([
+  'true',
+  'yes',
+  'on',
+  '1',
+  'y',
+  'false',
+  'no',
+  'off',
+  '0',
+  'n',
+]).pipe(
+  decodeTo(
+    BooleanSchema,
+    transform({
+      decode: (value) => ['true', 'yes', 'on', '1', 'y'].includes(value),
+      encode: (value) => (value ? 'true' : 'false'),
+    }),
+  ),
+);
+const requireCloudflarePublicUrls = getOptionOrElse(
+  getResultOrThrow(
+    decodeUnknownResult(OptionFromUndefinedOr(BuildBooleanSchema))(
+      getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS'),
+    ),
+  ),
+  () => false,
+);
 
 const createRemoteManifestUrl = (options: {
   manifestEnv: string;
@@ -21,21 +78,17 @@ const createRemoteManifestUrl = (options: {
   publicUrlEnv: string;
   workerName: string;
 }) => {
-  const configuredManifest = getBuildConfigEnvironment(options.manifestEnv)?.trim();
-  if (configuredManifest !== undefined && configuredManifest.length > 0) {
+  const configuredManifest = getOptionalBuildConfig(options.manifestEnv);
+  if (configuredManifest !== undefined) {
     return configuredManifest;
   }
 
-  const configuredPublicUrl = getBuildConfigEnvironment(options.publicUrlEnv)?.trim();
-  if (configuredPublicUrl !== undefined && configuredPublicUrl.length > 0) {
+  const configuredPublicUrl = getOptionalBuildConfig(options.publicUrlEnv);
+  if (configuredPublicUrl !== undefined) {
     return `${options.mfName}@${configuredPublicUrl.replace(/\/+$/u, '')}/mf-manifest.json`;
   }
 
-  if (
-    cloudflareDeployEnabled &&
-    cloudflareWorkersDevSubdomain !== undefined &&
-    cloudflareWorkersDevSubdomain.length > 0
-  ) {
+  if (cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined) {
     return `${options.mfName}@https://${options.workerName}.${cloudflareWorkersDevSubdomain}.workers.dev/mf-manifest.json`;
   }
 
@@ -49,9 +102,9 @@ const createRemoteManifestUrl = (options: {
 };
 
 const require = createRequire(import.meta.url);
-const PackageVersionSchema = Schema.Struct({ version: Schema.String });
+const PackageVersionSchema = Struct({ version: StringSchema });
 const packageVersion = (packageName: string): string =>
-  Schema.decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
+  decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
 const i18nVersion = packageVersion('@modern-js/plugin-i18n');
 const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');
@@ -67,12 +120,12 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     filename: 'remoteEntry.js',
     name: 'shellSuperApp',
     remotes: {
-      contacts: createRemoteManifestUrl({
-        manifestEnv: 'VERTICAL_CONTACTS_MF_MANIFEST',
-        mfName: 'verticalContacts',
-        port: 4101,
-        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
-        workerName: 'app-contacts',
+      partyRegistry: createRemoteManifestUrl({
+        manifestEnv: 'VERTICAL_PARTY_REGISTRY_MF_MANIFEST',
+        mfName: 'verticalPartyRegistry',
+        port: 4102,
+        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
+        workerName: 'app-party-registry',
       }),
     },
     shared: {

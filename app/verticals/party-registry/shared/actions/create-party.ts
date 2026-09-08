@@ -1,0 +1,11 @@
+// Canonical schema-only contract extracted from the generated create-party Action.
+import { Schema } from 'effect';
+import { PartyCandidateSchema } from '../domain/identity-contracts.ts';
+import type { PartyCandidate } from '../domain/identity-contracts.ts';
+
+export const CreatePartyPayloadSchema = Schema.Struct({ candidate: PartyCandidateSchema });
+export const CreatePartyPayloadJsonSchema = Schema.toEncoded(CreatePartyPayloadSchema);
+export interface CreatePartyPayload {
+  readonly candidate: PartyCandidate;
+}
+export { PartyCreateOutcomeSchema as CreatePartyResultSchema } from '../domain/identity-contracts.ts';

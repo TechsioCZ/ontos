@@ -1,3 +1,4 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { beforeEach, expect, rstest, test } from '@rstest/core';
 import { ConfigProvider, Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
@@ -8,11 +9,13 @@ import { loader } from '../../../../src/routes/[lang]/page.data.ts';
 const {
   availableLegalEntitiesMock,
   availableTenantsMock,
+  browserConfigValuesMock,
   currentSessionMock,
   shellCompositionMock,
 } = rstest.hoisted(() => ({
   availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
+  browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
   currentSessionMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
@@ -22,11 +25,19 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
-  runEffectRequest: <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
-    Effect.runPromise(
-      effect.pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv())),
-    ),
   shellComposition: shellCompositionMock,
+}));
+
+rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  runBrowserEffect: async <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
+    await runEffectTestPromise(
+      effect.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown(browserConfigValuesMock()),
+        ),
+      ),
+    ),
 }));
 
 const identity = {
@@ -60,20 +71,12 @@ const withBetterAuthUrl = async <Value>(
   baseUrl: string,
   operation: () => Promise<Value>,
 ): Promise<Value> => {
-  const previousBaseUrl = process.env['BETTER_AUTH_URL'];
-  process.env['BETTER_AUTH_URL'] = baseUrl;
-  try {
-    return await operation();
-  } finally {
-    if (previousBaseUrl === undefined) {
-      delete process.env['BETTER_AUTH_URL'];
-    } else {
-      process.env['BETTER_AUTH_URL'] = previousBaseUrl;
-    }
-  }
+  browserConfigValuesMock.mockReturnValueOnce({ BETTER_AUTH_URL: baseUrl });
+  return await operation();
 };
 
 beforeEach(() => {
+  browserConfigValuesMock.mockReturnValue({});
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
   availableLegalEntitiesMock.mockReturnValue(
     Effect.succeed({
@@ -82,7 +85,9 @@ beforeEach(() => {
       state: 'authenticated',
     }),
   );
-  shellCompositionMock.mockReturnValue(Effect.succeed({ navigation, state: 'available' as const }));
+  shellCompositionMock.mockReturnValue(
+    Effect.succeed({ navigation, state: 'available' as const, unavailableDeployments: [] }),
+  );
   availableTenantsMock.mockReturnValue(
     Effect.succeed({
       tenants: [
@@ -101,7 +106,7 @@ test('resolves trusted context before returning one serializable composition', a
       items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
       state: 'available',
     },
-    navigation: { items: navigation, state: 'available' },
+    navigation: { items: navigation, state: 'available', unavailableDeployments: [] },
     selectedLegalEntityId: 'legal-1',
     state: 'authenticated',
     tenants: {
@@ -124,11 +129,41 @@ test('does not request composition for an anonymous session', async () => {
   expect(availableTenantsMock).not.toHaveBeenCalled();
 });
 
+test('does not invent a selected legal entity while a tenant session requires selection', async () => {
+  const tenantIdentity = {
+    displayName: identity.displayName,
+    email: identity.email,
+    principalId: identity.principalId,
+    tenantId: identity.tenantId,
+  };
+  currentSessionMock.mockReturnValueOnce(
+    Effect.succeed({
+      availableLegalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+      identity: tenantIdentity,
+      state: 'selection_required' as const,
+    }),
+  );
+  const model = await loader({ request: request() });
+  expect(model).toMatchObject({
+    contextState: 'selection_required',
+    identity: tenantIdentity,
+    legalEntities: {
+      items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+      state: 'available',
+    },
+    state: 'authenticated',
+  });
+  expect(model).not.toHaveProperty('selectedLegalEntityId');
+  expect(shellCompositionMock).not.toHaveBeenCalled();
+  expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
+});
+
 test('uses the configured HTTPS origin for the server-side session request', async () => {
   currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
 
-  await withBetterAuthUrl('https://shell.stage.example.test', () =>
-    loader({ request: new Request('http://shell.stage.example.test/en') }),
+  await withBetterAuthUrl(
+    'https://shell.stage.example.test',
+    async () => await loader({ request: new Request('http://shell.stage.example.test/en') }),
   );
 
   expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
@@ -139,8 +174,9 @@ test('uses the configured HTTPS origin for the server-side session request', asy
 test('keeps the configured local HTTP origin for the server-side session request', async () => {
   currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
 
-  await withBetterAuthUrl('http://localhost:3020', () =>
-    loader({ request: new Request('http://localhost:3020/en') }),
+  await withBetterAuthUrl(
+    'http://localhost:3020',
+    async () => await loader({ request: new Request('http://localhost:3020/en') }),
   );
 
   expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(

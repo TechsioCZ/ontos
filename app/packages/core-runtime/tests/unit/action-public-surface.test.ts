@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import * as publicSurface from '../../src/index.ts';
 import {
   computeActionRequestHash,
   computeCanonicalValueHash,
 } from '../../src/actions/repository.ts';
+import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
+import * as publicSurface from '../../src/index.ts';
 
 const principal = {
   authMethod: 'session',
@@ -12,7 +13,7 @@ const principal = {
   tenantId: '00000000-0000-4000-8000-000000000001',
 } as const;
 
-test('computes deterministic hashes independent of object key ordering', () => {
+void test('computes deterministic hashes independent of object key ordering', () => {
   const left = computeActionRequestHash({
     actionKey: 'shell.test.hash',
     normalizedPayload: {
@@ -54,7 +55,7 @@ test('computes deterministic hashes independent of object key ordering', () => {
   );
 });
 
-test('rejects cyclic values instead of producing an unstable request hash', () => {
+void test('rejects cyclic values instead of producing an unstable request hash', () => {
   const cyclic: unknown[] = [];
   cyclic.push(cyclic);
 
@@ -70,7 +71,7 @@ test('rejects cyclic values instead of producing an unstable request hash', () =
   );
 });
 
-test('canonical hashing distinguishes literal objects from internal value types', () => {
+void test('canonical hashing distinguishes literal objects from internal value types', () => {
   assert.notEqual(computeCanonicalValueHash(), computeCanonicalValueHash({ $undefined: true }));
   assert.notEqual(
     computeCanonicalValueHash(Number.NaN),
@@ -79,11 +80,14 @@ test('canonical hashing distinguishes literal objects from internal value types'
   assert.notEqual(computeCanonicalValueHash(-0), computeCanonicalValueHash(0));
 });
 
-test('publishes only the narrow server Action surface', () => {
+void test('publishes only the narrow server Action surface', () => {
   assert.equal('ActionRuntime' in publicSurface, true);
   assert.equal('defineAction' in publicSurface, true);
   assert.equal('defineGlobalPolicy' in publicSurface, true);
   assert.equal('defineMicroverticalPolicy' in publicSurface, true);
+  assert.equal('defineActionResourcePermission' in publicSurface, true);
+  assert.equal('LEGAL_ENTITY_PERMISSION_KEYS' in publicSurface, true);
+  assert.equal('TENANT_PERMISSION_KEYS' in publicSurface, true);
   assert.equal('denyPolicy' in publicSurface, true);
   assert.equal('ActionPolicyDenied' in publicSurface, true);
   assert.equal('ActionPolicyEvaluationError' in publicSurface, true);
@@ -102,4 +106,28 @@ test('publishes only the narrow server Action surface', () => {
   assert.equal('createPermissionCheckClient' in publicSurface, false);
   assert.equal('makeActionPermissionService' in publicSurface, false);
   assert.equal('Pool' in publicSurface, false);
+});
+
+void test('publishes the sanitized PostgreSQL classifier on the server surface', () => {
+  assert.equal('findPostgresFailure' in publicSurface, true);
+});
+
+test('publishes the typed governed Read alternative-target composition', () => {
+  const target = {
+    kind: 'any_of',
+    targets: [
+      {
+        kind: 'resource',
+        resource: {
+          moduleId: 'party.registry',
+          resourceId: 'counterparty-1',
+          resourceType: 'counterparty',
+        },
+      },
+      { kind: 'tenant', permission: 'manage_party_identity' },
+    ],
+  } as const satisfies ResolvedReadPermissionTarget;
+
+  assert.equal(target.kind, 'any_of');
+  assert.equal(target.targets[0].kind, 'resource');
 });

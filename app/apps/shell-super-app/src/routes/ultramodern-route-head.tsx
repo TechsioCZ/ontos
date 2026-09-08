@@ -1,12 +1,13 @@
 import { useLocalizedLocation, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Helmet } from '@modern-js/runtime/head';
+import { Result, Schema } from 'effect';
 import { ultramodernRouteMetadata } from './ultramodern-route-metadata';
 import type { RouteJsonLd } from './ultramodern-jsonld';
 
 const appName = 'Shell Super App';
 const fallbackLanguage = 'en';
 const supportedLanguages = ['en', 'cs'] as const;
-type SupportedLanguage = (typeof supportedLanguages)[number];
+const SupportedLanguageSchema = Schema.Literals(supportedLanguages);
 type GeneratedRouteMetadata = (typeof ultramodernRouteMetadata)[number];
 type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'jsonLd' | 'public'> & {
   readonly indexable: boolean;
@@ -16,8 +17,7 @@ type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'jsonLd' | 'publ
 
 const routeMetadata: readonly RouteMetadata[] = ultramodernRouteMetadata;
 
-const isSupportedLanguage = (value: string): value is SupportedLanguage =>
-  value === supportedLanguages[0] || value === supportedLanguages[1];
+const isSupportedLanguage = Schema.is(SupportedLanguageSchema);
 
 const normalisePath = (pathname: string) => {
   const normalised = pathname.replaceAll(/\/+/gu, '/').replace(/\/+$/u, '');
@@ -32,7 +32,7 @@ const stripLanguagePrefix = (pathname: string) => {
   return `/${segments.join('/')}`;
 };
 
-const escapeRegExp = (value: string) => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+const escapeRegExp = (value: string) => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 const paramName = (segment: string) => segment.slice(1).replace(/\?$/u, '');
 
@@ -82,7 +82,7 @@ const resolveRouteMetadata = (pathname: string) => {
   return routeMetadata[0];
 };
 
-const isPublicIndexableRoute = (route: RouteMetadata | undefined): route is RouteMetadata =>
+const isPublicIndexableRoute = (route: RouteMetadata | undefined): boolean =>
   route !== undefined && route.public && route.indexable;
 
 const absoluteUrl = (pathname: string) => {
@@ -90,11 +90,15 @@ const absoluteUrl = (pathname: string) => {
   return `${origin}${pathname}`;
 };
 
-const sanitiseJsonLd = (value: RouteJsonLd) => JSON.stringify(value).replaceAll('<', '\\u003c');
+const encodeRouteJsonLd = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
+
+const sanitiseJsonLd = (value: RouteJsonLd) =>
+  Result.getOrThrow(encodeRouteJsonLd(value)).replaceAll('<', String.raw`\u003c`);
 
 export const UltramodernRouteHead = () => {
   const { language, t } = useModernI18n();
-  const { canonical, alternates } = useLocalizedLocation();
+  const { alternates, canonical } = useLocalizedLocation();
+  const resolvedLanguage = language ?? fallbackLanguage;
   const route = resolveRouteMetadata(canonical);
   const title = route === undefined ? appName : t(route.titleKey);
   const description = route === undefined ? appName : t(route.descriptionKey);
@@ -103,13 +107,13 @@ export const UltramodernRouteHead = () => {
   const jsonLd = route?.jsonLd;
 
   return (
-    <Helmet htmlAttributes={{ lang: language ?? fallbackLanguage }}>
+    <Helmet htmlAttributes={{ lang: resolvedLanguage }}>
       <title>{title}</title>
       <meta content={description} name="description" />
       <meta content={indexable ? 'index, follow' : 'noindex, nofollow'} name="robots" />
       {indexable && (
         <>
-          <link rel="canonical" href={canonicalUrl} />
+          <link href={canonicalUrl} rel="canonical" />
           {supportedLanguages.map((code) => (
             <link
               href={absoluteUrl(alternates[code] ?? `/${code}`)}
@@ -118,16 +122,12 @@ export const UltramodernRouteHead = () => {
               rel="alternate"
             />
           ))}
-          <link
-            href={absoluteUrl(alternates[fallbackLanguage] ?? `/${fallbackLanguage}`)}
-            hrefLang="x-default"
-            rel="alternate"
-          />
+          <link href={canonicalUrl} hrefLang="x-default" rel="alternate" />
           <meta content={title} property="og:title" />
           <meta content={description} property="og:description" />
           <meta content={canonicalUrl} property="og:url" />
           <meta content="website" property="og:type" />
-          <meta content={language ?? fallbackLanguage} property="og:locale" />
+          <meta content={resolvedLanguage} property="og:locale" />
           <meta content="summary_large_image" name="twitter:card" />
           <meta content={title} name="twitter:title" />
           <meta content={description} name="twitter:description" />

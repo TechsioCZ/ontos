@@ -21,7 +21,7 @@ const registrations = [
   setSelfApiKeyBindingStatusAction,
 ] as const;
 
-test('identity Actions are generated, sensitive, idempotent, and owned by Core identity', () => {
+void test('identity Actions are generated, sensitive, idempotent, and owned by Core identity', () => {
   for (const registration of registrations) {
     assert.equal(registration.descriptor.actionKey.startsWith('core.identity.'), true);
     assert.equal(registration.descriptor.auditProfile, 'sensitive');
@@ -32,7 +32,7 @@ test('identity Actions are generated, sensitive, idempotent, and owned by Core i
   }
 });
 
-test('identity administration and support starts declare independent tenant permissions', () => {
+void test('identity administration and support starts declare independent tenant permissions', () => {
   const principalId = '00000000-0000-4000-8000-000000000001';
   const authBindingId = '00000000-0000-4000-8000-000000000002';
   const originalPrincipalId = '00000000-0000-4000-8000-000000000003';
@@ -97,7 +97,7 @@ test('identity administration and support starts declare independent tenant perm
   );
 });
 
-test('identity status schemas require reasons for disabling, archiving, and revoking', () => {
+void test('identity status schemas require reasons for disabling, archiving, and revoking', () => {
   const principalId = '00000000-0000-4000-8000-000000000001';
   const authBindingId = '00000000-0000-4000-8000-000000000002';
 
@@ -125,7 +125,7 @@ test('identity status schemas require reasons for disabling, archiving, and revo
   );
 });
 
-test('support checkpoints forbid unsafe or misplaced session references', () => {
+void test('support checkpoints forbid unsafe or misplaced session references', () => {
   const originalPrincipalId = '00000000-0000-4000-8000-000000000001';
   const targetPrincipalId = '00000000-0000-4000-8000-000000000002';
   const decode = Schema.decodeUnknownSync(

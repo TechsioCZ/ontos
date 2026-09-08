@@ -2,30 +2,97 @@ import { Effect, Schema, Predicate } from 'effect';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 
+const SystemPrincipalContextSchema = Schema.Struct({ authMethod: Schema.Literal('system') });
+const SessionPrincipalContextSchema = Schema.Struct({ authMethod: Schema.Literal('session') });
+const systemProvenance = Object.freeze({ kind: 'system' });
+const supportRecoveryProvenance = Object.freeze({ kind: 'support_recovery' });
+const provenanceAccessProperty = '__ontosCorePrincipalContextProvenanceAccess';
+
+const PrincipalContextProvenanceInvariant = Schema.TaggedError<Error>()(
+  'PrincipalContextProvenanceInvariant',
+  {
+    reason: Schema.String,
+  },
+);
+
 export class TrustedPrincipalContextDecodeError extends Schema.TaggedError<TrustedPrincipalContextDecodeError>()(
   'TrustedPrincipalContextDecodeError',
   {},
 ) {}
 
-const trustedSystemContexts = new WeakSet<object>();
-const trustedSupportRecoveryContexts = new WeakMap<object, object>();
+type PrincipalContextProvenanceToken = typeof supportRecoveryProvenance | typeof systemProvenance;
+type PrincipalContextProvenanceAccess = (
+  candidate: TrustedPrincipalContext,
+  token: PrincipalContextProvenanceToken,
+) => boolean | object;
+
+const PrincipalContextProvenanceAccessSchema = Schema.declare<PrincipalContextProvenanceAccess>(
+  (value): value is PrincipalContextProvenanceAccess => Predicate.isFunction(value),
+);
+const PrincipalContextProvenanceCarrierSchema = Schema.Struct({
+  [provenanceAccessProperty]: Schema.optionalKey(PrincipalContextProvenanceAccessSchema),
+});
+
+const attachPrincipalContextProvenance = <
+  Context extends TrustedPrincipalContext,
+  Registration extends object = object,
+>(
+  context: Context,
+  provenance: PrincipalContextProvenanceToken,
+  actionRegistration?: Registration,
+): Context => {
+  const carrier = { ...context };
+  const accessProvenance: PrincipalContextProvenanceAccess = (candidate, token) => {
+    if (candidate !== carrier || token !== provenance) {
+      return false;
+    }
+    return provenance === systemProvenance ? true : (actionRegistration ?? false);
+  };
+  Object.defineProperty(carrier, provenanceAccessProperty, { value: accessProvenance });
+  return Object.isFrozen(context) ? Object.freeze(carrier) : carrier;
+};
+
+const hasSystemProvenance = <Context>(context: Context): boolean => {
+  if (
+    !Schema.is(TrustedPrincipalContextSchema)(context) ||
+    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
+  ) {
+    return false;
+  }
+  const accessProvenance = context[provenanceAccessProperty];
+  return accessProvenance?.(context, systemProvenance) === true;
+};
+
+const readSupportRecoveryAction = <Context>(context: Context): object | null => {
+  if (
+    !Schema.is(TrustedPrincipalContextSchema)(context) ||
+    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
+  ) {
+    return null;
+  }
+  const accessProvenance = context[provenanceAccessProperty];
+  if (accessProvenance === undefined) {
+    return null;
+  }
+  const registration = accessProvenance(context, supportRecoveryProvenance);
+  return Predicate.isObjectKeyword(registration) && registration !== null ? registration : null;
+};
+
+const failProvenanceInvariant = (reason: string): never => {
+  throw new PrincipalContextProvenanceInvariant({ reason });
+};
 
 export const trustResolvedSystemPrincipalContext = <Context extends TrustedPrincipalContext>(
   context: Context,
 ): Context => {
-  if (context.authMethod !== 'system') {
-    throw new TypeError('Only resolved system contexts can carry system provenance');
+  if (!Schema.is(SystemPrincipalContextSchema)(context)) {
+    return failProvenanceInvariant('Only resolved system contexts can carry system provenance');
   }
-  trustedSystemContexts.add(context);
-  return context;
+  return attachPrincipalContextProvenance(context, systemProvenance);
 };
 
 export const isTrustedSystemPrincipalContext = <Context>(context: Context): boolean =>
-  Predicate.isObjectKeyword(context) &&
-  context !== null &&
-  trustedSystemContexts.has(context) &&
-  'authMethod' in context &&
-  context.authMethod === 'system';
+  hasSystemProvenance(context) && Schema.is(SystemPrincipalContextSchema)(context);
 
 export const trustSupportRecoveryPrincipalContext = <
   Context extends TrustedPrincipalContext,
@@ -34,11 +101,12 @@ export const trustSupportRecoveryPrincipalContext = <
   context: Context,
   actionRegistration: Registration,
 ): Context => {
-  if (context.authMethod !== 'session') {
-    throw new TypeError('Only resolved session contexts can carry support recovery provenance');
+  if (!Schema.is(SessionPrincipalContextSchema)(context)) {
+    return failProvenanceInvariant(
+      'Only resolved session contexts can carry support recovery provenance',
+    );
   }
-  trustedSupportRecoveryContexts.set(context, actionRegistration);
-  return context;
+  return attachPrincipalContextProvenance(context, supportRecoveryProvenance, actionRegistration);
 };
 
 export const isTrustedSupportRecoveryPrincipalContext = <
@@ -48,15 +116,11 @@ export const isTrustedSupportRecoveryPrincipalContext = <
   context: Context,
   actionRegistration?: Registration,
 ): boolean => {
-  if (!Predicate.isObjectKeyword(context) || context === null) {
-    return false;
-  }
-  const trustedActionRegistration = trustedSupportRecoveryContexts.get(context);
+  const trustedActionRegistration = readSupportRecoveryAction(context);
   return (
-    trustedActionRegistration !== undefined &&
+    trustedActionRegistration !== null &&
     (actionRegistration === undefined || trustedActionRegistration === actionRegistration) &&
-    'authMethod' in context &&
-    context.authMethod === 'session'
+    Schema.is(SessionPrincipalContextSchema)(context)
   );
 };
 
@@ -70,11 +134,9 @@ export const preserveSystemPrincipalContextTrust = <
   if (isTrustedSystemPrincipalContext(source)) {
     return trustResolvedSystemPrincipalContext(context);
   }
-  if (Predicate.isObjectKeyword(source) && source !== null) {
-    const recoveryActionRegistration = trustedSupportRecoveryContexts.get(source);
-    if (recoveryActionRegistration !== undefined) {
-      return trustSupportRecoveryPrincipalContext(context, recoveryActionRegistration);
-    }
+  const recoveryActionRegistration = readSupportRecoveryAction(source);
+  if (recoveryActionRegistration !== null) {
+    return trustSupportRecoveryPrincipalContext(context, recoveryActionRegistration);
   }
   return context;
 };
@@ -82,17 +144,13 @@ export const preserveSystemPrincipalContextTrust = <
 export const decodeTrustedPrincipalContext = <Input>(
   input: Input,
 ): Effect.Effect<TrustedPrincipalContext, TrustedPrincipalContextDecodeError> => {
-  if (
-    Predicate.isObjectKeyword(input) &&
-    input !== null &&
-    'authMethod' in input &&
-    input.authMethod === 'system' &&
-    !isTrustedSystemPrincipalContext(input)
-  ) {
+  if (Schema.is(SystemPrincipalContextSchema)(input) && !isTrustedSystemPrincipalContext(input)) {
     return Effect.fail(new TrustedPrincipalContextDecodeError());
   }
   return Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(input).pipe(
-    Effect.mapError(() => new TrustedPrincipalContextDecodeError()),
+    Effect.mapError((cause) =>
+      Object.defineProperty(new TrustedPrincipalContextDecodeError(), 'cause', { value: cause }),
+    ),
     Effect.map((context) => preserveSystemPrincipalContextTrust(input, context)),
   );
 };

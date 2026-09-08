@@ -23,7 +23,7 @@ const prepareSnapshotInput = <Input>(
   );
 
 const run: ModuleEntrypointGatewayService['run'] = (input) =>
-  input.authorize.pipe(Effect.andThen(Effect.suspend(input.load)));
+  input.authorize.pipe(Effect.andThen(input.load));
 
 export const openModuleEntrypointGateway: ModuleEntrypointGatewayService = Object.freeze({
   check: () => Effect.void,

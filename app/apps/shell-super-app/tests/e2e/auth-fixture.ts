@@ -1,13 +1,13 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { config as loadDotenv } from 'dotenv';
+import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import {
-  coreDatabaseSchema,
+  coreRelations,
   dataAccessEvents,
   legalEntities,
   principalAuthBindings,
@@ -15,11 +15,14 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { account, authDatabaseSchema, session, user } from '../../api/auth/db/schema.ts';
-import { createContactsE2eCustomersFixture } from '../../../../verticals/contacts/tests/support/e2e-customers.ts';
-
-export { contactsE2eCustomers as e2eCustomers } from '../../../../verticals/contacts/tests/support/e2e-customers.ts';
-export { contactsE2eContacts as e2eContacts } from '../../../../verticals/contacts/tests/support/e2e-customers.ts';
+import { loadAuthConfig } from '../../api/auth/config.ts';
+import {
+  account,
+  authDatabaseSchema,
+  authRelations,
+  session,
+  user,
+} from '../../api/auth/db/schema.ts';
 
 export const e2eCredentials = {
   email: 'e2e.user@example.test',
@@ -42,32 +45,16 @@ export const e2eTenants = {
 } as const;
 
 export const createAuthenticationFixture = async () => {
-  loadDotenv({
-    path: APP_ENV_PATH,
-    quiet: true,
-  });
-  const adminConnectionString = process.env['DATABASE_ADMIN_URL'];
-  const connectionString = process.env['DATABASE_URL'];
-  const secret = process.env['BETTER_AUTH_SECRET'];
-  const baseURL = process.env['BETTER_AUTH_URL'];
-
-  if (
-    adminConnectionString === undefined ||
-    connectionString === undefined ||
-    secret === undefined ||
-    baseURL === undefined
-  ) {
-    throw new Error('The E2E authentication fixture requires the root development environment');
-  }
+  const {
+    baseUrl: baseURL,
+    connectionString,
+    secret,
+  } = await runEffectTestPromise(loadAuthConfig({ envPath: APP_ENV_PATH }));
 
   const corePool = new Pool({ connectionString });
   const authPool = new Pool({ connectionString });
-  const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
-  const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
-  const contactsCustomersFixture = createContactsE2eCustomersFixture({
-    connectionString: adminConnectionString,
-    tenantIds: [e2eTenants.first.tenantId, e2eTenants.second.tenantId],
-  });
+  const coreDatabase = drizzle({ client: corePool, relations: coreRelations });
+  const authDatabase = drizzle({ client: authPool, relations: authRelations });
   const authentication = betterAuth({
     baseURL,
     database: drizzleAdapter(authDatabase, {
@@ -124,33 +111,17 @@ export const createAuthenticationFixture = async () => {
           .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
       ),
     );
+    const tenantIds = Object.values(e2eTenants).map(({ tenantId }) => tenantId);
+    const principalIds = Object.values(e2eTenants).map(({ principalId }) => principalId);
     await coreDatabase
       .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.principalId, e2eTenants.first.principalId));
-    await coreDatabase
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.principalId, e2eTenants.second.principalId));
+      .where(inArray(principalAuthBindings.principalId, principalIds));
     await coreDatabase
       .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, e2eTenants.first.tenantId));
-    await coreDatabase
-      .delete(tenantModuleStates)
-      .where(eq(tenantModuleStates.tenantId, e2eTenants.second.tenantId));
-    await contactsCustomersFixture.cleanup();
-    await coreDatabase
-      .delete(legalEntities)
-      .where(eq(legalEntities.tenantId, e2eTenants.first.tenantId));
-    await coreDatabase
-      .delete(legalEntities)
-      .where(eq(legalEntities.tenantId, e2eTenants.second.tenantId));
-    await coreDatabase
-      .delete(principals)
-      .where(eq(principals.principalId, e2eTenants.first.principalId));
-    await coreDatabase
-      .delete(principals)
-      .where(eq(principals.principalId, e2eTenants.second.principalId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.first.tenantId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.second.tenantId));
+      .where(inArray(tenantModuleStates.tenantId, tenantIds));
+    await coreDatabase.delete(legalEntities).where(inArray(legalEntities.tenantId, tenantIds));
+    await coreDatabase.delete(principals).where(inArray(principals.principalId, principalIds));
+    await coreDatabase.delete(tenants).where(inArray(tenants.tenantId, tenantIds));
   };
 
   await cleanup();
@@ -232,18 +203,16 @@ export const createAuthenticationFixture = async () => {
     },
   ]);
   await coreDatabase.insert(tenantModuleStates).values([
-    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.first.tenantId },
-    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.second.tenantId },
+    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.first.tenantId },
+    { moduleKey: 'party.registry', state: 'active', tenantId: e2eTenants.second.tenantId },
     { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
     { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
   ]);
-  await contactsCustomersFixture.seed(e2eTenants.first.tenantId);
-
   return async () => {
     try {
       await cleanup();
     } finally {
-      await Promise.all([authPool.end(), corePool.end(), contactsCustomersFixture.close()]);
+      await Promise.all([authPool.end(), corePool.end()]);
     }
   };
 };

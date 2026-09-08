@@ -1,11 +1,19 @@
 import { Schema } from 'effect';
+import {
+  decodedStringBrand,
+  nonEmptyString,
+  TargetModuleKeySchema,
+  TargetResourceIdSchema,
+} from './string-schemas.ts';
 
-const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 const nonNegativeInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const EvidencePolicyKeySchema = decodedStringBrand(nonEmptyString, 'EvidencePolicyKey');
+const ProducerModuleKeySchema = decodedStringBrand(nonEmptyString, 'ProducerModuleKey');
+const ServingModuleKeySchema = decodedStringBrand(nonEmptyString, 'ServingModuleKey');
+const SubjectModuleKeySchema = decodedStringBrand(nonEmptyString, 'SubjectModuleKey');
+const SubjectResourceIdSchema = decodedStringBrand(nonEmptyString, 'SubjectResourceId');
 
-export type DomainEventContractMap = Readonly<
-  Record<string, Schema.ConstraintDecoder<unknown, never>>
->;
+export type DomainEventContractMap = Readonly<Record<string, Schema.ConstraintDecoder<unknown>>>;
 
 export type ActionAccessEvidencePolicy =
   | {
@@ -32,16 +40,16 @@ export const DataAccessEventSchema = Schema.Struct({
     'stored_artifact',
   ]),
   evidencePayloadJson: Schema.optionalKey(Schema.Json),
-  evidencePolicyKey: nonEmptyString,
+  evidencePolicyKey: EvidencePolicyKeySchema,
   occurredAt: Schema.optionalKey(Schema.Date),
   queryHash: nonEmptyString,
   redactionProfile: Schema.optionalKey(nonEmptyString),
   resultCount: nonNegativeInteger,
   resultFingerprintHash: Schema.optionalKey(nonEmptyString),
   resultFingerprintSchema: Schema.optionalKey(nonEmptyString),
-  servingModuleKey: nonEmptyString,
-  targetModuleKey: Schema.optionalKey(nonEmptyString),
-  targetResourceId: Schema.optionalKey(nonEmptyString),
+  servingModuleKey: ServingModuleKeySchema,
+  targetModuleKey: Schema.optionalKey(TargetModuleKeySchema),
+  targetResourceId: Schema.optionalKey(TargetResourceIdSchema),
   targetResourceType: Schema.optionalKey(nonEmptyString),
 });
 
@@ -57,9 +65,9 @@ export const DomainEventSchema = Schema.Struct({
   eventType: nonEmptyString,
   occurredAt: Schema.optionalKey(Schema.Date),
   payloadJson: Schema.Json,
-  producerModuleKey: nonEmptyString,
-  subjectModuleKey: nonEmptyString,
-  subjectResourceId: nonEmptyString,
+  producerModuleKey: ProducerModuleKeySchema,
+  subjectModuleKey: SubjectModuleKeySchema,
+  subjectResourceId: SubjectResourceIdSchema,
   subjectResourceType: nonEmptyString,
 });
 
@@ -77,7 +85,7 @@ export type DeclaredDomainEvent<Contracts extends DomainEventContractMap> = {
 
 export const OutboxMessageSchema = Schema.Struct({
   payloadJson: Schema.Json,
-  producerModuleKey: nonEmptyString,
+  producerModuleKey: ProducerModuleKeySchema,
   topic: nonEmptyString,
 });
 

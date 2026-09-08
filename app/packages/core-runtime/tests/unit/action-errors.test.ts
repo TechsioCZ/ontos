@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Schema } from 'effect';
 import {
   ACTION_CORE_ERROR_TAGS,
   ActionAlreadyCommitted,
@@ -25,7 +26,7 @@ import {
   ModuleStateDeniedError,
 } from '../../src/modules/module-state-gate-errors.ts';
 
-test('publishes the exhaustive stable Core Action error tags', () => {
+void test('publishes the exhaustive stable Core Action error tags', () => {
   const errors = [
     new ActionPayloadValidationError({
       code: 'action_payload_invalid',
@@ -53,6 +54,7 @@ test('publishes the exhaustive stable Core Action error tags', () => {
     }),
     new ActionAlreadyCommitted({
       code: 'action_already_committed',
+      invocationId: 'invocation-id',
       reason: 'Already committed',
     }),
     new ActionRequestHashConflict({
@@ -116,9 +118,7 @@ test('publishes the exhaustive stable Core Action error tags', () => {
     assert.equal(error.reason.includes('ontos-local-development-key'), false);
     assert.equal('status' in error, false);
   }
-  const denial = errors.find(
-    (error): error is ActionPolicyDenied => error._tag === 'ActionPolicyDenied',
-  );
+  const denial = errors.find(Schema.is(ActionPolicyDenied));
   assert.equal(denial?.reason, 'This tenant is suspended');
   assert.equal(denial?.policyReasonCode, 'tenant_suspended');
   assert.equal('payload' in (denial ?? {}), false);

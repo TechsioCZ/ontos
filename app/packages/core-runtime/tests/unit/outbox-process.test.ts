@@ -1,64 +1,67 @@
-// @effect-diagnostics asyncFunction:off globalTimers:off newPromise:off nodeBuiltinImport:off processEnv:off
-/* eslint-disable promise/avoid-new, promise/param-names -- Child-process events are bounded explicitly. */
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
+import { NodeServices } from '@effect/platform-node';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import test from 'node:test';
+import { Deferred, Effect, Fiber, Layer, Stream } from 'effect';
+import { ChildProcess } from 'effect/unstable/process';
 
-const assertGracefulShutdown = async (signal: 'SIGINT' | 'SIGTERM'): Promise<void> => {
-  const child = spawn(
-    process.execPath,
-    ['--experimental-strip-types', 'tests/fixtures/outbox-worker-process.fixture.ts'],
-    {
-      cwd: new URL('../..', import.meta.url),
-      env: {
-        ...process.env,
-        OUTBOX_WORKER_MAX_DELIVERIES: '1',
-        OUTBOX_WORKER_POLL_INTERVAL_MS: '10',
+const gracefulShutdown = (signal: 'SIGINT' | 'SIGTERM') =>
+  Effect.gen(function* gracefulShutdownEffect() {
+    const child = yield* ChildProcess.make(
+      process.execPath,
+      ['--experimental-strip-types', 'tests/fixtures/outbox-worker-process.fixture.ts'],
+      {
+        cwd: new URL('../..', import.meta.url).pathname,
+        env: {
+          OUTBOX_WORKER_MAX_DELIVERIES: '1',
+          OUTBOX_WORKER_POLL_INTERVAL_MS: '10',
+        },
+        extendEnv: true,
+        forceKillAfter: '1 second',
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
+    );
+    const readyToStop = yield* Deferred.make<null>();
+    const outputFiber = yield* child.stdout.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.tap((line) =>
+        line === 'cycle:1' ? Deferred.succeed(readyToStop, null).pipe(Effect.asVoid) : Effect.void,
+      ),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    const errorsFiber = yield* child.stderr.pipe(
+      Stream.decodeText(),
+      Stream.mkString,
+      Effect.forkChild,
+    );
+
+    yield* Deferred.await(readyToStop);
+    yield* child.kill({ killSignal: signal });
+    const [code, outputLines, errors] = yield* Effect.all(
+      [child.exitCode, Fiber.join(outputFiber), Fiber.join(errorsFiber)],
+      { concurrency: 'unbounded' },
+    );
+    const output = outputLines.join('\n');
+
+    assert.equal(Number(code), 0, `${errors}\n${output}`);
+    assert.match(output, /cycle:1/u);
+    assert.match(output, /disposed/u);
+  });
+
+const assertGracefulShutdown = (signal: 'SIGINT' | 'SIGTERM') =>
+  Layer.build(NodeServices.layer).pipe(
+    Effect.flatMap((nodeServices) => gracefulShutdown(signal).pipe(Effect.provide(nodeServices))),
+    Effect.scoped,
   );
-  let output = '';
-  let errors = '';
-  let terminationRequested = false;
-  child.stdout.setEncoding('utf-8');
-  child.stderr.setEncoding('utf-8');
-  child.stdout.on('data', (chunk: string) => {
-    output += chunk;
-    if (!terminationRequested && output.match(/cycle:1\n/gu)?.length === 2) {
-      terminationRequested = true;
-      child.kill(signal);
-    }
-  });
-  child.stderr.on('data', (chunk: string) => {
-    errors += chunk;
-  });
-
-  let timeout: NodeJS.Timeout | undefined;
-  const result = await Promise.race([
-    new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>(
-      (resolve, reject) => {
-        child.once('error', reject);
-        child.once('exit', (code, exitSignal) => resolve({ code, signal: exitSignal }));
-      },
-    ),
-    new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`worker process did not stop\n${errors}`));
-      }, 3000);
-    }),
-  ]);
-  if (timeout !== undefined) {
-    clearTimeout(timeout);
-  }
-
-  assert.deepEqual(result, { code: 0, signal: null }, `${errors}\n${output}`);
-  assert.match(output, /cycle:1/u);
-  assert.match(output, /disposed/u);
-};
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  test(`${signal} interrupts polling and disposes the managed worker runtime`, () =>
-    assertGracefulShutdown(signal));
+  void test(
+    `${signal} interrupts polling and disposes the managed worker runtime`,
+    { timeout: 5000 },
+    makeEffectTestCallback(assertGracefulShutdown(signal)),
+  );
 }

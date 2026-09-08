@@ -1,11 +1,8 @@
-/* eslint-disable no-await-in-loop, node/no-process-env, typescript/no-non-null-assertion, unicorn/consistent-function-scoping -- The integration fixture owns isolated live SpiceDB state. */
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off
+import { NodeServices } from '@effect/platform-node';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { Crypto, Effect, FileSystem, flow, ManagedRuntime } from 'effect';
 import {
   makeContextAccess,
   toLegalEntityAccessObjectId,
@@ -18,18 +15,63 @@ import {
 } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 
-test('isolates live legal-entity, module, and resource batches by tenant and entity', async () => {
-  const configuration = await Effect.runPromise(loadSpiceDbConfig());
-  const tenantId = randomUUID();
-  const otherTenantId = randomUUID();
-  const legalEntityId = randomUUID();
-  const otherLegalEntityId = randomUUID();
-  const principalId = randomUUID();
+const integrationRuntime = ManagedRuntime.make(NodeServices.layer);
+
+const effectTest = <Value, Failure>(
+  name: string,
+  effect: Effect.Effect<Value, Failure, Crypto.Crypto | FileSystem.FileSystem>,
+): void => {
+  test(
+    name,
+    flow(() => Effect.asVoid(effect), integrationRuntime.runPromise),
+  );
+};
+
+const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
+
+const relationship = (
+  resourceType: string,
+  resourceId: string,
+  relation: string,
+  subjectType: string,
+  subjectId: string,
+) =>
+  v1.Relationship.create({
+    relation,
+    resource: v1.ObjectReference.create({ objectId: resourceId, objectType: resourceType }),
+    subject: v1.SubjectReference.create({
+      object: v1.ObjectReference.create({ objectId: subjectId, objectType: subjectType }),
+    }),
+  });
+
+const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
+  const configuration = yield* loadSpiceDbConfig();
+  const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const [tenantId, otherTenantId, legalEntityId, otherLegalEntityId, principalId, resourceId] =
+    yield* Effect.all(
+      [
+        crypto.randomUUIDv4,
+        crypto.randomUUIDv4,
+        crypto.randomUUIDv4,
+        crypto.randomUUIDv4,
+        crypto.randomUUIDv4,
+        crypto.randomUUIDv4,
+      ],
+      { concurrency: 'unbounded' },
+    );
   const moduleId = 'property.registry';
-  const resource = { moduleId, resourceId: randomUUID(), resourceType: 'property.unit' };
-  const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId)!;
-  const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, moduleId)!;
-  const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource)!;
+  const resource = { moduleId, resourceId, resourceType: 'property.unit' };
+  const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
+  const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, moduleId);
+  const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource);
+  if (
+    legalObjectId === undefined ||
+    moduleObjectId === undefined ||
+    resourceObjectId === undefined
+  ) {
+    assert.fail('Expected valid SpiceDB object identifiers');
+  }
   const client = v1.NewClient(
     configuration.preSharedKey,
     configuration.endpoint,
@@ -37,9 +79,8 @@ test('isolates live legal-entity, module, and resource batches by tenant and ent
       ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
       : v1.ClientSecurity.SECURE,
   );
-  const bootstrap = await readFile(
-    new URL('../../spicedb/bootstrap.yaml', import.meta.url),
-    'utf-8',
+  const bootstrap = yield* fileSystem.readFileString(
+    new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname,
   );
   const bootstrapLines = bootstrap.split('\n');
   const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;
@@ -49,121 +90,134 @@ test('isolates live legal-entity, module, and resource batches by tenant and ent
     .slice(schemaStart, schemaEnd)
     .map((line) => line.replace(/^ {2}/u, ''))
     .join('\n');
-  await client.promises.writeSchema(
-    v1.WriteSchemaRequest.create({
-      schema: schemaBlock,
-    }),
-  );
-  const relationship = (
-    resourceType: string,
-    resourceId: string,
-    relation: string,
-    subjectType: string,
-    subjectId: string,
-  ) =>
-    v1.Relationship.create({
-      relation,
-      resource: v1.ObjectReference.create({ objectId: resourceId, objectType: resourceType }),
-      subject: v1.SubjectReference.create({
-        object: v1.ObjectReference.create({ objectId: subjectId, objectType: subjectType }),
+  yield* spiceDbEffect(
+    client.promises.writeSchema(
+      v1.WriteSchemaRequest.create({
+        schema: schemaBlock,
       }),
-    });
+    ),
+  );
   const relationships = [
     relationship('tenant', tenantId, 'member', 'principal', principalId),
     relationship('tenant', tenantId, 'identity_admin', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_manager', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_merger', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_reader', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_reviewer', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_relationship_manager', 'principal', principalId),
     relationship('tenant', tenantId, 'support', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'tenant', 'tenant', tenantId),
     relationship('legal_entity', legalObjectId, 'member', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'counterparty_manager', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'counterparty_reader', 'principal', principalId),
     relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalObjectId),
     relationship('module_access', moduleObjectId, 'accessor', 'principal', principalId),
     relationship('resource', resourceObjectId, 'module', 'module_access', moduleObjectId),
     relationship('resource', resourceObjectId, 'reader', 'principal', principalId),
   ];
 
-  try {
-    await client.promises.writeRelationships(
-      v1.WriteRelationshipsRequest.create({
-        updates: relationships.map((item) =>
-          v1.RelationshipUpdate.create({
-            operation: v1.RelationshipUpdate_Operation.TOUCH,
-            relationship: item,
-          }),
-        ),
-      }),
-    );
-    const permissionClient = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
-    try {
-      const access = makeContextAccess(permissionClient);
-      for (const permission of ['manage_identity', 'impersonate'] as const) {
-        assert.deepEqual(
-          await Effect.runPromise(
-            access.tenants({
-              permission,
-              principalId,
-              tenantIds: [tenantId, otherTenantId],
+  yield* Effect.gen(function* exerciseContextAccess() {
+    yield* spiceDbEffect(
+      client.promises.writeRelationships(
+        v1.WriteRelationshipsRequest.create({
+          updates: relationships.map((item) =>
+            v1.RelationshipUpdate.create({
+              operation: v1.RelationshipUpdate_Operation.TOUCH,
+              relationship: item,
             }),
           ),
-          [
-            { decision: 'allowed', key: tenantId },
-            { decision: 'denied', key: otherTenantId },
-          ],
-        );
+        }),
+      ),
+    );
+    const permissionClient = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
+    yield* Effect.gen(function* checkContextAccess() {
+      const access = makeContextAccess(permissionClient);
+      const tenantDecisions = yield* Effect.forEach(
+        [
+          'impersonate',
+          'manage_identity',
+          'manage_party_identity',
+          'manage_party_relationships',
+          'merge_party_identity',
+          'read_party_identity',
+          'review_party_identity',
+        ] as const,
+        (permission) =>
+          access.tenants({
+            permission,
+            principalId,
+            tenantIds: [tenantId, otherTenantId],
+          }),
+        { concurrency: 'unbounded' },
+      );
+      for (const decisions of tenantDecisions) {
+        assert.deepEqual(decisions, [
+          { decision: 'allowed', key: tenantId },
+          { decision: 'denied', key: otherTenantId },
+        ]);
       }
-      assert.deepEqual(
-        await Effect.runPromise(
+      const legalEntityDecisions = yield* Effect.forEach(
+        ['access', 'manage_counterparty', 'read_counterparty'] as const,
+        (permission) =>
           access.legalEntities({
             legalEntityIds: [legalEntityId, otherLegalEntityId],
+            permission,
             principalId,
             tenantId,
           }),
-        ),
-        [
+        { concurrency: 'unbounded' },
+      );
+      for (const decisions of legalEntityDecisions) {
+        assert.deepEqual(decisions, [
           { decision: 'allowed', key: legalEntityId },
           { decision: 'denied', key: otherLegalEntityId },
-        ],
-      );
+        ]);
+      }
       assert.deepEqual(
-        await Effect.runPromise(
-          access.modules({ legalEntityId, moduleIds: [moduleId], principalId, tenantId }),
-        ),
+        yield* access.modules({ legalEntityId, moduleIds: [moduleId], principalId, tenantId }),
         [{ decision: 'allowed', key: moduleId }],
       );
       assert.deepEqual(
-        await Effect.runPromise(
-          access.modules({
-            legalEntityId,
-            moduleIds: [moduleId],
-            principalId,
-            tenantId: otherTenantId,
-          }),
-        ),
+        yield* access.modules({
+          legalEntityId,
+          moduleIds: [moduleId],
+          principalId,
+          tenantId: otherTenantId,
+        }),
         [{ decision: 'denied', key: moduleId }],
       );
       assert.deepEqual(
-        await Effect.runPromise(
-          access.resources({ legalEntityId, principalId, resources: [resource], tenantId }),
-        ),
+        yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId }),
         [{ decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` }],
       );
-    } finally {
-      permissionClient.close();
-    }
-  } finally {
-    for (const [resourceType, resourceId] of [
-      ['resource', resourceObjectId],
-      ['module_access', moduleObjectId],
-      ['legal_entity', legalObjectId],
-      ['tenant', tenantId],
-    ] as const) {
-      await client.promises.deleteRelationships(
-        v1.DeleteRelationshipsRequest.create({
-          relationshipFilter: v1.RelationshipFilter.create({
-            optionalResourceId: resourceId,
-            resourceType,
-          }),
-        }),
-      );
-    }
-    client.close();
-  }
+    }).pipe(Effect.ensuring(Effect.sync(() => permissionClient.close())));
+  }).pipe(
+    Effect.ensuring(
+      Effect.forEach(
+        [
+          ['resource', resourceObjectId],
+          ['module_access', moduleObjectId],
+          ['legal_entity', legalObjectId],
+          ['tenant', tenantId],
+        ] as const,
+        ([resourceType, cleanupResourceId]) =>
+          spiceDbEffect(
+            client.promises.deleteRelationships(
+              v1.DeleteRelationshipsRequest.create({
+                relationshipFilter: v1.RelationshipFilter.create({
+                  optionalResourceId: cleanupResourceId,
+                  resourceType,
+                }),
+              }),
+            ),
+          ),
+        { concurrency: 'unbounded', discard: true },
+      ).pipe(Effect.ensuring(Effect.sync(() => client.close())), Effect.orDie),
+    ),
+  );
 });
+
+effectTest(
+  'isolates live legal-entity, module, and resource batches by tenant and entity',
+  contextAccessProgram,
+);

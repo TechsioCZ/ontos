@@ -4,7 +4,7 @@ import { v1 } from '@authzed/authzed-node';
 import { spiceDbClientSecurity } from '../../src/permissions/client.ts';
 import { SpiceDbConfigError } from '../../src/permissions/config-error.ts';
 
-test('uses authenticated plaintext credentials for an explicitly insecure transport', () => {
+void test('uses authenticated plaintext credentials for an explicitly insecure transport', () => {
   assert.equal(
     spiceDbClientSecurity({
       endpoint: 'localhost:50051',
@@ -22,7 +22,7 @@ test('uses authenticated plaintext credentials for an explicitly insecure transp
   );
 });
 
-test('uses TLS credentials for a secure transport', () => {
+void test('uses TLS credentials for a secure transport', () => {
   assert.equal(
     spiceDbClientSecurity({
       endpoint: 'spicedb.internal.example:443',
@@ -32,7 +32,7 @@ test('uses TLS credentials for a secure transport', () => {
   );
 });
 
-test('rejects plaintext credentials for an arbitrary or non-stage endpoint', () => {
+void test('rejects plaintext credentials for an arbitrary or non-stage endpoint', () => {
   for (const configuration of [
     { endpoint: 'spicedb.internal.example:50051', insecureLocal: true },
     { endpoint: 'spicedb:50051', insecureLocal: true },

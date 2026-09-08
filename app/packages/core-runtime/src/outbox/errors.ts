@@ -1,53 +1,17 @@
-/* eslint-disable max-classes-per-file -- The typed Outbox runtime error union is intentionally co-located. */
-import { Cause, Schema } from 'effect';
+import { Schema } from 'effect';
 
-const reason = { reason: Schema.String } as const;
-
-export class OutboxWorkerDescriptorError extends Schema.TaggedError<OutboxWorkerDescriptorError>()(
-  'OutboxWorkerDescriptorError',
-  { code: Schema.Literal('outbox_worker_descriptor_invalid'), ...reason },
-) {}
-
-export class OutboxPayloadDecodeError extends Schema.TaggedError<OutboxPayloadDecodeError>()(
-  'OutboxPayloadDecodeError',
-  { code: Schema.Literal('outbox_payload_invalid'), ...reason },
-) {}
+export { OutboxClaimLostError } from './outbox-claim-lost-error.ts';
+export { OutboxHandlerExecutionError } from './outbox-handler-execution-error.ts';
+export { OutboxPayloadDecodeError } from './outbox-payload-decode-error.ts';
+export { OutboxPollerConfigError } from './outbox-poller-config-error.ts';
+export { OutboxWorkerDescriptorError } from './outbox-worker-descriptor-error.ts';
 
 export class OutboxPersistenceError extends Schema.TaggedError<OutboxPersistenceError>()(
   'OutboxPersistenceError',
-  { code: Schema.Literal('outbox_persistence_failed'), ...reason },
+  { code: Schema.Literal('outbox_persistence_failed'), reason: Schema.String },
 ) {}
 
-export class OutboxClaimLostError extends Schema.TaggedError<OutboxClaimLostError>()(
-  'OutboxClaimLostError',
-  { code: Schema.Literal('outbox_claim_lost'), ...reason },
-) {}
-
-export class OutboxModuleStateError extends Schema.TaggedError<OutboxModuleStateError>()(
-  'OutboxModuleStateError',
-  { code: Schema.Literal('outbox_consumer_module_inactive'), ...reason },
-) {}
-
-export class OutboxHandlerExecutionError extends Schema.TaggedError<OutboxHandlerExecutionError>()(
-  'OutboxHandlerExecutionError',
-  { code: Schema.Literal('outbox_handler_execution_failed'), ...reason },
-) {}
-
-export class OutboxPollerConfigError extends Schema.TaggedError<OutboxPollerConfigError>()(
-  'OutboxPollerConfigError',
-  { code: Schema.Literal('outbox_poller_config_invalid'), ...reason },
-) {}
-
-export type OutboxWorkerError =
-  | OutboxClaimLostError
-  | OutboxHandlerExecutionError
-  | OutboxModuleStateError
-  | OutboxPayloadDecodeError
-  | OutboxPollerConfigError
-  | OutboxPersistenceError
-  | OutboxWorkerDescriptorError;
-
-const persistenceCauses = new WeakMap<OutboxPersistenceError, unknown>();
+const PERSISTENCE_CAUSE_PROPERTY = 'ontosOutboxPersistenceCause';
 
 export const outboxPersistenceError = <FailureCause>(
   cause: FailureCause,
@@ -56,15 +20,8 @@ export const outboxPersistenceError = <FailureCause>(
     code: 'outbox_persistence_failed',
     reason: 'The Outbox Worker persistence operation failed',
   });
-  persistenceCauses.set(failure, cause);
+  Object.defineProperty(failure, PERSISTENCE_CAUSE_PROPERTY, { value: cause });
   return failure;
-};
-
-export const getOutboxPersistenceCause = (
-  failure: OutboxPersistenceError,
-): Cause.Cause<never> | undefined => {
-  const cause = persistenceCauses.get(failure);
-  return cause === undefined ? undefined : Cause.die(cause);
 };
 
 export const sanitizeOutboxErrorMessage = (message: string): string =>

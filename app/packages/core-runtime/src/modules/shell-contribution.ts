@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Result, Schema } from 'effect';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
 const stableKey = Schema.String.check(
@@ -6,6 +6,14 @@ const stableKey = Schema.String.check(
   Schema.isMaxLength(200),
   Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
 );
+const actionKey = stableKey.pipe(Schema.brand('ActionKey'));
+const apiKey = stableKey.pipe(Schema.brand('ApiKey'));
+const componentKey = stableKey.pipe(Schema.brand('ComponentKey'));
+const contributionKey = stableKey.pipe(Schema.brand('ContributionKey'));
+const groupKey = stableKey.pipe(Schema.brand('GroupKey'));
+const pageKey = stableKey.pipe(Schema.brand('PageKey'));
+const reportKey = stableKey.pipe(Schema.brand('ReportKey'));
+const searchKey = stableKey.pipe(Schema.brand('SearchKey'));
 const order = Schema.Finite.check(
   Schema.isInt(),
   Schema.isBetween({ maximum: 10_000, minimum: 0 }),
@@ -98,56 +106,56 @@ const writableApiEntrypoint = ModuleEntrypointSchema.pipe(
 );
 
 export const ShellNavigationContributionSchema = Schema.Struct({
-  contributionKey: stableKey,
+  contributionKey,
   entrypoint: pageEntrypoint,
-  groupKey: stableKey,
+  groupKey,
   order,
-  pageKey: stableKey,
+  pageKey,
 });
 
 export const ShellPageContributionSchema = Schema.Struct({
-  componentKey: stableKey,
-  contributionKey: stableKey,
+  componentKey,
+  contributionKey,
   entrypoint: pageEntrypoint,
   routePath,
 });
 
 export const ShellPublicComponentContributionSchema = Schema.Struct({
-  componentKey: stableKey,
-  contributionKey: stableKey,
+  componentKey,
+  contributionKey,
   entrypoint: componentEntrypoint,
 });
 
 export const ShellSearchContributionSchema = Schema.Struct({
-  contributionKey: stableKey,
+  contributionKey,
   entrypoint: searchEntrypoint,
-  searchKey: stableKey,
+  searchKey,
 });
 
 export const ShellResourceDetailContributionSchema = Schema.Struct({
-  apiKey: stableKey,
-  contributionKey: stableKey,
+  apiKey,
+  contributionKey,
   entrypoint: readableApiEntrypoint,
   resourceType: stableKey,
 });
 
 export const ShellTimelineContributionSchema = Schema.Struct({
-  apiKey: stableKey,
-  contributionKey: stableKey,
+  apiKey,
+  contributionKey,
   entrypoint: readableApiEntrypoint,
   resourceType: stableKey,
 });
 
 export const ShellReportContributionSchema = Schema.Struct({
-  contributionKey: stableKey,
+  contributionKey,
   entrypoint: reportEntrypoint,
-  reportKey: stableKey,
+  reportKey,
 });
 
 export const ShellMediaAttachmentContributionSchema = Schema.Struct({
-  actionKey: stableKey,
-  apiKey: stableKey,
-  contributionKey: stableKey,
+  actionKey,
+  apiKey,
+  contributionKey,
   entrypoint: writableApiEntrypoint,
   resourceType: stableKey,
 });
@@ -175,25 +183,125 @@ export interface ShellContributionReferenceSets {
   readonly searchKeys: ReadonlySet<string>;
 }
 
-const unique = (values: readonly string[], label: string): void => {
-  if (new Set(values).size !== values.length) {
-    throw new TypeError(`duplicate ${label}`);
-  }
-};
+const referenceIssue = (
+  set: ReadonlySet<string>,
+  key: string,
+  label: string,
+): string | undefined =>
+  set.has(key) ? undefined : `${label} references undeclared manifest key ${key}`;
 
-const requireReference = (set: ReadonlySet<string>, key: string, label: string): void => {
-  if (!set.has(key)) {
-    throw new TypeError(`${label} references undeclared manifest key ${key}`);
-  }
-};
-
-export const validateShellContributions = <Input>(
-  input: Input,
+const validatePageReferences = (
+  contributions: OntosShellContributions,
   references: ShellContributionReferenceSets,
-): OntosShellContributions => {
-  const contributions = Schema.decodeUnknownSync(OntosShellContributionsSchema, {
-    onExcessProperty: 'error',
-  })(input);
+): string | undefined => {
+  const pageKeys = new Set(contributions.pages.map(({ contributionKey: key }) => key));
+  for (const contribution of contributions.navigation) {
+    const issue = referenceIssue(pageKeys, contribution.pageKey, 'navigation contribution');
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+  for (const contribution of [...contributions.pages, ...contributions.publicComponents]) {
+    const issue = referenceIssue(
+      references.componentKeys,
+      contribution.componentKey,
+      'component contribution',
+    );
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+
+  return undefined;
+};
+
+const validateDiscoveryReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  for (const contribution of contributions.search) {
+    const issue = referenceIssue(
+      references.searchKeys,
+      contribution.searchKey,
+      'search contribution',
+    );
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+  for (const contribution of contributions.reports) {
+    const issue = referenceIssue(
+      references.reportKeys,
+      contribution.reportKey,
+      'report contribution',
+    );
+    if (issue !== undefined) {
+      return issue;
+    }
+  }
+
+  return undefined;
+};
+
+const validateResourceReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  for (const contribution of [...contributions.resourceDetails, ...contributions.timelines]) {
+    const apiIssue = referenceIssue(
+      references.apiKeys,
+      contribution.apiKey,
+      'resource contribution',
+    );
+    if (apiIssue !== undefined) {
+      return apiIssue;
+    }
+    const resourceIssue = referenceIssue(
+      references.resourceTypeKeys,
+      contribution.resourceType,
+      'resource contribution',
+    );
+    if (resourceIssue !== undefined) {
+      return resourceIssue;
+    }
+  }
+
+  return undefined;
+};
+
+const validateMediaReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
+  for (const contribution of contributions.mediaAttachments) {
+    const actionIssue = referenceIssue(
+      references.actionKeys,
+      contribution.actionKey,
+      'media contribution',
+    );
+    if (actionIssue !== undefined) {
+      return actionIssue;
+    }
+    const apiIssue = referenceIssue(references.apiKeys, contribution.apiKey, 'media contribution');
+    if (apiIssue !== undefined) {
+      return apiIssue;
+    }
+    const resourceIssue = referenceIssue(
+      references.resourceTypeKeys,
+      contribution.resourceType,
+      'media contribution',
+    );
+    if (resourceIssue !== undefined) {
+      return resourceIssue;
+    }
+  }
+  return undefined;
+};
+
+const validateReferences = (
+  contributions: OntosShellContributions,
+  references: ShellContributionReferenceSets,
+): string | undefined => {
   const all = [
     ...contributions.mediaAttachments,
     ...contributions.navigation,
@@ -204,46 +312,36 @@ export const validateShellContributions = <Input>(
     ...contributions.search,
     ...contributions.timelines,
   ];
-  unique(
-    all.map(({ contributionKey }) => contributionKey),
-    'Shell contribution key',
-  );
+  const contributionKeys = all.map(({ contributionKey: key }) => key);
+  if (new Set(contributionKeys).size !== contributionKeys.length) {
+    return 'duplicate Shell contribution key';
+  }
   for (const contribution of all) {
     if (
       contribution.entrypoint.moduleKey !== references.moduleId ||
       !contribution.entrypoint.entrypointKey.startsWith(`${references.moduleId}.`)
     ) {
-      throw new TypeError('Shell contribution entrypoint owner must match the manifest module');
+      return 'Shell contribution entrypoint owner must match the manifest module';
     }
   }
-  for (const contribution of contributions.navigation) {
-    requireReference(
-      new Set(contributions.pages.map(({ contributionKey }) => contributionKey)),
-      contribution.pageKey,
-      'navigation contribution',
-    );
-  }
-  for (const contribution of [...contributions.pages, ...contributions.publicComponents]) {
-    requireReference(references.componentKeys, contribution.componentKey, 'component contribution');
-  }
-  for (const contribution of contributions.search) {
-    requireReference(references.searchKeys, contribution.searchKey, 'search contribution');
-  }
-  for (const contribution of contributions.reports) {
-    requireReference(references.reportKeys, contribution.reportKey, 'report contribution');
-  }
-  for (const contribution of [...contributions.resourceDetails, ...contributions.timelines]) {
-    requireReference(references.apiKeys, contribution.apiKey, 'resource contribution');
-    requireReference(
-      references.resourceTypeKeys,
-      contribution.resourceType,
-      'resource contribution',
-    );
-  }
-  for (const contribution of contributions.mediaAttachments) {
-    requireReference(references.actionKeys, contribution.actionKey, 'media contribution');
-    requireReference(references.apiKeys, contribution.apiKey, 'media contribution');
-    requireReference(references.resourceTypeKeys, contribution.resourceType, 'media contribution');
-  }
-  return contributions;
+  return (
+    validatePageReferences(contributions, references) ??
+    validateDiscoveryReferences(contributions, references) ??
+    validateResourceReferences(contributions, references) ??
+    validateMediaReferences(contributions, references)
+  );
+};
+
+export const validateShellContributions = <Input>(
+  input: Input,
+  references: ShellContributionReferenceSets,
+): OntosShellContributions => {
+  const schema = OntosShellContributionsSchema.pipe(
+    Schema.check(
+      Schema.makeFilter((contributions) => validateReferences(contributions, references)),
+    ),
+  );
+  return Result.getOrThrow(
+    Schema.decodeUnknownResult(schema, { onExcessProperty: 'error' })(input),
+  );
 };

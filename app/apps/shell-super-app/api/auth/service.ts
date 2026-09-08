@@ -1,24 +1,31 @@
-/* eslint-disable prefer-destructuring, promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/no-useless-undefined -- Better Auth hooks are Promise callbacks while the public service remains Effect-based. */
+import { isAPIError } from 'better-auth/api';
 import type {
   AvailableTenant,
-  ContextAccessService,
-  LegalEntityContextService,
   PrincipalResolutionError,
-  PrincipalResolverService,
   ResolvedPrincipalIdentity,
   TrustedPrincipalContext,
+  LegalEntityContext,
 } from '@app/core-runtime';
-import { ContextAccess, LegalEntityContext, PrincipalResolver } from '@app/core-runtime';
+import {
+  ContextAccess,
+  isDatabaseUnavailableFailure,
+  PrincipalResolver,
+  PrincipalResolverUnavailableError,
+} from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { getCookies } from 'better-auth/cookies';
 import { admin } from 'better-auth/plugins';
-import { Context, Effect, Layer, Schema, Predicate } from 'effect';
+import { Context, Effect, Function as Fn, Layer, Predicate, Redacted, Schema, flow } from 'effect';
+import {
+  empty as emptyCookies,
+  expireCookieUnsafe,
+  toSetCookieHeaders,
+} from 'effect/unstable/http/Cookies';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
-import type { AuthDatabaseExecutor } from './db/types.ts';
-import { authDatabaseSchema } from './db/schema.ts';
+import type { BetterAuthDatabaseAdapter } from './db/types.ts';
 import {
   AuthenticationInternalError,
   AuthenticationUnavailableError,
@@ -26,7 +33,13 @@ import {
   OntosIdentityForbiddenError,
   TenantAccessForbiddenError,
 } from './errors.ts';
-import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './errors.ts';
+import type {
+  AuthenticationRuntimeError,
+  AuthenticationUnavailableFailure,
+  OntosIdentityForbiddenFailure,
+  SwitchTenantRuntimeError,
+  TenantAccessForbiddenFailure,
+} from './errors.ts';
 import type { LegalEntitySelectionForbiddenError } from './legal-entity-selection.ts';
 import {
   LegalEntitySelectionUnavailableError,
@@ -49,43 +62,38 @@ const withOptionalProperty = <
 
 const FORBIDDEN_IDENTITY_CODE = 'ONTOS_IDENTITY_FORBIDDEN';
 const IDENTITY_UNAVAILABLE_CODE = 'ONTOS_IDENTITY_UNAVAILABLE';
+const AUTH_OPERATION_TIMEOUT = '30 seconds';
 
-interface SupportLifecyclePrincipalResolver {
-  readonly verifySupportImpersonationStarted: (input: {
-    readonly actionId: string;
-    readonly originalPrincipalId: string;
-    readonly reason: string;
-    readonly sessionId: string;
-    readonly targetPrincipalId: string;
-    readonly tenantId: string;
-  }) => Effect.Effect<boolean, PrincipalResolutionError>;
-}
+type AuthenticationSecretInput = Redacted.Redacted | string;
 
-const hasSupportLifecycleVerifier = (
-  resolver: PrincipalResolverService,
-): resolver is PrincipalResolverService & SupportLifecyclePrincipalResolver =>
-  'verifySupportImpersonationStarted' in resolver &&
-  Predicate.isFunction(resolver.verifySupportImpersonationStarted);
+type FixtureUserProvision = (
+  email: string,
+  name: string,
+  authenticationSecret: AuthenticationSecretInput,
+) => Effect.Effect<string, AuthenticationRuntimeError>;
 
-export interface SafeTenantIdentity {
+const revealAuthenticationSecret = (input: AuthenticationSecretInput): string =>
+  Redacted.isRedacted(input) ? Redacted.value(input) : input;
+
+interface SafeTenantIdentity {
   readonly displayName: string;
   readonly email: string;
+  readonly impersonating?: true;
   readonly principalId: string;
   readonly tenantId: string;
-  readonly impersonating?: true;
 }
 
-export interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
+interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
   readonly legalEntityId: string;
   readonly legalName: string;
 }
 
-export interface AuthenticationResult {
+interface AuthenticationResult {
   readonly identity: SafeTenantIdentity;
   readonly setCookieHeaders: readonly string[];
 }
 
-export type TenantContextResult =
+type TenantContextResult =
   | {
       readonly setCookieHeaders: readonly string[];
       readonly state: 'anonymous';
@@ -97,21 +105,21 @@ export type TenantContextResult =
       readonly state: 'authenticated';
     };
 
-export interface CurrentSessionResult {
+interface CurrentSessionResult {
   readonly identity: SafeTenantIdentity | null;
   readonly setCookieHeaders: readonly string[];
 }
 
-export interface SignOutResult {
+interface SignOutResult {
   readonly setCookieHeaders: readonly string[];
 }
 
-export interface AvailableTenantsResult {
+interface AvailableTenantsResult {
   readonly setCookieHeaders: readonly string[];
   readonly tenants: readonly AvailableTenant[];
 }
 
-export interface SwitchTenantResult {
+interface SwitchTenantResult {
   readonly selectedTenantId: string;
   readonly setCookieHeaders: readonly string[];
 }
@@ -132,6 +140,54 @@ interface AuthenticatedResolvedSession {
 }
 
 type ResolvedSession = AnonymousResolvedSession | AuthenticatedResolvedSession;
+type ResolvedSessionEffect = Effect.Effect<
+  ResolvedSession,
+  AuthenticationRuntimeError,
+  ContextAccess
+>;
+
+interface SupportImpersonationLifecycle {
+  readonly actionId: string;
+  readonly originalAuthBindingId: string;
+  readonly originalPrincipalId: string;
+  readonly originalSessionId: string;
+  readonly reason: string;
+  readonly targetPrincipalId: string;
+}
+
+interface ResolvedTenantIdentity {
+  readonly identity: SafeTenantIdentity;
+  readonly principal: TrustedPrincipalContext;
+}
+
+type ResolveImpersonatedIdentity = (
+  user: { readonly email: string; readonly id: string },
+  originalBetterAuthUserId: string,
+  tenantId: string,
+  sessionId: string,
+  lifecycle: SupportImpersonationLifecycle,
+) => Effect.Effect<
+  ResolvedTenantIdentity,
+  AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure,
+  ContextAccess
+>;
+
+type ResolveShellContext = (
+  requestHeaders: Headers,
+) => Effect.Effect<
+  ShellContextResult,
+  AuthenticationRuntimeError,
+  ContextAccess | LegalEntityContext
+>;
+
+type ResolveAuthenticatedContext = (
+  resolved: AuthenticatedResolvedSession,
+  requestHeaders: Headers,
+) => Effect.Effect<
+  Exclude<ShellContextResult, { readonly state: 'anonymous' }>,
+  AuthenticationRuntimeError,
+  ContextAccess | LegalEntityContext
+>;
 
 export type ShellContextResult =
   | {
@@ -169,40 +225,41 @@ export type ShellContextResult =
 export interface AuthenticationServiceContract {
   readonly availableTenants: (
     requestHeaders: Headers,
-  ) => Effect.Effect<AvailableTenantsResult, AuthenticationRuntimeError>;
-  readonly createFixtureUser: (
-    email: string,
-    name: string,
-    password: string,
-  ) => Effect.Effect<string, AuthenticationRuntimeError>;
+  ) => Effect.Effect<AvailableTenantsResult, AuthenticationRuntimeError, ContextAccess>;
+  readonly createFixtureUser: FixtureUserProvision;
   readonly currentSession: (
     requestHeaders: Headers,
-  ) => Effect.Effect<CurrentSessionResult, AuthenticationRuntimeError>;
+  ) => Effect.Effect<CurrentSessionResult, AuthenticationRuntimeError, ContextAccess>;
   readonly resolveShellContext: (
     requestHeaders: Headers,
-  ) => Effect.Effect<ShellContextResult, AuthenticationRuntimeError>;
+  ) => Effect.Effect<
+    ShellContextResult,
+    AuthenticationRuntimeError,
+    ContextAccess | LegalEntityContext
+  >;
   readonly resolveTenantContext: (
     requestHeaders: Headers,
-  ) => Effect.Effect<TenantContextResult, AuthenticationRuntimeError>;
+  ) => Effect.Effect<TenantContextResult, AuthenticationRuntimeError, ContextAccess>;
   readonly signIn: (
     email: string,
-    password: string,
+    authenticationSecret: AuthenticationSecretInput,
     requestHeaders: Headers,
   ) => Effect.Effect<AuthenticationResult, AuthenticationRuntimeError>;
   readonly signOut: (
     requestHeaders: Headers,
   ) => Effect.Effect<SignOutResult, AuthenticationRuntimeError>;
-  readonly switchTenant: (
-    tenantId: string,
-    requestHeaders: Headers,
-  ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError>;
   readonly switchLegalEntity: (
     legalEntityId: string,
     requestHeaders: Headers,
   ) => Effect.Effect<
     { readonly selectedLegalEntityId: string; readonly setCookieHeaders: readonly string[] },
-    AuthenticationRuntimeError | LegalEntitySelectionForbiddenError
+    AuthenticationRuntimeError | LegalEntitySelectionForbiddenError,
+    ContextAccess | LegalEntityContext
   >;
+  readonly switchTenant: (
+    tenantId: string,
+    requestHeaders: Headers,
+  ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError, ContextAccess>;
 }
 
 export class AuthenticationService extends Context.Service<
@@ -210,63 +267,40 @@ export class AuthenticationService extends Context.Service<
   AuthenticationServiceContract
 >()('@app/shell-super-app/api/auth/service/AuthenticationService') {}
 
-const isTagged = <Value>(value: Value): value is Value & { readonly _tag: string } =>
-  Predicate.isObjectKeyword(value) && value !== null && '_tag' in value;
-
-const isResolverUnavailable = <Failure>(error: Failure) =>
-  isTagged(error) && error._tag === 'PrincipalResolverUnavailableError';
-
 const mapResolverError = (
   error: PrincipalResolutionError,
-): AuthenticationUnavailableError | OntosIdentityForbiddenError =>
-  error._tag === 'PrincipalResolverUnavailableError'
+): AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure =>
+  Schema.is(PrincipalResolverUnavailableError)(error)
     ? new AuthenticationUnavailableError()
     : new OntosIdentityForbiddenError();
 
-const resolveForSession = (
-  resolver: PrincipalResolverService,
-  betterAuthUserId: string,
-): Promise<ResolvedPrincipalIdentity> =>
-  Effect.runPromise(resolver.resolveDefaultBetterAuthUser(betterAuthUserId)).catch(
-    <Failure>(error: Failure) => {
-      if (isResolverUnavailable(error)) {
-        throw new APIError('SERVICE_UNAVAILABLE', {
-          code: IDENTITY_UNAVAILABLE_CODE,
-          message: 'Authentication is temporarily unavailable',
-        });
-      }
+const mapTenantSwitchResolverError = (
+  error: PrincipalResolutionError,
+): AuthenticationUnavailableFailure | TenantAccessForbiddenFailure =>
+  Schema.is(PrincipalResolverUnavailableError)(error)
+    ? new AuthenticationUnavailableError()
+    : new TenantAccessForbiddenError();
 
-      throw new APIError('FORBIDDEN', {
+const mapLegalEntitySelectionError = (
+  error: LegalEntitySelectionForbiddenError | LegalEntitySelectionUnavailableError,
+): AuthenticationUnavailableFailure | LegalEntitySelectionForbiddenError =>
+  Schema.is(LegalEntitySelectionUnavailableError)(error)
+    ? new AuthenticationUnavailableError()
+    : error;
+
+const mapResolverApiError = (error: PrincipalResolutionError): APIError =>
+  Schema.is(PrincipalResolverUnavailableError)(error)
+    ? new APIError('SERVICE_UNAVAILABLE', {
+        code: IDENTITY_UNAVAILABLE_CODE,
+        message: 'Authentication is temporarily unavailable',
+      })
+    : new APIError('FORBIDDEN', {
         code: FORBIDDEN_IDENTITY_CODE,
         message: 'The authenticated identity cannot access OntOS',
       });
-    },
-  );
 
 const setCookieHeaders = (headers: Headers): readonly string[] =>
   Predicate.isFunction(headers.getSetCookie) ? headers.getSetCookie() : [];
-
-const isDatabaseUnavailable = <Failure>(error: Failure, depth = 0): boolean => {
-  if (depth > 3 || !Predicate.isObjectKeyword(error) || error === null) {
-    return false;
-  }
-
-  if ('code' in error) {
-    const { code } = error;
-    if (
-      Predicate.isString(code) &&
-      (/^(?:08|40|53|55|57|58)/u.test(code) ||
-        code === 'ECONNREFUSED' ||
-        code === 'ECONNRESET' ||
-        code === 'EPIPE' ||
-        code === 'ETIMEDOUT')
-    ) {
-      return true;
-    }
-  }
-
-  return 'cause' in error && isDatabaseUnavailable(error.cause, depth + 1);
-};
 
 const toSafeIdentity = (
   email: string,
@@ -278,27 +312,48 @@ const toSafeIdentity = (
   tenantId: principal.tenantId,
 });
 
+const isInvalidImpersonationLifecycle = (
+  target: ResolvedPrincipalIdentity,
+  original: ResolvedPrincipalIdentity,
+  lifecycle: SupportImpersonationLifecycle,
+): boolean =>
+  target.principalId === original.principalId ||
+  target.principalId !== lifecycle.targetPrincipalId ||
+  original.principalId !== lifecycle.originalPrincipalId ||
+  original.authBindingId !== lifecycle.originalAuthBindingId ||
+  lifecycle.originalSessionId.length === 0 ||
+  lifecycle.reason.trim().length === 0 ||
+  lifecycle.reason.length > 500;
+
+const mapApiError = (error: APIError): AuthenticationRuntimeError | undefined => {
+  const code =
+    Predicate.isObjectKeyword(error.body) && error.body !== null && 'code' in error.body
+      ? error.body.code
+      : undefined;
+
+  if (code === FORBIDDEN_IDENTITY_CODE) {
+    return new OntosIdentityForbiddenError();
+  }
+
+  if (code === IDENTITY_UNAVAILABLE_CODE || error.statusCode === 503) {
+    return new AuthenticationUnavailableError();
+  }
+
+  if (error.statusCode === 400 || error.statusCode === 401 || error.statusCode === 403) {
+    return new InvalidCredentialsError();
+  }
+  return undefined;
+};
+
 const mapKnownRuntimeError = <Failure>(error: Failure): AuthenticationRuntimeError | undefined => {
-  if (error instanceof APIError) {
-    const code =
-      Predicate.isObjectKeyword(error.body) && error.body !== null && 'code' in error.body
-        ? error.body.code
-        : undefined;
-
-    if (code === FORBIDDEN_IDENTITY_CODE) {
-      return new OntosIdentityForbiddenError();
-    }
-
-    if (code === IDENTITY_UNAVAILABLE_CODE || error.statusCode === 503) {
-      return new AuthenticationUnavailableError();
-    }
-
-    if (error.statusCode === 400 || error.statusCode === 401 || error.statusCode === 403) {
-      return new InvalidCredentialsError();
+  if (isAPIError(error)) {
+    const known = mapApiError(error);
+    if (known !== undefined) {
+      return known;
     }
   }
 
-  if (isDatabaseUnavailable(error)) {
+  if (isDatabaseUnavailableFailure(error)) {
     return new AuthenticationUnavailableError();
   }
 
@@ -311,7 +366,7 @@ const mapRuntimeError = <Failure>(error: Failure): AuthenticationRuntimeError =>
     return knownError;
   }
 
-  if (error instanceof APIError && error.statusCode >= 500) {
+  if (isAPIError(error) && error.statusCode >= 500) {
     return new AuthenticationUnavailableError();
   }
 
@@ -329,27 +384,83 @@ const mapSessionUpdateError = <Failure>(error: Failure): AuthenticationRuntimeEr
   throw error;
 };
 
-const fallbackClearingCookies = (configuration: AuthConfigValue): readonly string[] => {
-  const prefix = configuration.secureCookies ? '__Secure-' : '';
-  const secure = configuration.secureCookies ? '; Secure' : '';
-  const expires = 'Expires=Thu, 01 Jan 1970 00:00:00 GMT';
-
-  return ['session_token', 'session_data', 'dont_remember'].map(
-    (suffix) =>
-      `${prefix}better-auth.${suffix}=; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=0; ${expires}`,
+const runAuthOperation = <Value>(operation: PromiseLike<Value>) =>
+  Effect.tryPromise({ catch: mapRuntimeError, try: Fn.constant(operation) }).pipe(
+    Effect.timeoutOrElse({
+      duration: AUTH_OPERATION_TIMEOUT,
+      orElse: () => Effect.fail(new AuthenticationUnavailableError()),
+    }),
   );
+
+const runSessionUpdate = <Value>(operation: PromiseLike<Value>) =>
+  Effect.tryPromise({ catch: mapSessionUpdateError, try: Fn.constant(operation) }).pipe(
+    Effect.timeoutOrElse({
+      duration: AUTH_OPERATION_TIMEOUT,
+      orElse: () => Effect.fail(new AuthenticationUnavailableError()),
+    }),
+  );
+
+const fallbackClearingCookies = (configuration: AuthConfigValue): readonly string[] => {
+  const authCookies = getCookies({
+    advanced: {
+      defaultCookieAttributes: {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: configuration.secureCookies,
+      },
+      useSecureCookies: configuration.secureCookies,
+    },
+    baseURL: configuration.baseUrl,
+  });
+  const cookieOptions = {
+    httpOnly: true,
+    path: '/',
+    sameSite: 'lax' as const,
+    secure: configuration.secureCookies,
+  };
+  const sessionTokenExpired = expireCookieUnsafe(
+    emptyCookies,
+    authCookies.sessionToken.name,
+    cookieOptions,
+  );
+  const sessionDataExpired = expireCookieUnsafe(
+    sessionTokenExpired,
+    authCookies.sessionData.name,
+    cookieOptions,
+  );
+  const allExpired = expireCookieUnsafe(
+    sessionDataExpired,
+    authCookies.dontRememberToken.name,
+    cookieOptions,
+  );
+  return toSetCookieHeaders(allExpired);
 };
 
-export const makeAuthenticationService = (
-  configuration: AuthConfigValue,
-  database: AuthDatabaseExecutor,
-  resolver: PrincipalResolverService,
-  options: {
-    readonly allowFixtureSignUp?: boolean;
-    readonly contextAccess?: ContextAccessService;
-    readonly legalEntityContext?: LegalEntityContextService;
-  } = {},
+interface AuthenticationAssemblyOptions {
+  readonly allowFixtureSignUp?: boolean;
+  readonly runResolverEffect: typeof Effect.runPromise;
+}
+
+const assembleAuthenticationService = (
+  ...[configuration, databaseAdapter, resolver, options]: readonly [
+    configuration: AuthConfigValue,
+    databaseAdapter: BetterAuthDatabaseAdapter,
+    resolver: (typeof PrincipalResolver)['Service'],
+    options: AuthenticationAssemblyOptions,
+  ]
 ): AuthenticationServiceContract => {
+  const prepareCreatedSession = <Session extends { readonly userId: string }>(session: Session) =>
+    resolver.resolveDefaultBetterAuthUser(session.userId).pipe(
+      Effect.map((principal) => ({
+        data: {
+          ...session,
+          activeLegalEntityId: null,
+          activeTenantId: principal.tenantId,
+        },
+      })),
+      Effect.mapError(mapResolverApiError),
+    );
+  const beforeSessionCreate = flow(prepareCreatedSession, options.runResolverEffect);
   const auth = betterAuth({
     advanced: {
       defaultCookieAttributes: {
@@ -360,22 +471,11 @@ export const makeAuthenticationService = (
       useSecureCookies: configuration.secureCookies,
     },
     baseURL: configuration.baseUrl,
-    database: drizzleAdapter(database, {
-      provider: 'pg',
-      schema: authDatabaseSchema,
-      transaction: true,
-    }),
+    database: databaseAdapter,
     databaseHooks: {
       session: {
         create: {
-          before: (session) =>
-            resolveForSession(resolver, session.userId).then((principal) => ({
-              data: {
-                ...session,
-                activeLegalEntityId: null,
-                activeTenantId: principal.tenantId,
-              },
-            })),
+          before: beforeSessionCreate,
         },
       },
     },
@@ -455,7 +555,7 @@ export const makeAuthenticationService = (
     sessionId: string,
   ): Effect.Effect<
     { readonly identity: SafeTenantIdentity; readonly principal: TrustedPrincipalContext },
-    AuthenticationUnavailableError | OntosIdentityForbiddenError
+    AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure
   > =>
     resolver.resolveBetterAuthUserForTenant(user.id, tenantId).pipe(
       Effect.map((principal) => ({
@@ -479,7 +579,7 @@ export const makeAuthenticationService = (
     sessionId: string,
   ): Effect.Effect<
     { readonly identity: SafeTenantIdentity; readonly principal: TrustedPrincipalContext },
-    AuthenticationUnavailableError | OntosIdentityForbiddenError
+    AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure
   > =>
     resolver.resolveDefaultBetterAuthUser(user.id).pipe(
       Effect.map((principal) => ({
@@ -495,100 +595,77 @@ export const makeAuthenticationService = (
       Effect.mapError(mapResolverError),
     );
 
-  const resolveImpersonatedIdentity = (
+  const resolveImpersonatedIdentity: ResolveImpersonatedIdentity = Effect.fn(
+    'AuthenticationService.resolveImpersonatedIdentity',
+  )(function* resolveImpersonatedIdentityEffect(
     user: { readonly email: string; readonly id: string },
     originalBetterAuthUserId: string,
     tenantId: string,
     sessionId: string,
-    lifecycle: {
-      readonly actionId: string;
-      readonly originalAuthBindingId: string;
-      readonly originalPrincipalId: string;
-      readonly originalSessionId: string;
-      readonly reason: string;
-      readonly targetPrincipalId: string;
-    },
-  ): Effect.Effect<
-    { readonly identity: SafeTenantIdentity; readonly principal: TrustedPrincipalContext },
-    AuthenticationUnavailableError | OntosIdentityForbiddenError
-  > =>
-    Effect.gen(function* resolveImpersonatedIdentityEffect() {
-      const contextAccess = options.contextAccess;
-      if (contextAccess === undefined) {
-        return yield* new AuthenticationUnavailableError();
-      }
-      const target = yield* resolver
-        .resolveBetterAuthUserForTenant(user.id, tenantId)
-        .pipe(Effect.mapError(mapResolverError));
-      const original = yield* resolver
-        .resolveBetterAuthUserForTenant(originalBetterAuthUserId, tenantId)
-        .pipe(Effect.mapError(mapResolverError));
-      if (
-        target.principalId === original.principalId ||
-        target.principalId !== lifecycle.targetPrincipalId ||
-        original.principalId !== lifecycle.originalPrincipalId ||
-        original.authBindingId !== lifecycle.originalAuthBindingId ||
-        lifecycle.originalSessionId.length === 0 ||
-        lifecycle.reason.trim().length === 0 ||
-        lifecycle.reason.length > 500
-      ) {
-        return yield* new OntosIdentityForbiddenError();
-      }
-      if (!hasSupportLifecycleVerifier(resolver)) {
-        return yield* new AuthenticationUnavailableError();
-      }
-      const started = yield* resolver
-        .verifySupportImpersonationStarted({
-          actionId: lifecycle.actionId,
-          originalPrincipalId: original.principalId,
-          reason: lifecycle.reason,
-          sessionId,
-          targetPrincipalId: target.principalId,
-          tenantId,
-        })
-        .pipe(Effect.mapError(mapResolverError));
-      if (!started) {
-        return yield* new OntosIdentityForbiddenError();
-      }
-      const [decision] = yield* contextAccess.tenants({
-        permission: 'impersonate',
-        principalId: original.principalId,
-        tenantIds: [tenantId],
-      });
-      if (decision?.decision === 'denied') {
-        return yield* new OntosIdentityForbiddenError();
-      }
-      if (decision?.decision !== 'allowed') {
-        return yield* new AuthenticationUnavailableError();
-      }
-      return {
-        identity: { ...toSafeIdentity(user.email, target), impersonating: true },
-        principal: {
-          authBindingId: target.authBindingId,
-          authContextRef: `better-auth-session:${sessionId}`,
-          authMethod: 'support_impersonation',
-          impersonatedByPrincipalId: original.principalId,
-          principalId: target.principalId,
-          tenantId: target.tenantId,
-        },
-      };
+    lifecycle: SupportImpersonationLifecycle,
+  ) {
+    const contextAccess = yield* ContextAccess;
+    const target = yield* resolver
+      .resolveBetterAuthUserForTenant(user.id, tenantId)
+      .pipe(Effect.mapError(mapResolverError));
+    const original = yield* resolver
+      .resolveBetterAuthUserForTenant(originalBetterAuthUserId, target.tenantId)
+      .pipe(Effect.mapError(mapResolverError));
+    if (isInvalidImpersonationLifecycle(target, original, lifecycle)) {
+      return yield* new OntosIdentityForbiddenError();
+    }
+    const { verifySupportImpersonationStarted } = resolver;
+    if (!Predicate.isFunction(verifySupportImpersonationStarted)) {
+      return yield* new AuthenticationUnavailableError();
+    }
+    const started = yield* verifySupportImpersonationStarted({
+      actionId: lifecycle.actionId,
+      originalPrincipalId: original.principalId,
+      reason: lifecycle.reason,
+      sessionId,
+      targetPrincipalId: target.principalId,
+      tenantId,
+    }).pipe(Effect.mapError(mapResolverError));
+    if (!started) {
+      return yield* new OntosIdentityForbiddenError();
+    }
+    const [decision] = yield* contextAccess.tenants({
+      permission: 'impersonate',
+      principalId: original.principalId,
+      tenantIds: [tenantId],
     });
+    if (decision?.decision === 'denied') {
+      return yield* new OntosIdentityForbiddenError();
+    }
+    if (decision?.decision !== 'allowed') {
+      return yield* new AuthenticationUnavailableError();
+    }
+    return {
+      identity: { ...toSafeIdentity(user.email, target), impersonating: true },
+      principal: {
+        authBindingId: target.authBindingId,
+        authContextRef: `better-auth-session:${sessionId}`,
+        authMethod: 'support_impersonation',
+        impersonatedByPrincipalId: original.principalId,
+        principalId: target.principalId,
+        tenantId: target.tenantId,
+      },
+    };
+  });
 
   const getSession = (requestHeaders: Headers) =>
-    Effect.tryPromise({
-      catch: mapRuntimeError,
-      try: () =>
+    Effect.suspend(() =>
+      runAuthOperation(
         auth.api.getSession({
           headers: requestHeaders,
           returnHeaders: true,
         }),
-    });
+      ),
+    );
 
-  const readResolvedSession = (
-    requestHeaders: Headers,
-  ): Effect.Effect<ResolvedSession, AuthenticationRuntimeError> =>
+  const readResolvedSession = (requestHeaders: Headers): ResolvedSessionEffect =>
     getSession(requestHeaders).pipe(
-      Effect.flatMap((result): Effect.Effect<ResolvedSession, AuthenticationRuntimeError> => {
+      Effect.flatMap((result): ResolvedSessionEffect => {
         if (result.response === null) {
           return Effect.succeed({
             setCookieHeaders: setCookieHeaders(result.headers),
@@ -597,8 +674,7 @@ export const makeAuthenticationService = (
         }
 
         const { response } = result;
-        const selectedTenantId = response.session.activeTenantId;
-        const impersonatedBy = response.session.impersonatedBy;
+        const { activeTenantId: selectedTenantId, impersonatedBy } = response.session;
         if (Predicate.isString(impersonatedBy) && !Predicate.isString(selectedTenantId)) {
           return Effect.fail(new OntosIdentityForbiddenError());
         }
@@ -661,15 +737,15 @@ export const makeAuthenticationService = (
 
         return resolveDefaultIdentity(response.user, response.session.id).pipe(
           Effect.flatMap(({ identity, principal }) =>
-            Effect.tryPromise({
-              catch: mapSessionUpdateError,
-              try: () =>
+            Effect.suspend(() =>
+              runSessionUpdate(
                 auth.api.updateSession({
                   body: { activeTenantId: identity.tenantId },
                   headers: requestHeaders,
                   returnHeaders: true,
                 }),
-            }).pipe(
+              ),
+            ).pipe(
               Effect.map((updated) => ({
                 identity,
                 principal,
@@ -689,7 +765,7 @@ export const makeAuthenticationService = (
 
   const authenticatedSession = (
     requestHeaders: Headers,
-  ): Effect.Effect<AuthenticatedResolvedSession, AuthenticationRuntimeError> =>
+  ): Effect.Effect<AuthenticatedResolvedSession, AuthenticationRuntimeError, ContextAccess> =>
     readResolvedSession(requestHeaders).pipe(
       Effect.flatMap((resolved) =>
         resolved.state === 'anonymous'
@@ -698,102 +774,130 @@ export const makeAuthenticationService = (
       ),
     );
 
-  const resolveContext = (
+  const resolveContext: ResolveAuthenticatedContext = Effect.fn(
+    'AuthenticationService.resolveContext',
+  )(function* resolveContextEffect(
     resolved: AuthenticatedResolvedSession,
     requestHeaders: Headers,
-  ): Effect.Effect<
-    Exclude<ShellContextResult, { readonly state: 'anonymous' }>,
-    AuthenticationRuntimeError
-  > =>
-    Effect.gen(function* resolveContextEffect() {
-      const { legalEntityContext } = options;
-      const { contextAccess } = options;
-      if (legalEntityContext === undefined || contextAccess === undefined) {
-        return yield* new AuthenticationUnavailableError();
+  ) {
+    const selection = yield* resolveAuthorizedLegalEntities(
+      withOptionalProperty(
+        {
+          principalId: resolved.identity.principalId,
+        },
+        resolved.savedLegalEntityId !== undefined,
+        'savedLegalEntityId',
+        resolved.savedLegalEntityId,
+        {
+          tenantId: resolved.identity.tenantId,
+        },
+      ),
+    ).pipe(
+      Effect.mapError((selectionFailure) => {
+        void selectionFailure;
+        return new AuthenticationUnavailableError();
+      }),
+    );
+    const clearInvalidSavedSelection = Effect.gen(function* clearInvalidSavedSelectionEffect() {
+      if (resolved.savedLegalEntityId === undefined) {
+        return resolved.setCookieHeaders;
       }
-      const selection = yield* resolveAuthorizedLegalEntities(
-        legalEntityContext,
-        contextAccess,
-        withOptionalProperty(
-          {
-            principalId: resolved.identity.principalId,
-          },
-          !(resolved.savedLegalEntityId === undefined),
-          'savedLegalEntityId',
-          resolved.savedLegalEntityId,
-          {
-            tenantId: resolved.identity.tenantId,
-          },
-        ),
-      ).pipe(Effect.mapError(() => new AuthenticationUnavailableError()));
-      const clearInvalidSavedSelection = Effect.gen(function* clearInvalidSavedSelectionEffect() {
-        if (resolved.savedLegalEntityId === undefined) {
-          return resolved.setCookieHeaders;
-        }
-        const updated = yield* Effect.tryPromise({
-          catch: mapSessionUpdateError,
-          try: () =>
-            auth.api.updateSession({
-              body: { activeLegalEntityId: null },
-              headers: requestHeaders,
-              returnHeaders: true,
-            }),
-        });
-        return [...resolved.setCookieHeaders, ...setCookieHeaders(updated.headers)];
-      });
-      if (selection.state === 'access_blocked') {
-        return {
-          availableLegalEntities: [],
-          identity: resolved.identity,
-          principal: resolved.principal,
-          setCookieHeaders: yield* clearInvalidSavedSelection,
-          state: 'access_blocked',
-        };
-      }
-      if (selection.state === 'selection_required') {
-        return {
-          availableLegalEntities: selection.available,
-          identity: resolved.identity,
-          principal: resolved.principal,
-          setCookieHeaders: yield* clearInvalidSavedSelection,
-          state: 'selection_required',
-        };
-      }
-      const identity: SafeAuthenticatedIdentity = {
-        ...resolved.identity,
-        legalEntityId: selection.selected.legalEntityId,
-        legalName: selection.selected.legalName,
-      };
-      const principal: TrustedPrincipalContext = Object.freeze({
-        ...resolved.principal,
-        legalEntityId: selection.selected.legalEntityId,
-      });
-      if (resolved.savedLegalEntityId === selection.selected.legalEntityId) {
-        return {
-          availableLegalEntities: selection.available,
-          identity,
-          principal,
-          setCookieHeaders: resolved.setCookieHeaders,
-          state: 'authenticated',
-        };
-      }
-      const updated = yield* Effect.tryPromise({
-        catch: mapSessionUpdateError,
-        try: () =>
+      const updated = yield* Effect.suspend(() =>
+        runSessionUpdate(
           auth.api.updateSession({
-            body: { activeLegalEntityId: selection.selected.legalEntityId },
+            body: { activeLegalEntityId: null },
             headers: requestHeaders,
             returnHeaders: true,
           }),
-      });
+        ),
+      );
+      return [...resolved.setCookieHeaders, ...setCookieHeaders(updated.headers)];
+    });
+    if (selection.state === 'access_blocked') {
+      return {
+        availableLegalEntities: [],
+        identity: resolved.identity,
+        principal: resolved.principal,
+        setCookieHeaders: yield* clearInvalidSavedSelection,
+        state: 'access_blocked',
+      };
+    }
+    if (selection.state === 'selection_required') {
+      return {
+        availableLegalEntities: selection.available,
+        identity: resolved.identity,
+        principal: resolved.principal,
+        setCookieHeaders: yield* clearInvalidSavedSelection,
+        state: 'selection_required',
+      };
+    }
+    const identity: SafeAuthenticatedIdentity = {
+      ...resolved.identity,
+      legalEntityId: selection.selected.legalEntityId,
+      legalName: selection.selected.legalName,
+    };
+    const principal: TrustedPrincipalContext = Object.freeze({
+      ...resolved.principal,
+      legalEntityId: selection.selected.legalEntityId,
+    });
+    if (resolved.savedLegalEntityId === selection.selected.legalEntityId) {
       return {
         availableLegalEntities: selection.available,
         identity,
         principal,
-        setCookieHeaders: [...resolved.setCookieHeaders, ...setCookieHeaders(updated.headers)],
+        setCookieHeaders: resolved.setCookieHeaders,
         state: 'authenticated',
       };
-    });
+    }
+    const updated = yield* Effect.suspend(() =>
+      runSessionUpdate(
+        auth.api.updateSession({
+          body: { activeLegalEntityId: selection.selected.legalEntityId },
+          headers: requestHeaders,
+          returnHeaders: true,
+        }),
+      ),
+    );
+    return {
+      availableLegalEntities: selection.available,
+      identity,
+      principal,
+      setCookieHeaders: [...resolved.setCookieHeaders, ...setCookieHeaders(updated.headers)],
+      state: 'authenticated',
+    };
+  });
+
+  const provisionFixtureUser = (
+    email: string,
+    name: string,
+    authenticationSecret: AuthenticationSecretInput,
+  ) =>
+    options.allowFixtureSignUp === true
+      ? Effect.suspend(() =>
+          runAuthOperation(
+            auth.api.signUpEmail({
+              body: {
+                email,
+                name,
+                password: revealAuthenticationSecret(authenticationSecret),
+              },
+            }),
+          ),
+        ).pipe(Effect.map((result) => result.user.id))
+      : Effect.fail(new AuthenticationInternalError());
+
+  const resolveShellContext: ResolveShellContext = Effect.fn(
+    'AuthenticationService.resolveShellContext',
+  )(function* resolveShellContextEffect(requestHeaders: Headers) {
+    const resolved = yield* readResolvedSession(requestHeaders);
+    if (resolved.state === 'anonymous') {
+      return {
+        setCookieHeaders: resolved.setCookieHeaders,
+        state: 'anonymous',
+      } as const;
+    }
+    return yield* resolveContext(resolved, requestHeaders);
+  });
 
   return {
     availableTenants: (requestHeaders) =>
@@ -808,20 +912,7 @@ export const makeAuthenticationService = (
           ),
         ),
       ),
-    createFixtureUser: (email, name, password) =>
-      options.allowFixtureSignUp === true
-        ? Effect.tryPromise({
-            catch: mapRuntimeError,
-            try: () =>
-              auth.api.signUpEmail({
-                body: {
-                  email,
-                  name,
-                  password,
-                },
-              }),
-          }).pipe(Effect.map((result) => result.user.id))
-        : Effect.fail(new AuthenticationInternalError()),
+    createFixtureUser: provisionFixtureUser,
     currentSession: (requestHeaders) =>
       readResolvedSession(requestHeaders).pipe(
         Effect.map((resolved): CurrentSessionResult =>
@@ -833,17 +924,7 @@ export const makeAuthenticationService = (
               },
         ),
       ),
-    resolveShellContext: (requestHeaders) =>
-      Effect.gen(function* resolveShellContextEffect() {
-        const resolved = yield* readResolvedSession(requestHeaders);
-        if (resolved.state === 'anonymous') {
-          return {
-            setCookieHeaders: resolved.setCookieHeaders,
-            state: 'anonymous',
-          } as const;
-        }
-        return yield* resolveContext(resolved, requestHeaders);
-      }),
+    resolveShellContext,
     resolveTenantContext: (requestHeaders) =>
       readResolvedSession(requestHeaders).pipe(
         Effect.map((resolved): TenantContextResult =>
@@ -857,19 +938,19 @@ export const makeAuthenticationService = (
               },
         ),
       ),
-    signIn: (email, password, requestHeaders) =>
-      Effect.tryPromise({
-        catch: mapRuntimeError,
-        try: () =>
+    signIn: (email, authenticationSecret, requestHeaders) =>
+      Effect.suspend(() =>
+        runAuthOperation(
           auth.api.signInEmail({
             body: {
               email,
-              password,
+              password: revealAuthenticationSecret(authenticationSecret),
             },
             headers: requestHeaders,
             returnHeaders: true,
           }),
-      }).pipe(
+        ),
+      ).pipe(
         Effect.flatMap((result) =>
           resolver.resolveDefaultBetterAuthUser(result.response.user.id).pipe(
             Effect.mapError(mapResolverError),
@@ -881,14 +962,14 @@ export const makeAuthenticationService = (
         ),
       ),
     signOut: (requestHeaders) =>
-      Effect.tryPromise({
-        catch: mapRuntimeError,
-        try: () =>
+      Effect.suspend(() =>
+        runAuthOperation(
           auth.api.signOut({
             headers: requestHeaders,
             returnHeaders: true,
           }),
-      }).pipe(
+        ),
+      ).pipe(
         Effect.map((result) => ({
           setCookieHeaders: [
             ...setCookieHeaders(result.headers),
@@ -903,37 +984,28 @@ export const makeAuthenticationService = (
       ),
     switchLegalEntity: (legalEntityId, requestHeaders) =>
       authenticatedSession(requestHeaders).pipe(
-        Effect.flatMap((resolved) => {
-          const legalEntityContext = options.legalEntityContext;
-          const contextAccess = options.contextAccess;
-          if (legalEntityContext === undefined || contextAccess === undefined) {
-            return Effect.fail(new AuthenticationUnavailableError());
-          }
-          return validateAuthorizedLegalEntity(legalEntityContext, contextAccess, {
+        Effect.flatMap((resolved) =>
+          validateAuthorizedLegalEntity({
             legalEntityId,
             principalId: resolved.identity.principalId,
             tenantId: resolved.identity.tenantId,
           }).pipe(
-            Effect.mapError((error) =>
-              Schema.is(LegalEntitySelectionUnavailableError)(error)
-                ? new AuthenticationUnavailableError()
-                : error,
-            ),
+            Effect.mapError(mapLegalEntitySelectionError),
             Effect.flatMap((selected) =>
               selected.legalEntityId === resolved.savedLegalEntityId
                 ? Effect.succeed({
                     selectedLegalEntityId: selected.legalEntityId,
                     setCookieHeaders: resolved.setCookieHeaders,
                   })
-                : Effect.tryPromise({
-                    catch: mapSessionUpdateError,
-                    try: () =>
+                : Effect.suspend(() =>
+                    runSessionUpdate(
                       auth.api.updateSession({
                         body: { activeLegalEntityId: selected.legalEntityId },
                         headers: requestHeaders,
                         returnHeaders: true,
                       }),
-                  }).pipe(
+                    ),
+                  ).pipe(
                     Effect.map((updated) => ({
                       selectedLegalEntityId: selected.legalEntityId,
                       setCookieHeaders: [
@@ -943,33 +1015,29 @@ export const makeAuthenticationService = (
                     })),
                   ),
             ),
-          );
-        }),
+          ),
+        ),
       ),
     switchTenant: (tenantId, requestHeaders) =>
       authenticatedSession(requestHeaders).pipe(
         Effect.flatMap((resolved) =>
           resolver.resolveBetterAuthUserForTenant(resolved.userId, tenantId).pipe(
-            Effect.mapError((error: PrincipalResolutionError) =>
-              error._tag === 'PrincipalResolverUnavailableError'
-                ? new AuthenticationUnavailableError()
-                : new TenantAccessForbiddenError(),
-            ),
+            Effect.mapError(mapTenantSwitchResolverError),
             Effect.flatMap(() =>
               tenantId === resolved.selectedTenantId
                 ? Effect.succeed({
                     selectedTenantId: tenantId,
                     setCookieHeaders: resolved.setCookieHeaders,
                   })
-                : Effect.tryPromise({
-                    catch: mapSessionUpdateError,
-                    try: () =>
+                : Effect.suspend(() =>
+                    runSessionUpdate(
                       auth.api.updateSession({
                         body: { activeLegalEntityId: null, activeTenantId: tenantId },
                         headers: requestHeaders,
                         returnHeaders: true,
                       }),
-                  }).pipe(
+                    ),
+                  ).pipe(
                     Effect.map((updated) => ({
                       selectedTenantId: tenantId,
                       setCookieHeaders: [
@@ -985,17 +1053,18 @@ export const makeAuthenticationService = (
   };
 };
 
+export const makeAuthenticationService = assembleAuthenticationService;
+
 export const AuthenticationServiceLive = Layer.effect(
   AuthenticationService,
   Effect.gen(function* makeAuthenticationServiceEffect() {
     const configuration = yield* AuthConfig;
     const database = yield* AuthDatabase;
     const resolver = yield* PrincipalResolver;
-    const legalEntityContext = yield* LegalEntityContext;
-    const contextAccess = yield* ContextAccess;
-    return makeAuthenticationService(configuration, database.executor, resolver, {
-      contextAccess,
-      legalEntityContext,
+    const effectContext = yield* Effect.context();
+    const runResolverEffect = Effect.runPromiseWith(effectContext);
+    return makeAuthenticationService(configuration, database.adapter, resolver, {
+      runResolverEffect,
     });
   }),
 );

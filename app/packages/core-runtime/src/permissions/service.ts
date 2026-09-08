@@ -1,8 +1,13 @@
-/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed callback combinators are not Promise callback chains. */
 import { v1 } from '@authzed/authzed-node';
-import { Context, Effect, Layer, Predicate } from 'effect';
+import { Context, Effect, Layer, Predicate, Schema } from 'effect';
 import type { Scope } from 'effect';
+import type { ActionTransportMetadata } from '../actions/context.ts';
 import { ActionPermissionCheckError } from '../actions/errors.ts';
+import { decideAuthorizationRollout } from '../authorization/rollout-decision.ts';
+import type {
+  AuthorizationRolloutDecisionOptions,
+  AuthorizationWouldDenyEvent,
+} from '../authorization/rollout-decision.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
@@ -12,6 +17,7 @@ import {
   createSpiceDbPermissionClient,
   fullyConsistent,
 } from './client.ts';
+import type { SpiceDbPermissionClient } from './client.ts';
 
 export { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 
@@ -24,13 +30,17 @@ export const SPICEDB_EXECUTE_PERMISSION = 'execute';
 export const toSpiceDbActionObjectId = (actionKey: string): string =>
   `ak_${Buffer.from(actionKey, 'utf-8').toString('base64url')}`;
 
-export type ActionPermissionDecision = 'allowed' | 'denied' | 'unconfigured';
+const ActionPermissionDecisionSchema = Schema.Literals(['allowed', 'denied']);
+export type ActionPermissionDecision = typeof ActionPermissionDecisionSchema.Type;
 
-export interface CheckActionPermissionInput {
+interface ActionPermissionTargetInput {
   readonly actionKey: string;
-  readonly correlationId: string;
   readonly principalId: string;
 }
+
+export type CheckActionPermissionInput = Readonly<
+  ActionPermissionTargetInput & Pick<ActionTransportMetadata, 'correlationId'>
+>;
 
 export interface ActionPermissionService {
   readonly checkActionPermission: (
@@ -38,28 +48,33 @@ export interface ActionPermissionService {
   ) => Effect.Effect<ActionPermissionDecision, ActionPermissionCheckError>;
 }
 
-export interface PermissionCheckClient {
-  readonly checkPermission: (
-    request: v1.CheckPermissionRequest,
-  ) => Promise<v1.CheckPermissionResponse | undefined>;
-  readonly close: () => void;
-}
+export type PermissionCheckClient = Pick<SpiceDbPermissionClient, 'checkPermission' | 'close'>;
 
 export type PermissionClientFactory = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds: number,
 ) => PermissionCheckClient;
 
-const checkFailure = (): ActionPermissionCheckError =>
-  new ActionPermissionCheckError({
-    code: 'action_permission_check_failed',
-    reason: 'The authorization service could not determine permission safely',
-  });
+const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
+  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+
+const checkFailure = (cause?: unknown): ActionPermissionCheckError =>
+  attachCause(
+    new ActionPermissionCheckError({
+      code: 'action_permission_check_failed',
+      reason: 'The authorization service could not determine permission safely',
+    }),
+    cause,
+  );
 
 export const createPermissionCheckClient: PermissionClientFactory = (
   configuration,
   timeoutMilliseconds,
-) => createSpiceDbPermissionClient(configuration, timeoutMilliseconds);
+) =>
+  createSpiceDbPermissionClient(
+    configuration,
+    timeoutMilliseconds,
+  ) satisfies SpiceDbPermissionClient;
 
 export const acquirePermissionClientResource = (
   acquire: () => PermissionCheckClient,
@@ -80,20 +95,18 @@ const principalReference = (principalId: string) =>
     }),
   });
 
-const restrictionRequest = (actionKey: string) => {
-  const action = actionReference(actionKey);
-  return v1.CheckPermissionRequest.create({
-    consistency: fullyConsistent,
-    permission: SPICEDB_RESTRICTION_PERMISSION,
-    resource: action,
-    subject: v1.SubjectReference.create({ object: action }),
-  });
-};
-
 const executionRequest = (actionKey: string, principalId: string) =>
   v1.CheckPermissionRequest.create({
     consistency: fullyConsistent,
     permission: SPICEDB_EXECUTE_PERMISSION,
+    resource: actionReference(actionKey),
+    subject: principalReference(principalId),
+  });
+
+const restrictionRequest = (actionKey: string, principalId: string) =>
+  v1.CheckPermissionRequest.create({
+    consistency: fullyConsistent,
+    permission: SPICEDB_RESTRICTION_PERMISSION,
     resource: actionReference(actionKey),
     subject: principalReference(principalId),
   });
@@ -123,48 +136,71 @@ const runCheck = (
   client: PermissionCheckClient,
   request: v1.CheckPermissionRequest,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> =>
-  Effect.tryPromise({
-    catch: () => checkFailure(),
-    try: () => client.checkPermission(request),
-  }).pipe(Effect.flatMap(classifyPermissionship));
+  client
+    .checkPermission(request)
+    .pipe(Effect.mapError(checkFailure), Effect.flatMap(classifyPermissionship));
 
-export const makeActionPermissionService = (
+interface ActionPermissionRolloutOptions {
+  readonly emit: (event: AuthorizationWouldDenyEvent) => void;
+  readonly nowEpochMs: () => number;
+  readonly rollout: AuthorizationRolloutDecisionOptions['contract'];
+}
+
+type PermissionRollout = ActionPermissionRolloutOptions;
+
+const actionPermissionService = (
   client: PermissionCheckClient,
+  rolloutOptions?: PermissionRollout,
 ): ActionPermissionService =>
   Object.freeze({
-    checkActionPermission: (input: CheckActionPermissionInput) =>
-      Effect.gen(function* checkActionPermissionEffect() {
-        const restriction = yield* runCheck(client, restrictionRequest(input.actionKey));
-        if (restriction === 'none') {
-          return 'unconfigured' as const;
-        }
-
+    checkActionPermission: Effect.fn('ActionPermission.checkActionPermission')(
+      function* checkActionPermissionEffect(input: CheckActionPermissionInput) {
         const execution = yield* runCheck(
           client,
           executionRequest(input.actionKey, input.principalId),
         );
-        return execution === 'has' ? ('allowed' as const) : ('denied' as const);
-      }).pipe(
-        Effect.withSpan('SpiceDB.checkActionPermission', {
-          attributes: {
-            actionKey: input.actionKey,
-            correlationId: input.correlationId,
-          },
-        }),
-      ),
+        if (execution === 'has') {
+          return 'allowed' as const;
+        }
+        if (rolloutOptions === undefined) {
+          return 'denied' as const;
+        }
+        const restricted = yield* runCheck(
+          client,
+          restrictionRequest(input.actionKey, input.principalId),
+        );
+        if (restricted === 'has') {
+          return 'denied' as const;
+        }
+        return yield* Effect.try({
+          catch: (cause) => checkFailure(cause),
+          try: () =>
+            decideAuthorizationRollout(
+              {
+                candidate: 'denied',
+                current: 'allowed',
+                denialReason: 'missing_policy',
+                entrypointKey: input.actionKey,
+                nowEpochMs: rolloutOptions.nowEpochMs(),
+                policyClass: 'action_execution',
+                surface: 'action',
+              },
+              { contract: rolloutOptions.rollout, emit: rolloutOptions.emit },
+            ),
+        });
+      },
+    ),
   });
 
-const unavailablePermissionService = (): ActionPermissionService =>
+export const makeActionPermissionService = actionPermissionService;
+
+const unavailablePermissionService = (cause?: unknown): ActionPermissionService =>
   Object.freeze({
-    checkActionPermission: (input: CheckActionPermissionInput) =>
-      Effect.fail(checkFailure()).pipe(
-        Effect.withSpan('SpiceDB.checkActionPermission', {
-          attributes: {
-            actionKey: input.actionKey,
-            correlationId: input.correlationId,
-          },
-        }),
-      ),
+    checkActionPermission: Effect.fn('ActionPermission.checkActionPermission')(
+      function* unavailableCheckActionPermissionEffect() {
+        return yield* checkFailure(cause);
+      },
+    ),
   });
 
 export class ActionPermission extends Context.Service<ActionPermission, ActionPermissionService>()(
@@ -179,13 +215,15 @@ export const makeActionPermissionLive = (
   > = loadSpiceDbConfig,
 ): Effect.Effect<ActionPermissionService, never, Scope.Scope> =>
   Effect.matchEffect(loadConfiguration(), {
-    onFailure: () => Effect.succeed(unavailablePermissionService()),
+    onFailure: (cause) => Effect.succeed(unavailablePermissionService(cause)),
     onSuccess: (configuration) =>
       acquirePermissionClientResource(() =>
         clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS),
       ).pipe(
         Effect.map(makeActionPermissionService),
-        Effect.orElseSucceed(() => unavailablePermissionService()),
+        Effect.catchTag('ActionPermissionCheckError', (cause) =>
+          Effect.succeed(unavailablePermissionService(cause)),
+        ),
       ),
   });
 

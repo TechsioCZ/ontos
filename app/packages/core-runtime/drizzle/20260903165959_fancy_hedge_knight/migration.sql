@@ -1,0 +1,11 @@
+ALTER TABLE "core"."search_index_entries" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "core"."search_index_entries" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "core"."search_index_entries" ADD COLUMN "deleted" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "core"."search_index_entries" ADD COLUMN "projection_version" bigint DEFAULT 1 NOT NULL;--> statement-breakpoint
+CREATE INDEX "core_search_index_entries_query_idx" ON "core"."search_index_entries" USING btree ("tenant_id","source_module_key","source_resource_type","legal_entity_id","deleted");--> statement-breakpoint
+ALTER TABLE "core"."search_index_entries" ADD CONSTRAINT "core_search_index_entries_document_ck" CHECK ("core"."search_index_entries"."deleted" or (length(btrim("core"."search_index_entries"."title")) > 0 and length("core"."search_index_entries"."title") <= 300 and length("core"."search_index_entries"."body_text") <= 40000));--> statement-breakpoint
+ALTER TABLE "core"."search_index_entries" ADD CONSTRAINT "core_search_index_entries_version_ck" CHECK ("core"."search_index_entries"."projection_version" > 0);--> statement-breakpoint
+CREATE POLICY "core_search_index_entries_tenant_select" ON "core"."search_index_entries" AS PERMISSIVE FOR SELECT TO "ontos_runtime" USING ("core"."search_index_entries"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "core_search_index_entries_tenant_insert" ON "core"."search_index_entries" AS PERMISSIVE FOR INSERT TO "ontos_runtime" WITH CHECK ("core"."search_index_entries"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "core_search_index_entries_tenant_update" ON "core"."search_index_entries" AS PERMISSIVE FOR UPDATE TO "ontos_runtime" USING ("core"."search_index_entries"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid) WITH CHECK ("core"."search_index_entries"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "core_search_index_entries_tenant_delete" ON "core"."search_index_entries" AS PERMISSIVE FOR DELETE TO "ontos_runtime" USING ("core"."search_index_entries"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid);

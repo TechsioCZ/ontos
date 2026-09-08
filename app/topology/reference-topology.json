@@ -7,10 +7,15 @@
     "id": "shell-super-app",
     "kind": "shell",
     "package": "@app/shell-super-app",
-    "verticalRefs": ["contacts"],
+    "verticalRefs": [
+      "party-registry"
+    ],
     "authentication": {
       "kind": "shell-core-capability",
-      "owners": ["shell-super-app", "core-runtime"],
+      "owners": [
+        "shell-super-app",
+        "core-runtime"
+      ],
       "databaseSchema": "auth",
       "api": {
         "runtimeFramework": "effect",
@@ -31,9 +36,9 @@
       "name": "shellSuperApp",
       "remotes": [
         {
-          "id": "contacts",
-          "name": "verticalContacts",
-          "manifestUrl": "http://localhost:4101/mf-manifest.json"
+          "id": "party-registry",
+          "name": "verticalPartyRegistry",
+          "manifestUrl": "http://localhost:4102/mf-manifest.json"
         }
       ],
       "ssr": true,
@@ -44,7 +49,10 @@
       "workerName": "app-shell-super-app",
       "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
       "compatibilityDate": "2026-06-02",
-      "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+      "compatibilityFlags": [
+        "nodejs_compat",
+        "global_fetch_strictly_public"
+      ],
       "assetsBinding": "ASSETS",
       "routes": {
         "ssr": "/en",
@@ -61,15 +69,46 @@
         "contentSecurityPolicy": {
           "mode": "report-only",
           "directives": {
-            "base-uri": ["'self'"],
-            "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-            "default-src": ["'self'"],
-            "font-src": ["'self'", "data:", "https:", "http:"],
-            "form-action": ["'self'"],
-            "frame-ancestors": ["'self'"],
-            "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-            "manifest-src": ["'self'", "https:", "http:"],
-            "object-src": ["'none'"],
+            "base-uri": [
+              "'self'"
+            ],
+            "connect-src": [
+              "'self'",
+              "https:",
+              "http:",
+              "wss:",
+              "ws:"
+            ],
+            "default-src": [
+              "'self'"
+            ],
+            "font-src": [
+              "'self'",
+              "data:",
+              "https:",
+              "http:"
+            ],
+            "form-action": [
+              "'self'"
+            ],
+            "frame-ancestors": [
+              "'self'"
+            ],
+            "img-src": [
+              "'self'",
+              "data:",
+              "blob:",
+              "https:",
+              "http:"
+            ],
+            "manifest-src": [
+              "'self'",
+              "https:",
+              "http:"
+            ],
+            "object-src": [
+              "'none'"
+            ],
             "script-src": [
               "'self'",
               "'unsafe-inline'",
@@ -78,8 +117,16 @@
               "http:",
               "blob:"
             ],
-            "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-            "worker-src": ["'self'", "blob:"]
+            "style-src": [
+              "'self'",
+              "'unsafe-inline'",
+              "https:",
+              "http:"
+            ],
+            "worker-src": [
+              "'self'",
+              "blob:"
+            ]
           },
           "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
         },
@@ -152,62 +199,64 @@
   },
   "verticals": [
     {
-      "id": "contacts",
+      "id": "party-registry",
       "kind": "vertical",
-      "domain": "contacts",
-      "package": "@app/contacts",
-      "path": "verticals/contacts",
+      "domain": "party-registry",
+      "package": "@app/party-registry",
+      "path": "verticals/party-registry",
       "moduleFederation": {
         "role": "remote",
-        "name": "verticalContacts",
-        "manifestUrl": "http://localhost:4101/mf-manifest.json",
-        "exposes": ["./PageContacts"],
+        "name": "verticalPartyRegistry",
+        "manifestUrl": "http://localhost:4102/mf-manifest.json",
+        "exposes": [
+          "./PageContacts"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
       "backendFederation": {
         "role": "microvertical-server",
-        "name": "verticalContactsBackend",
+        "name": "verticalPartyRegistryBackend",
         "runtimeFramework": "effect",
         "strictEffectApproach": true,
         "deliveryUnit": {
           "schemaVersion": 1,
           "kind": "microvertical-delivery-unit",
-          "unitId": "app/contacts",
-          "packageName": "@app/contacts",
+          "unitId": "app/party-registry",
+          "packageName": "@app/party-registry",
           "version": "0.1.0",
-          "buildMarker": "b08ddded31ae2315",
+          "buildMarker": "3f023644c8a07e9a",
           "sourceRevision": "workspace"
         },
         "exposes": {
           "./effect-api": {
-            "contract": "verticals/contacts/shared/api.ts",
-            "runtime": "verticals/contacts/api/index.ts",
-            "client": "verticals/contacts/src/api/contacts-client.ts",
-            "openapi": "/contacts-api/openapi.json",
-            "readiness": "/contacts-api/contacts/readiness"
+            "contract": "verticals/party-registry/shared/api.ts",
+            "runtime": "verticals/party-registry/api/index.ts",
+            "client": "verticals/party-registry/src/api/party-registry-client.ts",
+            "openapi": "/party-registry-api/openapi.json",
+            "readiness": "/party-registry-api/party-registry/readiness"
           }
         },
         "versionBoundary": {
           "invariant": "web-and-api-same-build",
           "identityRoot": "deliveryUnit",
-          "packageName": "@app/contacts",
+          "packageName": "@app/party-registry",
           "ui": {
-            "manifestEnv": "VERTICAL_CONTACTS_MF_MANIFEST",
-            "manifestUrl": "http://localhost:4101/mf-manifest.json",
-            "buildMarker": "verticals/contacts/src/routes/ultramodern-route-metadata.ts"
+            "manifestEnv": "VERTICAL_PARTY_REGISTRY_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4102/mf-manifest.json",
+            "buildMarker": "verticals/party-registry/src/routes/ultramodern-route-metadata.ts"
           },
           "api": {
-            "readiness": "/contacts-api/contacts/readiness",
-            "buildMarker": "verticals/contacts/shared/ultramodern-build.ts",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS"
+            "readiness": "/party-registry-api/party-registry/readiness",
+            "buildMarker": "verticals/party-registry/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY"
           }
         },
         "executionSurfaces": {
           "cloudflare": {
             "kind": "cloudflare-worker-snapshot",
-            "workerName": "app-contacts",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
+            "workerName": "app-party-registry",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
             "ssr": {
               "workerEntry": ".output/server/index.mjs",
               "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -219,38 +268,38 @@
             "zephyr": {
               "runtime": "ssr-worker",
               "integration": "managed-cloudflare",
-              "snapshotIdEnv": "ZEPHYR_CONTACTS_SNAPSHOT_ID",
-              "versionIdEnv": "ZEPHYR_CONTACTS_VERSION_ID",
-              "applicationUidEnv": "ZEPHYR_CONTACTS_APPLICATION_UID"
+              "snapshotIdEnv": "ZEPHYR_PARTY_REGISTRY_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_PARTY_REGISTRY_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_PARTY_REGISTRY_APPLICATION_UID"
             },
             "workerDispatch": {
               "preferred": "service-binding",
-              "serviceBinding": "VERTICAL_CONTACTS_WORKER",
-              "serviceBindingEnv": "VERTICAL_CONTACTS_WORKER_BINDING",
-              "dispatchNamespaceEnv": "VERTICAL_CONTACTS_DISPATCH_NAMESPACE",
-              "dispatchWorkerNameEnv": "VERTICAL_CONTACTS_WORKER_NAME",
+              "serviceBinding": "VERTICAL_PARTY_REGISTRY_WORKER",
+              "serviceBindingEnv": "VERTICAL_PARTY_REGISTRY_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_PARTY_REGISTRY_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_PARTY_REGISTRY_WORKER_NAME",
               "requestInterface": "fetch"
             }
           },
           "node": {
             "kind": "node-mf-runtime",
             "adapterVersion": "backend-mf-effect-v1",
-            "remoteName": "verticalContactsBackend",
-            "manifestEnv": "VERTICAL_CONTACTS_BACKEND_MF_MANIFEST",
-            "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
-            "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+            "remoteName": "verticalPartyRegistryBackend",
+            "manifestEnv": "VERTICAL_PARTY_REGISTRY_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4102/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
             "expose": "./effect-api",
             "runtimePackage": "@modern-js/plugin-bff/effect",
             "expected": {
-              "unitId": "app/contacts",
-              "buildMarker": "b08ddded31ae2315"
+              "unitId": "app/party-registry",
+              "buildMarker": "3f023644c8a07e9a"
             }
           }
         },
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
-          "packageName": "@app/contacts",
+          "packageName": "@app/party-registry",
           "effectVersion": "4.0.0-beta.107",
           "moduleFederationVersion": "2.8.0"
         },
@@ -269,38 +318,46 @@
       "deliveryUnit": {
         "schemaVersion": 1,
         "kind": "microvertical-delivery-unit",
-        "unitId": "app/contacts",
-        "packageName": "@app/contacts",
+        "unitId": "app/party-registry",
+        "packageName": "@app/party-registry",
         "version": "0.1.0",
-        "buildMarker": "b08ddded31ae2315",
+        "buildMarker": "3f023644c8a07e9a",
         "sourceRevision": "workspace"
       },
       "api": {
         "runtime": "effect",
         "bff": {
-          "prefix": "/contacts-api",
+          "prefix": "/party-registry-api",
           "openapi": "/openapi.json",
           "strictEffectApproach": true
         },
         "contract": {
           "export": "./api",
-          "path": "verticals/contacts/shared/api.ts"
+          "path": "verticals/party-registry/shared/api.ts"
         },
         "client": {
           "export": "./api/client",
-          "path": "verticals/contacts/src/api/contacts-client.ts"
+          "path": "verticals/party-registry/src/api/party-registry-client.ts"
         },
-        "serverEntry": "verticals/contacts/api/index.ts",
-        "basePath": "/contacts-api/contacts",
-        "consumedBy": ["shell-super-app", "contacts"],
+        "serverEntry": "verticals/party-registry/api/index.ts",
+        "basePath": "/party-registry-api/party-registry",
+        "consumedBy": [
+          "shell-super-app",
+          "party-registry"
+        ],
         "readiness": {
-          "endpoint": "/contacts/readiness",
+          "endpoint": "/party-registry/readiness",
           "marker": {
             "ui": "ultramodernUiMarker",
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -313,43 +370,21 @@
             "x-vertical-version-id"
           ],
           "source": "shell-to-vertical-api-client"
-        },
-        "domainOperations": {
-          "workspaceFeed": {
-            "client": "listContacts",
-            "method": "GET",
-            "path": "/contacts",
-            "resource": "workspace-items",
-            "owner": "contacts"
-          },
-          "workspaceDetail": {
-            "client": "getContacts",
-            "method": "GET",
-            "path": "/contacts/:id",
-            "resource": "workspace-item",
-            "owner": "contacts"
-          },
-          "workspaceCreate": {
-            "client": "createContacts",
-            "method": "POST",
-            "path": "/contacts",
-            "resource": "contacts",
-            "owner": "contacts"
-          }
         }
       },
       "cloudflare": {
         "target": "cloudflare",
-        "workerName": "app-contacts",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
+        "workerName": "app-party-registry",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
-          "ssr": "/en",
           "mfManifest": "/mf-manifest.json",
-          "locale": "/locales/en/contacts.json",
-          "apiReadiness": "/contacts-api/contacts/readiness"
+          "apiReadiness": "/party-registry-api/party-registry/readiness"
         },
         "security": {
           "enabled": true,
@@ -361,15 +396,46 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
               "script-src": [
                 "'self'",
                 "'unsafe-inline'",
@@ -378,8 +444,16 @@
                 "http:",
                 "blob:"
               ],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -427,8 +501,8 @@
         },
         "jsonSmokeChecks": [
           {
-            "id": "contacts-readiness-smoke",
-            "route": "/contacts-api/contacts/readiness",
+            "id": "party-registry-readiness-smoke",
+            "route": "/party-registry-api/party-registry/readiness",
             "expect": {
               "status": "ready",
               "checks.api": "ready",
@@ -442,11 +516,13 @@
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/contacts.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#contacts",
+        "runbookRef": "runbooks/verticals/party-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#contacts"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
+          ]
         }
       }
     }
@@ -457,6 +533,12 @@
       "package": "@app/core-runtime",
       "path": "packages/core-runtime",
       "description": "Server-only Core infrastructure and typed PostgreSQL ownership."
+    },
+    {
+      "id": "gateway-principal-verifier",
+      "package": "@app/gateway-principal-verifier",
+      "path": "packages/gateway-principal-verifier",
+      "description": "Server-only audience-bound Shell gateway assertion verification."
     },
     {
       "id": "shared-contracts",

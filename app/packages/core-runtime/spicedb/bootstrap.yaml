@@ -4,16 +4,30 @@ schema: |-
   definition tenant {
     relation member: principal
     relation identity_admin: principal
+    relation party_identity_manager: principal
+    relation party_identity_merger: principal
+    relation party_identity_reader: principal
+    relation party_identity_reviewer: principal
+    relation party_relationship_manager: principal
     relation support: principal
     permission access = member
     permission manage_identity = identity_admin & access
+    permission manage_party_identity = party_identity_manager & access
+    permission manage_party_relationships = party_relationship_manager & access
+    permission merge_party_identity = party_identity_merger & access
+    permission read_party_identity = party_identity_reader & access
+    permission review_party_identity = party_identity_reviewer & access
     permission impersonate = support & access
   }
 
   definition legal_entity {
     relation tenant: tenant
     relation member: principal
+    relation counterparty_manager: principal
+    relation counterparty_reader: principal
     permission access = member & tenant->access
+    permission manage_counterparty = counterparty_manager & access
+    permission read_counterparty = counterparty_reader & access
   }
 
   definition module_access {
@@ -32,7 +46,7 @@ schema: |-
 
   definition action {
     relation restriction: action
-    relation executor: principal
+    relation executor: principal | tenant#member
 
     permission is_restricted = restriction
     permission execute = executor
@@ -41,6 +55,7 @@ schema: |-
 relationships: |-
   action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#restriction@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
   action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#executor@principal:allowed-principal
+  action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#executor@tenant:test-tenant#member
   action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#restriction@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
   action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#executor@principal:allowed-principal
   action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#restriction@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
@@ -88,6 +103,7 @@ assertions:
   assertTrue:
     - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
     - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:allowed-principal
+    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:allowed-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
     - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:allowed-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
@@ -119,6 +135,7 @@ assertions:
   assertFalse:
     - action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA
     - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:denied-principal
+    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:denied-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:denied-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:denied-principal
     - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:denied-principal

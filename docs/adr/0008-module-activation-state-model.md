@@ -1,23 +1,47 @@
 # ADR-0008: Module activation and state model
 
-Status: Superseded in deployment and registration details by [ADR-0016](0016-independently-deployable-microverticals.md). The state vocabulary and fail-closed entrypoint gate remain; current installation uses serialized deployment contracts, and Application Composition dependency closure governs activation.
+Status: Partially superseded by [ADR-0016](0016-independently-deployable-microverticals.md).
+
+The state vocabulary and fail-closed entrypoint gate remain accepted. ADR-0016 replaced the
+original deployment and registration assumptions. Current mechanics live in
+[`app/docs/architecture/MODULE_ENTRYPOINTS.md`](../../app/docs/architecture/MODULE_ENTRYPOINTS.md)
+and [`MODULE_MANIFESTS.md`](../../app/docs/architecture/MODULE_MANIFESTS.md).
 
 ## Context
 
-Tenants may have different modules enabled. Modules may need to be inactive, suspended, made read-only, quarantined, deprecated, or archived without deleting history. Legal-entity-specific differences are module configuration, not Core module activation.
+Tenants may have different modules enabled. Modules may need to be inactive, suspended, made
+read-only, quarantined, deprecated, or archived without deleting history. Legal-entity-specific
+differences are module configuration, not Core module activation.
 
-## Decision
+## Decision still in force
 
-Installed MicroVertical code is deployed with the application. Runtime module state controls availability per tenant. States include inactive, active, read-only, suspended, quarantined, deprecated, and archived.
+Runtime module state controls availability per tenant. States include inactive, active,
+read-only, suspended, quarantined, deprecated, and archived.
 
-If a module is active for a tenant but only configured for some legal entities, the owning module stores that in its own settings tables, for example `RENTAL_SHORT_TERM_LEGAL_ENTITY_SETTINGS`.
+If a module is active for a tenant but configured for only some legal entities, the owning module
+stores that distinction in its settings, for example
+`RENTAL_SHORT_TERM_LEGAL_ENTITY_SETTINGS`.
 
-All module entrypoints must be invoked through Shell/Core gateways so the Module State Gate can fail closed before loading or dispatching module code. Direct entrypoint loading is forbidden, including raw Module Federation `loadRemote(...)` calls outside the Shell/Core gateway and direct imports of private route, component, Action handler, or worker handler entrypoints. Shell/Core should use structured entrypoints keyed by module identity and entrypoint role rather than passing raw remote specifier strings through application code.
+Every module entrypoint passes through Shell/Core so the Module State Gate can fail closed before
+private module code loads or runs. Direct entrypoint loading is forbidden, including raw Module
+Federation `loadRemote(...)` calls outside the gateway and direct imports of private routes,
+components, Action handlers, or Worker handlers. Shell/Core uses structured entrypoints keyed by
+module identity and role rather than raw remote specifier strings.
+
+## Superseded deployment detail
+
+The original decision assumed installed MicroVertical code shipped with one application and that
+new module code required that application's deployment. ADR-0016 replaced that assumption with
+independently deployable MicroVertical seams and serialized deployment contracts.
 
 ## Consequences
 
-Activation/deactivation can happen without restart for installed modules. New module code still requires deployment in V0. Historical data remains visible according to permissions even when a module is not active.
+Tenant state can change without deleting history or redeploying an already installed module.
+Physical deployment follows ADR-0016; tenant installation and activation remain separate.
 
 ## Risks
 
-Every Action, UI contribution, search descriptor, report, public component, and worker dispatch must respect tenant-level module state and any module-owned legal-entity setup. Missing checks can expose disabled functionality. Module Federation loads should be mapped through Shell/Core-owned entrypoint metadata rather than raw remote specifier strings at call sites.
+Every Action, UI contribution, search descriptor, report, public component, and Worker dispatch
+must respect tenant module state and any module-owned legal-entity setup. Missing checks can expose
+disabled functionality. Entrypoints must remain mapped through Shell/Core-owned metadata rather
+than raw private specifiers at call sites.

@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { STAGE_CONTEXTS } from '../../src/install/stage-context-bootstrap.ts';
 
-test('defines the exact Techsio and Siampark stage contexts', () => {
+void test('defines the exact Techsio and Siampark stage contexts', () => {
   assert.deepEqual(STAGE_CONTEXTS, {
     siampark: {
       authBindingId: '73000000-0000-4000-8000-000000000002',
       defaultLocale: 'cs',
       legalEntityId: '71000000-0000-4000-8000-000000000002',
       legalName: 'Siampark',
-      moduleId: 'contacts.core',
+      moduleId: 'party.registry',
       moduleStateId: '74000000-0000-4000-8000-000000000002',
       principalDisplayName: 'Siampark 01',
       principalId: '72000000-0000-4000-8000-000000000002',
@@ -24,7 +24,7 @@ test('defines the exact Techsio and Siampark stage contexts', () => {
       defaultLocale: 'cs',
       legalEntityId: '71000000-0000-4000-8000-000000000001',
       legalName: 'TechsioCZ',
-      moduleId: 'contacts.core',
+      moduleId: 'party.registry',
       moduleStateId: '74000000-0000-4000-8000-000000000001',
       principalDisplayName: 'Techsio Demo',
       principalId: '72000000-0000-4000-8000-000000000001',

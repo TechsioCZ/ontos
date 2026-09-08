@@ -1,15 +1,17 @@
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- These pure helpers construct contract schemas, not Effect services.
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
 import {
   Effect,
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
-  HttpApiSchema,
   Schema,
   makeEffectHttpApiClient,
 } from '@modern-js/plugin-bff/effect-client';
-import type { HttpApiClient, HttpClientError } from '@modern-js/plugin-bff/effect-client';
+import type { HttpClientError } from '@modern-js/plugin-bff/effect-client';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
@@ -18,8 +20,9 @@ export const GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS = 30 as const;
 
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 const uuid = Schema.String.check(Schema.isUUID());
+const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const epochSeconds = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
-const gatewayAudience = nonEmptyString.check(
+export const GatewayAudienceSchema = nonEmptyString.check(
   Schema.makeFilter((value) =>
     /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(value)
       ? undefined
@@ -42,7 +45,7 @@ export type GatewayContextProtectedHeader = Schema.Schema.Type<
 >;
 
 export const GatewayContextClaimsSchema = Schema.Struct({
-  aud: gatewayAudience,
+  aud: GatewayAudienceSchema,
   exp: epochSeconds,
   iat: epochSeconds,
   iss: nonEmptyString,
@@ -78,10 +81,10 @@ export const decodeGatewayContextProtectedHeader = Schema.decodeUnknownEffect(
 );
 
 export const GatewayContextRequestSchema = Schema.Struct({
-  audience: gatewayAudience,
-  legalEntityId: Schema.optionalKey(uuid),
+  audience: GatewayAudienceSchema,
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
 });
-export type GatewayContextRequest = Schema.Schema.Type<typeof GatewayContextRequestSchema>;
+export type GatewayContextRequest = typeof GatewayContextRequestSchema.Encoded;
 
 export const GatewayContextResponseSchema = Schema.Struct({
   expiresAt: epochSeconds,
@@ -89,36 +92,41 @@ export const GatewayContextResponseSchema = Schema.Struct({
 });
 export type GatewayContextResponse = Schema.Schema.Type<typeof GatewayContextResponseSchema>;
 
-interface ProblemDetails {
-  readonly detail: string;
-  readonly status: number;
-  readonly title: string;
-  readonly type: string;
-}
+export const GatewayAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
+  'GatewayAuthenticationRequiredProblem',
+  401,
+);
 
-export interface GatewayAuthenticationRequiredProblem extends ProblemDetails {
-  readonly _tag: 'GatewayAuthenticationRequiredProblem';
-}
+export const GatewayAudienceInvalidProblemSchema = makeProblemDetailsSchema(
+  'GatewayAudienceInvalidProblem',
+  400,
+);
 
-export interface GatewayAudienceInvalidProblem extends ProblemDetails {
-  readonly _tag: 'GatewayAudienceInvalidProblem';
-}
+export const GatewayUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'GatewayUnavailableProblem',
+  503,
+);
 
-export interface GatewayUnavailableProblem extends ProblemDetails {
-  readonly _tag: 'GatewayUnavailableProblem';
-  readonly retryable: true;
-}
+export const GatewayInternalProblemSchema = makeProblemDetailsSchema('GatewayInternalProblem', 500);
+const GatewayForbiddenProblemSchema = makeProblemDetailsSchema('GatewayForbiddenProblem', 403);
+export const GatewayRateLimitedProblemSchema = makeProblemDetailsSchema(
+  'GatewayRateLimitedProblem',
+  429,
+  {
+    retryAfterSeconds: Schema.Finite,
+  },
+);
 
-export interface GatewayInternalProblem extends ProblemDetails {
-  readonly _tag: 'GatewayInternalProblem';
-}
-export interface GatewayForbiddenProblem extends ProblemDetails {
-  readonly _tag: 'GatewayForbiddenProblem';
-}
-export interface GatewayRateLimitedProblem extends ProblemDetails {
-  readonly _tag: 'GatewayRateLimitedProblem';
-  readonly retryAfterSeconds: number;
-}
+export type GatewayAuthenticationRequiredProblem = Schema.Schema.Type<
+  typeof GatewayAuthenticationRequiredProblemSchema
+>;
+export type GatewayAudienceInvalidProblem = Schema.Schema.Type<
+  typeof GatewayAudienceInvalidProblemSchema
+>;
+export type GatewayUnavailableProblem = Schema.Schema.Type<typeof GatewayUnavailableProblemSchema>;
+export type GatewayInternalProblem = Schema.Schema.Type<typeof GatewayInternalProblemSchema>;
+type GatewayForbiddenProblem = Schema.Schema.Type<typeof GatewayForbiddenProblemSchema>;
+type GatewayRateLimitedProblem = Schema.Schema.Type<typeof GatewayRateLimitedProblemSchema>;
 
 export type GatewayContextProblem =
   | GatewayAuthenticationRequiredProblem
@@ -127,42 +135,6 @@ export type GatewayContextProblem =
   | GatewayRateLimitedProblem
   | GatewayUnavailableProblem
   | GatewayInternalProblem;
-
-const problemDetailsFields = {
-  detail: Schema.String,
-  status: Schema.Finite,
-  title: Schema.String,
-  type: Schema.String,
-};
-const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
-
-export const GatewayAuthenticationRequiredProblemSchema = Schema.TaggedStruct(
-  'GatewayAuthenticationRequiredProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(401));
-
-export const GatewayAudienceInvalidProblemSchema = Schema.TaggedStruct(
-  'GatewayAudienceInvalidProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(400));
-
-export const GatewayUnavailableProblemSchema = Schema.TaggedStruct('GatewayUnavailableProblem', {
-  ...problemDetailsFields,
-  retryable: Schema.Literal(true),
-}).pipe(asProblemDetails, HttpApiSchema.status(503));
-
-export const GatewayInternalProblemSchema = Schema.TaggedStruct(
-  'GatewayInternalProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(500));
-export const GatewayForbiddenProblemSchema = Schema.TaggedStruct(
-  'GatewayForbiddenProblem',
-  problemDetailsFields,
-).pipe(asProblemDetails, HttpApiSchema.status(403));
-export const GatewayRateLimitedProblemSchema = Schema.TaggedStruct('GatewayRateLimitedProblem', {
-  ...problemDetailsFields,
-  retryAfterSeconds: Schema.Finite,
-}).pipe(asProblemDetails, HttpApiSchema.status(429));
 
 export const ApiKeyGatewayHeadersSchema = Schema.Struct({
   'x-api-key': Schema.optionalKey(Schema.String),
@@ -207,14 +179,24 @@ export const shellGatewayContextContract = {
   ownerId: 'shell-super-app',
 } as const;
 
-type GatewayContextApiGroups =
-  typeof GatewayContextApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
-
-export type GatewayContextClient = HttpApiClient.Client<
-  Extract<GatewayContextApiGroups, HttpApiGroup.Constraint>,
-  never,
-  never
->;
+export const gatewayContextAuthorizationEntrypoints = [
+  {
+    authorization: { credential: 'session', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-context.issue.session',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+  {
+    authorization: { credential: 'api_key', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-context.issue.api-key',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+] as const;
 
 export interface GatewayContextClientOptions {
   readonly baseUrl?: string | URL;
@@ -228,42 +210,39 @@ export type GatewayContextClientError =
 
 export type GatewayContextClientEffect<Success> = Effect.Effect<Success, GatewayContextClientError>;
 
-const createGatewayContextClient = (
-  options: GatewayContextClientOptions,
-): Effect.Effect<GatewayContextClient> => {
-  const transformClient =
-    options.cookie === undefined
-      ? {}
-      : {
-          transformClient: HttpClient.mapRequest(
-            HttpClientRequest.setHeader('cookie', options.cookie),
-          ),
-        };
+const GatewayContextRequestOptions = Context.Reference<GatewayContextClientOptions>(
+  'GatewayContextRequestOptions',
+  { defaultValue: () => ({}) },
+);
 
-  return makeEffectHttpApiClient(GatewayContextApi, {
-    baseUrl: options.baseUrl ?? shellGatewayContextContract.apiPrefix,
-    ...transformClient,
-  });
-};
+const gatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
+  transformClient: HttpClient.mapRequestEffect((request) =>
+    GatewayContextRequestOptions.pipe(
+      Effect.map((options) => {
+        let nextRequest = HttpClientRequest.prependUrl(
+          request,
+          (options.baseUrl ?? shellGatewayContextContract.apiPrefix).toString(),
+        );
+        if (options.cookie !== undefined) {
+          nextRequest = HttpClientRequest.setHeader(nextRequest, 'cookie', options.cookie);
+        }
+        return nextRequest;
+      }),
+    ),
+  ),
+});
 
 export const issueGatewayContext = (
   payload: GatewayContextRequest,
   options: GatewayContextClientOptions = {},
 ): GatewayContextClientEffect<GatewayContextResponse> =>
-  createGatewayContextClient(options).pipe(
-    Effect.flatMap((client) => client.gatewayContext.issueGatewayContext({ payload })),
-  );
-
-export const issueApiKeyGatewayContext = (
-  rawKey: string,
-  payload: GatewayContextRequest,
-  options: Omit<GatewayContextClientOptions, 'cookie'> = {},
-): GatewayContextClientEffect<GatewayContextResponse> =>
-  createGatewayContextClient(options).pipe(
-    Effect.flatMap((client) =>
-      client.gatewayContext.issueApiKeyGatewayContext({
-        headers: { 'x-api-key': rawKey },
-        payload,
-      }),
+  Schema.decodeUnknownEffect(GatewayContextRequestSchema)(payload).pipe(
+    Effect.flatMap((decodedPayload) =>
+      gatewayContextClient.pipe(
+        Effect.flatMap((client) =>
+          client.gatewayContext.issueGatewayContext({ payload: decodedPayload }),
+        ),
+      ),
     ),
+    Effect.provideService(GatewayContextRequestOptions, options),
   );

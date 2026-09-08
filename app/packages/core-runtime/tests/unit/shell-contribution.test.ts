@@ -1,11 +1,18 @@
-/* eslint-disable typescript/no-non-null-assertion, unicorn/prefer-structured-clone -- Mutation fixtures intentionally target known tuple members and verify JSON round trips. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateShellContributions } from '../../src/modules/shell-contribution.ts';
 
 const moduleId = 'property.registry';
+const first = <Value>(values: readonly Value[]): Value => {
+  const [value] = values;
+  if (value === undefined) {
+    assert.fail('Expected a fixture item');
+  }
+  return value;
+};
 const entrypoint = (role: 'api' | 'page' | 'public_component' | 'report' | 'search') => ({
-  access: role === 'api' ? ('read' as const) : ('read' as const),
+  access: 'read' as const,
+  authorization: { kind: 'context_permission' as const, permission: 'module.access' },
   entrypointKey: `${moduleId}.${role.replace('_', '-')}.primary`,
   moduleKey: moduleId,
   role,
@@ -100,19 +107,19 @@ test('accepts exact empty and full Shell contribution contracts with determinist
   };
   assert.deepEqual(validateShellContributions(empty, references), empty);
   const decoded = validateShellContributions(full(), references);
-  assert.deepEqual(JSON.parse(JSON.stringify(decoded)), decoded);
+  assert.deepEqual(structuredClone(decoded), decoded);
   assert.doesNotMatch(JSON.stringify(decoded), /handler|sourcePath|remote|import/iu);
 });
 
 test('accepts safe dynamic page templates as plain serialized data', () => {
   const dynamic = full();
   dynamic.pages[0] = {
-    ...dynamic.pages[0]!,
+    ...first(dynamic.pages),
     routePath: '/contacts/customers/:id/edit',
   };
   const decoded = validateShellContributions(dynamic, references);
   assert.equal(decoded.pages[0]?.routePath, '/contacts/customers/:id/edit');
-  assert.deepEqual(JSON.parse(JSON.stringify(decoded)), decoded);
+  assert.deepEqual(structuredClone(decoded), decoded);
   assert.doesNotMatch(JSON.stringify(decoded), /handler|loader|sourcePath|remote|import/iu);
 });
 
@@ -120,14 +127,14 @@ test('rejects extra keys, duplicates, cross-owner entrypoints, and missing refer
   assert.throws(() => validateShellContributions({ ...full(), route: '/private' }, references));
   const duplicate = full();
   duplicate.publicComponents[0] = {
-    ...duplicate.publicComponents[0]!,
-    contributionKey: duplicate.pages[0]!.contributionKey,
+    ...first(duplicate.publicComponents),
+    contributionKey: first(duplicate.pages).contributionKey,
   };
   assert.throws(() => validateShellContributions(duplicate, references), /duplicate/u);
   const crossOwner = full();
   crossOwner.pages[0] = {
-    ...crossOwner.pages[0]!,
-    entrypoint: { ...crossOwner.pages[0]!.entrypoint, moduleKey: 'billing.core' },
+    ...first(crossOwner.pages),
+    entrypoint: { ...first(crossOwner.pages).entrypoint, moduleKey: 'billing.core' },
   };
   assert.throws(() => validateShellContributions(crossOwner, references), /owner/u);
   assert.throws(() =>
@@ -141,7 +148,7 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
     validateShellContributions(
       {
         ...baseline,
-        search: [{ ...baseline.search[0]!, entrypoint: entrypoint('page') }],
+        search: [{ ...first(baseline.search), entrypoint: entrypoint('page') }],
       },
       references,
     ),
@@ -152,8 +159,8 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
         ...baseline,
         pages: [
           {
-            ...baseline.pages[0]!,
-            entrypoint: { ...baseline.pages[0]!.entrypoint, access: 'write' },
+            ...first(baseline.pages),
+            entrypoint: { ...first(baseline.pages).entrypoint, access: 'write' },
           },
         ],
       },
@@ -166,9 +173,9 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
         ...baseline,
         mediaAttachments: [
           {
-            ...baseline.mediaAttachments[0]!,
+            ...first(baseline.mediaAttachments),
             entrypoint: {
-              ...baseline.mediaAttachments[0]!.entrypoint,
+              ...first(baseline.mediaAttachments).entrypoint,
               access: 'read',
             },
           },
@@ -181,13 +188,16 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
     validateShellContributions(
       {
         ...baseline,
-        pages: [{ ...baseline.pages[0]!, remote: 'private/remote' }],
+        pages: [{ ...first(baseline.pages), remote: 'private/remote' }],
       },
       references,
     ),
   );
   const withUnsafeRoute = full();
-  withUnsafeRoute.pages[0] = { ...withUnsafeRoute.pages[0]!, routePath: '/modules/:module-id' };
+  withUnsafeRoute.pages[0] = {
+    ...first(withUnsafeRoute.pages),
+    routePath: '/modules/:module-id',
+  };
   assert.throws(() => validateShellContributions(withUnsafeRoute, references));
 });
 
@@ -211,7 +221,7 @@ for (const routePath of [
 ] as const) {
   test(`rejects unsafe or ambiguous page route template ${routePath}`, () => {
     const candidate = full();
-    candidate.pages[0] = { ...candidate.pages[0]!, routePath };
+    candidate.pages[0] = { ...first(candidate.pages), routePath };
     assert.throws(() => validateShellContributions(candidate, references));
   });
 }

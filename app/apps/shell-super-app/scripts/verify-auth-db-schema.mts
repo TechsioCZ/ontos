@@ -1,4 +1,4 @@
-// @effect-diagnostics globalConsole:off processEnv:off strictEffectProvide:off
+// @effect-diagnostics globalConsole:off processEnv:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 import { AuthConfigLive } from '../api/auth/config.ts';
@@ -13,32 +13,31 @@ class AuthDatabaseVerificationError extends Schema.TaggedError<AuthDatabaseVerif
   },
 ) {}
 
-type CatalogRow = Readonly<Record<string, string | null>> & {
-  readonly kind: 'migration' | 'table';
-  readonly schema_name: string;
-  readonly table_name: null | string;
-};
-
 const verification = Effect.gen(function* verifyAuthDatabase() {
   const database = yield* AuthDatabase;
 
   for (const table of AUTH_TABLES) {
-    yield* Effect.tryPromise({
-      catch: () =>
-        new AuthDatabaseVerificationError({
-          reason: `Typed verification failed for one ${AUTH_SCHEMA_NAME} table`,
-        }),
-      try: () => database.executor.select().from(table).limit(0),
-    });
+    yield* database.executor
+      .select()
+      .from(table)
+      .limit(0)
+      .pipe(
+        Effect.mapError(
+          () =>
+            new AuthDatabaseVerificationError({
+              reason: `Typed verification failed for one ${AUTH_SCHEMA_NAME} table`,
+            }),
+        ),
+      );
   }
 
-  const catalog = yield* Effect.tryPromise({
-    catch: () =>
-      new AuthDatabaseVerificationError({
-        reason: 'Unable to compare the PostgreSQL authentication catalog',
-      }),
-    try: () =>
-      database.executor.execute<CatalogRow>(sql`
+  const catalog = yield* database.executor
+    .execute<{
+      readonly kind: 'migration' | 'table';
+      readonly schema_name: string;
+      readonly table_name: string;
+    }>(
+      sql`
         with auth_tables as (
           select
             ${'table'}::text as kind,
@@ -66,13 +65,22 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
         union all
         select kind, schema_name, table_name from migration_bookkeeping
         order by kind, schema_name, table_name
-      `),
-  });
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new AuthDatabaseVerificationError({
+            reason: 'Unable to compare the PostgreSQL authentication catalog',
+          }),
+      ),
+    );
 
   const tableNames: string[] = [];
   const migrationBookkeepingTables: string[] = [];
 
-  for (const row of catalog.rows) {
+  for (const row of catalog) {
     if (row.kind === 'migration') {
       if (row.table_name !== null) {
         migrationBookkeepingTables.push(row.table_name);
@@ -86,8 +94,10 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
   migrationBookkeepingTables.sort();
   const difference = compareAuthCatalog(tableNames);
   if (
-    JSON.stringify(migrationBookkeepingTables) !==
-      JSON.stringify(expectedMigrationBookkeepingTables) ||
+    migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
+    migrationBookkeepingTables.some(
+      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
+    ) ||
     difference.missing.length > 0 ||
     difference.unexpected.length > 0
   ) {

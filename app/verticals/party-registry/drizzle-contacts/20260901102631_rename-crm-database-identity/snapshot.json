@@ -1,0 +1,617 @@
+{
+  "id": "be1c0ee1-9454-484c-904e-7e785692b043",
+  "prevIds": [
+    "4b41eb1a-a20a-467a-8e15-f5c2d818c619"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "contacts",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "contacts",
+      "schema": "contacts",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "contact_id"
+      ],
+      "nameExplicit": false,
+      "name": "contacts_pkey",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "contact_id",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_id",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "email",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "phone",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "archived_at",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"name\" = btrim(\"name\") and length(\"name\") > 0",
+      "name": "contacts_contacts_name_ck",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "checks"
+    },
+    {
+      "value": "length(btrim(\"email\")) > 0",
+      "name": "contacts_contacts_email_ck",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "checks"
+    },
+    {
+      "value": "length(btrim(\"phone\")) > 0",
+      "name": "contacts_contacts_phone_ck",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "contact_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_contacts_tenant_id_uk",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "customer_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "name",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"archived_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_contacts_tenant_customer_active_idx",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "customer_id"
+      ],
+      "schemaTo": "contacts",
+      "tableTo": "customers",
+      "columnsTo": [
+        "tenant_id",
+        "customer_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "contacts_contacts_tenant_customer_fk",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "fks"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_contacts_tenant_select",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_contacts_tenant_insert",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_contacts_tenant_update",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_contacts_tenant_delete",
+      "schema": "contacts",
+      "table": "contacts",
+      "entityType": "policies"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "customers",
+      "schema": "contacts",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "customer_id"
+      ],
+      "nameExplicit": false,
+      "name": "customers_pkey",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "customer_id",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ico",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dic",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_form_code",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "date",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "established_on",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "date",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "dissolved_on",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "archived_at",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "customer_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "contacts_customers_tenant_id_uk",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "uniques"
+    },
+    {
+      "value": "\"name\" = btrim(\"name\") and length(\"name\") > 0",
+      "name": "contacts_customers_name_ck",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"ico\" is null or \"ico\" ~ '^[0-9]{8}$'",
+      "name": "contacts_customers_ico_ck",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"dic\" is null or (\"dic\" = btrim(\"dic\") and length(\"dic\") between 1 and 20)",
+      "name": "contacts_customers_dic_ck",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"legal_form_code\" is null or \"legal_form_code\" ~ '^[0-9]{3}$'",
+      "name": "contacts_customers_legal_form_code_ck",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"dissolved_on\" is null or \"established_on\" is null or \"dissolved_on\" >= \"established_on\"",
+      "name": "contacts_customers_lifecycle_dates_ck",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "name",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"archived_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_customers_tenant_active_idx",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "ico",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "contacts_customers_tenant_ico_uk",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "indexes"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_customers_tenant_select",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_customers_tenant_insert",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "contacts_customers_tenant_update",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "contacts_customers_tenant_delete",
+      "schema": "contacts",
+      "table": "customers",
+      "entityType": "policies"
+    }
+  ],
+  "renames": []
+}

@@ -1,6 +1,8 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { expect, test } from '@rstest/core';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema, SchemaAST } from 'effect';
 import {
+  AuthenticationUnavailableProblemSchema,
   CurrentSessionSchema,
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
@@ -14,6 +16,8 @@ import {
   SwitchTenantResponseSchema,
   SwitchLegalEntityPayloadSchema,
   SetApiKeyStatusPayloadSchema,
+  ShellRateLimitedProblemSchema,
+  TenantCapabilityUnavailableProblemSchema,
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
 
@@ -25,6 +29,19 @@ const statuses = (endpoint: TenantEndpoint) =>
   [...endpoint.error]
     .map((schema) => schema.ast.annotations?.['httpApiStatus'])
     .toSorted((left, right) => Number(left) - Number(right));
+
+const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
+  expect(SchemaAST.isObjects(schema.ast)).toBe(true);
+  if (!SchemaAST.isObjects(schema.ast)) {
+    throw new Error('Expected an object problem schema');
+  }
+  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
+  expect(tag !== undefined && SchemaAST.isLiteral(tag)).toBe(true);
+  if (tag === undefined || !SchemaAST.isLiteral(tag)) {
+    throw new Error('Expected a literal problem tag');
+  }
+  return tag.literal;
+};
 
 test('publishes authentication, identity lifecycle, and gateway operations', () => {
   const authenticationEndpoints = Object.keys(
@@ -61,34 +78,43 @@ test('publishes authentication, identity lifecycle, and gateway operations', () 
   expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
   expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
+  expect(
+    Object.fromEntries(
+      Object.values(ShellAuthenticationApi.groups).flatMap((group) =>
+        Object.entries(group.endpoints).map(([name, endpoint]) => [name, endpoint.path]),
+      ),
+    ),
+  ).toEqual({
+    attachMedia: '/shell/resource/media-attachment',
+    availableLegalEntities: '/auth/legal-entities',
+    availableTenants: '/auth/tenants',
+    changePrincipalStatus: '/auth/identity/principal-status',
+    createNonHumanPrincipal: '/auth/identity/principals',
+    currentSession: '/auth/session',
+    issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
+    issueGatewayContext: '/auth/gateway-context',
+    issueManagedApiKey: '/auth/identity/api-keys/managed',
+    issueSelfApiKey: '/auth/identity/api-keys/self',
+    listManagedApiKeys: '/auth/identity/api-keys/managed/list',
+    listSelfApiKeys: '/auth/identity/api-keys/self/list',
+    resolveModuleTarget: '/shell/module-target',
+    resourceDetail: '/shell/resource',
+    rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',
+    rotateSelfApiKey: '/auth/identity/api-keys/self/rotate',
+    search: '/shell/search',
+    setManagedApiKeyStatus: '/auth/identity/api-keys/managed/status',
+    setSelfApiKeyStatus: '/auth/identity/api-keys/self/status',
+    shellComposition: '/shell/composition',
+    signIn: '/auth/sign-in',
+    signOut: '/auth/sign-out',
+    startSupportImpersonation: '/auth/identity/impersonation/start',
+    stopSupportImpersonation: '/auth/identity/impersonation/stop',
+    switchLegalEntity: '/auth/legal-entity/switch',
+    switchTenant: '/auth/tenant/switch',
+  });
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',
-    availableLegalEntitiesPath: '/shell-super-app-api/auth/legal-entities',
-    availableTenantsPath: '/shell-super-app-api/auth/tenants',
-    changePrincipalStatusPath: '/shell-super-app-api/auth/identity/principal-status',
-    compositionPath: '/shell-super-app-api/shell/composition',
-    createNonHumanPrincipalPath: '/shell-super-app-api/auth/identity/principals',
-    currentSessionPath: '/shell-super-app-api/auth/session',
-    issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
-    issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
-    issueManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed',
-    issueSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self',
-    listManagedApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/managed/list',
-    listSelfApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/self/list',
-    mediaAttachmentPath: '/shell-super-app-api/shell/resource/media-attachment',
-    ownerId: 'shell-super-app',
-    resolveModuleTargetPath: '/shell-super-app-api/shell/module-target',
-    resourceDetailPath: '/shell-super-app-api/shell/resource',
-    rotateManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed/rotate',
-    rotateSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self/rotate',
-    searchPath: '/shell-super-app-api/shell/search',
-    setManagedApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/managed/status',
-    setSelfApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/self/status',
     signInPath: '/shell-super-app-api/auth/sign-in',
-    signOutPath: '/shell-super-app-api/auth/sign-out',
-    startSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/start',
-    stopSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/stop',
-    switchLegalEntityPath: '/shell-super-app-api/auth/legal-entity/switch',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
   });
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
@@ -96,12 +122,58 @@ test('publishes authentication, identity lifecycle, and gateway operations', () 
   );
 });
 
+test('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {
+  const unavailable = {
+    _tag: 'AuthenticationUnavailableProblem',
+    detail: 'Authentication is temporarily unavailable. Please retry.',
+    status: 503,
+    title: 'Authentication unavailable',
+    type: 'https://ontos.dev/problems/authentication-unavailable',
+  } as const;
+  const retryable = {
+    _tag: 'TenantCapabilityUnavailableProblem',
+    detail: 'Tenant capability is temporarily unavailable.',
+    retryable: true,
+    status: 503,
+    title: 'Tenant capability unavailable',
+    type: 'https://ontos.dev/problems/tenant-capability-unavailable',
+  } as const;
+  const rateLimited = {
+    _tag: 'ShellRateLimitedProblem',
+    detail: 'Retry after the published delay.',
+    retryAfterSeconds: 15,
+    status: 429,
+    title: 'Rate limited',
+    type: 'https://ontos.dev/problems/shell-rate-limited',
+  } as const;
+  expect(Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(unavailable)).toEqual(
+    unavailable,
+  );
+  expect(Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(retryable)).toEqual(
+    retryable,
+  );
+  expect(Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited)).toEqual(rateLimited);
+  expect(() =>
+    Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema, {
+      onExcessProperty: 'error',
+    })({ ...unavailable, retryable: true }),
+  ).toThrow();
+  expect(
+    [...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error].map(problemTag),
+  ).toEqual([
+    'InvalidCredentialsProblem',
+    'OntosIdentityForbiddenProblem',
+    'AuthenticationUnavailableProblem',
+    'AuthenticationInternalProblem',
+  ]);
+});
+
 test('decodes a missing identity idempotency header so handlers can return declared 428', async () => {
   await expect(
-    Effect.runPromise(Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})),
+    runEffectTestPromise(Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})),
   ).resolves.toEqual({});
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       Effect.flip(
         Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({
           'idempotency-key': '',
@@ -124,7 +196,7 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
   });
   const legalEntityId = '35000000-0000-4000-8000-000000000001';
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({
         authorization: 'must-not-pass',
         legalEntityId,
@@ -133,7 +205,7 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
     ),
   ).toEqual({ legalEntityId });
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(AvailableLegalEntitiesResponseSchema)({
         legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
         selectedLegalEntityId: legalEntityId,
@@ -149,7 +221,7 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
 
 test('decodes an optional exact page entrypoint without accepting private routing fields', async () => {
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
         entrypointKey: 'contacts.core.page.customers',
         importPath: 'must-not-pass',
@@ -159,12 +231,12 @@ test('decodes an optional exact page entrypoint without accepting private routin
     ),
   ).toEqual({ entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' });
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({ moduleId: 'contacts.core' }),
     ),
   ).toEqual({ moduleId: 'contacts.core' });
   await expect(
-    Effect.runPromise(
+    runEffectTestPromise(
       Effect.flip(
         Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
           entrypointKey: '../private-page',
@@ -202,7 +274,7 @@ test('publishes the exhaustive identity failure status contract', () => {
 test('validates tenant UUIDs and strips all non-contract fields', async () => {
   const tenantId = '30000000-0000-4000-8000-000000000001';
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(AvailableTenantsResponseSchema)({
         tenants: [
           {
@@ -218,7 +290,7 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
     ),
   ).toEqual({ tenants: [{ name: 'Alpha tenant', tenantId }] });
   expect(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(SwitchTenantResponseSchema)({
         principalId: 'must-not-pass',
         selectedTenantId: tenantId,
@@ -227,16 +299,16 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
     ),
   ).toEqual({ selectedTenantId: tenantId });
   expect(
-    await Effect.runPromise(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })),
+    await runEffectTestPromise(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })),
   ).toEqual({ tenantId });
-  const invalidPayload = await Effect.runPromise(
+  const invalidPayload = await runEffectTestPromise(
     Effect.flip(Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId: 'not-a-uuid' })),
   );
   expect(invalidPayload._tag).toBe('SchemaError');
 });
 
 test('rejects malformed credentials through Effect Schema', async () => {
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
       Schema.decodeUnknownEffect(SignInPayloadSchema)({
         email: '',
@@ -250,7 +322,8 @@ test('rejects malformed credentials through Effect Schema', async () => {
 test('requires lifecycle reasons and strips provider-private API key identifiers', async () => {
   const principalId = '00000000-0000-4000-8000-000000000001';
   const authBindingId = '00000000-0000-4000-8000-000000000002';
-  const missingPrincipalReason = await Effect.runPromise(
+  const createdAt = '2026-08-09T00:00:00.000Z';
+  const missingPrincipalReason = await runEffectTestPromise(
     Effect.flip(
       Schema.decodeUnknownEffect(ChangePrincipalStatusPayloadSchema)({
         expectedStatus: 'active',
@@ -259,7 +332,7 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
       }),
     ),
   );
-  const missingRevocationReason = await Effect.runPromise(
+  const missingRevocationReason = await runEffectTestPromise(
     Effect.flip(
       Schema.decodeUnknownEffect(SetApiKeyStatusPayloadSchema)({
         authBindingId,
@@ -271,24 +344,34 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
   expect(missingPrincipalReason._tag).toBe('SchemaError');
   expect(missingRevocationReason._tag).toBe('SchemaError');
 
+  const lifecycle = await runEffectTestPromise(
+    Schema.decodeUnknownEffect(ApiKeyLifecycleResponseSchema)({
+      authBindingId,
+      cleanupPending: false,
+      createdAt,
+      enabled: true,
+      expiresAt: null,
+      id: 'private-provider-key-id',
+      name: null,
+      providerKeyId: 'private-provider-key-id',
+      start: 'onto',
+    }),
+  );
+  expect(lifecycle).toEqual({
+    authBindingId,
+    cleanupPending: false,
+    createdAt: DateTime.makeUnsafe(createdAt),
+    enabled: true,
+    expiresAt: null,
+    name: null,
+    start: 'onto',
+  });
   expect(
-    await Effect.runPromise(
-      Schema.decodeUnknownEffect(ApiKeyLifecycleResponseSchema)({
-        authBindingId,
-        cleanupPending: false,
-        createdAt: '2026-08-09T00:00:00.000Z',
-        enabled: true,
-        expiresAt: null,
-        id: 'private-provider-key-id',
-        name: null,
-        providerKeyId: 'private-provider-key-id',
-        start: 'onto',
-      }),
-    ),
+    await runEffectTestPromise(Schema.encodeEffect(ApiKeyLifecycleResponseSchema)(lifecycle)),
   ).toEqual({
     authBindingId,
     cleanupPending: false,
-    createdAt: '2026-08-09T00:00:00.000Z',
+    createdAt,
     enabled: true,
     expiresAt: null,
     name: null,
@@ -297,7 +380,7 @@ test('requires lifecycle reasons and strips provider-private API key identifiers
 });
 
 test('decodes only safe current-session identity fields', async () => {
-  const session = await Effect.runPromise(
+  const session = await runEffectTestPromise(
     Schema.decodeUnknownEffect(CurrentSessionSchema)({
       identity: {
         displayName: 'Ada',

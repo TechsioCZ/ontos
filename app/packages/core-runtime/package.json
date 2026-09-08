@@ -6,14 +6,25 @@
   "exports": {
     ".": "./src/index.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
+    "./actions/runtime-wiring": "./src/actions/runtime-wiring.ts",
+    "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
+    "./http/action-runner": "./src/http/http-instrumentation-seam.ts",
+    "./http/governed-read": "./src/http/governed-read.ts",
+    "./http/principal-authentication": "./src/http/principal-authentication.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
+    "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
+    "./testing/actions": "./src/testing/actions.ts",
+    "./testing/effect-runtime": "./src/testing/effect-runtime.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:test": "node --test tests/unit/*.test.ts tests/integration/*.test.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
+    "test:unit": "node --test tests/unit/*.test.ts",
+    "test:integration": "node --test tests/integration/*.test.ts",
     "action:test:unit": "node --test tests/unit/action-*.test.ts",
     "action:test:integration": "node --test tests/integration/action-*.test.ts",
     "outbox:test:unit": "node --test tests/unit/outbox-*.test.ts",
@@ -22,14 +33,15 @@
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
-    "drizzle-orm": "0.45.2",
-    "dotenv": "17.4.2",
+    "@effect/platform-node": "4.0.0-beta.107",
+    "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-beta.107",
-    "pg": "8.22.0"
+    "pg": "8.22.0",
+    "@effect/sql-pg": "4.0.0-beta.107"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@types/pg": "8.20.0",
-    "drizzle-kit": "0.31.10"
+    "drizzle-kit": "1.0.0-rc.5-ab785fc"
   }
 }

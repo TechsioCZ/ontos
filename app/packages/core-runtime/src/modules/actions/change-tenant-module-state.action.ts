@@ -44,7 +44,7 @@ const withOptionalProperty = <
 const moduleKeySchema = OntosModuleIdSchema.check(Schema.isMaxLength(128));
 const reasonSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
-export const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
+const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
   expectedState: Schema.optionalKey(TenantModuleStateSchema),
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
@@ -54,16 +54,13 @@ export type ChangeTenantModuleStatePayload = Schema.Schema.Type<
   typeof ChangeTenantModuleStatePayloadSchema
 >;
 
-export const ChangeTenantModuleStateResultSchema = Schema.Struct({
+const ChangeTenantModuleStateResultSchema = Schema.Struct({
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
-  previousState: Schema.NullOr(TenantModuleStateSchema),
+  previousState: Schema.Union([TenantModuleStateSchema, Schema.Null]),
 });
-export type ChangeTenantModuleStateResult = Schema.Schema.Type<
-  typeof ChangeTenantModuleStateResultSchema
->;
 
-export const ChangeTenantModuleStateError = Schema.Union([
+const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
   TenantModuleStateTenantMissingError,
@@ -75,7 +72,7 @@ export const ChangeTenantModuleStateError = Schema.Union([
 ]);
 
 type ChangeTenantModuleStateDomainEvents = Readonly<
-  Record<never, Schema.ConstraintDecoder<unknown, never>>
+  Record<never, Schema.ConstraintDecoder<unknown>>
 >;
 
 interface ChangeTenantModuleStateServices {
@@ -84,54 +81,55 @@ interface ChangeTenantModuleStateServices {
   ) => Effect.Effect<PersistTenantModuleStateChangeResult, TenantModuleStateTransitionError>;
 }
 
-const handleChangeTenantModuleState = (
+const handleChangeTenantModuleState = Effect.fn(
+  'ChangeTenantModuleStateAction.handleChangeTenantModuleState',
+)(function* changeTenantModuleStateHandler(
   payload: ChangeTenantModuleStatePayload,
   context: ActionHandlerContext<
     ChangeTenantModuleStateDomainEvents,
     ChangeTenantModuleStateServices
   >,
-) =>
-  Effect.gen(function* changeTenantModuleStateHandler() {
-    const installedCatalog = yield* InstalledModuleCatalogService;
-    const catalog = yield* installedCatalog.load;
-    yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
-    const result = yield* context.services.persist(
+) {
+  const installedCatalog = yield* InstalledModuleCatalogService;
+  const catalog = yield* installedCatalog.load;
+  yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
+  const result = yield* context.services.persist(
+    withOptionalProperty(
       withOptionalProperty(
-        withOptionalProperty(
-          {
-            actionInvocationId: context.actionInvocationId,
-            authMethod: context.scope.authMethod,
-          },
-          !(payload.expectedState === undefined),
-          'expectedState',
-          payload.expectedState,
-          {
-            moduleKey: payload.moduleKey,
-            newState: payload.newState,
-            principalId: context.scope.principalId,
-          },
-        ),
-        !(payload.reason === undefined),
-        'reason',
-        payload.reason,
         {
-          tenantId: context.scope.tenantId,
+          actionInvocationId: context.actionInvocationId,
+          authMethod: context.scope.authMethod,
+        },
+        payload.expectedState !== undefined,
+        'expectedState',
+        payload.expectedState,
+        {
+          moduleKey: payload.moduleKey,
+          newState: payload.newState,
+          principalId: context.scope.principalId,
         },
       ),
-    );
+      payload.reason !== undefined,
+      'reason',
+      payload.reason,
+      {
+        tenantId: context.scope.tenantId,
+      },
+    ),
+  );
 
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `tenant-module-state-prior:${payload.moduleKey}`,
-      resultCount: result.previousState === null ? 0 : 1,
-      servingModuleKey: 'core.modules',
-      targetModuleKey: payload.moduleKey,
-      targetResourceId: payload.moduleKey,
-      targetResourceType: 'tenant-module-state',
-    });
-
-    return result;
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `tenant-module-state-prior:${payload.moduleKey}`,
+    resultCount: result.previousState === null ? 0 : 1,
+    servingModuleKey: 'core.modules',
+    targetModuleKey: payload.moduleKey,
+    targetResourceId: payload.moduleKey,
+    targetResourceType: 'tenant-module-state',
   });
+
+  return result;
+});
 
 export const changeTenantModuleStateAction = defineAction(
   {
@@ -145,6 +143,7 @@ export const changeTenantModuleStateAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.modules.change-tenant-module-state',
       moduleKey: 'core.modules',
       role: 'action',

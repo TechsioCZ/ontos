@@ -1,0 +1,9 @@
+{
+  "jsPlugins": [{ "name": "effect-native", "specifier": "../../fixture-plugin.ts" }],
+  "categories": { "correctness": "off" },
+  "rules": { "effect-native/no-manual-tag-comparison": "error" },
+  "overrides": [{
+    "files": ["**/error-combinators-disabled/**"],
+    "rules": { "effect-native/no-manual-tag-comparison": ["error", { "includeErrorCombinators": false }] }
+  }]
+}

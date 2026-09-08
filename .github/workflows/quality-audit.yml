@@ -1,0 +1,84 @@
+name: Quality Audit
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - stage
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: app
+
+concurrency:
+  group: quality-audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-audit:
+    name: Quality Audit Guardrails
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare fresh report directory
+        id: prepare
+        run: |
+          rm -rf -- .codex/reports/quality-audit
+          mkdir -p .codex/reports/quality-audit
+
+      - name: Setup mise
+        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
+        with:
+          working_directory: app
+          env: false
+
+      - name: Install dependencies without lifecycle scripts
+        run: mise exec -- pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Verify audit runner and gate behavior
+        run: mise exec -- pnpm quality:audit:test
+
+      # Findings succeed; invalid or incomplete analysis fails visibly.
+      - name: Audit unused code, duplication, and complexity
+        id: audit
+        run: mise exec -- pnpm quality:audit --output .codex/reports/quality-audit
+
+      - name: Enforce calibrated quality guardrails
+        run: mise exec -- pnpm quality:audit:gate --summary .codex/reports/quality-audit/summary.json
+
+      - name: Publish job summary
+        if: ${{ always() && steps.prepare.outcome == 'success' }}
+        run: |
+          if [[ -f .codex/reports/quality-audit/summary.md ]]; then
+            cat .codex/reports/quality-audit/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Quality audit did not produce a summary. Check the failed or cancelled steps; no clean result is implied.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload audit reports
+        if: ${{ always() && (steps.audit.outcome == 'success' || steps.audit.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: quality-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: app/.codex/reports/quality-audit/
+          # The dedicated generated report directory is beneath hidden .codex/.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

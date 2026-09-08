@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
 
 export const STAGE_DEMO_ACCOUNTS = Object.freeze([
   Object.freeze({
@@ -13,20 +13,23 @@ export const STAGE_DEMO_ACCOUNTS = Object.freeze([
   }),
 ] as const);
 
-export type StageDemoEnvironment = Readonly<Record<string, string | undefined>>;
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
+type DecodedConfigString = Schema.Schema.Type<typeof Schema.String>;
+type OptionalDecodedConfigString = DecodedConfigString | undefined;
+
+export type StageDemoEnvironment = Readonly<Record<string, OptionalDecodedConfigString>>;
 
 export interface StageDemoBootstrapConfig {
   readonly accounts: readonly [StageDemoAccountConfig, StageDemoAccountConfig];
   readonly authBaseUrl: string;
-  readonly authSecret: string;
+  readonly authSecret: DecodedConfigString;
   readonly databaseAdminUrl: string;
 }
 
 export interface StageDemoAccountConfig {
   readonly email: string;
-  readonly password: string;
+  readonly password: DecodedConfigString;
   readonly principalDisplayName: string;
 }
 
@@ -57,88 +60,134 @@ export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstr
 const configurationFailure = (reason: string): StageDemoBootstrapError =>
   new StageDemoBootstrapError({ code: 'stage_demo_configuration_invalid', reason });
 
-const required = (environment: StageDemoEnvironment, key: string): string => {
-  const value = environment[key]?.trim();
-  if (value === undefined || value.length === 0) {
-    throw configurationFailure(`${key} is required`);
+const StageEnvironmentSchema = Schema.Trim.pipe(Schema.decodeTo(Schema.Literal('stage')));
+const StageDemoPasswordSchema = Schema.Redacted(
+  Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(8)),
+);
+const StageAuthSecretSchema = Schema.Redacted(
+  Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(32)),
+);
+const HttpOriginSchema = Schema.Trim.check(
+  Schema.isNonEmpty(),
+  Schema.makeFilter((value) => {
+    const url = URL.parse(value);
+    return url !== null &&
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.origin === value
+      ? undefined
+      : 'URL must be an HTTP origin';
+  }),
+);
+const PostgreSqlUrlSchema = Schema.Trim.check(
+  Schema.isNonEmpty(),
+  Schema.makeFilter((value) => {
+    const url = URL.parse(value);
+    return url !== null && (url.protocol === 'postgres:' || url.protocol === 'postgresql:')
+      ? undefined
+      : 'URL must use PostgreSQL';
+  }),
+);
+
+const stageDemoBootstrapSource = Config.all({
+  authBaseUrl: Config.schema(HttpOriginSchema, 'BETTER_AUTH_URL'),
+  authSecret: Config.schema(StageAuthSecretSchema, 'BETTER_AUTH_SECRET'),
+  databaseAdminUrl: Config.schema(PostgreSqlUrlSchema, 'DATABASE_ADMIN_URL'),
+  demoPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_DEMO_PASSWORD'),
+  deploymentEnvironment: Config.schema(
+    StageEnvironmentSchema,
+    'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+  ),
+  siamparkPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_SIAMPARK_PASSWORD'),
+});
+
+const configurationRequirements = [
+  ['STAGE_DEMO_PASSWORD', 'must contain at least 8 characters'],
+  ['STAGE_SIAMPARK_PASSWORD', 'must contain at least 8 characters'],
+  ['BETTER_AUTH_SECRET', 'must contain at least 32 characters'],
+  ['BETTER_AUTH_URL', 'must be an HTTP origin'],
+  ['DATABASE_ADMIN_URL', 'must use PostgreSQL'],
+] as const;
+
+const configurationFailureFromConfigError = (
+  error: Config.ConfigError,
+): StageDemoBootstrapError => {
+  const { message } = error;
+  if (message.includes('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) {
+    return configurationFailure('The demo bootstrap can run only in the stage environment');
   }
-  return value;
+  const requirement = configurationRequirements.find(([key]) => message.includes(key));
+  if (requirement === undefined) {
+    return configurationFailure('The stage demo configuration is invalid');
+  }
+  const [key, invalidReason] = requirement;
+  return configurationFailure(
+    `${key} ${message.includes('Expected string') ? 'is required' : invalidReason}`,
+  );
 };
 
-const parsePostgresUrl = (value: string): string => {
-  const url = new URL(value);
-  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
-    throw configurationFailure('DATABASE_ADMIN_URL must use PostgreSQL');
-  }
-  return value;
-};
+const environmentProvider = (environment: StageDemoEnvironment): ConfigProvider.ConfigProvider =>
+  ConfigProvider.fromEnvRecord({
+    BETTER_AUTH_SECRET: environment['BETTER_AUTH_SECRET'],
+    BETTER_AUTH_URL: environment['BETTER_AUTH_URL'],
+    DATABASE_ADMIN_URL: environment['DATABASE_ADMIN_URL'],
+    STAGE_DEMO_PASSWORD: environment['STAGE_DEMO_PASSWORD'],
+    STAGE_SIAMPARK_PASSWORD: environment['STAGE_SIAMPARK_PASSWORD'],
+    ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'],
+  });
 
-const parseHttpOrigin = (value: string): string => {
-  const url = new URL(value);
-  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.origin !== value) {
-    throw configurationFailure('BETTER_AUTH_URL must be an HTTP origin');
-  }
-  return value;
-};
+const parseStageDemoBootstrapConfigFromProvider = Effect.fn(
+  'StageDemoBootstrapContract.parseStageDemoBootstrapConfigFromProvider',
+)(function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
+  const source = yield* stageDemoBootstrapSource
+    .parse(provider)
+    .pipe(
+      Effect.catchTag('ConfigError', (error) =>
+        Effect.fail(configurationFailureFromConfigError(error)),
+      ),
+    );
+  return {
+    accounts: [
+      {
+        email: STAGE_DEMO_ACCOUNTS[0].email,
+        password: Redacted.value(source.demoPassword),
+        principalDisplayName: STAGE_DEMO_ACCOUNTS[0].principalDisplayName,
+      },
+      {
+        email: STAGE_DEMO_ACCOUNTS[1].email,
+        password: Redacted.value(source.siamparkPassword),
+        principalDisplayName: STAGE_DEMO_ACCOUNTS[1].principalDisplayName,
+      },
+    ] as const,
+    authBaseUrl: source.authBaseUrl,
+    authSecret: Redacted.value(source.authSecret),
+    databaseAdminUrl: source.databaseAdminUrl,
+  };
+});
 
 export const parseStageDemoBootstrapConfig = (
   environment: StageDemoEnvironment,
 ): Effect.Effect<StageDemoBootstrapConfig, StageDemoBootstrapError> =>
-  Effect.try({
-    catch: (cause) =>
-      cause instanceof StageDemoBootstrapError
-        ? cause
-        : configurationFailure('The stage demo configuration is invalid'),
-    try: () => {
-      if (environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']?.trim() !== 'stage') {
-        throw configurationFailure('The demo bootstrap can run only in the stage environment');
-      }
-      const authSecret = required(environment, 'BETTER_AUTH_SECRET');
-      if (authSecret.length < 32) {
-        throw configurationFailure('BETTER_AUTH_SECRET must contain at least 32 characters');
-      }
-      const accountConfiguration = (account: (typeof STAGE_DEMO_ACCOUNTS)[number]) => {
-        const password = required(environment, account.passwordEnvironmentKey);
-        if (password.length < 8) {
-          throw configurationFailure(
-            `${account.passwordEnvironmentKey} must contain at least 8 characters`,
-          );
-        }
-        return {
-          email: account.email,
-          password,
-          principalDisplayName: account.principalDisplayName,
-        };
-      };
-      const accounts = [
-        accountConfiguration(STAGE_DEMO_ACCOUNTS[0]),
-        accountConfiguration(STAGE_DEMO_ACCOUNTS[1]),
-      ] as const;
-      return {
-        accounts,
-        authBaseUrl: parseHttpOrigin(required(environment, 'BETTER_AUTH_URL')),
-        authSecret,
-        databaseAdminUrl: parsePostgresUrl(required(environment, 'DATABASE_ADMIN_URL')),
-      };
-    },
-  });
+  parseStageDemoBootstrapConfigFromProvider(environmentProvider(environment));
 
 export const classifyExactStageDemoRecord = <Expected extends ExactRecord>(
   label: string,
   existing: ExactRecord | undefined,
   expected: Expected,
-): 'create' | 'existing' => {
-  if (existing === undefined) {
-    return 'create';
-  }
-  const conflictingFields = Object.entries(expected)
-    .filter(([key, value]) => existing[key] !== value)
-    .map(([key]) => key);
-  if (conflictingFields.length > 0) {
-    throw new StageDemoBootstrapError({
-      code: 'stage_demo_conflict',
-      reason: `Existing ${label} conflicts with the stage demo definition (${conflictingFields.join(', ')})`,
-    });
-  }
-  return 'existing';
-};
+): Effect.Effect<'create' | 'existing', StageDemoBootstrapError> =>
+  Effect.suspend(() => {
+    if (existing === undefined) {
+      return Effect.succeed('create' as const);
+    }
+    const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
+      existing[key] === value ? [] : [key],
+    );
+    if (conflictingFields.length > 0) {
+      return Effect.fail(
+        new StageDemoBootstrapError({
+          code: 'stage_demo_conflict',
+          reason: `Existing ${label} conflicts with the stage demo definition (${conflictingFields.join(', ')})`,
+        }),
+      );
+    }
+    return Effect.succeed('existing' as const);
+  });

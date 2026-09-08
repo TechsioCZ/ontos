@@ -1,4 +1,3 @@
-import type { SupportRecoveryPrincipalContextResolverService } from '@app/core-runtime';
 import { Effect } from 'effect';
 import type {
   SupportAuthProvider,
@@ -8,8 +7,9 @@ import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 
 const unconfiguredEffect = (operation: string) =>
   Effect.die(`${operation} is not configured in this test`);
-const unconfiguredPromise = (operation: string) =>
-  Promise.reject(new Error(`${operation} is not configured in this test`));
+const unconfiguredPromise = async (operation: string) => {
+  throw new Error(`${operation} is not configured in this test`);
+};
 
 const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
@@ -24,23 +24,19 @@ const authenticationDefaults: AuthenticationServiceContract = {
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {
-  getSession: () => unconfiguredPromise('getSession'),
-  impersonateUser: () => unconfiguredPromise('impersonateUser'),
-  stopImpersonating: () => unconfiguredPromise('stopImpersonating'),
+  getSession: async () => await unconfiguredPromise('getSession'),
+  impersonateUser: async () => await unconfiguredPromise('impersonateUser'),
+  stopImpersonating: async () => await unconfiguredPromise('stopImpersonating'),
 };
 
 const storeDefaults: SupportImpersonationStore = {
-  deleteRecovery: () => unconfiguredPromise('deleteRecovery'),
-  deleteSession: () => unconfiguredPromise('deleteSession'),
-  insertRecovery: () => unconfiguredPromise('insertRecovery'),
-  loadExpiredRecovery: () => unconfiguredPromise('loadExpiredRecovery'),
-  loadOriginalSession: () => unconfiguredPromise('loadOriginalSession'),
-  loadRecoveries: () => unconfiguredPromise('loadRecoveries'),
-  updateImpersonationSession: () => unconfiguredPromise('updateImpersonationSession'),
-};
-
-const supportRecoveryDefaults: SupportRecoveryPrincipalContextResolverService = {
-  resolveStoppedImpersonation: () => unconfiguredEffect('resolveStoppedImpersonation'),
+  deleteRecovery: () => unconfiguredEffect('deleteRecovery'),
+  deleteSession: () => unconfiguredEffect('deleteSession'),
+  insertRecovery: () => unconfiguredEffect('insertRecovery'),
+  loadExpiredRecovery: () => unconfiguredEffect('loadExpiredRecovery'),
+  loadOriginalSession: () => unconfiguredEffect('loadOriginalSession'),
+  loadRecoveries: () => unconfiguredEffect('loadRecoveries'),
+  updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
 };
 
 export const makeAuthenticationServiceDouble = (
@@ -54,10 +50,3 @@ export const makeSupportAuthProviderDouble = (
 export const makeSupportImpersonationStoreDouble = (
   overrides: Partial<SupportImpersonationStore> = {},
 ): SupportImpersonationStore => ({ ...storeDefaults, ...overrides });
-
-export const makeSupportRecoveryPrincipalDouble = (
-  overrides: Partial<SupportRecoveryPrincipalContextResolverService> = {},
-): SupportRecoveryPrincipalContextResolverService => ({
-  ...supportRecoveryDefaults,
-  ...overrides,
-});

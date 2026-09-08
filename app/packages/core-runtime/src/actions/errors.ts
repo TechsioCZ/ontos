@@ -1,152 +1,177 @@
-/* eslint-disable max-classes-per-file -- The public Core error union is intentionally co-located and exhaustive. */
-import { Schema } from 'effect';
+import { Cause, Schema } from 'effect';
+import { actionErrorSchema } from './error-schema.ts';
+import type { ActionTransactionError } from './transaction-error.ts';
 import type {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
 } from '../modules/module-state-gate-errors.ts';
 import type { OperationContextError } from '../operations/errors.ts';
 
+export { ActionTransactionError } from './transaction-error.ts';
+
 const safeReason = {
   reason: Schema.String,
 } as const;
 
-export class ActionPayloadValidationError extends Schema.TaggedError<ActionPayloadValidationError>()(
-  'ActionPayloadValidationError',
-  {
-    code: Schema.Literal('action_payload_invalid'),
-    ...safeReason,
-  },
-) {}
+const ActionInvocationIdSchema = Schema.String.pipe(
+  Schema.brand('ActionInvocationId'),
+  Schema.decodeTo(Schema.String),
+);
 
-export class ActionResultValidationError extends Schema.TaggedError<ActionResultValidationError>()(
-  'ActionResultValidationError',
-  {
-    code: Schema.Literal('action_result_invalid'),
-    ...safeReason,
-  },
-) {}
+const ActionPayloadValidationErrorValue = actionErrorSchema('ActionPayloadValidationError', {
+  code: Schema.Literal('action_payload_invalid'),
+  ...safeReason,
+});
+export type ActionPayloadValidationError = InstanceType<typeof ActionPayloadValidationErrorValue>;
+export { ActionPayloadValidationErrorValue as ActionPayloadValidationError };
 
-export class ActionTrustedContextValidationError extends Schema.TaggedError<ActionTrustedContextValidationError>()(
+const ActionResultValidationErrorValue = actionErrorSchema('ActionResultValidationError', {
+  code: Schema.Literal('action_result_invalid'),
+  ...safeReason,
+});
+export type ActionResultValidationError = InstanceType<typeof ActionResultValidationErrorValue>;
+export { ActionResultValidationErrorValue as ActionResultValidationError };
+
+const ActionTrustedContextValidationErrorValue = actionErrorSchema(
   'ActionTrustedContextValidationError',
   {
     code: Schema.Literal('action_trusted_context_invalid'),
     ...safeReason,
   },
-) {}
+);
+export type ActionTrustedContextValidationError = InstanceType<
+  typeof ActionTrustedContextValidationErrorValue
+>;
+export { ActionTrustedContextValidationErrorValue as ActionTrustedContextValidationError };
 
-export class ActionIdempotencyKeyRequired extends Schema.TaggedError<ActionIdempotencyKeyRequired>()(
-  'ActionIdempotencyKeyRequired',
-  {
-    code: Schema.Literal('action_idempotency_key_required'),
-    ...safeReason,
-  },
-) {}
+const ActionIdempotencyKeyRequiredValue = actionErrorSchema('ActionIdempotencyKeyRequired', {
+  code: Schema.Literal('action_idempotency_key_required'),
+  ...safeReason,
+});
+export type ActionIdempotencyKeyRequired = InstanceType<typeof ActionIdempotencyKeyRequiredValue>;
+export { ActionIdempotencyKeyRequiredValue as ActionIdempotencyKeyRequired };
 
-export class ActionPermissionDenied extends Schema.TaggedError<ActionPermissionDenied>()(
-  'ActionPermissionDenied',
-  {
-    code: Schema.Literal('action_permission_denied'),
-    ...safeReason,
-  },
-) {}
+const ActionPermissionDeniedValue = actionErrorSchema('ActionPermissionDenied', {
+  code: Schema.Literal('action_permission_denied'),
+  ...safeReason,
+});
+export type ActionPermissionDenied = InstanceType<typeof ActionPermissionDeniedValue>;
+export { ActionPermissionDeniedValue as ActionPermissionDenied };
 
-export class ActionPermissionCheckError extends Schema.TaggedError<ActionPermissionCheckError>()(
-  'ActionPermissionCheckError',
-  {
-    code: Schema.Literal('action_permission_check_failed'),
-    ...safeReason,
-  },
-) {}
+const ActionPermissionCheckErrorValue = actionErrorSchema('ActionPermissionCheckError', {
+  code: Schema.Literal('action_permission_check_failed'),
+  ...safeReason,
+});
+export type ActionPermissionCheckError = InstanceType<typeof ActionPermissionCheckErrorValue>;
+export { ActionPermissionCheckErrorValue as ActionPermissionCheckError };
 
-export class ActionAlreadyCommitted extends Schema.TaggedError<ActionAlreadyCommitted>()(
-  'ActionAlreadyCommitted',
-  {
-    code: Schema.Literal('action_already_committed'),
-    ...safeReason,
-  },
-) {}
+const ActionAlreadyCommittedValue = actionErrorSchema('ActionAlreadyCommitted', {
+  code: Schema.Literal('action_already_committed'),
+  invocationId: ActionInvocationIdSchema,
+  ...safeReason,
+});
+export type ActionAlreadyCommitted = InstanceType<typeof ActionAlreadyCommittedValue>;
+export { ActionAlreadyCommittedValue as ActionAlreadyCommitted };
 
-export class ActionRequestHashConflict extends Schema.TaggedError<ActionRequestHashConflict>()(
-  'ActionRequestHashConflict',
-  {
-    code: Schema.Literal('action_request_hash_conflict'),
-    ...safeReason,
-  },
-) {}
+const ActionRequestHashConflictValue = actionErrorSchema('ActionRequestHashConflict', {
+  code: Schema.Literal('action_request_hash_conflict'),
+  ...safeReason,
+});
+export type ActionRequestHashConflict = InstanceType<typeof ActionRequestHashConflictValue>;
+export { ActionRequestHashConflictValue as ActionRequestHashConflict };
 
-export class ActionInvocationPersistenceError extends Schema.TaggedError<ActionInvocationPersistenceError>()(
+const ActionInvocationPersistenceErrorValue = actionErrorSchema(
   'ActionInvocationPersistenceError',
   {
     code: Schema.Literal('action_invocation_persistence_failed'),
     ...safeReason,
   },
-) {}
+);
+export type ActionInvocationPersistenceError = InstanceType<
+  typeof ActionInvocationPersistenceErrorValue
+>;
+const ActionInvocationPersistenceErrorInternals = (() => {
+  let createWithCause: (
+    props: ConstructorParameters<typeof ActionInvocationPersistenceErrorValue>[0],
+    cause?: unknown,
+  ) => ActionInvocationPersistenceError;
+  let readCause: (failure: ActionInvocationPersistenceError) => Cause.Cause<never> | undefined;
 
-export class ActionInvocationNotFound extends Schema.TaggedError<ActionInvocationNotFound>()(
-  'ActionInvocationNotFound',
-  {
-    code: Schema.Literal('action_invocation_not_found'),
-    ...safeReason,
-  },
-) {}
+  class RetainedError extends ActionInvocationPersistenceErrorValue {
+    #cause: Cause.Cause<never> | undefined;
 
-export class ActionInvocationStateError extends Schema.TaggedError<ActionInvocationStateError>()(
-  'ActionInvocationStateError',
-  {
-    code: Schema.Literal('action_invocation_state_invalid'),
-    ...safeReason,
-  },
-) {}
+    static {
+      createWithCause = (props, cause) => {
+        const failure = new RetainedError(props);
+        if (cause !== undefined) {
+          failure.#cause = Cause.die(cause);
+        }
+        return failure;
+      };
+      readCause = (failure) => (#cause in failure ? failure.#cause : undefined);
+    }
+  }
+  const ErrorClass: typeof ActionInvocationPersistenceErrorValue = RetainedError;
+  return { createWithCause, ErrorClass, readCause };
+})();
+const ActionInvocationPersistenceErrorClass = ActionInvocationPersistenceErrorInternals.ErrorClass;
+export { ActionInvocationPersistenceErrorClass as ActionInvocationPersistenceError };
+// Core-only accessors: deliberately excluded from the package root exports.
+export const createActionInvocationPersistenceErrorWithCause =
+  ActionInvocationPersistenceErrorInternals.createWithCause;
+export const getActionInvocationPersistenceErrorCause =
+  ActionInvocationPersistenceErrorInternals.readCause;
 
-export class ActionCollectorError extends Schema.TaggedError<ActionCollectorError>()(
-  'ActionCollectorError',
-  {
-    code: Schema.Literal('action_collector_invalid'),
-    ...safeReason,
-  },
-) {}
+const ActionInvocationNotFoundValue = actionErrorSchema('ActionInvocationNotFound', {
+  code: Schema.Literal('action_invocation_not_found'),
+  ...safeReason,
+});
+export type ActionInvocationNotFound = InstanceType<typeof ActionInvocationNotFoundValue>;
+export { ActionInvocationNotFoundValue as ActionInvocationNotFound };
 
-export class ActionHandlerExecutionError extends Schema.TaggedError<ActionHandlerExecutionError>()(
-  'ActionHandlerExecutionError',
-  {
-    code: Schema.Literal('action_handler_execution_failed'),
-    ...safeReason,
-  },
-) {}
+const ActionInvocationStateErrorValue = actionErrorSchema('ActionInvocationStateError', {
+  code: Schema.Literal('action_invocation_state_invalid'),
+  ...safeReason,
+});
+export type ActionInvocationStateError = InstanceType<typeof ActionInvocationStateErrorValue>;
+export { ActionInvocationStateErrorValue as ActionInvocationStateError };
 
-export class ActionPolicyDenied extends Schema.TaggedError<ActionPolicyDenied>()(
-  'ActionPolicyDenied',
-  {
-    code: Schema.Literal('action_policy_denied'),
-    policyReasonCode: Schema.String,
-    ...safeReason,
-  },
-) {}
+const ActionCollectorErrorValue = actionErrorSchema('ActionCollectorError', {
+  code: Schema.Literal('action_collector_invalid'),
+  ...safeReason,
+});
+export type ActionCollectorError = InstanceType<typeof ActionCollectorErrorValue>;
+export { ActionCollectorErrorValue as ActionCollectorError };
 
-export class ActionPolicyEvaluationError extends Schema.TaggedError<ActionPolicyEvaluationError>()(
-  'ActionPolicyEvaluationError',
-  {
-    code: Schema.Literal('action_policy_evaluation_failed'),
-    ...safeReason,
-  },
-) {}
+const ActionHandlerExecutionErrorValue = actionErrorSchema('ActionHandlerExecutionError', {
+  code: Schema.Literal('action_handler_execution_failed'),
+  ...safeReason,
+});
+export type ActionHandlerExecutionError = InstanceType<typeof ActionHandlerExecutionErrorValue>;
+export { ActionHandlerExecutionErrorValue as ActionHandlerExecutionError };
 
-export class ActionTransactionError extends Schema.TaggedError<ActionTransactionError>()(
-  'ActionTransactionError',
-  {
-    code: Schema.Literal('action_transaction_failed'),
-    ...safeReason,
-  },
-) {}
+const ActionPolicyDeniedValue = actionErrorSchema('ActionPolicyDenied', {
+  code: Schema.Literal('action_policy_denied'),
+  policyReasonCode: Schema.String,
+  ...safeReason,
+});
+export type ActionPolicyDenied = InstanceType<typeof ActionPolicyDeniedValue>;
+export { ActionPolicyDeniedValue as ActionPolicyDenied };
 
-export class ActionCommitIndeterminate extends Schema.TaggedError<ActionCommitIndeterminate>()(
-  'ActionCommitIndeterminate',
-  {
-    code: Schema.Literal('action_commit_indeterminate'),
-    invocationId: Schema.String,
-    ...safeReason,
-  },
-) {}
+const ActionPolicyEvaluationErrorValue = actionErrorSchema('ActionPolicyEvaluationError', {
+  code: Schema.Literal('action_policy_evaluation_failed'),
+  ...safeReason,
+});
+export type ActionPolicyEvaluationError = InstanceType<typeof ActionPolicyEvaluationErrorValue>;
+export { ActionPolicyEvaluationErrorValue as ActionPolicyEvaluationError };
+
+const ActionCommitIndeterminateValue = actionErrorSchema('ActionCommitIndeterminate', {
+  code: Schema.Literal('action_commit_indeterminate'),
+  invocationId: ActionInvocationIdSchema,
+  ...safeReason,
+});
+export type ActionCommitIndeterminate = InstanceType<typeof ActionCommitIndeterminateValue>;
+export { ActionCommitIndeterminateValue as ActionCommitIndeterminate };
 
 export type ActionCoreError =
   | ActionAlreadyCommitted

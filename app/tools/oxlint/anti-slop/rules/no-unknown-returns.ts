@@ -2,6 +2,8 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree } from "@oxlint/plugins";
 
+import { unshadowedAliasName } from "../shared/type-alias-reference.ts";
+
 import { lexicalTypeParameterNames } from "../shared/lexical-type-parameters.ts";
 
 type FunctionWithReturnType =
@@ -13,14 +15,19 @@ type FunctionWithReturnType =
   | ESTree.TSFunctionType
   | ESTree.TSMethodSignature;
 
-function referencedAliasName(type: ESTree.TSType): string | null {
-  if (type.type === "TSParenthesizedType") return referencedAliasName(type.typeAnnotation);
-  if (type.type !== "TSTypeReference" || type.typeName.type !== "Identifier") return null;
-  return type.typeArguments === null ||
-    type.typeArguments === undefined ||
-    type.typeArguments.params.length === 0
-    ? type.typeName.name
-    : null;
+function isPromiseReference(type: ESTree.TSType): type is ESTree.TSTypeReference {
+  return (
+    type.type === "TSTypeReference" &&
+    type.typeName.type === "Identifier" &&
+    (type.typeName.name === "Promise" || type.typeName.name === "PromiseLike")
+  );
+}
+
+function nonGenericAliasType(
+  alias: ESTree.TSTypeAliasDeclaration | undefined,
+): ESTree.TSType | undefined {
+  if (alias === undefined || alias.typeParameters != null) return undefined;
+  return alias.typeAnnotation;
 }
 
 /** Ban function contracts that return unknown instead of a parsed domain type. */
@@ -49,30 +56,19 @@ export const noUnknownReturnsRule = defineRule({
         return resolvesToUnknown(type.typeAnnotation, shadowedAliases, visited);
       }
       if (type.type === "TSUnionType") {
-        return type.types.some((member) =>
-          resolvesToUnknown(member, shadowedAliases, visited),
-        );
+        return type.types.some((member) => resolvesToUnknown(member, shadowedAliases, visited));
       }
-      if (
-        type.type === "TSTypeReference" &&
-        type.typeName.type === "Identifier" &&
-        (type.typeName.name === "Promise" || type.typeName.name === "PromiseLike")
-      ) {
+      if (isPromiseReference(type)) {
         const value = type.typeArguments?.params[0];
         return value !== undefined && resolvesToUnknown(value, shadowedAliases, visited);
       }
-      const name = referencedAliasName(type);
-      if (name === null || visited.has(name) || shadowedAliases.has(name)) return false;
-      const alias = aliases.get(name);
-      if (
-        alias === undefined ||
-        (alias.typeParameters !== null && alias.typeParameters !== undefined)
-      ) {
-        return false;
-      }
+      const name = unshadowedAliasName(type, shadowedAliases, visited);
+      if (name === null) return false;
+      const alias = nonGenericAliasType(aliases.get(name));
+      if (alias === undefined) return false;
       const nextVisited = new Set(visited);
       nextVisited.add(name);
-      return resolvesToUnknown(alias.typeAnnotation, shadowedAliases, nextVisited);
+      return resolvesToUnknown(alias, shadowedAliases, nextVisited);
     };
 
     const checkReturnType = (node: FunctionWithReturnType) => {

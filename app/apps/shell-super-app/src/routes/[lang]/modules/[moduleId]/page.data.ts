@@ -1,8 +1,10 @@
-/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- The loader preserves the typed Effect error channel until the framework boundary. */
-import { Effect, Predicate } from 'effect';
+import { Effect, Match, Predicate, Schema } from 'effect';
+import type { Config } from 'effect';
+import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
-import { resolveModuleTarget, runEffectRequest } from '../../../../api/auth-client.ts';
+import { resolveModuleTarget } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
+import { runBrowserEffect } from '../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../../page.data.ts';
 import type { HomePageModel } from '../../page.data.ts';
@@ -26,6 +28,12 @@ interface ModuleTargetLoaderArguments {
   readonly routeParams?: Readonly<Record<string, string>>;
 }
 
+const RouteParameterInputSchema = Schema.Record(
+  Schema.String,
+  Schema.Union([Schema.String, Schema.Undefined]),
+);
+type RouteParameterInput = typeof RouteParameterInputSchema.Type;
+
 export type ModulePageRouteParams = Readonly<Record<string, string>>;
 
 const routeParameterNamePattern = /^[a-z][A-Za-z0-9]*$/u;
@@ -33,7 +41,7 @@ const routeParameterLimit = 64;
 const routeParameterValueLengthLimit = 200;
 
 export const selectRouteParams = (
-  params: Readonly<Record<string, string | undefined>>,
+  params: RouteParameterInput,
   declaredNames: readonly string[],
 ): ModulePageRouteParams =>
   Object.freeze(
@@ -55,70 +63,78 @@ export type ModuleTargetPageModel =
       readonly state: 'forbidden' | 'not_found' | 'selection_required' | 'unavailable';
     }
   | {
+      readonly routeParams: ModulePageRouteParams;
       readonly shell: HomePageModel;
       readonly state: 'resolved';
-      readonly routeParams: ModulePageRouteParams;
       readonly target: ResolvedModuleTarget;
     };
 
-const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleTargetPageModel => {
-  switch (error._tag) {
-    case 'ShellAuthenticationRequiredProblem':
-    case 'ShellSelectionRequiredProblem': {
-      return { shell, state: 'selection_required' };
-    }
-    case 'ShellTargetForbiddenProblem': {
-      return { shell, state: 'forbidden' };
-    }
-    case 'ShellTargetNotFoundProblem': {
-      return { shell, state: 'not_found' };
-    }
-    case 'ShellCapabilityUnavailableProblem':
-    case 'ShellInternalProblem': {
-      return { shell, state: 'unavailable' };
-    }
-    default: {
-      return { shell, state: 'unavailable' };
-    }
-  }
-};
+const safeState = (
+  error: Config.ConfigError | ShellTargetClientError,
+  shell: HomePageModel,
+): ModuleTargetPageModel =>
+  Match.value(error).pipe(
+    Match.tag('ShellAuthenticationRequiredProblem', 'ShellSelectionRequiredProblem', () => ({
+      shell,
+      state: 'selection_required' as const,
+    })),
+    Match.tag('ShellTargetForbiddenProblem', () => ({ shell, state: 'forbidden' as const })),
+    Match.tag('ShellTargetNotFoundProblem', () => ({ shell, state: 'not_found' as const })),
+    Match.tag(
+      'ConfigError',
+      'HttpClientError',
+      'SchemaError',
+      'ShellCapabilityUnavailableProblem',
+      'ShellInternalProblem',
+      'ShellInvalidRequestProblem',
+      'ShellPolicyConflictProblem',
+      'ShellPolicyUnprocessableProblem',
+      'ShellPreconditionRequiredProblem',
+      'ShellRateLimitedProblem',
+      () => ({ shell, state: 'unavailable' as const }),
+    ),
+    Match.exhaustive,
+  );
 
-export const loader = async ({
+export const loader = ({
   params,
   request,
   routeParams = {},
-}: ModuleTargetLoaderArguments) => {
-  const shell = await loadHomePageModel(request);
-  if (shell.state !== 'authenticated') {
-    return {
-      shell,
-      state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-    } as const;
-  }
-  const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
-  return runEffectRequest(
-    shellAuthenticationClientOptionsFromRequest(request).pipe(
-      Effect.flatMap((options) =>
-        resolveModuleTarget(
-          withOptionalProperty(
-            {},
-            !(params.entrypointKey === undefined),
-            'entrypointKey',
-            params.entrypointKey,
-            {
-              moduleId: params.moduleId,
-            },
+}: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
+  runBrowserEffect(
+    Effect.tryPromise(() => loadHomePageModel(request)).pipe(
+      Effect.timeout('30 seconds'),
+      Effect.flatMap((shell) => {
+        if (shell.state !== 'authenticated') {
+          return Effect.succeed<ModuleTargetPageModel>({
+            shell,
+            state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+          });
+        }
+        const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
+        return shellAuthenticationClientOptionsFromRequest(request).pipe(
+          Effect.flatMap((options) =>
+            Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)(
+              withOptionalProperty(
+                {},
+                params.entrypointKey !== undefined,
+                'entrypointKey',
+                params.entrypointKey,
+                { moduleId: params.moduleId },
+              ),
+            ).pipe(Effect.flatMap((payload) => resolveModuleTarget(payload, options))),
           ),
-          options,
-        ),
-      ),
-      Effect.map((target): ModuleTargetPageModel => ({
-        routeParams: boundedRouteParams,
-        shell,
-        state: 'resolved',
-        target,
-      })),
-      Effect.catch((error) => Effect.succeed(safeState(error, shell))),
+          Effect.map((target): ModuleTargetPageModel => ({
+            routeParams: boundedRouteParams,
+            shell,
+            state: 'resolved',
+            target,
+          })),
+          Effect.matchEffect({
+            onFailure: (error) => Effect.succeed(safeState(error, shell)),
+            onSuccess: Effect.succeed,
+          }),
+        );
+      }),
     ),
   );
-};

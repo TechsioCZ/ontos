@@ -29,7 +29,7 @@ mkdir -p "${node_directory}"
 tar -xzf "${archive_path}" -C "${node_directory}" --strip-components=1
 
 if [ "${1:-}" = '--with-pnpm' ]; then
-  PATH="${node_directory}/bin:${PATH}" "${node_directory}/bin/npm" install --global --prefix "${node_directory}" pnpm@11.17.0
+  PATH="${node_directory}/bin:${PATH}" "${node_directory}/bin/npm" install --global --prefix "${node_directory}" pnpm@11.25.0
 fi
 
 "${node_directory}/bin/node" --version

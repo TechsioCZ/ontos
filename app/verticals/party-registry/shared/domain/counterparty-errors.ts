@@ -1,0 +1,10 @@
+export { CounterpartyEvidenceInsufficient } from './counterparty-errors/evidence-insufficient.ts';
+export { CounterpartyNotFound } from './counterparty-errors/not-found.ts';
+export { CounterpartyPartyArchived } from './counterparty-errors/party-archived.ts';
+export { CounterpartyPartyNotFound } from './counterparty-errors/party-not-found.ts';
+export { CounterpartyPersistenceUnavailable } from './counterparty-errors/persistence-unavailable.ts';
+export { CounterpartyRoleAlreadyEnded } from './counterparty-errors/role-already-ended.ts';
+export { CounterpartyRoleOverlap } from './counterparty-errors/role-overlap.ts';
+export { CounterpartyRolePeriodNotFound } from './counterparty-errors/role-period-not-found.ts';
+export { CounterpartyScopeMismatch } from './counterparty-errors/scope-mismatch.ts';
+export { CounterpartyTemporalConflict } from './counterparty-errors/temporal-conflict.ts';

@@ -4,26 +4,26 @@
   "preset": "presetUltramodern",
   "ports": {
     "shell-super-app": 3020,
-    "contacts": 4101
+    "party-registry": 4102
   },
   "manifests": {
-    "contacts": "http://localhost:4101/mf-manifest.json"
+    "party-registry": "http://localhost:4102/mf-manifest.json"
   },
   "ontosModuleManifests": {
-    "contacts": "http://localhost:4101/.well-known/ontos-module-manifest.json"
+    "party-registry": "http://localhost:4102/.well-known/ontos-module-manifest.json"
   },
   "serverExecution": {
-    "contacts": {
-      "apiBaseUrl": "http://localhost:4101/contacts-api",
+    "party-registry": {
+      "apiBaseUrl": "http://localhost:4102/party-registry-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/contacts",
-        "buildMarker": "b08ddded31ae2315"
+        "unitId": "app/party-registry",
+        "buildMarker": "3f023644c8a07e9a"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-contacts",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
+        "workerName": "app-party-registry",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -35,37 +35,37 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_CONTACTS_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_CONTACTS_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_CONTACTS_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_PARTY_REGISTRY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PARTY_REGISTRY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PARTY_REGISTRY_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_CONTACTS_WORKER",
-          "serviceBindingEnv": "VERTICAL_CONTACTS_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_CONTACTS_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_CONTACTS_WORKER_NAME",
+          "serviceBinding": "VERTICAL_PARTY_REGISTRY_WORKER",
+          "serviceBindingEnv": "VERTICAL_PARTY_REGISTRY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PARTY_REGISTRY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PARTY_REGISTRY_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v1",
-        "remoteName": "verticalContactsBackend",
-        "manifestEnv": "VERTICAL_CONTACTS_BACKEND_MF_MANIFEST",
-        "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
-        "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+        "remoteName": "verticalPartyRegistryBackend",
+        "manifestEnv": "VERTICAL_PARTY_REGISTRY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4102/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff/effect",
         "expected": {
-          "unitId": "app/contacts",
-          "buildMarker": "b08ddded31ae2315"
+          "unitId": "app/party-registry",
+          "buildMarker": "3f023644c8a07e9a"
         }
       }
     }
   },
   "apis": {
-    "contacts": "http://localhost:4101/contacts-api"
+    "party-registry": "http://localhost:4102/party-registry-api"
   }
 }

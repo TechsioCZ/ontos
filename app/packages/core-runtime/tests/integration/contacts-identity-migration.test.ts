@@ -1,9 +1,7 @@
-/* eslint-disable no-await-in-loop -- DDL and migration statements must execute in deterministic sequence. */
+import { NodeServices } from '@effect/platform-node';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Crypto, Effect, FileSystem, flow, ManagedRuntime, Schema } from 'effect';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 
@@ -15,6 +13,7 @@ interface MigrationFixtureRow {
   readonly consumer_module_key?: string | null;
   readonly consumer_name?: string | null;
   readonly evidence_policy_key?: string | null;
+  readonly module_key?: string | null;
   readonly payload: { readonly freeText: string };
   readonly producer_module_key?: string | null;
   readonly record_id: string;
@@ -53,15 +52,57 @@ const tableColumns = {
   worker_checkpoints: ['consumer_name', 'stream_key'],
 } as const;
 
-test('Contacts Core identity migration is preserving, scoped, rerunnable, and collision-safe', async () => {
-  const configuration = await Effect.runPromise(loadDatabaseConnectionPair());
-  const pool = new Pool({ connectionString: configuration.admin.connectionString, max: 1 });
-  const schema = `core_contacts_identity_${randomUUID().replaceAll('-', '')}`;
+type MigrationColumn = (typeof tableColumns)[keyof typeof tableColumns][number];
+
+const integrationRuntime = ManagedRuntime.make(NodeServices.layer);
+
+const effectTest = <Value, Failure>(
+  name: string,
+  effect: Effect.Effect<Value, Failure, Crypto.Crypto | FileSystem.FileSystem>,
+): void => {
+  test(
+    name,
+    flow(() => Effect.asVoid(effect), integrationRuntime.runPromise),
+  );
+};
+
+const databaseEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const columnDefinitions = (columns: readonly MigrationColumn[]): string =>
+  columns.map((column) => `"${column}" text`).join(', ');
+
+const loadTableResult = (
+  pool: Pool,
+  quotedSchema: string,
+  table: string,
+  columns: readonly MigrationColumn[],
+) =>
+  databaseEffect(
+    pool.query<MigrationFixtureRow>(`select * from ${quotedSchema}."${table}" order by record_id`),
+  ).pipe(Effect.map((result) => ({ columns, result, table })));
+
+const runSequentially = <Value, Result, Failure, Requirements>(
+  values: readonly Value[],
+  operation: (value: Value) => Effect.Effect<Result, Failure, Requirements>,
+): Effect.Effect<void, Failure, Requirements> =>
+  Effect.forEach(values, operation, { concurrency: 1, discard: true });
+
+const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMigration() {
+  const configuration = yield* loadDatabaseConnectionPair();
+  const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const pool = yield* Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString: configuration.admin.connectionString, max: 1 })),
+    (resource) => databaseEffect(resource.end()).pipe(Effect.orDie),
+  );
+  const schema = `core_contacts_identity_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
   const quotedSchema = `"${schema}"`;
-  try {
-    await pool.query(`create schema ${quotedSchema}`);
-    await pool.query(
-      `create table ${quotedSchema}.tenant_module_states (
+  yield* Effect.gen(function* exerciseContactsIdentityMigration() {
+    yield* databaseEffect(pool.query(`create schema ${quotedSchema}`));
+    yield* databaseEffect(
+      pool.query(
+        `create table ${quotedSchema}.tenant_module_states (
         record_id text primary key,
         tenant_id text not null,
         module_key text not null,
@@ -69,48 +110,62 @@ test('Contacts Core identity migration is preserving, scoped, rerunnable, and co
         recorded_at timestamptz not null,
         unique (tenant_id, module_key)
       )`,
+      ),
     );
-    for (const [table, columns] of Object.entries(tableColumns)) {
-      await pool.query(
-        `create table ${quotedSchema}."${table}" (
-          record_id text primary key,
-          ${columns.map((column) => `"${column}" text`).join(', ')},
-          payload jsonb not null default '{}'::jsonb
-        )`,
-      );
-    }
+    yield* runSequentially(Object.entries(tableColumns), ([table, columns]) =>
+      databaseEffect(
+        pool.query(
+          `create table ${quotedSchema}."${table}" (
+            record_id text primary key,
+            ${columnDefinitions(columns)},
+            payload jsonb not null default '{}'::jsonb
+          )`,
+        ),
+      ),
+    );
     const recordedAt = '2026-01-02T03:04:05.678Z';
     const payload = { freeText: 'crm.core must remain untouched inside arbitrary JSON' };
-    await pool.query(
-      `insert into ${quotedSchema}.tenant_module_states
+    const encodedPayload = encodeJson(payload);
+    yield* databaseEffect(
+      pool.query(
+        `insert into ${quotedSchema}.tenant_module_states
         (record_id, tenant_id, module_key, payload, recorded_at)
        values ('legacy-state', 'tenant-a', $1, $2::jsonb, $3),
               ('unrelated-state', 'tenant-b', 'commerce.core', $2::jsonb, $3)`,
-      [legacyModule, JSON.stringify(payload), recordedAt],
+        [legacyModule, encodedPayload, recordedAt],
+      ),
     );
-    for (const [table, columns] of Object.entries(tableColumns)) {
+    yield* runSequentially(Object.entries(tableColumns), ([table, columns]) => {
       const names = ['record_id', ...columns, 'payload'];
       const oldValues = [
         `${table}-legacy`,
         ...columns.map((_, index) => (index % 2 === 0 ? legacyModule : `${legacyModule}.record`)),
-        JSON.stringify(payload),
+        encodedPayload,
       ];
       const unrelatedValues = [
         `${table}-unrelated`,
         ...columns.map(() => 'commerce.core.record'),
-        JSON.stringify(payload),
+        encodedPayload,
       ];
       const placeholders = names.map((_, index) => `$${index + 1}`).join(', ');
-      await pool.query(
-        `insert into ${quotedSchema}."${table}" (${names.map((name) => `"${name}"`).join(', ')})
-         values (${placeholders}), (${names.map((_, index) => `$${index + names.length + 1}`).join(', ')})`,
-        [...oldValues, ...unrelatedValues],
+      const quotedNames = names.map((name) => `"${name}"`).join(', ');
+      const unrelatedPlaceholders = names
+        .map((_, index) => `$${index + names.length + 1}`)
+        .join(', ');
+      return databaseEffect(
+        pool.query(
+          `insert into ${quotedSchema}."${table}" (${quotedNames})
+           values (${placeholders}), (${unrelatedPlaceholders})`,
+          [...oldValues, ...unrelatedValues],
+        ),
       );
-    }
+    });
 
-    const migrationSource = await readFile(
-      new URL('../../drizzle/0008_rename-crm-module-identity.sql', import.meta.url),
-      'utf-8',
+    const migrationSource = yield* fileSystem.readFileString(
+      new URL(
+        '../../drizzle/20260901102632_rename-crm-module-identity/migration.sql',
+        import.meta.url,
+      ).pathname,
     );
     const migrationTables = ['tenant_module_states', ...Object.keys(tableColumns)];
     let isolatedMigrationSource = migrationSource;
@@ -124,20 +179,20 @@ test('Contacts Core identity migration is preserving, scoped, rerunnable, and co
       .split('--> statement-breakpoint')
       .map((statement) => statement.trim())
       .filter((statement) => statement.length > 0);
-    for (let run = 0; run < 2; run += 1) {
-      for (const statement of statements) {
-        await pool.query(statement);
-      }
-    }
+    yield* runSequentially([...statements, ...statements], (statement) =>
+      databaseEffect(pool.query(statement)),
+    );
 
-    const stateResult = await pool.query<{
-      module_key: string;
-      payload: typeof payload;
-      record_id: string;
-      recorded_at: Date;
-    }>(
-      `select record_id, module_key, payload, recorded_at
-       from ${quotedSchema}.tenant_module_states order by record_id`,
+    const stateResult = yield* databaseEffect(
+      pool.query<{
+        module_key: string;
+        payload: typeof payload;
+        record_id: string;
+        recorded_at: Date;
+      }>(
+        `select record_id, module_key, payload, recorded_at
+         from ${quotedSchema}.tenant_module_states order by record_id`,
+      ),
     );
     assert.deepEqual(
       stateResult.rows.map(({ module_key, record_id }) => ({ module_key, record_id })),
@@ -148,10 +203,12 @@ test('Contacts Core identity migration is preserving, scoped, rerunnable, and co
     );
     assert.deepEqual(stateResult.rows[0]?.payload, payload);
     assert.equal(stateResult.rows[0]?.recorded_at.toISOString(), recordedAt);
-    for (const [table, columns] of Object.entries(tableColumns)) {
-      const result = await pool.query<MigrationFixtureRow>(
-        `select * from ${quotedSchema}."${table}" order by record_id`,
-      );
+    const tableResults = yield* Effect.forEach(
+      Object.entries(tableColumns),
+      ([table, columns]) => loadTableResult(pool, quotedSchema, table, columns),
+      { concurrency: 'unbounded' },
+    );
+    for (const { columns, result, table } of tableResults) {
       const [migrated, unrelated] = result.rows;
       assert.ok(migrated);
       assert.ok(unrelated);
@@ -166,24 +223,36 @@ test('Contacts Core identity migration is preserving, scoped, rerunnable, and co
       assert.deepEqual(migrated.payload, payload);
     }
 
-    await pool.query(`truncate ${quotedSchema}.tenant_module_states`);
-    await pool.query(
-      `insert into ${quotedSchema}.tenant_module_states
+    yield* databaseEffect(pool.query(`truncate ${quotedSchema}.tenant_module_states`));
+    yield* databaseEffect(
+      pool.query(
+        `insert into ${quotedSchema}.tenant_module_states
         (record_id, tenant_id, module_key, payload, recorded_at)
        values ('legacy-collision', 'tenant-c', $1, '{}'::jsonb, now()),
               ('contacts-collision', 'tenant-c', $2, '{}'::jsonb, now())`,
-      [legacyModule, contactsModule],
+        [legacyModule, contactsModule],
+      ),
     );
-    await assert.rejects(() => pool.query(statements[0] ?? ''), /would collide/u);
-    const collisionRows = await pool.query<{ module_key: string }>(
-      `select module_key from ${quotedSchema}.tenant_module_states order by module_key`,
+    yield* databaseEffect(assert.rejects(pool.query(statements[0] ?? ''), /would collide/u));
+    const collisionRows = yield* databaseEffect(
+      pool.query<{ module_key: string }>(
+        `select module_key from ${quotedSchema}.tenant_module_states order by module_key`,
+      ),
     );
     assert.deepEqual(
       collisionRows.rows.map((row) => row.module_key),
       [contactsModule, legacyModule],
     );
-  } finally {
-    await pool.query(`drop schema if exists ${quotedSchema} cascade`);
-    await pool.end();
-  }
-});
+  }).pipe(
+    Effect.ensuring(
+      Effect.suspend(() =>
+        databaseEffect(pool.query(`drop schema if exists ${quotedSchema} cascade`)),
+      ).pipe(Effect.orDie),
+    ),
+  );
+}).pipe(Effect.scoped);
+
+effectTest(
+  'Contacts Core identity migration is preserving, scoped, rerunnable, and collision-safe',
+  contactsIdentityMigrationProgram,
+);

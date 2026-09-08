@@ -1,13 +1,23 @@
-import { afterEach, expect, rstest, test } from '@rstest/core';
-import { cleanup, render, screen } from '@testing-library/react';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
+import { Effect, Redacted } from 'effect';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
 
-const { navigateMock, runEffectRequestMock, signInMock } = rstest.hoisted(() => ({
-  navigateMock: rstest.fn(() => Promise.resolve()),
-  runEffectRequestMock: rstest.fn(() =>
-    Promise.resolve({
+const { navigateMock, runBrowserEffectMock, signInMock } = rstest.hoisted(() => ({
+  navigateMock: rstest.fn(async () => {}),
+  runBrowserEffectMock: rstest.fn(),
+  signInMock: rstest.fn(),
+}));
+
+beforeEach(() => {
+  runBrowserEffectMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await runEffectTestPromise(effect),
+  );
+  signInMock.mockReturnValue(
+    Effect.succeed({
       identity: {
         displayName: 'Ada',
         email: 'ada@example.test',
@@ -15,9 +25,8 @@ const { navigateMock, runEffectRequestMock, signInMock } = rstest.hoisted(() => 
         tenantId: 'tenant-1',
       },
     }),
-  ),
-  signInMock: rstest.fn(() => ({ operation: 'signIn' })),
-}));
+  );
+});
 
 const translations = new Map(
   Object.entries({
@@ -52,8 +61,11 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
-  runEffectRequest: runEffectRequestMock,
   signIn: signInMock,
+}));
+
+rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
+  runBrowserEffect: runBrowserEffectMock,
 }));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
@@ -89,151 +101,141 @@ test('shows the required login controls through the UI kit', () => {
   );
 });
 
-test('shows both field errors and one Toast when both values are missing', () => {
+interface LoginValidationCase {
+  readonly focus: 'login' | 'password' | 'submit';
+  readonly login: string;
+  readonly loginInvalid: boolean;
+  readonly name: string;
+  readonly password: string;
+  readonly passwordInvalid: boolean;
+}
+
+const focusTargets = {
+  login: getLogin,
+  password: getPassword,
+  submit: getSubmit,
+};
+
+const submitLogin = async (login: string, password: string) => {
+  const user = userEvent.setup();
+  renderLogin();
+  if (login.length > 0) {
+    await user.type(getLogin(), login);
+  }
+  if (password.length > 0) {
+    await user.type(getPassword(), password);
+  }
+  await user.click(getSubmit());
+  return user;
+};
+
+const validationCases: LoginValidationCase[] = [
+  {
+    focus: 'login',
+    login: '',
+    loginInvalid: true,
+    name: 'both values are missing',
+    password: '',
+    passwordInvalid: true,
+  },
+  {
+    focus: 'login',
+    login: '',
+    loginInvalid: true,
+    name: 'only the Password is present',
+    password: 'secret',
+    passwordInvalid: false,
+  },
+  {
+    focus: 'password',
+    login: 'admin',
+    loginInvalid: false,
+    name: 'only the Login is present',
+    password: '',
+    passwordInvalid: true,
+  },
+  {
+    focus: 'login',
+    login: '   ',
+    loginInvalid: true,
+    name: 'the Login holds only whitespace',
+    password: 'secret',
+    passwordInvalid: false,
+  },
+  {
+    focus: 'submit',
+    login: 'admin',
+    loginInvalid: false,
+    name: 'the Password is a single space',
+    password: ' ',
+    passwordInvalid: false,
+  },
+];
+
+test.each(validationCases)(
+  'marks, explains and focuses exactly the missing fields when $name',
+  async ({ focus, login, loginInvalid, password, passwordInvalid }) => {
+    await submitLogin(login, password);
+
+    const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
+    expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
+    expect(getPassword().getAttribute('aria-invalid')).toBe(passwordInvalid ? 'true' : null);
+    expect(screen.queryAllByText('Enter your login.')).toHaveLength(loginInvalid ? 1 : 0);
+    expect(screen.queryAllByText('Enter your password.')).toHaveLength(passwordInvalid ? 1 : 0);
+    expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(incompleteToasts);
+    expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(incompleteToasts);
+    expect(document.activeElement).toBe(focusTargets[focus]());
+  },
+);
+
+test('creates one Toast per repeated invalid submission', async () => {
+  const user = await submitLogin('', '');
+
+  await user.click(getSubmit());
+
+  expect(screen.getAllByText('Login details are incomplete')).toHaveLength(2);
+  expect(screen.getAllByText('Fill in both required fields.')).toHaveLength(2);
+});
+
+test('clears stale errors after both fields are corrected', async () => {
+  const user = await submitLogin('', '');
+
+  await user.type(getLogin(), 'admin');
+  await user.type(getPassword(), 'secret');
+  await user.click(getSubmit());
+
+  expect(getLogin().getAttribute('aria-invalid')).toBeNull();
+  expect(getPassword().getAttribute('aria-invalid')).toBeNull();
+  expect(screen.queryByText('Enter your login.')).toBeNull();
+  expect(screen.queryByText('Enter your password.')).toBeNull();
+});
+
+test('runs the same validation when submitted with Enter', async () => {
   const user = userEvent.setup();
   renderLogin();
 
-  return user.click(getSubmit()).then(() => {
-    const login = getLogin();
-    const password = getPassword();
+  await user.click(getLogin());
+  await user.keyboard('{Enter}');
 
-    expect(login.getAttribute('aria-invalid')).toBe('true');
-    expect(password.getAttribute('aria-invalid')).toBe('true');
-    expect(screen.getByText('Enter your login.')).toBeTruthy();
-    expect(screen.getByText('Enter your password.')).toBeTruthy();
-    expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
-    expect(screen.getByText('Fill in both required fields.')).toBeTruthy();
-    expect(document.activeElement).toBe(login);
+  expect(getLogin().getAttribute('aria-invalid')).toBe('true');
+  expect(getPassword().getAttribute('aria-invalid')).toBe('true');
+  expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
+  expect(document.activeElement).toBe(getLogin());
+});
+
+test('submits valid values through the Shell authentication client and navigates home', async () => {
+  await submitLogin('admin', 'secret');
+
+  await waitFor(() => {
+    expect(signInMock).toHaveBeenCalledWith(
+      {
+        email: 'admin',
+        password: Redacted.make('secret'),
+      },
+      { locale: 'en' },
+    );
+    expect(runBrowserEffectMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+    expect(screen.queryByText('Login details are incomplete')).toBeNull();
   });
-});
-
-test('creates one Toast per repeated invalid submission', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .click(getSubmit())
-    .then(() => user.click(getSubmit()))
-    .then(() => {
-      expect(screen.getAllByText('Login details are incomplete')).toHaveLength(2);
-      expect(screen.getAllByText('Fill in both required fields.')).toHaveLength(2);
-    });
-});
-
-test('shows only the Login error when the password is present', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .type(getPassword(), 'secret')
-    .then(() => user.click(getSubmit()))
-    .then(() => {
-      expect(getLogin().getAttribute('aria-invalid')).toBe('true');
-      expect(getPassword().getAttribute('aria-invalid')).toBeNull();
-      expect(screen.getByText('Enter your login.')).toBeTruthy();
-      expect(screen.queryByText('Enter your password.')).toBeNull();
-      expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
-      expect(document.activeElement).toBe(getLogin());
-    });
-});
-
-test('shows only the Password error when the login is present', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .type(getLogin(), 'admin')
-    .then(() => user.click(getSubmit()))
-    .then(() => {
-      expect(getLogin().getAttribute('aria-invalid')).toBeNull();
-      expect(getPassword().getAttribute('aria-invalid')).toBe('true');
-      expect(screen.queryByText('Enter your login.')).toBeNull();
-      expect(screen.getByText('Enter your password.')).toBeTruthy();
-      expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
-      expect(document.activeElement).toBe(getPassword());
-    });
-});
-
-test('treats a whitespace-only Login as missing', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .type(getLogin(), '   ')
-    .then(() => user.type(getPassword(), 'secret'))
-    .then(() => user.click(getSubmit()))
-    .then(() => {
-      expect(getLogin().getAttribute('aria-invalid')).toBe('true');
-      expect(screen.getByText('Enter your login.')).toBeTruthy();
-      expect(document.activeElement).toBe(getLogin());
-    });
-});
-
-test('accepts a non-empty whitespace Password', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .type(getLogin(), 'admin')
-    .then(() => user.type(getPassword(), ' '))
-    .then(() => user.click(getSubmit()))
-    .then(() => {
-      expect(getLogin().getAttribute('aria-invalid')).toBeNull();
-      expect(getPassword().getAttribute('aria-invalid')).toBeNull();
-      expect(screen.queryByText('Login details are incomplete')).toBeNull();
-    });
-});
-
-test('clears stale errors after both fields are corrected', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .click(getSubmit())
-    .then(() => user.type(getLogin(), 'admin'))
-    .then(() => user.type(getPassword(), 'secret'))
-    .then(() => user.click(getSubmit()))
-    .then(() => {
-      expect(getLogin().getAttribute('aria-invalid')).toBeNull();
-      expect(getPassword().getAttribute('aria-invalid')).toBeNull();
-      expect(screen.queryByText('Enter your login.')).toBeNull();
-      expect(screen.queryByText('Enter your password.')).toBeNull();
-    });
-});
-
-test('runs the same validation when submitted with Enter', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .click(getLogin())
-    .then(() => user.keyboard('{Enter}'))
-    .then(() => {
-      expect(getLogin().getAttribute('aria-invalid')).toBe('true');
-      expect(getPassword().getAttribute('aria-invalid')).toBe('true');
-      expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
-      expect(document.activeElement).toBe(getLogin());
-    });
-});
-
-test('submits valid values through the Shell authentication client and navigates home', () => {
-  const user = userEvent.setup();
-  renderLogin();
-
-  return user
-    .type(getLogin(), 'admin')
-    .then(() => user.type(getPassword(), 'secret'))
-    .then(() => user.click(getSubmit()))
-    .then(() => {
-      expect(signInMock).toHaveBeenCalledWith(
-        {
-          email: 'admin',
-          password: 'secret',
-        },
-        { locale: 'en' },
-      );
-      expect(runEffectRequestMock).toHaveBeenCalledTimes(1);
-      expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
-      expect(screen.queryByText('Login details are incomplete')).toBeNull();
-    });
 });

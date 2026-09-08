@@ -1,11 +1,13 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
-import { Effect, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import {
   decodeActionPayload,
   decodeActionResult,
   defineAction,
+  defineActionResourcePermission,
   validateActionDescriptorInput,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
@@ -14,35 +16,42 @@ import {
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
 
-test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
+const counterActionDescriptor = () =>
+  ({
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+    actionKey: 'shell.counter.change',
+    auditProfile: 'standard',
+    domainErrorSchema: Schema.Never,
+    domainEvents: {},
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      entrypointKey: 'shell.counter.change',
+      moduleKey: 'core.shell',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'optional',
+    owningModuleKey: 'core.shell',
+    payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+    policies: [],
+    schemaVersion: '1',
+  }) as const;
+
+void test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
   const registration = defineAction(
     {
-      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
-      actionKey: 'shell.counter.change',
-      auditProfile: 'standard',
-      domainErrorSchema: Schema.Never,
-      domainEvents: {},
-      entrypoint: defineSystemModuleEntrypoint({
-        access: 'write',
-        entrypointKey: 'shell.counter.change',
-        moduleKey: 'core.shell',
-        role: 'action',
-      }),
-      idempotency: 'required',
-      legalEntityScope: 'optional',
-      owningModuleKey: 'core.shell',
-      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
-      policies: [],
+      ...counterActionDescriptor(),
       resultSchema: Schema.Struct({ total: Schema.Finite }),
       schemaVersion: '1',
     },
     (payload) => Effect.succeed({ total: payload.amount }),
   );
 
-  const payload = await Effect.runPromise(
+  const payload = await runEffectTestPromise(
     decodeActionPayload(registration.descriptor.payloadSchema, { amount: 4 }),
   );
-  const result = await Effect.runPromise(
+  const result = await runEffectTestPromise(
     decodeActionResult(registration.descriptor.resultSchema, { total: payload.amount }),
   );
 
@@ -51,6 +60,52 @@ test('defines an immutable typed descriptor and decodes typed payloads and resul
   assert.equal(Object.isFrozen(registration), true);
   assert.equal(Object.isFrozen(registration.descriptor), true);
   assert.equal(Object.isFrozen(registration.descriptor.policies), true);
+});
+
+test('keeps the Resource permission resolver private behind an immutable declaration', () => {
+  const permission = defineActionResourcePermission<{ readonly counterpartyId: string }>(
+    ({ counterpartyId }) => ({
+      permission: 'write',
+      resource: {
+        moduleId: 'party.registry',
+        resourceId: counterpartyId,
+        resourceType: 'counterparty',
+      },
+    }),
+  );
+
+  assert.equal(Object.isFrozen(permission), true);
+  assert.deepEqual(Object.keys(permission), ['kind']);
+  assert.equal(permission.kind, 'resource');
+  assert.equal('resolver' in permission, false);
+});
+
+test('requires trusted Legal Entity scope for a Counterparty permission declaration', () => {
+  const entrypoint = defineTenantModuleEntrypoint({
+    access: 'write',
+    authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+    entrypointKey: 'party.registry.create-counterparty',
+    moduleKey: 'party.registry',
+    role: 'action',
+  });
+  assert.throws(() =>
+    validateActionDescriptorInput({
+      entrypoint,
+      legalEntityPermission: 'manage_counterparty',
+      legalEntityScope: 'optional',
+      owningModuleKey: 'party.registry',
+      policies: [],
+    }),
+  );
+  assert.doesNotThrow(() =>
+    validateActionDescriptorInput({
+      entrypoint,
+      legalEntityPermission: 'manage_counterparty',
+      legalEntityScope: 'required',
+      owningModuleKey: 'party.registry',
+      policies: [],
+    }),
+  );
 });
 
 test('uses Schema.Void for a no-payload Action', async () => {
@@ -63,6 +118,7 @@ test('uses Schema.Void for a no-payload Action', async () => {
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.cache.refresh',
         moduleKey: 'core.shell',
         role: 'action',
@@ -78,11 +134,11 @@ test('uses Schema.Void for a no-payload Action', async () => {
     () => Effect.void,
   );
 
-  const payload = await Effect.runPromise(
+  const payload = await runEffectTestPromise(
     // eslint-disable-next-line unicorn/no-useless-undefined -- Explicitly proves the Schema.Void payload contract.
     decodeActionPayload(registration.descriptor.payloadSchema, undefined),
   );
-  const invalid = await Effect.runPromise(
+  const invalid = await runEffectTestPromise(
     Effect.flip(decodeActionPayload(registration.descriptor.payloadSchema, {})),
   );
 
@@ -90,25 +146,10 @@ test('uses Schema.Void for a no-payload Action', async () => {
   assert.equal(invalid._tag, 'ActionPayloadValidationError');
 });
 
-test('keeps the private handler outside the public Action registration', () => {
+void test('keeps the private handler outside the public Action registration', () => {
   const registration = defineAction(
     {
-      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
-      actionKey: 'shell.counter.change',
-      auditProfile: 'standard',
-      domainErrorSchema: Schema.Never,
-      domainEvents: {},
-      entrypoint: defineSystemModuleEntrypoint({
-        access: 'write',
-        entrypointKey: 'shell.counter.change',
-        moduleKey: 'core.shell',
-        role: 'action',
-      }),
-      idempotency: 'required',
-      legalEntityScope: 'optional',
-      owningModuleKey: 'core.shell',
-      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
-      policies: [],
+      ...counterActionDescriptor(),
       resultSchema: Schema.Finite,
       schemaVersion: '1',
     },
@@ -119,8 +160,8 @@ test('keeps the private handler outside the public Action registration', () => {
   assert.deepEqual(Object.keys(registration), ['descriptor']);
 });
 
-test('rejects invalid declared results through a typed error', async () => {
-  const error = await Effect.runPromise(
+void test('rejects invalid declared results through a typed error', async () => {
+  const error = await runEffectTestPromise(
     Effect.flip(decodeActionResult(Schema.Struct({ id: Schema.String }), { id: 1 })),
   );
 
@@ -128,7 +169,22 @@ test('rejects invalid declared results through a typed error', async () => {
   assert.equal(error.code, 'action_result_invalid');
 });
 
-test('accepts global and same-owner Policy references and copies the collection', () => {
+void test('validates decoded DateTime and Option results through their encoded representation', async () => {
+  const resultSchema = Schema.Struct({
+    archivedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+    createdAt: Schema.DateTimeUtcFromString,
+  });
+  const decoded = Schema.decodeUnknownSync(resultSchema)({
+    archivedAt: null,
+    createdAt: '2026-09-07T10:30:00.000Z',
+  });
+  const result = await runEffectTestPromise(decodeActionResult(resultSchema, decoded));
+
+  assert.equal(Option.isNone(result.archivedAt), true);
+  assert.equal(DateTime.formatIso(result.createdAt), '2026-09-07T10:30:00.000Z');
+});
+
+void test('accepts global and same-owner Policy references and copies the collection', () => {
   const globalPolicy = defineGlobalPolicy<{ readonly amount: number }>({
     evaluate: () => Effect.void,
     policyKey: 'global.tenant-active.v1',
@@ -148,6 +204,7 @@ test('accepts global and same-owner Policy references and copies the collection'
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -170,7 +227,7 @@ test('accepts global and same-owner Policy references and copies the collection'
   assert.equal(registration.descriptor.policies[1], modulePolicy);
 });
 
-test('rejects cross-owner, string, copied, and missing Policy references at definition time', () => {
+void test('rejects cross-owner, string, copied, and missing Policy references at definition time', () => {
   const foreignPolicy = defineMicroverticalPolicy<unknown, 'billing.invoice'>({
     evaluate: () => Effect.void,
     owningModuleKey: 'billing.invoice',
@@ -184,6 +241,7 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -241,7 +299,7 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
   assert.throws(() => validateActionDescriptorInput(descriptor));
 });
 
-test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
+void test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
@@ -251,6 +309,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -270,6 +329,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'billing.invoice.reserve',
         moduleKey: 'billing.invoice',
         role: 'action',
@@ -281,6 +341,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -292,6 +353,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'core.modules.change-state',
         moduleKey: 'core.modules',
         role: 'action',

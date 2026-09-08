@@ -1,0 +1,5652 @@
+{
+  "id": "c148f7b8-9f63-4fad-ae8d-a158e5735c10",
+  "prevIds": [
+    "9582e86a-eff7-4b5c-8eb6-1492ff6f0f7f"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "core",
+      "entityType": "schemas"
+    },
+    {
+      "incrementBy": "1",
+      "minValue": "1",
+      "maxValue": "9223372036854775807",
+      "startWith": "1",
+      "cacheSize": 1,
+      "cycle": false,
+      "name": "domain_event_tenant_sequence_no_seq",
+      "schema": "core",
+      "entityType": "sequences"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "action_invocations",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "action_invocation_id"
+      ],
+      "nameExplicit": false,
+      "name": "action_invocations_pkey",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_binding_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_context_ref",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "impersonated_by_principal_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_method",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "anonymous_session_ref",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "trace_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "correlation_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_key",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "idempotency_key",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_module_key",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_type",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_id",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_hash",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "started_at",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "completed_at",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"action_invocations\".\"auth_method\" is null or \"core\".\"action_invocations\".\"auth_method\" in ('session', 'api_key', 'system', 'support_impersonation')",
+      "name": "core_action_invocations_auth_method_ck",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"action_invocations\".\"status\" in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')",
+      "name": "core_action_invocations_status_ck",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "action_invocation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_action_invocations_tenant_id_uk",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "action_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "principal_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "idempotency_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"core\".\"action_invocations\".\"idempotency_key\" is not null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_action_invocations_idempotency_uk",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "started_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_action_invocations_tenant_started_idx",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "target_module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "target_resource_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "target_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_action_invocations_target_idx",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "action_invocations_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_action_invocations_tenant_legal_entity_fk",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_action_invocations_tenant_principal_fk",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "auth_binding_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principal_auth_bindings",
+      "columnsTo": [
+        "tenant_id",
+        "principal_auth_binding_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_action_invocations_tenant_auth_binding_fk",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "impersonated_by_principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_action_invocations_tenant_impersonator_fk",
+      "schema": "core",
+      "table": "action_invocations",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "audit_events",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "audit_event_id"
+      ],
+      "nameExplicit": false,
+      "name": "audit_events_pkey",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "audit_event_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_binding_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_context_ref",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "impersonated_by_principal_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_method",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "event_type",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_stage",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_code",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audit_profile",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_module_key",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_type",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_id",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "name": "evidence_json",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "occurred_at",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"audit_events\".\"outcome\" in ('allowed', 'denied', 'succeeded', 'failed')",
+      "name": "core_audit_events_outcome_ck",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"audit_events\".\"outcome_stage\" in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')",
+      "name": "core_audit_events_stage_ck",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"audit_events\".\"audit_profile\" in ('standard', 'sensitive', 'minimal')",
+      "name": "core_audit_events_profile_ck",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "audit_event_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_audit_events_tenant_id_uk",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "occurred_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_audit_events_tenant_occurred_idx",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "action_invocation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_audit_events_action_idx",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "audit_events_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_audit_events_tenant_legal_entity_fk",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "action_invocations",
+      "columnsTo": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_audit_events_tenant_invocation_fk",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_audit_events_tenant_principal_fk",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "auth_binding_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principal_auth_bindings",
+      "columnsTo": [
+        "tenant_id",
+        "principal_auth_binding_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_audit_events_tenant_auth_binding_fk",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "impersonated_by_principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_audit_events_tenant_impersonator_fk",
+      "schema": "core",
+      "table": "audit_events",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "data_access_events",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "data_access_event_id"
+      ],
+      "nameExplicit": false,
+      "name": "data_access_events_pkey",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "data_access_event_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_binding_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_context_ref",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "impersonated_by_principal_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "auth_method",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_stage",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outcome_code",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "access_kind",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "serving_module_key",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_module_key",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_type",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_id",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "query_hash",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "result_count",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "result_fingerprint_schema",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "result_fingerprint_hash",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_policy_key",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_capture_mode",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_payload_json",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "redaction_profile",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "occurred_at",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"data_access_events\".\"outcome\" in ('allowed', 'denied', 'failed')",
+      "name": "core_data_access_events_outcome_ck",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"data_access_events\".\"outcome_stage\" in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')",
+      "name": "core_data_access_events_stage_ck",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"data_access_events\".\"access_kind\" in ('read', 'list', 'search', 'export', 'download')",
+      "name": "core_data_access_events_access_kind_ck",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"data_access_events\".\"evidence_capture_mode\" in ('metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact')",
+      "name": "core_data_access_events_capture_mode_ck",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "checks"
+    },
+    {
+      "value": "(\"core\".\"data_access_events\".\"evidence_capture_mode\" = 'redacted_payload' and \"core\".\"data_access_events\".\"redaction_profile\" is not null and \"core\".\"data_access_events\".\"evidence_payload_json\" is not null) or (\"core\".\"data_access_events\".\"evidence_capture_mode\" <> 'redacted_payload' and \"core\".\"data_access_events\".\"redaction_profile\" is null)",
+      "name": "core_data_access_events_redaction_ck",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "data_access_event_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_data_access_events_tenant_id_uk",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "occurred_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_data_access_events_tenant_occurred_idx",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "data_access_events_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_data_access_events_tenant_legal_entity_fk",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "action_invocations",
+      "columnsTo": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_data_access_events_tenant_invocation_fk",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_data_access_events_tenant_principal_fk",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "auth_binding_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principal_auth_bindings",
+      "columnsTo": [
+        "tenant_id",
+        "principal_auth_binding_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_data_access_events_tenant_auth_binding_fk",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "impersonated_by_principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_data_access_events_tenant_impersonator_fk",
+      "schema": "core",
+      "table": "data_access_events",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "domain_events",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "domain_event_id"
+      ],
+      "nameExplicit": false,
+      "name": "domain_events_pkey",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "domain_event_id",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "producer_module_key",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "event_type",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_module_key",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_resource_type",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_resource_id",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "name": "payload_json",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "nextval('core.domain_event_tenant_sequence_no_seq'::regclass)",
+      "generated": null,
+      "identity": null,
+      "name": "tenant_sequence_no",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "occurred_at",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "domain_event_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_domain_events_tenant_id_uk",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "tenant_sequence_no",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_domain_events_tenant_sequence_uk",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_resource_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_domain_events_subject_idx",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "domain_events_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_domain_events_tenant_legal_entity_fk",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "action_invocations",
+      "columnsTo": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_domain_events_tenant_invocation_fk",
+      "schema": "core",
+      "table": "domain_events",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "evidence_references",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "evidence_reference_id"
+      ],
+      "nameExplicit": false,
+      "name": "evidence_references_pkey",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "evidence_reference_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "media_asset_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_kind",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audit_event_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "data_access_event_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "domain_event_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_kind",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_module_key",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_resource_type",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_resource_id",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "evidence_policy_key",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retention_policy_key",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "artifact_content_sha256",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_lock_scope",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_lock_mode",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "false",
+      "generated": null,
+      "identity": null,
+      "name": "storage_legal_hold",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_retain_until",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_lock_status",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_lock_verified_at",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "name": "storage_lock_evidence_json",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retain_until",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_hold_until",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "disposition_status",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "data_classification",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "schema_key",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "deleted_at",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"evidence_references\".\"source_kind\" in ('action', 'audit', 'data_access', 'domain_event')",
+      "name": "core_evidence_references_source_kind_ck",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "checks"
+    },
+    {
+      "value": "num_nonnulls(\"core\".\"evidence_references\".\"action_invocation_id\", \"core\".\"evidence_references\".\"audit_event_id\", \"core\".\"evidence_references\".\"data_access_event_id\", \"core\".\"evidence_references\".\"domain_event_id\") = 1",
+      "name": "core_evidence_references_source_one_ck",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "checks"
+    },
+    {
+      "value": "num_nonnulls(\"core\".\"evidence_references\".\"subject_module_key\", \"core\".\"evidence_references\".\"subject_resource_type\", \"core\".\"evidence_references\".\"subject_resource_id\") in (0, 3)",
+      "name": "core_evidence_references_subject_all_ck",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"evidence_references\".\"disposition_status\" in ('active', 'expired', 'deleted', 'legal_hold')",
+      "name": "core_evidence_references_disposition_ck",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"evidence_references\".\"data_classification\" in ('internal', 'confidential', 'restricted')",
+      "name": "core_evidence_references_classification_ck",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_resource_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_evidence_references_subject_idx",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "evidence_references_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_evidence_tenant_legal_entity_fk",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "media_asset_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "media_assets",
+      "columnsTo": [
+        "tenant_id",
+        "media_asset_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_evidence_tenant_asset_fk",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "action_invocations",
+      "columnsTo": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_evidence_tenant_invocation_fk",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "audit_event_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "audit_events",
+      "columnsTo": [
+        "tenant_id",
+        "audit_event_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_evidence_tenant_audit_fk",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "data_access_event_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "data_access_events",
+      "columnsTo": [
+        "tenant_id",
+        "data_access_event_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_evidence_tenant_data_access_fk",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "domain_event_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "domain_events",
+      "columnsTo": [
+        "tenant_id",
+        "domain_event_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_evidence_tenant_domain_event_fk",
+      "schema": "core",
+      "table": "evidence_references",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "legal_entities",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "legal_entity_id"
+      ],
+      "nameExplicit": false,
+      "name": "legal_entities_pkey",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_name",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "registration_country",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "registration_number",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "vat_id",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"legal_entities\".\"status\" in ('active', 'suspended', 'archived')",
+      "name": "core_legal_entities_status_ck",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_legal_entities_tenant_id_uk",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "registration_country",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "registration_number",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_legal_entities_registration_uk",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_legal_entities_tenant_idx",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "legal_entities_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "legal_entities",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "media_assets",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "media_asset_id"
+      ],
+      "nameExplicit": false,
+      "name": "media_assets_pkey",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "media_asset_id",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ingested_by_principal_id",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ingestion_source",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "external_source_ref",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_provider",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_key",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storage_object_version_ref",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "original_filename",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "display_filename",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "mime_type",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "byte_size",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "content_sha256",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sealed_at",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "processing_status",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"media_assets\".\"ingestion_source\" in ('user', 'integration', 'import', 'system')",
+      "name": "core_media_assets_ingestion_source_ck",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"media_assets\".\"processing_status\" in ('uploaded', 'scanning', 'ready', 'failed')",
+      "name": "core_media_assets_processing_status_ck",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "media_asset_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_media_assets_tenant_id_uk",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "storage_provider",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "storage_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "storage_object_version_ref",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_media_assets_storage_uk",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_media_assets_tenant_idx",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "media_assets_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_media_assets_tenant_legal_entity_fk",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "ingested_by_principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_media_assets_tenant_principal_fk",
+      "schema": "core",
+      "table": "media_assets",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "media_links",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "media_link_id"
+      ],
+      "nameExplicit": false,
+      "name": "media_links_pkey",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "media_link_id",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "media_asset_id",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "linked_by_principal_id",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "link_source",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_module_key",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_type",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_resource_id",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "link_kind",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "deleted_at",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"media_links\".\"link_source\" in ('user', 'integration', 'import', 'system')",
+      "name": "core_media_links_source_ck",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "target_module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "target_resource_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "target_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_media_links_target_idx",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "media_links_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "media_asset_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "media_assets",
+      "columnsTo": [
+        "tenant_id",
+        "media_asset_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_media_links_tenant_asset_fk",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "linked_by_principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_media_links_tenant_principal_fk",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "action_invocations",
+      "columnsTo": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_media_links_tenant_invocation_fk",
+      "schema": "core",
+      "table": "media_links",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "outbox_attempts",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "outbox_attempt_id"
+      ],
+      "nameExplicit": false,
+      "name": "outbox_attempts_pkey",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "outbox_attempt_id",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outbox_delivery_id",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "started_at",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "finished_at",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "error_message",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "outbox_delivery_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "started_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_attempts_delivery_started_idx",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "outbox_delivery_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "outbox_deliveries",
+      "columnsTo": [
+        "outbox_delivery_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "outbox_attempts_outbox_delivery_id_outbox_deliveries_outbox_del",
+      "schema": "core",
+      "table": "outbox_attempts",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "outbox_deliveries",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "outbox_delivery_id"
+      ],
+      "nameExplicit": false,
+      "name": "outbox_deliveries_pkey",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "outbox_delivery_id",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outbox_message_id",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "worker_key",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "consumer_module_key",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'pending'",
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "attempts_count",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "available_at",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "claimed_by",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "claimed_at",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "claim_expires_at",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"outbox_deliveries\".\"status\" in ('pending', 'processing', 'done', 'dead')",
+      "name": "core_outbox_deliveries_status_ck",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"outbox_deliveries\".\"attempts_count\" >= 0",
+      "name": "core_outbox_deliveries_attempts_count_ck",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "outbox_message_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "worker_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_deliveries_message_worker_uk",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "available_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"core\".\"outbox_deliveries\".\"status\" = 'pending'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_deliveries_pending_idx",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "outbox_message_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_deliveries_message_idx",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "worker_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "status",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_deliveries_worker_status_idx",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "outbox_message_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "outbox_messages",
+      "columnsTo": [
+        "outbox_message_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "name": "outbox_deliveries_outbox_message_id_outbox_messages_outbox_mess",
+      "schema": "core",
+      "table": "outbox_deliveries",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "outbox_messages",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "outbox_message_id"
+      ],
+      "nameExplicit": false,
+      "name": "outbox_messages_pkey",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "outbox_message_id",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "domain_event_id",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "producer_module_key",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "topic",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "name": "payload_json",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "matched_at",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "columns"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "created_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"core\".\"outbox_messages\".\"matched_at\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_messages_unmatched_idx",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "outbox_messages_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "domain_event_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "domain_events",
+      "columnsTo": [
+        "tenant_id",
+        "domain_event_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_outbox_messages_tenant_domain_event_fk",
+      "schema": "core",
+      "table": "outbox_messages",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "principal_auth_bindings",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "principal_auth_binding_id"
+      ],
+      "nameExplicit": false,
+      "name": "principal_auth_bindings_pkey",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "principal_auth_binding_id",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provider",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_type",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provider_subject_id",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revoked_at",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"principal_auth_bindings\".\"provider\" in ('better_auth')",
+      "name": "core_auth_bindings_provider_ck",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"principal_auth_bindings\".\"subject_type\" in ('user', 'api_key')",
+      "name": "core_auth_bindings_subject_type_ck",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"principal_auth_bindings\".\"status\" in ('active', 'revoked', 'disabled')",
+      "name": "core_auth_bindings_status_ck",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "checks"
+    },
+    {
+      "value": "(\"core\".\"principal_auth_bindings\".\"status\" = 'revoked' and \"core\".\"principal_auth_bindings\".\"revoked_at\" is not null) or (\"core\".\"principal_auth_bindings\".\"status\" in ('active', 'disabled') and \"core\".\"principal_auth_bindings\".\"revoked_at\" is null)",
+      "name": "core_auth_bindings_lifecycle_ck",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "principal_auth_binding_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_auth_bindings_tenant_id_uk",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "provider",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "provider_subject_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_auth_bindings_subject_uk",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "provider",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "provider_subject_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"core\".\"principal_auth_bindings\".\"subject_type\" = 'api_key'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_auth_bindings_api_key_subject_global_uk",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "principal_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_auth_bindings_principal_idx",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "principal_auth_bindings_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_auth_bindings_tenant_principal_fk",
+      "schema": "core",
+      "table": "principal_auth_bindings",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "principals",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "principal_id"
+      ],
+      "nameExplicit": false,
+      "name": "principals_pkey",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "principal_id",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "display_name",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "disabled_at",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"principals\".\"kind\" in ('human', 'service', 'integration', 'agent', 'system')",
+      "name": "core_principals_kind_ck",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"principals\".\"status\" in ('active', 'disabled', 'archived')",
+      "name": "core_principals_status_ck",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "principal_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_principals_tenant_id_uk",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "kind",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_principals_tenant_kind_idx",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "principals_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "principals",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "search_index_entries",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "search_index_entry_id"
+      ],
+      "nameExplicit": false,
+      "name": "search_index_entries_pkey",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "search_index_entry_id",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_module_key",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_resource_type",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_resource_id",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "title",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "body_text",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "false",
+      "generated": null,
+      "identity": null,
+      "name": "deleted",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "name": "facets_json",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "projection_version",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"search_index_entries\".\"deleted\" or (length(btrim(\"core\".\"search_index_entries\".\"title\")) > 0 and length(\"core\".\"search_index_entries\".\"title\") <= 300 and length(\"core\".\"search_index_entries\".\"body_text\") <= 40000)",
+      "name": "core_search_index_entries_document_ck",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"search_index_entries\".\"projection_version\" > 0",
+      "name": "core_search_index_entries_version_ck",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_resource_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_resource_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_search_index_entries_source_uk",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "source_resource_type",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "deleted",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_search_index_entries_query_idx",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "search_index_entries_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "legal_entities",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_search_index_entries_tenant_legal_entity_fk",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "fks"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"core\".\"search_index_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "core_search_index_entries_tenant_select",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"core\".\"search_index_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "core_search_index_entries_tenant_insert",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"core\".\"search_index_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"core\".\"search_index_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "core_search_index_entries_tenant_update",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"core\".\"search_index_entries\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "core_search_index_entries_tenant_delete",
+      "schema": "core",
+      "table": "search_index_entries",
+      "entityType": "policies"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "tenant_module_state_changes",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "module_state_change_id"
+      ],
+      "nameExplicit": false,
+      "name": "tenant_module_state_changes_pkey",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "module_state_change_id",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "module_key",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "previous_state",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "new_state",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "changed_by_principal_id",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "change_source",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "occurred_at",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"tenant_module_state_changes\".\"change_source\" in ('user', 'support', 'system')",
+      "name": "core_module_state_changes_source_ck",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "checks"
+    },
+    {
+      "value": "\"core\".\"tenant_module_state_changes\".\"new_state\" in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')",
+      "name": "core_module_state_changes_new_state_ck",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "occurred_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_module_state_changes_tenant_module_idx",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tenant_module_state_changes_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "changed_by_principal_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_module_state_changes_tenant_principal_fk",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "fks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "action_invocations",
+      "columnsTo": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "core_module_state_changes_tenant_invocation_fk",
+      "schema": "core",
+      "table": "tenant_module_state_changes",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "tenant_module_states",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "tenant_module_state_id"
+      ],
+      "nameExplicit": false,
+      "name": "tenant_module_states_pkey",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tenant_module_state_id",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "module_key",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "columns"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "last_change_id",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"tenant_module_states\".\"state\" in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')",
+      "name": "core_module_states_state_ck",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "module_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_module_states_tenant_module_uk",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "indexes"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "tenant_module_states_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "tenant_module_states",
+      "entityType": "fks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "tenants",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "columns": [
+        "tenant_id"
+      ],
+      "nameExplicit": false,
+      "name": "tenants_pkey",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "pks"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "slug",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "default_locale",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "columns"
+    },
+    {
+      "value": "\"core\".\"tenants\".\"status\" in ('active', 'suspended', 'archived')",
+      "name": "core_tenants_status_ck",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "checks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "slug",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_tenants_slug_uk",
+      "schema": "core",
+      "table": "tenants",
+      "entityType": "indexes"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "worker_checkpoints",
+      "schema": "core",
+      "entityType": "tables"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "consumer_name",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "columns"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stream_key",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "columns"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "last_tenant_sequence_no",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "last_processed_at",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "columns"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "columns"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "consumer_name",
+        "stream_key"
+      ],
+      "nameExplicit": true,
+      "name": "core_worker_checkpoints_pk",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "tenant_id"
+      ],
+      "schemaTo": "core",
+      "tableTo": "tenants",
+      "columnsTo": [
+        "tenant_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "worker_checkpoints_tenant_id_tenants_tenant_id_fk",
+      "schema": "core",
+      "table": "worker_checkpoints",
+      "entityType": "fks"
+    }
+  ],
+  "renames": []
+}

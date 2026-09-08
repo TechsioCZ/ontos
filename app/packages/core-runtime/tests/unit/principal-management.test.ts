@@ -1,12 +1,16 @@
-// @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off
-/* eslint-disable no-await-in-loop -- The table-driven assertions intentionally preserve failure locality. */
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
-import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
+import { Effect, Option, flow } from 'effect';
+import type {
+  PrincipalManagementPersistence,
+  PrincipalManagementRepositoryService,
+} from '../../src/auth/principal-management.ts';
 import {
   bindApiKey,
   changePrincipalStatus,
+  PrincipalManagementRepository,
+  principalManagementRepositoryFromPersistence,
   setApiKeyBindingStatus,
   validateSupportImpersonation,
 } from '../../src/auth/principal-management.ts';
@@ -14,10 +18,16 @@ import {
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
 const authBindingId = '30000000-0000-4000-8000-000000000001';
+const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
+  test(
+    name,
+    flow(() => Effect.asVoid(effect), runEffectTestPromise),
+  );
+};
 
 const unconfigured = (operation: string) =>
-  Promise.reject(new Error(`${operation} is not configured in this test`));
-const repositoryDefaults: PrincipalManagementRepositoryService = {
+  Effect.die(`${operation} is not configured in this test`);
+const repositoryDefaults: PrincipalManagementPersistence = {
   createPrincipal: () => unconfigured('createPrincipal'),
   insertApiKeyBinding: () => unconfigured('insertApiKeyBinding'),
   loadApiKeyBinding: () => unconfigured('loadApiKeyBinding'),
@@ -27,223 +37,234 @@ const repositoryDefaults: PrincipalManagementRepositoryService = {
   updatePrincipalStatus: () => unconfigured('updatePrincipalStatus'),
 };
 const repository = (
-  overrides: Partial<PrincipalManagementRepositoryService>,
-): PrincipalManagementRepositoryService => ({ ...repositoryDefaults, ...overrides });
-const selectingPrincipal = (
-  record: Awaited<ReturnType<PrincipalManagementRepositoryService['loadPrincipal']>>,
-) => repository({ loadPrincipal: () => Promise.resolve(record) });
-const selectingBinding = (
-  record: Awaited<ReturnType<PrincipalManagementRepositoryService['loadApiKeyBinding']>>,
-) => repository({ loadApiKeyBinding: () => Promise.resolve(record) });
+  overrides: Partial<PrincipalManagementPersistence>,
+): PrincipalManagementRepositoryService =>
+  principalManagementRepositoryFromPersistence({ ...repositoryDefaults, ...overrides });
+
+type OptionValue<Outcome> = Outcome extends Option.Option<infer Value> ? Value : never;
+type PrincipalRecord = OptionValue<
+  Effect.Success<ReturnType<PrincipalManagementPersistence['loadPrincipal']>>
+>;
+type ApiKeyBindingRecord = OptionValue<
+  Effect.Success<ReturnType<PrincipalManagementPersistence['loadApiKeyBinding']>>
+>;
+
+const selectingPrincipal = (record: PrincipalRecord | undefined) =>
+  repository({ loadPrincipal: () => Effect.succeed(Option.fromNullishOr(record)) });
+const selectingBinding = (record: ApiKeyBindingRecord | undefined) =>
+  repository({ loadApiKeyBinding: () => Effect.succeed(Option.fromNullishOr(record)) });
 const repositoryForSupportParticipants = (
   results: readonly (readonly { readonly authBindingId: string }[])[],
 ) => {
   let call = 0;
   return repository({
-    loadSupportBindings: () => {
-      const result = results[call] ?? [];
-      call += 1;
-      return Promise.resolve(result);
-    },
+    loadSupportBindings: () =>
+      Effect.sync(() => {
+        const result = results[call] ?? [];
+        call += 1;
+        return result;
+      }),
   });
 };
 
-test('rejects human principal administration and managed keys targeting humans', async () => {
-  const transaction = selectingPrincipal({ kind: 'human', status: 'active' });
-  const principalError = await Effect.runPromise(
-    Effect.flip(
-      changePrincipalStatus(transaction, {
+const provideRepository = (service: PrincipalManagementRepositoryService) =>
+  Effect.provideService(PrincipalManagementRepository, service);
+
+effectTest(
+  'rejects human principal administration and managed keys targeting humans',
+  Effect.gen(function* rejectsHumanPrincipalAdministration() {
+    const transaction = selectingPrincipal({ kind: 'human', status: 'active' });
+    const principalError = yield* Effect.flip(
+      changePrincipalStatus({
         expectedStatus: 'active',
         newStatus: 'disabled',
         principalId,
         reason: 'Offboarding',
         tenantId,
-      }),
-    ),
-  );
-  const bindingError = await Effect.runPromise(
-    Effect.flip(
-      bindApiKey(transaction, {
+      }).pipe(provideRepository(transaction)),
+    );
+    const bindingError = yield* Effect.flip(
+      bindApiKey({
         managed: true,
         principalId,
         providerSubjectId: 'provider-key-id',
         tenantId,
-      }),
-    ),
-  );
+      }).pipe(provideRepository(transaction)),
+    );
 
-  assert.equal(principalError._tag, 'IdentityTargetInvalidError');
-  assert.equal(bindingError._tag, 'IdentityTargetInvalidError');
-});
+    assert.equal(principalError._tag, 'IdentityTargetInvalidError');
+    assert.equal(bindingError._tag, 'IdentityTargetInvalidError');
+  }),
+);
 
-test('enforces expected state, terminal revocation, and revocation reasons', async () => {
-  const conflictError = await Effect.runPromise(
-    Effect.flip(
-      setApiKeyBindingStatus(
-        selectingBinding({
-          bindingStatus: 'disabled',
-          principalKind: 'service',
-          principalStatus: 'active',
-        }),
-        {
-          authBindingId,
-          expectedStatus: 'active',
-          managed: true,
-          newStatus: 'revoked',
-          principalId,
-          reason: 'Rotate',
-          tenantId,
-        },
+effectTest(
+  'enforces expected state, terminal revocation, and revocation reasons',
+  Effect.gen(function* enforcesBindingLifecycle() {
+    const conflictError = yield* Effect.flip(
+      setApiKeyBindingStatus({
+        authBindingId,
+        expectedStatus: 'active',
+        managed: true,
+        newStatus: 'revoked',
+        principalId,
+        reason: 'Rotate',
+        tenantId,
+      }).pipe(
+        provideRepository(
+          selectingBinding({
+            bindingStatus: 'disabled',
+            principalKind: 'service',
+            principalStatus: 'active',
+          }),
+        ),
       ),
-    ),
-  );
-  const terminalError = await Effect.runPromise(
-    Effect.flip(
-      setApiKeyBindingStatus(
-        selectingBinding({
-          bindingStatus: 'revoked',
-          principalKind: 'service',
-          principalStatus: 'active',
-        }),
-        {
-          authBindingId,
-          expectedStatus: 'revoked',
-          managed: true,
-          newStatus: 'active',
-          principalId,
-          tenantId,
-        },
+    );
+    const terminalError = yield* Effect.flip(
+      setApiKeyBindingStatus({
+        authBindingId,
+        expectedStatus: 'revoked',
+        managed: true,
+        newStatus: 'active',
+        principalId,
+        tenantId,
+      }).pipe(
+        provideRepository(
+          selectingBinding({
+            bindingStatus: 'revoked',
+            principalKind: 'service',
+            principalStatus: 'active',
+          }),
+        ),
       ),
-    ),
-  );
-  const reasonError = await Effect.runPromise(
-    Effect.flip(
-      setApiKeyBindingStatus(
-        selectingBinding({
-          bindingStatus: 'active',
-          principalKind: 'service',
-          principalStatus: 'active',
-        }),
-        {
-          authBindingId,
-          expectedStatus: 'active',
-          managed: true,
-          newStatus: 'revoked',
-          principalId,
-          reason: '   ',
-          tenantId,
-        },
+    );
+    const reasonError = yield* Effect.flip(
+      setApiKeyBindingStatus({
+        authBindingId,
+        expectedStatus: 'active',
+        managed: true,
+        newStatus: 'revoked',
+        principalId,
+        reason: '   ',
+        tenantId,
+      }).pipe(
+        provideRepository(
+          selectingBinding({
+            bindingStatus: 'active',
+            principalKind: 'service',
+            principalStatus: 'active',
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  assert.equal(conflictError._tag, 'IdentityLifecycleConflictError');
-  assert.equal(terminalError._tag, 'IdentityLifecycleConflictError');
-  assert.equal(reasonError._tag, 'IdentityTargetInvalidError');
-});
+    assert.equal(conflictError._tag, 'IdentityLifecycleConflictError');
+    assert.equal(terminalError._tag, 'IdentityLifecycleConflictError');
+    assert.equal(reasonError._tag, 'IdentityTargetInvalidError');
+  }),
+);
 
-test('rejects managed binding transitions for human or inactive targets', async () => {
-  const records = [
-    { bindingStatus: 'active', principalKind: 'human', principalStatus: 'active' },
-    { bindingStatus: 'active', principalKind: 'service', principalStatus: 'disabled' },
-  ] satisfies readonly NonNullable<
-    Awaited<ReturnType<PrincipalManagementRepositoryService['loadApiKeyBinding']>>
-  >[];
-  for (const record of records) {
-    const error = await Effect.runPromise(
-      Effect.flip(
-        setApiKeyBindingStatus(selectingBinding(record), {
-          authBindingId,
-          expectedStatus: 'active',
-          managed: true,
-          newStatus: 'disabled',
-          principalId,
-          tenantId,
+effectTest(
+  'rejects managed binding transitions for human or inactive targets',
+  Effect.gen(function* rejectsIneligibleBindingTargets() {
+    const records = [
+      { bindingStatus: 'active', principalKind: 'human', principalStatus: 'active' },
+      { bindingStatus: 'active', principalKind: 'service', principalStatus: 'disabled' },
+    ] satisfies readonly ApiKeyBindingRecord[];
+    yield* Effect.all(
+      records.map((record) =>
+        Effect.gen(function* rejectsIneligibleBindingTarget() {
+          const error = yield* Effect.flip(
+            setApiKeyBindingStatus({
+              authBindingId,
+              expectedStatus: 'active',
+              managed: true,
+              newStatus: 'disabled',
+              principalId,
+              tenantId,
+            }).pipe(provideRepository(selectingBinding(record))),
+          );
+          assert.equal(error._tag, 'IdentityTargetInvalidError');
         }),
       ),
     );
-    assert.equal(error._tag, 'IdentityTargetInvalidError');
-  }
-});
+  }),
+);
 
-test('binds only eligible active self and managed principal kinds without secret material', async () => {
-  let inserted:
-    | Parameters<PrincipalManagementRepositoryService['insertApiKeyBinding']>[0]
-    | undefined;
-  const transaction = repository({
-    insertApiKeyBinding: (value) => {
-      inserted = value;
-      return Promise.resolve({ authBindingId });
-    },
-    loadPrincipal: () => Promise.resolve({ kind: 'service', status: 'active' }),
-  });
-  const result = await Effect.runPromise(
-    bindApiKey(transaction, {
+effectTest(
+  'binds only eligible active self and managed principal kinds without secret material',
+  Effect.gen(function* bindsEligiblePrincipal() {
+    let inserted: Parameters<PrincipalManagementPersistence['insertApiKeyBinding']>[0] | undefined;
+    const transaction = repository({
+      insertApiKeyBinding: (value) =>
+        Effect.sync(() => {
+          inserted = value;
+          return Option.some({ authBindingId });
+        }),
+      loadPrincipal: () => Effect.succeed(Option.some({ kind: 'service', status: 'active' })),
+    });
+    const result = yield* bindApiKey({
       managed: true,
       principalId,
       providerSubjectId: 'provider-key-id',
       tenantId,
-    }),
-  );
+    }).pipe(provideRepository(transaction));
 
-  assert.deepEqual(result, { authBindingId, status: 'active' });
-  assert.equal(inserted?.providerSubjectId, 'provider-key-id');
-  assert.equal('key' in (inserted ?? {}), false);
-  assert.equal('secret' in (inserted ?? {}), false);
-  assert.equal('hash' in (inserted ?? {}), false);
-});
+    assert.deepEqual(result, { authBindingId, status: 'active' });
+    assert.equal(inserted?.providerSubjectId, 'provider-key-id');
+    assert.equal('key' in (inserted ?? {}), false);
+    assert.equal('secret' in (inserted ?? {}), false);
+    assert.equal('hash' in (inserted ?? {}), false);
+  }),
+);
 
-test('maps wrapped PostgreSQL uniqueness failures to a lifecycle conflict', async () => {
-  const transaction = repository({
-    insertApiKeyBinding: () =>
-      Promise.reject(
-        new Error('Drizzle query failed', {
-          cause: Object.assign(new Error('duplicate key'), { code: '23505' }),
-        }),
-      ),
-    loadPrincipal: () => Promise.resolve({ kind: 'service', status: 'active' }),
-  });
+effectTest(
+  'maps an existing API key binding to a lifecycle conflict',
+  Effect.gen(function* mapsExistingBindingToConflict() {
+    const transaction = repository({
+      insertApiKeyBinding: () => Effect.succeed(Option.none()),
+      loadPrincipal: () => Effect.succeed(Option.some({ kind: 'service', status: 'active' })),
+    });
 
-  const error = await Effect.runPromise(
-    Effect.flip(
-      bindApiKey(transaction, {
+    const error = yield* Effect.flip(
+      bindApiKey({
         managed: true,
         principalId,
         providerSubjectId: 'duplicate-provider-key-id',
         tenantId,
-      }),
-    ),
-  );
+      }).pipe(provideRepository(transaction)),
+    );
 
-  assert.equal(error._tag, 'IdentityLifecycleConflictError');
-});
+    assert.equal(error._tag, 'IdentityLifecycleConflictError');
+  }),
+);
 
-test('requires exactly one active tenant-local user binding for both impersonation participants', async () => {
-  const original = [{ authBindingId }];
-  const target = [{ authBindingId: '30000000-0000-4000-8000-000000000002' }];
-  const input: Parameters<typeof validateSupportImpersonation>[1] = {
-    checkpoint: 'requested',
-    originalAuthBindingId: authBindingId,
-    originalPrincipalId: principalId,
-    targetPrincipalId: '20000000-0000-4000-8000-000000000002',
-    tenantId,
-  };
+effectTest(
+  'requires exactly one active tenant-local user binding for both impersonation participants',
+  Effect.gen(function* validatesSupportParticipants() {
+    const original = [{ authBindingId }];
+    const target = [{ authBindingId: '30000000-0000-4000-8000-000000000002' }];
+    const input: Parameters<typeof validateSupportImpersonation>[0] = {
+      checkpoint: 'requested',
+      originalAuthBindingId: authBindingId,
+      originalPrincipalId: principalId,
+      targetPrincipalId: '20000000-0000-4000-8000-000000000002',
+      tenantId,
+    };
 
-  await Effect.runPromise(
-    validateSupportImpersonation(repositoryForSupportParticipants([original, target]), input),
-  );
-  const error = await Effect.runPromise(
-    Effect.flip(
-      validateSupportImpersonation(repositoryForSupportParticipants([original, []]), input),
-    ),
-  );
+    yield* validateSupportImpersonation(input).pipe(
+      provideRepository(repositoryForSupportParticipants([original, target])),
+    );
+    const error = yield* Effect.flip(
+      validateSupportImpersonation(input).pipe(
+        provideRepository(repositoryForSupportParticipants([original, []])),
+      ),
+    );
 
-  assert.equal(error._tag, 'IdentityTargetInvalidError');
+    assert.equal(error._tag, 'IdentityTargetInvalidError');
 
-  await Effect.runPromise(
-    validateSupportImpersonation(repositoryForSupportParticipants([original, target]), {
+    yield* validateSupportImpersonation({
       ...input,
       checkpoint: 'stopped',
-    }),
-  );
-});
+    }).pipe(provideRepository(repositoryForSupportParticipants([original, target])));
+  }),
+);

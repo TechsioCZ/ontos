@@ -1,4 +1,10 @@
 import { Schema } from 'effect';
+import {
+  decodedStringBrand,
+  nonEmptyString,
+  TargetModuleKeySchema,
+  TargetResourceIdSchema,
+} from './string-schemas.ts';
 import type { Effect } from 'effect';
 import type {
   DataAccessEventInput,
@@ -13,15 +19,17 @@ import type { OperationalScope } from '../operations/context.ts';
 export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
 
-const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
+const CorrelationIdSchema = decodedStringBrand(nonEmptyString, 'CorrelationId');
+const IdempotencyKeySchema = decodedStringBrand(nonEmptyString, 'IdempotencyKey');
+const TraceIdSchema = decodedStringBrand(nonEmptyString, 'TraceId');
 
 export const ActionTransportMetadataSchema = Schema.Struct({
-  correlationId: nonEmptyString,
-  idempotencyKey: Schema.optionalKey(nonEmptyString),
-  targetModuleKey: Schema.optionalKey(nonEmptyString),
-  targetResourceId: Schema.optionalKey(nonEmptyString),
+  correlationId: CorrelationIdSchema,
+  idempotencyKey: Schema.optionalKey(IdempotencyKeySchema),
+  targetModuleKey: Schema.optionalKey(TargetModuleKeySchema),
+  targetResourceId: Schema.optionalKey(TargetResourceIdSchema),
   targetResourceType: Schema.optionalKey(nonEmptyString),
-  traceId: Schema.optionalKey(nonEmptyString),
+  traceId: Schema.optionalKey(TraceIdSchema),
 });
 
 export type ActionTransportMetadata = Schema.Schema.Type<typeof ActionTransportMetadataSchema>;
@@ -34,11 +42,11 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
     domainEvent: DomainEventReference,
     message: OutboxMessage,
   ) => Effect.Effect<void, ActionCollectorError>;
-  readonly recordDataAccess: (
-    event: DataAccessEventInput,
-  ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
+  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordDataAccess: (
+    event: DataAccessEventInput,
   ) => Effect.Effect<void, ActionCollectorError>;
 }
 

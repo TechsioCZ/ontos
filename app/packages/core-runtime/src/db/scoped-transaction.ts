@@ -1,8 +1,7 @@
-// @effect-diagnostics asyncFunction:off
 import { sql } from 'drizzle-orm';
-import { Effect } from 'effect';
-import { pgPolicy } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { pgPolicy } from 'drizzle-orm/pg-core';
+import { Context, Effect, Option } from 'effect';
 import type { OperationalScope } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { CoreTransaction } from './types.ts';
@@ -11,9 +10,9 @@ const scopedTransaction: unique symbol = Symbol('@app/core-runtime/db/scoped-tra
 
 /** Private owner-factory capability. It is never supplied to an Action or read handler. */
 export interface ScopedTransactionExecutor {
-  readonly [scopedTransaction]: true;
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
+  readonly [scopedTransaction]: true;
   readonly select: CoreTransaction['select'];
   readonly update: CoreTransaction['update'];
 }
@@ -26,75 +25,92 @@ interface SettingRow extends Record<string, unknown> {
 export interface OperationalScopeTransactionService {
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
-  readonly install: (scope: OperationalScope) => Promise<void>;
+  readonly install: (scope: OperationalScope) => Effect.Effect<void, OperationContextUnavailable>;
   readonly select: CoreTransaction['select'];
   readonly update: CoreTransaction['update'];
-  readonly verify: () => Promise<SettingRow | undefined>;
+  readonly verify: Effect.Effect<Option.Option<SettingRow>, OperationContextUnavailable>;
 }
+
+export class OperationalScopeTransaction extends Context.Service<
+  OperationalScopeTransaction,
+  OperationalScopeTransactionService
+>()('@app/core-runtime/db/scoped-transaction/OperationalScopeTransaction') {}
+
+const operationContextUnavailable = (cause?: unknown) => {
+  const failure = new OperationContextUnavailable({
+    code: 'operation_context_unavailable',
+    reason: 'The database operation scope could not be installed',
+  });
+  if (cause !== undefined) {
+    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+  }
+  return failure;
+};
 
 const operationalScopeTransactionFromCoreTransaction = (
   transaction: CoreTransaction,
 ): OperationalScopeTransactionService => ({
   delete: transaction.delete.bind(transaction),
   insert: transaction.insert.bind(transaction),
-  install: async (scope) => {
-    await transaction.execute(
-      sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
-    );
-  },
+  install: (scope) =>
+    transaction
+      .execute(
+        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
+        'objects',
+      )
+      .pipe(Effect.mapError(operationContextUnavailable), Effect.asVoid),
   select: transaction.select.bind(transaction),
   update: transaction.update.bind(transaction),
-  verify: async () => {
-    const verified = await transaction.execute<SettingRow>(sql`
+  verify: transaction
+    .execute<SettingRow>(
+      sql`
       select
         current_setting('ontos.tenant_id', true) as tenant_id,
         current_setting('ontos.legal_entity_id', true) as legal_entity_id
-    `);
-    return verified.rows[0];
-  },
+    `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(operationContextUnavailable),
+      Effect.map((verified) => Option.fromUndefinedOr(verified[0])),
+    ),
 });
 
-export const installOperationalScopeFromTransactionService = (
-  transaction: OperationalScopeTransactionService,
-  scope: OperationalScope,
-): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
-  Effect.tryPromise({
-    catch: () =>
-      new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'The database operation scope could not be installed',
-      }),
-    try: async () => {
-      await transaction.install(scope);
-      const setting = await transaction.verify();
-      if (
-        setting?.tenant_id !== scope.tenantId ||
-        setting.legal_entity_id !== (scope.legalEntityId ?? '')
-      ) {
-        throw new Error('Transaction-local operation scope verification failed');
-      }
-      return Object.freeze({
-        [scopedTransaction]: true as const,
-        delete: transaction.delete.bind(transaction),
-        insert: transaction.insert.bind(transaction),
-        select: transaction.select.bind(transaction),
-        update: transaction.update.bind(transaction),
-      });
-    },
+export const installOperationalScopeFromTransactionService = Effect.fn(
+  'installOperationalScopeFromTransactionService',
+)(function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
+  const transaction = yield* OperationalScopeTransaction;
+  yield* transaction.install(scope);
+  const setting = yield* transaction.verify;
+  if (
+    Option.isNone(setting) ||
+    setting.value.tenant_id !== scope.tenantId ||
+    setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
+  ) {
+    return yield* operationContextUnavailable();
+  }
+  return Object.freeze({
+    delete: transaction.delete.bind(transaction),
+    insert: transaction.insert.bind(transaction),
+    [scopedTransaction]: true as const,
+    select: transaction.select.bind(transaction),
+    update: transaction.update.bind(transaction),
   });
+});
 
 export const installOperationalScope = (
   transaction: CoreTransaction,
   scope: OperationalScope,
 ): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
-  installOperationalScopeFromTransactionService(
-    operationalScopeTransactionFromCoreTransaction(transaction),
-    scope,
+  installOperationalScopeFromTransactionService(scope).pipe(
+    Effect.updateContext((context: Context.Context<never>) =>
+      Context.add(
+        context,
+        OperationalScopeTransaction,
+        operationalScopeTransactionFromCoreTransaction(transaction),
+      ),
+    ),
   );
-
-/** Marks an owner table as RLS-governed while preserving its concrete Drizzle type. */
-export const enableGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>
-  table.enableRLS();
 
 export const tenantRlsPolicies = (prefix: string, tenantColumn: AnyPgColumn) => {
   const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;

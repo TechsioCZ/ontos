@@ -1,0 +1,3 @@
+# These regression inputs intentionally retain CRLF (and, in one case, a BOM).
+no-promise-first-scaffold-templates/invalid/scripts/scaffolding/edge-crlf/scaffold.mts -text whitespace=cr-at-eol
+no-unjustified-file-wide-lint-suppression/invalid/packages/core-runtime/src/evasion-bom-crlf.ts -text whitespace=cr-at-eol

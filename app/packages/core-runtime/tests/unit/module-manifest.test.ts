@@ -1,6 +1,7 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, flow } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 import { defineAction } from '../../src/actions/definition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -19,6 +20,7 @@ import {
 } from '../../src/modules/runtime-registration.ts';
 
 const componentValue = () => null;
+const UnitId = Schema.String.pipe(Schema.brand('UnitId'));
 
 const createAction = (owner = 'property.registry') =>
   defineAction(
@@ -30,6 +32,7 @@ const createAction = (owner = 'property.registry') =>
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: `${owner}.create-unit`,
         moduleKey: owner,
         role: 'action',
@@ -88,7 +91,7 @@ const emptyManifestInput = () => ({
   },
 });
 
-test('defines a valid empty manifest, preserves literals, and freezes its public shape', () => {
+void test('defines a valid empty manifest, preserves literals, and freezes its public shape', () => {
   const manifest = defineOntosModuleManifest(emptyManifestInput());
   const literal: 'property.registry' = manifest.module.id;
 
@@ -104,106 +107,123 @@ test('defines a valid empty manifest, preserves literals, and freezes its public
   );
 });
 
-test('accepts populated typed surfaces and keeps executable values out of safe descriptors', () => {
-  const action = createAction();
-  const apiValue = HttpApi.make('PropertyApi').add(
-    HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),
-  );
-  const manifest = defineOntosModuleManifest({
-    ...emptyManifestInput(),
-    publicSurface: {
-      actions: [action],
-      api: { PropertyClient: apiValue },
-      components: { PropertyUnitCard: componentValue },
-      events: [
-        {
-          key: 'property.unit-created',
-          owningModuleId: 'property.registry',
-          payloadSchema: Schema.Struct({ unitId: Schema.String }),
-          referencesResourceTypes: ['property.unit'],
-          tense: 'past',
-          visibility: 'public_module_event',
-        },
-      ],
-      reports: [
-        {
-          accessFiltering: 'legal_entity_scope',
-          dimensions: ['legal_entity'],
-          key: 'property.unit-inventory',
-          label: 'Unit inventory',
-          owningModuleId: 'property.registry',
-          resourceTypes: ['property.unit'],
-        },
-      ],
-      resourceTypes: [
-        {
-          capabilities: {
-            graphVisible: true,
-            linkable: true,
-            mediaAttachable: true,
-            searchable: true,
-            timelineVisible: true,
+test(
+  'accepts populated typed surfaces and keeps executable values out of safe descriptors',
+  flow(
+    () =>
+      Effect.gen(function* verifySafeDescriptors() {
+        const action = createAction();
+        const apiValue = HttpApi.make('PropertyApi').add(
+          HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),
+        );
+        const parameterizedApiValue = HttpApi.make('PropertyDetailApi').add(
+          HttpApiGroup.make('propertyDetail').add(
+            HttpApiEndpoint.get('getUnit', '/units/:unitId', {
+              headers: {},
+              params: { unitId: UnitId },
+              query: {},
+            }),
+          ),
+        );
+        const manifest = defineOntosModuleManifest({
+          ...emptyManifestInput(),
+          publicSurface: {
+            actions: [action],
+            api: { PropertyClient: apiValue, PropertyDetail: parameterizedApiValue },
+            components: { PropertyUnitCard: componentValue },
+            events: [
+              {
+                key: 'property.unit-created',
+                owningModuleId: 'property.registry',
+                payloadSchema: Schema.Struct({ unitId: UnitId }),
+                referencesResourceTypes: ['property.unit'],
+                tense: 'past',
+                visibility: 'public_module_event',
+              },
+            ],
+            reports: [
+              {
+                accessFiltering: 'legal_entity_scope',
+                dimensions: ['legal_entity'],
+                key: 'property.unit-inventory',
+                label: 'Unit inventory',
+                owningModuleId: 'property.registry',
+                resourceTypes: ['property.unit'],
+              },
+            ],
+            resourceTypes: [
+              {
+                capabilities: {
+                  graphVisible: true,
+                  linkable: true,
+                  mediaAttachable: true,
+                  searchable: true,
+                  timelineVisible: true,
+                },
+                description: 'A physical unit',
+                key: 'property.unit',
+                label: 'Unit',
+                owningModuleId: 'property.registry',
+              },
+            ],
+            search: [
+              {
+                accessFiltering: 'legal_entity_scope',
+                key: 'property.unit-search',
+                owningModuleId: 'property.registry',
+                resourceType: 'property.unit',
+              },
+            ],
+            shellContributions: emptyManifestInput().publicSurface.shellContributions,
           },
-          description: 'A physical unit',
-          key: 'property.unit',
-          label: 'Unit',
-          owningModuleId: 'property.registry',
-        },
-      ],
-      search: [
-        {
-          accessFiltering: 'legal_entity_scope',
-          key: 'property.unit-search',
-          owningModuleId: 'property.registry',
-          resourceType: 'property.unit',
-        },
-      ],
-      shellContributions: emptyManifestInput().publicSurface.shellContributions,
-    },
-  });
-  const registration = defineVerticalRuntimeRegistration({
-    actions: [action],
-    entrypoints: {
-      api: { resource: () => apiValue },
-      components: { dashboard: () => componentValue },
-      pages: {},
-      reports: {},
-      search: {},
-    },
-    manifest,
-    outboxWorkers: [],
-  });
-  const descriptors = extractVerticalRuntimeSafeDescriptors(registration);
+        });
+        const registration = defineVerticalRuntimeRegistration({
+          actions: [action],
+          entrypoints: {
+            api: { resource: flow(() => Effect.succeed(apiValue), runEffectTestPromise) },
+            components: {
+              dashboard: flow(() => Effect.succeed(componentValue), runEffectTestPromise),
+            },
+            pages: {},
+            reports: {},
+            search: {},
+          },
+          manifest,
+          outboxWorkers: [],
+        });
+        const descriptors = extractVerticalRuntimeSafeDescriptors(registration);
 
-  assert.equal(manifest.publicSurface.actions[0], action);
-  assert.equal(manifest.publicSurface.api['PropertyClient'], apiValue);
-  assert.equal(manifest.publicSurface.components['PropertyUnitCard'], componentValue);
-  assert.deepEqual(Object.keys(registration), ['moduleId']);
-  assert.equal(getVerticalRuntimeActions(registration)[0], action);
-  assert.equal(
-    getVerticalRuntimeEntrypoints(registration).components['dashboard']?.(),
-    componentValue,
-  );
-  assert.deepEqual(descriptors, {
-    actions: [
-      {
-        actionKey: 'property.registry.create-unit',
-        auditProfile: 'standard',
-        idempotency: 'required',
-        legalEntityScope: 'optional',
-        owningModuleId: 'property.registry',
-        schemaVersion: '1',
-      },
-    ],
-    moduleId: 'property.registry',
-    outboxSubscriptions: [],
-    shellContributions: emptyManifestInput().publicSurface.shellContributions,
-  });
-  assert.equal(JSON.stringify(descriptors).includes('handler'), false);
-  assert.equal(JSON.stringify(descriptors).includes('dashboard'), false);
-});
+        assert.equal(manifest.publicSurface.actions[0], action);
+        assert.equal(manifest.publicSurface.api.PropertyClient, apiValue);
+        assert.equal(manifest.publicSurface.api.PropertyDetail, parameterizedApiValue);
+        assert.equal(manifest.publicSurface.components.PropertyUnitCard, componentValue);
+        assert.deepEqual(Object.keys(registration), ['moduleId']);
+        assert.equal(getVerticalRuntimeActions(registration)[0], action);
+        const loadDashboard = getVerticalRuntimeEntrypoints(registration).components['dashboard'];
+        assert.ok(loadDashboard);
+        assert.equal(yield* Effect.promise(loadDashboard), componentValue);
+        assert.deepEqual(descriptors, {
+          actions: [
+            {
+              actionKey: 'property.registry.create-unit',
+              auditProfile: 'standard',
+              entrypoint: action.descriptor.entrypoint,
+              idempotency: 'required',
+              legalEntityScope: 'optional',
+              owningModuleId: 'property.registry',
+              schemaVersion: '1',
+            },
+          ],
+          moduleId: 'property.registry',
+          outboxSubscriptions: [],
+          shellContributions: emptyManifestInput().publicSurface.shellContributions,
+        });
+      }),
+    runEffectTestPromise,
+  ),
+);
 
-test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
+void test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
   assert.throws(() =>
     defineOntosModuleManifest({
       ...emptyManifestInput(),
@@ -295,7 +315,7 @@ test('rejects invalid identities, private fields, duplicates, cross-owner values
   );
 });
 
-test('deployment contract decoding is exact and versioned', () => {
+void test('deployment contract decoding is exact and versioned', () => {
   const contract = {
     deployment: { appId: 'property-registry', buildMarker: 'build-1' },
     manifest: {

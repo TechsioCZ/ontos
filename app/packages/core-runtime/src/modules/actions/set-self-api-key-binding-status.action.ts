@@ -4,25 +4,25 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import {
-  principalManagementRepositoryFromTransaction,
-  setApiKeyBindingStatus,
-} from '../../auth/principal-management.ts';
+import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
+import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const uuid = Schema.String.check(Schema.isUUID());
+const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AuthBindingId'),
+);
 const status = Schema.Literals(['active', 'disabled', 'revoked']);
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const SetSelfApiKeyBindingStatusPayloadSchema = Schema.Union([
+const SetSelfApiKeyBindingStatusPayloadSchema = Schema.Union([
   Schema.Struct({
-    authBindingId: uuid,
+    authBindingId: AuthBindingIdSchema,
     expectedStatus: status,
     newStatus: Schema.Literals(['active', 'disabled']),
     reason: Schema.optionalKey(reason),
   }),
   Schema.Struct({
-    authBindingId: uuid,
+    authBindingId: AuthBindingIdSchema,
     expectedStatus: status,
     newStatus: Schema.Literal('revoked'),
     reason,
@@ -31,23 +31,18 @@ export const SetSelfApiKeyBindingStatusPayloadSchema = Schema.Union([
 export type SetSelfApiKeyBindingStatusPayload = Schema.Schema.Type<
   typeof SetSelfApiKeyBindingStatusPayloadSchema
 >;
-export const SetSelfApiKeyBindingStatusResultSchema = Schema.Struct({
+const SetSelfApiKeyBindingStatusResultSchema = Schema.Struct({
   previousStatus: status,
   status,
 });
-export type SetSelfApiKeyBindingStatusResult = Schema.Schema.Type<
-  typeof SetSelfApiKeyBindingStatusResultSchema
->;
-type Input = Parameters<typeof setApiKeyBindingStatus>[1];
-type Result = ReturnType<typeof setApiKeyBindingStatus>;
-const handle = (
-  payload: SetSelfApiKeyBindingStatusPayload,
-  context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
-    { readonly setStatus: (input: Input) => Result }
-  >,
-) =>
-  Effect.gen(function* setSelfApiKeyBindingStatusHandler() {
+const handle = Effect.fn('SetSelfApiKeyBindingStatusAction.handle')(
+  function* setSelfApiKeyBindingStatusActionHandle(
+    payload: SetSelfApiKeyBindingStatusPayload,
+    context: ActionHandlerContext<
+      Readonly<Record<never, never>>,
+      { readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'] }
+    >,
+  ) {
     const result = yield* context.services.setStatus({
       ...payload,
       managed: false,
@@ -64,7 +59,8 @@ const handle = (
       targetResourceType: 'principal-auth-binding',
     });
     return result;
-  });
+  },
+);
 export const setSelfApiKeyBindingStatusAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -77,6 +73,7 @@ export const setSelfApiKeyBindingStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.identity.set-self-api-key-binding-status',
       moduleKey: 'core.identity',
       role: 'action',
@@ -92,6 +89,6 @@ export const setSelfApiKeyBindingStatusAction = defineAction(
   handle,
   (transaction) => {
     const repository = principalManagementRepositoryFromTransaction(transaction);
-    return Effect.succeed({ setStatus: (input) => setApiKeyBindingStatus(repository, input) });
+    return Effect.succeed({ setStatus: repository.setApiKeyBindingStatus });
   },
 );

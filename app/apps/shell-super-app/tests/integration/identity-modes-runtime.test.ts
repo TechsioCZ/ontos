@@ -1,13 +1,25 @@
-// @effect-diagnostics asyncFunction:off
+import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
+import { Scope as NativeScope, Exit as NativeExit, Context, Effect, Predicate } from 'effect';
+import {
+  runEffectTestSync as runNativeSync,
+  makeEffectTestCallback as nativeTestCallback,
+  runEffectTestPromise,
+} from '@app/core-runtime/testing/effect-runtime';
+
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+import test, { after as afterNativeDatabase } from 'node:test';
 import { and, eq, inArray } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Predicate } from 'effect';
+import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
+  ActionRuntime,
+  ContextAccess,
+  PrincipalResolver,
+  SupportRecoveryPrincipalContextResolver,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
   makePrincipalResolver,
@@ -15,31 +27,46 @@ import {
 } from '@app/core-runtime';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import {
+  PrincipalManagementRepository,
+  principalManagementRepositoryFromTransaction,
+} from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import { createNonHumanPrincipalAction } from '../../../../packages/core-runtime/src/modules/actions/create-non-human-principal.action.ts';
 import {
   actionInvocations,
   auditEvents,
-  coreDatabaseSchema,
+  coreRelations,
   dataAccessEvents,
   principalAuthBindings,
   principals,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
-import { loadAuthConfig } from '../../api/auth/config.ts';
+import {
+  issueGatewayContextAssertion,
+  makeGatewayIssuerLayer,
+} from '../../api/auth/gateway-issuer.ts';
+import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import {
   account,
   apikey,
-  authDatabaseSchema,
   session,
   supportImpersonationRecovery,
   user,
 } from '../../api/auth/db/schema.ts';
-import { makeSupportImpersonationService } from '../../api/auth/impersonation-service.ts';
-import { makeAuthenticationService } from '../../api/auth/service.ts';
+import {
+  makeSupportAuthProvider,
+  makeSupportImpersonationService,
+  makeSupportImpersonationStore,
+  SupportAuthProviderService,
+  SupportImpersonationCorrelationId,
+  SupportImpersonationStoreService,
+} from '../../api/auth/impersonation-service.ts';
+import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 import { makeIdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
+
+const nativeDatabaseScope = runNativeSync(NativeScope.make());
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   const cookies = new Map<string, string>();
@@ -53,12 +80,25 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   return [...cookies.values()].join('; ');
 };
 
-test('verifies provider keys and completes live support impersonation with durable stopped evidence', async () => {
-  const baseConfiguration = await Effect.runPromise(loadAuthConfig());
-  const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
+void test('verifies provider keys and completes live support impersonation with durable stopped evidence', async (context) => {
+  const baseConfiguration = await runEffectTestPromise(loadAuthConfig());
   const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
-  const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
-  const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
+  const authPersistence = await runEffectTestPromise(
+    makeAuthDatabase(baseConfiguration).pipe(NativeScope.provide(nativeDatabaseScope)),
+  );
+  const authDatabase = authPersistence.executor;
+  const coreDatabase = await runEffectTestPromise(
+    makeTestDatabaseFromPool(corePool, coreRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
+  const principalManagementRepository = principalManagementRepositoryFromTransaction(coreDatabase);
+  const providePrincipalManagementRepository = <Success, Failure, Requirements>(
+    effect: Effect.Effect<Success, Failure, Requirements>,
+  ) =>
+    effect.pipe(
+      Effect.provideService(PrincipalManagementRepository, principalManagementRepository),
+    );
   const tenantId = randomUUID();
   const originalPrincipalId = randomUUID();
   const targetPrincipalId = randomUUID();
@@ -80,7 +120,15 @@ test('verifies provider keys and completes live support impersonation with durab
       permission,
       tenantIds,
     }: {
-      readonly permission: 'access' | 'impersonate' | 'manage_identity';
+      readonly permission:
+        | 'access'
+        | 'impersonate'
+        | 'manage_identity'
+        | 'manage_party_identity'
+        | 'manage_party_relationships'
+        | 'merge_party_identity'
+        | 'read_party_identity'
+        | 'review_party_identity';
       readonly tenantIds: readonly string[];
     }) =>
       Effect.succeed(
@@ -93,6 +141,9 @@ test('verifies provider keys and completes live support impersonation with durab
         })),
       ),
   };
+  const provideContextAccess = <Success, Failure, Requirements>(
+    effect: Effect.Effect<Success, Failure, Requirements>,
+  ) => effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess));
   const operationalScope = makeOperationalScopeResolver(
     makeOperationalScopeRepository({ executor: coreDatabase }),
     allowedContextAccess,
@@ -106,9 +157,9 @@ test('verifies provider keys and completes live support impersonation with durab
   );
   const fixtureAuthentication = makeAuthenticationService(
     baseConfiguration,
-    authDatabase,
+    authPersistence.adapter,
     resolver,
-    { allowFixtureSignUp: true },
+    { allowFixtureSignUp: true, runResolverEffect: runEffectTestPromise },
   );
   let originalUserId = '';
   let targetUserId = '';
@@ -122,109 +173,124 @@ test('verifies provider keys and completes live support impersonation with durab
       const ids = [originalUserId, targetUserId, secondAdministratorUserId].filter(
         (id) => id.length > 0,
       );
-      await authDatabase
-        .delete(supportImpersonationRecovery)
-        .where(eq(supportImpersonationRecovery.tenantId, tenantId));
-      await authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids));
-      await authDatabase.delete(session).where(inArray(session.userId, ids));
-      await authDatabase.delete(account).where(inArray(account.userId, ids));
-      await authDatabase.delete(user).where(inArray(user.id, ids));
+      await runEffectTestPromise(
+        purgeFixtureRows([
+          authDatabase
+            .delete(supportImpersonationRecovery)
+            .where(eq(supportImpersonationRecovery.tenantId, tenantId)),
+          authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids)),
+          authDatabase.delete(session).where(inArray(session.userId, ids)),
+          authDatabase.delete(account).where(inArray(account.userId, ids)),
+          authDatabase.delete(user).where(inArray(user.id, ids)),
+        ]),
+      );
     }
-    await coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
-    await coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
-    await coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
-    await coreDatabase
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.tenantId, tenantId));
-    await coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
+    await runEffectTestPromise(
+      purgeFixtureRows([
+        coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+        coreDatabase
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.tenantId, tenantId)),
+        coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
+        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+      ]),
+    );
   };
 
   try {
-    originalUserId = await Effect.runPromise(
+    originalUserId = await runEffectTestPromise(
       fixtureAuthentication.createFixtureUser(originalEmail, 'Support original', password),
     );
-    targetUserId = await Effect.runPromise(
+    targetUserId = await runEffectTestPromise(
       fixtureAuthentication.createFixtureUser(targetEmail, 'Support target', password),
     );
-    secondAdministratorUserId = await Effect.runPromise(
+    secondAdministratorUserId = await runEffectTestPromise(
       fixtureAuthentication.createFixtureUser(
         secondAdministratorEmail,
         'Second identity administrator',
         password,
       ),
     );
-    await coreDatabase.insert(tenants).values({
-      defaultLocale: 'en',
-      name: 'Identity modes Auth integration',
-      slug: `identity-modes-auth-${tenantId}`,
-      status: 'active',
-      tenantId,
-    });
-    await coreDatabase.insert(principals).values([
-      {
-        displayName: 'Support original',
-        kind: 'human',
-        principalId: originalPrincipalId,
+    await runEffectTestPromise(
+      coreDatabase.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Identity modes Auth integration',
+        slug: `identity-modes-auth-${tenantId}`,
         status: 'active',
         tenantId,
-      },
-      {
-        displayName: 'Support target',
-        kind: 'human',
-        principalId: targetPrincipalId,
-        status: 'active',
-        tenantId,
-      },
-      {
-        displayName: 'Second identity administrator',
-        kind: 'human',
-        principalId: secondAdministratorPrincipalId,
-        status: 'active',
-        tenantId,
-      },
-    ]);
-    await coreDatabase.insert(principalAuthBindings).values([
-      {
-        principalAuthBindingId: originalAuthBindingId,
-        principalId: originalPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: originalUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId,
-      },
-      {
-        principalAuthBindingId: targetAuthBindingId,
-        principalId: targetPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: targetUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId,
-      },
-      {
-        principalAuthBindingId: secondAdministratorAuthBindingId,
-        principalId: secondAdministratorPrincipalId,
-        provider: 'better_auth',
-        providerSubjectId: secondAdministratorUserId,
-        status: 'active',
-        subjectType: 'user',
-        tenantId,
-      },
-    ]);
+      }),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principals).values([
+        {
+          displayName: 'Support original',
+          kind: 'human',
+          principalId: originalPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+        {
+          displayName: 'Support target',
+          kind: 'human',
+          principalId: targetPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+        {
+          displayName: 'Second identity administrator',
+          kind: 'human',
+          principalId: secondAdministratorPrincipalId,
+          status: 'active',
+          tenantId,
+        },
+      ]),
+    );
+    await runEffectTestPromise(
+      coreDatabase.insert(principalAuthBindings).values([
+        {
+          principalAuthBindingId: originalAuthBindingId,
+          principalId: originalPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: originalUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+        {
+          principalAuthBindingId: targetAuthBindingId,
+          principalId: targetPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: targetUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+        {
+          principalAuthBindingId: secondAdministratorAuthBindingId,
+          principalId: secondAdministratorPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: secondAdministratorUserId,
+          status: 'active',
+          subjectType: 'user',
+          tenantId,
+        },
+      ]),
+    );
     const configuration = {
       ...baseConfiguration,
       supportUserIds: [originalUserId],
     };
-    const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
-      contextAccess: allowedContextAccess,
-      legalEntityContext: {
-        listActiveForTenant: () => Effect.succeed([]),
-        validateSelection: () => Effect.die('not used'),
+    const authentication = makeAuthenticationService(
+      configuration,
+      authPersistence.adapter,
+      resolver,
+      {
+        runResolverEffect: runEffectTestPromise,
       },
-    });
-    const signedIn = await Effect.runPromise(
+    );
+    const signedIn = await runEffectTestPromise(
       authentication.signIn(
         originalEmail,
         password,
@@ -236,16 +302,80 @@ test('verifies provider keys and completes live support impersonation with durab
       origin: configuration.baseUrl,
     });
 
-    const keys = makeApiKeyService(configuration, authDatabase);
-    const resolvedOriginal = await Effect.runPromise(
-      authentication.resolveTenantContext(originalHeaders),
+    const keys = await runEffectTestPromise(
+      makeApiKeyService().pipe(
+        Effect.provideService(AuthConfig, configuration),
+        Effect.provideService(AuthDatabase, authPersistence),
+      ),
+    );
+    const resolvedOriginal = await runEffectTestPromise(
+      provideContextAccess(authentication.resolveTenantContext(originalHeaders)),
     );
     assert.equal(resolvedOriginal.state, 'authenticated');
     if (resolvedOriginal.state !== 'authenticated') {
       throw new Error('The live original session did not resolve');
     }
+    await context.test(
+      'finds stale pending API keys with current and legacy metadata orders',
+      async () => {
+        const nowEpochMillis = 1_800_000_000_000;
+        const lifecycleOperationId = randomUUID();
+        const pending = await runEffectTestPromise(
+          keys.issue(originalHeaders, {
+            issuerPrincipalId: originalPrincipalId,
+            lifecycleOperationId,
+            name: 'Pending cleanup integration key',
+            tenantId,
+          }),
+        );
+        await runEffectTestPromise(
+          authDatabase
+            .update(apikey)
+            .set({ createdAt: new Date(nowEpochMillis - 10 * 60 * 1000) })
+            .where(eq(apikey.id, pending.providerKeyId)),
+        );
+
+        assert.deepEqual(
+          await runEffectTestPromise(
+            keys.pendingCleanup({
+              issuerPrincipalId: originalPrincipalId,
+              lifecycleOperationId: randomUUID(),
+              nowEpochMillis,
+              tenantId,
+            }),
+          ),
+          { hasMore: false, providerKeyIds: [pending.providerKeyId] },
+        );
+        await runEffectTestPromise(
+          authDatabase
+            .update(apikey)
+            .set({
+              metadata: JSON.stringify({
+                issuerPrincipalId: originalPrincipalId,
+                lifecycleOperationId,
+                ontosLifecycle: 'binding_pending_v1',
+                tenantId,
+              }),
+            })
+            .where(eq(apikey.id, pending.providerKeyId)),
+        );
+        assert.deepEqual(
+          await runEffectTestPromise(
+            keys.pendingCleanup({
+              issuerPrincipalId: originalPrincipalId,
+              lifecycleOperationId: randomUUID(),
+              nowEpochMillis,
+              tenantId,
+            }),
+          ),
+          { hasMore: false, providerKeyIds: [pending.providerKeyId] },
+        );
+        await runEffectTestPromise(keys.setEnabled(pending.providerKeyId, false));
+        await runEffectTestPromise(keys.clearPendingCleanup(pending.providerKeyId));
+      },
+    );
     const lifecycle = makeIdentityLifecycleService(actionRuntime, keys, resolver);
-    const issued = await Effect.runPromise(
+    const issued = await runEffectTestPromise(
       lifecycle.issue({
         correlationId: randomUUID(),
         idempotencyKey: `identity-integration-key-${randomUUID()}`,
@@ -254,9 +384,9 @@ test('verifies provider keys and completes live support impersonation with durab
         requestHeaders: originalHeaders,
       }),
     );
-    const verified = await Effect.runPromise(keys.verify(issued.secret));
+    const verified = await runEffectTestPromise(keys.verify(issued.secret));
     const apiKeyAuthBindingId = issued.authBindingId;
-    const apiKeyIdentity = await Effect.runPromise(
+    const apiKeyIdentity = await runEffectTestPromise(
       resolver.resolveBetterAuthApiKey(verified.providerKeyId),
     );
     const { privateKey, publicKey } = await generateKeyPair('EdDSA', {
@@ -264,35 +394,36 @@ test('verifies provider keys and completes live support impersonation with durab
       extractable: true,
     });
     const privateJwk = await exportJWK(privateKey);
-    const assertion = await Effect.runPromise(
-      issueGatewayContextAssertion(
-        {
-          audience: 'identity-integration',
-          principal: {
-            authBindingId: apiKeyIdentity.authBindingId,
-            authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-            authMethod: 'api_key',
-            principalId: apiKeyIdentity.principalId,
-            tenantId: apiKeyIdentity.tenantId,
-          },
+    const assertion = await runEffectTestPromise(
+      issueGatewayContextAssertion({
+        audience: 'identity-integration',
+        principal: {
+          authBindingId: apiKeyIdentity.authBindingId,
+          authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+          authMethod: 'api_key',
+          principalId: apiKeyIdentity.principalId,
+          tenantId: apiKeyIdentity.tenantId,
         },
-        {
-          currentTimeSeconds: Effect.succeed(1_800_000_000),
-          generateJti: Effect.succeed(randomUUID()),
-          loadAudiences: Effect.succeed(new Set(['identity-integration'])),
-          loadConfig: Effect.succeed({
-            issuer: 'https://shell.identity-integration.test',
-            privateJwk: {
-              alg: 'EdDSA',
-              crv: 'Ed25519',
-              d: privateJwk.d ?? '',
-              kid: 'identity-integration-key',
-              kty: 'OKP',
-              use: 'sig',
-              x: privateJwk.x ?? '',
-            },
+      }).pipe(
+        Effect.provide(
+          makeGatewayIssuerLayer({
+            currentTimeSeconds: Effect.succeed(1_800_000_000),
+            generateJti: Effect.succeed(randomUUID()),
+            loadAudiences: Effect.succeed(new Set(['identity-integration'])),
+            loadConfig: Effect.succeed({
+              issuer: 'https://shell.identity-integration.test',
+              privateJwk: {
+                alg: 'EdDSA',
+                crv: 'Ed25519',
+                d: privateJwk.d ?? '',
+                kid: 'identity-integration-key',
+                kty: 'OKP',
+                use: 'sig',
+                x: privateJwk.x ?? '',
+              },
+            }),
           }),
-        },
+        ),
       ),
     );
     const verifiedAssertion = await jwtVerify(assertion.token, publicKey, {
@@ -309,33 +440,37 @@ test('verifies provider keys and completes live support impersonation with durab
       tenantId,
     });
     assert.equal(JSON.stringify(verifiedAssertion.payload).includes(issued.secret), false);
-    await Effect.runPromise(
-      actionRuntime.runAction({
-        payload: { displayName: 'API-key evidence target', kind: 'service' },
-        principal: {
-          authBindingId: apiKeyAuthBindingId,
-          authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-          authMethod: 'api_key',
-          principalId: originalPrincipalId,
-          tenantId,
-        },
-        registration: createNonHumanPrincipalAction,
-        transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
-      }),
+    await runEffectTestPromise(
+      providePrincipalManagementRepository(
+        actionRuntime.runAction({
+          payload: { displayName: 'API-key evidence target', kind: 'service' },
+          principal: {
+            authBindingId: apiKeyAuthBindingId,
+            authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+            authMethod: 'api_key',
+            principalId: originalPrincipalId,
+            tenantId,
+          },
+          registration: createNonHumanPrincipalAction,
+          transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
+        }),
+      ),
     );
-    await Effect.runPromise(keys.setEnabled(verified.providerKeyId, false));
-    const invalidKey = await Effect.runPromise(Effect.flip(keys.verify(issued.secret)));
-    assert.equal(invalidKey._tag, 'ApiKeyCredentialInvalidError');
+    await runEffectTestPromise(keys.setEnabled(verified.providerKeyId, false));
+    const invalidKey = await runEffectTestPromise(Effect.flip(keys.verify(issued.secret)));
+    assert.ok(Predicate.isTagged(invalidKey, 'ApiKeyCredentialInvalidError'));
 
-    const managedPrincipal = await Effect.runPromise(
-      lifecycle.createNonHumanPrincipal({
-        correlationId: randomUUID(),
-        idempotencyKey: randomUUID(),
-        payload: { displayName: 'Cross-admin integration', kind: 'integration' },
-        principal: resolvedOriginal.principal,
-      }),
+    const managedPrincipal = await runEffectTestPromise(
+      providePrincipalManagementRepository(
+        lifecycle.createNonHumanPrincipal({
+          correlationId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          payload: { displayName: 'Cross-admin integration', kind: 'integration' },
+          principal: resolvedOriginal.principal,
+        }),
+      ),
     );
-    const managedKey = await Effect.runPromise(
+    const managedKey = await runEffectTestPromise(
       lifecycle.issue({
         correlationId: randomUUID(),
         idempotencyKey: randomUUID(),
@@ -345,26 +480,28 @@ test('verifies provider keys and completes live support impersonation with durab
         requestHeaders: originalHeaders,
       }),
     );
-    const secondAdministratorSignIn = await Effect.runPromise(
+    const secondAdministratorSignIn = await runEffectTestPromise(
       authentication.signIn(
         secondAdministratorEmail,
         password,
         new Headers({ origin: configuration.baseUrl }),
       ),
     );
-    const secondAdministratorContext = await Effect.runPromise(
-      authentication.resolveTenantContext(
-        new Headers({
-          cookie: cookieHeader(secondAdministratorSignIn.setCookieHeaders),
-          origin: configuration.baseUrl,
-        }),
+    const secondAdministratorContext = await runEffectTestPromise(
+      provideContextAccess(
+        authentication.resolveTenantContext(
+          new Headers({
+            cookie: cookieHeader(secondAdministratorSignIn.setCookieHeaders),
+            origin: configuration.baseUrl,
+          }),
+        ),
       ),
     );
     assert.equal(secondAdministratorContext.state, 'authenticated');
     if (secondAdministratorContext.state !== 'authenticated') {
       throw new Error('The second live tenant administrator did not resolve');
     }
-    const crossAdminDisabled = await Effect.runPromise(
+    const crossAdminDisabled = await runEffectTestPromise(
       lifecycle.setStatus({
         authBindingId: managedKey.authBindingId,
         correlationId: randomUUID(),
@@ -379,98 +516,132 @@ test('verifies provider keys and completes live support impersonation with durab
     assert.equal(crossAdminDisabled.enabled, false);
     assert.equal(crossAdminDisabled.cleanupPending, false);
 
-    const support = makeSupportImpersonationService({
-      actionRuntime,
-      authentication,
-      configuration,
-      database: authDatabase,
-      resolver,
-      supportRecoveryPrincipal: makeSupportRecoveryPrincipalContextResolver({
-        executor: coreDatabase,
-      }),
+    const supportRecoveryPrincipal = makeSupportRecoveryPrincipalContextResolver({
+      executor: coreDatabase,
     });
-    const started = await Effect.runPromise(
-      support.start({
-        correlationId: randomUUID(),
-        idempotencyKey: randomUUID(),
-        reason: 'Investigating a tenant support request',
-        requestHeaders: originalHeaders,
-        targetPrincipalId,
-      }),
+    const support = makeSupportImpersonationService(
+      Context.empty().pipe(
+        Context.add(ActionRuntime, actionRuntime),
+        Context.add(AuthenticationService, authentication),
+        Context.add(AuthConfig, configuration),
+        Context.add(PrincipalResolver, resolver),
+        Context.add(SupportRecoveryPrincipalContextResolver, supportRecoveryPrincipal),
+        Context.add(
+          SupportAuthProviderService,
+          makeSupportAuthProvider(configuration, authPersistence.adapter),
+        ),
+        Context.add(SupportImpersonationStoreService, makeSupportImpersonationStore(authDatabase)),
+      ),
+    );
+    const started = await runEffectTestPromise(
+      provideContextAccess(
+        providePrincipalManagementRepository(
+          support
+            .start({
+              idempotencyKey: randomUUID(),
+              reason: 'Investigating a tenant support request',
+              requestHeaders: originalHeaders,
+              targetPrincipalId,
+            })
+            .pipe(Effect.provideService(SupportImpersonationCorrelationId, randomUUID())),
+        ),
+      ),
     );
     const impersonatedHeaders = new Headers({
       cookie: cookieHeader(started.setCookieHeaders),
       origin: configuration.baseUrl,
     });
-    const [impersonationSession] = await authDatabase
-      .select({ actionId: session.impersonationActionId, id: session.id })
-      .from(session)
-      .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
-      .limit(1);
-    assert.ok(impersonationSession);
+    const [impersonationSession] = await runEffectTestPromise(
+      authDatabase
+        .select({ actionId: session.impersonationActionId, id: session.id })
+        .from(session)
+        .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
+        .limit(1),
+    );
+    assert.notEqual(impersonationSession, undefined);
+    if (impersonationSession === undefined) {
+      throw new TypeError('The support impersonation session was not persisted');
+    }
     assert.equal(Predicate.isString(impersonationSession.actionId), true);
     if (!Predicate.isString(impersonationSession.actionId)) {
       throw new TypeError('The approved support start did not persist its Action correlation');
     }
-    await authDatabase
-      .update(session)
-      .set({ impersonationActionId: null })
-      .where(eq(session.id, impersonationSession.id));
-    const incompleteImpersonation = await Effect.runPromise(
-      Effect.flip(authentication.resolveTenantContext(impersonatedHeaders)),
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationActionId: null })
+        .where(eq(session.id, impersonationSession.id)),
     );
-    assert.equal(incompleteImpersonation._tag, 'OntosIdentityForbiddenError');
-    await authDatabase
-      .update(session)
-      .set({ impersonationActionId: impersonationSession.actionId })
-      .where(eq(session.id, impersonationSession.id));
-    await authDatabase
-      .update(session)
-      .set({ impersonationReason: 'Tampered support reason' })
-      .where(eq(session.id, impersonationSession.id));
-    const mismatchedImpersonationReason = await Effect.runPromise(
-      Effect.flip(authentication.resolveTenantContext(impersonatedHeaders)),
+    const incompleteImpersonation = await runEffectTestPromise(
+      Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(mismatchedImpersonationReason._tag, 'OntosIdentityForbiddenError');
-    await authDatabase
-      .update(session)
-      .set({ impersonationReason: 'Investigating a tenant support request' })
-      .where(eq(session.id, impersonationSession.id));
-    const impersonated = await Effect.runPromise(
-      authentication.resolveTenantContext(impersonatedHeaders),
+    assert.ok(Predicate.isTagged(incompleteImpersonation, 'OntosIdentityForbiddenError'));
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationActionId: impersonationSession.actionId })
+        .where(eq(session.id, impersonationSession.id)),
+    );
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationReason: 'Tampered support reason' })
+        .where(eq(session.id, impersonationSession.id)),
+    );
+    const mismatchedImpersonationReason = await runEffectTestPromise(
+      Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
+    );
+    assert.ok(Predicate.isTagged(mismatchedImpersonationReason, 'OntosIdentityForbiddenError'));
+    await runEffectTestPromise(
+      authDatabase
+        .update(session)
+        .set({ impersonationReason: 'Investigating a tenant support request' })
+        .where(eq(session.id, impersonationSession.id)),
+    );
+    const impersonated = await runEffectTestPromise(
+      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
     );
     assert.equal(impersonated.state, 'authenticated');
     if (impersonated.state === 'authenticated') {
       assert.equal(impersonated.principal.authMethod, 'support_impersonation');
       assert.equal(impersonated.principal.principalId, targetPrincipalId);
       assert.equal(impersonated.principal.impersonatedByPrincipalId, originalPrincipalId);
-      await Effect.runPromise(
-        actionRuntime.runAction({
-          payload: { displayName: 'Support evidence target', kind: 'integration' },
-          principal: impersonated.principal,
-          registration: createNonHumanPrincipalAction,
-          transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
-        }),
+      await runEffectTestPromise(
+        providePrincipalManagementRepository(
+          actionRuntime.runAction({
+            payload: { displayName: 'Support evidence target', kind: 'integration' },
+            principal: impersonated.principal,
+            registration: createNonHumanPrincipalAction,
+            transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
+          }),
+        ),
       );
     }
     supportPermissionAllowed = false;
-    const revokedImpersonation = await Effect.runPromise(
-      Effect.flip(authentication.resolveTenantContext(impersonatedHeaders)),
+    const revokedImpersonation = await runEffectTestPromise(
+      Effect.flip(provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders))),
     );
-    assert.equal(revokedImpersonation._tag, 'OntosIdentityForbiddenError');
-    const stopped = await Effect.runPromise(
-      support.stop({
-        correlationId: randomUUID(),
-        idempotencyKey: randomUUID(),
-        requestHeaders: impersonatedHeaders,
-      }),
+    assert.ok(Predicate.isTagged(revokedImpersonation, 'OntosIdentityForbiddenError'));
+    const stopped = await runEffectTestPromise(
+      provideContextAccess(
+        providePrincipalManagementRepository(
+          support
+            .stop({
+              idempotencyKey: randomUUID(),
+              requestHeaders: impersonatedHeaders,
+            })
+            .pipe(Effect.provideService(SupportImpersonationCorrelationId, randomUUID())),
+        ),
+      ),
     );
     assert.equal(stopped.checkpointPending, false);
     assert.ok(stopped.setCookieHeaders.length > 0);
-    const checkpoints = await coreDatabase
-      .select({ evidence: auditEvents.evidenceJson })
-      .from(auditEvents)
-      .where(eq(auditEvents.tenantId, tenantId));
+    const checkpoints = await runEffectTestPromise(
+      coreDatabase
+        .select({ evidence: auditEvents.evidenceJson })
+        .from(auditEvents)
+        .where(eq(auditEvents.tenantId, tenantId)),
+    );
     assert.deepEqual(
       checkpoints
         .flatMap(({ evidence }) =>
@@ -484,15 +655,17 @@ test('verifies provider keys and completes live support impersonation with durab
         .toSorted(),
       ['requested', 'started', 'stopped'],
     );
-    const identityEvidence = await coreDatabase
-      .select({
-        authBindingId: auditEvents.authBindingId,
-        authMethod: auditEvents.authMethod,
-        impersonatedByPrincipalId: auditEvents.impersonatedByPrincipalId,
-        principalId: auditEvents.principalId,
-      })
-      .from(auditEvents)
-      .where(eq(auditEvents.tenantId, tenantId));
+    const identityEvidence = await runEffectTestPromise(
+      coreDatabase
+        .select({
+          authBindingId: auditEvents.authBindingId,
+          authMethod: auditEvents.authMethod,
+          impersonatedByPrincipalId: auditEvents.impersonatedByPrincipalId,
+          principalId: auditEvents.principalId,
+        })
+        .from(auditEvents)
+        .where(eq(auditEvents.tenantId, tenantId)),
+    );
     assert.ok(
       identityEvidence.some(
         (evidence) =>
@@ -511,10 +684,15 @@ test('verifies provider keys and completes live support impersonation with durab
           evidence.impersonatedByPrincipalId === originalPrincipalId,
       ),
     );
-    const recovery = await authDatabase.select().from(supportImpersonationRecovery);
+    const recovery = await runEffectTestPromise(
+      authDatabase.select().from(supportImpersonationRecovery),
+    );
     assert.equal(recovery.length, 0);
   } finally {
     await cleanup();
-    await Promise.all([authPool.end(), corePool.end()]);
+    await corePool.end();
   }
 });
+afterNativeDatabase(
+  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
+);

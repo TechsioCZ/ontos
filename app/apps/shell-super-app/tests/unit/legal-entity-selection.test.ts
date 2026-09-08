@@ -1,7 +1,9 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import { test } from '@rstest/core';
+import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
 import type { ContextAccessService, LegalEntityContextService } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import {
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
@@ -34,21 +36,42 @@ const access = (
   modules: ({ moduleIds }) =>
     Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
   resources: () => Effect.succeed([]),
+  tenants: ({ tenantIds }) =>
+    Effect.succeed(tenantIds.map((key) => ({ decision: 'denied' as const, key }))),
 });
 
+const provideSelectionServices = <Success, Failure>(
+  effect: Effect.Effect<Success, Failure, ContextAccess | LegalEntityContext>,
+  legalEntityContext: LegalEntityContextService,
+  contextAccess: ContextAccessService,
+): Effect.Effect<Success, Failure> =>
+  effect.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(LegalEntityContext, legalEntityContext),
+        Layer.succeed(ContextAccess, contextAccess),
+      ),
+    ),
+  );
+
 test('auto-selects the only authorized entity and preserves an exact saved choice', async () => {
-  const only = await Effect.runPromise(
-    resolveAuthorizedLegalEntities(context(), access({ [alpha.legalEntityId]: 'allowed' }), {
-      principalId,
-      tenantId,
-    }),
+  const only = await runEffectTestPromise(
+    provideSelectionServices(
+      resolveAuthorizedLegalEntities({ principalId, tenantId }),
+      context(),
+      access({ [alpha.legalEntityId]: 'allowed' }),
+    ),
   );
   assert.deepEqual(only, { available: [alpha], selected: alpha, state: 'selected' });
-  const saved = await Effect.runPromise(
-    resolveAuthorizedLegalEntities(
+  const saved = await runEffectTestPromise(
+    provideSelectionServices(
+      resolveAuthorizedLegalEntities({
+        principalId,
+        savedLegalEntityId: beta.legalEntityId,
+        tenantId,
+      }),
       context(),
       access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
-      { principalId, savedLegalEntityId: beta.legalEntityId, tenantId },
     ),
   );
   assert.deepEqual(saved, { available: [alpha, beta], selected: beta, state: 'selected' });
@@ -56,40 +79,49 @@ test('auto-selects the only authorized entity and preserves an exact saved choic
 
 test('requires a choice for several entities and blocks zero definite grants', async () => {
   assert.deepEqual(
-    await Effect.runPromise(
-      resolveAuthorizedLegalEntities(
+    await runEffectTestPromise(
+      provideSelectionServices(
+        resolveAuthorizedLegalEntities({ principalId, tenantId }),
         context(),
         access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
-        { principalId, tenantId },
       ),
     ),
     { available: [alpha, beta], state: 'selection_required' },
   );
   assert.deepEqual(
-    await Effect.runPromise(
-      resolveAuthorizedLegalEntities(context(), access({}), { principalId, tenantId }),
+    await runEffectTestPromise(
+      provideSelectionServices(
+        resolveAuthorizedLegalEntities({ principalId, tenantId }),
+        context(),
+        access({}),
+      ),
     ),
     { available: [], state: 'access_blocked' },
   );
 });
 
 test('fails closed for authorization uncertainty and validates a switch independently', async () => {
-  const unavailable = await Effect.runPromise(
+  const unavailable = await runEffectTestPromise(
     Effect.flip(
-      resolveAuthorizedLegalEntities(context(), access({ [alpha.legalEntityId]: 'unavailable' }), {
-        principalId,
-        tenantId,
-      }),
+      provideSelectionServices(
+        resolveAuthorizedLegalEntities({ principalId, tenantId }),
+        context(),
+        access({ [alpha.legalEntityId]: 'unavailable' }),
+      ),
     ),
   );
   assert.equal(unavailable._tag, 'LegalEntitySelectionUnavailableError');
   assert.deepEqual(
-    await Effect.runPromise(
-      validateAuthorizedLegalEntity(context(), access({ [beta.legalEntityId]: 'allowed' }), {
-        legalEntityId: beta.legalEntityId,
-        principalId,
-        tenantId,
-      }),
+    await runEffectTestPromise(
+      provideSelectionServices(
+        validateAuthorizedLegalEntity({
+          legalEntityId: beta.legalEntityId,
+          principalId,
+          tenantId,
+        }),
+        context(),
+        access({ [beta.legalEntityId]: 'allowed' }),
+      ),
     ),
     beta,
   );

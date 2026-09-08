@@ -6,6 +6,7 @@ import { Select as ActualSelect } from '@techsio/ui-kit/molecules/select' with {
   rstest: 'importActual',
 };
 import type { ComponentProps, ReactNode } from 'react';
+import { AppIdSchema } from '../../shared/api';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
 
@@ -44,7 +45,11 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.brand': 'OntOS',
         'shell.dashboard.header.label': 'Dashboard header',
         'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
+        'shell.dashboard.legalEntity.failed': 'Legal entity switching failed. Try again.',
+        'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
         'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
+        'shell.dashboard.legalEntity.unavailable':
+          'Legal entity choices are temporarily unavailable.',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
@@ -52,6 +57,10 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
         'shell.dashboard.tenant.pending': 'Switching tenant…',
         'shell.dashboard.tenant.unavailable': 'Tenant choices are temporarily unavailable.',
+        'shell.modules.discovery.incompatible': 'Incompatible module deployment',
+        'shell.modules.discovery.revoked': 'Module revoked',
+        'shell.modules.discovery.timeout': 'Module deployment timed out',
+        'shell.modules.discovery.unavailable': 'Module deployment unavailable',
       })[key] ?? key,
   }),
 }));
@@ -101,6 +110,11 @@ const homeTitle = 'Home';
 const homeOverviewTitle = 'Home overview';
 const noopLogout = rstest.fn();
 const noopTenantChange = rstest.fn();
+const unavailableDeploymentAppIds = {
+  legacyCenter: AppIdSchema.make('legacy-center'),
+  propertyRegistry: AppIdSchema.make('property-registry'),
+  reportingCenter: AppIdSchema.make('reporting-center'),
+};
 const tenantProps = {
   currentLegalEntityId: 'legal-entity-1',
   currentTenantId: 'tenant-1',
@@ -118,6 +132,7 @@ const tenantProps = {
   tenantState: 'available' as const,
   tenantSwitchFailed: false,
   tenantSwitchPending: false,
+  unavailableDeployments: [],
 };
 const testingWorkspaceTitle = 'Testing workspace';
 
@@ -139,9 +154,9 @@ test('renders the default Home dashboard contract and preserves page children', 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       title={homeOverviewTitle}
     >
@@ -179,10 +194,10 @@ test('supports an alternate title and current MicroVertical without changing chi
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       currentModuleId="testing.one"
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       title={testingWorkspaceTitle}
     >
@@ -202,10 +217,10 @@ test('supports module pages without a shell heading and keeps reduced horizontal
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       currentModuleId="testing.one"
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
     >
       <section>Module content</section>
@@ -222,9 +237,9 @@ test('keeps Home as the only navigation link when no active modules are supplied
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={[]}
       identity={identity}
       logoutPending={false}
+      navigation={[]}
       onLogout={noopLogout}
       title={homeTitle}
     >
@@ -237,15 +252,53 @@ test('keeps Home as the only navigation link when no active modules are supplied
   ).toHaveLength(1);
 });
 
+test('shows failed installed deployments as disabled identities with typed reasons', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={homeTitle}
+      unavailableDeployments={[
+        {
+          appId: unavailableDeploymentAppIds.propertyRegistry,
+          reason: 'timeout',
+          status: 'unavailable',
+        },
+        {
+          appId: unavailableDeploymentAppIds.reportingCenter,
+          reason: 'incompatible',
+          status: 'unavailable',
+        },
+        { appId: unavailableDeploymentAppIds.legacyCenter, status: 'revoked' },
+      ]}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByText('property-registry')).toBeTruthy();
+  expect(screen.getByText('Module deployment timed out')).toBeTruthy();
+  expect(screen.getByText('reporting-center')).toBeTruthy();
+  expect(screen.getByText('Incompatible module deployment')).toBeTruthy();
+  expect(screen.getByText('legacy-center')).toBeTruthy();
+  expect(screen.getByText('Module revoked')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'property-registry' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'reporting-center' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'legacy-center' })).toBeNull();
+});
+
 test('renders the account Menu last and dispatches only the logout command by keyboard', async () => {
   const onLogout = rstest.fn();
   const user = userEvent.setup();
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={onLogout}
       title={homeTitle}
     >
@@ -257,7 +310,9 @@ test('renders the account Menu last and dispatches only the logout command by ke
   const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
   expect(header?.lastElementChild?.contains(trigger)).toBe(true);
   const accountMenu = header?.lastElementChild;
-  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset.position : undefined).toBe('end');
+  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset['position'] : undefined).toBe(
+    'end',
+  );
 
   trigger.focus();
   await user.keyboard('{Enter}');
@@ -277,9 +332,9 @@ test('retains the account trigger and disables the sole command while logout is 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending
+      navigation={navigation}
       onLogout={onLogout}
       title={homeTitle}
     >
@@ -301,9 +356,9 @@ test('renders complete ordered tenant items and dispatches keyboard selection on
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       onTenantChange={onTenantChange}
       title={homeTitle}
@@ -316,7 +371,7 @@ test('renders complete ordered tenant items and dispatches keyboard selection on
   await user.click(trigger);
   const options = await screen.findAllByRole('option');
   expect(options.map((option) => option.textContent)).toEqual(['Alpha tenant', 'Zeta tenant']);
-  expect(options.map((option) => option.dataset.value)).toEqual(['tenant-1', 'tenant-2']);
+  expect(options.map((option) => option.dataset['value'])).toEqual(['tenant-1', 'tenant-2']);
   expect(options.every((option) => option.querySelector('span') !== null)).toBe(true);
   await user.keyboard('{ArrowDown}{Enter}');
   expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
@@ -334,9 +389,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   const { rerender } = render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantChoices={tenantProps.tenantChoices.slice(0, 1)}
       title={homeTitle}
@@ -351,9 +406,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantChoices={[]}
       title={homeTitle}
@@ -368,9 +423,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantState="unavailable"
       title={homeTitle}
@@ -386,9 +441,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantSwitchPending
       title={homeTitle}
@@ -406,9 +461,9 @@ test('associates failed tenant feedback and keeps multiple choices operable', ()
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantSwitchFailed
       title={homeTitle}
@@ -422,3 +477,104 @@ test('associates failed tenant feedback and keeps multiple choices operable', ()
   expect(trigger.getAttribute('aria-invalid')).toBe('true');
   expect(screen.getByText('Tenant switching failed. Try again.')).toBeTruthy();
 });
+
+test('names the legal-entity selector by its own label and keeps a sole choice operable', () => {
+  const { rerender } = render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={homeTitle}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+
+  const legalEntity = screen.getByRole('combobox', { name: 'Current legal entity' });
+  expect(legalEntity.hasAttribute('aria-label')).toBe(false);
+  expect(legalEntity.hasAttribute('aria-describedby')).toBe(false);
+  expect(legalEntity.hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-label')).toBe(
+    'Current tenant',
+  );
+  expect(screen.queryByText('Select a legal entity')).toBeNull();
+
+  const { currentLegalEntityId: _selectedLegalEntityId, ...unselectedLegalEntityProps } =
+    tenantProps;
+  rerender(
+    <AuthenticatedDashboardLayout
+      {...unselectedLegalEntityProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={homeTitle}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByText('Select a legal entity')).toBeTruthy();
+});
+
+interface LegalEntitySelectorStateCase {
+  readonly disabled: boolean;
+  readonly name: string;
+  readonly overrides: Partial<
+    Pick<
+      ComponentProps<typeof AuthenticatedDashboardLayout>,
+      'legalEntityState' | 'legalEntitySwitchFailed' | 'legalEntitySwitchPending'
+    >
+  >;
+  readonly statusText: string;
+}
+
+const legalEntitySelectorStateCases: LegalEntitySelectorStateCase[] = [
+  {
+    disabled: true,
+    name: 'the legal entities are unavailable',
+    overrides: { legalEntityState: 'unavailable' },
+    statusText: 'Legal entity choices are temporarily unavailable.',
+  },
+  {
+    disabled: true,
+    name: 'a legal-entity switch is pending',
+    overrides: { legalEntitySwitchPending: true },
+    statusText: 'Switching legal entity…',
+  },
+  {
+    disabled: false,
+    name: 'a legal-entity switch failed',
+    overrides: { legalEntitySwitchFailed: true },
+    statusText: 'Legal entity switching failed. Try again.',
+  },
+];
+
+test.each(legalEntitySelectorStateCases)(
+  'associates legal-entity feedback with its own selector when $name',
+  ({ disabled, overrides, statusText }) => {
+    render(
+      <AuthenticatedDashboardLayout
+        {...tenantProps}
+        {...overrides}
+        identity={identity}
+        logoutPending={false}
+        navigation={navigation}
+        onLogout={noopLogout}
+        title={homeTitle}
+      >
+        Content
+      </AuthenticatedDashboardLayout>,
+    );
+
+    const legalEntity = screen.getByRole('combobox', { name: 'Current legal entity' });
+    expect(legalEntity.hasAttribute('disabled')).toBe(disabled);
+    expect(legalEntity.getAttribute('aria-describedby')).toBe('legal-entity-switch-status');
+    expect(screen.getByText(statusText)).toBeTruthy();
+    expect(
+      screen.getByRole('combobox', { name: 'Current tenant' }).getAttribute('aria-describedby'),
+    ).toBeNull();
+  },
+);

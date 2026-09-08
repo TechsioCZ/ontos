@@ -1,9 +1,12 @@
+import { makeInstalledCatalogFixture as catalog } from '../support/installed-catalog.ts';
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
-import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
+import type { OntosModuleDeploymentContract } from '../../src/index.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -26,102 +29,61 @@ import {
 const contract = (
   moduleId: string,
   supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates'],
-): OntosModuleDeploymentContract => ({
-  deployment: { appId: 'unit-module', buildMarker: 'unit-build' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates,
-    },
-    module: {
-      description: 'Unit module',
-      displayName: 'Unit module',
-      id: moduleId,
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-});
-
-const catalog = (
-  ...contracts: readonly OntosModuleDeploymentContract[]
-): InstalledModuleCatalog => {
-  const byModule = new Map(contracts.map((item) => [item.manifest.module.id, item]));
-  return Object.freeze({
-    contracts: Object.freeze([...contracts]),
-    deploymentAppIds: Object.freeze(contracts.map(({ deployment }) => deployment.appId)),
-    getByDeploymentAppId: (appId: string) =>
-      contracts.find(({ deployment }) => deployment.appId === appId),
-    getByModuleId: (moduleId: string) => byModule.get(moduleId),
-    moduleIds: Object.freeze(contracts.map(({ manifest }) => manifest.module.id)),
-    outboxSubscriptions: Object.freeze([]),
+): OntosModuleDeploymentContract =>
+  makeModuleContractFixture({
+    appId: 'unit-module',
+    buildMarker: 'unit-build',
+    description: 'Unit module',
+    displayName: 'Unit module',
+    moduleId,
+    supportedStates,
   });
-};
 
-test('uses one canonical tenant module state schema', async () => {
+void test('uses one canonical tenant module state schema', async () => {
   const decodedStates = await Promise.all(
-    TENANT_MODULE_STATES.map((state) =>
-      Effect.runPromise(Schema.decodeUnknownEffect(TenantModuleStateSchema)(state)),
+    TENANT_MODULE_STATES.map(
+      async (state) =>
+        await runEffectTestPromise(Schema.decodeUnknownEffect(TenantModuleStateSchema)(state)),
     ),
   );
   assert.deepEqual(decodedStates, TENANT_MODULE_STATES);
 
-  const failure = await Effect.runPromise(
+  const failure = await runEffectTestPromise(
     Effect.flip(Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled')),
   );
   assert.equal(failure._tag, 'SchemaError');
 });
 
-test('maps only trusted supported authentication methods to history sources', async () => {
-  assert.equal(await Effect.runPromise(resolveTenantModuleStateChangeSource('session')), 'user');
+void test('maps only trusted supported authentication methods to history sources', async () => {
+  assert.equal(await runEffectTestPromise(resolveTenantModuleStateChangeSource('session')), 'user');
   assert.equal(
-    await Effect.runPromise(resolveTenantModuleStateChangeSource('support_impersonation')),
+    await runEffectTestPromise(resolveTenantModuleStateChangeSource('support_impersonation')),
     'support',
   );
-  assert.equal(await Effect.runPromise(resolveTenantModuleStateChangeSource('system')), 'system');
+  assert.equal(
+    await runEffectTestPromise(resolveTenantModuleStateChangeSource('system')),
+    'system',
+  );
 
-  const unsupported = await Effect.runPromise(
+  const unsupported = await runEffectTestPromise(
     Effect.flip(resolveTenantModuleStateChangeSource('api_key')),
   );
   assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedChangeSourceError');
   assert.equal(unsupported.code, 'tenant_module_state_change_source_unsupported');
 });
 
-test('rejects a no-op transition without changing first-state semantics', async () => {
-  await Effect.runPromise(rejectUnchangedTenantModuleState(null, 'active'));
-  await Effect.runPromise(rejectUnchangedTenantModuleState('inactive', 'active'));
+void test('rejects a no-op transition without changing first-state semantics', async () => {
+  await runEffectTestPromise(rejectUnchangedTenantModuleState(null, 'active'));
+  await runEffectTestPromise(rejectUnchangedTenantModuleState('inactive', 'active'));
 
-  const unchanged = await Effect.runPromise(
+  const unchanged = await runEffectTestPromise(
     Effect.flip(rejectUnchangedTenantModuleState('active', 'active')),
   );
   assert.equal(unchanged._tag, 'TenantModuleStateUnchangedError');
   assert.equal(unchanged.code, 'tenant_module_state_unchanged');
 });
 
-test('keeps Core module-state errors stable and sanitized', () => {
+void test('keeps Core module-state errors stable and sanitized', () => {
   const errors = [
     new TenantModuleStateConcurrentChangeError({
       code: 'tenant_module_state_changed_concurrently',
@@ -167,28 +129,28 @@ test('keeps Core module-state errors stable and sanitized', () => {
   }
 });
 
-test('validates only installed membership and the target module supported states', async () => {
+void test('validates only installed membership and the target module supported states', async () => {
   const other = contract('documents.center', ['inactive', 'active']);
   const target = contract('property.registry', ['inactive', 'active', 'read_only']);
   const installed = catalog(other, target);
 
-  const unknown = await Effect.runPromise(
+  const unknown = await runEffectTestPromise(
     Effect.flip(validateTenantModuleStateTransition(installed, 'unknown.module', 'active')),
   );
   assert.equal(unknown._tag, 'TenantModuleStateUnknownModuleError');
-  const unsupported = await Effect.runPromise(
+  const unsupported = await runEffectTestPromise(
     Effect.flip(validateTenantModuleStateTransition(installed, 'property.registry', 'archived')),
   );
   assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedStateError');
-  await Effect.runPromise(
+  await runEffectTestPromise(
     validateTenantModuleStateTransition(installed, 'property.registry', 'active'),
   );
-  await Effect.runPromise(
+  await runEffectTestPromise(
     validateTenantModuleStateTransition(installed, 'stale.module', 'inactive'),
   );
 });
 
-test('declares the generated Core Action contract and bounded business payload', async () => {
+void test('declares the generated Core Action contract and bounded business payload', async () => {
   const { descriptor } = changeTenantModuleStateAction;
   assert.equal(descriptor.actionKey, 'core.modules.change-tenant-module-state');
   assert.equal(descriptor.owningModuleKey, 'core.modules');
@@ -199,7 +161,7 @@ test('declares the generated Core Action contract and bounded business payload',
   assert.doesNotMatch(JSON.stringify(descriptor.domainErrorSchema.ast), /dependency/iu);
 
   assert.deepEqual(
-    await Effect.runPromise(
+    await runEffectTestPromise(
       Schema.decodeUnknownEffect(descriptor.payloadSchema)({
         expectedState: 'inactive',
         moduleKey: 'testing.module',
@@ -215,7 +177,7 @@ test('declares the generated Core Action contract and bounded business payload',
     },
   );
   await assert.rejects(
-    Effect.runPromise(
+    runEffectTestPromise(
       Schema.decodeUnknownEffect(descriptor.payloadSchema)({
         moduleKey: 'testing.module',
         newState: 'active',
@@ -224,7 +186,7 @@ test('declares the generated Core Action contract and bounded business payload',
     ),
   );
   await assert.rejects(
-    Effect.runPromise(
+    runEffectTestPromise(
       Schema.decodeUnknownEffect(descriptor.payloadSchema)({
         moduleKey: 'testing.module',
         newState: 'enabled',

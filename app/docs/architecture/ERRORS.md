@@ -102,11 +102,12 @@ Core keeps its Action errors transport-neutral. A future Action BFF endpoint
 must exhaustively map `ActionPermissionDenied` to a declared `403` Problem
 Details schema and `ActionPermissionCheckError` to a declared `503` Problem
 Details schema. The denial exposes only its stable code and safe reason. The
-check error covers missing configuration, timeout, unavailability,
-authentication or schema failure, and any conditional or otherwise
-indeterminate SpiceDB decision; it must never be reclassified as an
-unconfigured-Action allow. Do not introduce a generic Action HTTP endpoint to
-perform this mapping.
+absence of an executor relationship is a definite `NO_PERMISSION` denial, not
+an unavailable configuration state. The check error covers timeout,
+unavailability, authentication or schema failure, and any conditional or
+otherwise indeterminate SpiceDB decision; it must never be reclassified as a
+permission denial or an unconfigured-Action allow. Do not introduce a generic
+Action HTTP endpoint to perform this mapping.
 
 ## Problem Details
 
@@ -118,6 +119,19 @@ Every error response must contain a Problem Details body whose schema is declare
 - `status`, equal to the actual HTTP response status.
 
 Add structured extension members only when clients need them to recover, such as safe field issues, a retry hint, or a stable domain reason code. Keep those extensions typed in Effect Schema.
+
+Contract modules construct these schemas with the browser-safe `makeProblemDetailsSchema` and
+`makeRetryableProblemDetailsSchema` helpers from `@app/shared-contracts/problem-details`. The
+dedicated package entrypoint has no owner-local handler, environment, JOSE, database, or runtime
+dependency. The helper couples the literal body status, HttpApi status annotation, and
+`application/problem+json` representation. The retryable constructor deliberately adds only
+`retryable: true`; other safe recovery data must be supplied as concrete Effect Schema fields.
+Reserved Problem Details fields, arbitrary records, `Schema.Unknown`, and `Schema.Any` are not
+extension points.
+
+These helpers are transport-contract infrastructure, not a catalog of business errors. Every
+contract still chooses its endpoint-specific tag, status, typed extensions, and visibly ordered
+error collection. Do not derive universal tags or endpoint semantics from status codes.
 
 ## Generated Client Contract
 
@@ -145,3 +159,12 @@ Before completing backend or BFF client work, verify:
 6. The generated client decodes backend, transport, and decoding failures into typed errors.
 7. Frontend integration handles the client error union exhaustively before rendering.
 8. Action endpoints exhaustively translate `ActionPolicyDenied` and `ActionPolicyEvaluationError`, choosing denial status by Policy semantics rather than applying one universal Policy status.
+
+## Single-use gateway assertions
+
+The receiving owner verifies signature, issuer, audience, expiry, version, `jti`, and trusted
+principal claims before attempting redemption. Atomic duplicate redemption is a typed unusable
+credential and maps to the same sanitized `401` family as another invalid Bearer assertion, with
+`WWW-Authenticate: Bearer`. Redemption storage failure is a typed unavailable result and maps to
+retryable `503`. Neither response exposes the assertion, `jti`, principal, tenant, or storage
+diagnostic.

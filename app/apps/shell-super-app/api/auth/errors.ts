@@ -1,35 +1,45 @@
-/* eslint-disable max-classes-per-file -- Authentication exposes one closed runtime failure vocabulary. */
 import { Schema } from 'effect';
 
-export class InvalidCredentialsError extends Schema.TaggedError<InvalidCredentialsError>()(
+const InvalidCredentialsErrorSchema = Schema.TaggedStruct('InvalidCredentialsError', {});
+export type InvalidCredentialsFailure = typeof InvalidCredentialsErrorSchema.Type;
+export const InvalidCredentialsError = Schema.TaggedError<InvalidCredentialsFailure>()(
   'InvalidCredentialsError',
   {},
-) {}
+);
 
-export class OntosIdentityForbiddenError extends Schema.TaggedError<OntosIdentityForbiddenError>()(
+const OntosIdentityForbiddenErrorSchema = Schema.TaggedStruct('OntosIdentityForbiddenError', {});
+export type OntosIdentityForbiddenFailure = typeof OntosIdentityForbiddenErrorSchema.Type;
+export const OntosIdentityForbiddenError = Schema.TaggedError<OntosIdentityForbiddenFailure>()(
   'OntosIdentityForbiddenError',
   {},
-) {}
+);
 
-export class TenantAccessForbiddenError extends Schema.TaggedError<TenantAccessForbiddenError>()(
+const TenantAccessForbiddenErrorSchema = Schema.TaggedStruct('TenantAccessForbiddenError', {});
+export type TenantAccessForbiddenFailure = typeof TenantAccessForbiddenErrorSchema.Type;
+export const TenantAccessForbiddenError = Schema.TaggedError<TenantAccessForbiddenFailure>()(
   'TenantAccessForbiddenError',
   {},
-) {}
+);
 
-export class AuthenticationUnavailableError extends Schema.TaggedError<AuthenticationUnavailableError>()(
+const AuthenticationUnavailableErrorSchema = Schema.TaggedStruct(
   'AuthenticationUnavailableError',
   {},
-) {}
+);
+export type AuthenticationUnavailableFailure = typeof AuthenticationUnavailableErrorSchema.Type;
+export const AuthenticationUnavailableError =
+  Schema.TaggedError<AuthenticationUnavailableFailure>()('AuthenticationUnavailableError', {});
 
-export class AuthenticationInternalError extends Schema.TaggedError<AuthenticationInternalError>()(
+const AuthenticationInternalErrorSchema = Schema.TaggedStruct('AuthenticationInternalError', {});
+export type AuthenticationInternalFailure = typeof AuthenticationInternalErrorSchema.Type;
+export const AuthenticationInternalError = Schema.TaggedError<AuthenticationInternalFailure>()(
   'AuthenticationInternalError',
   {},
-) {}
+);
 
 export type AuthenticationRuntimeError =
-  | InvalidCredentialsError
-  | OntosIdentityForbiddenError
-  | AuthenticationUnavailableError
-  | AuthenticationInternalError;
+  | InvalidCredentialsFailure
+  | OntosIdentityForbiddenFailure
+  | AuthenticationUnavailableFailure
+  | AuthenticationInternalFailure;
 
-export type SwitchTenantRuntimeError = AuthenticationRuntimeError | TenantAccessForbiddenError;
+export type SwitchTenantRuntimeError = AuthenticationRuntimeError | TenantAccessForbiddenFailure;

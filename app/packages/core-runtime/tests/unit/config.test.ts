@@ -1,5 +1,6 @@
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import test from 'node:test';
 import { Effect } from 'effect';
 import { acquirePoolResource } from '../../src/db/client.ts';
@@ -10,16 +11,16 @@ import {
   parseDatabaseConnectionPair,
 } from '../../src/db/config.ts';
 
-test('loads the root environment independently of the invocation directory', async () => {
+void test('loads the root environment independently of the invocation directory', async () => {
   const originalDirectory = process.cwd();
   const rootExamplePath = ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
 
   try {
     process.chdir('/');
-    const configuration = await Effect.runPromise(
+    const configuration = await runEffectTestPromise(
       loadDatabaseConfig({
-        envPath: rootExamplePath,
         environment: {},
+        envPath: rootExamplePath,
       }),
     );
 
@@ -33,8 +34,8 @@ test('loads the root environment independently of the invocation directory', asy
   }
 });
 
-test('parses valid local PostgreSQL connection settings', async () => {
-  const configuration = await Effect.runPromise(
+void test('parses valid local PostgreSQL connection settings', async () => {
+  const configuration = await runEffectTestPromise(
     parseDatabaseConfig({
       DATABASE_URL: 'postgresql://ontos:ontos@localhost:5433/ontos',
     }),
@@ -49,9 +50,9 @@ test('parses valid local PostgreSQL connection settings', async () => {
   });
 });
 
-test('keeps missing and malformed configuration in the typed error channel', async () => {
-  const missing = await Effect.runPromise(Effect.flip(parseDatabaseConfig({})));
-  const malformed = await Effect.runPromise(
+void test('keeps missing and malformed configuration in the typed error channel', async () => {
+  const missing = await runEffectTestPromise(Effect.flip(parseDatabaseConfig({})));
+  const malformed = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConfig({
         DATABASE_URL: 'https://localhost/not-postgres',
@@ -63,21 +64,21 @@ test('keeps missing and malformed configuration in the typed error channel', asy
   assert.equal(malformed._tag, 'DatabaseConfigError');
 });
 
-test('requires distinct administrative and least-privilege runtime identities', async () => {
-  const valid = await Effect.runPromise(
+void test('requires distinct administrative and least-privilege runtime identities', async () => {
+  const valid = await runEffectTestPromise(
     parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
       DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
     }),
   );
-  const missing = await Effect.runPromise(
+  const missing = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
       }),
     ),
   );
-  const identical = await Effect.runPromise(
+  const identical = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://ontos:secret@localhost:5433/ontos',
@@ -85,7 +86,7 @@ test('requires distinct administrative and least-privilege runtime identities', 
       }),
     ),
   );
-  const superuserCompatible = await Effect.runPromise(
+  const superuserCompatible = await runEffectTestPromise(
     Effect.flip(
       parseDatabaseConnectionPair({
         DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
@@ -93,23 +94,39 @@ test('requires distinct administrative and least-privilege runtime identities', 
       }),
     ),
   );
+  const queryParameterIdentities = await runEffectTestPromise(
+    parseDatabaseConnectionPair({
+      DATABASE_ADMIN_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_admin',
+      DATABASE_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_runtime',
+    }),
+  );
+  const queryParameterCollision = await runEffectTestPromise(
+    Effect.flip(
+      parseDatabaseConnectionPair({
+        DATABASE_ADMIN_URL: 'postgresql://admin-authority@localhost:5433/ontos?user=effective_role',
+        DATABASE_URL: 'postgresql://runtime-authority@localhost:5433/ontos?user=effective_role',
+      }),
+    ),
+  );
 
   assert.equal(valid.admin.user, 'ontos_admin');
   assert.equal(valid.runtime.user, 'ontos_runtime');
+  assert.equal(queryParameterIdentities.admin.user, 'ontos_admin');
+  assert.equal(queryParameterIdentities.runtime.user, 'ontos_runtime');
   assert.equal(missing._tag, 'DatabaseConfigError');
   assert.equal(identical._tag, 'DatabaseConfigError');
+  assert.equal(queryParameterCollision._tag, 'DatabaseConfigError');
   assert.equal(superuserCompatible._tag, 'DatabaseConfigError');
 });
 
-test('finalizes the pool resource when its Effect scope closes', async () => {
+void test('finalizes the pool resource when its Effect scope closes', async () => {
   let finalized = false;
 
-  await Effect.runPromise(
+  await runEffectTestPromise(
     Effect.scoped(
       acquirePoolResource(() => ({
-        end: () => {
+        end: async () => {
           finalized = true;
-          return Promise.resolve();
         },
       })),
     ),

@@ -1,4 +1,43 @@
 export {
+  ACTION_PROVISIONING_INTENTS,
+  ActionExecutionAuthorizationSchema,
+  ActionProvisioningIntentSchema,
+  AuthenticatedPrincipalAuthorizationSchema,
+  CapabilityIssuanceAuthorizationSchema,
+  ContextPermissionAuthorizationSchema,
+  EntrypointAuthorizationSchema,
+  IntentionalPublicAuthorizationSchema,
+  OwnerLocalBackgroundAuthorizationSchema,
+  decodeEntrypointAuthorization,
+} from './authorization/entrypoint-classification.ts';
+export {
+  AUTHORIZATION_WOULD_DENY_SCHEMA_VERSION,
+  decideAuthorizationRollout,
+} from './authorization/rollout-decision.ts';
+export type {
+  AuthorizationDenialReason,
+  AuthorizationRolloutDecisionInput,
+  AuthorizationRolloutDecisionOptions,
+  AuthorizationRolloutMode,
+  AuthorizationRolloutRuntimeContract,
+  AuthorizationWouldDenyEvent,
+} from './authorization/rollout-decision.ts';
+export {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionRedemptionUnavailableError,
+  GatewayAssertionReplayError,
+} from './auth/gateway-assertion-redemption.ts';
+export type {
+  GatewayAssertionRedemption,
+  GatewayAssertionRedemptionError,
+  GatewayAssertionRedemptionInput,
+} from './auth/gateway-assertion-redemption.ts';
+export type {
+  ActionExecutionAuthorization,
+  ActionProvisioningIntent,
+  EntrypointAuthorization,
+} from './authorization/entrypoint-classification.ts';
+export {
   PrincipalBindingAmbiguousError,
   PrincipalBindingInactiveError,
   PrincipalBindingMissingError,
@@ -77,10 +116,13 @@ export type {
   SafeLegalEntity,
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
+export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
+export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
   DatabaseConfig,
   DatabaseConfigError,
+  DatabaseConfigLive,
   ROOT_ENV_PATH,
   loadDatabaseConnectionPair,
   loadDatabaseConfig,
@@ -103,14 +145,30 @@ export type {
   PrincipalKind,
   PrincipalStatus,
 } from './db/schema.ts';
+export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-transaction.ts';
 export {
-  enableGovernedRls,
-  tenantLegalEntityRlsPolicies,
-  tenantRlsPolicies,
-} from './db/scoped-transaction.ts';
+  DatabaseCommitAcknowledgementAmbiguous,
+  DatabaseDriverFailureKindSchema,
+  DatabaseDriverFailureSchema,
+  DatabaseDriverFailureInputSchema,
+  DatabaseDriverUnavailableFailure,
+  DatabaseTransactionFailure,
+  decodeDatabaseDriverFailure,
+  isDatabaseCommitAcknowledgementAmbiguous,
+  isDatabaseUnavailableFailure,
+} from './database/driver-failure.ts';
+export type {
+  DatabaseDriverFailure,
+  DatabaseDriverFailureInput,
+  DatabaseDriverFailureKind,
+} from './database/driver-failure.ts';
+export { findPostgresFailure } from './database/postgres-failure.ts';
+export type { PostgresFailureMetadata } from './database/postgres-failure.ts';
 export {
   ContextAccess,
   ContextAccessLive,
+  LEGAL_ENTITY_PERMISSION_KEYS,
+  TENANT_PERMISSION_KEYS,
   makeContextAccess,
   makeContextAccessLive,
   toLegalEntityAccessObjectId,
@@ -122,16 +180,28 @@ export type {
   ContextAccessDecision,
   ContextAccessResult,
   ContextAccessService,
+  LegalEntityPermissionKey,
   ResourceAccessTarget,
+  TenantPermissionKey,
 } from './permissions/context-access.ts';
-export { defineAction, isActionRegistration } from './actions/definition.ts';
+export {
+  defineAction,
+  defineActionResourcePermission,
+  isActionRegistration,
+} from './actions/definition.ts';
 export type {
   ActionAuditProfile,
   ActionDescriptor,
   ActionHandler,
   ActionIdempotencyRule,
+  ActionLegalEntityPermission,
   ActionRegistration,
+  ActionResourcePermission,
+  ActionResourcePermissionDeclaration,
+  ActionResourcePermissionTarget,
+  ActionResourcePermissionTargetResolver,
   ActionRequirements,
+  ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
 export {
@@ -172,14 +242,18 @@ export type {
 } from './actions/context.ts';
 export {
   LEGAL_ENTITY_SCOPES,
+  OperationalScopeRepositoryLive,
   OperationalScopeResolver,
+  OperationalScopeResolverFromRepositoryLive,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from './operations/context.ts';
+export { OperationalScopeRepositoryContext } from './operations/repository-context.ts';
 export type {
   LegalEntityScope,
   OperationalScope,
   OperationalScopeRepository,
+  OperationalScopeRequest,
   OperationalScopeResolverService,
   ResolveOperationalScopeInput,
 } from './operations/context.ts';
@@ -197,6 +271,9 @@ export {
   defineRead,
 } from './reads/definition.ts';
 export type {
+  AlternativeResolvedReadPermissionTarget,
+  AtomicResolvedReadPermissionTarget,
+  ReadAlternativeTenantPermission,
   ReadAccessKind,
   ReadDescriptor,
   ReadEvidenceCaptureMode,
@@ -208,18 +285,14 @@ export type {
   ReadResultPermissionTargetResolver,
   ReadRegistration,
   ReadServiceFactory,
+  ResolvedReadPermissionTarget,
 } from './reads/definition.ts';
 export type {
   ReadEvidenceMetadata,
   ReadHandlerContext,
   ReadHandlerResult,
 } from './reads/context.ts';
-export {
-  READ_RUNTIME_STAGES,
-  ReadRuntime,
-  ReadRuntimeLive,
-  makeReadRuntimeLive,
-} from './reads/runtime.ts';
+export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
   ReadEvidencePersistenceError,
@@ -235,6 +308,68 @@ export {
   ReadResultValidationError,
 } from './reads/errors.ts';
 export type { ReadCoreError } from './reads/errors.ts';
+export {
+  CoreSearchFacetSchema,
+  CoreSearchMetadataFieldSchema,
+  CoreSearchProjectionDocumentSchema,
+  CoreSearchProjectionHitSchema,
+  CoreSearchProjectionInvalid,
+  CoreSearchProjectionMutationSchema,
+  CoreSearchProjectionReplacementSchema,
+  CoreSearchProjectionStore,
+  CoreSearchProjectionUnavailable,
+  CoreSearchQueryRuntime,
+  CoreSearchQuerySchema,
+  CoreSearchResourceRefSchema,
+  CoreSearchTemporalFacetSchema,
+  decodeCoreSearchProjectionMutation,
+  decodeCoreSearchProjectionReplacement,
+  createCoreSearchQueryRuntime,
+  makeInMemoryCoreSearchProjectionStore,
+} from './search/projection.ts';
+export type {
+  CoreSearchFacet,
+  CoreSearchMetadataField,
+  CoreSearchProjectionDocument,
+  CoreSearchProjectionHit,
+  CoreSearchProjectionStoreService,
+  CoreSearchQuery,
+  CoreSearchQueryRuntimeService,
+  CoreSearchResourceRef,
+  CoreSearchTemporalFacet,
+  CoreSearchProjectionMutation,
+  CoreSearchProjectionReplacement,
+} from './search/projection.ts';
+export {
+  CoreSearchProjectionStoreLive,
+  CoreSearchQueryRuntimeLive,
+  makePostgresCoreSearchProjectionStore,
+} from './search/persistence.ts';
+export {
+  CORE_SEARCH_INGESTION_REGISTRATIONS,
+  CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
+  CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS,
+  CoreSearchIngestion,
+  CoreSearchIngestionLive,
+  CoreSearchIngestionObservationSchema,
+  makeCoreSearchIngestion,
+} from './search/ingestion.ts';
+export type {
+  CoreSearchIngestionObservation,
+  CoreSearchIngestionRegistration,
+  CoreSearchIngestionService,
+  CoreSearchPartyLifecycleTopic,
+  CoreSearchPartyProjectorWorkerKey,
+} from './search/ingestion.ts';
+export {
+  CoreSearchWorkerSnapshot,
+  CoreSearchWorkerSnapshotLive,
+} from './search/worker-snapshot.ts';
+export type {
+  CoreSearchSnapshotReadExecutor,
+  CoreSearchWorkerSnapshotService,
+  CoreSearchWorkerSnapshotView,
+} from './search/worker-snapshot.ts';
 export { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema } from './actions/events.ts';
 export type {
   ActionAccessEvidencePolicy,
@@ -289,6 +424,25 @@ export {
   makeTenantModuleStateService,
   validateTenantModuleStateTransition,
 } from './modules/tenant-module-state-service.ts';
+export {
+  ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
+  ApplicationCompositionArtifactReferenceSchema,
+  ApplicationCompositionModuleSchema,
+  ApplicationCompositionSchema,
+  ApplicationCompositionSingletonSchema,
+  ApplicationCompositionValidationError,
+  ApplicationCompositionVersionedIdentitySchema,
+  canonicalizeApplicationComposition,
+  validateApplicationCompositionCandidate,
+} from './modules/application-composition.ts';
+export type {
+  ApplicationComposition,
+  ApplicationCompositionCandidateEvidence,
+  ApplicationCompositionModule,
+  ApplicationCompositionVersionedIdentity,
+  ObservedApplicationCompositionContract,
+  ObservedModuleFederationManifest,
+} from './modules/application-composition.ts';
 export {
   MODULE_ENTRYPOINT_ACCESSES,
   MODULE_ENTRYPOINT_ROLES,
@@ -405,9 +559,13 @@ export {
   OntosModuleCatalogValidationError,
   InstalledModuleCatalogService,
   buildInstalledModuleCatalog,
+  resolveInstalledModuleCatalog,
 } from './modules/catalog.ts';
 export type {
   InstalledDeploymentContractInput,
+  InstalledDeploymentFailureReason,
+  InstalledDeploymentResolutionInput,
+  InstalledDeploymentStatus,
   InstalledModuleCatalog,
   InstalledModuleCatalogServiceContract,
 } from './modules/catalog.ts';
@@ -426,6 +584,10 @@ export type {
   VerticalRuntimeSafeDescriptors,
 } from './modules/runtime-registration.ts';
 
+export { coreActionCatalog } from './modules/actions/catalog.ts';
+export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
+export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
+
 // <generated-core-action-exports>
 export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
 export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
@@ -437,7 +599,7 @@ export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-manag
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
 
-export { defineOutboxWorker } from './outbox/definition.ts';
+export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './outbox/definition.ts';
 export type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerDescriptor,
@@ -451,13 +613,12 @@ export type {
 export {
   OutboxClaimLostError,
   OutboxHandlerExecutionError,
-  OutboxModuleStateError,
   OutboxPayloadDecodeError,
   OutboxPollerConfigError,
   OutboxPersistenceError,
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
-export type { OutboxWorkerError } from './outbox/errors.ts';
+export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
 export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {
   OutboxCycleRunner,
@@ -465,11 +626,7 @@ export type {
   ParseOutboxPollingConfigInput,
   RunOutboxPollingLoopInput,
 } from './outbox/poller.ts';
-export {
-  OutboxWorkerInfrastructureLive,
-  runOutboxWorkerProcess,
-  startOutboxWorkerProcess,
-} from './outbox/process.ts';
+export { OutboxRepositoryLive } from './outbox/repository.ts';
 export type {
   RunOutboxWorkerProcessInput,
   StartOutboxWorkerProcessInput,

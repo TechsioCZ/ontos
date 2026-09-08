@@ -1,4 +1,3 @@
-/* eslint-disable complexity -- Closed evidence validation keeps every fail-closed bound visible. */
 import { Effect, Predicate, Schema } from 'effect';
 import type { OperationalScope } from '../operations/context.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
@@ -42,17 +41,47 @@ const evidenceKeys = new Set([
   'resultFingerprintHash',
   'resultFingerprintSchema',
 ]);
-const invalidEvidence = () =>
-  new ReadEvidenceValidationError({
+const invalidEvidence = (cause?: unknown): ReadEvidenceValidationError => {
+  const failure = new ReadEvidenceValidationError({
     code: 'read_evidence_invalid',
     reason: 'The read evidence does not match its declared capture policy',
   });
+  return cause === undefined
+    ? failure
+    : Object.defineProperty(failure, 'cause', {
+        configurable: false,
+        enumerable: false,
+        value: cause,
+        writable: false,
+      });
+};
 const ReadEvidenceCandidateSchema = Schema.Struct({
   queryHash: Schema.optional(Schema.Unknown),
   resultCount: Schema.Unknown,
   resultFingerprintHash: Schema.optional(Schema.Unknown),
   resultFingerprintSchema: Schema.optional(Schema.Unknown),
 });
+
+type ReadEvidenceCandidate = typeof ReadEvidenceCandidateSchema.Type;
+
+const isValidResultCount = Schema.is(
+  Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 2_147_483_647, minimum: 0 })),
+);
+
+const hasInvalidFingerprintHash = (
+  value: ReadEvidenceCandidate['resultFingerprintHash'],
+): boolean => value !== undefined && (!Predicate.isString(value) || !sha256.test(value));
+
+const hasInvalidFingerprintSchema = (
+  value: ReadEvidenceCandidate['resultFingerprintSchema'],
+): boolean =>
+  value !== undefined && (!Predicate.isString(value) || value.length === 0 || value.length > 300);
+
+const hasInvalidHashEvidence = (record: ReadEvidenceCandidate): boolean =>
+  record.queryHash !== undefined ||
+  (record.resultFingerprintHash === undefined) !== (record.resultFingerprintSchema === undefined) ||
+  hasInvalidFingerprintHash(record.resultFingerprintHash) ||
+  hasInvalidFingerprintSchema(record.resultFingerprintSchema);
 
 export const validateReadEvidenceMetadata = <Value>(
   captureMode: ReadEvidenceCaptureMode,
@@ -71,10 +100,7 @@ export const validateReadEvidenceMetadata = <Value>(
       } = record;
       if (
         Object.keys(record).some((key) => !evidenceKeys.has(key)) ||
-        !Predicate.isNumber(resultCount) ||
-        !Number.isSafeInteger(resultCount) ||
-        resultCount < 0 ||
-        resultCount > 2_147_483_647
+        !isValidResultCount(resultCount)
       ) {
         return Effect.fail(invalidEvidence());
       }
@@ -86,17 +112,7 @@ export const validateReadEvidenceMetadata = <Value>(
       ) {
         return Effect.fail(invalidEvidence());
       }
-      if (
-        captureMode === 'hash_only' &&
-        (queryHash !== undefined ||
-          (fingerprintHash === undefined) !== (fingerprintSchema === undefined) ||
-          (fingerprintHash !== undefined &&
-            (!Predicate.isString(fingerprintHash) || !sha256.test(fingerprintHash))) ||
-          (fingerprintSchema !== undefined &&
-            (!Predicate.isString(fingerprintSchema) ||
-              fingerprintSchema.length === 0 ||
-              fingerprintSchema.length > 300)))
-      ) {
+      if (captureMode === 'hash_only' && hasInvalidHashEvidence(record)) {
         return Effect.fail(invalidEvidence());
       }
       return Effect.succeed(

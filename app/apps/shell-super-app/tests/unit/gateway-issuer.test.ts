@@ -1,10 +1,16 @@
-import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { expect, rs, test } from '@rstest/core';
+import { Effect, Exit, Fiber, Predicate } from 'effect';
+import { TestClock } from 'effect/testing';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
-import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
-import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
+import {
+  GatewayIssuer,
+  issueGatewayContextAssertion,
+  makeGatewayIssuerLayer,
+} from '../../api/auth/gateway-issuer.ts';
+import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -58,8 +64,8 @@ const makeConfiguration = async (): Promise<{
 
 const dependencies = (
   configuration: GatewayIssuerConfigValue,
-  overrides: Partial<GatewayIssuerDependencies> = {},
-): GatewayIssuerDependencies => ({
+  overrides: Partial<GatewayIssuerLayerOptions> = {},
+): GatewayIssuerLayerOptions => ({
   currentTimeSeconds: Effect.succeed(1_700_000_000),
   generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
   loadAudiences: Effect.succeed(new Set(['property-registry'])),
@@ -67,13 +73,33 @@ const dependencies = (
   ...overrides,
 });
 
-test('signs exact five-minute, audience-scoped EdDSA claims with the configured key ID', async () => {
+const issueGatewayContextAssertionWith = <Principal>(
+  input: {
+    readonly audience: string;
+    readonly principal: Principal;
+  },
+  options: GatewayIssuerLayerOptions,
+) => issueGatewayContextAssertion(input).pipe(Effect.provide(makeGatewayIssuerLayer(options)));
+
+test('memoises configuration within the refresh window and issues signed assertions', async () => {
   const { configuration, publicKey } = await makeConfiguration();
-  const result = await Effect.runPromise(
-    issueGatewayContextAssertion(
-      { audience: 'property-registry', principal },
-      dependencies(configuration),
-    ),
+  let configurationLoads = 0;
+  const layer = makeGatewayIssuerLayer(
+    dependencies(configuration, {
+      loadConfig: Effect.sync(() => {
+        configurationLoads += 1;
+        return configuration;
+      }),
+    }),
+  );
+  const [result] = await runEffectTestPromise(
+    Effect.all(
+      [
+        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+      ],
+      { concurrency: 2 },
+    ).pipe(Effect.provide(layer)),
   );
   const header = decodeProtectedHeader(result.token);
   const claims = decodeJwt(result.token);
@@ -96,10 +122,208 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
     sub: principal.principalId,
     ver: 1,
   });
-  expect(verified.payload.principal).toEqual(principal);
+  expect(verified.payload['principal']).toEqual(principal);
   expect(JSON.stringify(claims)).not.toMatch(
     /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u,
   );
+  expect(configurationLoads).toBe(1);
+});
+
+test('shares cached configuration across concurrent valid issuances', async () => {
+  const { configuration, publicKey } = await makeConfiguration();
+  let loadConfigCount = 0;
+  const layer = makeGatewayIssuerLayer(
+    dependencies(configuration, {
+      loadConfig: Effect.sync(() => {
+        loadConfigCount += 1;
+        return configuration;
+      }),
+    }),
+  );
+  const importKey = rs.spyOn(globalThis.crypto.subtle, 'importKey');
+  let results: readonly { readonly token: string }[];
+  try {
+    results = await runEffectTestPromise(
+      Effect.all(
+        Array.from({ length: 8 }, () =>
+          issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        ),
+        { concurrency: 8 },
+      ).pipe(Effect.provide(layer)),
+    );
+    // The signing key is imported once and shared: the slot serialises concurrent first callers.
+    expect(importKey).toHaveBeenCalledTimes(1);
+  } finally {
+    importKey.mockRestore();
+  }
+  expect(results.length).toBe(8);
+  expect(loadConfigCount).toBe(1);
+  await Promise.all(
+    results.map(async (result) => {
+      const verified = await jwtVerify(result.token, publicKey, {
+        algorithms: ['EdDSA'],
+        audience: 'property-registry',
+        currentDate: new Date(1_700_000_001_000),
+        issuer,
+      });
+      expect(verified.payload['principal']).toEqual(principal);
+    }),
+  );
+});
+
+test('allows the next issuance after interrupting a pending key import', async () => {
+  const { configuration, publicKey } = await makeConfiguration();
+  const started = Promise.withResolvers<boolean>();
+  const blocked = Promise.withResolvers<CryptoKey>();
+  const importKey = rs
+    .spyOn(globalThis.crypto.subtle, 'importKey')
+    .mockImplementationOnce(async () => {
+      started.resolve(true);
+      return await blocked.promise;
+    });
+  try {
+    const result = await runEffectTestPromise(
+      Effect.gen(function* interruptedImport() {
+        const gatewayIssuer = yield* GatewayIssuer;
+        const first = yield* gatewayIssuer
+          .issue({ audience: 'property-registry', principal })
+          .pipe(Effect.forkChild);
+        yield* Effect.promise(async () => await started.promise);
+        yield* Fiber.interrupt(first);
+        expect(Exit.isFailure(yield* Fiber.await(first))).toBe(true);
+        return yield* gatewayIssuer.issue({ audience: 'property-registry', principal });
+      }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration)))),
+    );
+    await jwtVerify(result.token, publicKey, {
+      algorithms: ['EdDSA'],
+      audience: 'property-registry',
+      currentDate: new Date(1_700_000_001_000),
+      issuer,
+    });
+  } finally {
+    blocked.resolve(publicKey);
+    importKey.mockRestore();
+  }
+});
+
+test('refreshes configuration after 30 seconds and replaces the rotated signing key', async () => {
+  const { configuration: initialConfiguration, publicKey: initialPublicKey } =
+    await makeConfiguration();
+  const { configuration: generatedRotatedConfiguration, publicKey: rotatedPublicKey } =
+    await makeConfiguration();
+  const rotatedConfiguration = {
+    ...generatedRotatedConfiguration,
+    privateJwk: {
+      ...generatedRotatedConfiguration.privateJwk,
+      kid: 'rotated-2026-09',
+    },
+  };
+  let loadConfigCount = 0;
+  const layer = makeGatewayIssuerLayer(
+    dependencies(initialConfiguration, {
+      loadConfig: Effect.sync(() => {
+        loadConfigCount += 1;
+        return loadConfigCount === 1 ? initialConfiguration : rotatedConfiguration;
+      }),
+    }),
+  );
+  const [initialResult, rotatedResult] = await runEffectTestPromise(
+    Effect.gen(function* gatewayRotationSequence() {
+      const initial = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        principal,
+      });
+      const cached = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        principal,
+      });
+      expect(loadConfigCount).toBe(1);
+      expect(decodeProtectedHeader(cached.token).kid).toBe(initialConfiguration.privateJwk.kid);
+      yield* TestClock.adjust('31 seconds');
+      const rotated = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        principal,
+      });
+      return [initial, rotated] as const;
+    }).pipe(Effect.provide(layer), Effect.provide(TestClock.layer())),
+  );
+  const initialHeader = decodeProtectedHeader(initialResult.token);
+  const rotatedHeader = decodeProtectedHeader(rotatedResult.token);
+
+  await jwtVerify(initialResult.token, initialPublicKey, {
+    algorithms: ['EdDSA'],
+    audience: 'property-registry',
+    currentDate: new Date(1_700_000_001_000),
+    issuer,
+  });
+  await jwtVerify(rotatedResult.token, rotatedPublicKey, {
+    algorithms: ['EdDSA'],
+    audience: 'property-registry',
+    currentDate: new Date(1_700_000_001_000),
+    issuer,
+  });
+
+  expect(loadConfigCount).toBe(2);
+  expect(rotatedHeader.kid).toBe(rotatedConfiguration.privateJwk.kid);
+  expect(rotatedHeader.kid).not.toBe(initialHeader.kid);
+});
+
+test('does not cache configuration failures', async () => {
+  const { configuration } = await makeConfiguration();
+  let loadConfigCount = 0;
+  const layer = makeGatewayIssuerLayer(
+    dependencies(configuration, {
+      loadConfig: Effect.suspend(() => {
+        loadConfigCount += 1;
+        return loadConfigCount === 1 ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration);
+      }),
+    }),
+  );
+  const [configurationError, result] = await runEffectTestPromise(
+    Effect.gen(function* gatewayFailureSequence() {
+      const configurationFailure = yield* Effect.flip(
+        issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+      );
+      const issuedResult = yield* issueGatewayContextAssertion({
+        audience: 'property-registry',
+        principal,
+      });
+      return [configurationFailure, issuedResult] as const;
+    }).pipe(Effect.provide(layer)),
+  );
+  expect(configurationError.stage).toBe('configuration');
+  expect(result.token.length).toBeGreaterThan(0);
+  expect(loadConfigCount).toBe(2);
+});
+
+test('retries a failed key import on the next issuance', async () => {
+  const { configuration, publicKey } = await makeConfiguration();
+  const importKey = rs
+    .spyOn(globalThis.crypto.subtle, 'importKey')
+    .mockRejectedValueOnce(new Error('transient import failure'));
+  try {
+    const [error, result] = await runEffectTestPromise(
+      Effect.gen(function* retryImport() {
+        const failed = yield* Effect.flip(
+          issueGatewayContextAssertion({ audience: 'property-registry', principal }),
+        );
+        const issued = yield* issueGatewayContextAssertion({
+          audience: 'property-registry',
+          principal,
+        });
+        return [failed, issued] as const;
+      }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration)))),
+    );
+    expect(error.stage).toBe('signing');
+    await jwtVerify(result.token, publicKey, {
+      algorithms: ['EdDSA'],
+      audience: 'property-registry',
+      currentDate: new Date(1_700_000_001_000),
+      issuer,
+    });
+  } finally {
+    importKey.mockRestore();
+  }
 });
 
 test('fails closed for unknown audiences and invalid Effect-managed time', async () => {
@@ -107,22 +331,22 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
   const audienceErrors = await Promise.all(
     [
       Effect.flip(
-        issueGatewayContextAssertion(
+        issueGatewayContextAssertionWith(
           { audience: 'billing', principal },
           dependencies(configuration),
         ),
       ),
       Effect.flip(
-        issueGatewayContextAssertion(
+        issueGatewayContextAssertionWith(
           { audience: 'property.registry', principal },
           dependencies(configuration),
         ),
       ),
-    ].map((effect) => Effect.runPromise(effect)),
+    ].map(async (effect) => await runEffectTestPromise(effect)),
   );
-  const timeError = await Effect.runPromise(
+  const timeError = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
         dependencies(configuration, { currentTimeSeconds: Effect.succeed(-1) }),
       ),
@@ -137,9 +361,9 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
 
 test('rejects transport correlation or any other excess principal claim', async () => {
   const { configuration } = await makeConfiguration();
-  const error = await Effect.runPromise(
+  const error = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         {
           audience: 'property-registry',
           principal: { ...principal, correlationId: 'must-remain-a-header' },
@@ -154,9 +378,9 @@ test('rejects transport correlation or any other excess principal claim', async 
 
 test('identifies configuration and signing failures without exposing key material', async () => {
   const { configuration } = await makeConfiguration();
-  const configurationError = await Effect.runPromise(
+  const configurationError = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
         dependencies(configuration, {
           loadConfig: parseGatewayIssuerConfig({}),
@@ -164,9 +388,9 @@ test('identifies configuration and signing failures without exposing key materia
       ),
     ),
   );
-  const signingError = await Effect.runPromise(
+  const signingError = await runEffectTestPromise(
     Effect.flip(
-      issueGatewayContextAssertion(
+      issueGatewayContextAssertionWith(
         { audience: 'property-registry', principal },
         dependencies({
           ...configuration,
@@ -199,23 +423,24 @@ test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing ke
   ];
 
   const errors = await Promise.all(
-    invalidJwks.map((privateJwk) =>
-      Effect.runPromise(
-        Effect.flip(
-          parseGatewayIssuerConfig(
-            withOptionalProperty(
-              {
-                ONTOS_GATEWAY_ISSUER: issuer,
-              },
-              !(privateJwk === undefined),
-              'ONTOS_GATEWAY_PRIVATE_JWK',
-              JSON.stringify(privateJwk),
-              {},
+    invalidJwks.map(
+      async (privateJwk) =>
+        await runEffectTestPromise(
+          Effect.flip(
+            parseGatewayIssuerConfig(
+              withOptionalProperty(
+                {
+                  ONTOS_GATEWAY_ISSUER: issuer,
+                },
+                privateJwk !== undefined,
+                'ONTOS_GATEWAY_PRIVATE_JWK',
+                JSON.stringify(privateJwk),
+                {},
+              ),
             ),
           ),
         ),
-      ),
     ),
   );
-  expect(errors.every((error) => error._tag === 'GatewayIssuerConfigError')).toBe(true);
+  expect(errors.every((error) => Predicate.isTagged(error, 'GatewayIssuerConfigError'))).toBe(true);
 });

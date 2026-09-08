@@ -16,6 +16,8 @@ export default defineConfig({
     '**/modern-tanstack/**',
     '**/routeTree.gen.*',
     'tools/oxlint/anti-slop/**',
+    // Fixtures intentionally preserve syntax variants and source positions.
+    'tools/oxlint/effect-native/tests/fixtures/**',
   ],
   singleQuote: true,
 });

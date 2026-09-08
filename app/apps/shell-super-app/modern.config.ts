@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
+import {
+  createCloudflareWorkerSecurity,
+  createWorkerSsrPlugins,
+  createZephyrRspackPlugin,
+  resolveCloudflareExternal,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { bffPlugin } from '@modern-js/plugin-bff';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
@@ -9,8 +16,33 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
+import {
+  contains as optionContains,
+  getOrElse as getOptionOrElse,
+  getOrUndefined as getOptionOrUndefined,
+} from 'effect/Option';
+import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
+import {
+  Boolean as BooleanSchema,
+  Literals,
+  NumberFromString,
+  OptionFromUndefinedOr,
+  Trim,
+  check,
+  decodeTo,
+  decodeUnknownResult,
+  fromJsonString,
+  isBetween,
+  isInt,
+  isMinLength,
+} from 'effect/Schema';
+import { transform } from 'effect/SchemaTransformation';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 import { createModuleDeploymentAllowlistBuildInput } from './module-deployment-allowlist.config.ts';
+import {
+  DeploymentAllowlistOverlaySchema,
+  DeploymentAllowlistTopologySchema,
+} from './api/modules/deployment-allowlist.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -25,31 +57,80 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
+type RspackConfigHandler = Extract<
+  NonNullable<NonNullable<AppToolsUserConfig['tools']>['rspack']>,
+  (...arguments_: never[]) => void
+>;
+
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
-const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+const nonEmptyBuildStringSchema = Trim.pipe(check(isMinLength(1)));
+const getOptionalBuildConfig = (name: string): string | undefined => {
+  const decoded = decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
+    getBuildConfigEnvironment(name),
+  );
+  return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
+};
+const envValue = getOptionalBuildConfig;
+const BuildBooleanSchema = Literals([
+  'true',
+  'yes',
+  'on',
+  '1',
+  'y',
+  'false',
+  'no',
+  'off',
+  '0',
+  'n',
+]).pipe(
+  decodeTo(
+    BooleanSchema,
+    transform({
+      decode: (value) => ['true', 'yes', 'on', '1', 'y'].includes(value),
+      encode: (value) => (value ? 'true' : 'false'),
+    }),
+  ),
+);
+const getBuildBoolean = (name: string): boolean =>
+  getOptionOrElse(
+    getResultOrThrow(
+      decodeUnknownResult(OptionFromUndefinedOr(BuildBooleanSchema))(
+        getBuildConfigEnvironment(name),
+      ),
+    ),
+    () => false,
+  );
+const cloudflareDeployMode = getResultOrThrow(
+  decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
+    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
+  ),
+);
+const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
+const postgresProtocolCommonJsEntry = fileURLToPath(
+  new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')),
+);
+const postgresPoolCommonJsEntry = createRequire(import.meta.resolve('pg/package.json')).resolve(
+  'pg-pool',
+);
+const cloudflareWorkerRemoteStubPath = fileURLToPath(
+  new URL('src/api/cloudflare-worker-remote-stub.ts', import.meta.url),
+);
+const effectApiSourceDirectory = fileURLToPath(new URL('api/', import.meta.url));
+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
+const cloudflareRuntimeExternal = (
+  request: { dependencyType?: string; request?: string },
+  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
+) => {
+  callback(...resolveCloudflareExternal(request));
+};
+/* oxlint-enable promise/prefer-await-to-callbacks */
 
-const zephyrRspackPlugin = () => ({
-  name: 'ultramodern-zephyr-rspack-plugin',
-  pre: ['@modern-js/plugin-module-federation-config'],
-  setup(api: { modifyRspackConfig: (handler: ReturnType<typeof withZephyrRspack>) => void }) {
-    // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
-    // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
-    // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
-    // application configuration. Zephyr therefore engages ONLY for such an
-    // authoritative deploy — a plain build never contacts Zephyr Cloud, needs
-    // no account, and is never blocked. This is the framework's "works with or
-    // without Zephyr" contract. The plugin stays registered unconditionally
-    // (this gate keys on Zephyr's native deploy token, not any UltraModern
-    // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
-    // hard build failure.
-    const zephyrCiDeploy = (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
-    if (!zephyrCiDeploy) {
-      return;
-    }
-    api.modifyRspackConfig(withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()));
-  },
-});
+const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
+  createZephyrRspackPlugin({
+    configure: () => withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()),
+    readToken: () => getOptionalBuildConfig('ZE_CI_TOKEN'),
+  });
 
 const appId = 'shell-super-app';
 const moduleFederationConfigPath = fileURLToPath(
@@ -58,11 +139,19 @@ const moduleFederationConfigPath = fileURLToPath(
 const referenceTopologyPath = fileURLToPath(
   new URL('../../topology/reference-topology.json', import.meta.url),
 );
-const referenceTopology: unknown = JSON.parse(readFileSync(referenceTopologyPath, 'utf-8'));
+const referenceTopology = getResultOrThrow(
+  decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema), {
+    onExcessProperty: 'preserve',
+  })(readFileSync(referenceTopologyPath, 'utf-8')),
+);
 const developmentOverlayPath = fileURLToPath(
   new URL('../../topology/local-overlays/development.json', import.meta.url),
 );
-const developmentOverlay: unknown = JSON.parse(readFileSync(developmentOverlayPath, 'utf-8'));
+const developmentOverlay = getResultOrThrow(
+  decodeUnknownResult(fromJsonString(DeploymentAllowlistOverlaySchema), {
+    onExcessProperty: 'preserve',
+  })(readFileSync(developmentOverlayPath, 'utf-8')),
+);
 const moduleDeploymentAllowlist = createModuleDeploymentAllowlistBuildInput({
   cloudflareDeployEnabled,
   developmentOverlay,
@@ -74,18 +163,25 @@ Object.assign(globalThis, {
   ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
 });
 const cloudflareWorkerName = 'app-shell-super-app';
-const port = Number(getBuildConfigEnvironment('SHELL_SUPER_APP_PORT') ?? 3020);
-const envValue = (name: string) => {
-  const value = getBuildConfigEnvironment(name)?.trim();
-  return value !== undefined && value.length > 0 ? value : undefined;
-};
+const port = getOptionOrElse(
+  getResultOrThrow(
+    decodeUnknownResult(
+      OptionFromUndefinedOr(
+        NumberFromString.pipe(check(isInt(), isBetween({ maximum: 65_535, minimum: 1 }))),
+      ),
+    )(getBuildConfigEnvironment('SHELL_SUPER_APP_PORT')),
+  ),
+  () => 3020,
+);
 const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
 const configuredCloudflareUrl = envValue('ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP');
 const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
 const configuredModernAssetPrefix = envValue('MODERN_ASSET_PREFIX');
 const moduleFederationDevServerOrigin =
-  envValue('ULTRAMODERN_MF_DEV_ORIGIN') || 'http://localhost:3020';
-const cloudflareWorkersDevSubdomain = envValue('ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN');
+  getOptionalBuildConfig('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020';
+const cloudflareWorkersDevSubdomain = getOptionalBuildConfig(
+  'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
+);
 const inferredCloudflareUrl =
   cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined
     ? `https://${cloudflareWorkerName}.${cloudflareWorkersDevSubdomain}.workers.dev`
@@ -107,10 +203,17 @@ const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
 const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
 const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
 const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`;
+const shellDevServerHeaders: NonNullable<
+  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
+> = {
+  'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
+};
 
 if (
   cloudflareDeployEnabled &&
-  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true' &&
+  getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
   configuredCloudflareUrl === undefined &&
   configuredSiteUrl === undefined &&
   inferredCloudflareUrl === undefined
@@ -136,60 +239,36 @@ export default defineConfig(
           runtimeFramework: 'effect',
         },
         builderPlugins: [pluginTailwindcss()],
-      },
+      } satisfies AppToolsUserConfig,
       cloudflareDeployEnabled,
       'deploy',
       {
         worker: {
           compatibilityDate: '2026-06-02',
           name: cloudflareWorkerName,
-          security: {
-            contentSecurityPolicy: {
-              directives: {
-                'base-uri': ["'self'"],
-                'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-                'default-src': ["'self'"],
-                'font-src': ["'self'", 'data:', 'https:', 'http:'],
-                'form-action': ["'self'"],
-                'frame-ancestors': ["'self'"],
-                'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-                'manifest-src': ["'self'", 'https:', 'http:'],
-                'object-src': ["'none'"],
-                'script-src': [
-                  "'self'",
-                  "'unsafe-inline'",
-                  "'unsafe-eval'",
-                  'https:',
-                  'http:',
-                  'blob:',
-                ],
-                'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
-                'worker-src': ["'self'", 'blob:'],
-              },
-              mode: 'report-only',
-              reason:
-                'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
+          security: createCloudflareWorkerSecurity(),
+          services: [
+            {
+              binding:
+                getOptionalBuildConfig('VERTICAL_PARTY_REGISTRY_WORKER_BINDING') ??
+                'VERTICAL_PARTY_REGISTRY_WORKER',
+              prefix: '/party-registry-api',
+              service:
+                getOptionalBuildConfig('VERTICAL_PARTY_REGISTRY_WORKER_NAME') ??
+                'app-party-registry',
             },
-            enabled: true,
-            headers: {
-              contentTypeOptions: 'nosniff',
-              permissionsPolicy: 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-              referrerPolicy: 'strict-origin-when-cross-origin',
-            },
-            noindex: {
-              localhost: true,
-              previewHostnames: [],
-              workersDev: true,
-            },
-          },
+          ],
           ssr: true,
         },
-      },
+      } satisfies NonNullable<AppToolsUserConfig['deploy']>,
       {
         dev: {
           // Keep shell dev assets origin-relative so the shell works through
           // tunnels and local previews without rewriting its own chunks.
           assetPrefix: '/',
+          server: {
+            headers: shellDevServerHeaders,
+          },
         },
         html: {
           outputStructure: 'flat',
@@ -212,7 +291,7 @@ export default defineConfig(
           },
           rsdoctor: {
             disableClientServer: true,
-            enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
+            enabled: getBuildBoolean('ULTRAMODERN_RSDOCTOR'),
           },
         },
         plugins: [
@@ -283,17 +362,48 @@ export default defineConfig(
               .uniqueName('shellSuperApp')
               .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
           },
-          devServer: {
-            headers: {
-              'Access-Control-Allow-Headers':
-                'Accept, Authorization, Content-Type, X-Requested-With',
-              'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-              'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
-            },
-          },
+          rspack: ((config, { environment, rspack }) => {
+            if (!cloudflareDeployEnabled) {
+              return;
+            }
+            const configuredAliases = config.resolve.alias;
+            config.resolve.alias =
+              configuredAliases === false || configuredAliases === undefined
+                ? {}
+                : configuredAliases;
+            Object.assign(config.resolve.alias, {
+              'pg-pool$': postgresPoolCommonJsEntry,
+              'pg-protocol$': postgresProtocolCommonJsEntry,
+            });
+            const configuredExternals = config.externals;
+            config.externals = [cloudflareRuntimeExternal];
+            if (configuredExternals !== undefined) {
+              config.externals.push(
+                ...(Array.isArray(configuredExternals)
+                  ? configuredExternals
+                  : [configuredExternals]),
+              );
+            }
+            if (environment.name === 'workerSSR') {
+              const configuredNode = config.node;
+              config.node =
+                configuredNode === false || configuredNode === undefined ? {} : configuredNode;
+              Object.assign(config.node, {
+                __dirname: false,
+                __filename: false,
+              });
+              config.plugins.push(
+                ...createWorkerSsrPlugins(rspack, effectApiSourceDirectory),
+                new rspack.NormalModuleReplacementPlugin(
+                  /^partyRegistry\//u,
+                  cloudflareWorkerRemoteStubPath,
+                ),
+              );
+            }
+          }) satisfies RspackConfigHandler,
         },
-      },
-    ),
+      } satisfies AppToolsUserConfig,
+    ) satisfies AppToolsUserConfig,
     {
       appId,
       deliveryUnit: {

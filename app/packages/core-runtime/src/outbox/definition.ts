@@ -1,14 +1,12 @@
-import { Predicate } from 'effect';
-import type { Effect, Schema } from 'effect';
+import { Predicate, Schema } from 'effect';
+import type { Effect } from 'effect';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 
 const outboxWorkerRegistration: unique symbol = Symbol(
   '@app/core-runtime/outbox/worker-registration',
 );
-const outboxWorkerHandler: unique symbol = Symbol(
-  '@app/core-runtime/outbox/worker-registration/handler',
-);
+const verifiedOutboxWorkerHandlerContext = '__verifiedOutboxWorkerHandlerContext' as const;
 
 export interface OutboxWorkerRetryPolicy {
   readonly initialBackoffMs: number;
@@ -17,10 +15,11 @@ export interface OutboxWorkerRetryPolicy {
   readonly multiplier: number;
 }
 
-export interface OutboxWorkerHandlerContext {
+export interface OutboxWorkerHandlerContext extends Readonly<
+  Partial<Record<'correlationId', string>>
+> {
   readonly attemptNumber: number;
   readonly claimId: string;
-  readonly correlationId?: string;
   readonly deliveryId: string;
   readonly domainEventId: string;
   readonly messageId: string;
@@ -31,8 +30,28 @@ export interface OutboxWorkerHandlerContext {
   readonly workerKey: string;
 }
 
+const VerifiedOutboxWorkerHandlerContextSchema = Schema.Struct({
+  [verifiedOutboxWorkerHandlerContext]: Schema.Literal(true),
+});
+
+/** Core-private construction seam: caller-created context objects are not trusted worker claims. */
+export const attestOutboxWorkerHandlerContext = (
+  context: OutboxWorkerHandlerContext,
+): OutboxWorkerHandlerContext => {
+  const verified = { ...context };
+  Object.defineProperty(verified, verifiedOutboxWorkerHandlerContext, {
+    enumerable: false,
+    value: true,
+  });
+  return Object.freeze(verified);
+};
+
+export const isVerifiedOutboxWorkerHandlerContext = (
+  context: OutboxWorkerHandlerContext,
+): boolean => Schema.is(VerifiedOutboxWorkerHandlerContextSchema)(context);
+
 export interface OutboxWorkerDescriptor<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   Consumer extends string,
   Producer extends string,
 > {
@@ -48,7 +67,7 @@ export interface OutboxWorkerDescriptor<
 
 export type OutboxWorkerSubscription = Readonly<
   Pick<
-    OutboxWorkerDescriptor<Schema.ConstraintDecoder<unknown, never>, string, string>,
+    OutboxWorkerDescriptor<Schema.ConstraintDecoder<unknown>, string, string>,
     'consumerModuleKey' | 'entrypoint' | 'producerModuleKey' | 'topic' | 'workerKey'
   >
 >;
@@ -58,48 +77,94 @@ export type OutboxWorkerHandler<Payload, Error, Requirements = never> = (
   context: OutboxWorkerHandlerContext,
 ) => Effect.Effect<void, Error, Requirements>;
 
-declare class OutboxWorkerHandlerVariance<Payload, Error, Requirements> {
-  invoke(
-    payload: Payload,
-    context: OutboxWorkerHandlerContext,
-  ): Effect.Effect<void, Error, Requirements>;
-}
-
-type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHandlerVariance<
+type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHandler<
   Payload,
   Error,
   Requirements
->['invoke'];
+>;
 
 export interface OutboxWorkerRegistration<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   Consumer extends string,
   Producer extends string,
   HandlerError,
   HandlerRequirements = never,
 > {
+  readonly _handlerError?: HandlerError;
+  readonly _handlerRequirements?: HandlerRequirements;
+  readonly descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>;
   readonly [outboxWorkerRegistration]: true;
-  readonly [outboxWorkerHandler]: BivariantOutboxWorkerHandler<
+}
+
+class OutboxWorkerRegistrationValue<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  Consumer extends string,
+  Producer extends string,
+  HandlerError,
+  HandlerRequirements,
+> implements OutboxWorkerRegistration<
+  PayloadSchema,
+  Consumer,
+  Producer,
+  HandlerError,
+  HandlerRequirements
+> {
+  readonly [outboxWorkerRegistration] = true;
+  readonly #handler: BivariantOutboxWorkerHandler<
     PayloadSchema['Type'],
     HandlerError,
     HandlerRequirements
   >;
   readonly descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>;
-  readonly _handlerError?: HandlerError;
-  readonly _handlerRequirements?: HandlerRequirements;
+
+  constructor(
+    descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>,
+    handler: BivariantOutboxWorkerHandler<PayloadSchema['Type'], HandlerError, HandlerRequirements>,
+  ) {
+    this.descriptor = descriptor;
+    this.#handler = handler;
+  }
+
+  resolveHandler(): BivariantOutboxWorkerHandler<
+    PayloadSchema['Type'],
+    HandlerError,
+    HandlerRequirements
+  > {
+    return this.#handler;
+  }
 }
 
+const isOutboxWorkerRegistrationValue = Schema.is(Schema.instanceOf(OutboxWorkerRegistrationValue));
+
 export type AnyOutboxWorkerRegistration = OutboxWorkerRegistration<
-  Schema.ConstraintDecoder<unknown, never>,
+  Schema.ConstraintDecoder<unknown>,
   string,
   string,
   unknown,
   unknown
 >;
 
+/** Derive the schema-free deployment catalog without importing an owner's unrelated entrypoints. */
+export const extractOutboxWorkerSubscriptions = (
+  registrations: readonly AnyOutboxWorkerRegistration[],
+): readonly OutboxWorkerSubscription[] =>
+  Object.freeze(
+    registrations
+      .map(({ descriptor }) =>
+        Object.freeze({
+          consumerModuleKey: descriptor.consumerModuleKey,
+          entrypoint: descriptor.entrypoint,
+          producerModuleKey: descriptor.producerModuleKey,
+          topic: descriptor.topic,
+          workerKey: descriptor.workerKey,
+        }),
+      )
+      .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
+  );
+
 export type OutboxWorkerRequirements<Registration extends AnyOutboxWorkerRegistration> =
   Registration extends OutboxWorkerRegistration<
-    Schema.ConstraintDecoder<unknown, never>,
+    Schema.ConstraintDecoder<unknown>,
     string,
     string,
     unknown,
@@ -110,7 +175,7 @@ export type OutboxWorkerRequirements<Registration extends AnyOutboxWorkerRegistr
 
 type OutboxWorkerHandlerError<Registration extends AnyOutboxWorkerRegistration> =
   Registration extends OutboxWorkerRegistration<
-    Schema.ConstraintDecoder<unknown, never>,
+    Schema.ConstraintDecoder<unknown>,
     string,
     string,
     infer HandlerError,
@@ -137,25 +202,7 @@ const assertFiniteInteger = (
   }
 };
 
-export const defineOutboxWorker = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-  const Consumer extends string,
-  const Producer extends string,
-  HandlerError,
-  HandlerRequirements,
->(
-  descriptor: OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>,
-  handler: OutboxWorkerHandler<PayloadSchema['Type'], HandlerError, HandlerRequirements>,
-): OutboxWorkerRegistration<
-  PayloadSchema,
-  Consumer,
-  Producer,
-  HandlerError,
-  HandlerRequirements
-> => {
-  if (!moduleKeyPattern.test(descriptor.consumerModuleKey)) {
-    throw descriptorError('consumerModuleKey must be a stable module key');
-  }
+const assertWorkerEntrypoint = (descriptor: OutboxWorkerSubscription, reason: string): void => {
   if (
     descriptor.entrypoint.scope !== 'tenant' ||
     descriptor.entrypoint.role !== 'worker' ||
@@ -164,10 +211,18 @@ export const defineOutboxWorker = <
     descriptor.entrypoint.entrypointKey !== descriptor.workerKey ||
     !Object.isFrozen(descriptor.entrypoint)
   ) {
-    throw descriptorError(
-      'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
-    );
+    throw descriptorError(reason);
   }
+};
+
+const assertWorkerSubscription = (
+  descriptor: OutboxWorkerSubscription,
+  entrypointError: string,
+): void => {
+  if (!moduleKeyPattern.test(descriptor.consumerModuleKey)) {
+    throw descriptorError('consumerModuleKey must be a stable module key');
+  }
+  assertWorkerEntrypoint(descriptor, entrypointError);
   if (!moduleKeyPattern.test(descriptor.producerModuleKey)) {
     throw descriptorError('producerModuleKey must be a stable module key');
   }
@@ -184,6 +239,28 @@ export const defineOutboxWorker = <
       'workerKey must be owned by consumerModuleKey and end in lower-kebab-case',
     );
   }
+};
+
+export const defineOutboxWorker = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  const Consumer extends string,
+  const Producer extends string,
+  HandlerError,
+  HandlerRequirements,
+>(
+  descriptor: OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>,
+  handler: OutboxWorkerHandler<PayloadSchema['Type'], HandlerError, HandlerRequirements>,
+): OutboxWorkerRegistration<
+  PayloadSchema,
+  Consumer,
+  Producer,
+  HandlerError,
+  HandlerRequirements
+> => {
+  assertWorkerSubscription(
+    descriptor,
+    'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
+  );
   assertFiniteInteger(descriptor.leaseDurationMs, 1000, 3_600_000, 'leaseDurationMs');
   assertFiniteInteger(descriptor.retryPolicy.maxAttempts, 1, 100, 'retryPolicy.maxAttempts');
   assertFiniteInteger(
@@ -209,16 +286,15 @@ export const defineOutboxWorker = <
     throw descriptorError('handler must be an Effect function');
   }
 
-  const registration = Object.freeze({
-    [outboxWorkerHandler]: handler,
-    [outboxWorkerRegistration]: true as const,
-    descriptor: Object.freeze({
+  const registration = new OutboxWorkerRegistrationValue(
+    Object.freeze({
       ...descriptor,
       entrypoint: descriptor.entrypoint,
       retryPolicy: Object.freeze({ ...descriptor.retryPolicy }),
     }),
-  });
-  return registration;
+    handler,
+  );
+  return Object.freeze(registration);
 };
 
 export const validateOutboxWorkerRegistrations = <Registration extends AnyOutboxWorkerRegistration>(
@@ -226,7 +302,11 @@ export const validateOutboxWorkerRegistrations = <Registration extends AnyOutbox
 ): readonly Registration[] => {
   const workerKeys = new Set<string>();
   for (const registration of registrations) {
-    if (registration[outboxWorkerRegistration] !== true || !Object.isFrozen(registration)) {
+    if (
+      !isOutboxWorkerRegistrationValue(registration) ||
+      !registration[outboxWorkerRegistration] ||
+      !Object.isFrozen(registration)
+    ) {
       throw descriptorError('every Outbox Worker must be created by defineOutboxWorker');
     }
     const { workerKey } = registration.descriptor;
@@ -243,37 +323,10 @@ export const validateOutboxWorkerSubscriptions = (
 ): readonly OutboxWorkerSubscription[] => {
   const workerKeys = new Set<string>();
   for (const subscription of subscriptions) {
-    if (!moduleKeyPattern.test(subscription.consumerModuleKey)) {
-      throw descriptorError('consumerModuleKey must be a stable module key');
-    }
-    if (
-      subscription.entrypoint.scope !== 'tenant' ||
-      subscription.entrypoint.role !== 'worker' ||
-      subscription.entrypoint.access !== 'background' ||
-      subscription.entrypoint.moduleKey !== subscription.consumerModuleKey ||
-      subscription.entrypoint.entrypointKey !== subscription.workerKey ||
-      !Object.isFrozen(subscription.entrypoint)
-    ) {
-      throw descriptorError(
-        'installed Worker entrypoint is inconsistent with its subscription owner',
-      );
-    }
-    if (!moduleKeyPattern.test(subscription.producerModuleKey)) {
-      throw descriptorError('producerModuleKey must be a stable module key');
-    }
-    if (!topicPattern.test(subscription.topic)) {
-      throw descriptorError('topic must be an exact lowercase dot-separated identifier');
-    }
-    const expectedWorkerPrefix = `${subscription.consumerModuleKey}.`;
-    const workerSlug = subscription.workerKey.slice(expectedWorkerPrefix.length);
-    if (
-      !subscription.workerKey.startsWith(expectedWorkerPrefix) ||
-      !workerSlugPattern.test(workerSlug)
-    ) {
-      throw descriptorError(
-        'workerKey must be owned by consumerModuleKey and end in lower-kebab-case',
-      );
-    }
+    assertWorkerSubscription(
+      subscription,
+      'installed Worker entrypoint is inconsistent with its subscription owner',
+    );
     if (workerKeys.has(subscription.workerKey)) {
       throw descriptorError(`duplicate Outbox Worker key ${subscription.workerKey}`);
     }
@@ -291,7 +344,10 @@ export function getOutboxWorkerHandler<Registration extends AnyOutboxWorkerRegis
   OutboxWorkerRequirements<Registration>
 >;
 export function getOutboxWorkerHandler(registration: AnyOutboxWorkerRegistration) {
-  return registration[outboxWorkerHandler];
+  if (!isOutboxWorkerRegistrationValue(registration)) {
+    throw descriptorError('every Outbox Worker must be created by defineOutboxWorker');
+  }
+  return registration.resolveHandler();
 }
 
 export const retryBackoffMs = (

@@ -104,6 +104,13 @@
         "label": "Aktivní MicroVerticaly",
         "unavailable": "Aktivní MicroVerticaly jsou dočasně nedostupné. Pro další pokus znovu načtěte stránku."
       },
+      "discovery": {
+        "disabled": "Modul je deaktivovaný.",
+        "incompatible": "Smlouva nasazeného modulu není kompatibilní.",
+        "revoked": "Modul byl odvolán.",
+        "timeout": "Vypršel časový limit nasazení modulu.",
+        "unavailable": "Nasazení modulu je dočasně nedostupné."
+      },
       "state": {
         "active": "Aktivní",
         "deprecated": "Zastaralý",
@@ -113,18 +120,27 @@
     },
     "moduleTarget": {
       "forbidden": "K otevření tohoto modulu nemáte oprávnění.",
+      "incompatible": "Nasazený vstupní bod modulu není kompatibilní.",
       "loading": "Načítání modulu…",
       "not_found": "Tento modul není v aktuálním kontextu dostupný.",
       "selection_required": "Před otevřením modulu vyberte právní subjekt.",
       "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
       "title": "Modul",
+      "timeout": "Vypršel časový limit vstupního bodu modulu. Zkuste to znovu.",
       "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
     },
     "search": {
+      "alias_match": "Shoda přes alias",
+      "archived": "Archivováno",
+      "counterparty": "Obchodní protistrana",
       "empty": "Nebyly nalezeny žádné autorizované výsledky.",
-      "label": "Hledat v tomto právním subjektu",
+      "label": "Hledat v tenantovi a vybraném právním subjektu",
+      "legal_entity": "Právní subjekt",
       "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
-      "selection_required": "Před vyhledáváním vyberte právní subjekt.",
+      "party": "Subjekt",
+      "reconciliation_required": "Vyžaduje sjednocení",
+      "roles": { "CUSTOMER": "Zákazník", "SUPPLIER": "Dodavatel" },
+      "selection_required": "Před vyhledáváním se přihlaste a vyberte tenanta.",
       "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
       "submit": "Hledat",
       "title": "Výsledky hledání",

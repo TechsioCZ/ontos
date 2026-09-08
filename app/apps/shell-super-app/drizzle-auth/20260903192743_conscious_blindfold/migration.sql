@@ -1,0 +1,1 @@
+CREATE INDEX "auth_apikey_metadata_jsonb_idx" ON "auth"."apikey" USING gin (("metadata"::jsonb));
