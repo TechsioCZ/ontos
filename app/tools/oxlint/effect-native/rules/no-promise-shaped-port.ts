@@ -235,6 +235,8 @@ export const rule = defineRule({
         "Audit A5: ownership-shaped implementation '{{member}}' is async outside a recognized adapter. First-party services should return Effect.Effect<A, E, R>, with Promise conversion at the driver/framework edge.",
       promiseReturningImplementation:
         "Audit A5: implementation '{{member}}' explicitly returns '{{wrapper}}' outside a recognized adapter. Expose Effect.Effect<A, E, R> from first-party services.",
+      testPromiseRoundTrip:
+        'Audit A1: owned tests must not wrap Effect Promise runners or Rstest resolves/rejects assertions in an Effect Promise adapter. Compose the Effect directly and assert its value or Exit; reserve Promise adapters for foreign APIs.',
     },
     schema: [
       {
@@ -310,20 +312,24 @@ export const rule = defineRule({
       }
       return null;
     };
+    const staticMemberKey = (node: any): string | null => {
+      const key = !node.computed
+        ? node.property.name
+        : node.property.type === 'Literal'
+          ? node.property.value
+          : node.property.type === 'TemplateLiteral' && !node.property.expressions.length
+            ? node.property.quasis[0]?.value.cooked
+            : null;
+      return typeof key === 'string' ? key : null;
+    };
     const imported = (raw: any, seen = new Set<any>()): string | null => {
       const node = unwrap(raw);
       if (!node || seen.has(node)) return null;
       seen.add(node);
       if (node.type === 'MemberExpression') {
         const left = imported(node.object, seen);
-        const key = !node.computed
-          ? node.property.name
-          : node.property.type === 'Literal'
-            ? node.property.value
-            : node.property.type === 'TemplateLiteral' && !node.property.expressions.length
-              ? node.property.quasis[0]?.value.cooked
-              : null;
-        return left && typeof key === 'string' ? `${left}.${key}` : null;
+        const key = staticMemberKey(node);
+        return left && key !== null ? `${left}.${key}` : null;
       }
       if (node.type !== 'Identifier') return null;
       const variable = variableFor(node, node.name);
@@ -450,6 +456,30 @@ export const rule = defineRule({
       return /^effect:(?:root\.)?Effect\.(?:promise|tryPromise|tryMapPromise)$/u.test(
         imported(call.callee) ?? '',
       );
+    };
+
+    /** Syntax-only test round trips: real imports, not arbitrary methods or cross-file runners. */
+    const checkTestPromiseAdapter = (call: ESTree.CallExpression): void => {
+      if (!isTestFile(path) || !isPromiseBoundaryCall(call)) return;
+      let roundTrip = false;
+      walk(call.arguments, (node) => {
+        if (
+          node.type === 'CallExpression' &&
+          /^effect:(?:root\.)?Effect\.runPromise(?:Exit)?$/u.test(imported(node.callee) ?? '')
+        )
+          roundTrip = true;
+        if (node.type !== 'MemberExpression') return;
+        if (!['resolves', 'rejects'].includes(staticMemberKey(node) ?? '')) return;
+        const assertion = unwrap(node.object);
+        if (
+          assertion?.type === 'CallExpression' &&
+          /^(?:@app\/effect-rstest|@rstest\/core):(?:\*\.)?expect$/u.test(
+            imported(assertion.callee) ?? '',
+          )
+        )
+          roundTrip = true;
+      });
+      if (roundTrip) context.report({ node: call, messageId: 'testPromiseRoundTrip' });
     };
 
     /** A `.transaction(...)` / `.then(...)` style driver callback the Promise protocol forces. */
@@ -1047,6 +1077,7 @@ export const rule = defineRule({
     };
 
     return {
+      CallExpression: checkTestPromiseAdapter,
       TSTypeReference: (node: ESTree.TSTypeReference) => {
         const annotation = parentOf(node as unknown as AnyNode);
         if (annotation?.type !== 'TSTypeAnnotation') return;

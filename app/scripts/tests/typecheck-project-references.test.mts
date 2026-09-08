@@ -73,9 +73,8 @@ it.live(
   'installed workspace generator keeps build mode as the root typecheck default',
   Effect.fn(function* testEffect2() {
     const generator = Schema.decodeUnknownSync(WorkspaceScriptPlanModuleSchema)(
-      yield* Effect.tryPromise({
-        catch: (error) => error,
-        try: () =>
+      yield* Effect.tryPromise(
+        () =>
           import(
             pathToFileURL(
               path.join(
@@ -84,7 +83,7 @@ it.live(
               ),
             ).href
           ),
-      }),
+      ),
     );
     const scriptPlan = Schema.decodeUnknownSync(WorkspaceScriptPlanSchema)(
       generator.createWorkspaceRootScriptPlan([]),

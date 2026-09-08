@@ -35,10 +35,9 @@ it('apps contain no environment files that can override the app-root .env', () =
 it.live(
   'workspace discovery resolves repository, app, shell, and microvertical directories',
   Effect.fn(function* testEffect1() {
-    const { resolveAppWorkspaceRoot } = yield* Effect.tryPromise({
-      catch: (error) => error,
-      try: () => import('../../packages/core-runtime/src/environment/workspace-environment.ts'),
-    });
+    const { resolveAppWorkspaceRoot } = yield* Effect.tryPromise(
+      () => import('../../packages/core-runtime/src/environment/workspace-environment.ts'),
+    );
 
     for (const directory of [
       repositoryRoot,

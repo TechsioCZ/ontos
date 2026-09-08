@@ -9,9 +9,7 @@ import {
   Duration,
   Effect,
   FileSystem,
-  flow,
   Layer,
-  ManagedRuntime,
   Option,
   Order,
   Path,
@@ -157,7 +155,7 @@ const decodeRepositoryInventory = (workspaceRoot: string) =>
     return { ownership, topology };
   });
 
-const discoverCurrentActionsEffect = (
+export const discoverCurrentActions = (
   workspaceRoot: string,
   deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
 ): Effect.Effect<
@@ -232,23 +230,7 @@ const discoverCurrentActionsEffect = (
     return actions;
   }).pipe(Effect.catchDefect(discoveryFailure));
 
-const repositoryRuntime = ManagedRuntime.make(NodeServices.layer);
-
-const discoverCurrentActionsProgram = (
-  workspaceRoot: string,
-  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
-): Effect.Effect<
-  readonly ActionAuthorizationProvisioningAction[],
-  ActionAuthorizationProvisioningError,
-  NodeServices.NodeServices
-> => discoverCurrentActionsEffect(workspaceRoot, deriveContract);
-
-export const discoverCurrentActions = flow(
-  discoverCurrentActionsProgram,
-  repositoryRuntime.runPromise,
-);
-
-const discoverCurrentActionKeysProgram = (
+export const discoverCurrentActionKeys = (
   workspaceRoot: string,
   deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
 ): Effect.Effect<
@@ -256,14 +238,9 @@ const discoverCurrentActionKeysProgram = (
   ActionAuthorizationProvisioningError,
   NodeServices.NodeServices
 > =>
-  discoverCurrentActionsEffect(workspaceRoot, deriveContract).pipe(
+  discoverCurrentActions(workspaceRoot, deriveContract).pipe(
     Effect.map((actions) => actions.map(({ actionKey }) => actionKey)),
   );
-
-export const discoverCurrentActionKeys = flow(
-  discoverCurrentActionKeysProgram,
-  repositoryRuntime.runPromise,
-);
 
 interface CloseableProvisioningClient extends ActionAuthorizationProvisioningClient {
   readonly close: () => void;
@@ -347,7 +324,7 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
       ),
     );
     const target = yield* selectActionAuthorizationProvisioningTarget(configuration);
-    const actions = yield* discoverCurrentActionsEffect(workspaceRoot);
+    const actions = yield* discoverCurrentActions(workspaceRoot);
     const client = yield* acquireProvisioningClient(target.configuration);
     const result = yield* provisionActionAuthorization(client, {
       actions,

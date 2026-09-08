@@ -205,11 +205,9 @@ it.effect(
 it.effect(
   'workspace validation rejects both provisioning spellings in every automatic startup path',
   Effect.fn(function* testEffect5() {
-    const source = yield* Effect.tryPromise({
-      catch: (error) => error,
-      try: () =>
-        readFile(new URL('../validate-ultramodern-workspace.mts', import.meta.url), 'utf-8'),
-    });
+    const source = yield* Effect.tryPromise(() =>
+      readFile(new URL('../validate-ultramodern-workspace.mts', import.meta.url), 'utf-8'),
+    );
     // Execute the actual validator block with controlled inputs, without loading the full workspace.
     const start = source.indexOf('const actionAuthorizationProvisioningCommand =');
     const end = source.indexOf('if (hasBackendSurfaces)', start);
@@ -221,10 +219,7 @@ it.effect(
       'local:initialize': 'node ./scripts/initialize-local-development.mts',
     };
     const validationRoot = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        catch: (error) => error,
-        try: () => mkdtemp(path.join(os.tmpdir(), 'ontos-workspace-validation-')),
-      }),
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-workspace-validation-'))),
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
     );
     let validationIndex = 0;
@@ -235,34 +230,29 @@ it.effect(
       Effect.gen(function* testEffect6() {
         const modulePath = path.join(validationRoot, `validation-${validationIndex}.mjs`);
         validationIndex += 1;
-        yield* Effect.tryPromise({
-          catch: (error) => error,
-          try: () =>
-            writeFile(
-              modulePath,
-              [
-                "import assert from 'node:assert/strict';",
-                `const sources = ${JSON.stringify(sources)};`,
-                "const readText = (file) => sources[file] ?? '';",
-                `const rootPackage = ${JSON.stringify({ scripts: { ...scripts, ...overrides } })};`,
-                "const SHARED_VALIDATOR_STRING_053 = 'authorization:provision-current-actions';",
-                "const SHARED_VALIDATOR_STRING_059 = 'cloudflare:build';",
-                "const SHARED_VALIDATOR_STRING_060 = 'cloudflare:deploy';",
-                "const SHARED_VALIDATOR_STRING_106 = 'provision-current-action-authorization';",
-                'const valueForKey = (entries, key) => entries.find(([candidate]) => candidate === key)?.[1];',
-                block,
-              ].join('\n'),
-              'utf-8',
-            ),
-        });
-        yield* Effect.tryPromise({
-          catch: (error) => error,
-          try: () => import(pathToFileURL(modulePath).href),
-        });
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            modulePath,
+            [
+              "import assert from 'node:assert/strict';",
+              `const sources = ${JSON.stringify(sources)};`,
+              "const readText = (file) => sources[file] ?? '';",
+              `const rootPackage = ${JSON.stringify({ scripts: { ...scripts, ...overrides } })};`,
+              "const SHARED_VALIDATOR_STRING_053 = 'authorization:provision-current-actions';",
+              "const SHARED_VALIDATOR_STRING_059 = 'cloudflare:build';",
+              "const SHARED_VALIDATOR_STRING_060 = 'cloudflare:deploy';",
+              "const SHARED_VALIDATOR_STRING_106 = 'provision-current-action-authorization';",
+              'const valueForKey = (entries, key) => entries.find(([candidate]) => candidate === key)?.[1];',
+              block,
+            ].join('\n'),
+            'utf-8',
+          ),
+        );
+        yield* Effect.tryPromise(() => import(pathToFileURL(modulePath).href));
       });
 
     yield* validate({});
-    const validationPromises: Effect.Effect<void, unknown>[] = [];
+    const validations: Effect.Effect<void, void>[] = [];
     for (const command of [
       'node ./scripts/provision-current-action-authorization.mts',
       'pnpm authorization:provision-current-actions',
@@ -273,30 +263,30 @@ it.effect(
         'docker-compose.yml',
         'scripts/run-zerops-spicedb.sh',
       ]) {
-        validationPromises.push(
+        validations.push(
           validate({ [file]: command }).pipe(
             Effect.flip,
             Effect.map((error) =>
               expect(() => {
-                throw error;
+                throw error.cause;
               }).toThrow(/must not provision Action authorization/u),
             ),
           ),
         );
       }
       for (const automaticScript of ['dev', 'build', 'cloudflare:build', 'cloudflare:deploy']) {
-        validationPromises.push(
+        validations.push(
           validate({}, { [automaticScript]: command }).pipe(
             Effect.flip,
             Effect.map((error) =>
               expect(() => {
-                throw error;
+                throw error.cause;
               }).toThrow(/must not invoke Action authorization provisioning/u),
             ),
           ),
         );
       }
-      validationPromises.push(
+      validations.push(
         validate(
           {},
           {
@@ -306,13 +296,13 @@ it.effect(
           Effect.flip,
           Effect.map((error) =>
             expect(() => {
-              throw error;
+              throw error.cause;
             }).toThrow(/must not provision Action authorization/u),
           ),
         ),
       );
     }
-    yield* Effect.all(validationPromises, { concurrency: 'unbounded' });
+    yield* Effect.all(validations, { concurrency: 'unbounded' });
   }),
 );
 
@@ -329,10 +319,7 @@ it.effect(
         ),
     );
     expect(
-      yield* Effect.tryPromise({
-        catch: (error) => error,
-        try: () => discoverCurrentActionKeys(workspaceRoot),
-      }),
+      yield* discoverCurrentActionKeys(workspaceRoot).pipe(Effect.provide(NodeServices.layer)),
     ).toEqual(currentActionKeys);
     expect(new Set(currentActionKeys).size).toBe(38);
     expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
@@ -692,10 +679,7 @@ const writeInventory = (
   verticals: readonly { readonly id: string; readonly package: string; readonly path: string }[],
 ) =>
   Effect.gen(function* testEffect18() {
-    yield* Effect.tryPromise({
-      catch: (error) => error,
-      try: () => mkdir(path.join(root, 'topology'), { recursive: true }),
-    });
+    yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
     yield* Effect.all(
       [
         Effect.promise(() =>
@@ -755,10 +739,7 @@ it.effect(
     const [currentPublicAction] = currentContract.manifest.publicSurface.actions;
     expect(currentPublicAction !== undefined).toBe(true);
     const root = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        catch: (error) => error,
-        try: () => mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-')),
-      }),
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-action-discovery-'))),
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
     );
     const vertical = { id: 'example', package: '@app/example', path: 'verticals/example' };
@@ -773,10 +754,7 @@ it.effect(
         },
       });
     const incompleteError = yield* rejectionOf(
-      Effect.tryPromise({
-        catch: (error) => error,
-        try: () => discoverCurrentActionKeys(root, incomplete),
-      }),
+      discoverCurrentActionKeys(root, incomplete).pipe(Effect.provide(NodeServices.layer)),
     );
     expect(Schema.is(NativeProvisioningError)(incompleteError)).toBe(true);
     expect(Schema.decodeUnknownSync(NativeProvisioningError)(incompleteError).code).toBe(
@@ -796,10 +774,7 @@ it.effect(
         },
       });
     const duplicateError = yield* rejectionOf(
-      Effect.tryPromise({
-        catch: (error) => error,
-        try: () => discoverCurrentActionKeys(root, duplicate),
-      }),
+      discoverCurrentActionKeys(root, duplicate).pipe(Effect.provide(NodeServices.layer)),
     );
     expect(Schema.is(NativeProvisioningError)(duplicateError)).toBe(true);
     expect(Schema.decodeUnknownSync(NativeProvisioningError)(duplicateError).code).toBe(
@@ -807,17 +782,12 @@ it.effect(
     );
 
     yield* writeInventory(root, [vertical, vertical]);
-    yield* Effect.tryPromise({
-      catch: (error) => error,
-      try: () => discoverCurrentActionKeys(root, duplicate),
-    }).pipe(
+    const duplicateInventoryError = yield* discoverCurrentActionKeys(root, duplicate).pipe(
+      Effect.provide(NodeServices.layer),
       Effect.flip,
-      Effect.map((error) =>
-        expect(() => {
-          throw error;
-        }).toThrow(NativeProvisioningError),
-      ),
     );
+    expect(Schema.is(NativeProvisioningError)(duplicateInventoryError)).toBe(true);
+    expect(duplicateInventoryError.code).toBe('action_authorization_discovery_failed');
   }),
 );
 
