@@ -6379,19 +6379,23 @@ if (hasDeliveryUnits) {
       sourceFragment(
         'DATABASE_ADMIN_URL: postgresql://',
         templatePlaceholderOpening,
-        'db_superUser}:',
+        'db18_superUser}:',
         templatePlaceholderOpening,
-        'db_superUserPassword}@',
+        'db18_superUserPassword}@',
         templatePlaceholderOpening,
-        'db_hostname}:',
+        'db18_hostname}:',
         templatePlaceholderOpening,
-        'db_port}/',
+        'db18_port}/',
         templatePlaceholderOpening,
-        'db_dbName}',
+        'db18_dbName}',
       ),
     ) &&
       !zeropsYaml.includes(
-        sourceFragment('DATABASE_ADMIN_URL: ', templatePlaceholderOpening, 'db_connectionString}'),
+        sourceFragment(
+          'DATABASE_ADMIN_URL: ',
+          templatePlaceholderOpening,
+          'db18_connectionString}',
+        ),
       ),
     'Zerops migrator must use the PostgreSQL administrative identity for role and database bootstrap',
   );

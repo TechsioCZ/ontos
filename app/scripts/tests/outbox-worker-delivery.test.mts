@@ -143,7 +143,7 @@ test('keeps the live Party Registry worker deployment generated and independentl
   const source = await readFile(path.join(root, 'zerops.yaml'), 'utf-8');
   assert.equal(await generateOutboxWorkerDeployment(root, source), source);
   const [, worker] = source.split("setup: 'party-registry-worker'");
-  assert.match(worker, /DATABASE_URL: \$\{party-registry_DATABASE_URL\}/u);
+  assert.match(worker, /DATABASE_URL: \$\{partyregistry_DATABASE_URL\}/u);
   assert.match(worker, /OUTBOX_WORKER_HEALTH_PORT: '4102'/u);
   assert.match(worker, /cd app\/\.zerops\/runtime\/party-registry-worker/u);
   assert.doesNotMatch(worker, /(?:^|\s)&(?:\s|$)/u);
