@@ -1976,18 +1976,18 @@ test('adapted governed artifacts require executable owner identity instead of co
       inventoryModuleApiServerFile,
       (source) =>
         `${source.replace(
-          'yield* authenticateOperationPrincipal(',
-          'yield* unverifiedPrincipal(',
+          'authenticatePrincipal: authenticateOperationPrincipal',
+          'authenticatePrincipal: unverifiedPrincipal',
         )}\nconst unverifiedPrincipal = authenticateOperationPrincipal;`,
     );
     await assertAdaptationRejected(
       inventoryModuleApiServerFile,
       (source) =>
-        `${source.replace('yield* ReadRuntime', 'yield* OtherRuntime')}\nvoid ReadRuntime;`,
+        `${source.replace('registration: resourceDetailRead', 'registration: otherRead')}\nvoid ReadRuntime;`,
     );
     await assertAdaptationRejected(
       inventoryModuleApiServerFile,
-      (source) => `${source.replace('.runRead({', '.unsafeRead({')}\nconst spoof = '.runRead({';`,
+      (source) => `${source.replace('makeGovernedReadHttpHandler({', 'unsafeReadHandler({')}\nconst spoof = '.runRead({';`,
     );
 
     const searchArguments = [

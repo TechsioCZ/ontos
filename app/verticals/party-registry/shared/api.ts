@@ -11,7 +11,7 @@ import {
   createMicroVerticalOperationContext,
 } from '@app/shared-contracts';
 import type { MicroVerticalOperationContext } from '@app/shared-contracts';
-import { Brand, identity } from 'effect';
+import { Brand } from 'effect';
 
 // <generated-governed-http-api-imports>
 import { AresLookupApi } from './apis/ares-lookup.ts';
@@ -121,7 +121,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyRelationshipDetailApi)
   .addHttpApi(PersonEngagementProfileApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  ;
 /** Canonical composition-root binding consumed by generated governed HTTP adapters. */
 export const governedHttpApi = partyRegistryApi;
 

@@ -6,7 +6,6 @@ import path from 'node:path';
 import nodeTest from 'node:test';
 import { NodeServices } from '@effect/platform-node';
 import { ManagedRuntime } from 'effect';
-import { hasGeneratedGovernedServerContract } from '../generated-module-api-boundary.mts';
 import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
 import {
   assertPublishedCrossMicroVerticalContractUsage,

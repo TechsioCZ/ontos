@@ -789,8 +789,7 @@ const governedSharedApiRoot = (source: string): SourceRange | undefined => {
     apiRoot === undefined ||
     !apiRoot.value.startsWith(HTTP_API_MAKE) ||
     slot === undefined ||
-    slot.markerStart <= apiRoot.start ||
-    slot.markerEnd >= apiRoot.end
+    slot.markerStart <= apiRoot.start
   ) {
     return undefined;
   }
@@ -1081,7 +1080,6 @@ const hasReadContract = (
   );
 };
 
-// eslint-disable-next-line complexity -- Client validation supports both generated clients and the migrated owner transport boundary.
 const hasClientContract = (
   source: string,
   contribution: GovernedReadContribution,
@@ -1090,9 +1088,7 @@ const hasClientContract = (
   deploymentAppId: string,
 ): boolean => {
   const type = toPascalCase(contribution.name);
-  const operation = contribution.kind === MODULE_API_KIND
-    ? `execute${type}`
-    : contribution.kind === REPORT_KIND ? `load${type}Report` : `search${type}`;
+  const operation = contribution.kind === MODULE_API_KIND ? `execute${type}` : `load${type}Client`;
   return hasGeneratedGovernedClientContract(source, {
     authorizedOperation: `${operation}WithAuthorization`,
     defaultApiPrefix: `/${deploymentAppId}-api`,
@@ -1569,9 +1565,9 @@ const hasPublishedContract = (
 export const hasCompleteGeneratedModuleApiSeam = (
   sources: ReadonlyMap<string, string>,
   sharedApiFile: string,
+  deploymentAppId = path.posix.basename(sharedApiFile.slice(0, -'/shared/api.ts'.length)),
 ): boolean => {
   const verticalPath = sharedApiFile.slice(0, -'/shared/api.ts'.length);
-  const deploymentAppId = path.posix.basename(verticalPath);
   const sharedApi = sources.get(sharedApiFile);
   const manifest = sources.get(`${verticalPath}/vertical.manifest.ts`);
   const registration = sources.get(`${verticalPath}/vertical.registration.ts`);
@@ -1701,15 +1697,41 @@ export const hasCompleteGeneratedModuleApiSeam = (
   });
 };
 
-export const hasGeneratedGovernedServerContract = (source: string, exportedName: string): boolean => {
+export const hasGeneratedGovernedServerContract = (
+  source: string,
+  exportedName: string,
+): boolean => {
   const camel = exportedName.replace(/ReadApiLive$/u, '');
-  const readImport = /from '(?<path>\.\.\/src\/(?<directory>api|search|reports)\/(?<name>[a-z0-9-]+)\.(?:read|provider)\.ts)'/u.exec(source);
+  const readImport =
+    /from '(?<path>\.\.\/src\/(?<directory>api|search|reports)\/(?<name>[a-z0-9-]+)\.(?:read|provider)\.ts)'/u.exec(
+      source,
+    );
   const readPath = readImport?.groups?.path;
   const name = readImport?.groups?.name;
   const directory = readImport?.groups?.directory;
-  if (readPath === undefined || name === undefined || directory === undefined || camel !== toCamelCase(name)) return false;
-  const kind = directory === 'api' ? MODULE_API_KIND : directory === 'reports' ? REPORT_KIND : SEARCH_PROVIDER_KIND;
-  const stem = kind === MODULE_API_KIND ? name : `${name}-${kind === REPORT_KIND ? 'report' : 'search'}`;
+  if (
+    readPath === undefined ||
+    name === undefined ||
+    directory === undefined ||
+    camel !== toCamelCase(name)
+  ) {
+    return false;
+  }
+  let kind: GovernedReadKind = SEARCH_PROVIDER_KIND;
+  if (directory === 'api') {
+    kind = MODULE_API_KIND;
+  } else if (directory === 'reports') {
+    kind = REPORT_KIND;
+  }
+  const stem =
+    kind === MODULE_API_KIND ? name : `${name}-${kind === REPORT_KIND ? 'report' : 'search'}`;
   const schemaStem = `${toPascalCase(name)}${kind === MODULE_API_KIND ? '' : 'Provider'}`;
-  return hasServerContract(source, escapeRegExp(camel), escapeRegExp(contributionGroup(kind, name)), readPath, schemaStem, `../shared/apis/${stem}.ts`);
+  return hasServerContract(
+    source,
+    escapeRegExp(camel),
+    escapeRegExp(contributionGroup(kind, name)),
+    readPath,
+    schemaStem,
+    `../shared/apis/${stem}.ts`,
+  );
 };
