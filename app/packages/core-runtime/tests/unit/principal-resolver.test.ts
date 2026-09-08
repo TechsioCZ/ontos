@@ -1,9 +1,8 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { DateTime, Effect, flow } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { DateTime, Effect, Predicate } from 'effect';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import type { PrincipalResolutionError } from '../../src/auth/principal-resolver-errors.ts';
+
 import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolver.ts';
 import {
   classifyApiKeyPrincipal,
@@ -13,13 +12,6 @@ import {
   makePrincipalResolver,
 } from '../../src/auth/principal-resolver.ts';
 import { makeTestDatabase } from '../support/database.ts';
-
-const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
-  test(
-    name,
-    flow(() => Effect.asVoid(effect), runEffectTestPromise),
-  );
-};
 
 const activeRecord: PrincipalResolutionRecord = {
   authBindingId: 'binding-1',
@@ -34,17 +26,7 @@ const activeRecord: PrincipalResolutionRecord = {
   tenantName: 'Zeta tenant',
   tenantStatus: 'active',
 };
-
-const failureTag = <Value>(effect: Effect.Effect<Value, PrincipalResolutionError>) =>
-  effect.pipe(
-    Effect.match({
-      onFailure: (error) => error._tag,
-      onSuccess: () => assert.fail('Expected principal resolution to fail'),
-    }),
-  );
-
-effectTest(
-  'lists safe eligible tenants by name and tenant ID',
+it.effect('lists safe eligible tenants by name and tenant ID', () =>
   Effect.gen(function* listsEligibleTenants() {
     const records = [
       activeRecord,
@@ -86,28 +68,26 @@ effectTest(
     ];
 
     const result = yield* classifyAvailableTenants(records);
-    assert.deepEqual(result, [
+    expect(result).toEqual([
       { name: 'Alpha tenant', tenantId: 'tenant-2' },
       { name: 'Alpha tenant', tenantId: 'tenant-3' },
       { name: 'Zeta tenant', tenantId: 'tenant-1' },
     ]);
   }),
 );
-
-effectTest(
-  'lists and resolves one active tenant binding',
+it.effect('lists and resolves one active tenant binding', () =>
   Effect.gen(function* listsAndResolvesActiveTenant() {
-    assert.deepEqual(yield* classifyAvailableTenants([activeRecord]), [
+    expect(yield* classifyAvailableTenants([activeRecord])).toEqual([
       { name: 'Zeta tenant', tenantId: 'tenant-1' },
     ]);
-    assert.deepEqual(yield* classifyDefaultPrincipal([activeRecord]), {
+    expect(yield* classifyDefaultPrincipal([activeRecord])).toEqual({
       authBindingId: 'binding-1',
       displayName: 'Ada Lovelace',
       principalId: 'principal-1',
       principalKind: 'human',
       tenantId: 'tenant-1',
     });
-    assert.deepEqual(yield* classifySelectedPrincipal([activeRecord], 'tenant-1'), {
+    expect(yield* classifySelectedPrincipal([activeRecord], 'tenant-1')).toEqual({
       authBindingId: 'binding-1',
       displayName: 'Ada Lovelace',
       principalId: 'principal-1',
@@ -116,9 +96,7 @@ effectTest(
     });
   }),
 );
-
-effectTest(
-  'chooses the oldest eligible binding and breaks creation ties by tenant ID',
+it.effect('chooses the oldest eligible binding and breaks creation ties by tenant ID', () =>
   Effect.gen(function* choosesOldestBinding() {
     const result = yield* classifyDefaultPrincipal([
       activeRecord,
@@ -136,7 +114,7 @@ effectTest(
       },
     ]);
 
-    assert.deepEqual(result, {
+    expect(result).toEqual({
       authBindingId: 'binding-1',
       displayName: 'Tie winner',
       principalId: 'principal-0',
@@ -145,9 +123,7 @@ effectTest(
     });
   }),
 );
-
-effectTest(
-  'resolves only the exact eligible selected tenant',
+it.effect('resolves only the exact eligible selected tenant', () =>
   Effect.gen(function* resolvesExactTenant() {
     const selected = {
       ...activeRecord,
@@ -155,111 +131,134 @@ effectTest(
       principalId: 'principal-2',
       tenantId: 'tenant-2',
     };
-    assert.deepEqual(yield* classifySelectedPrincipal([activeRecord, selected], 'tenant-2'), {
+    expect(yield* classifySelectedPrincipal([activeRecord, selected], 'tenant-2')).toEqual({
       authBindingId: 'binding-1',
       displayName: 'Grace Hopper',
       principalId: 'principal-2',
       principalKind: 'human',
       tenantId: 'tenant-2',
     });
-    assert.equal(
-      yield* failureTag(classifySelectedPrincipal([activeRecord, selected], 'foreign-tenant')),
-      'PrincipalBindingMissingError',
-    );
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(classifySelectedPrincipal([activeRecord, selected], 'foreign-tenant')),
+        'PrincipalBindingMissingError',
+      ),
+    ).toBe(true);
   }),
 );
-
-effectTest(
-  'rejects Better Auth user bindings to non-human principals',
+it.effect('rejects Better Auth user bindings to non-human principals', () =>
   Effect.all(
     (['service', 'integration', 'agent', 'system'] as const).map((principalKind) =>
       Effect.gen(function* rejectsNonHumanPrincipal() {
         const record = { ...activeRecord, principalKind };
-        assert.equal(
-          yield* failureTag(classifyDefaultPrincipal([record])),
-          'PrincipalInactiveError',
-        );
-        assert.equal(
-          yield* failureTag(classifySelectedPrincipal([record], record.tenantId)),
-          'PrincipalInactiveError',
-        );
-        assert.equal(
-          yield* failureTag(classifyAvailableTenants([record])),
-          'PrincipalInactiveError',
-        );
+        expect(
+          Predicate.isTagged(
+            yield* Effect.flip(classifyDefaultPrincipal([record])),
+            'PrincipalInactiveError',
+          ),
+        ).toBe(true);
+        expect(
+          Predicate.isTagged(
+            yield* Effect.flip(classifySelectedPrincipal([record], record.tenantId)),
+            'PrincipalInactiveError',
+          ),
+        ).toBe(true);
+        expect(
+          Predicate.isTagged(
+            yield* Effect.flip(classifyAvailableTenants([record])),
+            'PrincipalInactiveError',
+          ),
+        ).toBe(true);
       }),
     ),
   ),
 );
-
-effectTest(
+it.effect(
   'resolves exactly one API-key subject for human, service, or integration principals',
-  Effect.gen(function* resolvesApiKeySubject() {
-    yield* Effect.all(
-      (['human', 'service', 'integration'] as const).map((principalKind) =>
-        Effect.gen(function* resolvesPrincipalKind() {
-          const resolved = yield* classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]);
-          assert.equal(resolved.principalKind, principalKind);
-          assert.equal(resolved.authBindingId, activeRecord.authBindingId);
-        }),
-      ),
-    );
-    assert.equal(
-      yield* failureTag(
-        classifyApiKeyPrincipal([activeRecord, { ...activeRecord, tenantId: 't-2' }]),
-      ),
-      'PrincipalBindingAmbiguousError',
-    );
-  }),
+  () =>
+    Effect.gen(function* resolvesApiKeySubject() {
+      yield* Effect.all(
+        (['human', 'service', 'integration'] as const).map((principalKind) =>
+          Effect.gen(function* resolvesPrincipalKind() {
+            const resolved = yield* classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]);
+            expect(resolved.principalKind).toBe(principalKind);
+            expect(resolved.authBindingId).toBe(activeRecord.authBindingId);
+          }),
+        ),
+      );
+      expect(
+        Predicate.isTagged(
+          yield* Effect.flip(
+            classifyApiKeyPrincipal([activeRecord, { ...activeRecord, tenantId: 't-2' }]),
+          ),
+          'PrincipalBindingAmbiguousError',
+        ),
+      ).toBe(true);
+    }),
 );
-
-effectTest(
-  'fails closed for empty, inactive, and duplicate eligible resolver states',
+it.effect('fails closed for empty, inactive, and duplicate eligible resolver states', () =>
   Effect.gen(function* rejectsInvalidResolverStates() {
-    assert.equal(yield* failureTag(classifyAvailableTenants([])), 'PrincipalBindingMissingError');
-    assert.equal(
-      yield* failureTag(classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'revoked' }])),
-      'PrincipalBindingInactiveError',
-    );
-    assert.equal(
-      yield* failureTag(
-        classifyAvailableTenants([
-          {
-            ...activeRecord,
-            bindingRevokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-03-01T00:00:00.000Z')),
-          },
-        ]),
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(classifyAvailableTenants([])),
+        'PrincipalBindingMissingError',
       ),
-      'PrincipalBindingInactiveError',
-    );
-    assert.equal(
-      yield* failureTag(
-        classifyAvailableTenants([{ ...activeRecord, principalStatus: 'disabled' }]),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'revoked' }]),
+        ),
+        'PrincipalBindingInactiveError',
       ),
-      'PrincipalInactiveError',
-    );
-    assert.equal(
-      yield* failureTag(classifyAvailableTenants([{ ...activeRecord, tenantStatus: 'suspended' }])),
-      'TenantInactiveError',
-    );
-    assert.equal(
-      yield* failureTag(
-        classifyAvailableTenants([
-          activeRecord,
-          { ...activeRecord, principalId: 'duplicate-principal' },
-        ]),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([
+            {
+              ...activeRecord,
+              bindingRevokedAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-03-01T00:00:00.000Z')),
+            },
+          ]),
+        ),
+        'PrincipalBindingInactiveError',
       ),
-      'PrincipalBindingAmbiguousError',
-    );
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([{ ...activeRecord, principalStatus: 'disabled' }]),
+        ),
+        'PrincipalInactiveError',
+      ),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([{ ...activeRecord, tenantStatus: 'suspended' }]),
+        ),
+        'TenantInactiveError',
+      ),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          classifyAvailableTenants([
+            activeRecord,
+            { ...activeRecord, principalId: 'duplicate-principal' },
+          ]),
+        ),
+        'PrincipalBindingAmbiguousError',
+      ),
+    ).toBe(true);
   }),
 );
-
-effectTest(
-  'types database failures as resolver unavailability',
+it.effect('types database failures as resolver unavailability', () =>
   Effect.gen(function* sanitizesResolverDatabaseFailure() {
     const error = yield* Effect.flip(
       makePrincipalResolver({
-        executor: makeTestDatabase(() =>
+        executor: yield* makeTestDatabase(() =>
           Effect.fail(
             new SqlError({
               reason: new ConnectionError({ cause: new Error('secret database error') }),
@@ -268,7 +267,9 @@ effectTest(
         ),
       }).listAvailableTenants('subject'),
     );
-    assert.equal(error._tag, 'PrincipalResolverUnavailableError');
-    assert.doesNotMatch(error.reason, /secret database error/u);
+    if (!Predicate.isTagged(error, 'PrincipalResolverUnavailableError')) {
+      expect.unreachable('Expected resolver unavailability');
+    }
+    expect(error.reason).not.toMatch(/secret database error/u);
   }),
 );

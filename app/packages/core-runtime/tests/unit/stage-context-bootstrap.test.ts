@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 import { STAGE_CONTEXTS } from '../../src/install/stage-context-bootstrap.ts';
 
-void test('defines the exact Techsio and Siampark stage contexts', () => {
-  assert.deepEqual(STAGE_CONTEXTS, {
+it('defines the exact Techsio and Siampark stage contexts', () => {
+  expect(STAGE_CONTEXTS).toEqual({
     siampark: {
       authBindingId: '73000000-0000-4000-8000-000000000002',
       defaultLocale: 'cs',

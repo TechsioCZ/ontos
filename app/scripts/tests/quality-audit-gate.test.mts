@@ -1,9 +1,10 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect, Schema } from 'effect';
-import { runEffectTestPromise } from '../../packages/core-runtime/src/testing/effect-runtime.ts';
+import { expect, it } from 'effect-rstest';
+import { Cause, Effect, Schema } from 'effect';
 import { validateQualityAuditSummary } from '../quality-audit-gate.mts';
 import { validateReport } from '../quality-audit.mts';
+
+const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
+const EXPECTED_EFFECT_FAILURE = 'Expected the Effect to fail';
 
 const FALLOW_FILES = 'fallow-files';
 const FALLOW_SIMILARITY = 'fallow-similarity';
@@ -62,20 +63,29 @@ const clean = () => ({
   status: 'reported',
 });
 const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const validate = async (summary: ReturnType<typeof clean> | Schema.Json) =>
-  await runEffectTestPromise(encode(summary).pipe(Effect.flatMap(validateQualityAuditSummary)));
-
-await test('complete clean summary succeeds; semantic and UI-only findings remain advisory', async () => {
-  await validate(clean());
-  const summary = clean();
-  const semantic = summary.results.find(({ name }) => name === FALLOW_SIMILARITY);
-  const health = summary.results.find(({ name }) => name === FALLOW_HEALTH);
-  assert.ok(semantic && health);
-  semantic.findings = 19;
-  health.coverage.uiOnlyFindings = 2;
-  health.coverage.weightedFindings = 2;
-  await validate(summary);
+const validate = Effect.fn(function* mergedScenario1(
+  summary: ReturnType<typeof clean> | Schema.Json,
+) {
+  return yield* encode(summary).pipe(Effect.flatMap(validateQualityAuditSummary));
 });
+
+it.effect(
+  'complete clean summary succeeds; semantic and UI-only findings remain advisory',
+  Effect.fn(function* mergedScenario2() {
+    yield* validate(clean());
+    const summary = clean();
+    const semantic = summary.results.find(({ name }) => name === FALLOW_SIMILARITY);
+    const health = summary.results.find(({ name }) => name === FALLOW_HEALTH);
+    expect(semantic && health).toBeTruthy();
+    if (!(semantic && health)) {
+      throw new Error(EXPECTED_PROOF_VALUE);
+    }
+    semantic.findings = 19;
+    health.coverage.uiOnlyFindings = 2;
+    health.coverage.weightedFindings = 2;
+    yield* validate(summary);
+  }),
+);
 
 const positiveReports = [
   [
@@ -143,13 +153,17 @@ const positiveReports = [
     }),
   ],
 ] as const;
-await Promise.all(
-  positiveReports.map(async ([name, source]) => {
-    await test(`${name} real-positive analyzer report rejects through the normalized gate`, async () => {
-      const normalized = await runEffectTestPromise(validateReport(name, source));
+for (const [name, source] of positiveReports) {
+  it.effect(
+    `${name} real-positive analyzer report rejects through the normalized gate`,
+    Effect.fn(function* mergedScenario3() {
+      const normalized = yield* validateReport(name, source);
       const summary = clean();
       const result = summary.results.find((entry) => entry.name === name);
-      assert.ok(result);
+      expect(result).toBeTruthy();
+      if (!result) {
+        throw new Error(EXPECTED_PROOF_VALUE);
+      }
       Object.assign(result, normalized);
       if (name === 'knip') {
         Object.assign(result.coverage, {
@@ -157,116 +171,239 @@ await Promise.all(
           nativeFindingCounts: result.coverage.findingCounts,
         });
       }
-      await assert.rejects(
-        validate(summary),
-        new RegExp(`Quality audit gate failed: ${name}=1`, 'u'),
-      );
+      yield* Effect.matchCause(validate(summary), {
+        onFailure: (cause) =>
+          expect(String(Cause.squash(cause))).toMatch(
+            new RegExp(`Quality audit gate failed: ${name}=1`, 'u'),
+          ),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }),
+  );
+}
+
+it.effect(
+  'calibrated modeled consumers do not reintroduce native Knip findings',
+  Effect.fn(function* mergedScenario5() {
+    const summary = clean();
+    const knip = summary.results.find(({ name }) => name === 'knip');
+    expect(knip).toBeTruthy();
+    if (!knip) {
+      throw new Error(EXPECTED_PROOF_VALUE);
+    }
+    knip.coverage.modeledUsages = 4;
+    knip.coverage.nativeFindingCounts = { exports: 0, unlisted: 4 };
+    yield* validate(summary);
+    knip.coverage.modeledUsages = 5;
+    yield* Effect.matchCause(validate(summary), {
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/inconsistent/u),
+      onSuccess: () => {
+        throw new Error(EXPECTED_EFFECT_FAILURE);
+      },
     });
   }),
 );
 
-await test('calibrated modeled consumers do not reintroduce native Knip findings', async () => {
-  const summary = clean();
-  const knip = summary.results.find(({ name }) => name === 'knip');
-  assert.ok(knip);
-  knip.coverage.modeledUsages = 4;
-  knip.coverage.nativeFindingCounts = { exports: 0, unlisted: 4 };
-  await validate(summary);
-  knip.coverage.modeledUsages = 5;
-  await assert.rejects(validate(summary), /inconsistent/u);
-});
+it.effect(
+  'partial, duplicate, unknown, failed and empty reports fail closed',
+  Effect.fn(function* mergedScenario8() {
+    yield* Effect.matchCause(validate({}), {
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+      onSuccess: () => {
+        throw new Error(EXPECTED_EFFECT_FAILURE);
+      },
+    });
+    yield* Effect.matchCause(validate({ ...clean(), status: 'error' }), {
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+      onSuccess: () => {
+        throw new Error(EXPECTED_EFFECT_FAILURE);
+      },
+    });
+    yield* Effect.matchCause(validate({ results: [], status: 'reported' }), {
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+      onSuccess: () => {
+        throw new Error(EXPECTED_EFFECT_FAILURE);
+      },
+    });
+    yield* Effect.all(
+      names.map(
+        Effect.fn(function* mergedScenario6(name) {
+          const summary = clean();
+          yield* Effect.matchCause(
+            validate({
+              ...summary,
+              results: summary.results.filter((entry) => entry.name !== name),
+            }),
+            {
+              onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+              onSuccess: () => {
+                throw new Error(EXPECTED_EFFECT_FAILURE);
+              },
+            },
+          );
+          const result = summary.results.find((entry) => entry.name === name);
+          expect(result).toBeTruthy();
+          if (!result) {
+            throw new Error(EXPECTED_PROOF_VALUE);
+          }
+          yield* Effect.matchCause(
+            validate({ ...summary, results: [...summary.results, result] }),
+            {
+              onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+              onSuccess: () => {
+                throw new Error(EXPECTED_EFFECT_FAILURE);
+              },
+            },
+          );
+          result.status = 'error';
+          yield* Effect.matchCause(validate(summary), {
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+            onSuccess: () => {
+              throw new Error(EXPECTED_EFFECT_FAILURE);
+            },
+          });
+          result.status = 'reported';
+          result.files = 0;
+          yield* Effect.matchCause(validate(summary), {
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+            onSuccess: () => {
+              throw new Error(EXPECTED_EFFECT_FAILURE);
+            },
+          });
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    const summary = clean();
+    const [first] = summary.results;
+    first.name = 'unknown';
+    yield* Effect.matchCause(validate(summary), {
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+      onSuccess: () => {
+        throw new Error(EXPECTED_EFFECT_FAILURE);
+      },
+    });
+    yield* Effect.all(
+      ['', '{broken', 'null', '{"status":"reported","results":{}}'].map(
+        Effect.fn(function* mergedScenario7(source) {
+          yield* Effect.matchCause(validateQualityAuditSummary(source), {
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+            onSuccess: () => {
+              throw new Error(EXPECTED_EFFECT_FAILURE);
+            },
+          });
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
 
-await test('partial, duplicate, unknown, failed and empty reports fail closed', async () => {
-  await assert.rejects(validate({}), /Malformed/u);
-  await assert.rejects(validate({ ...clean(), status: 'error' }), /Malformed/u);
-  await assert.rejects(validate({ results: [], status: 'reported' }), /six unique/u);
-  await Promise.all(
-    names.map(async (name) => {
-      const summary = clean();
-      await assert.rejects(
-        validate({ ...summary, results: summary.results.filter((entry) => entry.name !== name) }),
-        /six unique/u,
-      );
-      const result = summary.results.find((entry) => entry.name === name);
-      assert.ok(result);
-      await assert.rejects(
-        validate({ ...summary, results: [...summary.results, result] }),
-        /six unique/u,
-      );
-      result.status = 'error';
-      await assert.rejects(validate(summary), /Malformed/u);
-      result.status = 'reported';
-      result.files = 0;
-      await assert.rejects(validate(summary), /Malformed/u);
-    }),
-  );
-  const summary = clean();
-  const [first] = summary.results;
-  first.name = 'unknown';
-  await assert.rejects(validate(summary), /Malformed/u);
-  await Promise.all(
-    ['', '{broken', 'null', '{"status":"reported","results":{}}'].map(async (source) => {
-      await assert.rejects(runEffectTestPromise(validateQualityAuditSummary(source)), /Malformed/u);
-    }),
-  );
-});
+it.effect(
+  'invalid counts, flags, diagnostics and inconsistent coverage cannot imply clean',
+  Effect.fn(function* mergedScenario12() {
+    yield* Effect.all(
+      names.map(
+        Effect.fn(function* mergedScenario10(name) {
+          yield* Effect.all(
+            [-1, 0.5, null, '0', undefined, Number.NaN, Number.POSITIVE_INFINITY].map(
+              Effect.fn(function* mergedScenario9(invalid) {
+                const summary = clean();
+                const result = summary.results.find((entry) => entry.name === name);
+                expect(result).toBeTruthy();
+                if (!result) {
+                  throw new Error(EXPECTED_PROOF_VALUE);
+                }
+                Object.assign(result, { findings: invalid });
+                yield* Effect.matchCause(validate(summary), {
+                  onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+                  onSuccess: () => {
+                    throw new Error(EXPECTED_EFFECT_FAILURE);
+                  },
+                });
+              }),
+            ),
+            { concurrency: 'unbounded' },
+          );
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    yield* Effect.all(
+      [
+        { advisory: true },
+        { diagnostic: 'analysis failed' },
+        { coverage: {} },
+        { coverage: { tokenEligibleFiles: -1 } },
+        { coverage: { tokenEligibleFiles: 1 } },
+      ].map(
+        Effect.fn(function* mergedScenario11(patch) {
+          const summary = clean();
+          const result = summary.results.find(({ name }) => name === 'jscpd');
+          expect(result).toBeTruthy();
+          if (!result) {
+            throw new Error(EXPECTED_PROOF_VALUE);
+          }
+          Object.assign(result, patch);
+          yield* Effect.matchCause(validate(summary), {
+            onFailure: (cause) =>
+              expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
+            onSuccess: () => {
+              throw new Error(EXPECTED_EFFECT_FAILURE);
+            },
+          });
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
 
-await test('invalid counts, flags, diagnostics and inconsistent coverage cannot imply clean', async () => {
-  await Promise.all(
-    names.map(async (name) => {
-      await Promise.all(
-        [-1, 0.5, null, '0', undefined, Number.NaN, Number.POSITIVE_INFINITY].map(
-          async (invalid) => {
-            const summary = clean();
-            const result = summary.results.find((entry) => entry.name === name);
-            assert.ok(result);
-            Object.assign(result, { findings: invalid });
-            await assert.rejects(validate(summary), /Malformed/u);
-          },
-        ),
-      );
-    }),
-  );
-  await Promise.all(
-    [
-      { advisory: true },
-      { diagnostic: 'analysis failed' },
-      { coverage: {} },
-      { coverage: { tokenEligibleFiles: -1 } },
-      { coverage: { tokenEligibleFiles: 1 } },
-    ].map(async (patch) => {
-      const summary = clean();
-      const result = summary.results.find(({ name }) => name === 'jscpd');
-      assert.ok(result);
-      Object.assign(result, patch);
-      await assert.rejects(validate(summary), /Malformed|inconsistent/u);
-    }),
-  );
-});
-
-await test('six-result duplicate and inconsistent normalization fail closed', async () => {
-  const duplicate = clean();
-  const [, repeated] = duplicate.results;
-  duplicate.results[0] = repeated;
-  await assert.rejects(validate(duplicate), /six unique/u);
-  await Promise.all(
-    [
-      ['knip', { findingCounts: {}, nativeFindingCounts: {} }],
-      ['knip', { processed: 1 }],
-      ['knip', { total: 3 }],
-      ['knip', { workspaces: [] }],
-      ['knip', { findingCounts: { exports: -1, unlisted: 0 } }],
-      [FALLOW_HEALTH, { controlFlowFindings: 1 }],
-      [FALLOW_HEALTH, { analyzedFunctions: 0 }],
-      [FALLOW_HEALTH, { weightedFindings: 1 }],
-      [FALLOW_HEALTH, { uiOnlyFindings: -1 }],
-      [FALLOW_FILES, { discoveredFiles: 0 }],
-    ].map(async ([name, coverage]) => {
-      const summary = clean();
-      const result = summary.results.find((entry) => entry.name === name);
-      assert.ok(result);
-      Object.assign(result.coverage, coverage);
-      await assert.rejects(validate(summary), /Malformed|inconsistent/u);
-    }),
-  );
-});
+it.effect(
+  'six-result duplicate and inconsistent normalization fail closed',
+  Effect.fn(function* mergedScenario14() {
+    const duplicate = clean();
+    const [, repeated] = duplicate.results;
+    duplicate.results[0] = repeated;
+    yield* Effect.matchCause(validate(duplicate), {
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+      onSuccess: () => {
+        throw new Error(EXPECTED_EFFECT_FAILURE);
+      },
+    });
+    yield* Effect.all(
+      [
+        ['knip', { findingCounts: {}, nativeFindingCounts: {} }],
+        ['knip', { processed: 1 }],
+        ['knip', { total: 3 }],
+        ['knip', { workspaces: [] }],
+        ['knip', { findingCounts: { exports: -1, unlisted: 0 } }],
+        [FALLOW_HEALTH, { controlFlowFindings: 1 }],
+        [FALLOW_HEALTH, { analyzedFunctions: 0 }],
+        [FALLOW_HEALTH, { weightedFindings: 1 }],
+        [FALLOW_HEALTH, { uiOnlyFindings: -1 }],
+        [FALLOW_FILES, { discoveredFiles: 0 }],
+      ].map(
+        Effect.fn(function* mergedScenario13([name, coverage]) {
+          const summary = clean();
+          const result = summary.results.find((entry) => entry.name === name);
+          expect(result).toBeTruthy();
+          if (!result) {
+            throw new Error(EXPECTED_PROOF_VALUE);
+          }
+          Object.assign(result.coverage, coverage);
+          yield* Effect.matchCause(validate(summary), {
+            onFailure: (cause) =>
+              expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
+            onSuccess: () => {
+              throw new Error(EXPECTED_EFFECT_FAILURE);
+            },
+          });
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);

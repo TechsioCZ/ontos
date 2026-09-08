@@ -1,11 +1,8 @@
-/// <reference types="node" />
-
-import assert from 'node:assert/strict';
+import { expect, it } from 'effect-rstest';
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Option } from 'effect';
 import { Param } from 'effect/unstable/cli';
@@ -42,12 +39,12 @@ assert.equal(pgRole('undefined', { inherit: undefined }).inherit, undefined);
 `,
     );
     const result = spawnSync(process.execPath, [filename], { encoding: 'utf-8' });
-    assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
   }
 };
 
-void test('published dependency declarations retain strict positive and negative contracts', () => {
+it('published dependency declarations retain strict positive and negative contracts', () => {
   const fixture = mkdtempSync(path.join(tmpdir(), 'ontos-declaration-contract-'));
   try {
     symlinkSync(
@@ -112,11 +109,11 @@ cockroachRole('invalid', { createRole: 1 });
           ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
           { encoding: 'utf-8' },
         );
-        assert.ifError(result.error);
+        expect(result.error).toBeUndefined();
         const diagnostics = result.stdout + result.stderr;
-        assert.equal(result.status, errors === 0 ? 0 : 1, diagnostics);
-        assert.equal(countDiagnostics(diagnostics, /error TS2322:/gu), errors, diagnostics);
-        assert.equal(countDiagnostics(diagnostics, /error TS\d+:/gu), errors, diagnostics);
+        expect(result.status, diagnostics).toBe(errors === 0 ? 0 : 1);
+        expect(countDiagnostics(diagnostics, /error TS2322:/gu), diagnostics).toBe(errors);
+        expect(countDiagnostics(diagnostics, /error TS\d+:/gu), diagnostics).toBe(errors);
       }
     }
     verifyDrizzleRuntimeFormats(fixture);
@@ -149,8 +146,8 @@ const reverse: typeof metadata = expected;
       ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
       { encoding: 'utf-8' },
     );
-    assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
     appendFileSync(
       path.join(fixture, metadataFilename),
       `
@@ -166,21 +163,21 @@ metadata.isOptional = true;
       ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
       { encoding: 'utf-8' },
     );
-    assert.ifError(invalidMetadata.error);
+    expect(invalidMetadata.error).toBeUndefined();
     const diagnostics = invalidMetadata.stdout + invalidMetadata.stderr;
-    assert.equal(invalidMetadata.status, 1, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS2322:/gu), 2, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS2375:/gu), 2, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS2540:/gu), 1, diagnostics);
-    assert.equal(countDiagnostics(diagnostics, /error TS\d+:/gu), 5, diagnostics);
+    expect(invalidMetadata.status, diagnostics).toBe(1);
+    expect(countDiagnostics(diagnostics, /error TS2322:/gu), diagnostics).toBe(2);
+    expect(countDiagnostics(diagnostics, /error TS2375:/gu), diagnostics).toBe(2);
+    expect(countDiagnostics(diagnostics, /error TS2540:/gu), diagnostics).toBe(1);
+    expect(countDiagnostics(diagnostics, /error TS\d+:/gu), diagnostics).toBe(5);
   } finally {
     rmSync(fixture, { force: true, recursive: true });
   }
 });
 
-void test('published runtime exposes real parameter metadata', () => {
+it('published runtime exposes real parameter metadata', () => {
   const metadata = Param.getParamMetadata(Param.string(Param.flagKind, 'name'));
-  assert.deepEqual(metadata, {
+  expect(metadata).toEqual({
     isOptional: false,
     isVariadic: false,
     variadicMax: Option.none(),

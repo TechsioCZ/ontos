@@ -31,19 +31,19 @@ const prepareDevModuleContractCommand = Command.make(
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const workspaceRoot = yield* pathService.fromFileUrl(new URL('..', import.meta.url));
-      const generated = yield* Effect.tryPromise({
-        catch: (cause) =>
-          new ModuleContractPreparationError({
-            cause,
-            reason: `Unable to generate the ${vertical} development module contract`,
-          }),
-        try: async () =>
-          await generateOntosModuleContract({
-            target: 'dist',
-            vertical,
-            workspaceRoot,
-          }),
-      });
+      const generated = yield* generateOntosModuleContract({
+        target: 'dist',
+        vertical,
+        workspaceRoot,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ModuleContractPreparationError({
+              cause,
+              reason: `Unable to generate the ${vertical} development module contract`,
+            }),
+        ),
+      );
       const publicDirectory = pathService.join(workspaceRoot, 'verticals', vertical, '.dev-public');
       const contractDirectory = pathService.join(publicDirectory, '.well-known');
       yield* fileSystem.makeDirectory(contractDirectory, { recursive: true });

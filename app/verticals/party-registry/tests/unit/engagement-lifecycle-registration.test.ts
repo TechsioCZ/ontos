@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { assert, it } from 'effect-rstest';
 import {
   OrganizationEngagementLifecyclePayloadSchema,
   OrganizationEngagementProfileSchema,
@@ -39,7 +38,7 @@ const cases = [
 ] as const;
 
 for (const [slug, action, payloadSchema, resultSchema] of cases) {
-  test(`${slug} engagement retains its governed registration and exact schemas`, () => {
+  it(`${slug} engagement retains its governed registration and exact schemas`, () => {
     const { descriptor } = action;
     const key = `party.registry.${slug}-engagement`;
     assert.equal(descriptor.actionKey, key);

@@ -1,9 +1,7 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
+import { expect, it } from 'effect-rstest';
 
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect } from 'effect';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { DateTime, Effect, Predicate } from 'effect';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
@@ -15,28 +13,28 @@ const principalOne = '20000000-0000-4000-8000-000000000001';
 const principalTwo = '20000000-0000-4000-8000-000000000002';
 const subject = 'better-auth-integration-subject';
 
-test(
+it.live(
   'lists and selects multiple tenant-scoped principals and fails closed after access changes',
-  Effect.gen(function* principalResolverIntegration() {
-    const configuration = yield* loadDatabaseConfig();
-    const { executor: database } = yield* makeCoreDatabase(configuration);
-    const resolver = makePrincipalResolver({ executor: database });
-    const cleanup = Effect.gen(function* cleanPrincipalResolverFixtures() {
-      yield* database
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.providerSubjectId, subject));
-      yield* database
-        .delete(principals)
-        .where(and(eq(principals.principalId, principalOne), eq(principals.tenantId, tenantOne)));
-      yield* database
-        .delete(principals)
-        .where(and(eq(principals.principalId, principalTwo), eq(principals.tenantId, tenantTwo)));
-      yield* database.delete(tenants).where(eq(tenants.tenantId, tenantOne));
-      yield* database.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
-    });
+  () =>
+    Effect.gen(function* principalResolverIntegration() {
+      const configuration = yield* loadDatabaseConfig();
+      const { executor: database } = yield* makeCoreDatabase(configuration);
+      const resolver = makePrincipalResolver({ executor: database });
+      const cleanup = Effect.gen(function* cleanPrincipalResolverFixtures() {
+        yield* database
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.providerSubjectId, subject));
+        yield* database
+          .delete(principals)
+          .where(and(eq(principals.principalId, principalOne), eq(principals.tenantId, tenantOne)));
+        yield* database
+          .delete(principals)
+          .where(and(eq(principals.principalId, principalTwo), eq(principals.tenantId, tenantTwo)));
+        yield* database.delete(tenants).where(eq(tenants.tenantId, tenantOne));
+        yield* database.delete(tenants).where(eq(tenants.tenantId, tenantTwo));
+      });
 
-    yield* Effect.gen(function* exercisePrincipalResolver() {
-      yield* cleanup;
+      yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
       yield* database.insert(tenants).values([
         {
           defaultLocale: 'en',
@@ -88,18 +86,18 @@ test(
         },
       ]);
 
-      assert.deepEqual(yield* resolver.listAvailableTenants(subject), [
+      expect(yield* resolver.listAvailableTenants(subject)).toEqual([
         { name: 'Resolver tenant one', tenantId: tenantOne },
         { name: 'Resolver tenant two', tenantId: tenantTwo },
       ]);
       const resolvedOne = yield* resolver.resolveBetterAuthUserForTenant(subject, tenantOne);
       const resolvedTwo = yield* resolver.resolveBetterAuthUserForTenant(subject, tenantTwo);
-      assert.equal(resolvedOne.principalId, principalOne);
-      assert.equal(resolvedTwo.principalId, principalTwo);
+      expect(resolvedOne.principalId).toBe(principalOne);
+      expect(resolvedTwo.principalId).toBe(principalTwo);
       const foreignResolution = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant('foreign-better-auth-subject', tenantOne),
       );
-      assert.equal(foreignResolution._tag, 'PrincipalBindingMissingError');
+      expect(Predicate.isTagged(foreignResolution, 'PrincipalBindingMissingError')).toBe(true);
 
       yield* database
         .update(principalAuthBindings)
@@ -108,13 +106,13 @@ test(
           status: 'revoked',
         })
         .where(eq(principalAuthBindings.tenantId, tenantOne));
-      assert.deepEqual(yield* resolver.listAvailableTenants(subject), [
+      expect(yield* resolver.listAvailableTenants(subject)).toEqual([
         { name: 'Resolver tenant two', tenantId: tenantTwo },
       ]);
       const revokedResolution = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
       );
-      assert.equal(revokedResolution._tag, 'PrincipalBindingInactiveError');
+      expect(Predicate.isTagged(revokedResolution, 'PrincipalBindingInactiveError')).toBe(true);
 
       yield* database
         .update(principalAuthBindings)
@@ -127,7 +125,7 @@ test(
       const inactivePrincipal = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
       );
-      assert.equal(inactivePrincipal._tag, 'PrincipalInactiveError');
+      expect(Predicate.isTagged(inactivePrincipal, 'PrincipalInactiveError')).toBe(true);
 
       yield* database
         .update(principals)
@@ -140,7 +138,6 @@ test(
       const inactiveTenant = yield* Effect.flip(
         resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
       );
-      assert.equal(inactiveTenant._tag, 'TenantInactiveError');
-    }).pipe(Effect.ensuring(cleanup.pipe(Effect.orDie)));
-  }).pipe(Effect.scoped, makeEffectTestCallback),
+      expect(Predicate.isTagged(inactiveTenant, 'TenantInactiveError')).toBe(true);
+    }),
 );

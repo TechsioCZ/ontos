@@ -1,10 +1,10 @@
 import { Effect, Match, Predicate, Schema } from 'effect';
-import type { Config } from 'effect';
+import type { Cause, Config } from 'effect';
 import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
-import { runBrowserEffect } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../../page.data.ts';
 import type { HomePageModel } from '../../page.data.ts';
@@ -96,45 +96,46 @@ const safeState = (
     Match.exhaustive,
   );
 
-export const loader = ({
+export const loadModulePageModel = ({
   params,
   request,
   routeParams = {},
-}: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
-  runBrowserEffect(
-    Effect.tryPromise(() => loadHomePageModel(request)).pipe(
-      Effect.timeout('30 seconds'),
-      Effect.flatMap((shell) => {
-        if (shell.state !== 'authenticated') {
-          return Effect.succeed<ModuleTargetPageModel>({
-            shell,
-            state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-          });
-        }
-        const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
-        return shellAuthenticationClientOptionsFromRequest(request).pipe(
-          Effect.flatMap((options) =>
-            Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)(
-              withOptionalProperty(
-                {},
-                params.entrypointKey !== undefined,
-                'entrypointKey',
-                params.entrypointKey,
-                { moduleId: params.moduleId },
-              ),
-            ).pipe(Effect.flatMap((payload) => resolveModuleTarget(payload, options))),
-          ),
-          Effect.map((target): ModuleTargetPageModel => ({
-            routeParams: boundedRouteParams,
-            shell,
-            state: 'resolved',
-            target,
-          })),
-          Effect.matchEffect({
-            onFailure: (error) => Effect.succeed(safeState(error, shell)),
-            onSuccess: Effect.succeed,
-          }),
-        );
-      }),
-    ),
+}: ModuleTargetLoaderArguments): Effect.Effect<ModuleTargetPageModel, Cause.TimeoutError> =>
+  loadHomePageModel(request).pipe(
+    Effect.timeout('30 seconds'),
+    Effect.flatMap((shell) => {
+      if (shell.state !== 'authenticated') {
+        return Effect.succeed<ModuleTargetPageModel>({
+          shell,
+          state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+        });
+      }
+      const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
+      return shellAuthenticationClientOptionsFromRequest(request).pipe(
+        Effect.flatMap((options) =>
+          Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)(
+            withOptionalProperty(
+              {},
+              params.entrypointKey !== undefined,
+              'entrypointKey',
+              params.entrypointKey,
+              { moduleId: params.moduleId },
+            ),
+          ).pipe(Effect.flatMap((payload) => resolveModuleTarget(payload, options))),
+        ),
+        Effect.map((target): ModuleTargetPageModel => ({
+          routeParams: boundedRouteParams,
+          shell,
+          state: 'resolved',
+          target,
+        })),
+        Effect.matchEffect({
+          onFailure: (error) => Effect.succeed(safeState(error, shell)),
+          onSuccess: Effect.succeed,
+        }),
+      );
+    }),
   );
+
+export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
+  browserRuntime.runPromise(loadModulePageModel(input), { signal: input.request.signal });

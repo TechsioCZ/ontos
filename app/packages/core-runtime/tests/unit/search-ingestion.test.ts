@@ -1,7 +1,5 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { Effect, Predicate } from 'effect';
 import {
   CORE_SEARCH_INGESTION_REGISTRATIONS,
   CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
@@ -11,12 +9,6 @@ import {
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
-
-const effectTest = <A, E>(name: string, body: () => Effect.Effect<A, E>): void => {
-  void test(name, () => {
-    void runEffectTestSync(body());
-  });
-};
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const ref = {
@@ -46,24 +38,22 @@ const observation = (projectionVersion: string, title: string) => ({
   workerKey: 'party.registry.project-party-updated-to-search',
 });
 
-void test('declares one immutable Core registration for every closed Party lifecycle topic', () => {
-  assert.deepEqual(
-    CORE_SEARCH_INGESTION_REGISTRATIONS.map(({ topic }) => topic),
+it('declares one immutable Core registration for every closed Party lifecycle topic', () => {
+  expect(CORE_SEARCH_INGESTION_REGISTRATIONS.map(({ topic }) => topic)).toEqual(
     CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
   );
-  assert.equal(Object.isFrozen(CORE_SEARCH_INGESTION_REGISTRATIONS), true);
-  assert.equal(
+  expect(Object.isFrozen(CORE_SEARCH_INGESTION_REGISTRATIONS)).toBe(true);
+  expect(
     CORE_SEARCH_INGESTION_REGISTRATIONS.every(
       (registration) =>
         Object.isFrozen(registration) &&
         registration.consumerModuleKey === 'party.registry' &&
         registration.producerModuleKey === 'party.registry',
     ),
-    true,
-  );
+  ).toBe(true);
 });
 
-effectTest('ingests duplicate and out-of-order post-commit observations idempotently', () => {
+it.effect('ingests duplicate and out-of-order post-commit observations idempotently', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
   const runtime = createCoreSearchQueryRuntime(store);
@@ -80,14 +70,11 @@ effectTest('ingests duplicate and out-of-order post-commit observations idempote
       resourceType: 'party.registry.party',
       tenantId,
     });
-    assert.deepEqual(
-      hits.map(({ title }) => title),
-      ['Current title'],
-    );
+    expect(hits.map(({ title }) => title)).toEqual(['Current title']);
   });
 });
 
-effectTest('identifier updates accept only their generated self-consumer worker', () => {
+it.effect('identifier updates accept only their generated self-consumer worker', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
   const update = {
@@ -104,11 +91,11 @@ effectTest('identifier updates accept only their generated self-consumer worker'
         workerKey: 'party.registry.project-official-identifier-added-to-search',
       }),
     );
-    assert.equal(denied._tag, 'CoreSearchProjectionInvalid');
+    expect(Predicate.isTagged(denied, 'CoreSearchProjectionInvalid')).toBe(true);
   });
 });
 
-effectTest('rejects undeclared topics and sequence/document identity mismatches', () => {
+it.effect('rejects undeclared topics and sequence/document identity mismatches', () => {
   const ingestion = makeCoreSearchIngestion(makeInMemoryCoreSearchProjectionStore());
   const invalidObservations = [
     { ...observation('1', 'Party'), topic: 'party.registry.undeclared.v1' },
@@ -129,18 +116,15 @@ effectTest('rejects undeclared topics and sequence/document identity mismatches'
       },
     },
   ];
-  return Effect.all(
-    invalidObservations.map((invalidObservation) =>
-      Effect.flip(ingestion.ingest(invalidObservation)),
-    ),
-    { concurrency: 'unbounded' },
-  ).pipe(
-    Effect.tap((failures) =>
-      Effect.sync(() => {
-        for (const failure of failures) {
-          assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
-        }
-      }),
-    ),
-  );
+  return Effect.gen(function* testInvalidObservations() {
+    const failures = yield* Effect.all(
+      invalidObservations.map((invalidObservation) =>
+        Effect.flip(ingestion.ingest(invalidObservation)),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    for (const failure of failures) {
+      expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(true);
+    }
+  });
 });

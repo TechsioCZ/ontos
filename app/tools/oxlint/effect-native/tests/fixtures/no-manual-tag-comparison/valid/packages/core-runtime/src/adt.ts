@@ -1,3 +1,5 @@
+import assert, { strictEqual as equal } from 'node:assert/strict';
+import { expect } from '@rstest/core';
 import { Exit, Option, Result } from "effect";
 
 /** Effect's own ADT tags belong to `no-raw-effect-adt-tag-check`; this rule must stay silent. */
@@ -13,3 +15,16 @@ export const isLeftOrRight = (value: { readonly _tag: string }): boolean =>
 /** Combinator-based inspection is the target state. */
 export const viaCombinators = (option: Option.Option<number>, result: Result.Result<number, string>): boolean =>
   Option.isSome(option) && Result.isSuccess(result);
+
+assert.equal(option._tag, 'Some');
+equal('None', option._tag);
+expect(option._tag).not.toEqual('None');
+assert.deepEqual(values.map(value => value._tag), ['Some', 'None']);
+
+switch (option._tag) {
+  case 'Some': break;
+  case 'None': break;
+  default: break;
+}
+
+assert.equal(option._tag === 'Some', true);

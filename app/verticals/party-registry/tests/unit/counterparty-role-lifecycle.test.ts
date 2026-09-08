@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 import {
   counterpartyContextEvidenceIsSufficient,
   roleEvidenceIsSufficient,
@@ -9,49 +8,43 @@ import {
   rolePeriodsOverlap,
 } from '../../shared/domain/counterparty-role-period.ts';
 
-test('requires evidence that establishes a commercial context rather than mere discovery', () => {
+it('requires evidence that establishes a commercial context rather than mere discovery', () => {
   for (const method of ['ENGAGEMENT_LEAD', 'SEARCH_RESULT', 'TECHNICAL_REFERENCE']) {
-    assert.equal(counterpartyContextEvidenceIsSufficient(method), false);
+    expect(counterpartyContextEvidenceIsSufficient(method)).toBe(false);
   }
   for (const method of ['SIGNED_CONTRACT', 'APPROVED_COMMERCIAL_RELATIONSHIP', 'BINDING_ORDER']) {
-    assert.equal(counterpartyContextEvidenceIsSufficient(method), true);
+    expect(counterpartyContextEvidenceIsSufficient(method)).toBe(true);
   }
 });
 
-test('applies CUSTOMER and SUPPLIER evidence thresholds without waiting for first completion', () => {
-  assert.equal(roleEvidenceIsSufficient('CUSTOMER', 'ENGAGEMENT_PROSPECT'), false);
-  assert.equal(roleEvidenceIsSufficient('CUSTOMER', 'BINDING_ORDER'), true);
-  assert.equal(roleEvidenceIsSufficient('CUSTOMER', 'APPROVED_PURCHASING_RELATIONSHIP'), true);
-  assert.equal(roleEvidenceIsSufficient('SUPPLIER', 'VENDOR_CANDIDATE'), false);
-  assert.equal(roleEvidenceIsSufficient('SUPPLIER', 'COMPLETED_VENDOR_ONBOARDING'), true);
-  assert.equal(roleEvidenceIsSufficient('SUPPLIER', 'BINDING_PURCHASE_ORDER'), true);
+it('applies CUSTOMER and SUPPLIER evidence thresholds without waiting for first completion', () => {
+  expect(roleEvidenceIsSufficient('CUSTOMER', 'ENGAGEMENT_PROSPECT')).toBe(false);
+  expect(roleEvidenceIsSufficient('CUSTOMER', 'BINDING_ORDER')).toBe(true);
+  expect(roleEvidenceIsSufficient('CUSTOMER', 'APPROVED_PURCHASING_RELATIONSHIP')).toBe(true);
+  expect(roleEvidenceIsSufficient('SUPPLIER', 'VENDOR_CANDIDATE')).toBe(false);
+  expect(roleEvidenceIsSufficient('SUPPLIER', 'COMPLETED_VENDOR_ONBOARDING')).toBe(true);
+  expect(roleEvidenceIsSufficient('SUPPLIER', 'BINDING_PURCHASE_ORDER')).toBe(true);
 });
 
-test('requires explicit relationship-end evidence and rejects operational inactivity', () => {
-  assert.equal(roleEndEvidenceIsSufficient('CUSTOMER', 'ENGAGEMENT_INACTIVITY'), false);
-  assert.equal(roleEndEvidenceIsSufficient('CUSTOMER', 'TRANSACTION_INACTIVITY'), false);
-  assert.equal(
-    roleEndEvidenceIsSufficient('CUSTOMER', 'CONFIRMED_CUSTOMER_RELATIONSHIP_END'),
-    true,
-  );
-  assert.equal(roleEndEvidenceIsSufficient('SUPPLIER', 'TEMPORARY_PROCUREMENT_BLOCK'), false);
-  assert.equal(roleEndEvidenceIsSufficient('SUPPLIER', 'PURCHASE_SUSPENSION'), false);
-  assert.equal(
-    roleEndEvidenceIsSufficient('SUPPLIER', 'CONFIRMED_SUPPLIER_RELATIONSHIP_END'),
-    true,
-  );
+it('requires explicit relationship-end evidence and rejects operational inactivity', () => {
+  expect(roleEndEvidenceIsSufficient('CUSTOMER', 'ENGAGEMENT_INACTIVITY')).toBe(false);
+  expect(roleEndEvidenceIsSufficient('CUSTOMER', 'TRANSACTION_INACTIVITY')).toBe(false);
+  expect(roleEndEvidenceIsSufficient('CUSTOMER', 'CONFIRMED_CUSTOMER_RELATIONSHIP_END')).toBe(true);
+  expect(roleEndEvidenceIsSufficient('SUPPLIER', 'TEMPORARY_PROCUREMENT_BLOCK')).toBe(false);
+  expect(roleEndEvidenceIsSufficient('SUPPLIER', 'PURCHASE_SUSPENSION')).toBe(false);
+  expect(roleEndEvidenceIsSufficient('SUPPLIER', 'CONFIRMED_SUPPLIER_RELATIONSHIP_END')).toBe(true);
 });
 
-test('derives current role state from lifecycle and effective time', () => {
+it('derives current role state from lifecycle and effective time', () => {
   const active = {
     state: 'ACTIVE' as const,
     validFrom: '2026-01-01T00:00:00.000Z',
     validTo: '2027-01-01T00:00:00.000Z',
   };
-  assert.equal(rolePeriodIsCurrentAt(active, '2025-12-31T23:59:59.000Z'), false);
-  assert.equal(rolePeriodIsCurrentAt(active, '2026-06-01T00:00:00.000Z'), true);
-  assert.equal(rolePeriodIsCurrentAt(active, '2027-01-01T00:00:00.000Z'), false);
-  assert.equal(
+  expect(rolePeriodIsCurrentAt(active, '2025-12-31T23:59:59.000Z')).toBe(false);
+  expect(rolePeriodIsCurrentAt(active, '2026-06-01T00:00:00.000Z')).toBe(true);
+  expect(rolePeriodIsCurrentAt(active, '2027-01-01T00:00:00.000Z')).toBe(false);
+  expect(
     rolePeriodIsCurrentAt(
       {
         state: 'ACTIVE',
@@ -60,23 +53,20 @@ test('derives current role state from lifecycle and effective time', () => {
       },
       '2026-06-01T00:00:00.000Z',
     ),
-    false,
-  );
-  assert.equal(
-    rolePeriodIsCurrentAt({ ...active, state: 'ENDED' }, '2026-06-01T00:00:00.000Z'),
+  ).toBe(false);
+  expect(rolePeriodIsCurrentAt({ ...active, state: 'ENDED' }, '2026-06-01T00:00:00.000Z')).toBe(
     false,
   );
 });
 
-test('stores future, current, future-ended, and historical periods by their interval', () => {
-  assert.deepEqual(
+it('stores future, current, future-ended, and historical periods by their interval', () => {
+  expect(
     rolePeriodStorageStateAt(
       { validFrom: '2027-01-01T00:00:00.000Z', validTo: null },
       '2026-06-01T00:00:00.000Z',
     ),
-    { isCurrent: false, state: 'ACTIVE' },
-  );
-  assert.deepEqual(
+  ).toEqual({ isCurrent: false, state: 'ACTIVE' });
+  expect(
     rolePeriodStorageStateAt(
       {
         validFrom: '2026-01-01T00:00:00.000Z',
@@ -84,9 +74,8 @@ test('stores future, current, future-ended, and historical periods by their inte
       },
       '2026-06-01T00:00:00.000Z',
     ),
-    { isCurrent: true, state: 'ACTIVE' },
-  );
-  assert.deepEqual(
+  ).toEqual({ isCurrent: true, state: 'ACTIVE' });
+  expect(
     rolePeriodStorageStateAt(
       {
         validFrom: '2026-01-01T00:00:00.000Z',
@@ -94,27 +83,24 @@ test('stores future, current, future-ended, and historical periods by their inte
       },
       '2027-01-01T00:00:00.000Z',
     ),
-    { isCurrent: false, state: 'ENDED' },
-  );
+  ).toEqual({ isCurrent: false, state: 'ENDED' });
 });
 
-test('rejects overlapping periods of the same role while allowing adjacent reactivation', () => {
+it('rejects overlapping periods of the same role while allowing adjacent reactivation', () => {
   const historical = {
     validFrom: '2025-01-01T00:00:00.000Z',
     validTo: '2026-01-01T00:00:00.000Z',
   };
-  assert.equal(
+  expect(
     rolePeriodsOverlap(historical, {
       validFrom: '2025-12-01T00:00:00.000Z',
       validTo: null,
     }),
-    true,
-  );
-  assert.equal(
+  ).toBe(true);
+  expect(
     rolePeriodsOverlap(historical, {
       validFrom: '2026-01-01T00:00:00.000Z',
       validTo: null,
     }),
-    false,
-  );
+  ).toBe(false);
 });

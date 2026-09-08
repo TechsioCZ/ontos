@@ -1,5 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
+
 import { getTableName, isTable } from 'drizzle-orm';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
@@ -17,14 +17,14 @@ const actionConfig = getTableConfig(actionInvocations);
 const dialect = new PgDialect();
 type SchemaExport = (typeof schemaExports)[keyof typeof schemaExports];
 const isPgTable = (value: SchemaExport): value is Extract<SchemaExport, PgTable> => isTable(value);
-
 const getColumn = (name: string) => {
   const column = actionConfig.columns.find((candidate) => candidate.name === name);
-  assert.ok(column, `Expected action_invocations.${name}`);
+  if (column === undefined) {
+    expect.unreachable(`Expected action_invocations.${name}`);
+  }
   return column;
 };
-
-void test('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
+it('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
   const exportedTables: PgTable[] = [];
   for (const value of Object.values(schemaExports)) {
     if (isPgTable(value)) {
@@ -41,29 +41,24 @@ void test('exports exactly the 18 Core tables in PostgreSQL schema core', () => 
     (tableName) => `${CORE_SCHEMA_NAME}.${tableName}`,
   ).toSorted();
 
-  assert.deepEqual(qualifiedNames, expectedQualifiedNames);
-  assert.equal(new Set(qualifiedNames).size, CORE_TABLE_INVENTORY.length);
-  assert.equal(
-    qualifiedNames.some((name) => name.startsWith('public.')),
-    false,
-  );
-  assert.equal(
+  expect(qualifiedNames).toEqual(expectedQualifiedNames);
+  expect(new Set(qualifiedNames).size).toBe(CORE_TABLE_INVENTORY.length);
+  expect(qualifiedNames.some((name) => name.startsWith('public.'))).toBe(false);
+  expect(
     qualifiedNames.some((name) =>
       /^(?:auth|ticketing|properties|property|accounting)\./u.test(name),
     ),
-    false,
-  );
+  ).toBe(false);
 });
+it('supports pre-authentication Action Invocation rows and indeterminate outcomes', () => {
+  expect(getColumn('principal_id').notNull).toBe(false);
+  expect(getColumn('auth_binding_id').notNull).toBe(false);
+  expect(getColumn('auth_context_ref').notNull).toBe(false);
+  expect(getColumn('auth_method').notNull).toBe(false);
+  expect(getColumn('anonymous_session_ref').notNull).toBe(false);
+  expect(getColumn('correlation_id').notNull).toBe(false);
 
-void test('supports pre-authentication Action Invocation rows and indeterminate outcomes', () => {
-  assert.equal(getColumn('principal_id').notNull, false);
-  assert.equal(getColumn('auth_binding_id').notNull, false);
-  assert.equal(getColumn('auth_context_ref').notNull, false);
-  assert.equal(getColumn('auth_method').notNull, false);
-  assert.equal(getColumn('anonymous_session_ref').notNull, false);
-  assert.equal(getColumn('correlation_id').notNull, false);
-
-  assert.deepEqual(ACTION_INVOCATION_STATUSES, [
+  expect(ACTION_INVOCATION_STATUSES).toEqual([
     'received',
     'rejected',
     'running',
@@ -76,66 +71,68 @@ void test('supports pre-authentication Action Invocation rows and indeterminate 
   const statusCheck = actionConfig.checks.find(
     (candidate) => candidate.name === 'core_action_invocations_status_ck',
   );
-  assert.ok(statusCheck);
+  if (statusCheck === undefined) {
+    expect.unreachable('Expected value to be present');
+  }
   const statusSql = dialect.sqlToQuery(statusCheck.value).sql;
 
   for (const status of ACTION_INVOCATION_STATUSES) {
-    assert.match(statusSql, new RegExp(`'${status}'`, 'u'));
+    expect(statusSql).toMatch(new RegExp(`'${status}'`, 'u'));
   }
 });
-
-void test('preserves critical Action foreign keys and unique idempotency index', () => {
+it('preserves critical Action foreign keys and unique idempotency index', () => {
   const principalForeignKey = actionConfig.foreignKeys.find((foreignKey) =>
     foreignKey.reference().columns.some((column) => column.name === 'principal_id'),
   );
-  assert.ok(principalForeignKey);
-  assert.equal(
-    getTableName(principalForeignKey.reference().foreignTable),
-    getTableName(principals),
-  );
-  assert.equal(principalForeignKey.onDelete, 'restrict');
-  assert.deepEqual(
-    principalForeignKey.reference().columns.map((column) => column.name),
-    ['tenant_id', 'principal_id'],
-  );
+  if (principalForeignKey === undefined) {
+    expect.unreachable('Expected value to be present');
+  }
+  expect(getTableName(principalForeignKey.reference().foreignTable)).toBe(getTableName(principals));
+  expect(principalForeignKey.onDelete).toBe('restrict');
+  expect(principalForeignKey.reference().columns.map((column) => column.name)).toEqual([
+    'tenant_id',
+    'principal_id',
+  ]);
 
   const idempotencyIndex = actionConfig.indexes.find(
     (candidate) => candidate.config.name === 'core_action_invocations_idempotency_uk',
   );
-  assert.ok(idempotencyIndex);
-  assert.equal(idempotencyIndex.config.unique, true);
-  assert.ok(idempotencyIndex.config.where);
-  assert.deepEqual(
+  if (idempotencyIndex === undefined) {
+    expect.unreachable('Expected value to be present');
+  }
+  expect(idempotencyIndex.config.unique).toBe(true);
+  expect(idempotencyIndex.config.where).toBeDefined();
+  expect(
     idempotencyIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
-    ['tenant_id', 'action_key', 'principal_id', 'idempotency_key'],
-  );
+  ).toEqual(['tenant_id', 'action_key', 'principal_id', 'idempotency_key']);
 });
-
-void test('allocates Domain Event order through a database-owned monotonic sequence', () => {
+it('allocates Domain Event order through a database-owned monotonic sequence', () => {
   const domainEventConfig = getTableConfig(domainEvents);
   const sequenceColumn = domainEventConfig.columns.find(
     (candidate) => candidate.name === 'tenant_sequence_no',
   );
 
-  assert.ok(sequenceColumn);
-  assert.equal(sequenceColumn.notNull, true);
-  assert.equal(sequenceColumn.hasDefault, true);
-  assert.equal(sequenceColumn.getSQLType(), 'bigint');
+  if (sequenceColumn === undefined) {
+    expect.unreachable('Expected value to be present');
+  }
+  expect(sequenceColumn.notNull).toBe(true);
+  expect(sequenceColumn.hasDefault).toBe(true);
+  expect(sequenceColumn.getSQLType()).toBe('bigint');
 
   const sequenceIndex = domainEventConfig.indexes.find(
     (candidate) => candidate.config.name === 'core_domain_events_tenant_sequence_uk',
   );
-  assert.ok(sequenceIndex);
-  assert.equal(sequenceIndex.config.unique, true);
-  assert.deepEqual(
+  if (sequenceIndex === undefined) {
+    expect.unreachable('Expected value to be present');
+  }
+  expect(sequenceIndex.config.unique).toBe(true);
+  expect(
     sequenceIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
-    ['tenant_id', 'tenant_sequence_no'],
-  );
+  ).toEqual(['tenant_id', 'tenant_sequence_no']);
 });
-
-void test('keeps the inferred Action status type aligned with the lifecycle union', () => {
+it('keeps the inferred Action status type aligned with the lifecycle union', () => {
   type ActionInsert = typeof actionInvocations.$inferInsert;
   const status: ActionInsert['status'] = 'indeterminate';
 
-  assert.equal(status, 'indeterminate');
+  expect(status).toBe('indeterminate');
 });

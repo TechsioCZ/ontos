@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 import {
   AddressContactPointValueSchema,
@@ -35,72 +34,67 @@ const partyRef = {
   resourceType: 'party.registry.party',
   tenantId: '20000000-0000-4000-8000-000000000001',
 } as const;
-
 const provenance = {
   authoritative: false,
   method: 'MANUAL_CONFIRMATION',
   source: 'USER_ASSERTION',
 } as const;
-
-test('normalizes EMAIL without provider-specific identity heuristics', () => {
-  assert.deepEqual(normalizeEmail('  Qa.Test+case@EXAMPLE.COM  '), {
+it('normalizes EMAIL without provider-specific identity heuristics', () => {
+  expect(normalizeEmail('  Qa.Test+case@EXAMPLE.COM  ')).toEqual({
     displayValue: 'Qa.Test+case@EXAMPLE.COM',
     lookupValue: 'Qa.Test+case@example.com',
   });
-  assert.notEqual(
-    normalizeEmail('qa.test+one@example.com').lookupValue,
+  expect(normalizeEmail('qa.test+one@example.com').lookupValue).not.toBe(
     normalizeEmail('qatest+two@example.com').lookupValue,
   );
-  assert.throws(() =>
+  expect(() =>
     Schema.decodeUnknownSync(EmailContactPointInputSchema)({
       preferred: false,
       type: 'EMAIL',
       value: 'not-an-email',
     }),
-  );
+  ).toThrow();
 });
-
-test('normalizes PHONE only with explicit international or country context and preserves extension', () => {
-  assert.deepEqual(normalizePhone('+420 (777) 123-456', undefined, '42'), {
+it('normalizes PHONE only with explicit international or country context and preserves extension', () => {
+  expect(normalizePhone('+420 (777) 123-456', undefined, '42')).toEqual({
     countryCode: 'CZ',
     displayValue: '+420 (777) 123-456',
     extension: '42',
     lookupValue: '+420777123456',
   });
-  assert.deepEqual(normalizePhone('777 123 456', 'CZ'), {
+  expect(normalizePhone('777 123 456', 'CZ')).toEqual({
     countryCode: 'CZ',
     displayValue: '777 123 456',
     extension: null,
     lookupValue: '+420777123456',
   });
-  assert.throws(() => normalizePhone('777 123 456'));
-  assert.throws(() =>
+  expect(() => normalizePhone('777 123 456')).toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
       countryCode: 'CZ',
       preferred: false,
       type: 'PHONE',
       value: '+0123456789',
     }),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
       extension: '1234567890123',
       preferred: false,
       type: 'PHONE',
       value: '+420777123456',
     }),
-  );
-  assert.doesNotThrow(() => normalizePhone('+420777123456', 'CZ', '123456789012'));
-  assert.throws(() =>
+  ).toThrow();
+  expect(() => normalizePhone('+420777123456', 'CZ', '123456789012')).not.toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
       preferred: false,
       type: 'PHONE',
       value: '777 123 456',
     }),
-  );
+  ).toThrow();
 });
-
-test('keeps ADDRESS structured, multi-purpose, and preferred independently per purpose', () => {
+it('keeps ADDRESS structured, multi-purpose, and preferred independently per purpose', () => {
   const decoded = Schema.decodeUnknownSync(AddressContactPointInputSchema)({
     address: {
       addressLine1: '  Na Prikope 1  ',
@@ -118,7 +112,7 @@ test('keeps ADDRESS structured, multi-purpose, and preferred independently per p
     ],
     type: 'ADDRESS',
   });
-  assert.deepEqual(normalizeAddress(decoded.address), {
+  expect(normalizeAddress(decoded.address)).toEqual({
     addressLine1: 'Na Prikope 1',
     addressLine2: null,
     city: 'Praha',
@@ -126,24 +120,20 @@ test('keeps ADDRESS structured, multi-purpose, and preferred independently per p
     postalCode: '110 00',
     region: null,
   });
-  assert.deepEqual(
-    decoded.purposes.map(({ preferred, purpose }) => ({ preferred, purpose })),
-    [
-      { preferred: true, purpose: 'REGISTERED' },
-      { preferred: false, purpose: 'CORRESPONDENCE' },
-    ],
-  );
-  assert.throws(() =>
+  expect(decoded.purposes.map(({ preferred, purpose }) => ({ preferred, purpose }))).toEqual([
+    { preferred: true, purpose: 'REGISTERED' },
+    { preferred: false, purpose: 'CORRESPONDENCE' },
+  ]);
+  expect(() =>
     Schema.decodeUnknownSync(AddressContactPointInputSchema)({
       address: { addressLine1: 'One', city: 'Prague', countryCode: 'CZ' },
       purposes: [{ preferred: false, purpose: 'OTHER' }],
       type: 'ADDRESS',
     }),
-  );
+  ).toThrow();
 });
-
-test('requires authoritative, registry-scoped evidence only for REGISTERED', () => {
-  assert.throws(() =>
+it('requires authoritative, registry-scoped evidence only for REGISTERED', () => {
+  expect(() =>
     assertAddressPurposeRules(
       [
         {
@@ -154,8 +144,8 @@ test('requires authoritative, registry-scoped evidence only for REGISTERED', () 
       ],
       provenance,
     ),
-  );
-  assert.doesNotThrow(() =>
+  ).toThrow();
+  expect(() =>
     assertAddressPurposeRules(
       [
         {
@@ -167,10 +157,9 @@ test('requires authoritative, registry-scoped evidence only for REGISTERED', () 
       ],
       { ...provenance, authoritative: true, evidenceReference: 'evidence:ares:subject:1' },
     ),
-  );
+  ).not.toThrow();
 });
-
-test('keeps the contact-point catalog closed to EMAIL, PHONE, and ADDRESS', () => {
+it('keeps the contact-point catalog closed to EMAIL, PHONE, and ADDRESS', () => {
   for (const input of [
     { preferred: false, type: 'EMAIL', value: 'a@example.test' },
     { countryCode: 'CZ', preferred: false, type: 'PHONE', value: '777123456' },
@@ -180,18 +169,17 @@ test('keeps the contact-point catalog closed to EMAIL, PHONE, and ADDRESS', () =
       type: 'ADDRESS',
     },
   ]) {
-    assert.doesNotThrow(() => Schema.decodeUnknownSync(ContactPointInputSchema)(input));
+    expect(() => Schema.decodeUnknownSync(ContactPointInputSchema)(input)).not.toThrow();
   }
-  assert.throws(() => Schema.decodeUnknownSync(ContactPointInputSchema)({ type: 'OTHER' }));
+  expect(() => Schema.decodeUnknownSync(ContactPointInputSchema)({ type: 'OTHER' })).toThrow();
 });
-
-test('declares tenant-authorized idempotent Actions and prevents value overwrite through UPDATE', () => {
+it('declares tenant-authorized idempotent Actions and prevents value overwrite through UPDATE', () => {
   for (const action of [addContactPointAction, updateContactPointAction, endContactPointAction]) {
-    assert.equal(action.descriptor.legalEntityScope, 'optional');
-    assert.equal(action.descriptor.idempotency, 'required');
-    assert.notEqual(action.descriptor.tenantPermission, undefined);
+    expect(action.descriptor.legalEntityScope).toBe('optional');
+    expect(action.descriptor.idempotency).toBe('required');
+    expect(action.descriptor.tenantPermission).not.toBe(undefined);
   }
-  assert.doesNotThrow(() =>
+  expect(() =>
     Schema.decodeUnknownSync(AddContactPointPayloadSchema)({
       contactPoint: { preferred: true, type: 'EMAIL', value: 'user@example.test' },
       partyRef,
@@ -200,8 +188,8 @@ test('declares tenant-authorized idempotent Actions and prevents value overwrite
       validFrom: '2026-09-01T00:00:00.000Z',
       verification: { state: 'UNVERIFIED' },
     }),
-  );
-  assert.throws(() =>
+  ).not.toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema, { onExcessProperty: 'error' })({
       change: { preferred: true, type: 'SET_CHANNEL_PREFERRED' },
       contactPointRef: {
@@ -212,38 +200,34 @@ test('declares tenant-authorized idempotent Actions and prevents value overwrite
       provenance,
       value: 'replacement@example.test',
     }),
-  );
+  ).toThrow();
 });
-
-test('governs contact reads with tenant Party authority even when Legal Entity context is optional', () => {
+it('governs contact reads with tenant Party authority even when Legal Entity context is optional', () => {
   for (const read of [partyContactPointsRead, partyContactPointDetailRead]) {
-    assert.equal(read.descriptor.legalEntityScope, 'optional');
-    assert.equal(read.descriptor.permissionTarget, 'tenant');
+    expect(read.descriptor.legalEntityScope).toBe('optional');
+    expect(read.descriptor.permissionTarget).toBe('tenant');
   }
 });
-
-test('publishes stable references instead of mutable contact data', () => {
+it('publishes stable references instead of mutable contact data', () => {
   const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
-  assert.deepEqual(
+  expect(
     Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema)({ contactPointRef, partyRef }),
-    { contactPointRef, partyRef },
-  );
-  assert.throws(() =>
+  ).toEqual({ contactPointRef, partyRef });
+  expect(() =>
     Schema.decodeUnknownSync(ContactPointAddedOutboxPayloadSchema, { onExcessProperty: 'error' })({
       contactPointRef,
       displayValue: 'private@example.test',
       partyRef,
     }),
-  );
+  ).toThrow();
 });
-
-test('models removal as a reasoned temporal end of a whole contact or one ADDRESS purpose', () => {
+it('models removal as a reasoned temporal end of a whole contact or one ADDRESS purpose', () => {
   const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
   for (const target of [
     { type: 'WHOLE_CONTACT_POINT' },
     { target: { purpose: 'DELIVERY' }, type: 'ADDRESS_PURPOSE' },
   ] as const) {
-    assert.doesNotThrow(() =>
+    expect(() =>
       Schema.decodeUnknownSync(EndContactPointPayloadSchema)({
         contactPointRef,
         effectiveEnd: '2026-09-03T10:00:00.000Z',
@@ -251,9 +235,9 @@ test('models removal as a reasoned temporal end of a whole contact or one ADDRES
         reason: 'Party confirmed that this contact is no longer used',
         target,
       }),
-    );
+    ).not.toThrow();
   }
-  assert.throws(() =>
+  expect(() =>
     Schema.decodeUnknownSync(EndContactPointPayloadSchema)({
       contactPointRef,
       effectiveEnd: '2026-09-03T10:00:00.000Z',
@@ -261,9 +245,8 @@ test('models removal as a reasoned temporal end of a whole contact or one ADDRES
       reason: '',
       target: { type: 'WHOLE_CONTACT_POINT' },
     }),
-  );
-
-  assert.doesNotThrow(() =>
+  ).toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
       change: {
         effectiveEnd: '2026-09-03T10:00:00.000Z',
@@ -275,20 +258,19 @@ test('models removal as a reasoned temporal end of a whole contact or one ADDRES
       expectedRevision: 1,
       provenance,
     }),
-  );
-  assert.throws(() =>
+  ).not.toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
       change: { target: { purpose: 'DELIVERY' }, type: 'END_ADDRESS_PURPOSE' },
       contactPointRef,
       expectedRevision: 1,
       provenance,
     }),
-  );
+  ).toThrow();
 });
-
-test('models an originally wrong Contact Point as an explicit correction with optional validated replacement', () => {
+it('models an originally wrong Contact Point as an explicit correction with optional validated replacement', () => {
   const contactPointRef = { ...partyRef, resourceType: 'party.registry.party-contact-point' };
-  assert.doesNotThrow(() =>
+  expect(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
       change: {
         evidenceReferences: ['evidence:customer-confirmation:42'],
@@ -310,8 +292,8 @@ test('models an originally wrong Contact Point as an explicit correction with op
       expectedRevision: 3,
       provenance: { ...provenance, evidenceReference: 'evidence:customer-confirmation:42' },
     }),
-  );
-  assert.throws(() =>
+  ).not.toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(UpdateContactPointPayloadSchema)({
       change: {
         evidenceReferences: [],
@@ -322,10 +304,9 @@ test('models an originally wrong Contact Point as an explicit correction with op
       expectedRevision: 3,
       provenance,
     }),
-  );
+  ).toThrow();
 });
-
-test('projects independently auditable whole-contact and ADDRESS-purpose ends', () => {
+it('projects independently auditable whole-contact and ADDRESS-purpose ends', () => {
   const encodedEnd = {
     effectiveEnd: '2026-10-01T00:00:00.000Z',
     endedByActionInvocationId: '30000000-0000-4000-8000-000000000001',
@@ -365,6 +346,6 @@ test('projects independently auditable whole-contact and ADDRESS-purpose ends', 
     ],
     type: 'ADDRESS',
   });
-  assert.deepEqual(address.purposes[0]?.end, end);
-  assert.equal(address.purposes[0]?.current, true, 'a future end remains current before boundary');
+  expect(address.purposes[0]?.end).toEqual(end);
+  expect(address.purposes[0]?.current, 'a future end remains current before boundary').toBe(true);
 });

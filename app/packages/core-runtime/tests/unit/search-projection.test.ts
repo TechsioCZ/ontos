@@ -1,17 +1,10 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { Effect, Schema, Predicate } from 'effect';
+import { TestClock } from 'effect/testing';
 import {
   createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
-
-const effectTest = <A, E>(name: string, body: () => Effect.Effect<A, E>): void => {
-  void test(name, () => {
-    void runEffectTestSync(body());
-  });
-};
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Any));
 
@@ -59,7 +52,7 @@ const party = (overrides: PartyOverrides = {}) => ({
   ...overrides,
 });
 
-effectTest(
+it.effect(
   'a projection rebuild floor prevents unseen stale resources and rejects divergent equal-version rebuilds',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -75,7 +68,7 @@ effectTest(
       yield* store.replace(rebuild);
       yield* store.apply({ document: party(), kind: 'upsert' });
       yield* store.replace({ ...rebuild, documents: [party()], rebuildVersion: '1' });
-      assert.deepEqual(
+      expect(
         yield* runtime.search({
           includeArchived: false,
           moduleId: partyRef.moduleId,
@@ -83,11 +76,10 @@ effectTest(
           resourceType: partyRef.resourceType,
           tenantId,
         }),
-        [],
-      );
+      ).toEqual([]);
       yield* store.replace(rebuild);
       const divergent = yield* Effect.flip(store.replace({ ...rebuild, documents: [party()] }));
-      assert.equal(divergent._tag, 'CoreSearchProjectionInvalid');
+      expect(Predicate.isTagged(divergent, 'CoreSearchProjectionInvalid')).toBe(true);
       yield* store.apply({ document: party({ projectionVersion: '3' }), kind: 'upsert' });
       yield* store.replace(rebuild);
       const searchResults = yield* runtime.search({
@@ -97,12 +89,12 @@ effectTest(
         resourceType: partyRef.resourceType,
         tenantId,
       });
-      assert.equal(searchResults.length, 1);
+      expect(searchResults.length).toBe(1);
     });
   },
 );
 
-effectTest(
+it.effect(
   'Core Search identifies alias-only matches while canonical evidence takes precedence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -126,18 +118,18 @@ effectTest(
           tenantId,
         });
       const aliasHits = yield* search('former');
-      assert.equal(aliasHits.length, 1);
-      assert.deepEqual(aliasHits[0]?.ref, partyRef);
-      assert.deepEqual(aliasHits[0]?.matchedRef, aliasRef);
-      assert.equal(aliasHits[0]?.matchedSubjectRef, undefined);
-      assert.doesNotMatch(encodeJson(aliasHits), /Former Company|searchableText|aliases/u);
+      expect(aliasHits.length).toBe(1);
+      expect(aliasHits[0]?.ref).toEqual(partyRef);
+      expect(aliasHits[0]?.matchedRef).toEqual(aliasRef);
+      expect(aliasHits[0]?.matchedSubjectRef).toBe(undefined);
+      expect(encodeJson(aliasHits)).not.toMatch(/Former Company|searchableText|aliases/u);
       const canonicalHits = yield* search('acme');
-      assert.equal(canonicalHits[0]?.matchedRef, undefined);
+      expect(canonicalHits[0]?.matchedRef).toBe(undefined);
     });
   },
 );
 
-effectTest(
+it.effect(
   'Core Search rejects cross-tenant aliases and malformed or oversized temporal evidence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -183,81 +175,76 @@ effectTest(
         })),
       },
     ];
-    return Effect.all(
-      invalidEvidence.map((evidence) =>
-        Effect.flip(store.apply({ document: party(evidence), kind: 'upsert' })),
-      ),
-      { concurrency: 'unbounded' },
-    ).pipe(
-      Effect.tap((failures) =>
-        Effect.sync(() => {
-          for (const failure of failures) {
-            assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
-          }
-        }),
-      ),
-    );
-  },
-);
-
-effectTest(
-  'Core Search honors half-open evidence periods for canonical and subject aliases',
-  () => {
-    const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = createCoreSearchQueryRuntime(store);
-    return Effect.gen(function* testHalfOpenEvidencePeriods() {
-      yield* store.apply({
-        document: party({
-          aliases: [
-            {
-              kind: 'subject',
-              ref: aliasRef,
-              searchableText: [],
-              temporalSearchableText: [
-                {
-                  validFrom: '2026-01-01T00:00:00Z',
-                  validTo: '2026-02-01T00:00:00Z',
-                  value: 'old-private@example.test',
-                },
-              ],
-            },
-          ],
-          temporalSearchableText: [
-            { validFrom: '2026-02-01T00:00:00Z', value: 'current-private@example.test' },
-            {
-              validFrom: '2000-01-01T00:00:00Z',
-              validTo: '2100-01-01T00:00:00Z',
-              value: 'long-lived@example.test',
-            },
-          ],
-        }),
-        kind: 'upsert',
-      });
-      const search = (query: string, effectiveAt?: string) => {
-        const request = {
-          includeArchived: false,
-          moduleId: partyRef.moduleId,
-          query,
-          resourceType: partyRef.resourceType,
-          tenantId,
-        };
-        return runtime.search(effectiveAt === undefined ? request : { ...request, effectiveAt });
-      };
-      const historicalHits = yield* search('old-private', '2026-01-01T00:00:00Z');
-      assert.deepEqual(historicalHits[0]?.matchedSubjectRef, aliasRef);
-      assert.deepEqual(yield* search('old-private', '2026-02-01T00:00:00Z'), []);
-      assert.deepEqual(yield* search('current-private', '2026-01-31T23:59:59Z'), []);
-      const current = yield* search('current-private', '2026-02-01T00:00:00Z');
-      assert.equal(current.length, 1);
-      assert.equal(current[0]?.matchedSubjectRef, undefined);
-      assert.doesNotMatch(encodeJson(current), /private@example|temporalSearchableText/u);
-      const longLivedHits = yield* search('long-lived');
-      assert.equal(longLivedHits.length, 1);
+    return Effect.gen(function* testInvalidEvidence() {
+      const failures = yield* Effect.all(
+        invalidEvidence.map((evidence) =>
+          Effect.flip(store.apply({ document: party(evidence), kind: 'upsert' })),
+        ),
+        { concurrency: 'unbounded' },
+      );
+      for (const failure of failures) {
+        expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(true);
+      }
     });
   },
 );
 
-effectTest('Core Search rebuilds one owned projection atomically and isolates tenants', () => {
+it.effect('Core Search honors half-open evidence periods for canonical and subject aliases', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const runtime = createCoreSearchQueryRuntime(store);
+  return Effect.gen(function* testHalfOpenEvidencePeriods() {
+    yield* TestClock.setTime(Date.parse('2026-09-03T00:00:00Z'));
+    yield* store.apply({
+      document: party({
+        aliases: [
+          {
+            kind: 'subject',
+            ref: aliasRef,
+            searchableText: [],
+            temporalSearchableText: [
+              {
+                validFrom: '2026-01-01T00:00:00Z',
+                validTo: '2026-02-01T00:00:00Z',
+                value: 'old-private@example.test',
+              },
+            ],
+          },
+        ],
+        temporalSearchableText: [
+          { validFrom: '2026-02-01T00:00:00Z', value: 'current-private@example.test' },
+          {
+            validFrom: '2000-01-01T00:00:00Z',
+            validTo: '2100-01-01T00:00:00Z',
+            value: 'long-lived@example.test',
+          },
+        ],
+      }),
+      kind: 'upsert',
+    });
+    const search = (query: string, effectiveAt?: string) => {
+      const request = {
+        includeArchived: false,
+        moduleId: partyRef.moduleId,
+        query,
+        resourceType: partyRef.resourceType,
+        tenantId,
+      };
+      return runtime.search(effectiveAt === undefined ? request : { ...request, effectiveAt });
+    };
+    const historicalHits = yield* search('old-private', '2026-01-01T00:00:00Z');
+    expect(historicalHits[0]?.matchedSubjectRef).toEqual(aliasRef);
+    expect(yield* search('old-private', '2026-02-01T00:00:00Z')).toEqual([]);
+    expect(yield* search('current-private', '2026-01-31T23:59:59Z')).toEqual([]);
+    const current = yield* search('current-private', '2026-02-01T00:00:00Z');
+    expect(current.length).toBe(1);
+    expect(current[0]?.matchedSubjectRef).toBe(undefined);
+    expect(encodeJson(current)).not.toMatch(/private@example|temporalSearchableText/u);
+    const longLivedHits = yield* search('long-lived');
+    expect(longLivedHits.length).toBe(1);
+  });
+});
+
+it.effect('Core Search rebuilds one owned projection atomically and isolates tenants', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const runtime = createCoreSearchQueryRuntime(store);
 
@@ -289,7 +276,7 @@ effectTest('Core Search rebuilds one owned projection atomically and isolates te
       resourceType: 'party.registry.party',
       tenantId,
     });
-    assert.deepEqual(result, [
+    expect(result).toEqual([
       {
         archived: false,
         facets: [],
@@ -298,7 +285,7 @@ effectTest('Core Search rebuilds one owned projection atomically and isolates te
         title: 'Acme, s.r.o.',
       },
     ]);
-    assert.doesNotMatch(encodeJson(result), /private@example\.test/u);
+    expect(encodeJson(result)).not.toMatch(/private@example\.test/u);
 
     yield* store.replace({
       documents: [party({ archived: true, projectionVersion: '2', title: 'Replacement' })],
@@ -314,11 +301,11 @@ effectTest('Core Search rebuilds one owned projection atomically and isolates te
       resourceType: 'party.registry.party',
       tenantId,
     });
-    assert.deepEqual(hits, []);
+    expect(hits).toEqual([]);
   });
 });
 
-effectTest(
+it.effect(
   'Core Search applies typed Legal Entity and role facets without returning match evidence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -373,7 +360,7 @@ effectTest(
         selectedLegalEntityId: legalEntityId,
         tenantId,
       });
-      assert.deepEqual(result, [
+      expect(result).toEqual([
         {
           archived: false,
           facets: [],
@@ -397,8 +384,8 @@ effectTest(
           title: 'Acme',
         },
       ]);
-      assert.doesNotMatch(encodeJson(result), /private@example\.test/u);
-      assert.deepEqual(
+      expect(encodeJson(result)).not.toMatch(/private@example\.test/u);
+      expect(
         yield* runtime.search({
           includeArchived: false,
           moduleId: 'party.registry',
@@ -406,13 +393,12 @@ effectTest(
           resourceType: 'party.registry.counterparty',
           tenantId,
         }),
-        [],
-      );
+      ).toEqual([]);
     });
   },
 );
 
-effectTest(
+it.effect(
   'Core Search rejects malformed or cross-owner rebuild documents without partial replacement',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
@@ -435,7 +421,7 @@ effectTest(
           tenantId,
         }),
       );
-      assert.equal(failure._tag, 'CoreSearchProjectionInvalid');
+      expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(true);
       const result = yield* runtime.search({
         includeArchived: false,
         moduleId: 'party.registry',
@@ -443,12 +429,12 @@ effectTest(
         resourceType: 'party.registry.party',
         tenantId,
       });
-      assert.equal(result.length, 1);
+      expect(result.length).toBe(1);
     });
   },
 );
 
-effectTest('Core Search makes duplicate and out-of-order lifecycle observations harmless', () => {
+it.effect('Core Search makes duplicate and out-of-order lifecycle observations harmless', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const runtime = createCoreSearchQueryRuntime(store);
   const versionTwo = party({ projectionVersion: '2', title: 'Current title' });
@@ -462,7 +448,7 @@ effectTest('Core Search makes duplicate and out-of-order lifecycle observations 
     yield* store.apply({ kind: 'delete', projectionVersion: '3', ref: partyRef });
     yield* store.apply({ document: versionTwo, kind: 'upsert' });
 
-    assert.deepEqual(
+    expect(
       yield* runtime.search({
         includeArchived: true,
         moduleId: 'party.registry',
@@ -470,7 +456,6 @@ effectTest('Core Search makes duplicate and out-of-order lifecycle observations 
         resourceType: 'party.registry.party',
         tenantId,
       }),
-      [],
-    );
+    ).toEqual([]);
   });
 });

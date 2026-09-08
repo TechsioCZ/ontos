@@ -1,6 +1,4 @@
-// @effect-diagnostics asyncFunction:off -- Node test callbacks exercise the generated Web handler boundary; expires: 2027-03-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 
 import {
   Effect,
@@ -61,55 +59,67 @@ const inferredRuntime: EffectBffDefinition<typeof api> & EffectBffRuntime<typeof
   makeRuntime('compile-time fixture');
 void inferredRuntime;
 
-void test('assembles a concrete API with caller-provided handler dependencies', async () => {
-  const server = makeRuntime('substitute runtime').createHandler();
-  try {
-    const response = await server.handler(new Request('http://localhost/greet'));
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { greeting: 'substitute runtime' });
-  } finally {
-    await server.dispose();
-  }
-});
-
-void test('keeps an optional caller-owned CORS layer in the assembled runtime', async () => {
-  const server = makeCorsRuntime('with cors').createHandler();
-  try {
-    const response = await server.handler(
-      new Request('http://localhost/greet', {
-        headers: {
-          'access-control-request-method': 'GET',
-          origin: 'https://shell.example.test',
-        },
-        method: 'OPTIONS',
-      }),
+it.live('assembles a concrete API with caller-provided handler dependencies', () =>
+  Effect.gen(function* assembleRuntimeEffect() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => makeRuntime('substitute runtime').createHandler()),
+      (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
     );
-    assert.equal(response.status, 204);
-    assert.equal(response.headers.get('access-control-allow-origin'), 'https://shell.example.test');
-    assert.equal(response.headers.get('access-control-max-age'), '600');
-  } finally {
-    await server.dispose();
-  }
-});
-
-void test('keeps strict runtime defect handling at the generated HTTP boundary', async () => {
-  const server = makeRuntime('unused').createHandler();
-  try {
-    const response = await server.handler(new Request('http://localhost/fail'));
-    assert.equal(response.status, 500);
-  } finally {
-    await server.dispose();
-  }
-});
-
-void test('preserves caller-owned Layer startup defects', async () => {
-  const server = failingStartupRuntime.createHandler();
-  try {
-    await assert.rejects(
+    const response = yield* Effect.promise(() =>
       server.handler(new Request('http://localhost/greet')),
-      /fixture layer startup defect/u,
     );
-  } finally {
-    await server.dispose();
-  }
-});
+    expect(response.status).toBe(200);
+    expect(yield* Effect.promise(() => response.json())).toEqual({
+      greeting: 'substitute runtime',
+    });
+  }),
+);
+
+it.live('keeps an optional caller-owned CORS layer in the assembled runtime', () =>
+  Effect.gen(function* corsRuntimeEffect() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => makeCorsRuntime('with cors').createHandler()),
+      (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
+    );
+    const response = yield* Effect.promise(() =>
+      server.handler(
+        new Request('http://localhost/greet', {
+          headers: {
+            'access-control-request-method': 'GET',
+            origin: 'https://shell.example.test',
+          },
+          method: 'OPTIONS',
+        }),
+      ),
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://shell.example.test');
+    expect(response.headers.get('access-control-max-age')).toBe('600');
+  }),
+);
+
+it.live('keeps strict runtime defect handling at the generated HTTP boundary', () =>
+  Effect.gen(function* runtimeDefectEffect() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => makeRuntime('unused').createHandler()),
+      (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
+    );
+    const response = yield* Effect.promise(() =>
+      server.handler(new Request('http://localhost/fail')),
+    );
+    expect(response.status).toBe(500);
+  }),
+);
+
+it.live('preserves caller-owned Layer startup defects', () =>
+  Effect.gen(function* startupDefectEffect() {
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() => failingStartupRuntime.createHandler()),
+      (runtimeServer) => Effect.promise(() => runtimeServer.dispose()),
+    );
+    const error = yield* Effect.tryPromise(() =>
+      server.handler(new Request('http://localhost/greet')),
+    ).pipe(Effect.flip);
+    expect(String(error.cause)).toMatch(/fixture layer startup defect/u);
+  }),
+);

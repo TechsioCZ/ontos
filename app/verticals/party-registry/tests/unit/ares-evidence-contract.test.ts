@@ -1,6 +1,6 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { Effect, Schema } from 'effect';
 import {
   AresCanonicalRouteSchema,
   AresEvidenceApplicationSchema,
@@ -43,113 +43,88 @@ const evidence = {
   },
 } as const;
 
-test('normalizes only surrounding whitespace and preserves leading zeroes in an exact IČO', () => {
-  assert.equal(Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)(' 01234567 '), '01234567');
-  assert.deepEqual(Schema.decodeUnknownSync(AresLookupRequestSchema)({ ico: ' 01234567 ' }), {
-    ico: '01234567',
-  });
+it.effect(
+  'normalizes only surrounding whitespace and preserves leading zeroes in an exact IČO',
+  () =>
+    Effect.gen(function* validateContract1() {
+      expect(yield* Schema.decodeUnknownEffect(AresSubjectLookupIcoSchema)(' 01234567 ')).toBe(
+        '01234567',
+      );
+      expect(
+        yield* Schema.decodeUnknownEffect(AresLookupRequestSchema)({ ico: ' 01234567 ' }),
+      ).toEqual({
+        ico: '01234567',
+      });
 
-  for (const ico of ['1234567', '123456789', '1234 5678', 'abcdefgh', '']) {
-    assert.throws(() => Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)(ico));
-  }
-});
-
-test('returns one bounded evidence envelope and strips unowned provider payload fields', () => {
-  const decoded = Schema.decodeUnknownSync(AresLookupResponseSchema)({
-    ...evidence,
-    rawResponse: { privateProviderBody: true },
-    subject: {
-      ...evidence.subject,
-      czNace: ['62010'],
-      seznamRegistraci: { unsafe: 'unbounded' },
-    },
-  });
-  const encoded = Schema.encodeSync(AresLookupResponseSchema)(decoded);
-
-  assert.deepEqual(encoded, evidence);
-  assert.equal(Object.hasOwn(decoded, 'rawResponse'), false);
-  assert.equal(Object.hasOwn(decoded.subject, 'czNace'), false);
-  assert.deepEqual(Schema.decodeUnknownSync(AresSubjectEvidenceSchema)(encoded), decoded);
-});
-
-test('keeps observed time separate from provider change time and cache-serving time', () => {
-  assert.throws(() =>
-    Schema.decodeUnknownSync(AresSubjectEvidenceSchema)({
-      ...evidence,
-      observedAt: '2026-02-30T08:00:00.000Z',
+      for (const ico of ['1234567', '123456789', '1234 5678', 'abcdefgh', '']) {
+        expect(() => Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)(ico)).toThrow();
+      }
     }),
-  );
-  const cached = Schema.decodeUnknownSync(AresSubjectEvidenceSchema)({
-    ...evidence,
-    cacheAgeSeconds: 120,
-    servedAt: '2026-09-03T08:02:00.000Z',
-  });
-  const encoded = Schema.encodeSync(AresSubjectEvidenceSchema)(cached);
+);
 
-  assert.equal(encoded.observedAt, '2026-09-03T08:00:00.000Z');
-  assert.equal(encoded.servedAt, '2026-09-03T08:02:00.000Z');
-  assert.equal(encoded.providerChangedOn, '2026-09-01');
-  assert.equal(encoded.cacheAgeSeconds, 120);
-});
-
-test('allows ARES evidence to route only through standard Party-owned lifecycle Actions', () => {
-  const routes = [
-    'PARTY_UPDATE',
-    'IDENTIFIER_ADD',
-    'CONTACT_POINT_ADD',
-    'PARTY_CORRECTION',
-  ] as const;
-  for (const route of routes) {
-    assert.equal(Schema.decodeUnknownSync(AresCanonicalRouteSchema)(route), route);
-  }
-  for (const forbiddenRoute of [
-    'PARTY_CREATE',
-    'ARES_APPLY',
-    'PARTY_MERGE',
-    'RAW_PROVIDER_OVERWRITE',
-  ]) {
-    assert.throws(() => Schema.decodeUnknownSync(AresCanonicalRouteSchema)(forbiddenRoute));
-  }
-
-  const application = Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
-    decidedAt: '2026-09-03T08:01:00.000Z',
-    evidence,
-    factDecisions: [
-      {
-        authorityPolicyKey: 'party.registry.ares.ico',
-        authorityPolicyVersion: '1',
-        fact: 'ICO',
-        outcome: 'APPLY_ENRICHMENT',
-        reasonCode: 'missing_supported_ico',
-        route: 'IDENTIFIER_ADD',
+it.effect('returns one bounded evidence envelope and strips unowned provider payload fields', () =>
+  Effect.gen(function* validateContract2() {
+    const decoded = yield* Schema.decodeUnknownEffect(AresLookupResponseSchema)({
+      ...evidence,
+      rawResponse: { privateProviderBody: true },
+      subject: {
+        ...evidence.subject,
+        czNace: ['62010'],
+        seznamRegistraci: { unsafe: 'unbounded' },
       },
-      {
-        authorityPolicyKey: 'party.registry.ares.business-name',
-        authorityPolicyVersion: '1',
-        fact: 'BUSINESS_NAME',
-        outcome: 'APPLY_ENRICHMENT',
-        reasonCode: 'missing_supported_name',
-        route: 'PARTY_UPDATE',
-      },
-      {
-        authorityPolicyKey: 'party.registry.ares.registered-address',
-        authorityPolicyVersion: '1',
-        fact: 'REGISTERED_ADDRESS',
-        outcome: 'APPLY_ENRICHMENT',
-        reasonCode: 'missing_supported_address',
-        route: 'CONTACT_POINT_ADD',
-      },
-    ],
-    outcome: 'APPLY_ENRICHMENT',
-    userConfirmed: true,
-  });
-  assert.equal(application.factDecisions.length, 3);
-  assert.equal(application.userConfirmed, true);
-});
+    });
+    const encoded = yield* Schema.encodeEffect(AresLookupResponseSchema)(decoded);
 
-test('rejects unattended enrichment and mutation routes on non-applying outcomes', () => {
-  assert.throws(() =>
-    Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+    expect(encoded).toEqual(evidence);
+    expect(Object.hasOwn(decoded, 'rawResponse')).toBe(false);
+    expect(Object.hasOwn(decoded.subject, 'czNace')).toBe(false);
+    expect(yield* Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(encoded)).toEqual(decoded);
+  }),
+);
+
+it.effect('keeps observed time separate from provider change time and cache-serving time', () =>
+  Effect.gen(function* validateContract3() {
+    expect(() =>
+      Schema.decodeUnknownSync(AresSubjectEvidenceSchema)({
+        ...evidence,
+        observedAt: '2026-02-30T08:00:00.000Z',
+      }),
+    ).toThrow();
+    const cached = yield* Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)({
+      ...evidence,
+      cacheAgeSeconds: 120,
+      servedAt: '2026-09-03T08:02:00.000Z',
+    });
+    const encoded = yield* Schema.encodeEffect(AresSubjectEvidenceSchema)(cached);
+
+    expect(encoded.observedAt).toBe('2026-09-03T08:00:00.000Z');
+    expect(encoded.servedAt).toBe('2026-09-03T08:02:00.000Z');
+    expect(encoded.providerChangedOn).toBe('2026-09-01');
+    expect(encoded.cacheAgeSeconds).toBe(120);
+  }),
+);
+
+it.effect('allows ARES evidence to route only through standard Party-owned lifecycle Actions', () =>
+  Effect.gen(function* validateContract4() {
+    const routes = [
+      'PARTY_UPDATE',
+      'IDENTIFIER_ADD',
+      'CONTACT_POINT_ADD',
+      'PARTY_CORRECTION',
+    ] as const;
+    for (const route of routes) {
+      expect(yield* Schema.decodeUnknownEffect(AresCanonicalRouteSchema)(route)).toBe(route);
+    }
+    for (const forbiddenRoute of [
+      'PARTY_CREATE',
+      'ARES_APPLY',
+      'PARTY_MERGE',
+      'RAW_PROVIDER_OVERWRITE',
+    ]) {
+      expect(() => Schema.decodeUnknownSync(AresCanonicalRouteSchema)(forbiddenRoute)).toThrow();
+    }
+
+    const application = yield* Schema.decodeUnknownEffect(AresEvidenceApplicationSchema)({
       decidedAt: '2026-09-03T08:01:00.000Z',
       evidence,
       factDecisions: [
@@ -160,14 +135,72 @@ test('rejects unattended enrichment and mutation routes on non-applying outcomes
           outcome: 'APPLY_ENRICHMENT',
           reasonCode: 'missing_supported_ico',
           route: 'IDENTIFIER_ADD',
+        },
+        {
+          authorityPolicyKey: 'party.registry.ares.business-name',
+          authorityPolicyVersion: '1',
+          fact: 'BUSINESS_NAME',
+          outcome: 'APPLY_ENRICHMENT',
+          reasonCode: 'missing_supported_name',
+          route: 'PARTY_UPDATE',
+        },
+        {
+          authorityPolicyKey: 'party.registry.ares.registered-address',
+          authorityPolicyVersion: '1',
+          fact: 'REGISTERED_ADDRESS',
+          outcome: 'APPLY_ENRICHMENT',
+          reasonCode: 'missing_supported_address',
+          route: 'CONTACT_POINT_ADD',
         },
       ],
       outcome: 'APPLY_ENRICHMENT',
-      userConfirmed: false,
-    }),
-  );
-  assert.throws(() =>
-    Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+      userConfirmed: true,
+    });
+    expect(application.factDecisions.length).toBe(3);
+    expect(application.userConfirmed).toBe(true);
+  }),
+);
+
+it.effect('rejects unattended enrichment and mutation routes on non-applying outcomes', () =>
+  Effect.gen(function* validateContract5() {
+    expect(() =>
+      Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+        decidedAt: '2026-09-03T08:01:00.000Z',
+        evidence,
+        factDecisions: [
+          {
+            authorityPolicyKey: 'party.registry.ares.ico',
+            authorityPolicyVersion: '1',
+            fact: 'ICO',
+            outcome: 'APPLY_ENRICHMENT',
+            reasonCode: 'missing_supported_ico',
+            route: 'IDENTIFIER_ADD',
+          },
+        ],
+        outcome: 'APPLY_ENRICHMENT',
+        userConfirmed: false,
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+        decidedAt: '2026-09-03T08:01:00.000Z',
+        evidence,
+        factDecisions: [
+          {
+            authorityPolicyKey: 'party.registry.ares.ico',
+            authorityPolicyVersion: '1',
+            fact: 'ICO',
+            outcome: 'APPLY_ENRICHMENT',
+            reasonCode: 'missing_supported_ico',
+            route: 'IDENTIFIER_ADD',
+          },
+        ],
+        outcome: 'NEEDS_CONFIRMATION',
+        userConfirmed: true,
+      }),
+    ).toThrow();
+
+    const conflict = yield* Schema.decodeUnknownEffect(AresEvidenceApplicationSchema)({
       decidedAt: '2026-09-03T08:01:00.000Z',
       evidence,
       factDecisions: [
@@ -175,31 +208,14 @@ test('rejects unattended enrichment and mutation routes on non-applying outcomes
           authorityPolicyKey: 'party.registry.ares.ico',
           authorityPolicyVersion: '1',
           fact: 'ICO',
-          outcome: 'APPLY_ENRICHMENT',
-          reasonCode: 'missing_supported_ico',
-          route: 'IDENTIFIER_ADD',
+          outcome: 'IDENTITY_AMBIGUITY',
+          reasonCode: 'conflicting_authoritative_ico',
+          route: null,
         },
       ],
-      outcome: 'NEEDS_CONFIRMATION',
+      outcome: 'IDENTITY_AMBIGUITY',
       userConfirmed: true,
-    }),
-  );
-
-  const conflict = Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
-    decidedAt: '2026-09-03T08:01:00.000Z',
-    evidence,
-    factDecisions: [
-      {
-        authorityPolicyKey: 'party.registry.ares.ico',
-        authorityPolicyVersion: '1',
-        fact: 'ICO',
-        outcome: 'IDENTITY_AMBIGUITY',
-        reasonCode: 'conflicting_authoritative_ico',
-        route: null,
-      },
-    ],
-    outcome: 'IDENTITY_AMBIGUITY',
-    userConfirmed: true,
-  });
-  assert.equal(conflict.factDecisions[0]?.route, null);
-});
+    });
+    expect(conflict.factDecisions[0]?.route).toBe(null);
+  }),
+);

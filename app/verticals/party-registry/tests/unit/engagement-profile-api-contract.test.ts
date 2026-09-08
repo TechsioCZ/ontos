@@ -1,9 +1,7 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics nodeBuiltinImport:off asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
+import { expect, it } from 'effect-rstest';
+// @effect-diagnostics nodeBuiltinImport:off -- Source-contract test reads actual module files; expires: 2026-12-31.
 import { readFile } from 'node:fs/promises';
-import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   AttachOrganizationEngagementPayloadSchema,
@@ -27,82 +25,84 @@ const counterpartyRef = {
   tenantId,
 } as const;
 
-test('publishes engagement operations from the Party Registry API boundary', () => {
-  assert.equal(
-    partyRegistryApiContract.readinessPath,
+it('publishes engagement operations from the Party Registry API boundary', () => {
+  expect(partyRegistryApiContract.readinessPath).toBe(
     '/party-registry-api/party-registry/readiness',
   );
-  assert.deepEqual(
+  expect(
     Object.values(engagementProfileOperationContexts)
       .map(({ routePath }) => routePath)
       .toSorted(),
-    [
-      '/contacts/engagement/organizations/archive',
-      '/contacts/engagement/organizations/attach',
-      '/contacts/engagement/organizations/unarchive',
-      '/contacts/engagement/people/archive',
-      '/contacts/engagement/people/attach',
-      '/contacts/engagement/people/unarchive',
-      '/reads/organization-engagement-profile',
-      '/reads/person-engagement-profile',
-    ],
-  );
+  ).toEqual([
+    '/contacts/engagement/organizations/archive',
+    '/contacts/engagement/organizations/attach',
+    '/contacts/engagement/organizations/unarchive',
+    '/contacts/engagement/people/archive',
+    '/contacts/engagement/people/attach',
+    '/contacts/engagement/people/unarchive',
+    '/reads/organization-engagement-profile',
+    '/reads/person-engagement-profile',
+  ]);
 });
 
-test('attach contracts accept only public Party Registry refs', () => {
-  const payload = { counterpartyRef, partyRef };
-  assert.deepEqual(
-    Schema.decodeUnknownSync(AttachOrganizationEngagementPayloadSchema)(payload),
-    payload,
-  );
-  assert.deepEqual(Schema.decodeUnknownSync(AttachPersonEngagementPayloadSchema)(payload), payload);
-
-  for (const schema of [
-    AttachOrganizationEngagementPayloadSchema,
-    AttachPersonEngagementPayloadSchema,
-  ] as const) {
-    assert.deepEqual(
-      Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({ partyRef }),
-      { partyRef },
+it.effect('attach contracts accept only public Party Registry refs', () =>
+  Effect.gen(function* decodeContracts() {
+    const payload = { counterpartyRef, partyRef };
+    expect(
+      yield* Schema.decodeUnknownEffect(AttachOrganizationEngagementPayloadSchema)(payload),
+    ).toEqual(payload);
+    expect(yield* Schema.decodeUnknownEffect(AttachPersonEngagementPayloadSchema)(payload)).toEqual(
+      payload,
     );
-    assert.throws(() =>
-      Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({
-        ...payload,
-        customerId: 'd4000000-0000-4000-8000-000000000001',
-      }),
-    );
-  }
-});
 
-test('public engagement mutations use the owner audience and preserve HTTP context', async () => {
-  const requests: Request[] = [];
-  const timestamp = '2026-09-07T00:00:00.000Z';
-  const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
-  const fakeFetch: typeof fetch = async (input, init) => {
-    const request = new Request(input, init);
-    requests.push(request);
-    const { pathname } = new URL(request.url);
-    if (pathname === '/auth/gateway-context') {
-      return Response.json({ expiresAt: 1, token: 'test-gateway-token' });
+    for (const schema of [
+      AttachOrganizationEngagementPayloadSchema,
+      AttachPersonEngagementPayloadSchema,
+    ] as const) {
+      expect(
+        yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })({ partyRef }),
+      ).toEqual({ partyRef });
+      expect(
+        yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })({
+          ...payload,
+          customerId: 'd4000000-0000-4000-8000-000000000001',
+        }).pipe(Effect.isFailure),
+      ).toBe(true);
     }
-    assert.equal(pathname, '/party-registry-api/contacts/engagement/organizations/attach');
-    return Response.json({
-      archivedAt: null,
-      counterpartyRef,
-      createdAt: timestamp,
-      partyRef,
-      profileRef: {
-        moduleId: 'party.registry',
-        resourceId: 'd5000000-0000-4000-8000-000000000001',
-        resourceType: 'party.registry.organization-engagement-profile',
-        tenantId,
-      },
-      updatedAt: timestamp,
-    });
-  };
+  }),
+);
 
-  await runEffectTestPromise(
-    attachOrganizationEngagement(
+it.effect('public engagement mutations preserve owner request context at the HTTP boundary', () =>
+  Effect.gen(function* verifyCase3() {
+    const requests: Request[] = [];
+    const timestamp = '2026-09-07T00:00:00.000Z';
+    const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+    const fakeFetch: typeof fetch = (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      const { pathname } = new URL(request.url);
+      if (pathname === '/auth/gateway-context') {
+        return Promise.resolve(Response.json({ expiresAt: 1, token: 'test-gateway-token' }));
+      }
+      expect(pathname).toBe('/party-registry-api/contacts/engagement/organizations/attach');
+      return Promise.resolve(
+        Response.json({
+          archivedAt: null,
+          counterpartyRef,
+          createdAt: timestamp,
+          partyRef,
+          profileRef: {
+            moduleId: 'party.registry',
+            resourceId: 'd5000000-0000-4000-8000-000000000001',
+            resourceType: 'party.registry.organization-engagement-profile',
+            tenantId,
+          },
+          updatedAt: timestamp,
+        }),
+      );
+    };
+
+    yield* attachOrganizationEngagement(
       { counterpartyRef, partyRef },
       {
         baseUrl: 'https://party.example/party-registry-api',
@@ -113,44 +113,51 @@ test('public engagement mutations use the owner audience and preserve HTTP conte
         traceId: 'engagement-trace',
         traceparent,
       },
-    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
-  );
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
 
-  const mutationRequest = requests.find(({ url }) => url.includes('/contacts/engagement/'));
-  const gatewayRequest = requests.find(({ url }) => url.endsWith('/auth/gateway-context'));
-  assert.ok(gatewayRequest);
-  assert.ok(mutationRequest);
-  assert.deepEqual(await gatewayRequest.json(), { audience: 'party-registry' });
-  assert.equal(mutationRequest.headers.get('authorization'), 'Bearer test-gateway-token');
-  assert.equal(mutationRequest.headers.get('accept-language'), 'cs');
-  assert.equal(mutationRequest.headers.get('x-trace-id'), 'engagement-trace');
-  assert.equal(mutationRequest.headers.get('traceparent'), traceparent);
-  assert.equal(mutationRequest.headers.get('x-correlation-id'), 'engagement-correlation');
-  assert.equal(
-    mutationRequest.headers.get('x-operation-id'),
-    engagementProfileOperationContexts.attachOrganizationEngagement.operationId,
-  );
-  assert.deepEqual(
-    JSON.parse(mutationRequest.headers.get('x-modernjs-bff-operation-context') ?? ''),
-    engagementProfileOperationContexts.attachOrganizationEngagement,
-  );
-});
-
-test('public Party Registry engagement API does not expose legacy identity operations', async () => {
-  const [apiSource, clientSource] = await Promise.all([
-    readFile(new URL('../../shared/engagement-profile-api.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../src/api/engagement-profile-client.ts', import.meta.url), 'utf-8'),
-  ]);
-
-  for (const source of [apiSource, clientSource]) {
-    assert.doesNotMatch(
-      source,
-      /\b(?:createCustomer|editCustomer|archiveCustomer|unarchiveCustomer)\b/u,
+    const mutationRequest = requests.find(({ url }) => url.includes('/contacts/engagement/'));
+    const gatewayRequest = requests.find(({ url }) => url.endsWith('/auth/gateway-context'));
+    expect(gatewayRequest).toBeDefined();
+    expect(mutationRequest).toBeDefined();
+    const gatewayPayload = yield* Effect.promise(() =>
+      Option.getOrThrow(Option.fromNullishOr(gatewayRequest)).json(),
     );
-    assert.doesNotMatch(
-      source,
-      /\b(?:createContact|editContact|archiveContact|unarchiveContact)\b/u,
+    expect(gatewayPayload).toEqual({ audience: 'party-registry' });
+    expect(mutationRequest?.headers.get('authorization')).toBe('Bearer test-gateway-token');
+    expect(mutationRequest?.headers.get('accept-language')).toBe('cs');
+    expect(mutationRequest?.headers.get('x-trace-id')).toBe('engagement-trace');
+    expect(mutationRequest?.headers.get('traceparent')).toBe(traceparent);
+    expect(mutationRequest?.headers.get('x-correlation-id')).toBe('engagement-correlation');
+    expect(mutationRequest?.headers.get('x-operation-id')).toBe(
+      engagementProfileOperationContexts.attachOrganizationEngagement.operationId,
     );
-    assert.doesNotMatch(source, /CustomerAresLookup|customerId|contactId/u);
-  }
-});
+    expect(
+      yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+        mutationRequest?.headers.get('x-modernjs-bff-operation-context') ?? '',
+      ),
+    ).toEqual(engagementProfileOperationContexts.attachOrganizationEngagement);
+  }),
+);
+
+it.effect('public Party Registry engagement API does not expose legacy identity operations', () =>
+  Effect.gen(function* verifyCase4() {
+    const [apiSource, clientSource] = yield* Effect.all([
+      Effect.promise(() =>
+        readFile(new URL('../../shared/engagement-profile-api.ts', import.meta.url), 'utf-8'),
+      ),
+      Effect.promise(() =>
+        readFile(new URL('../../src/api/engagement-profile-client.ts', import.meta.url), 'utf-8'),
+      ),
+    ]);
+
+    for (const source of [apiSource, clientSource]) {
+      expect(source).not.toMatch(
+        /\b(?:createCustomer|editCustomer|archiveCustomer|unarchiveCustomer)\b/u,
+      );
+      expect(source).not.toMatch(
+        /\b(?:createContact|editContact|archiveContact|unarchiveContact)\b/u,
+      );
+      expect(source).not.toMatch(/CustomerAresLookup|customerId|contactId/u);
+    }
+  }),
+);

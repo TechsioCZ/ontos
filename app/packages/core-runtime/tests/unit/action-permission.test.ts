@@ -1,7 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off missingEffectError:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
 import {
@@ -52,282 +49,291 @@ const makeClient = (
   };
 };
 
-test('loads the root SpiceDB environment independently of the invocation directory', async () => {
-  const originalDirectory = process.cwd();
-  const rootExamplePath = SPICEDB_ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
+it.effect('loads the root SpiceDB environment independently of the invocation directory', () =>
+  Effect.gen(function* loadsTheRootSpiceDBEnvironmentIndependentlyOfThe() {
+    const originalDirectory = process.cwd();
+    const rootExamplePath = SPICEDB_ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
 
-  try {
-    process.chdir('/');
-    const configuration = await runEffectTestPromise(
-      loadSpiceDbConfig({ environment: {}, envPath: rootExamplePath }),
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        process.chdir(originalDirectory);
+      }),
     );
+    process.chdir('/');
+    const configuration = yield* loadSpiceDbConfig({ environment: {}, envPath: rootExamplePath });
 
-    assert.equal(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env'), true);
-    assert.deepEqual(configuration, {
+    expect(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
+    expect(configuration).toEqual({
       endpoint: 'localhost:50051',
       insecureLocal: true,
       preSharedKey: 'ontos-local-development-key',
     });
-  } finally {
-    process.chdir(originalDirectory);
-  }
-});
+  }),
+);
 
-test('requires complete configuration and explicit secure or localhost-insecure transport', async () => {
-  const validSecure = await runEffectTestPromise(
-    parseSpiceDbConfig({
-      SPICEDB_ENDPOINT: 'spicedb.internal.example:443',
-      SPICEDB_INSECURE: 'false',
-      SPICEDB_PRESHARED_KEY: 'test-key',
+it.effect(
+  'requires complete configuration and explicit secure or localhost-insecure transport',
+  () =>
+    Effect.gen(function* requiresCompleteConfigurationAndExplicitSecureOrLocalhostinsecure() {
+      const validSecure = yield* parseSpiceDbConfig({
+        SPICEDB_ENDPOINT: 'spicedb.internal.example:443',
+        SPICEDB_INSECURE: 'false',
+        SPICEDB_PRESHARED_KEY: 'test-key',
+      });
+      const failures = yield* Effect.all(
+        [
+          {},
+          {
+            SPICEDB_ENDPOINT: 'localhost:50051',
+            SPICEDB_PRESHARED_KEY: 'test-key',
+          },
+          {
+            SPICEDB_ENDPOINT: 'spicedb.internal.example:50051',
+            SPICEDB_INSECURE: 'true',
+            SPICEDB_PRESHARED_KEY: 'test-key',
+          },
+          {
+            SPICEDB_ENDPOINT: 'https://spicedb.internal.example/path',
+            SPICEDB_INSECURE: 'false',
+            SPICEDB_PRESHARED_KEY: 'test-key',
+          },
+          {
+            SPICEDB_ENDPOINT: 'spicedb.internal.example:443?credential=test-key',
+            SPICEDB_INSECURE: 'false',
+            SPICEDB_PRESHARED_KEY: 'test-key',
+          },
+          {
+            SPICEDB_ENDPOINT: 'localhost:50051#fragment',
+            SPICEDB_INSECURE: 'true',
+            SPICEDB_PRESHARED_KEY: 'test-key',
+          },
+          {
+            SPICEDB_ENDPOINT: 'localhost:50051',
+            SPICEDB_INSECURE: 'true',
+            SPICEDB_PRESHARED_KEY: '   ',
+          },
+        ].map((environment) => Effect.flip(parseSpiceDbConfig(environment))),
+      );
+
+      expect(validSecure).toEqual({
+        endpoint: 'spicedb.internal.example:443',
+        insecureLocal: false,
+        preSharedKey: 'test-key',
+      });
+      expect(failures.every(Schema.is(SpiceDbConfigError))).toBe(true);
+      expect(failures.some((failure) => failure.reason.includes('test-key'))).toBe(false);
     }),
-  );
-  const failures = await Promise.all(
-    [
-      {},
-      {
-        SPICEDB_ENDPOINT: 'localhost:50051',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-      },
-      {
-        SPICEDB_ENDPOINT: 'spicedb.internal.example:50051',
-        SPICEDB_INSECURE: 'true',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-      },
-      {
-        SPICEDB_ENDPOINT: 'https://spicedb.internal.example/path',
-        SPICEDB_INSECURE: 'false',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-      },
-      {
-        SPICEDB_ENDPOINT: 'spicedb.internal.example:443?credential=test-key',
-        SPICEDB_INSECURE: 'false',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-      },
-      {
-        SPICEDB_ENDPOINT: 'localhost:50051#fragment',
-        SPICEDB_INSECURE: 'true',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-      },
-      {
-        SPICEDB_ENDPOINT: 'localhost:50051',
-        SPICEDB_INSECURE: 'true',
-        SPICEDB_PRESHARED_KEY: '   ',
-      },
-    ].map(
-      async (environment) =>
-        await runEffectTestPromise(Effect.flip(parseSpiceDbConfig(environment))),
-    ),
-  );
+);
 
-  assert.deepEqual(validSecure, {
-    endpoint: 'spicedb.internal.example:443',
-    insecureLocal: false,
-    preSharedKey: 'test-key',
-  });
-  assert.ok(failures.every(Schema.is(SpiceDbConfigError)));
-  assert.equal(
-    failures.some((failure) => failure.reason.includes('test-key')),
-    false,
-  );
-});
-
-test('allows insecure transport only for the exact Zerops stage private endpoint', async () => {
-  const stage = await runEffectTestPromise(
-    parseSpiceDbConfig({
+it.effect('allows insecure transport only for the exact Zerops stage private endpoint', () =>
+  Effect.gen(function* allowsInsecureTransportOnlyForTheExactZerops() {
+    const stage = yield* parseSpiceDbConfig({
       SPICEDB_ENDPOINT: 'spicedb:50051',
       SPICEDB_INSECURE: 'true',
       SPICEDB_PRESHARED_KEY: 'test-key',
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-    }),
-  );
-  const rejected = await Promise.all(
-    [
-      {
-        SPICEDB_ENDPOINT: 'spicedb:50051',
-        SPICEDB_INSECURE: 'true',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-      },
-      {
-        SPICEDB_ENDPOINT: 'spicedb:50052',
-        SPICEDB_INSECURE: 'true',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-      },
-      {
-        SPICEDB_ENDPOINT: 'spicedb:50051',
-        SPICEDB_INSECURE: 'true',
-        SPICEDB_PRESHARED_KEY: 'test-key',
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
-      },
-    ].map(
-      async (environment) =>
-        await runEffectTestPromise(Effect.flip(parseSpiceDbConfig(environment))),
-    ),
-  );
-
-  assert.deepEqual(stage, {
-    deploymentEnvironment: 'stage',
-    endpoint: 'spicedb:50051',
-    insecureLocal: true,
-    preSharedKey: 'test-key',
-  });
-  assert.ok(rejected.every(Schema.is(SpiceDbConfigError)));
-});
-
-test('losslessly maps Action keys and exact principal identities using fully consistent requests', async () => {
-  const requests: v1.CheckPermissionRequest[] = [];
-  const service = makeActionPermissionService(
-    makeClient([response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)], requests),
-  );
-
-  const decision = await runEffectTestPromise(service.checkActionPermission(input));
-
-  assert.equal(decision, 'allowed');
-  assert.equal(requests.length, 1);
-  assert.deepEqual(requests[0]?.resource, {
-    objectId: toSpiceDbActionObjectId(input.actionKey),
-    objectType: SPICEDB_ACTION_OBJECT_TYPE,
-  });
-  assert.equal(toSpiceDbActionObjectId(input.actionKey), 'ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU');
-  assert.notEqual(
-    toSpiceDbActionObjectId('inventory.stock.reserve'),
-    toSpiceDbActionObjectId('inventory-stock-reserve'),
-  );
-  assert.deepEqual(requests[0]?.subject?.object, {
-    objectId: input.principalId,
-    objectType: SPICEDB_PRINCIPAL_OBJECT_TYPE,
-  });
-  assert.equal(requests[0]?.permission, SPICEDB_EXECUTE_PERMISSION);
-  for (const request of requests) {
-    assert.deepEqual(request.consistency?.requirement, {
-      fullyConsistent: true,
-      oneofKind: 'fullyConsistent',
     });
-  }
-});
-
-test('classifies fully consistent execute permission as allowed or denied with one check', async () => {
-  const deniedRequests: v1.CheckPermissionRequest[] = [];
-  const allowed = makeActionPermissionService(
-    makeClient([response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)]),
-  );
-  const denied = makeActionPermissionService(
-    makeClient([response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)], deniedRequests),
-  );
-
-  assert.equal(await runEffectTestPromise(allowed.checkActionPermission(input)), 'allowed');
-  assert.equal(await runEffectTestPromise(denied.checkActionPermission(input)), 'denied');
-  assert.equal(deniedRequests.length, 1);
-});
-
-test('report-only compatibility distinguishes missing policy from an explicit restriction', async () => {
-  const nowEpochMs = Date.parse('2026-09-10T00:00:00.000Z');
-  const events: unknown[] = [];
-  const rollout = {
-    activatedAtEpochMs: nowEpochMs - 1000,
-    compatibilityEntrypoints: new Set([input.actionKey]),
-    expiresAtEpochMs: nowEpochMs + 1000,
-    inventoryHash: 'inventory',
-    mode: 'report_only' as const,
-    sourceRevision: 'revision',
-  };
-  const missingRequests: v1.CheckPermissionRequest[] = [];
-  const missing = makeActionPermissionService(
-    makeClient(
+    const rejected = yield* Effect.all(
       [
-        response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-        response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-      ],
-      missingRequests,
-    ),
-    {
-      emit: (event) => {
-        events.push(event);
-      },
-      nowEpochMs: () => nowEpochMs,
-      rollout,
-    },
-  );
-  assert.equal(await runEffectTestPromise(missing.checkActionPermission(input)), 'allowed');
-  assert.deepEqual(
-    missingRequests.map(({ permission }) => permission),
-    [SPICEDB_EXECUTE_PERMISSION, SPICEDB_RESTRICTION_PERMISSION],
-  );
-  assert.equal(events.length, 1);
-
-  const restricted = makeActionPermissionService(
-    makeClient([
-      response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-      response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-    ]),
-    { emit: () => assert.fail(), nowEpochMs: () => nowEpochMs, rollout },
-  );
-  assert.equal(await runEffectTestPromise(restricted.checkActionPermission(input)), 'denied');
-});
-
-test('fails closed for conditional, unspecified, malformed, and client failures', async () => {
-  const failures = await Promise.all(
-    [
-      makeClient([response(v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION)]),
-      makeClient([response(v1.CheckPermissionResponse_Permissionship.UNSPECIFIED)]),
-      makeClient([Effect.fail(spiceDbPermissionClientError())]),
-      makeClient([
-        Effect.fail(
-          spiceDbPermissionClientError(
-            new Error('ontos-local-development-key unavailable at internal host'),
-          ),
-        ),
-      ]),
-    ].map(
-      async (client) =>
-        await runEffectTestPromise(
-          Effect.flip(makeActionPermissionService(client).checkActionPermission(input)),
-        ),
-    ),
-  );
-
-  for (const failure of failures) {
-    assert.ok(Schema.is(ActionPermissionCheckError)(failure));
-    assert.equal(failure.code, 'action_permission_check_failed');
-    assert.equal(failure.reason.includes('ontos-local-development-key'), false);
-    assert.equal(failure.reason.includes('internal host'), false);
-  }
-});
-
-test('constructs the live client with a bounded deadline and finalizes it with the scope', async () => {
-  let finalized = false;
-  let observedTimeout = 0;
-  const configuration = {
-    endpoint: 'localhost:50051',
-    insecureLocal: true,
-    preSharedKey: 'test-key',
-  } as const;
-
-  await runEffectTestPromise(
-    Effect.scoped(
-      makeActionPermissionLive(
-        (_configuration, timeoutMilliseconds) => {
-          observedTimeout = timeoutMilliseconds;
-          return {
-            checkPermission: () =>
-              response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-            close: () => {
-              finalized = true;
-            },
-          };
+        {
+          SPICEDB_ENDPOINT: 'spicedb:50051',
+          SPICEDB_INSECURE: 'true',
+          SPICEDB_PRESHARED_KEY: 'test-key',
         },
-        () => Effect.succeed(configuration),
-      ).pipe(Effect.flatMap((service) => service.checkActionPermission(input))),
-    ),
-  );
+        {
+          SPICEDB_ENDPOINT: 'spicedb:50052',
+          SPICEDB_INSECURE: 'true',
+          SPICEDB_PRESHARED_KEY: 'test-key',
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+        },
+        {
+          SPICEDB_ENDPOINT: 'spicedb:50051',
+          SPICEDB_INSECURE: 'true',
+          SPICEDB_PRESHARED_KEY: 'test-key',
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
+        },
+      ].map((environment) => Effect.flip(parseSpiceDbConfig(environment))),
+    );
 
-  assert.equal(observedTimeout, SPICEDB_CHECK_TIMEOUT_MS);
-  assert.equal(finalized, true);
-});
+    expect(stage).toEqual({
+      deploymentEnvironment: 'stage',
+      endpoint: 'spicedb:50051',
+      insecureLocal: true,
+      preSharedKey: 'test-key',
+    });
+    expect(rejected.every(Schema.is(SpiceDbConfigError))).toBe(true);
+  }),
+);
 
-test('turns missing live configuration into a fail-closed permission service', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.scoped(
+it.effect(
+  'losslessly maps Action keys and exact principal identities using fully consistent requests',
+  () =>
+    Effect.gen(function* losslesslyMapsActionKeysAndExactPrincipalIdentities() {
+      const requests: v1.CheckPermissionRequest[] = [];
+      const service = makeActionPermissionService(
+        makeClient([response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)], requests),
+      );
+
+      const decision = yield* service.checkActionPermission(input);
+
+      expect(decision).toBe('allowed');
+      expect(requests.length).toBe(1);
+      expect(requests[0]?.resource).toEqual({
+        objectId: toSpiceDbActionObjectId(input.actionKey),
+        objectType: SPICEDB_ACTION_OBJECT_TYPE,
+      });
+      expect(toSpiceDbActionObjectId(input.actionKey)).toBe('ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU');
+      expect(toSpiceDbActionObjectId('inventory.stock.reserve')).not.toBe(
+        toSpiceDbActionObjectId('inventory-stock-reserve'),
+      );
+      expect(requests[0]?.subject?.object).toEqual({
+        objectId: input.principalId,
+        objectType: SPICEDB_PRINCIPAL_OBJECT_TYPE,
+      });
+      expect(requests[0]?.permission).toBe(SPICEDB_EXECUTE_PERMISSION);
+      for (const request of requests) {
+        expect(request.consistency?.requirement).toEqual({
+          fullyConsistent: true,
+          oneofKind: 'fullyConsistent',
+        });
+      }
+    }),
+);
+
+it.effect(
+  'classifies fully consistent execute permission as allowed or denied with one check',
+  () =>
+    Effect.gen(function* classifiesFullyConsistentExecutePermissionAsAllowedOr() {
+      const deniedRequests: v1.CheckPermissionRequest[] = [];
+      const allowed = makeActionPermissionService(
+        makeClient([response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)]),
+      );
+      const denied = makeActionPermissionService(
+        makeClient(
+          [response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)],
+          deniedRequests,
+        ),
+      );
+
+      expect(yield* allowed.checkActionPermission(input)).toBe('allowed');
+      expect(yield* denied.checkActionPermission(input)).toBe('denied');
+      expect(deniedRequests.length).toBe(1);
+    }),
+);
+
+it.effect(
+  'report-only compatibility distinguishes missing policy from an explicit restriction',
+  () =>
+    Effect.gen(function* reportonlyCompatibilityDistinguishesMissingPolicyFromAnExplicit() {
+      const nowEpochMs = Date.parse('2026-09-10T00:00:00.000Z');
+      const events: unknown[] = [];
+      const rollout = {
+        activatedAtEpochMs: nowEpochMs - 1000,
+        compatibilityEntrypoints: new Set([input.actionKey]),
+        expiresAtEpochMs: nowEpochMs + 1000,
+        inventoryHash: 'inventory',
+        mode: 'report_only' as const,
+        sourceRevision: 'revision',
+      };
+      const missingRequests: v1.CheckPermissionRequest[] = [];
+      const missing = makeActionPermissionService(
+        makeClient(
+          [
+            response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+            response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+          ],
+          missingRequests,
+        ),
+        {
+          emit: (event) => {
+            events.push(event);
+          },
+          nowEpochMs: () => nowEpochMs,
+          rollout,
+        },
+      );
+      expect(yield* missing.checkActionPermission(input)).toBe('allowed');
+      expect(missingRequests.map(({ permission }) => permission)).toEqual([
+        SPICEDB_EXECUTE_PERMISSION,
+        SPICEDB_RESTRICTION_PERMISSION,
+      ]);
+      expect(events.length).toBe(1);
+
+      const restricted = makeActionPermissionService(
+        makeClient([
+          response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+          response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        ]),
+        { emit: () => expect.unreachable(), nowEpochMs: () => nowEpochMs, rollout },
+      );
+      expect(yield* restricted.checkActionPermission(input)).toBe('denied');
+    }),
+);
+
+it.effect('fails closed for conditional, unspecified, malformed, and client failures', () =>
+  Effect.gen(function* failsClosedForConditionalUnspecifiedMalformedAndClient() {
+    const failures = yield* Effect.all(
+      [
+        makeClient([response(v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION)]),
+        makeClient([response(v1.CheckPermissionResponse_Permissionship.UNSPECIFIED)]),
+        makeClient([Effect.fail(spiceDbPermissionClientError())]),
+        makeClient([
+          Effect.fail(
+            spiceDbPermissionClientError(
+              new Error('ontos-local-development-key unavailable at internal host'),
+            ),
+          ),
+        ]),
+      ].map((client) =>
+        Effect.flip(makeActionPermissionService(client).checkActionPermission(input)),
+      ),
+    );
+
+    for (const failure of failures) {
+      expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+      expect(failure.code).toBe('action_permission_check_failed');
+      expect(failure.reason.includes('ontos-local-development-key')).toBe(false);
+      expect(failure.reason.includes('internal host')).toBe(false);
+    }
+  }),
+);
+
+it.effect(
+  'constructs the live client with a bounded deadline and finalizes it with the scope',
+  () =>
+    Effect.gen(function* constructsTheLiveClientWithABoundedDeadline() {
+      let finalized = false;
+      let observedTimeout = 0;
+      const configuration = {
+        endpoint: 'localhost:50051',
+        insecureLocal: true,
+        preSharedKey: 'test-key',
+      } as const;
+
+      yield* Effect.scoped(
+        makeActionPermissionLive(
+          (_configuration, timeoutMilliseconds) => {
+            observedTimeout = timeoutMilliseconds;
+            return {
+              checkPermission: () =>
+                response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+              close: () => {
+                finalized = true;
+              },
+            };
+          },
+          () => Effect.succeed(configuration),
+        ).pipe(Effect.flatMap((service) => service.checkActionPermission(input))),
+      );
+
+      expect(observedTimeout).toBe(SPICEDB_CHECK_TIMEOUT_MS);
+      expect(finalized).toBe(true);
+    }),
+);
+
+it.effect('turns missing live configuration into a fail-closed permission service', () =>
+  Effect.gen(function* turnsMissingLiveConfigurationIntoAFailclosedPermission() {
+    const failure = yield* Effect.scoped(
       makeActionPermissionLive(
         () => {
           throw new Error('the client must not be constructed');
@@ -337,17 +343,17 @@ test('turns missing live configuration into a fail-closed permission service', a
         Effect.flatMap((service) => service.checkActionPermission(input)),
         Effect.flip,
       ),
-    ),
-  );
+    );
 
-  assert.ok(Schema.is(ActionPermissionCheckError)(failure));
-  assert.equal(failure.code, 'action_permission_check_failed');
-});
+    expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+    expect(failure.code).toBe('action_permission_check_failed');
+  }),
+);
 
-test('finalizes an acquired client even when its scoped use fails', async () => {
-  let finalized = false;
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('finalizes an acquired client even when its scoped use fails', () =>
+  Effect.gen(function* finalizesAnAcquiredClientEvenWhenItsScoped() {
+    let finalized = false;
+    const failure = yield* Effect.flip(
       Effect.scoped(
         acquirePermissionClientResource(() => ({
           checkPermission: () =>
@@ -357,9 +363,9 @@ test('finalizes an acquired client even when its scoped use fails', async () => 
           },
         })).pipe(Effect.flatMap(() => Effect.fail('test-failure'))),
       ),
-    ),
-  );
+    );
 
-  assert.equal(failure, 'test-failure');
-  assert.equal(finalized, true);
-});
+    expect(failure).toBe('test-failure');
+    expect(finalized).toBe(true);
+  }),
+);

@@ -154,6 +154,7 @@ type JsonObject = typeof FragmentPropsSchema.Type;
 type ProofFailure = PlatformError | WorkerdProofError;
 type ProofEffect<Value> = Effect.Effect<Value, ProofFailure, FileSystem.FileSystem>;
 type ScopedProofEffect<Value> = Effect.Effect<Value, ProofFailure, FileSystem.FileSystem | Scope>;
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Miniflare requires this foreign SDK service-binding callback.
 type ServiceBindingHandler = (
   request: MiniflareRequest,
   miniflare: Miniflare,

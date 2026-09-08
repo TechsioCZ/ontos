@@ -33,6 +33,9 @@ const Tsconfig = Schema.Struct({
       types: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
+  exclude: Schema.optional(Schema.Array(Schema.String)),
+  files: Schema.optional(Schema.Array(Schema.String)),
+  include: Schema.optional(Schema.Array(Schema.String)),
 });
 const parseTsconfig = Effect.fn('QualityAudit.parseTsconfig')(function* parseTsconfigEffect(
   file: string,
@@ -204,6 +207,76 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         }
       }
     });
+    const testConsumerEvidence = Effect.fn('QualityAudit.testConsumerEvidence')(
+      function* testConsumerEvidence(
+        manifestFile: string,
+        manifestText: string,
+        commands: readonly string[],
+        prefix: string,
+        workspace: string,
+      ) {
+        // Rstest's default-config loader consumes default, not every named export.
+        const config = `${prefix}rstest.config.ts`;
+        if (
+          commands.some(
+            (command) => /^rstest(?:\s|$)/u.test(command) && !/--config(?:\s|=)/u.test(command),
+          ) &&
+          (yield* read(config)) !== undefined
+        ) {
+          evidence.push(
+            at(
+              manifestFile,
+              manifestText,
+              0,
+              workspace,
+              'file',
+              'rstest.config.ts',
+              'Package script invokes Rstest default configuration discovery',
+            ),
+            at(
+              manifestFile,
+              manifestText,
+              0,
+              workspace,
+              'export',
+              `${config}#default`,
+              'Rstest default-config loader consumes the default export',
+            ),
+          );
+        }
+        const tsconfigFile = `${prefix}tsconfig.json`;
+        const tsconfigText = yield* read(tsconfigFile);
+        if (tsconfigText === undefined) {
+          return;
+        }
+        const tsconfig = yield* parseTsconfig(tsconfigFile, tsconfigText);
+        // Only the explicit directory inclusion contract is modeled here. Do not
+        // turn all compiler inputs into roots or mark their exports as consumed.
+        if (
+          tsconfig.include?.includes('src') !== true ||
+          tsconfig.exclude !== undefined ||
+          tsconfig.files !== undefined ||
+          !(yield* fs.exists(path.join(appRoot, prefix, 'src')))
+        ) {
+          return;
+        }
+        for (const name of yield* fs.readDirectory(path.join(appRoot, prefix, 'src'))) {
+          if (name.endsWith('.type-test.ts')) {
+            evidence.push(
+              at(
+                tsconfigFile,
+                tsconfigText,
+                0,
+                workspace,
+                'file',
+                `src/${name}`,
+                'TypeScript include src compiles this type-test module; exports remain audited',
+              ),
+            );
+          }
+        }
+      },
+    );
     const cssEvidence = Effect.fn('QualityAudit.cssEvidence')(function* cssEvidence(
       extension: string,
       prefix: string,
@@ -466,7 +539,9 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         continue;
       }
       const manifest = yield* Schema.decodeUnknownEffect(Manifest)(manifestText);
-      for (const command of Object.values(manifest.scripts ?? {})) {
+      const commands = Object.values(manifest.scripts ?? {});
+      yield* testConsumerEvidence(manifestFile, manifestText, commands, prefix, workspace);
+      for (const command of commands) {
         yield* shellEvidence(command, prefix, workspace);
       }
       for (const extension of ['tsx', 'ts', 'jsx', 'js']) {

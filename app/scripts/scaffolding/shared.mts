@@ -1,9 +1,9 @@
 import { NodePath } from '@effect/platform-node';
+import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import type { GeneratorCore } from '@modern-js/codesmith';
-import { Effect, FileSystem, flow, Option, Path, Predicate, Result, Schema } from 'effect';
+import { Effect, FileSystem, Option, Path, Predicate, Result, Schema } from 'effect';
 import { format } from 'oxfmt';
 import ultraciteOxfmt from 'ultracite/oxfmt';
-import { scaffoldingRuntime } from '../scaffolding-runtime.mts';
 import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/index.ts';
 
 /* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. expires: 2026-12-31. */
@@ -835,14 +835,6 @@ export const readJsonEffect = (filePath: string, label: string) =>
     return { content, value: asJsonObject(parsed.success, label) };
   });
 
-export const readJson: (
-  filePath: string,
-  label: string,
-) => Promise<{ content: string; value: JsonObject }> = flow(
-  readJsonEffect,
-  scaffoldingRuntime.runPromise,
-);
-
 interface JsonPropertySpan {
   readonly key: string;
   readonly keyStart: number;
@@ -1263,14 +1255,6 @@ export const discoverOntosModuleEffect = (
     };
   });
 
-export const discoverOntosModule: (
-  workspaceRoot: string,
-  requestedVertical: string,
-) => Promise<OntosVerticalMetadata> = flow(
-  discoverOntosModuleEffect,
-  scaffoldingRuntime.runPromise,
-);
-
 const formatGeneratedMutationContent = (
   filePath: string,
   content: string,
@@ -1335,11 +1319,6 @@ export const createOrAcceptGeneratedMutationEffect = (
     }
     return yield* scaffoldFailure(`refusing to overwrite existing business file: ${filePath}`);
   });
-
-export const createMutation: (filePath: string, content: string) => Promise<Mutation> = flow(
-  createMutationEffect,
-  scaffoldingRuntime.runPromise,
-);
 
 export const updateMutation = (
   filePath: string,
@@ -1469,7 +1448,7 @@ export const applyMutationPlanEffect = <Result,>(
               mutation.content,
               'utf-8',
             ),
-        }),
+        }).pipe(Effect.uninterruptible),
       { concurrency: 'unbounded', discard: true },
     );
     const fileSystem = yield* FileSystem.FileSystem;

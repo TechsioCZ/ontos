@@ -1,3 +1,4 @@
+import { rule as noInstanceof } from './rules/no-instanceof.ts';
 import { eslintCompatPlugin } from '@oxlint/plugins';
 
 import { rule as noAdHocArgvInScripts } from './rules/no-ad-hoc-argv-in-scripts.ts';
@@ -76,6 +77,7 @@ import { rule as requireTimeoutOnExternalEffect } from './rules/require-timeout-
 const effectNativePlugin = eslintCompatPlugin({
   meta: { name: 'effect-native' },
   rules: {
+    'no-instanceof': noInstanceof,
     'no-ad-hoc-argv-in-scripts': noAdHocArgvInScripts,
     'no-ambient-date': noAmbientDate,
     'no-ambient-process-env': noAmbientProcessEnv,

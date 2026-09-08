@@ -3,7 +3,7 @@ import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   CORE_POLICY_SLOT_END,
   CORE_POLICY_SLOT_START,
-  discoverOntosModule,
+  discoverOntosModuleEffect,
   ensureUniqueMutationPaths,
   insertSortedSlot,
   requireCanonicalSlug,
@@ -35,11 +35,6 @@ const fromLegacySync = <Value,>(
   operation: () => Value,
 ): Effect.Effect<Value, PolicyScaffoldError> =>
   Effect.try({ catch: planningFailure, try: operation });
-
-const fromLegacyPromise = <Value,>(
-  operation: () => Promise<Value>,
-): Effect.Effect<Value, PolicyScaffoldError> =>
-  Effect.tryPromise({ catch: planningFailure, try: operation });
 
 const createPolicyMutation = (
   filePath: string,
@@ -167,8 +162,8 @@ const planPolicyScaffold = Effect.fn('PolicyScaffold.planPolicyScaffold')(
       );
     }
     const requestedVertical = config.vertical;
-    const vertical = yield* fromLegacyPromise(
-      discoverOntosModule.bind(undefined, workspaceRoot, requestedVertical),
+    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, requestedVertical).pipe(
+      Effect.mapError(planningFailure),
     );
     const policyPath = yield* fromLegacySync(() =>
       resolveContainedPath(

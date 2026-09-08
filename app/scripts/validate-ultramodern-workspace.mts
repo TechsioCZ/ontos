@@ -1,3 +1,4 @@
+import type { nodeFileTrace as traceNodeFiles } from '@vercel/nft';
 import {
   hasUltramodernDispatch,
   hasUltramodernSkillsDispatch,
@@ -528,12 +529,10 @@ const workspaceValidationContractDefinition = {
     'quality:audit:gate': 'node ./scripts/quality-audit-gate.mts',
     'quality:check': 'pnpm quality:audit && pnpm quality:audit:gate',
     'test:deployment-impact':
-      'node scripts/generate-outbox-worker-deployment.mjs && node --test scripts/tests/plan-deployment-impact.test.mts scripts/tests/outbox-worker-delivery.test.mts',
-    'test:generation':
-      'node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/resource-generator.test.mts scripts/scaffolding/tests/retire-contribution.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts',
+      'node scripts/generate-outbox-worker-deployment.mjs && rstest --project scripts scripts/tests/plan-deployment-impact scripts/tests/outbox-worker-delivery',
+    'test:generation': 'rstest --project generation',
     'test:integration': 'pnpm -r --if-present run test:integration',
-    'test:scripts':
-      'node --test scripts/tests/boundary-source-structure.test.mts scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/generated-slot-entries.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts scripts/tests/ultramodern-command.test.mts scripts/tests/code-tools-i18n.test.mts scripts/tests/dependency-declarations.test.mts',
+    'test:scripts': 'rstest --project scripts',
     'test:unit': 'pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component',
   },
   cloudflareSecurity: createCloudflareSecurityContract(),
@@ -2138,10 +2137,7 @@ interface TsConfig {
 const BuildArtifactSchema = Schema.Struct({
   deliveryUnit: Schema.optionalKey(DeliveryUnitSchema),
 });
-type NodeFileTrace = (
-  files: readonly string[],
-  options: { readonly base: string; readonly log: boolean; readonly processCwd: string },
-) => Promise<object>;
+type NodeFileTrace = typeof traceNodeFiles;
 const NodeFileTraceSchema = Schema.declare<NodeFileTrace>((input): input is NodeFileTrace =>
   Predicate.isFunction(input),
 );
@@ -6122,11 +6118,11 @@ for (const [scriptName, expectedCommand] of Object.entries(
 }
 const coreRuntimePackage = readJson(PackageJsonSchema, SHARED_VALIDATOR_STRING_093);
 assert(
-  coreRuntimePackage.scripts?.['test:unit'] === 'node --test tests/unit/*.test.ts',
+  coreRuntimePackage.scripts?.['test:unit'] === 'rstest --project unit',
   'Core runtime must expose its complete unit test surface',
 );
 assert(
-  coreRuntimePackage.scripts?.['test:integration'] === 'node --test tests/integration/*.test.ts',
+  coreRuntimePackage.scripts?.['test:integration'] === 'rstest --project integration',
   'Core runtime must expose its complete service-backed integration test surface',
 );
 assert(

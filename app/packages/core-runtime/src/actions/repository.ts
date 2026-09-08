@@ -126,7 +126,6 @@ const normalizeNumberForHash = (value: number): CanonicalValue => [
   'number',
   Object.is(value, -0) ? '-0' : String(value),
 ];
-const isCanonicalDate = Schema.is(Schema.instanceOf(Date));
 
 const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): CanonicalValue => {
   if (value === undefined) {
@@ -147,7 +146,7 @@ const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): Canonical
   if (Predicate.isBigInt(value)) {
     return ['bigint', value.toString(10)];
   }
-  if (isCanonicalDate(value)) {
+  if (Predicate.isDate(value)) {
     return ['date', value.toISOString()];
   }
   if (Predicate.isObjectKeyword(value)) {

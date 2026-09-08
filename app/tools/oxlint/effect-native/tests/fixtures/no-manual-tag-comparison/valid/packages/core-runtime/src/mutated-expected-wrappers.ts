@@ -1,0 +1,36 @@
+import { expect } from 'effect-rstest';
+import { expect as changed } from '@rstest/core';
+import * as testing from 'vitest';
+import { expect as source } from '@jest/globals';
+import imported from 'expect';
+import { expect as typed } from 'vitest';
+import * as destructuredNamespace from '@rstest/core';
+import { expect as deleted } from '@jest/globals';
+declare const error: unknown;
+const fake = (value: unknown) => value;
+expect.objectContaining = fake;
+expect(error).toEqual(expect.objectContaining({ _tag: 'Missing' }));
+const { objectContaining } = expect;
+expect(error).toEqual(objectContaining({ _tag: 'Missing' }));
+const alias = changed;
+alias.arrayContaining = fake;
+expect(error).toEqual(changed.arrayContaining([{ _tag: 'Missing' }]));
+testing.expect.objectContaining = fake;
+expect(error).toEqual(testing.expect.objectContaining({ _tag: 'Missing' }));
+const { expect: destructured } = testing;
+expect(error).toEqual(destructured.objectContaining({ _tag: 'Missing' }));
+const { objectContaining: detached } = source;
+source.objectContaining = fake;
+expect(error).toEqual(detached({ _tag: 'Missing' }));
+imported = expect;
+expect(error).toEqual(imported.objectContaining({ _tag: 'Missing' }));
+
+const typedAlias = typed as typeof typed;
+typedAlias.arrayContaining = fake;
+expect(error).toEqual(typed.arrayContaining([{ _tag: 'Missing' }]));
+
+const { expect: destructuredAlias } = destructuredNamespace;
+destructuredAlias.arrayContaining = fake;
+expect(error).toEqual(destructuredNamespace.expect.arrayContaining([{ _tag: 'Missing' }]));
+delete deleted.objectContaining;
+expect(error).toEqual(deleted.objectContaining({ _tag: 'Missing' }));

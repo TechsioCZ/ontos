@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { expect, it } from 'effect-rstest';
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import {
   DelimiterDepth,
@@ -20,49 +19,46 @@ const endpointApi = (endpointPath: string, extra = '') =>
 
 const stockReadPath = '/reads/stock';
 
-void test('balanced traversal ignores nested separators but preserves source offsets', () => {
+it('balanced traversal ignores nested separators but preserves source offsets', () => {
   const source = "call({ nested: [1, 2], literal: ',);' }, /[,)]/, () => [3, 4]); next();";
   const structure = maskNonCode(source);
   const close = matchingDelimiter(structure, source.indexOf('('), '(', ')');
-  assert.equal(close, source.indexOf('; next') - 1);
+  expect(close).toBe(source.indexOf('; next') - 1);
   // The semicolon in the string must not terminate the statement.
-  assert.deepEqual(topLevelSeparators(structure, ';'), [
-    source.indexOf('; next'),
-    source.length - 1,
+  expect(topLevelSeparators(structure, ';')).toEqual([source.indexOf('; next'), source.length - 1]);
+  expect(separatedSource(source, topLevelSeparators(structure, ',', 5, close), 5, close)).toEqual([
+    "{ nested: [1, 2], literal: ',);' }",
+    '/[,)]/',
+    '() => [3, 4]',
   ]);
-  assert.deepEqual(
-    separatedSource(source, topLevelSeparators(structure, ',', 5, close), 5, close),
-    ["{ nested: [1, 2], literal: ',);' }", '/[,)]/', '() => [3, 4]'],
-  );
 });
 
-void test('generic parameter commas and arrow returns remain separate lexical concerns', () => {
+it('generic parameter commas and arrow returns remain separate lexical concerns', () => {
   const source = 'value: Map<string, () => number>, next: number';
-  assert.deepEqual(topLevelSeparators(source, ',', 0, source.length, true), [
+  expect(topLevelSeparators(source, ',', 0, source.length, true)).toEqual([
     source.indexOf(', next'),
   ]);
-  assert.deepEqual(topLevelSeparators('value < maximum; next > minimum;', ';'), [15, 31]);
+  expect(topLevelSeparators('value < maximum; next > minimum;', ';')).toEqual([15, 31]);
   const depth = new DelimiterDepth();
   depth.update(']');
-  assert.equal(depth.hasUnmatchedClose(), true);
-  assert.equal(depth.isTopLevel(), false);
-  assert.equal(toCamelCase('Stock-list'), 'stockList');
+  expect(depth.hasUnmatchedClose()).toBe(true);
+  expect(depth.isTopLevel()).toBe(false);
+  expect(toCamelCase('Stock-list')).toBe('stockList');
 });
 
-void test('token rescan retains nested template expressions and excludes regex punctuation', () => {
+it('token rescan retains nested template expressions and excludes regex punctuation', () => {
   const source = `const result = \`outer \${ { nested: \`inner \${value}\` } }\`; const pattern = /[},;]/;`;
   const kinds = tokenizeGovernedClient(source).map(({ kind }) => kind);
-  assert.equal(kinds.filter((kind) => kind === SyntaxKind.TemplateTail).length, 2);
-  assert.equal(kinds.filter((kind) => kind === SyntaxKind.RegularExpressionLiteral).length, 1);
-  assert.equal(kinds.filter((kind) => kind === SyntaxKind.SemicolonToken).length, 2);
+  expect(kinds.filter((kind) => kind === SyntaxKind.TemplateTail).length).toBe(2);
+  expect(kinds.filter((kind) => kind === SyntaxKind.RegularExpressionLiteral).length).toBe(1);
+  expect(kinds.filter((kind) => kind === SyntaxKind.SemicolonToken).length).toBe(2);
 });
 
-void test('endpoint grammar shares only topology, preserving owner path and endpoint identity', () => {
-  assert.equal(
+it('endpoint grammar shares only topology, preserving owner path and endpoint identity', () => {
+  expect(
     hasGeneratedModuleApiContract(endpointApi(stockReadPath), 'StockApi', 'stock', 'stock'),
-    true,
-  );
-  assert.equal(
+  ).toBe(true);
+  expect(
     hasGeneratedProviderApiContract(
       endpointApi('/inventory.stock/reports/stock'),
       'StockApi',
@@ -70,9 +66,8 @@ void test('endpoint grammar shares only topology, preserving owner path and endp
       'stock',
       'report',
     ),
-    true,
-  );
-  assert.equal(
+  ).toBe(true);
+  expect(
     hasGeneratedProviderApiContract(
       endpointApi(stockReadPath),
       'StockApi',
@@ -80,24 +75,21 @@ void test('endpoint grammar shares only topology, preserving owner path and endp
       'stock',
       'report',
     ),
-    false,
-  );
-  assert.equal(
+  ).toBe(false);
+  expect(
     hasGeneratedModuleApiContract(
       endpointApi(stockReadPath, 'UnrelatedEndpoint'),
       'StockApi',
       'stock',
       'stock',
     ),
-    false,
-  );
-  assert.equal(
+  ).toBe(false);
+  expect(
     hasGeneratedModuleApiContract(
       endpointApi(stockReadPath).replace("'execute'", "'bypass'"),
       'StockApi',
       'stock',
       'stock',
     ),
-    false,
-  );
+  ).toBe(false);
 });

@@ -1,6 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { assert, expect, it } from 'effect-rstest';
 import { Effect } from 'effect';
 import type { PartySearchProjectionGatewayService } from '../../shared/domain/search-projection-gateway.ts';
 import {
@@ -12,49 +10,51 @@ import { loadPartySearch, partiesRead } from '../../src/search/parties.provider.
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
 
-test('Party provider declares optional Legal Entity context and tenant Party-read authority', () => {
-  assert.equal(partiesRead.descriptor.accessKind, 'search');
-  assert.equal(partiesRead.descriptor.legalEntityScope, 'optional');
-  assert.equal(partiesRead.descriptor.permissionTarget, 'tenant');
+it('Party provider declares optional Legal Entity context and tenant Party-read authority', () => {
+  expect(partiesRead.descriptor.accessKind).toBe('search');
+  expect(partiesRead.descriptor.legalEntityScope).toBe('optional');
+  expect(partiesRead.descriptor.permissionTarget).toBe('tenant');
 });
 
-test('Counterparty provider requires trusted Legal Entity context and candidate authorization', () => {
-  assert.equal(counterpartiesRead.descriptor.accessKind, 'search');
-  assert.equal(counterpartiesRead.descriptor.legalEntityScope, 'required');
-  assert.equal(counterpartiesRead.descriptor.permissionTarget, 'legal_entity');
+it('Counterparty provider requires trusted Legal Entity context and candidate authorization', () => {
+  expect(counterpartiesRead.descriptor.accessKind).toBe('search');
+  expect(counterpartiesRead.descriptor.legalEntityScope).toBe('required');
+  expect(counterpartiesRead.descriptor.permissionTarget).toBe('legal_entity');
 });
 
-test('Party provider sends only trusted tenant scope to the Core projection gateway', () =>
-  runEffectTestPromise(
-    Effect.gen(function* trustedPartyScope() {
-      const calls: unknown[] = [];
-      const gateway: PartySearchProjectionGatewayService = {
-        searchCounterparties: () => Effect.succeed([]),
-        searchParties: (input) => {
+it.effect('Party provider sends only trusted tenant scope to the Core projection gateway', () =>
+  Effect.gen(function* trustedPartyScope() {
+    const calls: unknown[] = [];
+    const gateway: PartySearchProjectionGatewayService = {
+      searchCounterparties: () => Effect.succeed([]),
+      searchParties: (input) =>
+        Effect.sync(() => {
           calls.push(input);
-          return Effect.succeed([]);
-        },
-      };
+          return [];
+        }),
+    };
 
-      const result = yield* loadPartySearch(
-        gateway,
-        { tenantId },
-        { includeArchived: true, query: 'ACME' },
-      );
-      assert.deepEqual(result, []);
-      assert.deepEqual(calls, [{ includeArchived: true, query: 'ACME', tenantId }]);
-    }),
-  ));
+    const result = yield* loadPartySearch(
+      gateway,
+      { tenantId },
+      { includeArchived: true, query: 'ACME' },
+    );
+    expect(result).toEqual([]);
+    expect(calls).toEqual([{ includeArchived: true, query: 'ACME', tenantId }]);
+  }),
+);
 
-test('Counterparty provider derives Legal Entity from trusted scope and never from payload', () =>
-  runEffectTestPromise(
+it.effect(
+  'Counterparty provider derives Legal Entity from trusted scope and never from payload',
+  () =>
     Effect.gen(function* trustedCounterpartyScope() {
       const calls: unknown[] = [];
       const gateway: PartySearchProjectionGatewayService = {
-        searchCounterparties: (input) => {
-          calls.push(input);
-          return Effect.succeed([]);
-        },
+        searchCounterparties: (input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return [];
+          }),
         searchParties: () => Effect.succeed([]),
       };
 
@@ -64,8 +64,8 @@ test('Counterparty provider derives Legal Entity from trusted scope and never fr
         { includeArchived: false, query: 'ACME', role: 'SUPPLIER' },
         '2026-09-03T12:00:00.000Z',
       );
-      assert.deepEqual(result, []);
-      assert.deepEqual(calls, [
+      expect(result).toEqual([]);
+      expect(calls).toEqual([
         {
           effectiveAt: '2026-09-03T12:00:00.000Z',
           includeArchived: false,
@@ -76,10 +76,11 @@ test('Counterparty provider derives Legal Entity from trusted scope and never fr
         },
       ]);
     }),
-  ));
+);
 
-test('Counterparty provider preserves typed normalization failures and omits an absent role', () =>
-  runEffectTestPromise(
+it.effect(
+  'Counterparty provider preserves typed normalization failures and omits an absent role',
+  () =>
     Effect.gen(function* invalidCounterpartyInstant() {
       const calls: unknown[] = [];
       const gateway: PartySearchProjectionGatewayService = {
@@ -98,4 +99,4 @@ test('Counterparty provider preserves typed normalization failures and omits an 
         { effectiveAt: 'invalid', includeArchived: false, legalEntityId, query: 'ACME', tenantId },
       ]);
     }),
-  ));
+);

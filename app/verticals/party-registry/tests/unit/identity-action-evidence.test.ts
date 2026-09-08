@@ -1,7 +1,5 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -33,68 +31,67 @@ const party = Schema.decodeUnknownSync(PartySchema)({
 });
 
 const assertInvariantEvidence = (snapshot: ActionEvidenceSnapshot) => {
-  assert.equal(snapshot.dataAccessEvents.length, 1);
+  expect(snapshot.dataAccessEvents.length).toBe(1);
   const [access] = snapshot.dataAccessEvents;
-  assert.equal(access?.evidenceCaptureMode, 'metadata_only');
-  assert.equal(access?.targetResourceId, partyId);
-  assert.equal(access?.targetResourceType, 'party.registry.party');
-  assert.equal(access?.resultCount, 1);
-  assert.equal(access?.evidencePayloadJson, undefined);
-  assert.equal(snapshot.domainEvents.length, 1);
-  assert.equal(snapshot.outboxMessages.length, 1);
+  expect(access?.evidenceCaptureMode).toBe('metadata_only');
+  expect(access?.targetResourceId).toBe(partyId);
+  expect(access?.targetResourceType).toBe('party.registry.party');
+  expect(access?.resultCount).toBe(1);
+  expect(access?.evidencePayloadJson).toBe(undefined);
+  expect(snapshot.domainEvents.length).toBe(1);
+  expect(snapshot.outboxMessages.length).toBe(1);
 };
 
-test('Update Party records metadata-only invariant evidence with its event and outbox', () =>
-  runEffectTestPromise(
-    Effect.gen(function* verifyUpdateEvidence() {
-      const collector = createActionCollector(
-        updatePartyAction.descriptor.domainEvents,
-        'party.registry',
-        updatePartyAction.descriptor.accessEvidencePolicy,
-      );
-      yield* getActionHandler(updatePartyAction)(
-        {
-          displayName: 'Example organization',
-          expectedRevision: 1,
-          partyRef: party.partyRef,
-          provenanceMethod: 'MANUAL',
-          provenanceSource: 'test',
-          validFrom: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
-        },
-        {
-          ...collector,
-          actionInvocationId,
-          scope,
-          services: { update: () => Effect.succeed({ _tag: 'found', value: party }) },
-        },
-      );
-      assertInvariantEvidence(collector.snapshot());
-    }),
-  ));
+it.effect('Update Party records metadata-only invariant evidence with its event and outbox', () =>
+  Effect.gen(function* verifyUpdateEvidence() {
+    const collector = createActionCollector(
+      updatePartyAction.descriptor.domainEvents,
+      'party.registry',
+      updatePartyAction.descriptor.accessEvidencePolicy,
+    );
+    yield* getActionHandler(updatePartyAction)(
+      {
+        displayName: 'Example organization',
+        expectedRevision: 1,
+        partyRef: party.partyRef,
+        provenanceMethod: 'MANUAL',
+        provenanceSource: 'test',
+        validFrom: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
+      },
+      {
+        ...collector,
+        actionInvocationId,
+        scope,
+        services: { update: () => Effect.succeed({ _tag: 'found', value: party }) },
+      },
+    );
+    assertInvariantEvidence(collector.snapshot());
+  }),
+);
 
-test('Archive Party records metadata-only invariant evidence with its event and outbox', () =>
-  runEffectTestPromise(
-    Effect.gen(function* verifyArchiveEvidence() {
-      const collector = createActionCollector(
-        archivePartyAction.descriptor.domainEvents,
-        'party.registry',
-        archivePartyAction.descriptor.accessEvidencePolicy,
-      );
-      yield* getActionHandler(archivePartyAction)(
-        { expectedRevision: 1, partyRef: party.partyRef, reason: 'No longer active' },
-        {
-          ...collector,
-          actionInvocationId,
-          scope,
-          services: { transition: () => Effect.succeed({ _tag: 'found', value: party }) },
-        },
-      );
-      assertInvariantEvidence(collector.snapshot());
-    }),
-  ));
+it.effect('Archive Party records metadata-only invariant evidence with its event and outbox', () =>
+  Effect.gen(function* verifyArchiveEvidence() {
+    const collector = createActionCollector(
+      archivePartyAction.descriptor.domainEvents,
+      'party.registry',
+      archivePartyAction.descriptor.accessEvidencePolicy,
+    );
+    yield* getActionHandler(archivePartyAction)(
+      { expectedRevision: 1, partyRef: party.partyRef, reason: 'No longer active' },
+      {
+        ...collector,
+        actionInvocationId,
+        scope,
+        services: { transition: () => Effect.succeed({ _tag: 'found', value: party }) },
+      },
+    );
+    assertInvariantEvidence(collector.snapshot());
+  }),
+);
 
-test('Unarchive Party records metadata-only invariant evidence with its event and outbox', () =>
-  runEffectTestPromise(
+it.effect(
+  'Unarchive Party records metadata-only invariant evidence with its event and outbox',
+  () =>
     Effect.gen(function* verifyUnarchiveEvidence() {
       const collector = createActionCollector(
         unarchivePartyAction.descriptor.domainEvents,
@@ -112,10 +109,11 @@ test('Unarchive Party records metadata-only invariant evidence with its event an
       );
       assertInvariantEvidence(collector.snapshot());
     }),
-  ));
+);
 
-test('Unarchive review outcome commits once and replays without an unarchive event or outbox', () =>
-  runEffectTestPromise(
+it.effect(
+  'Unarchive review outcome commits once and replays without an unarchive event or outbox',
+  () =>
     Effect.gen(function* verifyUnarchiveConflictEvidence() {
       let calls = 0;
       const blocked = {
@@ -128,7 +126,7 @@ test('Unarchive review outcome commits once and replays without an unarchive eve
         },
         reasonCode: 'EXACT_CLAIM_CONFLICT' as const,
       };
-      const harness = makeActionTestHarness({
+      const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         services: [
           bindActionTestServices(unarchivePartyAction, {
@@ -153,15 +151,15 @@ test('Unarchive review outcome commits once and replays without an unarchive eve
         registration: unarchivePartyAction,
         transport: { correlationId: 'unarchive-review', idempotencyKey: 'unarchive-once' },
       };
-      assert.deepEqual(yield* harness.runtime.runAction(request), blocked);
+      expect(yield* harness.runtime.runAction(request)).toEqual(blocked);
       const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-      assert.equal(replay._tag, 'ActionAlreadyCommitted');
-      assert.equal(calls, 1);
+      expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
+      expect(calls).toBe(1);
       const snapshot = harness.snapshot();
-      assert.equal(snapshot.committed.length, 1);
-      assert.equal(snapshot.invocations[0]?.status, 'succeeded');
-      assert.equal(snapshot.committed[0]?.evidence.dataAccessEvents.length, 1);
-      assert.deepEqual(snapshot.committed[0]?.evidence.domainEvents, []);
-      assert.deepEqual(snapshot.committed[0]?.evidence.outboxMessages, []);
+      expect(snapshot.committed.length).toBe(1);
+      expect(snapshot.invocations[0]?.status).toBe('succeeded');
+      expect(snapshot.committed[0]?.evidence.dataAccessEvents.length).toBe(1);
+      expect(snapshot.committed[0]?.evidence.domainEvents).toEqual([]);
+      expect(snapshot.committed[0]?.evidence.outboxMessages).toEqual([]);
     }),
-  ));
+);

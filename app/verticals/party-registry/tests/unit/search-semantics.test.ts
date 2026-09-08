@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Match } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { Match, Predicate, Struct } from 'effect';
 import {
   normalizeCounterpartySearchHits,
   normalizePartySearchHits,
@@ -34,31 +33,34 @@ const expectSearchResults = <Result>(
 ): SearchResults<Result> =>
   Match.value(result).pipe(
     Match.tag('SearchResults', (results) => results),
-    Match.tag('SearchProjectionViolation', ({ reason }) =>
-      assert.fail(`Expected normalized search results, but the projection was invalid: ${reason}`),
-    ),
+    Match.tag('SearchProjectionViolation', ({ reason }) => {
+      throw new Error(
+        `Expected normalized search results, but the projection was invalid: ${reason}`,
+      );
+    }),
     Match.exhaustive,
   );
 
-test('Party Search hides archived hits by default and explicitly labels included archived hits', () => {
+it('Party Search hides archived hits by default and explicitly labels included archived hits', () => {
   const hits: readonly PartySearchProjectionHit[] = [
     { archived: false, canonicalPartyRef: partyRef('active'), title: 'Active' },
     { archived: true, canonicalPartyRef: partyRef('archived'), title: 'Archived' },
   ];
 
-  assert.deepEqual(normalizePartySearchHits({ includeArchived: false, tenantId }, hits), {
-    _tag: 'SearchResults',
+  const activeResults = normalizePartySearchHits({ includeArchived: false, tenantId }, hits);
+  expect(Predicate.isTagged(activeResults, 'SearchResults')).toBe(true);
+  expect(Struct.omit(activeResults, ['_tag'])).toEqual({
     items: [{ archived: false, matchedViaAlias: false, ref: partyRef('active'), title: 'Active' }],
   });
   const included = normalizePartySearchHits({ includeArchived: true, tenantId }, hits);
-  assert.equal(included._tag, 'SearchResults');
-  assert.deepEqual(
-    expectSearchResults(included).items.map(({ archived }) => archived),
-    [false, true],
-  );
+  expect(Predicate.isTagged(included, 'SearchResults')).toBe(true);
+  expect(expectSearchResults(included).items.map(({ archived }) => archived)).toEqual([
+    false,
+    true,
+  ]);
 });
 
-test('Party aliases collapse to one survivor while shared contact queries may retain multiple Parties', () => {
+it('Party aliases collapse to one survivor while shared contact queries may retain multiple Parties', () => {
   const survivor = partyRef('survivor');
   const result = normalizePartySearchHits({ includeArchived: false, tenantId }, [
     { archived: false, canonicalPartyRef: survivor, title: 'ACME' },
@@ -71,33 +73,34 @@ test('Party aliases collapse to one survivor while shared contact queries may re
     { archived: false, canonicalPartyRef: partyRef('shared-2'), title: 'Other person' },
   ]);
 
-  assert.equal(result._tag, 'SearchResults');
+  expect(Predicate.isTagged(result, 'SearchResults')).toBe(true);
   const { items } = expectSearchResults(result);
-  assert.deepEqual(
-    items.map(({ ref }) => ref.resourceId),
-    ['survivor', 'shared-2'],
-  );
-  assert.equal(items[0]?.matchedViaAlias, true);
+  expect(items.map(({ ref }) => ref.resourceId)).toEqual(['survivor', 'shared-2']);
+  expect(items[0]?.matchedViaAlias).toBe(true);
 });
 
-test('Party Search fails closed when Core returns a cross-tenant or inconsistent projection', () => {
+it('Party Search fails closed when Core returns a cross-tenant or inconsistent projection', () => {
   const wrongTenant = {
     ...partyRef('wrong'),
     tenantId: '90000000-0000-4000-8000-000000000009',
   };
-  assert.equal(
-    normalizePartySearchHits({ includeArchived: true, tenantId }, [
-      { archived: false, canonicalPartyRef: wrongTenant, title: 'Wrong' },
-    ])._tag,
-    'SearchProjectionViolation',
-  );
-  assert.equal(
-    normalizePartySearchHits({ includeArchived: true, tenantId }, [
-      { archived: false, canonicalPartyRef: partyRef('same'), title: 'One' },
-      { archived: true, canonicalPartyRef: partyRef('same'), title: 'Two' },
-    ])._tag,
-    'SearchProjectionViolation',
-  );
+  expect(
+    Predicate.isTagged(
+      normalizePartySearchHits({ includeArchived: true, tenantId }, [
+        { archived: false, canonicalPartyRef: wrongTenant, title: 'Wrong' },
+      ]),
+      'SearchProjectionViolation',
+    ),
+  ).toBe(true);
+  expect(
+    Predicate.isTagged(
+      normalizePartySearchHits({ includeArchived: true, tenantId }, [
+        { archived: false, canonicalPartyRef: partyRef('same'), title: 'One' },
+        { archived: true, canonicalPartyRef: partyRef('same'), title: 'Two' },
+      ]),
+      'SearchProjectionViolation',
+    ),
+  ).toBe(true);
 });
 
 const baseCounterpartyHit = (
@@ -113,7 +116,7 @@ const baseCounterpartyHit = (
   rolePeriods,
 });
 
-test('Counterparty Search evaluates only current role periods at the exclusive time boundary', () => {
+it('Counterparty Search evaluates only current role periods at the exclusive time boundary', () => {
   const effectiveAt = '2026-09-03T12:00:00.000Z';
   const hits: readonly CounterpartySearchProjectionHit[] = [
     baseCounterpartyHit('ended', 'p1', [
@@ -139,16 +142,13 @@ test('Counterparty Search evaluates only current role periods at the exclusive t
     hits,
   );
 
-  assert.equal(result._tag, 'SearchResults');
+  expect(Predicate.isTagged(result, 'SearchResults')).toBe(true);
   const { items } = expectSearchResults(result);
-  assert.deepEqual(
-    items.map(({ ref }) => ref.resourceId),
-    ['future-ended', 'dual'],
-  );
-  assert.deepEqual(items[1]?.currentRoles, ['CUSTOMER', 'SUPPLIER']);
+  expect(items.map(({ ref }) => ref.resourceId)).toEqual(['future-ended', 'dual']);
+  expect(items[1]?.currentRoles).toEqual(['CUSTOMER', 'SUPPLIER']);
 });
 
-test('Counterparty Search without a role retains durable Counterparties with no current role', () => {
+it('Counterparty Search without a role retains durable Counterparties with no current role', () => {
   const result = normalizeCounterpartySearchHits(
     {
       effectiveAt: '2026-09-03T12:00:00.000Z',
@@ -159,11 +159,11 @@ test('Counterparty Search without a role retains durable Counterparties with no 
     [baseCounterpartyHit('no-role', 'p1')],
   );
 
-  assert.equal(result._tag, 'SearchResults');
-  assert.deepEqual(expectSearchResults(result).items[0]?.currentRoles, []);
+  expect(Predicate.isTagged(result, 'SearchResults')).toBe(true);
+  expect(expectSearchResults(result).items[0]?.currentRoles).toEqual([]);
 });
 
-test('Counterparty identity dedupes independently and survivor collisions are surfaced', () => {
+it('Counterparty identity dedupes independently and survivor collisions are surfaced', () => {
   const hits = [
     baseCounterpartyHit('cp-1', 'survivor'),
     baseCounterpartyHit('cp-1', 'survivor'),
@@ -179,22 +179,18 @@ test('Counterparty identity dedupes independently and survivor collisions are su
     hits,
   );
 
-  assert.equal(result._tag, 'SearchResults');
+  expect(Predicate.isTagged(result, 'SearchResults')).toBe(true);
   const { items } = expectSearchResults(result);
-  assert.deepEqual(
-    items.map(({ ref }) => ref.resourceId),
-    ['cp-1', 'cp-2'],
-  );
-  assert.deepEqual(
+  expect(items.map(({ ref }) => ref.resourceId)).toEqual(['cp-1', 'cp-2']);
+  expect(
     items.map(({ collision }) => collision?.counterpartyRefs.map(({ resourceId }) => resourceId)),
-    [
-      ['cp-1', 'cp-2'],
-      ['cp-1', 'cp-2'],
-    ],
-  );
+  ).toEqual([
+    ['cp-1', 'cp-2'],
+    ['cp-1', 'cp-2'],
+  ]);
 });
 
-test('Counterparty Search fails closed on the wrong Legal Entity instead of broadening scope', () => {
+it('Counterparty Search fails closed on the wrong Legal Entity instead of broadening scope', () => {
   const result = normalizeCounterpartySearchHits(
     {
       effectiveAt: '2026-09-03T12:00:00.000Z',
@@ -213,5 +209,5 @@ test('Counterparty Search fails closed on the wrong Legal Entity instead of broa
     ],
   );
 
-  assert.equal(result._tag, 'SearchProjectionViolation');
+  expect(Predicate.isTagged(result, 'SearchProjectionViolation')).toBe(true);
 });

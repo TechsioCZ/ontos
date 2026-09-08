@@ -1,5 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { expect, test } from '@rstest/core';
+import { expect, it } from 'effect-rstest';
 import { buildInstalledModuleCatalog, resolveInstalledModuleCatalog } from '@app/core-runtime';
 import type {
   ContextAccessDecision,
@@ -185,100 +184,102 @@ const contextAccess = (
 
 const context = { legalEntityId, principalId, tenantId } as const;
 
-test('composes one deterministic state and permission batch with lifecycle affordances', async () => {
-  let stateBatches = 0;
-  let permissionBatches = 0;
-  const composition = makeShellComposition({
-    catalog: Effect.succeed(catalog()),
-    contextAccess: contextAccess(
-      { 'documents.center': 'allowed', 'property.registry': 'allowed' },
-      () => (permissionBatches += 1),
-    ),
-    moduleStates: {
-      getTenantModuleStates: (_tenantId, moduleIds) => {
-        stateBatches += 1;
-        return Effect.succeed(
-          moduleIds.map((moduleKey) => ({
-            moduleKey,
-            state:
-              moduleKey === 'documents.center' ? ('read_only' as const) : ('deprecated' as const),
-          })),
-        );
+it.effect('composes one deterministic state and permission batch with lifecycle affordances', () =>
+  Effect.gen(function* composesOneDeterministicStateAndPermission() {
+    let stateBatches = 0;
+    let permissionBatches = 0;
+    const composition = makeShellComposition({
+      catalog: Effect.succeed(catalog()),
+      contextAccess: contextAccess(
+        { 'documents.center': 'allowed', 'property.registry': 'allowed' },
+        () => (permissionBatches += 1),
+      ),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) => {
+          stateBatches += 1;
+          return Effect.succeed(
+            moduleIds.map((moduleKey) => ({
+              moduleKey,
+              state:
+                moduleKey === 'documents.center' ? ('read_only' as const) : ('deprecated' as const),
+            })),
+          );
+        },
       },
-    },
-  });
-  const result = await runEffectTestPromise(composition.compose(context));
-  expect(result).toEqual({
-    navigation: [
-      {
-        appId: 'documents-center',
-        enabled: true,
-        groupKey: 'shell.navigation.modules',
-        href: '/documents-center',
-        label: 'Documents',
-        moduleId: 'documents.center',
-        order: 10,
-        state: 'read_only',
-        unavailable: false,
-        writable: false,
-      },
-      {
-        appId: 'property-registry',
-        enabled: true,
-        groupKey: 'shell.navigation.modules',
-        href: '/property-registry',
-        label: 'Property',
-        moduleId: 'property.registry',
-        order: 20,
-        state: 'deprecated',
-        unavailable: false,
-        writable: false,
-      },
-    ],
-    state: 'available',
-    unavailableDeployments: [],
-  });
-  expect({ permissionBatches, stateBatches }).toEqual({ permissionBatches: 1, stateBatches: 1 });
-});
+    });
+    const result = yield* composition.compose(context);
+    expect(result).toEqual({
+      navigation: [
+        {
+          appId: 'documents-center',
+          enabled: true,
+          groupKey: 'shell.navigation.modules',
+          href: '/documents-center',
+          label: 'Documents',
+          moduleId: 'documents.center',
+          order: 10,
+          state: 'read_only',
+          unavailable: false,
+          writable: false,
+        },
+        {
+          appId: 'property-registry',
+          enabled: true,
+          groupKey: 'shell.navigation.modules',
+          href: '/property-registry',
+          label: 'Property',
+          moduleId: 'property.registry',
+          order: 20,
+          state: 'deprecated',
+          unavailable: false,
+          writable: false,
+        },
+      ],
+      state: 'available',
+      unavailableDeployments: [],
+    });
+    expect({ permissionBatches, stateBatches }).toEqual({ permissionBatches: 1, stateBatches: 1 });
+  }),
+);
 
-test('keeps healthy navigation and exposes failed installed deployments separately', async () => {
-  const degradedCatalog = resolveInstalledModuleCatalog([
-    {
-      contract: deployment('documents-center', 'documents.center', 'Documents', 10),
-      expectedAppId: 'documents-center',
-      outcome: 'fetched',
-    },
-    {
-      expectedAppId: 'property-registry',
-      outcome: 'failed',
-      reason: 'timeout',
-    },
-  ]);
-  const result = await runEffectTestPromise(
-    makeShellComposition({
+it.effect('keeps healthy navigation and exposes failed installed deployments separately', () =>
+  Effect.gen(function* keepsHealthyNavigationAndExposesFailed() {
+    const degradedCatalog = resolveInstalledModuleCatalog([
+      {
+        contract: deployment('documents-center', 'documents.center', 'Documents', 10),
+        expectedAppId: 'documents-center',
+        outcome: 'fetched',
+      },
+      {
+        expectedAppId: 'property-registry',
+        outcome: 'failed',
+        reason: 'timeout',
+      },
+    ]);
+    const result = yield* makeShellComposition({
       catalog: Effect.succeed(degradedCatalog),
       contextAccess: contextAccess({ 'documents.center': 'allowed' }),
       moduleStates: {
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
-    }).compose(context),
-  );
+    }).compose(context);
 
-  expect(result.state).toBe('available');
-  if (result.state !== 'available') {
-    throw new Error('expected an available degraded composition');
-  }
-  expect(result.navigation.map(({ moduleId }) => moduleId)).toEqual(['documents.center']);
-  expect(result.unavailableDeployments).toEqual([
-    { appId: 'property-registry', reason: 'timeout', status: 'unavailable' },
-  ]);
-  expect(() => Schema.decodeUnknownSync(ShellCompositionSchema)(result)).not.toThrow();
-});
+    expect(result.state).toBe('available');
+    if (result.state !== 'available') {
+      throw new Error('expected an available degraded composition');
+    }
+    expect(result.navigation.map(({ moduleId }) => moduleId)).toEqual(['documents.center']);
+    expect(result.unavailableDeployments).toEqual([
+      { appId: 'property-registry', reason: 'timeout', status: 'unavailable' },
+    ]);
+    expect(() => Schema.decodeUnknownSync(ShellCompositionSchema)(result)).not.toThrow();
+  }),
+);
 
-test('normalizes number-like module order before returning the public composition', async () => {
-  const result = await runEffectTestPromise(
-    makeShellComposition({
+it.effect('normalizes number-like module order before returning the public composition', () =>
+  Effect.gen(function* normalizesNumberLikeModuleOrderBefore() {
+    const result = yield* makeShellComposition({
       catalog: Effect.succeed(catalogWithNumberLikeOrder()),
       contextAccess: contextAccess({
         'documents.center': 'allowed',
@@ -288,19 +289,19 @@ test('normalizes number-like module order before returning the public compositio
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
-    }).compose(context),
-  );
+    }).compose(context);
 
-  expect(result.navigation.map(({ order }) => order)).toEqual([10, 20]);
-  expect(result.navigation.every(({ order }) => Object.is(order, Number(order)))).toBe(true);
-  expect(() => Schema.decodeUnknownSync(ShellCompositionSchema)(result)).not.toThrow();
-});
+    expect(result.navigation.map(({ order }) => order)).toEqual([10, 20]);
+    expect(result.navigation.every(({ order }) => Object.is(order, Number(order)))).toBe(true);
+    expect(() => Schema.decodeUnknownSync(ShellCompositionSchema)(result)).not.toThrow();
+  }),
+);
 
-test.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
+it.effect.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
   'hides the %s lifecycle from normal navigation',
-  async (state) => {
-    const result = await runEffectTestPromise(
-      makeShellComposition({
+  (state) =>
+    Effect.gen(function* inactive() {
+      const result = yield* makeShellComposition({
         catalog: Effect.succeed(catalog()),
         contextAccess: contextAccess({
           'documents.center': 'allowed',
@@ -310,15 +311,14 @@ test.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
           getTenantModuleStates: (_tenantId, moduleIds) =>
             Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
         },
-      }).compose(context),
-    );
-    expect(result).toEqual({ navigation: [], state: 'available', unavailableDeployments: [] });
-  },
+      }).compose(context);
+      expect(result).toEqual({ navigation: [], state: 'available', unavailableDeployments: [] });
+    }),
 );
 
-test('omits definite denial while preserving unavailable authorization as disabled', async () => {
-  const result = await runEffectTestPromise(
-    makeShellComposition({
+it.effect('omits definite denial while preserving unavailable authorization as disabled', () =>
+  Effect.gen(function* omitsDefiniteDenialWhilePreservingUnavailable() {
+    const result = yield* makeShellComposition({
       catalog: Effect.succeed(catalog()),
       contextAccess: contextAccess({
         'documents.center': 'denied',
@@ -328,121 +328,119 @@ test('omits definite denial while preserving unavailable authorization as disabl
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
-    }).compose(context),
-  );
-  expect(result.state).toBe('available');
-  expect(result.navigation).toEqual([
-    {
-      appId: 'property-registry',
-      enabled: false,
-      groupKey: 'shell.navigation.modules',
-      label: 'Property',
-      moduleId: 'property.registry',
-      order: 20,
-      state: 'active',
-      unavailable: true,
-      writable: true,
-    },
-  ]);
-});
-
-test('resolves direct targets independently with exhaustive safe outcomes and historical reads', async () => {
-  let state: TenantModuleState = 'active';
-  let decision: ContextAccessDecision = 'allowed';
-  const mutableAccess = contextAccess({});
-  const composition = makeShellComposition({
-    catalog: Effect.succeed(catalog()),
-    contextAccess: {
-      ...mutableAccess,
-      modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
-    },
-    moduleStates: {
-      getTenantModuleStates: (_tenantId, moduleIds) =>
-        Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
-    },
-  });
-  const resolved = await runEffectTestPromise(
-    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-  );
-  expect(resolved.outcome).toBe('resolved');
-  decision = 'denied';
-  const forbidden = await runEffectTestPromise(
-    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-  );
-  expect(forbidden.outcome).toBe('forbidden');
-  decision = 'unavailable';
-  const unavailable = await runEffectTestPromise(
-    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-  );
-  expect(unavailable.outcome).toBe('unavailable');
-  decision = 'allowed';
-  state = 'archived';
-  const archived = await runEffectTestPromise(
-    composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-  );
-  expect(archived.outcome).toBe('not_found');
-  const historical = await runEffectTestPromise(
-    composition.resolveModuleTarget(context, {
-      access: 'historical_read',
-      moduleId: 'property.registry',
-    }),
-  );
-  expect(historical.outcome).toBe('resolved');
-  const selectionRequired = await runEffectTestPromise(
-    composition.resolveModuleTarget({ principalId, tenantId }, { moduleId: 'property.registry' }),
-  );
-  expect(selectionRequired.outcome).toBe('selection_required');
-  const missing = await runEffectTestPromise(
-    composition.resolveModuleTarget(context, { moduleId: 'missing.module' }),
-  );
-  expect(missing.outcome).toBe('not_found');
-});
-
-test.each(['active', 'read_only', 'deprecated'] as const)(
-  'resolves the exact page entrypoint in the %s lifecycle without changing module landing',
-  async (state) => {
-    const composition = makeShellComposition({
-      catalog: Effect.succeed(catalogWithSecondPropertyPage()),
-      contextAccess: contextAccess({
-        'documents.center': 'allowed',
-        'property.registry': 'allowed',
-      }),
-      moduleStates: {
-        getTenantModuleStates: (_tenantId, moduleIds) =>
-          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
+    }).compose(context);
+    expect(result.state).toBe('available');
+    expect(result.navigation).toEqual([
+      {
+        appId: 'property-registry',
+        enabled: false,
+        groupKey: 'shell.navigation.modules',
+        label: 'Property',
+        moduleId: 'property.registry',
+        order: 20,
+        state: 'active',
+        unavailable: true,
+        writable: true,
       },
-    });
-    const landing = await runEffectTestPromise(
-      composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
-    );
-    const customers = await runEffectTestPromise(
-      composition.resolveModuleTarget(context, {
+    ]);
+  }),
+);
+
+it.effect(
+  'resolves direct targets independently with exhaustive safe outcomes and historical reads',
+  () =>
+    Effect.gen(function* resolvesDirectTargetsIndependentlyWithExhaustive() {
+      let state: TenantModuleState = 'active';
+      let decision: ContextAccessDecision = 'allowed';
+      const mutableAccess = contextAccess({});
+      const composition = makeShellComposition({
+        catalog: Effect.succeed(catalog()),
+        contextAccess: {
+          ...mutableAccess,
+          modules: ({ moduleIds }) => Effect.succeed(moduleIds.map((key) => ({ decision, key }))),
+        },
+        moduleStates: {
+          getTenantModuleStates: (_tenantId, moduleIds) =>
+            Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
+        },
+      });
+      const resolved = yield* composition.resolveModuleTarget(context, {
+        moduleId: 'property.registry',
+      });
+      expect(resolved.outcome).toBe('resolved');
+      decision = 'denied';
+      const forbidden = yield* composition.resolveModuleTarget(context, {
+        moduleId: 'property.registry',
+      });
+      expect(forbidden.outcome).toBe('forbidden');
+      decision = 'unavailable';
+      const unavailable = yield* composition.resolveModuleTarget(context, {
+        moduleId: 'property.registry',
+      });
+      expect(unavailable.outcome).toBe('unavailable');
+      decision = 'allowed';
+      state = 'archived';
+      const archived = yield* composition.resolveModuleTarget(context, {
+        moduleId: 'property.registry',
+      });
+      expect(archived.outcome).toBe('not_found');
+      const historical = yield* composition.resolveModuleTarget(context, {
+        access: 'historical_read',
+        moduleId: 'property.registry',
+      });
+      expect(historical.outcome).toBe('resolved');
+      const selectionRequired = yield* composition.resolveModuleTarget(
+        { principalId, tenantId },
+        { moduleId: 'property.registry' },
+      );
+      expect(selectionRequired.outcome).toBe('selection_required');
+      const missing = yield* composition.resolveModuleTarget(context, {
+        moduleId: 'missing.module',
+      });
+      expect(missing.outcome).toBe('not_found');
+    }),
+);
+
+it.effect.each(['active', 'read_only', 'deprecated'] as const)(
+  'resolves the exact page entrypoint in the %s lifecycle without changing module landing',
+  (state) =>
+    Effect.gen(function* active() {
+      const composition = makeShellComposition({
+        catalog: Effect.succeed(catalogWithSecondPropertyPage()),
+        contextAccess: contextAccess({
+          'documents.center': 'allowed',
+          'property.registry': 'allowed',
+        }),
+        moduleStates: {
+          getTenantModuleStates: (_tenantId, moduleIds) =>
+            Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
+        },
+      });
+      const landing = yield* composition.resolveModuleTarget(context, {
+        moduleId: 'property.registry',
+      });
+      const customers = yield* composition.resolveModuleTarget(context, {
         entrypointKey: 'property.registry.page.customers',
         moduleId: 'property.registry',
-      }),
-    );
-    expect(landing).toMatchObject({
-      outcome: 'resolved',
-      page: { componentKey: 'property.registry.page-home' },
-    });
-    expect(customers).toMatchObject({
-      outcome: 'resolved',
-      page: { componentKey: 'property.registry.page-customers' },
-      writable: state === 'active',
-    });
-    const missingPage = await runEffectTestPromise(
-      composition.resolveModuleTarget(context, {
+      });
+      expect(landing).toMatchObject({
+        outcome: 'resolved',
+        page: { componentKey: 'property.registry.page-home' },
+      });
+      expect(customers).toMatchObject({
+        outcome: 'resolved',
+        page: { componentKey: 'property.registry.page-customers' },
+        writable: state === 'active',
+      });
+      const missingPage = yield* composition.resolveModuleTarget(context, {
         entrypointKey: 'property.registry.page.missing',
         moduleId: 'property.registry',
-      }),
-    );
-    expect(missingPage.outcome).toBe('not_found');
-    const crossOwnedPage = await runEffectTestPromise(
-      composition.resolveModuleTarget(context, {
+      });
+      expect(missingPage.outcome).toBe('not_found');
+      const crossOwnedPage = yield* composition.resolveModuleTarget(context, {
         entrypointKey: 'documents.center.page.home',
         moduleId: 'property.registry',
-      }),
-    );
-    expect(crossOwnedPage.outcome).toBe('not_found');
-  },
+      });
+      expect(crossOwnedPage.outcome).toBe('not_found');
+    }),
 );

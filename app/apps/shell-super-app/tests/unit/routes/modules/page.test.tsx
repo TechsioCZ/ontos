@@ -1,13 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
+import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
-import {
-  LegalEntityIdSchema,
-  ResolvedModuleTargetSchema,
-  SafeTenantIdentitySchema,
-} from '../../../../shared/api.ts';
+import { ResolvedModuleTargetSchema } from '../../../../shared/api.ts';
+import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 import ContactsPage from '../../../../src/routes/[lang]/contacts/page.tsx';
 import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
@@ -38,10 +34,6 @@ rstest.mock('@techsio/ui-kit/atoms/status-text', () => ({
   StatusText: ({ children }: { readonly children: ReactNode }) => <span>{children}</span>,
 }));
 
-rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: runEffectTestPromise,
-}));
-
 rstest.mock('../../../../src/api/vertical-clients.ts', () => ({
   findApprovedVerticalPageClient: findApprovedVerticalPageClientMock,
 }));
@@ -67,22 +59,7 @@ rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
   }),
 }));
 
-const shell: ResolvedPageModel['shell'] = {
-  contextState: 'authenticated' as const,
-  identity: Schema.decodeUnknownSync(SafeTenantIdentitySchema)({
-    displayName: 'Ada Lovelace',
-    email: 'ada@example.test',
-    principalId: 'principal-1',
-    tenantId: 'tenant-1',
-  }),
-  legalEntities: { items: [], state: 'available' as const },
-  navigation: { items: [], state: 'available' as const, unavailableDeployments: [] },
-  selectedLegalEntityId: Schema.decodeUnknownSync(LegalEntityIdSchema)(
-    '20000000-0000-4000-8000-000000000001',
-  ),
-  state: 'authenticated' as const,
-  tenants: { items: [], state: 'available' as const },
-};
+const shell: ResolvedPageModel['shell'] = authenticatedShellFixture();
 
 const targetFixture = (componentKey: string, entrypointKey: string, writable = true) =>
   Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
@@ -187,7 +164,7 @@ afterEach(() => {
   rstest.clearAllMocks();
 });
 
-test.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as const)(
+it.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as const)(
   'does not consult or invoke the private registry for a %s exact-page response',
   (state) => {
     useLoaderDataMock.mockReturnValue({ shell, state } satisfies ModuleTargetPageModel);
@@ -197,15 +174,19 @@ test.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as con
   },
 );
 
-test('invokes the exact private page loader only after a resolved authenticated response', async () => {
-  useLoaderDataMock.mockReturnValue(resolvedModel);
-  render(<ModuleTargetPage />);
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('contacts.core.page-customers:customer-1')).toBeTruthy();
-});
+it.live('invokes the exact private page loader only after a resolved authenticated response', () =>
+  Effect.gen(function* invokesTheExactPrivatePageLoader() {
+    useLoaderDataMock.mockReturnValue(resolvedModel);
+    render(<ModuleTargetPage />);
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1')),
+    ).toBeTruthy();
+  }),
+);
 
-test('reads loader data from the active Party Registry owner route', () => {
+it('reads loader data from the active Party Registry owner route', () => {
   useLoaderDataMock.mockImplementation(({ from }: { readonly from: string }) => {
     if (from !== '/$lang/contacts') {
       throw new Error(`Invariant failed: Could not find an active match from "${from}"`);
@@ -220,47 +201,62 @@ test('reads loader data from the active Party Registry owner route', () => {
   });
 });
 
-test('maps an unreachable approved remote to its safe local diagnostic', async () => {
-  loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
-  useLoaderDataMock.mockReturnValue(resolvedModel);
-
-  render(<ModuleTargetPage />);
-
-  expect(await screen.findByText('shell.moduleTarget.unavailable')).toBeTruthy();
-});
-
-test('rejects a malformed remote module before React receives it', async () => {
-  loadRemotePageMock.mockResolvedValueOnce({ default: 'not a component' });
-  useLoaderDataMock.mockReturnValue(resolvedModel);
-
-  render(<ModuleTargetPage />);
-
-  expect(await screen.findByText('shell.moduleTarget.incompatible')).toBeTruthy();
-  expect(remotePropsMock).not.toHaveBeenCalled();
-});
-
-test('passes an empty route-parameter record to a resolved static page', async () => {
-  useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
-  render(<ModuleTargetPage />);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('contacts.core.page-customers:static')).toBeTruthy();
-});
-
-test.each(exactPageCases)(
-  'loads the approved $componentKey remote once with its exact route context and resolved target',
-  async ({ componentKey, entrypointKey, renderedText, routeParams, writable }) => {
-    const exactModel: ResolvedPageModel = {
-      ...resolvedModel,
-      routeParams,
-      target: targetFixture(componentKey, entrypointKey, writable),
-    };
-    useLoaderDataMock.mockReturnValue(exactModel);
+it.live('maps an unreachable approved remote to its safe local diagnostic', () =>
+  Effect.gen(function* mapsAnUnreachableApprovedRemoteTo() {
+    loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
+    useLoaderDataMock.mockReturnValue(resolvedModel);
 
     render(<ModuleTargetPage />);
 
-    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(exactModel.target);
-    await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-    expect(remotePropsMock).toHaveBeenCalledWith({ routeParams, target: exactModel.target });
-    expect(await screen.findByText(renderedText)).toBeTruthy();
-  },
+    expect(
+      yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable')),
+    ).toBeTruthy();
+  }),
+);
+
+it.live('rejects a malformed remote module before React receives it', () =>
+  Effect.gen(function* rejectsAMalformedRemoteModuleBefore() {
+    loadRemotePageMock.mockResolvedValueOnce({ default: 'not a component' });
+    useLoaderDataMock.mockReturnValue(resolvedModel);
+
+    render(<ModuleTargetPage />);
+
+    expect(
+      yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible')),
+    ).toBeTruthy();
+    expect(remotePropsMock).not.toHaveBeenCalled();
+  }),
+);
+
+it.live('passes an empty route-parameter record to a resolved static page', () =>
+  Effect.gen(function* passesAnEmptyRouteParameterRecord() {
+    useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
+    render(<ModuleTargetPage />);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:static')),
+    ).toBeTruthy();
+  }),
+);
+
+it.live.each(exactPageCases)(
+  'loads the approved $componentKey remote once with its exact route context and resolved target',
+  ({ componentKey, entrypointKey, renderedText, routeParams, writable }) =>
+    Effect.gen(function* loadsTheApprovedExactRemoteOnce() {
+      const exactModel: ResolvedPageModel = {
+        ...resolvedModel,
+        routeParams,
+        target: targetFixture(componentKey, entrypointKey, writable),
+      };
+      useLoaderDataMock.mockReturnValue(exactModel);
+
+      render(<ModuleTargetPage />);
+
+      expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(exactModel.target);
+      yield* Effect.promise(() =>
+        waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)),
+      );
+      expect(remotePropsMock).toHaveBeenCalledWith({ routeParams, target: exactModel.target });
+      expect(yield* Effect.promise(() => screen.findByText(renderedText))).toBeTruthy();
+    }),
 );

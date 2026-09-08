@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+import { Effect, Schema } from 'effect';
 import {
   bindManagedApiKeyAction,
   bindSelfApiKeyAction,
@@ -21,157 +20,165 @@ const registrations = [
   setSelfApiKeyBindingStatusAction,
 ] as const;
 
-void test('identity Actions are generated, sensitive, idempotent, and owned by Core identity', () => {
+it('identity Actions are generated, sensitive, idempotent, and owned by Core identity', () => {
   for (const registration of registrations) {
-    assert.equal(registration.descriptor.actionKey.startsWith('core.identity.'), true);
-    assert.equal(registration.descriptor.auditProfile, 'sensitive');
-    assert.equal(registration.descriptor.idempotency, 'required');
-    assert.equal(registration.descriptor.owningModuleKey, 'core.identity');
-    assert.equal(registration.descriptor.accessEvidencePolicy.captureMode, 'metadata_only');
-    assert.equal(Object.isFrozen(registration.descriptor), true);
+    expect(registration.descriptor.actionKey.startsWith('core.identity.')).toBe(true);
+    expect(registration.descriptor.auditProfile).toBe('sensitive');
+    expect(registration.descriptor.idempotency).toBe('required');
+    expect(registration.descriptor.owningModuleKey).toBe('core.identity');
+    expect(registration.descriptor.accessEvidencePolicy.captureMode).toBe('metadata_only');
+    expect(Object.isFrozen(registration.descriptor)).toBe(true);
   }
 });
 
-void test('identity administration and support starts declare independent tenant permissions', () => {
+it.effect('identity administration and support starts declare independent tenant permissions', () =>
+  Effect.gen(function* identityScenario2() {
+    const principalId = '00000000-0000-4000-8000-000000000001';
+    const authBindingId = '00000000-0000-4000-8000-000000000002';
+    const originalPrincipalId = '00000000-0000-4000-8000-000000000003';
+    const managedPermissions = [
+      bindManagedApiKeyAction.descriptor.tenantPermission?.(
+        yield* Schema.decodeUnknownEffect(bindManagedApiKeyAction.descriptor.payloadSchema)({
+          principalId,
+          providerSubjectId: 'provider-key-id',
+        }),
+      ),
+      changePrincipalStatusAction.descriptor.tenantPermission?.(
+        yield* Schema.decodeUnknownEffect(changePrincipalStatusAction.descriptor.payloadSchema)({
+          expectedStatus: 'active',
+          newStatus: 'disabled',
+          principalId,
+          reason: 'Offboarding',
+        }),
+      ),
+      createNonHumanPrincipalAction.descriptor.tenantPermission?.(
+        yield* Schema.decodeUnknownEffect(createNonHumanPrincipalAction.descriptor.payloadSchema)({
+          displayName: 'Inventory service',
+          kind: 'service',
+        }),
+      ),
+      setManagedApiKeyBindingStatusAction.descriptor.tenantPermission?.(
+        yield* Schema.decodeUnknownEffect(
+          setManagedApiKeyBindingStatusAction.descriptor.payloadSchema,
+        )({
+          authBindingId,
+          expectedStatus: 'active',
+          newStatus: 'disabled',
+          principalId,
+        }),
+      ),
+    ];
+    for (const permission of managedPermissions) {
+      expect(permission).toBe('manage_identity');
+    }
+    expect(bindSelfApiKeyAction.descriptor.tenantPermission).toBe(undefined);
+    expect(setSelfApiKeyBindingStatusAction.descriptor.tenantPermission).toBe(undefined);
+    const supportPayload = {
+      originalPrincipalId,
+      reason: 'Investigating a support request',
+      targetPrincipalId: principalId,
+    };
+    expect(
+      recordSupportImpersonationAction.descriptor.tenantPermission?.(
+        yield* Schema.decodeUnknownEffect(
+          recordSupportImpersonationAction.descriptor.payloadSchema,
+        )({
+          ...supportPayload,
+          checkpoint: 'requested',
+        }),
+      ),
+    ).toBe('impersonate');
+    expect(
+      recordSupportImpersonationAction.descriptor.tenantPermission?.(
+        yield* Schema.decodeUnknownEffect(
+          recordSupportImpersonationAction.descriptor.payloadSchema,
+        )({
+          ...supportPayload,
+          checkpoint: 'stopped',
+          sessionRef: 'better-auth-session:safe-session-reference',
+        }),
+      ),
+    ).toBe(undefined);
+  }),
+);
+
+it('identity status schemas require reasons for disabling, archiving, and revoking', () => {
   const principalId = '00000000-0000-4000-8000-000000000001';
   const authBindingId = '00000000-0000-4000-8000-000000000002';
-  const originalPrincipalId = '00000000-0000-4000-8000-000000000003';
-  const managedPermissions = [
-    bindManagedApiKeyAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(bindManagedApiKeyAction.descriptor.payloadSchema)({
-        principalId,
-        providerSubjectId: 'provider-key-id',
-      }),
-    ),
-    changePrincipalStatusAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(changePrincipalStatusAction.descriptor.payloadSchema)({
-        expectedStatus: 'active',
-        newStatus: 'disabled',
-        principalId,
-        reason: 'Offboarding',
-      }),
-    ),
-    createNonHumanPrincipalAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(createNonHumanPrincipalAction.descriptor.payloadSchema)({
-        displayName: 'Inventory service',
-        kind: 'service',
-      }),
-    ),
-    setManagedApiKeyBindingStatusAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(setManagedApiKeyBindingStatusAction.descriptor.payloadSchema)({
-        authBindingId,
-        expectedStatus: 'active',
-        newStatus: 'disabled',
-        principalId,
-      }),
-    ),
-  ];
-  for (const permission of managedPermissions) {
-    assert.equal(permission, 'manage_identity');
-  }
-  assert.equal(bindSelfApiKeyAction.descriptor.tenantPermission, undefined);
-  assert.equal(setSelfApiKeyBindingStatusAction.descriptor.tenantPermission, undefined);
-  const supportPayload = {
-    originalPrincipalId,
-    reason: 'Investigating a support request',
-    targetPrincipalId: principalId,
-  };
-  assert.equal(
-    recordSupportImpersonationAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
-        ...supportPayload,
-        checkpoint: 'requested',
-      }),
-    ),
-    'impersonate',
-  );
-  assert.equal(
-    recordSupportImpersonationAction.descriptor.tenantPermission?.(
-      Schema.decodeUnknownSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
-        ...supportPayload,
-        checkpoint: 'stopped',
-        sessionRef: 'better-auth-session:safe-session-reference',
-      }),
-    ),
-    undefined,
-  );
-});
 
-void test('identity status schemas require reasons for disabling, archiving, and revoking', () => {
-  const principalId = '00000000-0000-4000-8000-000000000001';
-  const authBindingId = '00000000-0000-4000-8000-000000000002';
-
-  assert.throws(() =>
+  expect(() =>
     Schema.decodeUnknownSync(changePrincipalStatusAction.descriptor.payloadSchema)({
       expectedStatus: 'active',
       newStatus: 'disabled',
       principalId,
     }),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(setSelfApiKeyBindingStatusAction.descriptor.payloadSchema)({
       authBindingId,
       expectedStatus: 'active',
       newStatus: 'revoked',
     }),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     Schema.decodeUnknownSync(setManagedApiKeyBindingStatusAction.descriptor.payloadSchema)({
       authBindingId,
       expectedStatus: 'active',
       newStatus: 'revoked',
       principalId,
     }),
-  );
+  ).toThrow();
 });
 
-void test('support checkpoints forbid unsafe or misplaced session references', () => {
-  const originalPrincipalId = '00000000-0000-4000-8000-000000000001';
-  const targetPrincipalId = '00000000-0000-4000-8000-000000000002';
-  const decode = Schema.decodeUnknownSync(
-    recordSupportImpersonationAction.descriptor.payloadSchema,
-  );
+it.effect('support checkpoints forbid unsafe or misplaced session references', () =>
+  Effect.gen(function* identityScenario4() {
+    const originalPrincipalId = '00000000-0000-4000-8000-000000000001';
+    const targetPrincipalId = '00000000-0000-4000-8000-000000000002';
+    const decode = Schema.decodeUnknownEffect(
+      recordSupportImpersonationAction.descriptor.payloadSchema,
+    );
 
-  assert.deepEqual(
-    decode({
+    expect(
+      yield* decode({
+        checkpoint: 'requested',
+        originalPrincipalId,
+        reason: 'Investigating a support request',
+        sessionRef: 'better-auth-session:must-not-exist-yet',
+        targetPrincipalId,
+      }),
+    ).toEqual({
       checkpoint: 'requested',
       originalPrincipalId,
       reason: 'Investigating a support request',
-      sessionRef: 'better-auth-session:must-not-exist-yet',
       targetPrincipalId,
-    }),
-    {
-      checkpoint: 'requested',
-      originalPrincipalId,
-      reason: 'Investigating a support request',
-      targetPrincipalId,
-    },
-  );
-  for (const sessionRef of ['raw-session-token', 'better-auth-session:contains whitespace']) {
-    assert.throws(() =>
-      decode({
+    });
+    for (const sessionRef of ['raw-session-token', 'better-auth-session:contains whitespace']) {
+      expect(
+        yield* Effect.flip(
+          decode({
+            checkpoint: 'stopped',
+            originalPrincipalId,
+            reason: 'Investigating a support request',
+            sessionRef,
+            targetPrincipalId,
+          }),
+        ),
+      ).toBeDefined();
+    }
+    expect(
+      yield* decode({
         checkpoint: 'stopped',
         originalPrincipalId,
         reason: 'Investigating a support request',
-        sessionRef,
+        sessionRef: 'better-auth-session:safe-session-reference',
         targetPrincipalId,
       }),
-    );
-  }
-  assert.deepEqual(
-    decode({
+    ).toEqual({
       checkpoint: 'stopped',
       originalPrincipalId,
       reason: 'Investigating a support request',
       sessionRef: 'better-auth-session:safe-session-reference',
       targetPrincipalId,
-    }),
-    {
-      checkpoint: 'stopped',
-      originalPrincipalId,
-      reason: 'Investigating a support request',
-      sessionRef: 'better-auth-session:safe-session-reference',
-      targetPrincipalId,
-    },
-  );
-});
+    });
+  }),
+);

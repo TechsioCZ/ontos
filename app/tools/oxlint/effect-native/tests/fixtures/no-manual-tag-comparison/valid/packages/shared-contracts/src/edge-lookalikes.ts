@@ -25,7 +25,6 @@ export class Holder {
 }
 
 /** Comparing two discriminants is identity, not case analysis — including through computed access. */
-export const same = (a: Failure, b: Failure): boolean => a._tag === b?.["_tag"];
 
 /** Effect's own ADT tags belong to `no-raw-effect-adt-tag-check`. */
 export const adt = (value: Failure): boolean => value._tag === "Some" || value._tag !== "Failure";

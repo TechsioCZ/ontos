@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { NodeFileSystem, NodeRuntime } from '@effect/platform-node';
+import { NodeServices, NodeRuntime } from '@effect/platform-node';
 import { Effect, Equal, FileSystem, Layer, Schema } from 'effect';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
@@ -369,14 +369,12 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     if (!contractUrl.endsWith(ONTOS_MODULE_CONTRACT_PATH)) {
       return yield* failure(`${appId} development module-contract URL is invalid`);
     }
-    const derived = yield* Effect.tryPromise({
-      catch: () => failure(`${appId} authored module contract could not be derived`),
-      try: async () =>
-        await deriveOntosModuleDeploymentContract({
-          vertical: verticalName,
-          workspaceRoot,
-        }),
-    });
+    const derived = yield* deriveOntosModuleDeploymentContract({
+      vertical: verticalName,
+      workspaceRoot,
+    }).pipe(
+      Effect.mapError(() => failure(`${appId} authored module contract could not be derived`)),
+    );
     if (derived.deployment.appId !== appId || derived.manifest.module.id !== manifestModuleId) {
       return yield* failure(
         `${appId} authored module contract disagrees with generated owner metadata`,
@@ -443,6 +441,6 @@ if (
     checkOntosModuleContracts().pipe(
       Effect.tap(() => Effect.logInfo('OntOS module contracts validated')),
     ),
-  ).pipe(Layer.provide(NodeFileSystem.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
   NodeRuntime.runMain(Effect.scoped(Layer.build(programLayer)));
 }

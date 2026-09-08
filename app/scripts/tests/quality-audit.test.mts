@@ -1,5 +1,5 @@
-import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { expect, it } from 'effect-rstest';
+
 import {
   copyFileSync,
   mkdirSync,
@@ -12,15 +12,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import {
-  makeEffectTestCallback,
-  runEffectTestPromise,
-} from '../../packages/core-runtime/src/testing/effect-runtime.ts';
+
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
+import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const FALLOW_CLONES = 'fallow-clones';
 const FALLOW_SIMILARITY = 'fallow-similarity';
@@ -30,6 +28,7 @@ const REPORT_DIRECTORY = 'reports';
 const SUMMARY_FILE = 'summary.json';
 const GITIGNORE_FILE = '.gitignore';
 const KNIP_CONFIG = 'quality-audit/knip.json';
+const PACKAGE_JSON = 'package.json';
 const CALLER_OWNED_FILE = 'caller-owned.txt';
 const ProvenanceSchema = Schema.fromJsonString(
   Schema.Struct({
@@ -38,165 +37,182 @@ const ProvenanceSchema = Schema.fromJsonString(
   }),
 );
 const appRoot = path.resolve(import.meta.dirname, '../..');
-const reportSchema = Schema.fromJsonString(Schema.Unknown);
-const stringify = async (value: Schema.Json) =>
-  await runEffectTestPromise(Schema.encodeEffect(reportSchema)(value));
-const validate = async (name: string, source: string) =>
-  await runEffectTestPromise(validateReport(name, source));
-
-await test('report-only analysis accepts findings and rejects empty or malformed reports', async () => {
-  const report = {
-    duplicates: [
-      {
-        firstFile: { name: 'a.ts', start: 1 },
-        lines: 12,
-        secondFile: { name: 'b.ts', start: 1 },
-        tokens: 110,
-      },
-    ],
-    statistics: { total: { clones: 1, sources: 2 } },
-  };
-  assert.deepEqual(await validate('jscpd', await stringify(report)), {
-    coverage: { tokenEligibleFiles: 2 },
-    files: 2,
-    findings: 1,
-  });
-  await assert.rejects(validate('jscpd', '{}'), /Malformed analyzer report/u);
-  await assert.rejects(validate('jscpd', '{broken'), /Malformed analyzer report/u);
-  await assert.rejects(
-    validate(
-      'jscpd',
-      await stringify({ duplicates: [], statistics: { total: { clones: 0, sources: 0 } } }),
-    ),
-    /no files/u,
-  );
-  await assert.rejects(
-    validate(
-      'jscpd',
-      await stringify({ ...report, statistics: { total: { clones: 0, sources: 2 } } }),
-    ),
-    /count disagrees/u,
-  );
-});
-
-await test('Knip coverage is mandatory and findings count categories rather than files', async () => {
-  const findings = await stringify({ issues: [] });
-  const coverage = await stringify({
-    coverage: { processed: 12, total: 12 },
-    findingCounts: { exports: 4, files: 2 },
-    workspaces: ['.'],
-  });
-  assert.deepEqual(await validate('knip', `${findings}\n${coverage}`), {
-    coverage: {
-      findingCounts: { exports: 4, files: 2 },
-      processed: 12,
-      total: 12,
-      workspaces: ['.'],
-    },
-    files: 12,
-    findings: 6,
-  });
-  await assert.rejects(validate('knip', findings), /coverage records/u);
-  await assert.rejects(
-    validate(
-      'knip',
-      `${findings}\n${await stringify({ coverage: { processed: 0, total: 0 }, findingCounts: {}, workspaces: ['.'] })}`,
-    ),
-    /no files/u,
-  );
-});
-
-await test('Fallow rejects missing discovery, unsupported schema and incomplete workspaces', async () => {
-  const report = {
-    clone_groups: [],
-    kind: 'dupes',
-    schema_version: 9,
-    stats: { clone_groups: 0, total_files: 2 },
-    version: '3.22.0',
-  };
-  assert.deepEqual(await validate(FALLOW_CLONES, await stringify(report)), {
-    coverage: { tokenEligibleFiles: 2 },
-    files: 2,
-    findings: 0,
-  });
-  await assert.rejects(
-    validate(FALLOW_CLONES, await stringify({ ...report, schema_version: 10 })),
-    /Malformed analyzer report/u,
-  );
-  await assert.rejects(
-    validate(
-      FALLOW_CLONES,
-      await stringify({
-        ...report,
-        workspace_diagnostics: [
-          { kind: 'invalid-package-json', message: 'invalid package', path: 'packages/broken' },
-        ],
-      }),
-    ),
-    /incomplete workspace/u,
-  );
-  await assert.rejects(
-    validate('fallow-files', await stringify({ file_count: 2, files: ['a.ts'] })),
-    /count disagrees/u,
-  );
-});
-
-await test('tool selection preserves the complete Fallow group', () => {
-  assert.deepEqual(
-    auditSteps('/app', '/output', 'fallow').map((step) => step.name),
-    ['fallow-files', FALLOW_CLONES, FALLOW_SIMILARITY, FALLOW_HEALTH],
-  );
-  assert.deepEqual(
-    auditSteps('/app', '/output', 'knip').map((step) => step.name),
-    ['knip'],
-  );
-  assert.equal(auditSteps('/app', '/output', 'all').length, 6);
-});
-
-const createFixture = async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'ontos-quality-test-'));
-  mkdirSync(path.join(root, CONFIG_DIRECTORY));
-  mkdirSync(path.join(root, 'scripts'));
-  mkdirSync(path.join(root, '.codex'));
-  writeFileSync(path.join(root, '.codex/caller-owned.txt'), 'keep');
-  symlinkSync(path.join(appRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir');
-  writeFileSync(
-    path.join(root, 'package.json'),
-    await stringify({ name: 'quality-test', private: true, type: 'module' }),
-  );
-  for (const name of ['scope.json', 'fallow.json', 'jscpd.json', 'knip-reporter.mts']) {
-    copyFileSync(
-      path.join(appRoot, CONFIG_DIRECTORY, name),
-      path.join(root, CONFIG_DIRECTORY, name),
-    );
-  }
-  writeFileSync(
-    path.join(root, KNIP_CONFIG),
-    await stringify({
-      entry: ['scripts/index.ts'],
-      lefthook: false,
-      node: false,
-      project: ['scripts/**/*.ts'],
-    }),
-  );
-  const branches = Array.from(
-    { length: 15 },
-    (_, index) => `if (input > ${index}) result += input * ${index};`,
-  ).join('\n');
-  const body = `export function calculate(input: number) {\nlet result = input;\n${branches}\nreturn result;\n}\n`;
-  writeFileSync(path.join(root, 'scripts/index.ts'), body);
-  writeFileSync(path.join(root, 'scripts/dead.ts'), body.replace('calculate', 'unusedCalculation'));
-  return root;
+const includesPolicyFiles = (
+  instances: readonly { readonly file: string }[],
+  policyFiles: readonly string[],
+) => {
+  const names = new Set(instances.map((instance) => path.basename(instance.file)));
+  return policyFiles.every((file) => names.has(file));
 };
 
-const runFixture = async (
-  root: string,
-  output: string,
-  tool: 'all' | 'knip' | 'jscpd' | 'fallow',
-) =>
-  await runEffectTestPromise(
-    runQualityAudit(root, output, tool).pipe(Effect.provide(NodeServices.layer)),
-  );
+const reportSchema = Schema.fromJsonString(Schema.Unknown);
+const encodeReport = Schema.encodeEffect(reportSchema);
+
+it.effect(
+  'report-only analysis accepts findings and rejects empty or malformed reports',
+  Effect.fn(function* testEffect3() {
+    const report = {
+      duplicates: [
+        {
+          firstFile: { name: 'a.ts', start: 1 },
+          lines: 12,
+          secondFile: { name: 'b.ts', start: 1 },
+          tokens: 110,
+        },
+      ],
+      statistics: { total: { clones: 1, sources: 2 } },
+    };
+    expect(yield* validateReport('jscpd', yield* encodeReport(report))).toEqual({
+      coverage: { tokenEligibleFiles: 2 },
+      files: 2,
+      findings: 1,
+    });
+    const emptyReportError = yield* Effect.flip(validateReport('jscpd', '{}'));
+    expect(emptyReportError.message).toMatch(/Malformed analyzer report/u);
+    const malformedReportError = yield* Effect.flip(validateReport('jscpd', '{broken'));
+    expect(malformedReportError.message).toMatch(/Malformed analyzer report/u);
+    const emptySourceError = yield* Effect.flip(
+      validateReport(
+        'jscpd',
+        yield* encodeReport({ duplicates: [], statistics: { total: { clones: 0, sources: 0 } } }),
+      ),
+    );
+    expect(emptySourceError.message).toMatch(/no files/u);
+    const cloneCountError = yield* Effect.flip(
+      validateReport(
+        'jscpd',
+        yield* encodeReport({ ...report, statistics: { total: { clones: 0, sources: 2 } } }),
+      ),
+    );
+    expect(cloneCountError.message).toMatch(/count disagrees/u);
+  }),
+);
+
+it.effect(
+  'Knip coverage is mandatory and findings count categories rather than files',
+  Effect.fn(function* testEffect4() {
+    const findings = yield* encodeReport({ issues: [] });
+    const coverage = yield* encodeReport({
+      coverage: { processed: 12, total: 12 },
+      findingCounts: { exports: 4, files: 2 },
+      workspaces: ['.'],
+    });
+    expect(yield* validateReport('knip', `${findings}\n${coverage}`)).toEqual({
+      coverage: {
+        findingCounts: { exports: 4, files: 2 },
+        processed: 12,
+        total: 12,
+        workspaces: ['.'],
+      },
+      files: 12,
+      findings: 6,
+    });
+    const missingCoverageError = yield* Effect.flip(validateReport('knip', findings));
+    expect(missingCoverageError.message).toMatch(/coverage records/u);
+    const emptyCoverageError = yield* Effect.flip(
+      validateReport(
+        'knip',
+        `${findings}\n${yield* encodeReport({ coverage: { processed: 0, total: 0 }, findingCounts: {}, workspaces: ['.'] })}`,
+      ),
+    );
+    expect(emptyCoverageError.message).toMatch(/no files/u);
+  }),
+);
+
+it.effect(
+  'Fallow rejects missing discovery, unsupported schema and incomplete workspaces',
+  Effect.fn(function* testEffect5() {
+    const report = {
+      clone_groups: [],
+      kind: 'dupes',
+      schema_version: 9,
+      stats: { clone_groups: 0, total_files: 2 },
+      version: '3.22.0',
+    };
+    expect(yield* validateReport(FALLOW_CLONES, yield* encodeReport(report))).toEqual({
+      coverage: { tokenEligibleFiles: 2 },
+      files: 2,
+      findings: 0,
+    });
+    const unsupportedSchemaError = yield* Effect.flip(
+      validateReport(FALLOW_CLONES, yield* encodeReport({ ...report, schema_version: 10 })),
+    );
+    expect(unsupportedSchemaError.message).toMatch(/Malformed analyzer report/u);
+    const incompleteWorkspaceError = yield* Effect.flip(
+      validateReport(
+        FALLOW_CLONES,
+        yield* encodeReport({
+          ...report,
+          workspace_diagnostics: [
+            { kind: 'invalid-package-json', message: 'invalid package', path: 'packages/broken' },
+          ],
+        }),
+      ),
+    );
+    expect(incompleteWorkspaceError.message).toMatch(/incomplete workspace/u);
+    const fileCountError = yield* Effect.flip(
+      validateReport('fallow-files', yield* encodeReport({ file_count: 2, files: ['a.ts'] })),
+    );
+    expect(fileCountError.message).toMatch(/count disagrees/u);
+  }),
+);
+
+it('tool selection preserves the complete Fallow group', () => {
+  expect(auditSteps('/app', '/output', 'fallow').map((step) => step.name)).toEqual([
+    'fallow-files',
+    FALLOW_CLONES,
+    FALLOW_SIMILARITY,
+    FALLOW_HEALTH,
+  ]);
+  expect(auditSteps('/app', '/output', 'knip').map((step) => step.name)).toEqual(['knip']);
+  expect(auditSteps('/app', '/output', 'all').length).toBe(6);
+});
+
+const createFixture = () =>
+  Effect.gen(function* testEffect6() {
+    const root = yield* Effect.acquireRelease(
+      Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'ontos-quality-test-'))),
+      (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+    );
+    mkdirSync(path.join(root, CONFIG_DIRECTORY));
+    mkdirSync(path.join(root, 'scripts'));
+    mkdirSync(path.join(root, '.codex'));
+    writeFileSync(path.join(root, '.codex/caller-owned.txt'), 'keep');
+    symlinkSync(path.join(appRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir');
+    writeFileSync(
+      path.join(root, PACKAGE_JSON),
+      yield* encodeReport({ name: 'quality-test', private: true, type: 'module' }),
+    );
+    for (const name of ['scope.json', 'fallow.json', 'jscpd.json', 'knip-reporter.mts']) {
+      copyFileSync(
+        path.join(appRoot, CONFIG_DIRECTORY, name),
+        path.join(root, CONFIG_DIRECTORY, name),
+      );
+    }
+    writeFileSync(
+      path.join(root, KNIP_CONFIG),
+      yield* encodeReport({
+        entry: ['scripts/index.ts'],
+        lefthook: false,
+        node: false,
+        project: ['scripts/**/*.ts'],
+      }),
+    );
+    const branches = Array.from(
+      { length: 15 },
+      (_, index) => `if (input > ${index}) result += input * ${index};`,
+    ).join('\n');
+    const body = `export function calculate(input: number) {\nlet result = input;\n${branches}\nreturn result;\n}\n`;
+    writeFileSync(path.join(root, 'scripts/index.ts'), body);
+    writeFileSync(
+      path.join(root, 'scripts/dead.ts'),
+      body.replace('calculate', 'unusedCalculation'),
+    );
+    return root;
+  });
+
+const runFixture = (root: string, output: string, tool: 'all' | 'knip' | 'jscpd' | 'fallow') =>
+  runQualityAudit(root, output, tool).pipe(Effect.provide(NodeServices.layer));
 
 const SummarySchema = Schema.Struct({
   mode: Schema.Literal('report-only'),
@@ -214,22 +230,21 @@ const SummarySchema = Schema.Struct({
   runDirectory: Schema.String,
   status: Schema.String,
 });
-const summary = async (output: string) =>
-  await runEffectTestPromise(
-    Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
-      readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
-    ),
+const summary = (output: string) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
+    readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
   );
 
-await test('real Fallow separates UI penalties from control-flow complexity without hiding branches', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  const props = Array.from({ length: 22 }, (_, index) => `p${index + 1}`).join(', ');
-  const branches = Array.from(
-    { length: 11 },
-    (_, index) => `if (value === ${index + 1}) return ${index + 1};`,
-  ).join('\n');
-  try {
+it.live(
+  'real Fallow separates UI penalties from control-flow complexity without hiding branches',
+  Effect.fn(function* testEffect9() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const props = Array.from({ length: 22 }, (_, index) => `p${index + 1}`).join(', ');
+    const branches = Array.from(
+      { length: 11 },
+      (_, index) => `if (value === ${index + 1}) return ${index + 1};`,
+    ).join('\n');
     writeFileSync(
       path.join(root, 'scripts/metric-example.tsx'),
       `import { useState } from 'react';
@@ -245,52 +260,54 @@ export function branchHeavy(value: number) {
 }
 `,
     );
-    await runFixture(root, output, 'fallow');
-    const result = await summary(output);
+    yield* runFixture(root, output, 'fallow');
+    const result = yield* summary(output);
     const healthDirectory = path.join(result.runDirectory, FALLOW_HEALTH);
-    const rows = await runEffectTestPromise(
-      Schema.decodeUnknownEffect(
-        Schema.fromJsonString(
-          Schema.Array(
-            Schema.Struct({
-              controlFlowCognitive: Schema.Number,
-              exceedsControlFlowLimits: Schema.Boolean,
-              name: Schema.String,
-              weightedCognitive: Schema.Number,
-            }),
-          ),
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Array(
+          Schema.Struct({
+            controlFlowCognitive: Schema.Number,
+            exceedsControlFlowLimits: Schema.Boolean,
+            name: Schema.String,
+            weightedCognitive: Schema.Number,
+          }),
         ),
-      )(readFileSync(path.join(healthDirectory, 'complexity.json'), 'utf-8')),
-    );
+      ),
+    )(readFileSync(path.join(healthDirectory, 'complexity.json'), 'utf-8'));
     const panel = rows.find((row) => row.name === 'Panel');
     const branchHeavy = rows.find((row) => row.name === 'branchHeavy');
-    assert.ok(panel);
-    assert.equal(panel.weightedCognitive, 21);
-    assert.equal(panel.controlFlowCognitive, 0);
-    assert.equal(panel.exceedsControlFlowLimits, false);
-    assert.equal(branchHeavy?.exceedsControlFlowLimits, true);
+    expect(panel).toBeDefined();
+    if (panel === undefined) {
+      throw new Error('Expected panel to be present');
+    }
+    expect(panel.weightedCognitive).toBe(21);
+    expect(panel.controlFlowCognitive).toBe(0);
+    expect(panel.exceedsControlFlowLimits).toBe(false);
+    expect(branchHeavy?.exceedsControlFlowLimits).toBe(true);
     const raw = readFileSync(path.join(healthDirectory, 'report.json'), 'utf-8');
     const corrupted = raw.replace(
       /(?<prefix>"cognitive"\s*:\s*)21/u,
       (_match: string, prefix: string) => `${prefix}22`,
     );
-    assert.notEqual(corrupted, raw);
-    await assert.rejects(validate(FALLOW_HEALTH, corrupted), /contributions disagree/u);
+    expect(corrupted).not.toBe(raw);
+    const contributionsError = yield* Effect.flip(validateReport(FALLOW_HEALTH, corrupted));
+    expect(contributionsError.message).toMatch(/contributions disagree/u);
     const wrongCount = raw.replace(
       /"functions_above_threshold"\s*:\s*\d+/u,
       '"functions_above_threshold": 0',
     );
-    await assert.rejects(validate(FALLOW_HEALTH, wrongCount), /count disagrees/u);
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+    const thresholdCountError = yield* Effect.flip(validateReport(FALLOW_HEALTH, wrongCount));
+    expect(thresholdCountError.message).toMatch(/count disagrees/u);
+  }),
+);
 
-await test('primary clone detectors preserve policy literals while semantic similarity stays advisory', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  const policyFiles = ['policy-read.ts', 'policy-write.ts'];
-  try {
+it.live(
+  'primary clone detectors preserve policy literals while semantic similarity stays advisory',
+  Effect.fn(function* testEffect10() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const policyFiles = ['policy-read.ts', 'policy-write.ts'];
     for (const [index, file] of policyFiles.entries()) {
       const policy = Array.from(
         { length: 16 },
@@ -302,8 +319,8 @@ await test('primary clone detectors preserve policy literals while semantic simi
         `export function selectPolicy(subject: string) {\nreturn {\n${policy}\n};\n}\n`,
       );
     }
-    await runFixture(root, output, 'all');
-    const result = await summary(output);
+    yield* runFixture(root, output, 'all');
+    const result = yield* summary(output);
     const schema = Schema.fromJsonString(
       Schema.Struct({
         clone_groups: Schema.Array(
@@ -311,95 +328,90 @@ await test('primary clone detectors preserve policy literals while semantic simi
         ),
       }),
     );
-    await Promise.all(
-      [FALLOW_CLONES, FALLOW_SIMILARITY].map(async (name) => {
-        const report = await runEffectTestPromise(
-          Schema.decodeUnknownEffect(schema)(
+    yield* Effect.all(
+      [FALLOW_CLONES, FALLOW_SIMILARITY].map((name) =>
+        Effect.gen(function* testEffect11() {
+          const report = yield* Schema.decodeUnknownEffect(schema)(
             readFileSync(path.join(result.runDirectory, name, 'report.json'), 'utf-8'),
-          ),
-        );
-        const matchesDistinctPolicies = report.clone_groups.some((group) =>
-          policyFiles.every((file) =>
-            group.instances.some((instance) => path.basename(instance.file) === file),
-          ),
-        );
-        assert.equal(matchesDistinctPolicies, name === FALLOW_SIMILARITY, name);
-      }),
+          );
+          const matchesDistinctPolicies = report.clone_groups.some((group) =>
+            includesPolicyFiles(group.instances, policyFiles),
+          );
+          expect(matchesDistinctPolicies, name).toBe(name === FALLOW_SIMILARITY);
+        }),
+      ),
+      { concurrency: 'unbounded' },
     );
-    const jscpd = await runEffectTestPromise(
-      Schema.decodeUnknownEffect(
-        Schema.fromJsonString(
-          Schema.Struct({
-            duplicates: Schema.Array(
-              Schema.Struct({
-                firstFile: Schema.Struct({ name: Schema.String }),
-                secondFile: Schema.Struct({ name: Schema.String }),
-              }),
-            ),
-          }),
-        ),
-      )(readFileSync(path.join(result.runDirectory, 'jscpd/report.json'), 'utf-8')),
-    );
-    assert.equal(
+    const jscpd = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          duplicates: Schema.Array(
+            Schema.Struct({
+              firstFile: Schema.Struct({ name: Schema.String }),
+              secondFile: Schema.Struct({ name: Schema.String }),
+            }),
+          ),
+        }),
+      ),
+    )(readFileSync(path.join(result.runDirectory, 'jscpd/report.json'), 'utf-8'));
+    expect(
       jscpd.duplicates.some((pair) =>
         policyFiles.every((file) =>
           [pair.firstFile.name, pair.secondFile.name].some((name) => path.basename(name) === file),
         ),
       ),
-      false,
-    );
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+    ).toBe(false);
+  }),
+);
 
-await test('real pinned tools report debt successfully and isolate stale reports after invalid config', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  try {
-    await runFixture(root, output, 'all');
-    const first = await summary(output);
-    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
-    assert.equal(first.status, 'reported');
-    assert.equal(first.results.length, 6);
+it.live(
+  'real pinned tools report debt successfully and isolate stale reports after invalid config',
+  Effect.fn(function* testEffect12() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    yield* runFixture(root, output, 'all');
+    const first = yield* summary(output);
+    expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
+    expect(first.status).toBe('reported');
+    expect(first.results.length).toBe(6);
     for (const name of ['knip', 'jscpd', FALLOW_CLONES, FALLOW_HEALTH]) {
-      assert.ok(
+      expect(
         first.results.some((row) => row.name === name && row.findings > 0),
         `${name} must report injected debt`,
-      );
+      ).toBe(true);
     }
     writeFileSync(path.join(root, 'quality-audit/jscpd.json'), '{invalid unrelated config');
-    await runFixture(root, output, 'knip');
+    yield* runFixture(root, output, 'knip');
     writeFileSync(path.join(root, KNIP_CONFIG), '{invalid');
-    await assert.rejects(runFixture(root, output, 'knip'), /analysis failed/u);
-    const second = await summary(output);
-    assert.equal(second.status, 'error');
-    assert.notEqual(second.runDirectory, first.runDirectory);
-    assert.equal(second.results[0]?.status, 'error');
-    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
-    assert.equal(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8'), 'keep');
-    assert.match(
-      readFileSync(path.join(output, 'summary.md'), 'utf-8'),
+    const invalidConfigError = yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(invalidConfigError.message).toMatch(/analysis failed/u);
+    const second = yield* summary(output);
+    expect(second.status).toBe('error');
+    expect(second.runDirectory).not.toBe(first.runDirectory);
+    expect(second.results[0]?.status).toBe('error');
+    expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
+    expect(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8')).toBe('keep');
+    expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(
       /Malformed .*configs\/knip\.json/u,
     );
-    assert.ok(
+    expect(
       readFileSync(path.join(first.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0,
-    );
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+    ).toBe(true);
+  }),
+);
 
-await test('missing binaries and an empty source scope fail with preserved summaries', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  try {
+it.live(
+  'missing binaries and an empty source scope fail with preserved summaries',
+  Effect.fn(function* testEffect13() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
     rmSync(path.join(root, 'node_modules'));
-    await assert.rejects(runFixture(root, output, 'knip'), /analysis failed/u);
-    const missing = await summary(output);
-    assert.equal(missing.status, 'error');
+    const missingBinaryError = yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(missingBinaryError.message).toMatch(/analysis failed/u);
+    const missing = yield* summary(output);
+    expect(missing.status).toBe('error');
     const failedDirectory = path.join(missing.runDirectory, 'knip');
-    assert.deepEqual(missing.results, [
+    expect(missing.results).toEqual([
       {
         coverage: {},
         diagnostic: readFileSync(
@@ -413,17 +425,17 @@ await test('missing binaries and an empty source scope fail with preserved summa
         status: 'error',
       },
     ]);
-    assert.match(
-      readFileSync(path.join(missing.runDirectory, 'knip/metadata.json'), 'utf-8'),
+    expect(readFileSync(path.join(missing.runDirectory, 'knip/metadata.json'), 'utf-8')).toMatch(
       /Missing pinned local binary/u,
     );
     writeFileSync(
       path.join(root, 'quality-audit/scope.json'),
-      await stringify({ exclude: [], patterns: ['absent/**/*.ts'] }),
+      yield* encodeReport({ exclude: [], patterns: ['absent/**/*.ts'] }),
     );
-    await assert.rejects(runFixture(root, output, 'jscpd'), /analysis failed/u);
-    const empty = await summary(output);
-    assert.deepEqual(empty.results, [
+    const emptyScopeError = yield* Effect.flip(runFixture(root, output, 'jscpd'));
+    expect(emptyScopeError.message).toMatch(/analysis failed/u);
+    const empty = yield* summary(output);
+    expect(empty.results).toEqual([
       {
         coverage: {},
         diagnostic: 'QualityAuditError: Source inventory: analysis contains no files',
@@ -434,25 +446,21 @@ await test('missing binaries and an empty source scope fail with preserved summa
         status: 'error',
       },
     ]);
-    assert.match(
-      readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
+    expect(readFileSync(path.join(output, SUMMARY_FILE), 'utf-8')).toMatch(
       /Source inventory: analysis contains no files/u,
     );
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+  }),
+);
 
-await test('the CLI handles escaped paths, foreign cwd and untracked source provenance', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  try {
-    await runEffectTestPromise(
-      Effect.gen(function* initializeFixtureRepository() {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        yield* spawner.string(ChildProcess.make('git', ['init', '-q', root]));
-      }).pipe(Effect.provide(NodeServices.layer)),
-    );
+it.live(
+  'the CLI handles forced CI colors, escaped paths, foreign cwd and untracked source provenance',
+  Effect.fn(function* testEffect14() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    yield* Effect.gen(function* initializeFixtureRepository() {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      yield* spawner.string(ChildProcess.make('git', ['init', '-q', root]));
+    }).pipe(Effect.provide(NodeServices.layer));
     mkdirSync(path.join(root, 'scripts/shared'), { recursive: true });
     copyFileSync(
       path.join(appRoot, 'scripts/shared/ultramodern-wrapper-source.mts'),
@@ -470,239 +478,272 @@ await test('the CLI handles escaped paths, foreign cwd and untracked source prov
         path.join(root, CONFIG_DIRECTORY, file),
       );
     }
-    const result = spawnSync(process.execPath, [executable, '--tool', 'knip', '--output', output], {
-      cwd: tmpdir(),
-      encoding: 'utf-8',
-      timeout: 60_000,
-    });
-    assert.equal(
-      result.error,
-      undefined,
-      `CLI spawn failed: ${String(result.error)}\n${result.stdout}\n${result.stderr}`,
+    const result = yield* collectToolingProcess(
+      ChildProcess.make(process.execPath, [executable, '--tool', 'knip', '--output', output], {
+        cwd: tmpdir(),
+        env: { CI: 'true', FORCE_COLOR: '1', GITHUB_ACTIONS: 'true', NO_COLOR: '1' },
+        extendEnv: true,
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
+      }),
+    ).pipe(Effect.scoped, Effect.timeout('60 seconds'), Effect.provide(NodeServices.layer));
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const report = yield* summary(output);
+    expect(report.status).toBe('reported');
+    expect(readFileSync(path.join(report.runDirectory, 'knip/stderr.txt'), 'utf-8')).toBe('');
+    const provenance = yield* Schema.decodeUnknownEffect(ProvenanceSchema)(
+      readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8'),
     );
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    const report = await summary(output);
-    assert.equal(report.status, 'reported');
-    const provenance = await runEffectTestPromise(
-      Schema.decodeUnknownEffect(ProvenanceSchema)(
-        readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8'),
-      ),
+    expect(provenance.sourceState).toBe('modified');
+    expect(provenance.workingTreeChanges.some((file) => file === '?? scripts/index.ts')).toBe(true);
+    expect(!provenance.workingTreeChanges.some((file) => file.startsWith('?? reports/'))).toBe(
+      true,
     );
-    assert.equal(provenance.sourceState, 'modified');
-    assert.ok(provenance.workingTreeChanges.some((file) => file === '?? scripts/index.ts'));
-    assert.ok(!provenance.workingTreeChanges.some((file) => file.startsWith('?? reports/')));
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
-
-void test(
-  'external report directories preserve valid Fallow exclusions and source coverage',
-  makeEffectTestCallback(
-    Effect.scoped(
-      Layer.build(
-        Layer.effectDiscard(
-          Effect.gen(function* externalReportDirectory() {
-            const root = yield* Effect.acquireRelease(Effect.promise(createFixture), (directory) =>
-              Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
-            );
-            const output = yield* Effect.acquireRelease(
-              Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'ontos-external-report-'))),
-              (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
-            );
-            const generatedTypes = path.join(root, 'apps/shell/@mf-types/remote');
-            mkdirSync(generatedTypes, { recursive: true });
-            writeFileSync(path.join(root, GITIGNORE_FILE), '**/@mf-types/\n');
-            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-            const initialized = yield* spawner.exitCode(
-              ChildProcess.make('git', ['init', '-q'], { cwd: root }),
-            );
-            assert.equal(Number(initialized), 0);
-            writeFileSync(
-              path.join(generatedTypes, 'index.d.ts'),
-              'export declare const remoteComponent: unknown;\n',
-            );
-            yield* runQualityAudit(root, output, 'fallow');
-            const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
-              readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
-            );
-            assert.equal(result.status, 'reported');
-            assert.equal(result.results.length, 4);
-            assert.ok(result.results.every((row) => row.status === 'reported' && row.files > 0));
-            const coverage = yield* Schema.decodeUnknownEffect(
-              Schema.fromJsonString(
-                Schema.Struct({
-                  extra: Schema.Array(Schema.String),
-                  intendedSources: Schema.Number,
-                  missing: Schema.Array(Schema.String),
-                }),
-              ),
-            )(readFileSync(path.join(result.runDirectory, 'coverage.json'), 'utf-8'));
-            // Two authored fixture sources plus the copied Knip reporter, not remote declarations.
-            assert.deepEqual(coverage, { extra: [], intendedSources: 3, missing: [] });
-            assert.ok(result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0));
-            assert.equal(
-              readFileSync(path.join(result.runDirectory, 'configs/fallow.json'), 'utf-8'),
-              readFileSync(path.join(root, 'quality-audit/fallow.json'), 'utf-8'),
-            );
-          }),
-        ).pipe(Layer.provide(NodeServices.layer)),
-      ),
-    ),
-  ),
+  }),
 );
 
-await test('output inside a source root fails before creating analyzer snapshots', async () => {
-  const root = await createFixture();
-  const output = path.join(root, 'scripts/reports');
-  try {
-    await assert.rejects(runFixture(root, output, 'all'), /analysis failed/u);
-    const report = await summary(output);
-    assert.equal(report.results[0]?.name, 'setup');
-    assert.match(
-      readFileSync(path.join(output, 'summary.md'), 'utf-8'),
+it.live(
+  'output inside a source root fails before creating analyzer snapshots',
+  Effect.fn(function* testEffect15() {
+    const root = yield* createFixture();
+    const output = path.join(root, 'scripts/reports');
+    const sourceOutputError = yield* Effect.flip(runFixture(root, output, 'all'));
+    expect(sourceOutputError.message).toMatch(/analysis failed/u);
+    const report = yield* summary(output);
+    expect(report.results[0]?.name).toBe('setup');
+    expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(
       /output directory outside configured source roots/u,
     );
-    assert.deepEqual(readdirSync(report.runDirectory), []);
-    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+    expect(readdirSync(report.runDirectory)).toEqual([]);
+    expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
+  }),
+);
 
-await test('symlink output cannot place snapshots in source roots but permits report targets', async () => {
-  const root = await createFixture();
-  const output = path.join(root, 'reports-link');
-  const sourceOutput = path.join(root, 'scripts/reports');
-  const safeOutput = path.join(root, REPORT_DIRECTORY);
-  try {
+it.live(
+  'symlink output cannot place snapshots in source roots but permits report targets',
+  Effect.fn(function* testEffect16() {
+    const root = yield* createFixture();
+    const output = path.join(root, 'reports-link');
+    const sourceOutput = path.join(root, 'scripts/reports');
+    const safeOutput = path.join(root, REPORT_DIRECTORY);
     mkdirSync(sourceOutput);
     symlinkSync(sourceOutput, output, 'dir');
-    await assert.rejects(runFixture(root, output, 'all'), /analysis failed/u);
-    const rejected = await summary(output);
-    assert.equal(rejected.results[0]?.name, 'setup');
-    assert.match(
-      rejected.results[0]?.diagnostic ?? '',
+    const symlinkOutputError = yield* Effect.flip(runFixture(root, output, 'all'));
+    expect(symlinkOutputError.message).toMatch(/analysis failed/u);
+    const rejected = yield* summary(output);
+    expect(rejected.results[0]?.name).toBe('setup');
+    expect(rejected.results[0]?.diagnostic ?? '').toMatch(
       /output directory outside configured source roots/u,
     );
-    assert.deepEqual(readdirSync(rejected.runDirectory), []);
-    assert.deepEqual(readdirSync(path.join(root, '.codex')), [CALLER_OWNED_FILE]);
+    expect(readdirSync(rejected.runDirectory)).toEqual([]);
+    expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
 
     rmSync(output);
     mkdirSync(safeOutput);
     symlinkSync(safeOutput, output, 'dir');
-    await runFixture(root, output, 'jscpd');
-    const accepted = await summary(output);
-    assert.equal(accepted.status, 'reported');
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+    yield* runFixture(root, output, 'jscpd');
+    const accepted = yield* summary(output);
+    expect(accepted.status).toBe('reported');
+  }),
+);
 
-await test('custom output does not mark clean source provenance as modified', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  try {
+it.live(
+  'custom output does not mark clean source provenance as modified',
+  Effect.fn(function* testEffect17() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
     writeFileSync(path.join(root, GITIGNORE_FILE), 'node_modules\n.codex\n');
-    await runEffectTestPromise(
-      Effect.gen(function* commitFixture() {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const commands = [
-          ['init', '-q'],
-          ['add', GITIGNORE_FILE, 'package.json', CONFIG_DIRECTORY, 'scripts'],
-          [
-            '-c',
-            `core.hooksPath=${path.join(root, '.git/no-hooks')}`,
-            '-c',
-            'user.name=Audit test',
-            '-c',
-            'user.email=audit@example.invalid',
-            '-c',
-            'commit.gpgSign=false',
-            'commit',
-            '-qm',
-            'Fixture source',
-          ],
-        ];
-        yield* Effect.forEach(
-          commands,
-          (args) =>
-            spawner
-              .exitCode(ChildProcess.make('git', args, { cwd: root }))
-              .pipe(Effect.tap((code) => Effect.sync(() => assert.equal(Number(code), 0)))),
-          { concurrency: 1 },
-        );
-      }).pipe(Effect.provide(NodeServices.layer)),
+    yield* Effect.gen(function* commitFixture() {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const commands = [
+        ['init', '-q'],
+        ['add', GITIGNORE_FILE, PACKAGE_JSON, CONFIG_DIRECTORY, 'scripts'],
+        [
+          '-c',
+          `core.hooksPath=${path.join(root, '.git/no-hooks')}`,
+          '-c',
+          'user.name=Audit test',
+          '-c',
+          'user.email=audit@example.invalid',
+          '-c',
+          'commit.gpgSign=false',
+          'commit',
+          '-qm',
+          'Fixture source',
+        ],
+      ];
+      yield* Effect.forEach(
+        commands,
+        (args) =>
+          spawner
+            .exitCode(ChildProcess.make('git', args, { cwd: root }))
+            .pipe(Effect.map((code) => expect(Number(code)).toBe(0))),
+        { concurrency: 1 },
+      );
+    }).pipe(Effect.provide(NodeServices.layer));
+    yield* runFixture(root, output, 'jscpd');
+    const report = yield* summary(output);
+    const provenance = yield* Schema.decodeUnknownEffect(ProvenanceSchema)(
+      readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8'),
     );
-    await runFixture(root, output, 'jscpd');
-    const report = await summary(output);
-    const provenance = await runEffectTestPromise(
-      Schema.decodeUnknownEffect(ProvenanceSchema)(
-        readFileSync(path.join(report.runDirectory, 'provenance.json'), 'utf-8'),
-      ),
-    );
-    assert.equal(provenance.sourceState, 'clean');
-    assert.deepEqual(provenance.workingTreeChanges, []);
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+    expect(provenance.sourceState).toBe('clean');
+    expect(provenance.workingTreeChanges).toEqual([]);
+  }),
+);
 
-await test('narrowed workspace and Fallow source discovery produce coverage errors', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  try {
+it.live(
+  'narrowed workspace and Fallow source discovery produce coverage errors',
+  Effect.fn(function* testEffect18() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
     mkdirSync(path.join(root, 'packages/omitted'), { recursive: true });
     writeFileSync(
       path.join(root, 'packages/omitted/package.json'),
-      await stringify({ name: 'omitted', private: true }),
+      yield* encodeReport({ name: 'omitted', private: true }),
     );
-    await assert.rejects(runFixture(root, output, 'knip'), /analysis failed/u);
-    const narrowed = await summary(output);
-    assert.equal(narrowed.results[0]?.status, 'reported');
-    assert.equal(narrowed.results.at(-1)?.name, 'coverage');
-    assert.match(narrowed.results.at(-1)?.diagnostic ?? '', /Knip workspace coverage mismatch/u);
-    assert.ok(
+    const narrowedWorkspaceError = yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(narrowedWorkspaceError.message).toMatch(/analysis failed/u);
+    const narrowed = yield* summary(output);
+    expect(narrowed.results[0]?.status).toBe('reported');
+    expect(narrowed.results.at(-1)?.name).toBe('coverage');
+    expect(narrowed.results.at(-1)?.diagnostic ?? '').toMatch(/Knip workspace coverage mismatch/u);
+    expect(
       narrowed.results.some((result) => result.name === 'coverage' && result.status === 'error'),
-    );
+    ).toBe(true);
     writeFileSync(
       path.join(root, 'quality-audit/fallow.json'),
-      await stringify({ ignorePatterns: ['scripts/**', 'node_modules/**', 'packages/**'] }),
+      yield* encodeReport({ ignorePatterns: ['scripts/**', 'node_modules/**', 'packages/**'] }),
     );
-    await assert.rejects(runFixture(root, output, 'fallow'), /analysis failed/u);
-    const omitted = await summary(output);
-    assert.ok(
+    const omittedSourceError = yield* Effect.flip(runFixture(root, output, 'fallow'));
+    expect(omittedSourceError.message).toMatch(/analysis failed/u);
+    const omitted = yield* summary(output);
+    expect(
       omitted.results.some((result) => result.name === 'coverage' && result.status === 'error'),
-    );
-    assert.match(
-      readFileSync(path.join(omitted.runDirectory, 'coverage.json'), 'utf-8'),
+    ).toBe(true);
+    expect(readFileSync(path.join(omitted.runDirectory, 'coverage.json'), 'utf-8')).toMatch(
       /scripts\/index.ts/u,
     );
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+  }),
+);
 
-await test('a selected tool with the wrong installed version fails before launch', async () => {
-  const root = await createFixture();
-  const output = path.join(root, REPORT_DIRECTORY);
-  try {
+it.live(
+  'a selected tool with the wrong installed version fails before launch',
+  Effect.fn(function* testEffect19() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
     // Replace only the fixture's symlink; never mutate the shared installed dependencies.
     rmSync(path.join(root, 'node_modules'));
     mkdirSync(path.join(root, 'node_modules/knip/bin'), { recursive: true });
     writeFileSync(path.join(root, 'node_modules/knip/bin/knip.js'), 'must never execute');
     writeFileSync(
       path.join(root, 'node_modules/knip/package.json'),
-      await stringify({ version: '0.0.0' }),
+      yield* encodeReport({ version: '0.0.0' }),
     );
-    await assert.rejects(runFixture(root, output, 'knip'), /analysis failed/u);
-    const mismatch = await summary(output);
-    assert.match(
-      readFileSync(path.join(mismatch.runDirectory, 'knip/metadata.json'), 'utf-8'),
+    const versionError = yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(versionError.message).toMatch(/analysis failed/u);
+    const mismatch = yield* summary(output);
+    expect(readFileSync(path.join(mismatch.runDirectory, 'knip/metadata.json'), 'utf-8')).toMatch(
       /Expected knip 6\.34\.0, found 0\.0\.0/u,
     );
-    assert.equal(readFileSync(path.join(mismatch.runDirectory, 'knip/stdout.txt'), 'utf-8'), '');
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-  }
-});
+    expect(readFileSync(path.join(mismatch.runDirectory, 'knip/stdout.txt'), 'utf-8')).toBe('');
+  }),
+);
+
+it.live(
+  'jscpd accepts only its config banner and preserves additional diagnostics on failure',
+  Effect.fn(function* testAnalyzerDiagnostics() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    // Replace only the fixture symlink, retaining the real installed tools unchanged.
+    rmSync(path.join(root, 'node_modules'));
+    const toolDirectory = path.join(root, 'node_modules/jscpd');
+    mkdirSync(toolDirectory, { recursive: true });
+    writeFileSync(
+      path.join(toolDirectory, PACKAGE_JSON),
+      yield* encodeReport({ type: 'module', version: '5.1.2' }),
+    );
+    const report = yield* encodeReport({
+      duplicates: [],
+      statistics: { total: { clones: 0, sources: 2 } },
+    });
+    const warning = 'Warning: unable to parse scripts/dead.ts';
+    for (const diagnostic of ['', `${warning}\n`]) {
+      writeFileSync(
+        path.join(toolDirectory, 'run-jscpd.js'),
+        [
+          "import { writeFileSync } from 'node:fs';",
+          "import path from 'node:path';",
+          "console.error('Using config from ' + process.argv[3]);",
+          `process.stderr.write(${JSON.stringify(diagnostic)});`,
+          `writeFileSync(path.join(process.argv[5], 'jscpd-report.json'), ${JSON.stringify(report)});`,
+        ].join('\n'),
+      );
+      if (diagnostic) {
+        const issue = yield* Effect.flip(runFixture(root, output, 'jscpd'));
+        expect(issue.message).toMatch(/analysis failed/u);
+      } else {
+        yield* runFixture(root, output, 'jscpd');
+      }
+      const result = yield* summary(output);
+      const directory = path.join(result.runDirectory, 'jscpd');
+      expect(result.status).toBe(diagnostic ? 'error' : 'reported');
+      expect(readFileSync(path.join(directory, 'stderr.txt'), 'utf-8')).toBe(
+        `Using config from ${result.runDirectory}/jscpd.config.json\n${diagnostic}`,
+      );
+      expect(readFileSync(path.join(directory, 'jscpd-report.json'), 'utf-8')).toBe(report);
+      if (diagnostic) {
+        expect(result.results[0]?.diagnostic).toMatch(/Analyzer emitted diagnostics/u);
+        expect(readFileSync(path.join(directory, 'validation-error.txt'), 'utf-8')).toMatch(
+          /Analyzer emitted diagnostics/u,
+        );
+      }
+    }
+  }),
+);
+
+it.live('external report directories preserve valid Fallow exclusions and source coverage', () =>
+  Effect.gen(function* externalReportDirectory() {
+    const root = yield* createFixture();
+    const output = yield* Effect.acquireRelease(
+      Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'ontos-external-report-'))),
+      (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+    );
+    const generatedTypes = path.join(root, 'apps/shell/@mf-types/remote');
+    mkdirSync(generatedTypes, { recursive: true });
+    writeFileSync(path.join(root, GITIGNORE_FILE), '**/@mf-types/\n');
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const initialized = yield* spawner.exitCode(
+      ChildProcess.make('git', ['init', '-q'], { cwd: root }),
+    );
+    expect(Number(initialized)).toBe(0);
+    writeFileSync(
+      path.join(generatedTypes, 'index.d.ts'),
+      'export declare const remoteComponent: unknown;\n',
+    );
+    yield* runQualityAudit(root, output, 'fallow');
+    const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(SummarySchema))(
+      readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'),
+    );
+    expect(result.status).toBe('reported');
+    expect(result.results.length).toBe(4);
+    expect(result.results.every((row) => row.status === 'reported' && row.files > 0)).toBeTruthy();
+    const coverage = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          extra: Schema.Array(Schema.String),
+          intendedSources: Schema.Number,
+          missing: Schema.Array(Schema.String),
+        }),
+      ),
+    )(readFileSync(path.join(result.runDirectory, 'coverage.json'), 'utf-8'));
+    // Two authored fixture sources plus the copied Knip reporter, not remote declarations.
+    expect(coverage).toEqual({ extra: [], intendedSources: 3, missing: [] });
+    expect(
+      result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0),
+    ).toBeTruthy();
+    expect(readFileSync(path.join(result.runDirectory, 'configs/fallow.json'), 'utf-8')).toBe(
+      readFileSync(path.join(root, 'quality-audit/fallow.json'), 'utf-8'),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

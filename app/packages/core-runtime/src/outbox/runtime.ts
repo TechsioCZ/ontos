@@ -282,9 +282,7 @@ const failOutboxDelivery = Effect.fn('OutboxRuntime.failDelivery')(
     outcome: string,
   ) {
     const status = yield* repository.fail(claim, reason, now).pipe(
-      Effect.catchTag('OutboxPersistenceError', (error) =>
-        Effect.andThen(logUnexpectedPersistence(claim), Effect.fail(error)),
-      ),
+      Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
       (effect) => withOutcomeSpan(effect, claim, outcome),
     );
     return {
@@ -371,9 +369,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
     }
 
     yield* repository.complete(claim, execution.now).pipe(
-      Effect.catchTag('OutboxPersistenceError', (error) =>
-        Effect.andThen(logUnexpectedPersistence(claim), Effect.fail(error)),
-      ),
+      Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
       (effect) => withOutcomeSpan(effect, claim, 'success'),
     );
     return { ...claimedState, succeeded: claimedState.succeeded + 1 };

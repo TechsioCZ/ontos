@@ -1,11 +1,10 @@
+import { expect, it } from 'effect-rstest';
 import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { Cause, Effect, Exit, Match, Option, Schema, flow } from 'effect';
-import assert from 'node:assert/strict';
-import test, { after, before } from 'node:test';
+import { Cause, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
@@ -84,13 +83,6 @@ const withDatabase = <Value, Error>(
     }),
   );
 
-const effectCallback = <Value, Error>(effect: Effect.Effect<Value, Error>) =>
-  flow(() => Effect.asVoid(effect), runEffectTestPromise);
-
-const effectTest = <Value, Error>(name: string, effect: Effect.Effect<Value, Error>): void => {
-  test(name, effectCallback(effect));
-};
-
 const cleanup = withDatabase((database) =>
   Effect.gen(function* cleanTenantModuleStateFixtures() {
     // Keep dependent evidence ahead of its referenced identity rows.
@@ -109,69 +101,69 @@ const cleanup = withDatabase((database) =>
   }),
 );
 
-before(
-  Effect.gen(function* initializeTenantModuleStateFixtures() {
-    yield* cleanup;
-    yield* withDatabase((database) =>
-      Effect.gen(function* insertTenantModuleStateFixtures() {
-        yield* database.executor.insert(tenants).values([
-          {
-            defaultLocale: 'en',
-            name: 'Tenant module state one',
-            slug: `tenant-module-state-${tenantOne}`,
-            status: 'active',
-            tenantId: tenantOne,
-          },
-          {
-            defaultLocale: 'en',
-            name: 'Tenant module state two',
-            slug: `tenant-module-state-${tenantTwo}`,
-            status: 'active',
-            tenantId: tenantTwo,
-          },
-        ]);
-        yield* database.executor.insert(principals).values([
-          {
-            displayName: 'Tenant module state principal one',
-            kind: 'human',
-            principalId: principalOne,
-            status: 'active',
-            tenantId: tenantOne,
-          },
-          {
-            displayName: 'Tenant module state principal two',
-            kind: 'human',
-            principalId: principalTwo,
-            status: 'active',
-            tenantId: tenantTwo,
-          },
-        ]);
-        yield* database.executor.insert(principalAuthBindings).values([
-          {
-            principalAuthBindingId: bindingOne,
-            principalId: principalOne,
-            provider: 'better_auth',
-            providerSubjectId: `tenant-module-state-user-${principalOne}`,
-            status: 'active',
-            subjectType: 'user',
-            tenantId: tenantOne,
-          },
-          {
-            principalAuthBindingId: bindingTwo,
-            principalId: principalTwo,
-            provider: 'better_auth',
-            providerSubjectId: `tenant-module-state-user-${principalTwo}`,
-            status: 'active',
-            subjectType: 'user',
-            tenantId: tenantTwo,
-          },
-        ]);
-      }),
-    );
-  }).pipe(effectCallback),
-);
+const setup = Effect.gen(function* initializeTenantModuleStateFixtures() {
+  yield* cleanup;
+  yield* withDatabase((database) =>
+    Effect.gen(function* insertTenantModuleStateFixtures() {
+      yield* database.executor.insert(tenants).values([
+        {
+          defaultLocale: 'en',
+          name: 'Tenant module state one',
+          slug: `tenant-module-state-${tenantOne}`,
+          status: 'active',
+          tenantId: tenantOne,
+        },
+        {
+          defaultLocale: 'en',
+          name: 'Tenant module state two',
+          slug: `tenant-module-state-${tenantTwo}`,
+          status: 'active',
+          tenantId: tenantTwo,
+        },
+      ]);
+      yield* database.executor.insert(principals).values([
+        {
+          displayName: 'Tenant module state principal one',
+          kind: 'human',
+          principalId: principalOne,
+          status: 'active',
+          tenantId: tenantOne,
+        },
+        {
+          displayName: 'Tenant module state principal two',
+          kind: 'human',
+          principalId: principalTwo,
+          status: 'active',
+          tenantId: tenantTwo,
+        },
+      ]);
+      yield* database.executor.insert(principalAuthBindings).values([
+        {
+          principalAuthBindingId: bindingOne,
+          principalId: principalOne,
+          provider: 'better_auth',
+          providerSubjectId: `tenant-module-state-user-${principalOne}`,
+          status: 'active',
+          subjectType: 'user',
+          tenantId: tenantOne,
+        },
+        {
+          principalAuthBindingId: bindingTwo,
+          principalId: principalTwo,
+          provider: 'better_auth',
+          providerSubjectId: `tenant-module-state-user-${principalTwo}`,
+          status: 'active',
+          subjectType: 'user',
+          tenantId: tenantTwo,
+        },
+      ]);
+    }),
+  );
+});
 
-after(cleanup.pipe(effectCallback));
+const Fixtures = Layer.effectDiscard(
+  Effect.acquireRelease(setup, () => cleanup.pipe(Effect.orDie)),
+);
 
 const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
@@ -231,8 +223,8 @@ const verifyHistoryEvidence = (
       .select()
       .from(actionInvocations)
       .where(eq(actionInvocations.actionInvocationId, row.actionInvocationId ?? ''));
-    assert.equal(invocation?.principalId, principalOne);
-    assert.equal(invocation?.status, 'succeeded');
+    expect(invocation?.principalId).toBe(principalOne);
+    expect(invocation?.status).toBe('succeeded');
     const audit = yield* database.executor
       .select()
       .from(auditEvents)
@@ -241,277 +233,253 @@ const verifyHistoryEvidence = (
       .select()
       .from(dataAccessEvents)
       .where(eq(dataAccessEvents.actionInvocationId, row.actionInvocationId ?? ''));
-    assert.ok(audit.some((event) => event.eventType === 'action.executed'));
-    assert.equal(access.length, 1);
-    assert.deepEqual(
-      access.map((event) => event.targetResourceType),
-      ['tenant-module-state'],
-    );
-    assert.ok(access.every((event) => event.accessKind === 'read'));
+    expect(audit.some((event) => event.eventType === 'action.executed')).toBe(true);
+    expect(access.length).toBe(1);
+    expect(access.map((event) => event.targetResourceType)).toEqual(['tenant-module-state']);
+    expect(access.every((event) => event.accessKind === 'read')).toBe(true);
   });
 
-effectTest(
-  'lists exact active rows and all states for one trusted tenant in module-key order',
-  withDatabase((database) =>
-    Effect.gen(function* listTenantModuleStates() {
-      yield* database.executor.insert(tenantModuleStates).values([
-        { moduleKey: 'list.zeta', state: 'active', tenantId: tenantOne },
-        { moduleKey: 'list.alpha', state: 'active', tenantId: tenantOne },
-        { moduleKey: 'list.inactive', state: 'inactive', tenantId: tenantOne },
-        { moduleKey: 'list.alpha', state: 'active', tenantId: tenantTwo },
-      ]);
+const tenantModuleStateTest1 = withDatabase((database) =>
+  Effect.gen(function* listTenantModuleStates() {
+    yield* database.executor.insert(tenantModuleStates).values([
+      { moduleKey: 'list.zeta', state: 'active', tenantId: tenantOne },
+      { moduleKey: 'list.alpha', state: 'active', tenantId: tenantOne },
+      { moduleKey: 'list.inactive', state: 'inactive', tenantId: tenantOne },
+      { moduleKey: 'list.alpha', state: 'active', tenantId: tenantTwo },
+    ]);
 
-      const service = makeTenantModuleStateService(database);
-      assert.deepEqual(yield* service.listActiveTenantModules(tenantOne), [
-        { moduleKey: 'list.alpha', state: 'active' },
-        { moduleKey: 'list.zeta', state: 'active' },
-      ]);
-      assert.deepEqual(yield* service.listActiveTenantModules(tenantTwo), [
-        { moduleKey: 'list.alpha', state: 'active' },
-      ]);
-      assert.deepEqual(yield* service.listTenantModuleStates(tenantOne), [
-        { moduleKey: 'list.alpha', state: 'active' },
-        { moduleKey: 'list.inactive', state: 'inactive' },
-        { moduleKey: 'list.zeta', state: 'active' },
-      ]);
-      assert.deepEqual(yield* service.listTenantModuleStates(tenantTwo), [
-        { moduleKey: 'list.alpha', state: 'active' },
-      ]);
-    }),
-  ),
+    const service = makeTenantModuleStateService(database);
+    expect(yield* service.listActiveTenantModules(tenantOne)).toEqual([
+      { moduleKey: 'list.alpha', state: 'active' },
+      { moduleKey: 'list.zeta', state: 'active' },
+    ]);
+    expect(yield* service.listActiveTenantModules(tenantTwo)).toEqual([
+      { moduleKey: 'list.alpha', state: 'active' },
+    ]);
+    expect(yield* service.listTenantModuleStates(tenantOne)).toEqual([
+      { moduleKey: 'list.alpha', state: 'active' },
+      { moduleKey: 'list.inactive', state: 'inactive' },
+      { moduleKey: 'list.zeta', state: 'active' },
+    ]);
+    expect(yield* service.listTenantModuleStates(tenantTwo)).toEqual([
+      { moduleKey: 'list.alpha', state: 'active' },
+    ]);
+  }),
 );
+const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantModuleState() {
+  const moduleKey = testModuleKey('testing', tenantOne);
 
-effectTest(
-  'atomically creates and transitions state with truthful Action history and evidence',
-  Effect.gen(function* createAndTransitionTenantModuleState() {
-    const moduleKey = testModuleKey('testing', tenantOne);
-
-    yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        database,
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
-      );
-      return Effect.gen(function* transitionSequence() {
-        const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
-        assert.deepEqual(created, { moduleKey, newState: 'active', previousState: null });
-        const suspended = yield* runtime.runAction(actionInput(moduleKey, 'suspended', 'suspend'));
-        assert.deepEqual(suspended, {
-          moduleKey,
-          newState: 'suspended',
-          previousState: 'active',
-        });
-        const reactivated = yield* runtime.runAction(
-          actionInput(moduleKey, 'active', 'reactivate'),
-        );
-        assert.deepEqual(reactivated, {
-          moduleKey,
-          newState: 'active',
-          previousState: 'suspended',
-        });
+  yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
+    );
+    return Effect.gen(function* transitionSequence() {
+      const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
+      expect(created).toEqual({ moduleKey, newState: 'active', previousState: null });
+      const suspended = yield* runtime.runAction(actionInput(moduleKey, 'suspended', 'suspend'));
+      expect(suspended).toEqual({
+        moduleKey,
+        newState: 'suspended',
+        previousState: 'active',
+      });
+      const reactivated = yield* runtime.runAction(actionInput(moduleKey, 'active', 'reactivate'));
+      expect(reactivated).toEqual({
+        moduleKey,
+        newState: 'active',
+        previousState: 'suspended',
       });
     });
+  });
 
-    yield* withDatabase((database) =>
-      Effect.gen(function* verifyTenantModuleStateHistory() {
-        const [current] = yield* database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(
-            and(
-              eq(tenantModuleStates.tenantId, tenantOne),
-              eq(tenantModuleStates.moduleKey, moduleKey),
-            ),
-          );
-        const history = yield* database.executor
-          .select()
-          .from(tenantModuleStateChanges)
-          .where(
-            and(
-              eq(tenantModuleStateChanges.tenantId, tenantOne),
-              eq(tenantModuleStateChanges.moduleKey, moduleKey),
-            ),
-          )
-          .orderBy(asc(tenantModuleStateChanges.occurredAt));
-        assert.equal(current?.state, 'active');
-        assert.equal(history.length, 3);
-        assert.deepEqual(
-          history.map(({ changeSource, newState, previousState }) => ({
-            changeSource,
-            newState,
-            previousState,
-          })),
-          [
-            { changeSource: 'user', newState: 'active', previousState: null },
-            { changeSource: 'user', newState: 'suspended', previousState: 'active' },
-            { changeSource: 'user', newState: 'active', previousState: 'suspended' },
-          ],
+  yield* withDatabase((database) =>
+    Effect.gen(function* verifyTenantModuleStateHistory() {
+      const [current] = yield* database.executor
+        .select()
+        .from(tenantModuleStates)
+        .where(
+          and(
+            eq(tenantModuleStates.tenantId, tenantOne),
+            eq(tenantModuleStates.moduleKey, moduleKey),
+          ),
         );
-        assert.equal(current?.lastChangeId, history.at(-1)?.moduleStateChangeId);
-        assert.ok(history.every((row) => row.changedByPrincipalId === principalOne));
-        assert.ok(history.every((row) => row.actionInvocationId !== null));
-        assert.ok(
-          history.every((row) => row.reason?.startsWith('Integration transition to ') === true),
-        );
+      const history = yield* database.executor
+        .select()
+        .from(tenantModuleStateChanges)
+        .where(
+          and(
+            eq(tenantModuleStateChanges.tenantId, tenantOne),
+            eq(tenantModuleStateChanges.moduleKey, moduleKey),
+          ),
+        )
+        .orderBy(asc(tenantModuleStateChanges.occurredAt));
+      expect(current?.state).toBe('active');
+      expect(history.length).toBe(3);
+      expect(
+        history.map(({ changeSource, newState, previousState }) => ({
+          changeSource,
+          newState,
+          previousState,
+        })),
+      ).toEqual([
+        { changeSource: 'user', newState: 'active', previousState: null },
+        { changeSource: 'user', newState: 'suspended', previousState: 'active' },
+        { changeSource: 'user', newState: 'active', previousState: 'suspended' },
+      ]);
+      expect(current?.lastChangeId).toBe(history.at(-1)?.moduleStateChangeId);
+      expect(history.every((row) => row.changedByPrincipalId === principalOne)).toBe(true);
+      expect(history.every((row) => row.actionInvocationId !== null)).toBe(true);
+      expect(
+        history.every((row) => row.reason?.startsWith('Integration transition to ') === true),
+      ).toBe(true);
 
-        yield* Effect.forEach(history, (row) => verifyHistoryEvidence(database, row), {
-          concurrency: 1,
-        });
-      }),
-    );
-  }),
-);
+      yield* Effect.forEach(history, (row) => verifyHistoryEvidence(database, row), {
+        concurrency: 1,
+      });
+    }),
+  );
+});
+const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleStates() {
+  const otherModuleKey = testModuleKey('other', tenantOne);
+  const targetModuleKey = testModuleKey('independent', tenantOne);
+  const transitionCatalog = catalogFrom(
+    installedContract(otherModuleKey),
+    installedContract(targetModuleKey),
+  );
+  yield* withDatabase((database) =>
+    database.executor.insert(tenantModuleStates).values({
+      moduleKey: otherModuleKey,
+      state: 'inactive',
+      tenantId: tenantOne,
+    }),
+  );
 
-effectTest(
-  'supports every declared state independently of other installed module states',
-  Effect.gen(function* allDeclaredTenantModuleStates() {
-    const otherModuleKey = testModuleKey('other', tenantOne);
-    const targetModuleKey = testModuleKey('independent', tenantOne);
-    const transitionCatalog = catalogFrom(
-      installedContract(otherModuleKey),
-      installedContract(targetModuleKey),
+  yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
-    yield* withDatabase((database) =>
-      database.executor.insert(tenantModuleStates).values({
-        moduleKey: otherModuleKey,
-        state: 'inactive',
-        tenantId: tenantOne,
-      }),
-    );
-
-    yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        database,
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
+    const withCatalog = <Value, Error, Requirements>(
+      effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
+    ) =>
+      effect.pipe(
+        Effect.provideService(InstalledModuleCatalogService, {
+          load: Effect.succeed(transitionCatalog),
+        }),
       );
-      const withCatalog = <Value, Error, Requirements>(
-        effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
-      ) =>
-        effect.pipe(
-          Effect.provideService(InstalledModuleCatalogService, {
-            load: Effect.succeed(transitionCatalog),
-          }),
-        );
-      const states = [
+    const states = [
+      'active',
+      'read_only',
+      'suspended',
+      'quarantined',
+      'deprecated',
+      'archived',
+      'inactive',
+    ] as const;
+    return Effect.forEach(
+      states,
+      (state) =>
+        withCatalog(runtime.runAction(actionInput(targetModuleKey, state, `independent-${state}`))),
+      { concurrency: 1, discard: true },
+    );
+  });
+
+  yield* withDatabase((database) =>
+    Effect.gen(function* verifyAllDeclaredStates() {
+      const stateRows = yield* database.executor
+        .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+        .from(tenantModuleStates)
+        .where(inArray(tenantModuleStates.moduleKey, [otherModuleKey, targetModuleKey]));
+      const historyRows = yield* database.executor
+        .select()
+        .from(tenantModuleStateChanges)
+        .where(eq(tenantModuleStateChanges.moduleKey, targetModuleKey));
+      expect(Object.fromEntries(stateRows.map((row) => [row.moduleKey, row.state]))).toEqual({
+        [otherModuleKey]: 'inactive',
+        [targetModuleKey]: 'inactive',
+      });
+      expect(historyRows.map(({ newState }) => newState).toSorted()).toEqual([
         'active',
+        'archived',
+        'deprecated',
+        'inactive',
+        'quarantined',
         'read_only',
         'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-        'inactive',
-      ] as const;
-      return Effect.forEach(
-        states,
-        (state) =>
-          withCatalog(
-            runtime.runAction(actionInput(targetModuleKey, state, `independent-${state}`)),
-          ),
-        { concurrency: 1, discard: true },
-      );
-    });
+      ]);
+    }),
+  );
+});
+const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameStateRejection() {
+  const moduleKey = testModuleKey('idempotency', tenantOne);
+  const input = actionInput(moduleKey, 'active', 'same-intent');
 
-    yield* withDatabase((database) =>
-      Effect.gen(function* verifyAllDeclaredStates() {
-        const stateRows = yield* database.executor
-          .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
-          .from(tenantModuleStates)
-          .where(inArray(tenantModuleStates.moduleKey, [otherModuleKey, targetModuleKey]));
-        const historyRows = yield* database.executor
-          .select()
-          .from(tenantModuleStateChanges)
-          .where(eq(tenantModuleStateChanges.moduleKey, targetModuleKey));
-        assert.deepEqual(Object.fromEntries(stateRows.map((row) => [row.moduleKey, row.state])), {
-          [otherModuleKey]: 'inactive',
-          [targetModuleKey]: 'inactive',
-        });
-        assert.deepEqual(historyRows.map(({ newState }) => newState).toSorted(), [
-          'active',
-          'archived',
-          'deprecated',
-          'inactive',
-          'quarantined',
-          'read_only',
-          'suspended',
-        ]);
-      }),
+  yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
-  }),
-);
-
-effectTest(
-  'idempotent replay and same-state rejection create no duplicate history or evidence',
-  Effect.gen(function* idempotentReplayAndSameStateRejection() {
-    const moduleKey = testModuleKey('idempotency', tenantOne);
-    const input = actionInput(moduleKey, 'active', 'same-intent');
-
-    yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        database,
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
-      );
-      return runtime.runAction(input);
-    });
-    const replay = yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        database,
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
-      );
-      return Effect.exit(runtime.runAction(input));
-    });
-    assert.equal(failureTag(replay), 'ActionAlreadyCommitted');
-
-    const unchanged = yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        database,
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
-      );
-      return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'same-state')));
-    });
-    assert.equal(failureTag(unchanged), 'TenantModuleStateUnchangedError');
-
-    yield* withDatabase((database) =>
-      Effect.gen(function* verifyIdempotentEvidence() {
-        const history = yield* database.executor
-          .select()
-          .from(tenantModuleStateChanges)
-          .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
-        assert.equal(history.length, 1);
-        const unchangedInvocation = yield* database.executor
-          .select()
-          .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, 'same-state'));
-        assert.equal(unchangedInvocation.length, 1);
-        const invocationId = unchangedInvocation[0]?.actionInvocationId ?? '';
-        const unchangedAudit = yield* database.executor
-          .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.actionInvocationId, invocationId));
-        assert.equal(unchangedAudit.length, 0);
-        const unchangedAccess = yield* database.executor
-          .select()
-          .from(dataAccessEvents)
-          .where(eq(dataAccessEvents.actionInvocationId, invocationId));
-        assert.equal(unchangedAccess.length, 0);
-      }),
+    return runtime.runAction(input);
+  });
+  const replay = yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
-  }),
-);
+    return Effect.exit(runtime.runAction(input));
+  });
+  expect(failureTag(replay)).toBe('ActionAlreadyCommitted');
 
+  const unchanged = yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
+    );
+    return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'same-state')));
+  });
+  expect(failureTag(unchanged)).toBe('TenantModuleStateUnchangedError');
+
+  yield* withDatabase((database) =>
+    Effect.gen(function* verifyIdempotentEvidence() {
+      const history = yield* database.executor
+        .select()
+        .from(tenantModuleStateChanges)
+        .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
+      expect(history.length).toBe(1);
+      const unchangedInvocation = yield* database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, 'same-state'));
+      expect(unchangedInvocation.length).toBe(1);
+      const invocationId = unchangedInvocation[0]?.actionInvocationId ?? '';
+      const unchangedAudit = yield* database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, invocationId));
+      expect(unchangedAudit.length).toBe(0);
+      const unchangedAccess = yield* database.executor
+        .select()
+        .from(dataAccessEvents)
+        .where(eq(dataAccessEvents.actionInvocationId, invocationId));
+      expect(unchangedAccess.length).toBe(0);
+    }),
+  );
+});
 const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService => {
   const transaction: DatabaseService['executor']['transaction'] = (operation) =>
     database.executor.transaction((currentTransaction) =>
@@ -540,57 +508,50 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
   );
   return { executor };
 };
-
-effectTest(
-  'rolls back history and Action evidence when current-state persistence fails',
-  Effect.gen(function* rollbackFailedTenantModuleStateWrite() {
-    const moduleKey = testModuleKey('rollback', tenantOne);
-    const failure = yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        withTenantStateWriteFailure(database),
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
-      );
-      return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure')));
-    });
-    assert.equal(
-      failureTag(failure),
-      'TenantModuleStatePersistenceUnavailableError',
-      Exit.isFailure(failure) ? Cause.pretty(failure.cause) : 'success',
+const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleStateWrite() {
+  const moduleKey = testModuleKey('rollback', tenantOne);
+  const failure = yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      withTenantStateWriteFailure(database),
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
+    return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure')));
+  });
+  expect(
+    failureTag(failure),
+    Exit.isFailure(failure) ? Cause.pretty(failure.cause) : 'success',
+  ).toBe('TenantModuleStatePersistenceUnavailableError');
 
-    yield* withDatabase((database) =>
-      Effect.gen(function* verifyFailedWriteRollback() {
-        const states = yield* database.executor
-          .select()
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleKey));
-        assert.equal(states.length, 0);
-        const history = yield* database.executor
-          .select()
-          .from(tenantModuleStateChanges)
-          .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
-        assert.equal(history.length, 0);
-        const [invocation] = yield* database.executor
-          .select()
-          .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, 'forced-failure'));
-        assert.ok(invocation);
-        const audits = yield* database.executor
-          .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
-        assert.equal(audits.length, 0);
-      }),
-    );
-  }),
-);
-
-effectTest(
-  'serializes concurrent transitions into one truthful history chain',
-  Effect.gen(function* serializeConcurrentTenantModuleStateTransitions() {
+  yield* withDatabase((database) =>
+    Effect.gen(function* verifyFailedWriteRollback() {
+      const states = yield* database.executor
+        .select()
+        .from(tenantModuleStates)
+        .where(eq(tenantModuleStates.moduleKey, moduleKey));
+      expect(states.length).toBe(0);
+      const history = yield* database.executor
+        .select()
+        .from(tenantModuleStateChanges)
+        .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
+      expect(history.length).toBe(0);
+      const [invocation] = yield* database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, 'forced-failure'));
+      expect(invocation).toBeDefined();
+      const audits = yield* database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, invocation?.actionInvocationId ?? ''));
+      expect(audits.length).toBe(0);
+    }),
+  );
+});
+const tenantModuleStateTest6 = Effect.gen(
+  function* serializeConcurrentTenantModuleStateTransitions() {
     const moduleKey = testModuleKey('concurrency', tenantOne);
     yield* withDatabase((database) => {
       const runtime = makeActionRuntime(
@@ -621,7 +582,7 @@ effectTest(
         }),
       { concurrency: 'unbounded' },
     );
-    assert.ok(exits.every(Exit.isSuccess));
+    expect(exits.every(Exit.isSuccess)).toBe(true);
 
     yield* withDatabase((database) =>
       Effect.gen(function* verifySerializedTransitions() {
@@ -633,57 +594,89 @@ effectTest(
           .select()
           .from(tenantModuleStateChanges)
           .where(eq(tenantModuleStateChanges.moduleKey, moduleKey));
-        assert.equal(history.length, 3);
+        expect(history.length).toBe(3);
         const last = history.find((row) => row.moduleStateChangeId === current?.lastChangeId);
         const concurrentFirst = history.find(
           (row) =>
             row.previousState === 'inactive' &&
             row.moduleStateChangeId !== last?.moduleStateChangeId,
         );
-        assert.ok(last);
-        assert.ok(concurrentFirst);
-        assert.equal(last.previousState, concurrentFirst.newState);
-        assert.equal(current?.state, last.newState);
+        expect(last).toBeDefined();
+        expect(concurrentFirst).toBeDefined();
+        expect(last?.previousState).toBe(concurrentFirst?.newState);
+        expect(current?.state).toBe(last?.newState);
       }),
     );
-  }),
+  },
 );
+const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
+  const moduleKey = testModuleKey('isolation', tenantOne);
+  yield* withDatabase((database) =>
+    database.executor.insert(tenantModuleStates).values({
+      moduleKey,
+      state: 'active',
+      tenantId: tenantTwo,
+    }),
+  );
 
-effectTest(
-  'derives tenant scope only from the trusted principal',
-  Effect.gen(function* deriveTrustedTenantScope() {
-    const moduleKey = testModuleKey('isolation', tenantOne);
-    yield* withDatabase((database) =>
-      database.executor.insert(tenantModuleStates).values({
-        moduleKey,
-        state: 'active',
-        tenantId: tenantTwo,
-      }),
+  yield* withDatabase((database) => {
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      allowedPermission,
+      testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
+    return runtime.runAction(actionInput(moduleKey, 'suspended', 'tenant-isolation'));
+  });
 
-    yield* withDatabase((database) => {
-      const runtime = makeActionRuntime(
-        database,
-        makeActionRepository(),
-        allowedPermission,
-        testOperationalScopeResolver,
-        openActionRuntimeOptions,
-      );
-      return runtime.runAction(actionInput(moduleKey, 'suspended', 'tenant-isolation'));
-    });
+  yield* withDatabase((database) =>
+    Effect.gen(function* verifyTrustedTenantScope() {
+      const rows = yield* database.executor
+        .select({ state: tenantModuleStates.state, tenantId: tenantModuleStates.tenantId })
+        .from(tenantModuleStates)
+        .where(eq(tenantModuleStates.moduleKey, moduleKey))
+        .orderBy(asc(tenantModuleStates.tenantId));
+      expect(Object.fromEntries(rows.map((row) => [row.tenantId, row.state]))).toEqual({
+        [tenantOne]: 'suspended',
+        [tenantTwo]: 'active',
+      });
+    }),
+  );
+});
+it.layer(Fixtures, { excludeTestServices: true })('tenant module state', (suite) => {
+  suite.effect(
+    'lists exact active rows and all states for one trusted tenant in module-key order',
+    () => tenantModuleStateTest1,
+  );
 
-    yield* withDatabase((database) =>
-      Effect.gen(function* verifyTrustedTenantScope() {
-        const rows = yield* database.executor
-          .select({ state: tenantModuleStates.state, tenantId: tenantModuleStates.tenantId })
-          .from(tenantModuleStates)
-          .where(eq(tenantModuleStates.moduleKey, moduleKey))
-          .orderBy(asc(tenantModuleStates.tenantId));
-        assert.deepEqual(Object.fromEntries(rows.map((row) => [row.tenantId, row.state])), {
-          [tenantOne]: 'suspended',
-          [tenantTwo]: 'active',
-        });
-      }),
-    );
-  }),
-);
+  suite.effect(
+    'atomically creates and transitions state with truthful Action history and evidence',
+    () => tenantModuleStateTest2,
+  );
+
+  suite.effect(
+    'supports every declared state independently of other installed module states',
+    () => tenantModuleStateTest3,
+  );
+
+  suite.effect(
+    'idempotent replay and same-state rejection create no duplicate history or evidence',
+    () => tenantModuleStateTest4,
+  );
+
+  suite.effect(
+    'rolls back history and Action evidence when current-state persistence fails',
+    () => tenantModuleStateTest5,
+  );
+
+  suite.effect(
+    'serializes concurrent transitions into one truthful history chain',
+    () => tenantModuleStateTest6,
+  );
+
+  suite.effect(
+    'derives tenant scope only from the trusted principal',
+    () => tenantModuleStateTest7,
+  );
+});

@@ -1,6 +1,4 @@
-// @effect-diagnostics asyncFunction:off -- Node test callbacks and Web handlers bridge the Effect contracts under test; expires: 2027-03-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from 'effect-rstest';
 import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import {
   HttpApi,
@@ -10,8 +8,7 @@ import {
   HttpRouter,
   HttpServer,
 } from '@modern-js/plugin-bff/effect-edge';
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { Context, Effect, Layer, Result, Schema, SchemaAST } from 'effect';
+import { Context, Effect, Layer, Predicate, Schema, SchemaAST, Struct } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   makeProblemDetailsSchema,
@@ -22,7 +19,7 @@ import { ImportedUnconstrainedExtensionSchema } from '../fixtures/unconstrained-
 const statuses = [400, 401, 403, 404, 409, 422, 428, 429, 500, 503, 504] as const;
 
 for (const status of statuses) {
-  void test(`couples the ${status} body, schema, and HttpApi status`, () => {
+  it(`couples the ${status} body, schema, and HttpApi status`, () => {
     const schema = makeProblemDetailsSchema(`FixtureProblem${status}`, status, {
       recoveryCode: Schema.Literal(`RECOVER_${status}`),
     });
@@ -35,24 +32,32 @@ for (const status of statuses) {
       type: `urn:ontos:test:problem:${status}`,
     } as const;
 
-    assert.deepEqual(Schema.decodeUnknownSync(schema)(problem), problem);
-    assert.deepEqual(Schema.encodeUnknownSync(schema)(problem), problem);
-    assert.equal(schema.ast.annotations?.['httpApiStatus'], status);
-    assert.deepEqual(schema.ast.annotations?.['~httpApiEncoding'], {
-      _tag: 'Json',
+    const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+    expect(Schema.is(schema)(decodedProblem)).toBe(true);
+    expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
+    const encodedProblem = Schema.encodeUnknownSync(schema)(problem);
+    expect(Schema.is(Schema.toEncoded(schema))(encodedProblem)).toBe(true);
+    expect(Struct.omit(encodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
+    expect(schema.ast.annotations?.['httpApiStatus']).toBe(status);
+    const encoding = schema.ast.annotations?.['~httpApiEncoding'];
+    expect(Predicate.isTagged(encoding, 'Json')).toBe(true);
+    if (!Predicate.isTagged(encoding, 'Json')) {
+      throw new Error('Expected JSON HTTP API encoding');
+    }
+    expect(Struct.omit(encoding, ['_tag'])).toEqual({
       contentType: 'application/problem+json',
     });
-    assert.throws(() => Schema.decodeUnknownSync(schema)({ ...problem, status: 418 }));
-    assert.throws(() =>
+    expect(() => Schema.decodeUnknownSync(schema)({ ...problem, status: 418 })).toThrow();
+    expect(() =>
       Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })({
         ...problem,
         internalDiagnostic: 'must-not-pass',
       }),
-    );
+    ).toThrow();
   });
 }
 
-void test('adds only the deliberate retryable literal marker', () => {
+it('adds only the deliberate retryable literal marker', () => {
   const schema = makeRetryableProblemDetailsSchema('RetryableFixtureProblem', 503, {
     retryAfterSeconds: Schema.Finite,
   });
@@ -66,113 +71,103 @@ void test('adds only the deliberate retryable literal marker', () => {
     type: 'urn:ontos:test:retryable',
   } as const;
 
-  assert.deepEqual(Schema.decodeUnknownSync(schema)(problem), problem);
-  assert.throws(() => Schema.decodeUnknownSync(schema)({ ...problem, retryable: false }));
+  const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+  expect(Schema.is(schema)(decodedProblem)).toBe(true);
+  expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
+  expect(() => Schema.decodeUnknownSync(schema)({ ...problem, retryable: false })).toThrow();
 });
 
-void test('drives real HttpApi responses and generated client decoding', async () => {
-  const schema = makeRetryableProblemDetailsSchema('FixtureGatewayTimeoutProblem', 504, {
-    operation: Schema.Literal('fixture-read'),
-  });
-  const problem = schema.make({
-    detail: 'The fixture operation timed out.',
-    operation: 'fixture-read',
-    retryable: true,
-    status: 504,
-    title: 'Fixture timeout',
-    type: 'urn:ontos:test:fixture-timeout',
-  });
-  const group = HttpApiGroup.make('problemFixture').add(
-    HttpApiEndpoint.post('execute', '/problem-fixture', {
-      error: [schema],
-      payload: Schema.Struct({}),
-      success: Schema.Struct({ ok: Schema.Literal(true) }),
-    }),
-  );
-  const api = HttpApi.make('ProblemFixtureApi').add(group);
-  const handlers = HttpApiBuilder.group(api, 'problemFixture', (builder) =>
-    builder.handle('execute', () => Effect.fail(problem)),
-  );
-  const server = HttpRouter.toWebHandler(
-    HttpApiBuilder.layer(api).pipe(
-      Layer.provide(handlers),
-      Layer.provide(HttpServer.layerServices),
-    ),
-    { disableLogger: true },
-  );
+it.live('drives real HttpApi responses and generated client decoding', () =>
+  Effect.gen(function* problemDetailsHttpScenario() {
+    const schema = makeRetryableProblemDetailsSchema('FixtureGatewayTimeoutProblem', 504, {
+      operation: Schema.Literal('fixture-read'),
+    });
+    const problem = schema.make({
+      detail: 'The fixture operation timed out.',
+      operation: 'fixture-read',
+      retryable: true,
+      status: 504,
+      title: 'Fixture timeout',
+      type: 'urn:ontos:test:fixture-timeout',
+    });
+    const group = HttpApiGroup.make('problemFixture').add(
+      HttpApiEndpoint.post('execute', '/problem-fixture', {
+        error: [schema],
+        payload: Schema.Struct({}),
+        success: Schema.Struct({ ok: Schema.Literal(true) }),
+      }),
+    );
+    const api = HttpApi.make('ProblemFixtureApi').add(group);
+    const handlers = HttpApiBuilder.group(api, 'problemFixture', (builder) =>
+      builder.handle('execute', () => Effect.fail(problem)),
+    );
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          HttpApiBuilder.layer(api).pipe(
+            Layer.provide(handlers),
+            Layer.provide(HttpServer.layerServices),
+          ),
+          { disableLogger: true },
+        ),
+      ),
+      (webHandler) => Effect.promise(() => webHandler.dispose()),
+    );
 
-  try {
     const request = new Request('https://fixture.ontos.test/problem-fixture', {
       body: '{}',
       headers: { 'content-type': 'application/json' },
       method: 'POST',
     });
-    const response = await server.handler(request, Context.empty());
-    assert.equal(response.status, problem.status);
-    assert.match(response.headers.get('content-type') ?? '', /^application\/problem\+json\b/u);
-    assert.deepEqual(await response.json(), problem);
+    const response = yield* Effect.promise(() => server.handler(request, Context.empty()));
+    expect(response.status).toBe(problem.status);
+    expect(response.headers.get('content-type') ?? '').toMatch(/^application\/problem\+json\b/u);
+    expect(yield* Effect.promise(() => response.json())).toEqual(problem);
 
     const client = makeEffectHttpApiClient(api, { baseUrl: 'https://fixture.ontos.test' });
-    const clientResult = await runEffectTestPromise(
+    const clientError = yield* Effect.flip(
       client.pipe(
         Effect.flatMap((generated) => generated.problemFixture.execute({ payload: {} })),
-        Effect.result,
-        Effect.provideService(
-          FetchHttpClient.Fetch,
-          async (input, init) => await server.handler(new Request(input, init), Context.empty()),
+        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+          server.handler(new Request(input, init), Context.empty()),
         ),
       ),
     );
-    assert.ok(Result.isFailure(clientResult));
-    assert.deepEqual(clientResult.failure, problem);
-  } finally {
-    await server.dispose();
-  }
-});
+    expect(clientError).toEqual(problem);
+  }),
+);
 
-void test('rejects reserved and unconstrained extension schemas at construction', () => {
+it('rejects reserved and unconstrained extension schemas at construction', () => {
   const uniqueSymbol = Symbol('problem-detail-extension');
   const nestedUniqueSymbol = Symbol('nested-problem-detail-extension');
-  assert.throws(
-    () =>
-      makeProblemDetailsSchema('ReservedFixtureProblem', 400, {
-        status: Schema.Finite,
-      }),
-    /reserved/u,
-  );
-  assert.throws(
-    () =>
-      makeProblemDetailsSchema('PrototypeSyntaxFixtureProblem', 400, { __proto__: Schema.String }),
-    /plain object/u,
-  );
-  assert.throws(
-    () =>
-      makeProblemDetailsSchema('SymbolKeyFixtureProblem', 400, {
-        [uniqueSymbol]: Schema.Unknown,
-      }),
-    /names must be strings/u,
-  );
-  assert.throws(
-    () =>
-      makeProblemDetailsSchema('PrototypeKeyFixtureProblem', 400, {
-        ['__proto__']: Schema.String,
-      }),
-    /reserved/u,
-  );
-  assert.throws(
-    () =>
-      makeProblemDetailsSchema('UnknownFixtureProblem', 400, {
-        unsafe: Schema.Unknown,
-      }),
-    /concrete/u,
-  );
-  assert.throws(
-    () =>
-      makeProblemDetailsSchema('AnyFixtureProblem', 400, {
-        unsafe: Schema.Any,
-      }),
-    /concrete/u,
-  );
+  expect(() =>
+    makeProblemDetailsSchema('ReservedFixtureProblem', 400, {
+      status: Schema.Finite,
+    }),
+  ).toThrow(/reserved/u);
+  expect(() =>
+    makeProblemDetailsSchema('PrototypeSyntaxFixtureProblem', 400, { __proto__: Schema.String }),
+  ).toThrow(/plain object/u);
+  expect(() =>
+    makeProblemDetailsSchema('SymbolKeyFixtureProblem', 400, {
+      [uniqueSymbol]: Schema.Unknown,
+    }),
+  ).toThrow(/names must be strings/u);
+  expect(() =>
+    makeProblemDetailsSchema('PrototypeKeyFixtureProblem', 400, {
+      ['__proto__']: Schema.String,
+    }),
+  ).toThrow(/reserved/u);
+  expect(() =>
+    makeProblemDetailsSchema('UnknownFixtureProblem', 400, {
+      unsafe: Schema.Unknown,
+    }),
+  ).toThrow(/concrete/u);
+  expect(() =>
+    makeProblemDetailsSchema('AnyFixtureProblem', 400, {
+      unsafe: Schema.Any,
+    }),
+  ).toThrow(/concrete/u);
   for (const unsafe of [
     Schema.Array(Schema.Unknown),
     Schema.BigInt,
@@ -191,22 +186,20 @@ void test('rejects reserved and unconstrained extension schemas at construction'
     Schema.Undefined,
     ImportedUnconstrainedExtensionSchema,
   ]) {
-    assert.throws(
-      () => makeProblemDetailsSchema('NestedUnknownFixtureProblem', 400, { unsafe }),
+    expect(() => makeProblemDetailsSchema('NestedUnknownFixtureProblem', 400, { unsafe })).toThrow(
       /concrete/u,
     );
   }
   for (const literal of [undefined, Symbol('non-json-literal')]) {
     // @ts-expect-error JavaScript callers can provide unsupported literal values, so the runtime factory must still reject them.
     const unsafe = Schema.Literal(literal);
-    assert.throws(
-      () => makeProblemDetailsSchema('NonJsonLiteralFixtureProblem', 400, { unsafe }),
+    expect(() => makeProblemDetailsSchema('NonJsonLiteralFixtureProblem', 400, { unsafe })).toThrow(
       /concrete/u,
     );
   }
 });
 
-void test('rejects accessor-backed extension fields before reading them', () => {
+it('rejects accessor-backed extension fields before reading them', () => {
   let reads = 0;
   const extensions = Object.defineProperty({}, 'diagnostics', {
     enumerable: true,
@@ -216,14 +209,13 @@ void test('rejects accessor-backed extension fields before reading them', () => 
     },
   });
 
-  assert.throws(
-    () => makeProblemDetailsSchema('AccessorFixtureProblem', 400, extensions),
+  expect(() => makeProblemDetailsSchema('AccessorFixtureProblem', 400, extensions)).toThrow(
     /enumerable data property/u,
   );
-  assert.equal(reads, 0);
+  expect(reads).toBe(0);
 });
 
-void test('uses one descriptor snapshot for extension keys and schema ASTs', () => {
+it('uses one descriptor snapshot for extension keys and schema ASTs', () => {
   let ownKeyReads = 0;
   const changingFields = new Proxy(
     {},
@@ -241,8 +233,8 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
     },
   );
   const stableSchema = makeProblemDetailsSchema('StableSnapshotProblem', 400, changingFields);
-  assert.equal(ownKeyReads, 1);
-  assert.throws(() =>
+  expect(ownKeyReads).toBe(1);
+  expect(() =>
     Schema.decodeUnknownSync(stableSchema)({
       _tag: 'StableSnapshotProblem',
       detail: 'Wrong status.',
@@ -250,7 +242,7 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
       title: 'Wrong status',
       type: 'urn:ontos:test:wrong-status',
     }),
-  );
+  ).toThrow();
 
   let astReads = 0;
   const changingSchema = new Proxy(Schema.Unknown, {
@@ -263,23 +255,24 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
       return Reflect.get(target, key, receiver);
     },
   });
-  assert.throws(
-    () =>
-      makeProblemDetailsSchema('StableAstProblem', 400, {
-        diagnostics: changingSchema,
-      }),
-    /concrete/u,
-  );
+  expect(() =>
+    makeProblemDetailsSchema('StableAstProblem', 400, {
+      diagnostics: changingSchema,
+    }),
+  ).toThrow(/concrete/u);
 
   const mutableExtension = Schema.Struct({ note: Schema.String });
   const immutableProblem = makeProblemDetailsSchema('ImmutableAstProblem', 400, {
     metadata: mutableExtension,
   });
-  assert.ok(SchemaAST.isObjects(mutableExtension.ast));
+  expect(SchemaAST.isObjects(mutableExtension.ast)).toBe(true);
   const [note] = mutableExtension.ast.propertySignatures;
-  assert.ok(note !== undefined);
+  expect(note).toBeDefined();
+  if (note === undefined) {
+    return;
+  }
   Reflect.set(note, 'type', Schema.Unknown.ast);
-  assert.throws(() =>
+  expect(() =>
     Schema.decodeUnknownSync(immutableProblem)({
       _tag: 'ImmutableAstProblem',
       detail: 'Must stay concrete.',
@@ -288,10 +281,10 @@ void test('uses one descriptor snapshot for extension keys and schema ASTs', () 
       title: 'Immutable AST',
       type: 'urn:ontos:test:immutable-ast',
     }),
-  );
+  ).toThrow();
 });
 
-void test('accepts concrete JSON literals and schemas with JSON-safe encodings', () => {
+it('accepts concrete JSON literals and schemas with JSON-safe encodings', () => {
   const schema = makeProblemDetailsSchema('EncodedExtensionsProblem', 422, {
     amount: Schema.FiniteFromString,
     attachment: Schema.Uint8ArrayFromBase64,
@@ -313,11 +306,13 @@ void test('accepts concrete JSON literals and schemas with JSON-safe encodings',
     type: 'urn:ontos:test:encoded-extensions',
   } as const;
   const decoded = Schema.decodeUnknownSync(schema)(encoded);
-  assert.equal(decoded.amount, 12.5);
-  assert.deepEqual(decoded.attachment, new Uint8Array([1, 2]));
-  assert.equal(decoded.count, 7n);
-  assert.equal(decoded.occurredAt.toISOString(), encoded.occurredAt);
-  assert.deepEqual(Schema.encodeUnknownSync(schema)(decoded), encoded);
+  expect(decoded.amount).toBe(12.5);
+  expect(decoded.attachment).toEqual(new Uint8Array([1, 2]));
+  expect(decoded.count).toBe(7n);
+  expect(decoded.occurredAt.toISOString()).toBe(encoded.occurredAt);
+  const reencoded = Schema.encodeUnknownSync(schema)(decoded);
+  expect(Schema.is(Schema.toEncoded(schema))(reencoded)).toBe(true);
+  expect(Struct.omit(reencoded, ['_tag'])).toEqual(Struct.omit(encoded, ['_tag']));
 });
 
 const narrowSchema = makeProblemDetailsSchema('NarrowFixtureProblem', 409, {

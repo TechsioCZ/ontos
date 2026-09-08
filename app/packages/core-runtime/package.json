@@ -14,21 +14,20 @@
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
     "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
     "./testing/actions": "./src/testing/actions.ts",
-    "./testing/effect-runtime": "./src/testing/effect-runtime.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "db:test": "node --test tests/unit/*.test.ts tests/integration/*.test.ts",
+    "db:test": "rstest --project unit --project integration",
     "db:verify": "node scripts/verify-db-schema.mts",
-    "test:unit": "node --test tests/unit/*.test.ts",
-    "test:integration": "node --test tests/integration/*.test.ts",
-    "action:test:unit": "node --test tests/unit/action-*.test.ts",
-    "action:test:integration": "node --test tests/integration/action-*.test.ts",
-    "outbox:test:unit": "node --test tests/unit/outbox-*.test.ts",
-    "outbox:test:integration": "node --test tests/integration/outbox-runtime.test.ts",
+    "test:unit": "rstest --project unit",
+    "test:integration": "rstest --project integration",
+    "action:test:unit": "rstest --project unit tests/unit/action-",
+    "action:test:integration": "rstest --project integration tests/integration/action-",
+    "outbox:test:unit": "rstest --project unit tests/unit/outbox-",
+    "outbox:test:integration": "rstest --project integration tests/integration/outbox-",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
@@ -42,6 +41,8 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@types/pg": "8.20.0",
-    "drizzle-kit": "1.0.0-rc.5-ab785fc"
+    "drizzle-kit": "1.0.0-rc.5-ab785fc",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@79abbf684c7b150ee5f32694129a7caf969903bc",
+    "@rstest/core": "0.11.11"
   }
 }
