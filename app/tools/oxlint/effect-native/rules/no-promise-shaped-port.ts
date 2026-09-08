@@ -565,7 +565,8 @@ export const rule = defineRule({
 
     /** The `Promise` / `PromiseLike` reference of a return/value annotation, if any. */
     const promiseReference = (
-      annotation: ESTree.TSTypeAnnotation | null | undefined,
+      annotation: ESTree.TSTypeAnnotation | ESTree.TSTypeReference | null | undefined,
+      functionAliasOnly = false,
     ): string | null => {
       if (annotation === null || annotation === undefined) return null;
       interface TypeBinding {
@@ -576,19 +577,43 @@ export const rule = defineRule({
         raw: any,
         seen = new Set<any>(),
         substitutions: ReadonlyMap<any, TypeBinding> = new Map(),
+        insideFunction = false,
       ): string | null => {
         if (!raw || seen.has(raw)) return null;
         seen.add(raw);
         if (raw.type === 'TSTypeAnnotation' || raw.type === 'TSParenthesizedType')
-          return resolve(raw.typeAnnotation, seen, substitutions);
+          return resolve(raw.typeAnnotation, seen, substitutions, insideFunction);
+        // Direct function types have their own visitor. Applied aliases need this
+        // traversal here because that visitor cannot see the use-site substitutions.
+        if (raw.type === 'TSFunctionType')
+          return substitutions.size === 0
+            ? null
+            : resolve(raw.returnType, seen, substitutions, true);
         if (raw.type === 'TSTypeParameter')
           return (
-            resolve(raw.constraint, new Set(seen), substitutions) ??
-            resolve(raw.default, new Set(seen), substitutions)
+            resolve(raw.constraint, new Set(seen), substitutions, insideFunction) ??
+            resolve(raw.default, new Set(seen), substitutions, insideFunction)
           );
         if (raw.type === 'TSUnionType' || raw.type === 'TSIntersectionType') {
           for (const item of raw.types) {
-            const result = resolve(item, new Set(seen), substitutions);
+            const result = resolve(item, new Set(seen), substitutions, insideFunction);
+            if (result) return result;
+          }
+          return null;
+        }
+        // Object members have their own visitors too; only an applied generic alias
+        // (`type Service<T> = { run: () => T }` used as `Service<Promise<void>>`) needs this.
+        if (raw.type === 'TSTypeLiteral' || raw.type === 'TSInterfaceBody') {
+          if (substitutions.size === 0) return null;
+          for (const member of raw.members ?? raw.body) {
+            const isValue =
+              member.type === 'TSPropertySignature' || member.type === 'TSIndexSignature';
+            const result = resolve(
+              isValue ? member.typeAnnotation : member.returnType,
+              new Set(seen),
+              substitutions,
+              insideFunction || !isValue,
+            );
             if (result) return result;
           }
           return null;
@@ -603,13 +628,13 @@ export const rule = defineRule({
           !variableFor(raw, 'globalThis')?.defs.length &&
           options.promiseTypes.includes(name)
         )
-          return `${name}<…>`;
+          return functionAliasOnly && !insideFunction ? null : `${name}<…>`;
         if (names.length !== 1) return null;
         const variable = variableFor(raw.typeName, name);
         const bound = substitutions.get(variable);
-        if (bound) return resolve(bound.node, seen, bound.substitutions);
-        const alias = variable?.defs.find(
-          (d: any) => d.node.type === 'TSTypeAliasDeclaration',
+        if (bound) return resolve(bound.node, seen, bound.substitutions, insideFunction);
+        const alias = variable?.defs.find((d: any) =>
+          ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(d.node.type),
         )?.node;
         if (alias) {
           const applied = new Map(substitutions);
@@ -624,12 +649,12 @@ export const rule = defineRule({
                 substitutions: argument ? substitutions : applied,
               });
           }
-          return resolve(alias.typeAnnotation, seen, applied);
+          return resolve(alias.typeAnnotation ?? alias.body, seen, applied, insideFunction);
         }
         const parameter = variable?.defs.find((d: any) => d.node.type === 'TSTypeParameter')?.node;
-        if (parameter) return resolve(parameter, seen, substitutions);
+        if (parameter) return resolve(parameter, seen, substitutions, insideFunction);
         if (variable?.defs.length || !options.promiseTypes.includes(name)) return null;
-        return `${name}<…>`;
+        return functionAliasOnly && !insideFunction ? null : `${name}<…>`;
       };
       return resolve(annotation);
     };
@@ -900,6 +925,17 @@ export const rule = defineRule({
     };
 
     return {
+      TSTypeReference: (node: ESTree.TSTypeReference) => {
+        const annotation = parentOf(node as unknown as AnyNode);
+        if (annotation?.type !== 'TSTypeAnnotation') return;
+        const owner = parentOf(annotation);
+        if (owner?.type !== 'Identifier' && owner?.type !== 'RestElement') return;
+        if (!isPortFunctionTypePosition(node as unknown as AnyNode)) return;
+        const wrapper = promiseReference(node, true);
+        if (wrapper === null) return;
+        if (isForeignThunkParameter(node) || atTestBoundary(node) || atDriverEdge(node)) return;
+        report(node, 'promisePort', { member: nameOf(node as unknown as AnyNode), wrapper });
+      },
       TSMethodSignature: (node: ESTree.TSMethodSignature) => {
         const wrapper = promiseReference(node.returnType);
         if (wrapper === null) return;

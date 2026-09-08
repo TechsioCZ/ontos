@@ -1,9 +1,8 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
+// @effect-diagnostics nodeBuiltinImport:off -- Inspect source files through the Node filesystem boundary; expires: 2026-12-31.
+import { expect, it } from '@app/effect-rstest';
 import { readFile } from 'node:fs/promises';
-import test from 'node:test';
 
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import {
   partyRegistryApi,
@@ -60,9 +59,9 @@ const serverFiles = [
   'person-engagement-profile-read-server',
 ] as const;
 
-test('aggregates every governed read and search API beside readiness', () => {
-  assert.deepEqual(Object.keys(partyRegistryApi.groups).toSorted(), apiNames);
-  assert.deepEqual(partyRegistryApiContract, {
+it('aggregates every governed read and search API beside readiness', () => {
+  expect(Object.keys(partyRegistryApi.groups).toSorted()).toEqual(apiNames);
+  expect(partyRegistryApiContract).toEqual({
     apiPrefix: '/party-registry-api',
     basePath: '/party-registry-api/party-registry',
     ownerId: 'party-registry',
@@ -72,21 +71,17 @@ test('aggregates every governed read and search API beside readiness', () => {
   const endpointPaths = Object.values(partyRegistryApi.groups).flatMap((group) =>
     Object.values(group.endpoints).map(({ path }) => path),
   );
-  assert.equal(new Set(Object.keys(partyRegistryApi.groups)).size, apiNames.length);
-  assert.equal(new Set(endpointPaths).size, endpointPaths.length);
-  assert.equal(endpointPaths.includes('/party-registry/readiness'), true);
-  assert.equal(
-    endpointPaths.some((path) => path === '/party-registry'),
-    false,
-  );
-  assert.equal(
+  expect(new Set(Object.keys(partyRegistryApi.groups)).size).toBe(apiNames.length);
+  expect(new Set(endpointPaths).size).toBe(endpointPaths.length);
+  expect(endpointPaths.includes('/party-registry/readiness')).toBe(true);
+  expect(endpointPaths.some((path) => path === '/party-registry')).toBe(false);
+  expect(
     endpointPaths.some((path) => path === '/actions' || path === '/party-registry/actions'),
-    false,
-  );
+  ).toBe(false);
 });
 
-test('keeps readiness tied to the immutable build marker', () => {
-  assert.equal(
+it('keeps readiness tied to the immutable build marker', () => {
+  expect(
     Schema.is(partyRegistryReadinessSchema)({
       checks: {
         api: 'ready',
@@ -98,72 +93,84 @@ test('keeps readiness tied to the immutable build marker', () => {
       status: 'ready',
       versionSkew: 'none',
     }),
-    true,
-  );
+  ).toBe(true);
 });
 
-test('composes generated governed servers through the Core read runtime', async () => {
-  const serverSources = await Promise.all([
-    readFile(new URL('../../api/index.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../api/engagement-profile-server.ts', import.meta.url), 'utf-8'),
-  ]);
-  const source = serverSources.join('\n');
+it.effect('composes generated governed servers through the Core read runtime', () =>
+  Effect.gen(function* testProgram1() {
+    const serverSources = yield* Effect.promise(() =>
+      Promise.all([
+        readFile(new URL('../../api/index.ts', import.meta.url), 'utf-8'),
+        readFile(new URL('../../api/engagement-profile-server.ts', import.meta.url), 'utf-8'),
+      ]),
+    );
+    const source = serverSources.join('\n');
 
-  for (const serverFile of serverFiles) {
-    assert.match(source, new RegExp(serverFile.replaceAll('-', '[-]'), 'u'));
-  }
-  assert.match(source, /ReadRuntimeLive/u);
-  assert.match(source, /ContextAccessLive/u);
-  assert.match(source, /Layer\.provide\(CorePersistenceLive\)/u);
-  assert.doesNotMatch(source, /partyRegistryItems|Wire a real|generated-party-registry/u);
-  assert.doesNotMatch(source, /\.handle\(['"]create['"]/u);
-  assert.match(source, /ActionRuntimeLive/u);
-  assert.match(source, /partyRegistryCommandsLive/u);
-});
+    for (const serverFile of serverFiles) {
+      expect(source).toMatch(new RegExp(serverFile.replaceAll('-', '[-]'), 'u'));
+    }
+    expect(source).toMatch(/ReadRuntimeLive/u);
+    expect(source).toMatch(/ContextAccessLive/u);
+    expect(source).toMatch(/Layer\.provide\(CorePersistenceLive\)/u);
+    expect(source).not.toMatch(/partyRegistryItems|Wire a real|generated-party-registry/u);
+    expect(source).not.toMatch(/\.handle\(['"]create['"]/u);
+    expect(source).toMatch(/ActionRuntimeLive/u);
+    expect(source).toMatch(/partyRegistryCommandsLive/u);
+  }),
+);
 
-test('re-exports every governed generated client without exposing private executors', async () => {
-  const source = await readFile(
-    new URL('../../src/api/party-registry-client.ts', import.meta.url),
-    'utf-8',
-  );
+it.effect('re-exports every governed generated client without exposing private executors', () =>
+  Effect.gen(function* testProgram2() {
+    const source = yield* Effect.promise(() =>
+      readFile(new URL('../../src/api/party-registry-client.ts', import.meta.url), 'utf-8'),
+    );
 
-  for (const client of apiNames.filter(
-    (name) =>
-      name !== 'foundation' &&
-      name !== 'organizationEngagementMutations' &&
-      name !== 'partyCommands' &&
-      name !== 'partyCommandRecovery' &&
-      name !== 'personEngagementMutations',
-  )) {
-    const file = client.replaceAll(/[A-Z]/gu, (value) => `-${value.toLowerCase()}`);
-    assert.match(source, new RegExp(`\\./${file}-client\\.ts`, 'u'));
-  }
-  assert.match(source, /\.\/engagement-profile-client\.ts/u);
-  assert.match(source, /getPartyRegistryReadiness/u);
-  assert.match(source, /party-command-client/u);
-  assert.match(source, /export const partyRegistryClient =/u);
-  assert.match(source, /createPartyRegistryHttpClient/u);
-  assert.doesNotMatch(source, /createPartyRegistryClient/u);
-  assert.doesNotMatch(source, /makeEffectHttpApiClient\(partyRegistryApi/u);
-  assert.doesNotMatch(
-    source,
-    /export const (?:createPartyRegistry|listPartyRegistry|getPartyRegistry)\s*=/u,
-  );
-  assert.doesNotMatch(source, /action\.ts|runAction|ActionRuntime/u);
-});
+    for (const client of apiNames.filter(
+      (name) =>
+        name !== 'foundation' &&
+        name !== 'organizationEngagementMutations' &&
+        name !== 'partyCommands' &&
+        name !== 'partyCommandRecovery' &&
+        name !== 'personEngagementMutations',
+    )) {
+      const file = client.replaceAll(/[A-Z]/gu, (value) => `-${value.toLowerCase()}`);
+      expect(source).toMatch(new RegExp(`\\./${file}-client\\.ts`, 'u'));
+    }
+    expect(source).toMatch(/\.\/engagement-profile-client\.ts/u);
+    expect(source).toMatch(/getPartyRegistryReadiness/u);
+    expect(source).toMatch(/party-command-client/u);
+    expect(source).toMatch(/export const partyRegistryClient =/u);
+    expect(source).toMatch(/createPartyRegistryHttpClient/u);
+    expect(source).not.toMatch(/createPartyRegistryClient/u);
+    expect(source).not.toMatch(/makeEffectHttpApiClient\(partyRegistryApi/u);
+    expect(source).not.toMatch(
+      /export const (?:createPartyRegistry|listPartyRegistry|getPartyRegistry)\s*=/u,
+    );
+    expect(source).not.toMatch(/action\.ts|runAction|ActionRuntime/u);
+  }),
+);
 
-test('exposes only the backend Effect API and no placeholder UI module', async () => {
-  const [frontendFederation, backendFederation, packageSource] = await Promise.all([
-    readFile(new URL('../../module-federation.config.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../backend-federation.config.ts', import.meta.url), 'utf-8'),
-    readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
-  ]);
-  const packageJson: { readonly exports: Record<string, string> } = JSON.parse(packageSource);
+it.effect('exposes only the backend Effect API and no placeholder UI module', () =>
+  Effect.gen(function* testProgram3() {
+    const [frontendFederation, backendFederation, packageSource] = yield* Effect.promise(() =>
+      Promise.all([
+        readFile(new URL('../../module-federation.config.ts', import.meta.url), 'utf-8'),
+        readFile(new URL('../../backend-federation.config.ts', import.meta.url), 'utf-8'),
+        readFile(new URL('../../package.json', import.meta.url), 'utf-8'),
+      ]),
+    );
+    const packageJson: { readonly exports: Record<string, string> } =
+      yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({ exports: Schema.Record(Schema.String, Schema.String) }),
+        ),
+      )(packageSource);
 
-  assert.doesNotMatch(frontendFederation, /['"]\.\/Route['"]|['"]\.\/Widget['"]/u);
-  assert.match(backendFederation, /['"]\.\/effect-api['"]/u);
-  assert.equal(packageJson.exports['./Route'], undefined);
-  assert.equal(packageJson.exports['./Widget'], undefined);
-  assert.equal(packageJson.exports['./api'], './shared/api.ts');
-  assert.equal(packageJson.exports['./api/client'], './src/api/party-registry-client.ts');
-});
+    expect(frontendFederation).not.toMatch(/['"]\.\/Route['"]|['"]\.\/Widget['"]/u);
+    expect(backendFederation).toMatch(/['"]\.\/effect-api['"]/u);
+    expect(packageJson.exports['./Route']).toBe(undefined);
+    expect(packageJson.exports['./Widget']).toBe(undefined);
+    expect(packageJson.exports['./api']).toBe('./shared/api.ts');
+    expect(packageJson.exports['./api/client']).toBe('./src/api/party-registry-client.ts');
+  }),
+);

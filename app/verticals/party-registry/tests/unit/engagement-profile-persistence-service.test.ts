@@ -1,9 +1,6 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { expect, it } from '@app/effect-rstest';
 /* eslint-disable anti-slop/no-chained-type-assertions -- Focused harness implements only the mutation insert's Drizzle seam. expires: 2026-12-31. */
 import { DateTime, Effect, Predicate } from 'effect';
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import type { OrganizationEngagementProfileRecord } from '../../src/db/engagement-schema.ts';
 import {
   createOrganizationEngagementProfile,
@@ -45,35 +42,34 @@ const rejectingMutationTransaction = <Failure>(failure: Failure) =>
     }),
   }) as unknown as Parameters<typeof createOrganizationEngagementProfile>[0];
 
-void test('reconstructs typed references from the owner-local persistence record', () => {
+it('reconstructs typed references from the owner-local persistence record', () => {
   const result = organizationEngagementProfileFromRecord(row);
-  assert.deepEqual(result.partyRef, refs.partyRef);
-  assert.deepEqual(result.counterpartyRef, refs.counterpartyRef);
-  assert.equal('name' in result, false);
-  assert.equal('ico' in result, false);
-  assert.equal(
+  expect(result.partyRef).toEqual(refs.partyRef);
+  expect(result.counterpartyRef).toEqual(refs.counterpartyRef);
+  expect('name' in result).toBe(false);
+  expect('ico' in result).toBe(false);
+  expect(
     organizationEngagementProfileFromRecord({ ...row, counterpartyResourceId: null })
       .counterpartyRef,
-    null,
-  );
+  ).toBe(null);
 });
 
-void test('fails closed when a caller-supplied ref crosses the trusted tenant', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('fails closed when a caller-supplied ref crosses the trusted tenant', () =>
+  Effect.gen(function* verifyCase2() {
+    const failure = yield* Effect.flip(
       ensureReferencesBelongToTenant(tenantId, {
         ...refs,
         partyRef: { ...refs.partyRef, tenantId: 'c9000000-0000-4000-8000-000000000001' },
       }),
-    ),
-  );
-  assert.ok(Predicate.isTagged(failure, 'EngagementProfileConflict'));
-  assert.equal(failure.code, 'contacts_party_counterparty_mismatch');
-});
+    );
+    expect(Predicate.isTagged(failure, 'EngagementProfileConflict')).toBe(true);
+    expect(failure.code).toBe('contacts_party_counterparty_mismatch');
+  }),
+);
 
-void test('maps a wrapped owner uniqueness constraint to the declared engagement conflict', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('maps a wrapped owner uniqueness constraint to the declared engagement conflict', () =>
+  Effect.gen(function* verifyCase3() {
+    const failure = yield* Effect.flip(
       createOrganizationEngagementProfile(
         rejectingMutationTransaction({
           cause: {
@@ -85,20 +81,19 @@ void test('maps a wrapped owner uniqueness constraint to the declared engagement
         }),
         { ...refs, tenantId },
       ),
-    ),
-  );
+    );
 
-  assert.ok(Predicate.isTagged(failure, 'EngagementProfileConflict'));
-  assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
-  assert.equal(
-    failure.reason,
-    'An engagement profile already exists for these canonical references',
-  );
-});
+    expect(Predicate.isTagged(failure, 'EngagementProfileConflict')).toBe(true);
+    expect(failure.code).toBe('contacts_engagement_profile_already_exists');
+    expect(failure.reason).toBe(
+      'An engagement profile already exists for these canonical references',
+    );
+  }),
+);
 
-void test('continues past an unrelated wrapper code to the owner uniqueness constraint', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('continues past an unrelated wrapper code to the owner uniqueness constraint', () =>
+  Effect.gen(function* verifyCase4() {
+    const failure = yield* Effect.flip(
       createOrganizationEngagementProfile(
         rejectingMutationTransaction({
           code: 'ERR_QUERY_FAILED',
@@ -109,16 +104,16 @@ void test('continues past an unrelated wrapper code to the owner uniqueness cons
         }),
         { ...refs, tenantId },
       ),
-    ),
-  );
+    );
 
-  assert.ok(Predicate.isTagged(failure, 'EngagementProfileConflict'));
-  assert.equal(failure.code, 'contacts_engagement_profile_already_exists');
-});
+    expect(Predicate.isTagged(failure, 'EngagementProfileConflict')).toBe(true);
+    expect(failure.code).toBe('contacts_engagement_profile_already_exists');
+  }),
+);
 
-void test('maps an unrelated uniqueness constraint to the existing persistence fallback', async () => {
-  const failure = await runEffectTestPromise(
-    Effect.flip(
+it.effect('maps an unrelated uniqueness constraint to the existing persistence fallback', () =>
+  Effect.gen(function* verifyCase5() {
+    const failure = yield* Effect.flip(
       createOrganizationEngagementProfile(
         rejectingMutationTransaction({
           code: '23505',
@@ -126,13 +121,12 @@ void test('maps an unrelated uniqueness constraint to the existing persistence f
         }),
         { ...refs, tenantId },
       ),
-    ),
-  );
+    );
 
-  assert.ok(Predicate.isTagged(failure, 'EngagementProfilePersistenceUnavailable'));
-  assert.equal(failure.code, 'contacts_engagement_profile_persistence_unavailable');
-  assert.equal(
-    failure.reason,
-    'Contacts engagement profile persistence is temporarily unavailable',
-  );
-});
+    expect(Predicate.isTagged(failure, 'EngagementProfilePersistenceUnavailable')).toBe(true);
+    expect(failure.code).toBe('contacts_engagement_profile_persistence_unavailable');
+    expect(failure.reason).toBe(
+      'Contacts engagement profile persistence is temporarily unavailable',
+    );
+  }),
+);

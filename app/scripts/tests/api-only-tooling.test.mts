@@ -1,19 +1,21 @@
-/// <reference types="node" />
+import { Cause, Effect, Predicate, Schema } from 'effect';
+import { afterEach, expect, it, rs } from '@app/effect-rstest';
 
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
-import type { TestContext } from 'node:test';
+
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { Predicate, Schema } from 'effect';
 import { transform } from 'esbuild';
 import { format } from 'oxfmt';
+
+afterEach(() => {
+  rs.restoreAllMocks();
+});
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyId = 'party-registry';
@@ -240,41 +242,58 @@ const CloudflareReportSchema = Schema.Struct({
   status: Schema.String,
 });
 
-const loadReleaseFramework = async (modulePath: string): Promise<ReleaseFramework> => {
-  const source: unknown = await import(pathToFileURL(modulePath).href);
-  const framework = Schema.decodeUnknownSync(ReleaseFrameworkModuleSchema)(source);
-  const emitFrameworkMicroVerticalReleaseEnvelope =
-    framework.emitFrameworkMicroVerticalReleaseEnvelope.bind(source);
-  const emitNodeStagedReleaseEnvelope = framework.emitNodeStagedReleaseEnvelope.bind(source);
-  const verifyBuildOutputReleaseEnvelope = framework.verifyBuildOutputReleaseEnvelope.bind(source);
-  const verifyNodeReleaseEnvelopeStaging = framework.verifyNodeReleaseEnvelopeStaging.bind(source);
-  return {
-    emitFrameworkMicroVerticalReleaseEnvelope,
-    emitNodeStagedReleaseEnvelope,
-    verifyBuildOutputReleaseEnvelope,
-    verifyNodeReleaseEnvelopeStaging,
-  };
-};
+const loadReleaseFramework = (modulePath: string): Effect.Effect<ReleaseFramework, unknown> =>
+  Effect.gen(function* scenario1() {
+    const source: unknown = yield* Effect.promise(() => import(pathToFileURL(modulePath).href));
+    const framework = Schema.decodeUnknownSync(ReleaseFrameworkModuleSchema)(source);
+    const emitFrameworkMicroVerticalReleaseEnvelope =
+      framework.emitFrameworkMicroVerticalReleaseEnvelope.bind(source);
+    const emitNodeStagedReleaseEnvelope = framework.emitNodeStagedReleaseEnvelope.bind(source);
+    const verifyBuildOutputReleaseEnvelope =
+      framework.verifyBuildOutputReleaseEnvelope.bind(source);
+    const verifyNodeReleaseEnvelopeStaging =
+      framework.verifyNodeReleaseEnvelopeStaging.bind(source);
+    return {
+      emitFrameworkMicroVerticalReleaseEnvelope,
+      emitNodeStagedReleaseEnvelope,
+      verifyBuildOutputReleaseEnvelope,
+      verifyNodeReleaseEnvelopeStaging,
+    };
+  });
 
-const readJson = async <JsonSchema extends Schema.ConstraintDecoder<unknown>>(
+const readJson = <JsonSchema extends Schema.ConstraintDecoder<unknown>>(
   schema: JsonSchema,
   filePath: string,
-): Promise<JsonSchema['Type']> =>
-  Schema.decodeUnknownSync(schema)(JSON.parse(await readFile(filePath, 'utf-8')));
+): Effect.Effect<JsonSchema['Type'], unknown> =>
+  Effect.gen(function* scenario2() {
+    return Schema.decodeUnknownSync(schema)(
+      JSON.parse(yield* Effect.promise(() => readFile(filePath, 'utf-8'))),
+    );
+  });
 
-const writeJson = async <Value extends object>(
+const writeJson = <Value extends object>(
   root: string,
   logicalPath: string,
   value: Value,
-): Promise<void> => {
-  await mkdir(path.dirname(path.join(root, logicalPath)), { recursive: true });
-  await writeFile(path.join(root, logicalPath), JSON.stringify(value));
-};
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function* scenario3() {
+    yield* Effect.promise(() =>
+      mkdir(path.dirname(path.join(root, logicalPath)), { recursive: true }),
+    );
+    yield* Effect.promise(() => writeFile(path.join(root, logicalPath), JSON.stringify(value)));
+  });
 
-const writeText = async (root: string, logicalPath: string, value: string): Promise<void> => {
-  await mkdir(path.dirname(path.join(root, logicalPath)), { recursive: true });
-  await writeFile(path.join(root, logicalPath), value);
-};
+const writeText = (
+  root: string,
+  logicalPath: string,
+  value: string,
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function* scenario4() {
+    yield* Effect.promise(() =>
+      mkdir(path.dirname(path.join(root, logicalPath)), { recursive: true }),
+    );
+    yield* Effect.promise(() => writeFile(path.join(root, logicalPath), value));
+  });
 
 const runNode = (
   argumentsList: readonly string[],
@@ -291,15 +310,15 @@ const releaseFrameworkRoot = path.join(
   'verticals/party-registry/node_modules/@modern-js/app-tools/dist',
 );
 
-const releaseFixture = async (context: TestContext) => {
-  const releaseFramework = await loadReleaseFramework(
+const releaseFixture = Effect.fn(function* scenario5() {
+  const releaseFramework = yield* loadReleaseFramework(
     path.join(releaseFrameworkRoot, 'esm-node/ultramodern-release-envelope/framework-output.mjs'),
   );
-  const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-empty-producer-'));
-  context.after(async (): Promise<void> => {
-    await rm(root, { force: true, recursive: true });
-  });
-  const baseArtifact = await readJson(
+  const root = yield* Effect.acquireRelease(
+    Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-empty-producer-'))),
+    (dir) => Effect.promise(() => rm(dir, { force: true, recursive: true })),
+  );
+  const baseArtifact = yield* readJson(
     BuildArtifactSchema,
     path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
   );
@@ -320,208 +339,272 @@ const releaseFixture = async (context: TestContext) => {
     },
     remotes: [],
   };
-  const putJson = async <Value extends object>(logicalPath: string, value: Value): Promise<void> =>
-    await writeJson(root, logicalPath, value);
-  const putText = async (logicalPath: string, value: string): Promise<void> =>
-    await writeText(root, logicalPath, value);
-  await putJson('ultramodern-build.json', artifact);
-  await putJson('backend-mf-manifest.json', {
+  const putJson = <Value extends object>(
+    logicalPath: string,
+    value: Value,
+  ): Effect.Effect<void, unknown> =>
+    Effect.gen(function* scenario6() {
+      return yield* writeJson(root, logicalPath, value);
+    });
+  const putText = (logicalPath: string, value: string): Effect.Effect<void, unknown> =>
+    Effect.gen(function* scenario7() {
+      return yield* writeText(root, logicalPath, value);
+    });
+  yield* putJson('ultramodern-build.json', artifact);
+  yield* putJson('backend-mf-manifest.json', {
     backendFederation: {
       deliveryUnit: artifact.deliveryUnit,
       versionBoundary: { deliveryUnit: artifact.deliveryUnit },
     },
   });
-  await putJson(mfManifestFile, manifest);
-  await putJson(routesManifestFile, {
-    routeAssets: { index: { assets: [`https://assets.example.test/app/${compiledUiAssetPath}`] } },
+  yield* putJson(mfManifestFile, manifest);
+  yield* putJson(routesManifestFile, {
+    routeAssets: {
+      index: { assets: [`https://assets.example.test/app/${compiledUiAssetPath}`] },
+    },
   });
-  await putJson('route.json', { routes: [{ bundle: ssrBundlePath }] });
-  await putJson('package.json', { type: 'module' });
-  await Promise.all(
+  yield* putJson('route.json', { routes: [{ bundle: ssrBundlePath }] });
+  yield* putJson('package.json', { type: 'module' });
+  yield* Effect.all(
     [compiledUiAssetPath, ssrBundlePath, apiBundlePath, 'index.js', 'backendRemoteEntry.cjs'].map(
-      async (file) => await putText(file, 'console.log("compiled fixture");'),
-    ),
-  );
-  const emit = async () =>
-    Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
-      await releaseFramework.emitFrameworkMicroVerticalReleaseEnvelope({
-        apiOnly: false,
-        distDirectory: root,
-        target: 'node',
+      Effect.fn(function* scenario8(file) {
+        return yield* putText(file, 'console.log("compiled fixture");');
       }),
+    ),
+    { concurrency: 'unbounded' },
+  );
+  const emit = Effect.fn(function* scenario9() {
+    return Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+      yield* Effect.promise(() =>
+        releaseFramework.emitFrameworkMicroVerticalReleaseEnvelope({
+          apiOnly: false,
+          distDirectory: root,
+          target: 'node',
+        }),
+      ),
     );
-  return { artifact, emit, framework: releaseFramework, manifest, putJson, putText, root };
-};
-
-void test('empty MF producers retain complete build and Node staged release evidence in every framework format', async (context) => {
-  await Promise.all(
-    ['cjs', 'esm', 'esm-node'].map(async (moduleFormat) => {
-      const fixture = await releaseFixture(context);
-      const extension = moduleFormat === 'cjs' ? 'js' : 'mjs';
-      const framework = await loadReleaseFramework(
-        path.join(
-          releaseFrameworkRoot,
-          moduleFormat,
-          `ultramodern-release-envelope/framework-output.${extension}`,
-        ),
-      );
-      const envelope = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
-        await framework.emitFrameworkMicroVerticalReleaseEnvelope({
-          apiOnly: false,
-          distDirectory: fixture.root,
-          target: 'node',
-        }),
-      );
-      assert.ok(envelope.surfaces.uiClient.includes(compiledUiAssetPath));
-      assert.deepEqual(envelope.surfaces.ssr, [ssrBundlePath]);
-      assert.deepEqual(envelope.surfaces.apiBackend, [apiBundlePath]);
-      await framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node');
-      const staged = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
-        await framework.emitNodeStagedReleaseEnvelope({
-          distDirectory: fixture.root,
-          outputDirectory: fixture.root,
-        }),
-      );
-      assert.ok(staged.surfaces.uiClient.includes(compiledUiAssetPath));
-      await framework.verifyNodeReleaseEnvelopeStaging({ outputDirectory: fixture.root });
-    }),
-  );
-  const fixture = await releaseFixture(context);
-  await fixture.emit();
-  await fixture.putText(compiledUiAssetPath, 'console.log("tampered");');
-  await assert.rejects(
-    async () => await fixture.framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
-    /digest|hash|size/iu,
-  );
-});
-
-void test('empty MF producers bind root-relative route assets when publicPath is auto', async (context) => {
-  await Promise.all(
-    ['cjs', 'esm', 'esm-node'].map(async (moduleFormat) => {
-      const fixture = await releaseFixture(context);
-      fixture.manifest.metaData.publicPath = 'auto';
-      await fixture.putJson(mfManifestFile, fixture.manifest);
-      await fixture.putJson(routesManifestFile, {
-        routeAssets: { index: { assets: [`/${compiledUiAssetPath}`] } },
-      });
-      const extension = moduleFormat === 'cjs' ? 'js' : 'mjs';
-      const framework = await loadReleaseFramework(
-        path.join(
-          releaseFrameworkRoot,
-          moduleFormat,
-          `ultramodern-release-envelope/framework-output.${extension}`,
-        ),
-      );
-      const envelope = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
-        await framework.emitFrameworkMicroVerticalReleaseEnvelope({
-          apiOnly: false,
-          distDirectory: fixture.root,
-          target: 'node',
-        }),
-      );
-      assert.ok(envelope.surfaces.uiClient.includes(compiledUiAssetPath));
-    }),
-  );
-});
-
-void test('empty-producer fallback rejects undeclared, foreign, traversing, missing, and nonbrowser assets', async (context) => {
-  const references = [
-    `https://foreign.example.test/app/${compiledUiAssetPath}`,
-    `https://assets.example.test/app/../app/${compiledUiAssetPath}`,
-    `https://assets.example.test/app/%2e%2e/app/${compiledUiAssetPath}`,
-    String.raw`https://assets.example.test/app/static\js/index.js`,
-    'https://assets.example.test/app/static%5cjs/index.js',
-    'https://assets.example.test/app/static/js/missing.js',
-    `https://assets.example.test/app/${apiBundlePath}`,
-    `https://assets.example.test/app/${ssrBundlePath}`,
-    `https://assets.example.test/app/${compiledUiAssetPath}?forged=true`,
-  ];
-  await Promise.all(
-    references.map(async (reference) => {
-      const fixture = await releaseFixture(context);
-      await fixture.putJson(routesManifestFile, {
-        routeAssets: { index: { assets: [reference] } },
-      });
-      await assert.rejects(
-        fixture.emit,
-        /UI\/client manifest references no compiled execution module/u,
-        reference,
-      );
-    }),
-  );
-  const baseline = await releaseFixture(context);
-  const invalidManifests = [
-    { ...baseline.manifest, exposes: [{ name: './Page' }] },
-    { ...baseline.manifest, remotes: [{ name: 'shell' }] },
-    { metaData: baseline.manifest.metaData, remotes: baseline.manifest.remotes },
-    { exposes: baseline.manifest.exposes, metaData: baseline.manifest.metaData },
-    {
-      ...baseline.manifest,
-      metaData: { ...baseline.manifest.metaData, remoteEntry: { name: '', path: '' } },
-    },
-  ];
-  await Promise.all(
-    invalidManifests.map(async (manifest) => {
-      const fixture = await releaseFixture(context);
-      await fixture.putJson(mfManifestFile, manifest);
-      await assert.rejects(
-        fixture.emit,
-        /UI\/client manifest references no compiled execution module/u,
-      );
-    }),
-  );
-  const fixture = await releaseFixture(context);
-  await rm(path.join(fixture.root, routesManifestFile));
-  await assert.rejects(fixture.emit, /ENOENT/u);
-});
-
-void test('empty MF producers cannot bypass backend, SSR, revision, or identity proof', async (context) => {
-  await Promise.all(
-    [apiBundlePath, ssrBundlePath, 'backendRemoteEntry.cjs'].map(async (file) => {
-      const fixture = await releaseFixture(context);
-      await rm(path.join(fixture.root, file));
-      await assert.rejects(
-        fixture.emit,
-        /compiled Node Effect API|SSR artifacts|emitted together/u,
-      );
-    }),
-  );
-  const fixture = await releaseFixture(context);
-  await fixture.putJson('backend-mf-manifest.json', {
-    backendFederation: {
-      deliveryUnit: { ...fixture.artifact.deliveryUnit, sourceRevision: 'b'.repeat(40) },
-    },
   });
-  await assert.rejects(fixture.emit, /must match/u);
-  const workspaceArtifact = {
-    ...fixture.artifact,
-    deliveryUnit: { ...fixture.artifact.deliveryUnit, sourceRevision: 'workspace' },
-    surfaces: {
-      api: { ...fixture.artifact.surfaces.api, sourceRevision: 'workspace' },
-      ui: { ...fixture.artifact.surfaces.ui, sourceRevision: 'workspace' },
-    },
-  };
-  await fixture.putJson('ultramodern-build.json', workspaceArtifact);
-  await assert.rejects(fixture.emit, /workspace/u);
+  return { artifact, emit, framework: releaseFramework, manifest, putJson, putText, root };
 });
+
+it.live(
+  'empty MF producers retain complete build and Node staged release evidence in every framework format',
+  Effect.fn(function* scenario10() {
+    yield* Effect.all(
+      ['cjs', 'esm', 'esm-node'].map(
+        Effect.fn(function* scenario11(moduleFormat) {
+          const fixture = yield* releaseFixture();
+          const extension = moduleFormat === 'cjs' ? 'js' : 'mjs';
+          const framework = yield* loadReleaseFramework(
+            path.join(
+              releaseFrameworkRoot,
+              moduleFormat,
+              `ultramodern-release-envelope/framework-output.${extension}`,
+            ),
+          );
+          const envelope = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+            yield* Effect.promise(() =>
+              framework.emitFrameworkMicroVerticalReleaseEnvelope({
+                apiOnly: false,
+                distDirectory: fixture.root,
+                target: 'node',
+              }),
+            ),
+          );
+          expect(envelope.surfaces.uiClient.includes(compiledUiAssetPath)).toBe(true);
+          expect(envelope.surfaces.ssr).toEqual([ssrBundlePath]);
+          expect(envelope.surfaces.apiBackend).toEqual([apiBundlePath]);
+          yield* Effect.promise(() =>
+            framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
+          );
+          const staged = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+            yield* Effect.promise(() =>
+              framework.emitNodeStagedReleaseEnvelope({
+                distDirectory: fixture.root,
+                outputDirectory: fixture.root,
+              }),
+            ),
+          );
+          expect(staged.surfaces.uiClient.includes(compiledUiAssetPath)).toBe(true);
+          yield* Effect.promise(() =>
+            framework.verifyNodeReleaseEnvelopeStaging({ outputDirectory: fixture.root }),
+          );
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    const fixture = yield* releaseFixture();
+    yield* fixture.emit();
+    yield* fixture.putText(compiledUiAssetPath, 'console.log("tampered");');
+    const failureCause1 = yield* Effect.flip(
+      Effect.sandbox(
+        Effect.fn(function* scenario12() {
+          return yield* Effect.promise(() =>
+            fixture.framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
+          );
+        })(),
+      ),
+    );
+    expect(String(Cause.squash(failureCause1))).toMatch(/digest|hash|size/iu);
+  }),
+);
+
+it.live(
+  'empty MF producers bind root-relative route assets when publicPath is auto',
+  Effect.fn(function* scenario13() {
+    yield* Effect.all(
+      ['cjs', 'esm', 'esm-node'].map(
+        Effect.fn(function* scenario14(moduleFormat) {
+          const fixture = yield* releaseFixture();
+          fixture.manifest.metaData.publicPath = 'auto';
+          yield* fixture.putJson(mfManifestFile, fixture.manifest);
+          yield* fixture.putJson(routesManifestFile, {
+            routeAssets: { index: { assets: [`/${compiledUiAssetPath}`] } },
+          });
+          const extension = moduleFormat === 'cjs' ? 'js' : 'mjs';
+          const framework = yield* loadReleaseFramework(
+            path.join(
+              releaseFrameworkRoot,
+              moduleFormat,
+              `ultramodern-release-envelope/framework-output.${extension}`,
+            ),
+          );
+          const envelope = Schema.decodeUnknownSync(ReleaseEnvelopeSchema)(
+            yield* Effect.promise(() =>
+              framework.emitFrameworkMicroVerticalReleaseEnvelope({
+                apiOnly: false,
+                distDirectory: fixture.root,
+                target: 'node',
+              }),
+            ),
+          );
+          expect(envelope.surfaces.uiClient.includes(compiledUiAssetPath)).toBe(true);
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
+
+it.live(
+  'empty-producer fallback rejects undeclared, foreign, traversing, missing, and nonbrowser assets',
+  Effect.fn(function* scenario15() {
+    const references = [
+      `https://foreign.example.test/app/${compiledUiAssetPath}`,
+      `https://assets.example.test/app/../app/${compiledUiAssetPath}`,
+      `https://assets.example.test/app/%2e%2e/app/${compiledUiAssetPath}`,
+      String.raw`https://assets.example.test/app/static\js/index.js`,
+      'https://assets.example.test/app/static%5cjs/index.js',
+      'https://assets.example.test/app/static/js/missing.js',
+      `https://assets.example.test/app/${apiBundlePath}`,
+      `https://assets.example.test/app/${ssrBundlePath}`,
+      `https://assets.example.test/app/${compiledUiAssetPath}?forged=true`,
+    ];
+    yield* Effect.all(
+      references.map(
+        Effect.fn(function* scenario16(reference) {
+          const fixture = yield* releaseFixture();
+          yield* fixture.putJson(routesManifestFile, {
+            routeAssets: { index: { assets: [reference] } },
+          });
+          const failureCause2 = yield* Effect.flip(Effect.sandbox(fixture.emit()));
+          expect(String(Cause.squash(failureCause2)), reference).toMatch(
+            /UI\/client manifest references no compiled execution module/u,
+          );
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    const baseline = yield* releaseFixture();
+    const invalidManifests = [
+      { ...baseline.manifest, exposes: [{ name: './Page' }] },
+      { ...baseline.manifest, remotes: [{ name: 'shell' }] },
+      { metaData: baseline.manifest.metaData, remotes: baseline.manifest.remotes },
+      { exposes: baseline.manifest.exposes, metaData: baseline.manifest.metaData },
+      {
+        ...baseline.manifest,
+        metaData: { ...baseline.manifest.metaData, remoteEntry: { name: '', path: '' } },
+      },
+    ];
+    yield* Effect.all(
+      invalidManifests.map(
+        Effect.fn(function* scenario17(manifest) {
+          const fixture = yield* releaseFixture();
+          yield* fixture.putJson(mfManifestFile, manifest);
+          const failureCause3 = yield* Effect.flip(Effect.sandbox(fixture.emit()));
+          expect(String(Cause.squash(failureCause3))).toMatch(
+            /UI\/client manifest references no compiled execution module/u,
+          );
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    const fixture = yield* releaseFixture();
+    yield* Effect.promise(() => rm(path.join(fixture.root, routesManifestFile)));
+    const failureCause4 = yield* Effect.flip(Effect.sandbox(fixture.emit()));
+    expect(String(Cause.squash(failureCause4))).toMatch(/ENOENT/u);
+  }),
+);
+
+it.live(
+  'empty MF producers cannot bypass backend, SSR, revision, or identity proof',
+  Effect.fn(function* scenario18() {
+    yield* Effect.all(
+      [apiBundlePath, ssrBundlePath, 'backendRemoteEntry.cjs'].map(
+        Effect.fn(function* scenario19(file) {
+          const fixture = yield* releaseFixture();
+          yield* Effect.promise(() => rm(path.join(fixture.root, file)));
+          const failureCause5 = yield* Effect.flip(Effect.sandbox(fixture.emit()));
+          expect(String(Cause.squash(failureCause5))).toMatch(
+            /compiled Node Effect API|SSR artifacts|emitted together/u,
+          );
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    const fixture = yield* releaseFixture();
+    yield* fixture.putJson('backend-mf-manifest.json', {
+      backendFederation: {
+        deliveryUnit: { ...fixture.artifact.deliveryUnit, sourceRevision: 'b'.repeat(40) },
+      },
+    });
+    const failureCause6 = yield* Effect.flip(Effect.sandbox(fixture.emit()));
+    expect(String(Cause.squash(failureCause6))).toMatch(/must match/u);
+    const workspaceArtifact = {
+      ...fixture.artifact,
+      deliveryUnit: { ...fixture.artifact.deliveryUnit, sourceRevision: 'workspace' },
+      surfaces: {
+        api: { ...fixture.artifact.surfaces.api, sourceRevision: 'workspace' },
+        ui: { ...fixture.artifact.surfaces.ui, sourceRevision: 'workspace' },
+      },
+    };
+    yield* fixture.putJson('ultramodern-build.json', workspaceArtifact);
+    const failureCause7 = yield* Effect.flip(Effect.sandbox(fixture.emit()));
+    expect(String(Cause.squash(failureCause7))).toMatch(/workspace/u);
+  }),
+);
 
 const GlobalVarsSchema = Schema.Struct({ ULTRAMODERN_SHELL_ORIGIN: Schema.String });
 
-const evaluatePartyBuildGlobalVars = async (shellOrigin: string) => {
-  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'ontos-party-config-'));
-  try {
+const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin: string) {
+  const temporaryRoot = yield* Effect.promise(() =>
+    mkdtemp(path.join(os.tmpdir(), 'ontos-party-config-')),
+  );
+  return yield* Effect.gen(function* useResource1() {
     const harnessPath = path.join(temporaryRoot, 'read-config.mjs');
-    const configSource = await readFile(
-      path.join(workspaceRoot, 'verticals/party-registry/modern.config.ts'),
-      'utf-8',
+    const configSource = yield* Effect.promise(() =>
+      readFile(path.join(workspaceRoot, 'verticals/party-registry/modern.config.ts'), 'utf-8'),
     );
     const effectModuleUrl = pathToFileURL(
       require.resolve('effect', { paths: [workspaceRoot] }),
     ).href;
-    const { code } = await transform(configSource, { format: 'cjs', loader: 'ts' });
-    await writeFile(
-      harnessPath,
-      `import * as effect from ${JSON.stringify(effectModuleUrl)};
+    const { code } = yield* Effect.promise(() =>
+      transform(configSource, { format: 'cjs', loader: 'ts' }),
+    );
+    yield* Effect.promise(() =>
+      writeFile(
+        harnessPath,
+        `import * as effect from ${JSON.stringify(effectModuleUrl)};
 import { runInNewContext } from 'node:vm';
 const framework = {
   appTools: () => ({}),
@@ -544,183 +627,219 @@ runInNewContext(${JSON.stringify(code)}, {
 });
 process.stdout.write(JSON.stringify(module.exports.default.source.globalVars));
 `,
+      ),
     );
     const output = runNode([harnessPath]);
     return Schema.decodeUnknownSync(Schema.fromJsonString(GlobalVarsSchema))(output);
-  } finally {
-    await rm(temporaryRoot, { force: true, recursive: true });
-  }
-};
-
-void test('Party build configuration injects the exact nonlocal Shell origin into the API runtime', async () => {
-  const shellOrigin = 'https://operations.example.test';
-  const globalVars = await evaluatePartyBuildGlobalVars(shellOrigin);
-  assert.equal(globalVars.ULTRAMODERN_SHELL_ORIGIN, shellOrigin);
+  }).pipe(
+    Effect.ensuring(Effect.promise(() => rm(temporaryRoot, { force: true, recursive: true }))),
+  );
 });
 
-void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin without a runtime global', async () => {
-  const shellOrigin = 'https://operations.example.test';
-  const globalVars = await evaluatePartyBuildGlobalVars(shellOrigin);
-  const partyRoot = path.join(workspaceRoot, 'verticals/party-registry');
-  const source = await readFile(path.join(partyRoot, 'api/index.ts'), 'utf-8');
-  const reader =
-    /(?<reader>declare const ULTRAMODERN_SHELL_ORIGIN[\s\S]+?const shellOrigin = readShellOrigin\(\);)/u.exec(
-      source,
-    )?.groups?.reader;
-  assert.notEqual(reader, undefined, 'compile the actual API origin-reader boundary');
-  const appToolsPath = require.resolve('@modern-js/app-tools/config', { paths: [partyRoot] });
-  const rspackModule: unknown = require(require.resolve('@rspack/core', { paths: [appToolsPath] }));
-  const rspackFixture = Schema.decodeUnknownSync(RspackModuleFixtureSchema)(rspackModule);
-  const temporaryRoot = await mkdtemp(path.join(partyRoot, 'node_modules/.ontos-compiled-cors-'));
-  try {
-    const entry = path.join(temporaryRoot, 'reader.ts');
-    await writeFile(
-      entry,
-      `import { Schema } from 'effect';\nimport { resolvePartyRegistryShellOrigin, partyRegistryCorsAllowedOrigins } from ${JSON.stringify(path.join(partyRoot, 'api/read-server-support.ts'))};\n${reader}\nexport const allowedOrigins = partyRegistryCorsAllowedOrigins(shellOrigin);\n`,
-    );
-    const definePlugin = new rspackFixture.DefinePlugin(
-      Object.fromEntries(
-        Object.entries(globalVars).map(([key, value]) => [key, JSON.stringify(value)]),
-      ),
-    );
-    const createCompiler = rspackFixture.rspack.bind(rspackModule);
-    const compilerSource = createCompiler({
-      entry,
-      externals: { effect: 'commonjs effect' },
-      mode: 'none',
-      module: {
-        rules: [
-          {
-            test: /\.ts$/u,
-            use: {
-              loader: 'builtin:swc-loader',
-              options: { jsc: { parser: { syntax: 'typescript' } } },
-            },
-          },
-        ],
-      },
-      output: { filename: 'reader.cjs', library: { type: 'commonjs2' }, path: temporaryRoot },
-      plugins: [definePlugin],
-      target: 'node',
-    });
-    const compiler = Schema.decodeUnknownSync(CompilerFixtureSchema)({
-      close: compilerSource.close,
-      run: compilerSource.run,
-    });
-    const runCompiler = promisify(compiler.run.bind(compilerSource));
-    const closeCompiler = promisify(compiler.close.bind(compilerSource));
-    try {
-      const statsSource = await runCompiler();
-      assert.ok(statsSource);
-      const stats = Schema.decodeUnknownSync(CompilerStatsFixtureSchema)({
-        hasErrors: statsSource.hasErrors,
-        toString: statsSource.toString,
-      });
-      const hasErrors = stats.hasErrors.bind(statsSource)();
-      const errorText = stats.toString.bind(statsSource)({ all: false, errors: true });
-      assert.equal(hasErrors, false, errorText);
-    } finally {
-      await closeCompiler();
-    }
-    const compiledReaderModule: unknown = require(path.join(temporaryRoot, 'reader.cjs'));
-    const compiledReader = Schema.decodeUnknownSync(CompiledReaderSchema)(compiledReaderModule);
-    assert.deepEqual([...compiledReader.allowedOrigins], [shellOrigin]);
-  } finally {
-    await rm(temporaryRoot, { force: true, recursive: true });
-  }
-});
+it.live(
+  'Party build configuration injects the exact nonlocal Shell origin into the API runtime',
+  Effect.fn(function* scenario21() {
+    const shellOrigin = 'https://operations.example.test';
+    const globalVars = yield* evaluatePartyBuildGlobalVars(shellOrigin);
+    expect(globalVars.ULTRAMODERN_SHELL_ORIGIN).toBe(shellOrigin);
+  }),
+);
 
-const normalizedGeneratedSource = async (fileName: string, source: string) => {
-  const result = await format(fileName, source, { singleQuote: true, sortImports: true });
-  assert.deepEqual(result.errors, []);
-  return result.code.replaceAll(/^\s*\n/gmu, '');
-};
-
-void test('all published scaffold formats retain lint-safe Party infrastructure parity', async () => {
-  await Promise.all(
-    ['esm', 'esm-node', 'cjs'].map(async (moduleFormat) => {
-      const extension = moduleFormat === 'cjs' ? 'cjs' : 'js';
-      const generatorModulePath = (name: string): string =>
-        path.join(generatorRoot, `dist/${moduleFormat}/ultramodern-workspace/${name}.${extension}`);
-      const descriptorPath = generatorModulePath('descriptors');
-      const descriptorSource: unknown =
-        moduleFormat === 'cjs'
-          ? require(descriptorPath)
-          : await import(pathToFileURL(descriptorPath).href);
-      const descriptorModule = Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
-      const componentPath = generatorModulePath('demo-components');
-      const componentSource: unknown =
-        moduleFormat === 'cjs'
-          ? require(componentPath)
-          : await import(pathToFileURL(componentPath).href);
-      const componentModule = Schema.decodeUnknownSync(ComponentModuleSchema)(componentSource);
-      const federationPath = generatorModulePath('module-federation/config');
-      const federationSource: unknown =
-        moduleFormat === 'cjs'
-          ? require(federationPath)
-          : await import(pathToFileURL(federationPath).href);
-      const federationModule = Schema.decodeUnknownSync(FederationConfigModuleSchema)(
-        federationSource,
+it.live(
+  'compiled Party CORS reader uses the nonlocal DefinePlugin origin without a runtime global',
+  Effect.fn(function* scenario22() {
+    const shellOrigin = 'https://operations.example.test';
+    const globalVars = yield* evaluatePartyBuildGlobalVars(shellOrigin);
+    const partyRoot = path.join(workspaceRoot, 'verticals/party-registry');
+    const source = yield* Effect.promise(() =>
+      readFile(path.join(partyRoot, 'api/index.ts'), 'utf-8'),
+    );
+    const reader =
+      /(?<reader>declare const ULTRAMODERN_SHELL_ORIGIN[\s\S]+?const shellOrigin = readShellOrigin\(\);)/u.exec(
+        source,
+      )?.groups?.reader;
+    expect(reader, 'compile the actual API origin-reader boundary').not.toBe(undefined);
+    const appToolsPath = require.resolve('@modern-js/app-tools/config', { paths: [partyRoot] });
+    const rspackModule: unknown = require(
+      require.resolve('@rspack/core', { paths: [appToolsPath] }),
+    );
+    const rspackFixture = Schema.decodeUnknownSync(RspackModuleFixtureSchema)(rspackModule);
+    const temporaryRoot = yield* Effect.promise(() =>
+      mkdtemp(path.join(partyRoot, 'node_modules/.ontos-compiled-cors-')),
+    );
+    yield* Effect.gen(function* useResource3() {
+      const entry = path.join(temporaryRoot, 'reader.ts');
+      yield* Effect.promise(() =>
+        writeFile(
+          entry,
+          `import { Schema } from 'effect';\nimport { resolvePartyRegistryShellOrigin, partyRegistryCorsAllowedOrigins } from ${JSON.stringify(path.join(partyRoot, 'api/read-server-support.ts'))};\n${reader}\nexport const allowedOrigins = partyRegistryCorsAllowedOrigins(shellOrigin);\n`,
+        ),
       );
-      const buildModulePath = generatorModulePath('module-federation/reexport-module');
-      const buildModuleSource: unknown =
-        moduleFormat === 'cjs'
-          ? require(buildModulePath)
-          : await import(pathToFileURL(buildModulePath).href);
-      const buildModule = Schema.decodeUnknownSync(BuildModuleGeneratorSchema)(buildModuleSource);
-      const createVerticalDescriptor =
-        descriptorModule.createVerticalDescriptor.bind(descriptorSource);
-      const createLayout = componentModule.createLayout.bind(componentSource);
-      const createAppModernConfig = federationModule.createAppModernConfig.bind(federationSource);
-      const createBackendModuleFederationConfig =
-        federationModule.createBackendModuleFederationConfig.bind(federationSource);
-      const createUltramodernBuildModule =
-        buildModule.createUltramodernBuildModule.bind(buildModuleSource);
-      const descriptor: unknown = createVerticalDescriptor(partyId, 4102);
-      Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
-      const app = { ...descriptor, exposes: {} };
-      const generated = {
-        'backend-federation.config.ts': Schema.decodeUnknownSync(Schema.String)(
-          createBackendModuleFederationConfig(app),
+      const definePlugin = new rspackFixture.DefinePlugin(
+        Object.fromEntries(
+          Object.entries(globalVars).map(([key, value]) => [key, JSON.stringify(value)]),
         ),
-        'modern.config.ts': Schema.decodeUnknownSync(Schema.String)(
-          createAppModernConfig('app', app),
-        ),
-        'shared/ultramodern-build.ts': Schema.decodeUnknownSync(Schema.String)(
-          createUltramodernBuildModule('app', app),
-        ),
-        'src/routes/layout.tsx': Schema.decodeUnknownSync(Schema.String)(createLayout(app.id)),
-      };
-      await Promise.all(
-        Object.entries(generated).map(async ([fileName, source]) => {
-          const actual = await readFile(
-            path.join(workspaceRoot, 'verticals/party-registry', fileName),
-            'utf-8',
+      );
+      const createCompiler = rspackFixture.rspack.bind(rspackModule);
+      const compilerSource = createCompiler({
+        entry,
+        externals: { effect: 'commonjs effect' },
+        mode: 'none',
+        module: {
+          rules: [
+            {
+              test: /\.ts$/u,
+              use: {
+                loader: 'builtin:swc-loader',
+                options: { jsc: { parser: { syntax: 'typescript' } } },
+              },
+            },
+          ],
+        },
+        output: { filename: 'reader.cjs', library: { type: 'commonjs2' }, path: temporaryRoot },
+        plugins: [definePlugin],
+        target: 'node',
+      });
+      const compiler = Schema.decodeUnknownSync(CompilerFixtureSchema)({
+        close: compilerSource.close,
+        run: compilerSource.run,
+      });
+      const runCompiler = promisify(compiler.run.bind(compilerSource));
+      const closeCompiler = promisify(compiler.close.bind(compilerSource));
+      yield* Effect.gen(function* useResource2() {
+        const statsSource = yield* Effect.promise(() => runCompiler());
+        expect(statsSource).toBeDefined();
+        if (!statsSource) {
+          throw new Error('Compiler stats are missing');
+        }
+        const stats = Schema.decodeUnknownSync(CompilerStatsFixtureSchema)({
+          hasErrors: statsSource.hasErrors,
+          toString: statsSource.toString,
+        });
+        const hasErrors = stats.hasErrors.bind(statsSource)();
+        const errorText = stats.toString.bind(statsSource)({ all: false, errors: true });
+        expect(hasErrors, errorText).toBe(false);
+      }).pipe(Effect.ensuring(Effect.promise(() => closeCompiler())));
+      const compiledReaderModule: unknown = require(path.join(temporaryRoot, 'reader.cjs'));
+      const compiledReader = Schema.decodeUnknownSync(CompiledReaderSchema)(compiledReaderModule);
+      expect([...compiledReader.allowedOrigins]).toEqual([shellOrigin]);
+    }).pipe(
+      Effect.ensuring(Effect.promise(() => rm(temporaryRoot, { force: true, recursive: true }))),
+    );
+  }),
+);
+
+const normalizedGeneratedSource = Effect.fn(function* scenario23(fileName: string, source: string) {
+  const result = yield* Effect.promise(() =>
+    format(fileName, source, { singleQuote: true, sortImports: true }),
+  );
+  expect(result.errors).toEqual([]);
+  return result.code.replaceAll(/^\s*\n/gmu, '');
+});
+
+it.live(
+  'all published scaffold formats retain lint-safe Party infrastructure parity',
+  Effect.fn(function* scenario24() {
+    yield* Effect.all(
+      ['esm', 'esm-node', 'cjs'].map(
+        Effect.fn(function* scenario25(moduleFormat) {
+          const extension = moduleFormat === 'cjs' ? 'cjs' : 'js';
+          const generatorModulePath = (name: string): string =>
+            path.join(
+              generatorRoot,
+              `dist/${moduleFormat}/ultramodern-workspace/${name}.${extension}`,
+            );
+          const descriptorPath = generatorModulePath('descriptors');
+          const descriptorSource: unknown =
+            moduleFormat === 'cjs'
+              ? require(descriptorPath)
+              : yield* Effect.promise(() => import(pathToFileURL(descriptorPath).href));
+          const descriptorModule =
+            Schema.decodeUnknownSync(DescriptorModuleSchema)(descriptorSource);
+          const componentPath = generatorModulePath('demo-components');
+          const componentSource: unknown =
+            moduleFormat === 'cjs'
+              ? require(componentPath)
+              : yield* Effect.promise(() => import(pathToFileURL(componentPath).href));
+          const componentModule = Schema.decodeUnknownSync(ComponentModuleSchema)(componentSource);
+          const federationPath = generatorModulePath('module-federation/config');
+          const federationSource: unknown =
+            moduleFormat === 'cjs'
+              ? require(federationPath)
+              : yield* Effect.promise(() => import(pathToFileURL(federationPath).href));
+          const federationModule = Schema.decodeUnknownSync(FederationConfigModuleSchema)(
+            federationSource,
           );
-          assert.equal(
-            await normalizedGeneratedSource(fileName, source),
-            await normalizedGeneratedSource(fileName, actual),
-            `${moduleFormat}: ${fileName} must match the controlled scaffold`,
+          const buildModulePath = generatorModulePath('module-federation/reexport-module');
+          const buildModuleSource: unknown =
+            moduleFormat === 'cjs'
+              ? require(buildModulePath)
+              : yield* Effect.promise(() => import(pathToFileURL(buildModulePath).href));
+          const buildModule = Schema.decodeUnknownSync(BuildModuleGeneratorSchema)(
+            buildModuleSource,
+          );
+          const createVerticalDescriptor =
+            descriptorModule.createVerticalDescriptor.bind(descriptorSource);
+          const createLayout = componentModule.createLayout.bind(componentSource);
+          const createAppModernConfig =
+            federationModule.createAppModernConfig.bind(federationSource);
+          const createBackendModuleFederationConfig =
+            federationModule.createBackendModuleFederationConfig.bind(federationSource);
+          const createUltramodernBuildModule =
+            buildModule.createUltramodernBuildModule.bind(buildModuleSource);
+          const descriptor: unknown = createVerticalDescriptor(partyId, 4102);
+          Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
+          const app = { ...descriptor, exposes: {} };
+          const generated = {
+            'backend-federation.config.ts': Schema.decodeUnknownSync(Schema.String)(
+              createBackendModuleFederationConfig(app),
+            ),
+            'modern.config.ts': Schema.decodeUnknownSync(Schema.String)(
+              createAppModernConfig('app', app),
+            ),
+            'shared/ultramodern-build.ts': Schema.decodeUnknownSync(Schema.String)(
+              createUltramodernBuildModule('app', app),
+            ),
+            'src/routes/layout.tsx': Schema.decodeUnknownSync(Schema.String)(createLayout(app.id)),
+          };
+          yield* Effect.all(
+            Object.entries(generated).map(
+              Effect.fn(function* scenario26([fileName, source]) {
+                const actual = yield* Effect.promise(() =>
+                  readFile(path.join(workspaceRoot, 'verticals/party-registry', fileName), 'utf-8'),
+                );
+                expect(
+                  yield* normalizedGeneratedSource(fileName, source),
+                  `${moduleFormat}: ${fileName} must match the controlled scaffold`,
+                ).toBe(yield* normalizedGeneratedSource(fileName, actual));
+              }),
+            ),
+            { concurrency: 'unbounded' },
           );
         }),
-      );
-    }),
-  );
-});
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
 
-void test('full-stack Party Registry keeps backend and Contacts component tests executable', async () => {
-  const packageJson = await readJson(
-    PackageJsonSchema,
-    path.join(workspaceRoot, 'verticals/party-registry/package.json'),
-  );
-  assert.equal(packageJson.scripts['test:component'], 'rstest --config rstest.config.ts');
-  assert.equal(packageJson.scripts['test:unit'], 'node --test tests/unit/*.test.ts');
-  assert.equal(packageJson.scripts['test:integration'], 'node --test tests/integration/*.test.ts');
-  assert.match(
-    await readFile(path.join(workspaceRoot, 'verticals/party-registry/rstest.config.ts'), 'utf-8'),
-    /tests\/components/u,
-  );
-});
+it.live(
+  'full-stack Party Registry keeps backend and Contacts component tests executable',
+  Effect.fn(function* scenario27() {
+    const packageJson = yield* readJson(
+      PackageJsonSchema,
+      path.join(workspaceRoot, 'verticals/party-registry/package.json'),
+    );
+    expect(packageJson.scripts['test:component']).toBe('rstest --project component');
+    expect(packageJson.scripts['test:unit']).toBe('rstest --project unit');
+    expect(packageJson.scripts['test:integration']).toBe('rstest --project integration');
+    expect(
+      yield* Effect.promise(() =>
+        readFile(path.join(workspaceRoot, 'verticals/party-registry/rstest.config.ts'), 'utf-8'),
+      ),
+    ).toMatch(/tests\/components/u);
+  }),
+);
 const cloudflareProofModule: unknown = await import(
   pathToFileURL(
     path.join(generatorRoot, 'templates/workspace-scripts/ultramodern-cloudflare-proof.mjs'),
@@ -730,13 +849,16 @@ const cloudflareProof = Schema.decodeUnknownSync(CloudflareProofModuleSchema)(
   cloudflareProofModule,
 );
 const validateCloudflareApp = cloudflareProof.validateApp.bind(cloudflareProofModule);
-const validateApp = async (
+const validateApp = (
   app: ApiOnlyAppFixture,
   applicationPublicUrl: string,
-): Promise<typeof CloudflareEvidenceSchema.Type> => {
-  const output: unknown = await validateCloudflareApp(app, applicationPublicUrl);
-  return Schema.decodeUnknownSync(CloudflareEvidenceSchema)(output);
-};
+): Effect.Effect<typeof CloudflareEvidenceSchema.Type, unknown> =>
+  Effect.gen(function* scenario28() {
+    const output: unknown = yield* Effect.promise(() =>
+      validateCloudflareApp(app, applicationPublicUrl),
+    );
+    return Schema.decodeUnknownSync(CloudflareEvidenceSchema)(output);
+  });
 const federationValidationModule: unknown = await import(
   pathToFileURL(
     path.join(generatorRoot, 'dist/esm-node/ultramodern-workspace/mf-validation/validate.js'),
@@ -795,41 +917,55 @@ const apiOnlyApp = (): ApiOnlyAppFixture => ({
   marker: { build: buildMarker },
 });
 
-const mockPublicResponses = (context: TestContext, failedPath?: string) => {
+const mockPublicResponses = (failedPath?: string) => {
   const requested: string[] = [];
-  context.mock.method(globalThis, 'fetch', async (input: string | URL) => {
-    const route = new URL(String(input)).pathname;
+  rs.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    let address: string;
+    if (Schema.is(Schema.String)(input)) {
+      address = input;
+    } else if ('url' in input) {
+      address = input.url;
+    } else {
+      address = input.href;
+    }
+    const route = new URL(address).pathname;
     requested.push(route);
     if (route === failedPath) {
-      return new Response('unavailable', { status: 503 });
+      return Promise.resolve(new Response('unavailable', { status: 503 }));
     }
     const body =
       route === mfManifestPath
         ? { metaData: { publicPath: `${publicUrl}/` } }
         : { marker: { build: buildMarker }, status: 'ready' };
-    return Response.json(body, { headers: { 'access-control-allow-origin': '*' } });
+    return Promise.resolve(
+      Response.json(body, { headers: { 'access-control-allow-origin': '*' } }),
+    );
   });
   return requested;
 };
 
-void test('API-only proof keeps manifest, readiness, service-binding and JSON proofs without invented pages/locales', async (context) => {
-  const requested = mockPublicResponses(context);
-  const evidence = await validateApp(apiOnlyApp(), publicUrl);
-  assert.deepEqual(requested, [mfManifestPath, readinessPath, '/binding', apiSmokePath]);
-  for (const proof of [
-    'mf-manifest',
-    'api-marker',
-    'delivery-unit-api-marker',
-    'service-binding-api-marker',
-    'json-smoke-value',
-  ]) {
-    assert.ok(evidence.assertions.some((entry) => entry.type === proof && entry.status === 'pass'));
-  }
-  assert.equal(
-    evidence.assertions.some((entry) => entry.type === 'ssr' || entry.type === 'i18n-marker'),
-    false,
-  );
-});
+it.live(
+  'API-only proof keeps manifest, readiness, service-binding and JSON proofs without invented pages/locales',
+  Effect.fn(function* scenario29() {
+    const requested = mockPublicResponses();
+    const evidence = yield* validateApp(apiOnlyApp(), publicUrl);
+    expect(requested).toEqual([mfManifestPath, readinessPath, '/binding', apiSmokePath]);
+    for (const proof of [
+      'mf-manifest',
+      'api-marker',
+      'delivery-unit-api-marker',
+      'service-binding-api-marker',
+      'json-smoke-value',
+    ]) {
+      expect(
+        evidence.assertions.some((entry) => entry.type === proof && entry.status === 'pass'),
+      ).toBe(true);
+    }
+    expect(
+      evidence.assertions.some((entry) => entry.type === 'ssr' || entry.type === 'i18n-marker'),
+    ).toBe(false);
+  }),
+);
 
 for (const [route, error] of [
   [mfManifestPath, /MF manifest returned HTTP 503/u],
@@ -837,167 +973,214 @@ for (const [route, error] of [
   ['/binding', /service binding PARTY_WORKER returned HTTP 503/u],
   [apiSmokePath, /JSON smoke api returned HTTP 503/u],
 ] as const) {
-  void test(`API-only proof still fails closed for ${route}`, async (context) => {
-    mockPublicResponses(context, route);
-    await assert.rejects(validateApp(apiOnlyApp(), publicUrl), error);
-  });
+  it.live(
+    `API-only proof still fails closed for ${route}`,
+    Effect.fn(function* scenario30() {
+      mockPublicResponses(route);
+      const failureCause8 = yield* Effect.flip(
+        Effect.sandbox(validateApp(apiOnlyApp(), publicUrl)),
+      );
+      expect(String(Cause.squash(failureCause8))).toMatch(error);
+    }),
+  );
 }
 
-void test('full-stack declared SSR remains mandatory', async (context) => {
-  const requested = mockPublicResponses(context, '/en');
-  const app = apiOnlyApp();
-  Object.assign(app.deploy.cloudflare.routes, {
-    locale: localePath,
-    ssr: '/en',
-  });
-  await assert.rejects(validateApp(app, publicUrl), /SSR route returned HTTP 503/u);
-  assert.deepEqual(requested, ['/en']);
-});
+it.live(
+  'full-stack declared SSR remains mandatory',
+  Effect.fn(function* scenario31() {
+    const requested = mockPublicResponses('/en');
+    const app = apiOnlyApp();
+    Object.assign(app.deploy.cloudflare.routes, {
+      locale: localePath,
+      ssr: '/en',
+    });
+    const failureCause9 = yield* Effect.flip(Effect.sandbox(validateApp(app, publicUrl)));
+    expect(String(Cause.squash(failureCause9))).toMatch(/SSR route returned HTTP 503/u);
+    expect(requested).toEqual(['/en']);
+  }),
+);
 
-void test('declared namespace locale remains mandatory independently of SSR', async (context) => {
-  const requested = mockPublicResponses(context, localePath);
-  const app = apiOnlyApp();
-  Object.assign(app.deploy.cloudflare.routes, { locale: localePath });
-  await assert.rejects(validateApp(app, publicUrl), /locale JSON returned HTTP 503/u);
-  assert.deepEqual(requested, [mfManifestPath, localePath]);
-});
+it.live(
+  'declared namespace locale remains mandatory independently of SSR',
+  Effect.fn(function* scenario32() {
+    const requested = mockPublicResponses(localePath);
+    const app = apiOnlyApp();
+    Object.assign(app.deploy.cloudflare.routes, { locale: localePath });
+    const failureCause10 = yield* Effect.flip(Effect.sandbox(validateApp(app, publicUrl)));
+    expect(String(Cause.squash(failureCause10))).toMatch(/locale JSON returned HTTP 503/u);
+    expect(requested).toEqual([mfManifestPath, localePath]);
+  }),
+);
 
 for (const field of ['ssr', 'locale']) {
-  void test(`an invalid declared ${field} route cannot disable its proof`, async (context) => {
-    mockPublicResponses(context);
-    const app = apiOnlyApp();
-    Object.assign(app.deploy.cloudflare.routes, { [field]: '' });
-    await assert.rejects(
-      validateApp(app, publicUrl),
-      /declared .* route must be a root-relative path/u,
-    );
-  });
+  it.live(
+    `an invalid declared ${field} route cannot disable its proof`,
+    Effect.fn(function* scenario33() {
+      mockPublicResponses();
+      const app = apiOnlyApp();
+      Object.assign(app.deploy.cloudflare.routes, { [field]: '' });
+      const failureCause11 = yield* Effect.flip(Effect.sandbox(validateApp(app, publicUrl)));
+      expect(String(Cause.squash(failureCause11))).toMatch(
+        /declared .* route must be a root-relative path/u,
+      );
+    }),
+  );
 }
 
 for (const variant of ['cjs', 'esm', 'esm-node']) {
-  void test(`${variant} inspector permits dts:false only with zero frontend exposes`, async () => {
-    const extension = variant === 'cjs' ? 'cjs' : 'js';
-    const inspectionModule: unknown = await import(
-      pathToFileURL(
-        path.join(
-          generatorRoot,
-          `dist/${variant}/ultramodern-workspace/mf-validation/inspect.${extension}`,
-        ),
-      ).href
-    );
-    const inspection = Schema.decodeUnknownSync(ModuleFederationInspectionModuleSchema)(
-      inspectionModule,
-    );
-    const inspectInstalledModuleFederationConfig =
-      inspection.inspectModuleFederationConfigSource.bind(inspectionModule);
-    const inspect = (source: string): typeof ModuleFederationInspectionSchema.Type => {
-      const output: unknown = inspectInstalledModuleFederationConfig(
-        source,
-        'verticals/api',
-        'module-federation.config.ts',
+  it.live(
+    `${variant} inspector permits dts:false only with zero frontend exposes`,
+    Effect.fn(function* scenario34() {
+      const extension = variant === 'cjs' ? 'cjs' : 'js';
+      const inspectionModule: unknown = yield* Effect.promise(
+        () =>
+          import(
+            pathToFileURL(
+              path.join(
+                generatorRoot,
+                `dist/${variant}/ultramodern-workspace/mf-validation/inspect.${extension}`,
+              ),
+            ).href
+          ),
       );
-      return Schema.decodeUnknownSync(ModuleFederationInspectionSchema)(output);
-    };
-    assert.deepEqual(
-      inspect('// @ultramodern-mf no-exposes\nexport default { dts: false, exposes: {} };').dts,
-      {},
-    );
-    assert.throws(
-      () => inspect('export default { dts: false, exposes: { "./Page": "./page.tsx" } };'),
-      /DTS cannot be disabled for exposed app/u,
-    );
-  });
+      const inspection = Schema.decodeUnknownSync(ModuleFederationInspectionModuleSchema)(
+        inspectionModule,
+      );
+      const inspectInstalledModuleFederationConfig =
+        inspection.inspectModuleFederationConfigSource.bind(inspectionModule);
+      const inspect = (source: string): typeof ModuleFederationInspectionSchema.Type => {
+        const output: unknown = inspectInstalledModuleFederationConfig(
+          source,
+          'verticals/api',
+          'module-federation.config.ts',
+        );
+        return Schema.decodeUnknownSync(ModuleFederationInspectionSchema)(output);
+      };
+      expect(
+        inspect('// @ultramodern-mf no-exposes\nexport default { dts: false, exposes: {} };').dts,
+      ).toEqual({});
+      expect(() =>
+        inspect('export default { dts: false, exposes: { "./Page": "./page.tsx" } };'),
+      ).toThrow(/DTS cannot be disabled for exposed app/u);
+    }),
+  );
 }
 
-void test('MF proof accepts explicit API-only intent but keeps exposed-app archives mandatory', async (context) => {
-  const fixture = await mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-mf-'));
-  context.after(async (): Promise<void> => {
-    await rm(fixture, { force: true, recursive: true });
-  });
-  const appDir = 'verticals/api';
-  await mkdir(path.join(fixture, appDir), { recursive: true });
-  const configPath = path.join(fixture, appDir, 'module-federation.config.ts');
-  const validate = () =>
-    validateModuleFederationTypes({ appDirs: [appDir], workspaceRoot: fixture });
-  await writeFile(
-    configPath,
-    '// @ultramodern-mf no-exposes\nexport default { dts: false, exposes: {} };',
-  );
-  assert.equal(validate().hostOnlyAppCount, 1);
-  await writeFile(configPath, 'export default { dts: false, exposes: {} };');
-  assert.throws(validate, /without an explicit host-only\/no-exposes declaration/u);
-  await writeFile(
-    configPath,
-    'export default { dts: { tsConfigPath: "./tsconfig.mf-types.json", generateTypes: { compilerInstance: "effect-tsgo" } }, exposes: { "./Page": "./page.tsx" } };',
-  );
-  assert.throws(validate, /Missing Module Federation DTS archive/u);
-});
+it.live(
+  'MF proof accepts explicit API-only intent but keeps exposed-app archives mandatory',
+  Effect.fn(function* scenario35() {
+    const fixture = yield* Effect.acquireRelease(
+      Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-mf-'))),
+      (dir) => Effect.promise(() => rm(dir, { force: true, recursive: true })),
+    );
+    const appDir = 'verticals/api';
+    yield* Effect.promise(() => mkdir(path.join(fixture, appDir), { recursive: true }));
+    const configPath = path.join(fixture, appDir, 'module-federation.config.ts');
+    const validate = () =>
+      validateModuleFederationTypes({ appDirs: [appDir], workspaceRoot: fixture });
+    yield* Effect.promise(() =>
+      writeFile(
+        configPath,
+        '// @ultramodern-mf no-exposes\nexport default { dts: false, exposes: {} };',
+      ),
+    );
+    expect(validate().hostOnlyAppCount).toBe(1);
+    yield* Effect.promise(() =>
+      writeFile(configPath, 'export default { dts: false, exposes: {} };'),
+    );
+    expect(validate).toThrow(/without an explicit host-only\/no-exposes declaration/u);
+    yield* Effect.promise(() =>
+      writeFile(
+        configPath,
+        'export default { dts: { tsConfigPath: "./tsconfig.mf-types.json", generateTypes: { compilerInstance: "effect-tsgo" } }, exposes: { "./Page": "./page.tsx" } };',
+      ),
+    );
+    expect(validate).toThrow(/Missing Module Federation DTS archive/u);
+  }),
+);
 
-void test('Party deployment declares no fake SSR/locale URL while retaining backend contracts', async () => {
-  const topology = await readJson(
-    TopologySchema,
-    path.join(workspaceRoot, 'topology/reference-topology.json'),
-  );
-  const party = topology.verticals.find((entry) => entry.id === partyId);
-  assert.ok(party);
-  assert.equal(party.cloudflare.routes.ssr, undefined);
-  assert.equal(party.cloudflare.routes.locale, undefined);
-  assert.equal(party.cloudflare.routes.mfManifest, mfManifestPath);
-  assert.equal(party.cloudflare.routes.apiReadiness, readinessPath);
-  assert.equal(
-    party.backendFederation.exposes['./effect-api'].contract,
-    'verticals/party-registry/shared/api.ts',
-  );
-  assert.equal(
-    party.backendFederation.exposes['./effect-api'].openapi,
-    '/party-registry-api/openapi.json',
-  );
-});
+it.live(
+  'Party deployment declares no fake SSR/locale URL while retaining backend contracts',
+  Effect.fn(function* scenario36() {
+    const topology = yield* readJson(
+      TopologySchema,
+      path.join(workspaceRoot, 'topology/reference-topology.json'),
+    );
+    const party = topology.verticals.find((entry) => entry.id === partyId);
+    expect(party).toBeDefined();
+    if (!party) {
+      throw new Error('Party deployment is missing');
+    }
+    expect(party.cloudflare.routes.ssr).toBe(undefined);
+    expect(party.cloudflare.routes.locale).toBe(undefined);
+    expect(party.cloudflare.routes.mfManifest).toBe(mfManifestPath);
+    expect(party.cloudflare.routes.apiReadiness).toBe(readinessPath);
+    expect(party.backendFederation.exposes['./effect-api'].contract).toBe(
+      'verticals/party-registry/shared/api.ts',
+    );
+    expect(party.backendFederation.exposes['./effect-api'].openapi).toBe(
+      '/party-registry-api/openapi.json',
+    );
+  }),
+);
 
-void test('Party Registry is the sole deployment owner for Contacts capabilities', async () => {
-  const topology = await readJson(
-    TopologySchema,
-    path.join(workspaceRoot, 'topology/reference-topology.json'),
-  );
-  const overlay = await readJson(
-    OverlaySchema,
-    path.join(workspaceRoot, 'topology/local-overlays/development.json'),
-  );
-  const zerops = await readFile(path.join(workspaceRoot, 'zerops.yaml'), 'utf-8');
-  const partySetup = zerops.split(`  - setup: '${partyId}'`)[1]?.split('  - setup:')[0];
-  assert.ok(partySetup);
-  assert.equal(zerops.includes("  - setup: 'contacts'"), false);
-  assert.equal(
-    topology.verticals.some((entry) => entry.id === 'contacts'),
-    false,
-  );
-  const party = topology.verticals.find((entry) => entry.id === partyId);
-  assert.ok(party);
-  assert.equal(overlay.ports[party.id], 4102);
-  assert.equal(overlay.apis[party.id], 'http://localhost:4102/party-registry-api');
-  assert.ok(partySetup.includes('ULTRAMODERN_ZEROPS_SERVICE: party-registry'));
-  assert.ok(party.moduleFederation.exposes.includes('./PageContacts'));
-});
+it.live(
+  'Party Registry is the sole deployment owner for Contacts capabilities',
+  Effect.fn(function* scenario37() {
+    const topology = yield* readJson(
+      TopologySchema,
+      path.join(workspaceRoot, 'topology/reference-topology.json'),
+    );
+    const overlay = yield* readJson(
+      OverlaySchema,
+      path.join(workspaceRoot, 'topology/local-overlays/development.json'),
+    );
+    const zerops = yield* Effect.promise(() =>
+      readFile(path.join(workspaceRoot, 'zerops.yaml'), 'utf-8'),
+    );
+    const partySetup = zerops.split(`  - setup: '${partyId}'`)[1]?.split('  - setup:')[0];
+    expect(partySetup).toBeDefined();
+    if (!partySetup) {
+      throw new Error('Party setup is missing');
+    }
+    expect(zerops.includes("  - setup: 'contacts'")).toBe(false);
+    expect(topology.verticals.some((entry) => entry.id === 'contacts')).toBe(false);
+    const party = topology.verticals.find((entry) => entry.id === partyId);
+    expect(party).toBeDefined();
+    if (!party) {
+      throw new Error('Party deployment is missing');
+    }
+    expect(overlay.ports[party.id]).toBe(4102);
+    expect(overlay.apis[party.id]).toBe('http://localhost:4102/party-registry-api');
+    expect(partySetup.includes('ULTRAMODERN_ZEROPS_SERVICE: party-registry')).toBe(true);
+    expect(party.moduleFederation.exposes.includes('./PageContacts')).toBe(true);
+  }),
+);
 
-void test('installed Cloudflare CLI preserves API-only routes when synthesizing the real Party contract', async (context) => {
-  const fixture = await mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-proof-'));
-  context.after(async (): Promise<void> => {
-    await rm(fixture, { force: true, recursive: true });
-  });
-  await mkdir(path.join(fixture, '.modernjs'));
-  await writeFile(
-    path.join(fixture, '.modernjs/ultramodern.json'),
-    await readFile(path.join(workspaceRoot, '.modernjs/ultramodern.json')),
-  );
-  const build = await readJson(
-    BuildArtifactSchema,
-    path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
-  );
-  const requestedPath = path.join(fixture, 'requested-routes.txt');
-  const fetchMockPath = path.join(fixture, 'cloudflare-fetch-mock.mjs');
-  await writeFile(
-    fetchMockPath,
-    `import { appendFileSync } from 'node:fs';
+it.live(
+  'installed Cloudflare CLI preserves API-only routes when synthesizing the real Party contract',
+  Effect.fn(function* scenario38() {
+    const fixture = yield* Effect.acquireRelease(
+      Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-proof-'))),
+      (dir) => Effect.promise(() => rm(dir, { force: true, recursive: true })),
+    );
+    yield* Effect.promise(() => mkdir(path.join(fixture, '.modernjs')));
+    const modernConfig = yield* Effect.promise(() =>
+      readFile(path.join(workspaceRoot, '.modernjs/ultramodern.json')),
+    );
+    yield* Effect.promise(() =>
+      writeFile(path.join(fixture, '.modernjs/ultramodern.json'), modernConfig),
+    );
+    const build = yield* readJson(
+      BuildArtifactSchema,
+      path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
+    );
+    const requestedPath = path.join(fixture, 'requested-routes.txt');
+    const fetchMockPath = path.join(fixture, 'cloudflare-fetch-mock.mjs');
+    yield* Effect.promise(() =>
+      writeFile(
+        fetchMockPath,
+        `import { appendFileSync } from 'node:fs';
 const requestedPath = ${JSON.stringify(requestedPath)};
 const publicUrl = ${JSON.stringify(publicUrl)};
 const manifestPath = ${JSON.stringify(mfManifestPath)};
@@ -1027,31 +1210,33 @@ globalThis.fetch = async input => {
   return Response.json({ error: 'No owner route or locale exists' }, { headers, status: 404 });
 };
 `,
-  );
-  const reportPath = path.join(fixture, 'proof.json');
-  runNode(
-    [
-      '--import',
-      pathToFileURL(fetchMockPath).href,
-      path.join(generatorRoot, 'templates/workspace-scripts/proof-cloudflare-version.mjs'),
-      '--app',
-      partyId,
-      '--require-public-urls',
-      '--out',
-      reportPath,
-    ],
-    {
-      env: {
-        ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: publicUrl,
-        ULTRAMODERN_WORKSPACE_ROOT: fixture,
+      ),
+    );
+    const reportPath = path.join(fixture, 'proof.json');
+    runNode(
+      [
+        '--import',
+        pathToFileURL(fetchMockPath).href,
+        path.join(generatorRoot, 'templates/workspace-scripts/proof-cloudflare-version.mjs'),
+        '--app',
+        partyId,
+        '--require-public-urls',
+        '--out',
+        reportPath,
+      ],
+      {
+        env: {
+          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: publicUrl,
+          ULTRAMODERN_WORKSPACE_ROOT: fixture,
+        },
       },
-    },
-  );
-  const requestedSource = await readFile(requestedPath, 'utf-8');
-  const requested = requestedSource.trimEnd().split('\n');
-  assert.deepEqual(requested, [mfManifestPath, readinessPath, readinessPath]);
-  const report = await readJson(CloudflareReportSchema, reportPath);
-  assert.equal(report.status, 'pass');
-  assert.equal(report.results[0].appId, 'party-registry');
-  assert.ok(report.results[0].assertions.every((entry) => entry.status === 'pass'));
-});
+    );
+    const requestedSource = yield* Effect.promise(() => readFile(requestedPath, 'utf-8'));
+    const requested = requestedSource.trimEnd().split('\n');
+    expect(requested).toEqual([mfManifestPath, readinessPath, readinessPath]);
+    const report = yield* readJson(CloudflareReportSchema, reportPath);
+    expect(report.status).toBe('pass');
+    expect(report.results[0].appId).toBe('party-registry');
+    expect(report.results[0].assertions.every((entry) => entry.status === 'pass')).toBe(true);
+  }),
+);

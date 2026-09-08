@@ -1,8 +1,6 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import {
   ApiKeyGatewayHeadersSchema,
   GatewayContextApiGroup,
@@ -40,93 +38,93 @@ const claims = {
   ver: 1 as const,
 };
 
-void test('decodes the exact versioned public assertion contract', async () => {
-  assert.deepEqual(await runEffectTestPromise(decodeGatewayContextClaims(claims)), claims);
-  assert.deepEqual(
-    Schema.decodeUnknownSync(GatewayContextProtectedHeaderSchema)({
+it.effect('decodes the exact versioned public assertion contract', () =>
+  Effect.gen(function* testScenario1() {
+    expect(yield* decodeGatewayContextClaims(claims)).toEqual(claims);
+    expect(
+      Schema.decodeUnknownSync(GatewayContextProtectedHeaderSchema)({
+        alg: 'EdDSA',
+        kid: 'current-2026-08',
+        typ: 'JWT',
+      }),
+    ).toEqual({
       alg: 'EdDSA',
       kid: 'current-2026-08',
       typ: 'JWT',
-    }),
-    {
-      alg: 'EdDSA',
-      kid: 'current-2026-08',
-      typ: 'JWT',
-    },
-  );
-  assert.deepEqual(
-    Schema.decodeUnknownSync(GatewayContextRequestSchema)({
-      audience: 'inventory-stock',
-    }),
-    { audience: 'inventory-stock' },
-  );
-  assert.deepEqual(
-    Schema.decodeUnknownSync(GatewayContextResponseSchema)({
-      expiresAt: claims.exp,
-      token: 'header.payload.signature',
-    }),
-    { expiresAt: claims.exp, token: 'header.payload.signature' },
-  );
-});
-
-void test('rejects malformed audiences, invalid ordering, and subject mismatch', async () => {
-  await assert.rejects(
-    runEffectTestPromise(Schema.decodeUnknownEffect(GatewayContextRequestSchema)({ audience: '' })),
-  );
-  await assert.rejects(
-    runEffectTestPromise(decodeGatewayContextClaims({ ...claims, exp: claims.iat })),
-  );
-  await assert.rejects(
-    runEffectTestPromise(decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 })),
-  );
-  await assert.rejects(
-    runEffectTestPromise(
-      decodeGatewayContextClaims({
-        ...claims,
-        sub: '60000000-0000-4000-8000-000000000001',
+    });
+    expect(
+      Schema.decodeUnknownSync(GatewayContextRequestSchema)({
+        audience: 'inventory-stock',
       }),
-    ),
-  );
-});
-
-void test('rejects credential, display, authorization, Action, and business claim expansion', async () => {
-  const forbiddenFields = [
-    'email',
-    'displayName',
-    'credential',
-    'rawApiKey',
-    'providerKeyId',
-    'keyId',
-    'cookie',
-    'sessionToken',
-    'actionKey',
-    'permission',
-    'policyDecision',
-    'businessPayload',
-  ] as const;
-
-  await Promise.all(
-    forbiddenFields.map(
-      async (field) =>
-        await assert.rejects(
-          runEffectTestPromise(decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })),
-          field,
-        ),
-    ),
-  );
-  await assert.rejects(
-    runEffectTestPromise(
-      decodeGatewayContextClaims({
-        ...claims,
-        principal: { ...principal, email: 'must-not-pass@example.test' },
+    ).toEqual({ audience: 'inventory-stock' });
+    expect(
+      Schema.decodeUnknownSync(GatewayContextResponseSchema)({
+        expiresAt: claims.exp,
+        token: 'header.payload.signature',
       }),
-    ),
-  );
-});
+    ).toEqual({ expiresAt: claims.exp, token: 'header.payload.signature' });
+  }),
+);
 
-void test('schemas publish only the required public field names', () => {
-  assert.equal(GatewayTrustedPrincipalContextSchema, TrustedPrincipalContextSchema);
-  assert.deepEqual(Object.keys(GatewayContextClaimsSchema.fields).toSorted(), [
+it.effect('rejects malformed audiences, invalid ordering, and subject mismatch', () =>
+  Effect.gen(function* testScenario2() {
+    expect(
+      yield* Effect.flip(Schema.decodeUnknownEffect(GatewayContextRequestSchema)({ audience: '' })),
+    ).toBeDefined();
+    expect(
+      yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat })),
+    ).toBeDefined();
+    expect(
+      yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 })),
+    ).toBeDefined();
+    expect(
+      yield* Effect.flip(
+        decodeGatewayContextClaims({
+          ...claims,
+          sub: '60000000-0000-4000-8000-000000000001',
+        }),
+      ),
+    ).toBeDefined();
+  }),
+);
+
+it.effect('rejects credential, display, authorization, Action, and business claim expansion', () =>
+  Effect.gen(function* testScenario3() {
+    const forbiddenFields = [
+      'email',
+      'displayName',
+      'credential',
+      'rawApiKey',
+      'providerKeyId',
+      'keyId',
+      'cookie',
+      'sessionToken',
+      'actionKey',
+      'permission',
+      'policyDecision',
+      'businessPayload',
+    ] as const;
+
+    for (const field of forbiddenFields) {
+      expect(
+        yield* Effect.flip(decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })),
+        field,
+      ).toBeDefined();
+    }
+    expect(
+      yield* Effect.flip(
+        decodeGatewayContextClaims({
+          ...claims,
+          principal: { ...principal, email: 'must-not-pass@example.test' },
+        }),
+      ),
+    ).toBeDefined();
+  }),
+);
+
+it('schemas publish only the required public field names', () => {
+  expect(GatewayTrustedPrincipalContextSchema).toBe(TrustedPrincipalContextSchema);
+  expect(Object.keys(GatewayContextClaimsSchema.fields).toSorted()).toEqual([
     'aud',
     'exp',
     'iat',
@@ -136,17 +134,16 @@ void test('schemas publish only the required public field names', () => {
     'sub',
     'ver',
   ]);
-  assert.deepEqual(Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted(), [
+  expect(Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted()).toEqual([
     'alg',
     'kid',
     'typ',
   ]);
 });
 
-void test('publishes the exact API-key credential boundary and failure statuses', () => {
-  assert.deepEqual(Object.keys(ApiKeyGatewayHeadersSchema.fields), ['x-api-key']);
-  assert.deepEqual(
-    endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext),
-    [400, 401, 403, 429, 500, 503],
-  );
+it('publishes the exact API-key credential boundary and failure statuses', () => {
+  expect(Object.keys(ApiKeyGatewayHeadersSchema.fields)).toEqual(['x-api-key']);
+  expect(endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext)).toEqual([
+    400, 401, 403, 429, 500, 503,
+  ]);
 });

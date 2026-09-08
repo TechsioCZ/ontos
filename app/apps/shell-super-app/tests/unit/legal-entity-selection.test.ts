@@ -1,6 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import { test } from '@rstest/core';
+import { expect, it } from '@app/effect-rstest';
 import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
 import type { ContextAccessService, LegalEntityContextService } from '@app/core-runtime';
 import { Effect, Layer, Predicate } from 'effect';
@@ -54,17 +52,15 @@ const provideSelectionServices = <Success, Failure>(
     ),
   );
 
-test('auto-selects the only authorized entity and preserves an exact saved choice', async () => {
-  const only = await runEffectTestPromise(
-    provideSelectionServices(
+it.effect('auto-selects the only authorized entity and preserves an exact saved choice', () =>
+  Effect.gen(function* verifyCase1() {
+    const only = yield* provideSelectionServices(
       resolveAuthorizedLegalEntities({ principalId, tenantId }),
       context(),
       access({ [alpha.legalEntityId]: 'allowed' }),
-    ),
-  );
-  assert.deepEqual(only, { available: [alpha], selected: alpha, state: 'selected' });
-  const saved = await runEffectTestPromise(
-    provideSelectionServices(
+    );
+    expect(only).toEqual({ available: [alpha], selected: alpha, state: 'selected' });
+    const saved = yield* provideSelectionServices(
       resolveAuthorizedLegalEntities({
         principalId,
         savedLegalEntityId: beta.legalEntityId,
@@ -72,48 +68,42 @@ test('auto-selects the only authorized entity and preserves an exact saved choic
       }),
       context(),
       access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
-    ),
-  );
-  assert.deepEqual(saved, { available: [alpha, beta], selected: beta, state: 'selected' });
-});
+    );
+    expect(saved).toEqual({ available: [alpha, beta], selected: beta, state: 'selected' });
+  }),
+);
 
-test('requires a choice for several entities and blocks zero definite grants', async () => {
-  assert.deepEqual(
-    await runEffectTestPromise(
-      provideSelectionServices(
+it.effect('requires a choice for several entities and blocks zero definite grants', () =>
+  Effect.gen(function* verifyCase2() {
+    expect(
+      yield* provideSelectionServices(
         resolveAuthorizedLegalEntities({ principalId, tenantId }),
         context(),
         access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
       ),
-    ),
-    { available: [alpha, beta], state: 'selection_required' },
-  );
-  assert.deepEqual(
-    await runEffectTestPromise(
-      provideSelectionServices(
+    ).toEqual({ available: [alpha, beta], state: 'selection_required' });
+    expect(
+      yield* provideSelectionServices(
         resolveAuthorizedLegalEntities({ principalId, tenantId }),
         context(),
         access({}),
       ),
-    ),
-    { available: [], state: 'access_blocked' },
-  );
-});
+    ).toEqual({ available: [], state: 'access_blocked' });
+  }),
+);
 
-test('fails closed for authorization uncertainty and validates a switch independently', async () => {
-  const unavailable = await runEffectTestPromise(
-    Effect.flip(
+it.effect('fails closed for authorization uncertainty and validates a switch independently', () =>
+  Effect.gen(function* verifyCase3() {
+    const unavailable = yield* Effect.flip(
       provideSelectionServices(
         resolveAuthorizedLegalEntities({ principalId, tenantId }),
         context(),
         access({ [alpha.legalEntityId]: 'unavailable' }),
       ),
-    ),
-  );
-  assert.ok(Predicate.isTagged(unavailable, 'LegalEntitySelectionUnavailableError'));
-  assert.deepEqual(
-    await runEffectTestPromise(
-      provideSelectionServices(
+    );
+    expect(Predicate.isTagged(unavailable, 'LegalEntitySelectionUnavailableError')).toBe(true);
+    expect(
+      yield* provideSelectionServices(
         validateAuthorizedLegalEntity({
           legalEntityId: beta.legalEntityId,
           principalId,
@@ -122,7 +112,6 @@ test('fails closed for authorization uncertainty and validates a switch independ
         context(),
         access({ [beta.legalEntityId]: 'allowed' }),
       ),
-    ),
-    beta,
-  );
-});
+    ).toEqual(beta);
+  }),
+);

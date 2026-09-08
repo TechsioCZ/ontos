@@ -1,57 +1,70 @@
-import assert from 'node:assert/strict';
-import childProcess from 'node:child_process';
+import { expect, it, rstest } from '@app/effect-rstest';
+import { Schema } from 'effect';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
-import { join } from 'node:path';
-import { mock, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import nodePath from 'node:path';
+import { createRequire } from 'node:module';
 
 import { appRoot, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
-test('Oxlint launches its JavaScript entry point through Node without a platform shim', () => {
+const decodePackageScripts = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })),
+);
+
+rstest.mock('node:child_process', () => {
+  const original = process.getBuiltinModule('node:child_process');
+  return { ...original, spawnSync: rstest.fn(original.spawnSync) };
+});
+
+it('Oxlint launches its JavaScript entry point through Node without a platform shim', () => {
   withTemporaryWorkspace((directory) => {
-    const config = join(directory, 'lint config.json');
+    const config = nodePath.join(directory, 'lint config.json');
     const input = 'source with spaces.ts';
     writeFileSync(config, JSON.stringify({ categories: { correctness: 'off' } }));
-    writeFileSync(join(directory, input), 'export const value = 1;');
-    const spawn = mock.method(childProcess, 'spawnSync');
-    syncBuiltinESMExports();
+    writeFileSync(nodePath.join(directory, input), 'export const value = 1;');
+    const spawn = rstest.mocked(spawnSync);
+    spawn.mockClear();
     try {
       const run = runOxlint(config, [input], directory);
-      assert.equal(run.exitCode, 0);
-      assert.equal(run.numberOfFiles, 1);
-      assert.deepEqual(run.diagnostics, []);
-      assert.equal(spawn.mock.callCount(), 1);
-      const args: readonly unknown[] = spawn.mock.calls[0]!.arguments;
-      assert.equal(args[0], process.execPath);
-      assert.ok(Array.isArray(args[1]));
-      assert.equal(
-        args[1][0],
-        fileURLToPath(new URL('bin/oxlint', import.meta.resolve('oxlint/package.json'))),
+      expect(run.exitCode).toBe(0);
+      expect(run.numberOfFiles).toBe(1);
+      expect(run.diagnostics).toEqual([]);
+      expect(spawn.mock.calls.length).toBe(1);
+      const args: readonly unknown[] = spawn.mock.calls[0];
+      expect(args[0]).toBe(process.execPath);
+      expect(Array.isArray(args[1])).toBe(true);
+      if (!Array.isArray(args[1])) {
+        throw new TypeError('Expected spawn arguments array');
+      }
+      expect(args[1][0]).toBe(
+        nodePath.join(
+          nodePath.dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
+          'bin/oxlint',
+        ),
       );
-      assert.ok(args[1].includes(input));
-      assert.ok(args[1].includes(config));
+      expect(args[1].includes(input)).toBe(true);
+      expect(args[1].includes(config)).toBe(true);
     } finally {
-      spawn.mock.restore();
-      syncBuiltinESMExports();
+      spawn.mockClear();
     }
   });
 });
 
-test('lint and lint:fix cover the same directories without changing reporting-only commands', () => {
-  const { scripts } = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8')) as {
-    scripts: Record<string, string>;
-  };
-  const lint = scripts['lint']!.split(/\s+/u);
-  const fix = scripts['lint:fix']!.split(/\s+/u);
-  assert.deepEqual(
-    fix.filter((argument) => argument !== '--fix'),
-    lint,
+it('lint and lint:fix cover the same directories without changing reporting-only commands', () => {
+  const { scripts } = decodePackageScripts(
+    readFileSync(nodePath.join(appRoot, 'package.json'), 'utf-8'),
   );
-  assert.equal(fix.filter((argument) => argument === '--fix').length, 1);
-  assert.ok(lint.includes('scripts'));
+  expect(scripts.lint).toBeDefined();
+  expect(scripts['lint:fix']).toBeDefined();
+  const lint = (scripts.lint ?? '').split(/\s+/u);
+  const fix = (scripts['lint:fix'] ?? '').split(/\s+/u);
+  expect(fix.filter((argument) => argument !== '--fix')).toEqual(lint);
+  expect(fix.filter((argument) => argument === '--fix').length).toBe(1);
+  expect(lint.includes('scripts')).toBe(true);
   for (const name of ['lint', 'lint:effect', 'test:lint-rules', 'check']) {
-    assert.ok(!scripts[name]!.includes('--fix'), `${name} must remain reporting-only`);
+    expect(!(scripts[name] ?? '').includes('--fix'), `${name} must remain reporting-only`).toBe(
+      true,
+    );
   }
 });

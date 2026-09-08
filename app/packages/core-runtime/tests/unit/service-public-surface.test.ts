@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import type {
   ContextAccessService,
   InstalledModuleCatalogServiceContract,
@@ -27,6 +26,6 @@ const preservePublicServiceContract = <Service extends PublicServiceContract>(
   service: Service,
 ): Service => service;
 
-void test('exports the anti-slop-compliant Core service contracts', () => {
-  assert.equal(preservePublicServiceContract.length, 1);
+it('exports the anti-slop-compliant Core service contracts', () => {
+  expect(preservePublicServiceContract.length).toBe(1);
 });

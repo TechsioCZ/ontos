@@ -1,7 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { Effect, Predicate } from 'effect';
 import {
   defineGlobalPolicy,
@@ -31,7 +28,7 @@ const input = {
   transport: { correlationId: 'correlation-policy' },
 } as const;
 
-void test('defines immutable global and owner-local Policy references', () => {
+it('defines immutable global and owner-local Policy references', () => {
   const globalPolicy = defineGlobalPolicy<typeof input.payload>({
     evaluate: () => Effect.void,
     policyKey: 'global.tenant-active.v1',
@@ -42,59 +39,61 @@ void test('defines immutable global and owner-local Policy references', () => {
     policyKey: 'inventory.stock.available.v1',
   });
 
-  assert.deepEqual(
-    { policyKey: globalPolicy.policyKey, scope: globalPolicy.scope },
-    { policyKey: 'global.tenant-active.v1', scope: 'global' },
-  );
-  assert.deepEqual(
-    {
-      owningModuleKey: modulePolicy.owningModuleKey,
-      policyKey: modulePolicy.policyKey,
-      scope: modulePolicy.scope,
-    },
-    {
-      owningModuleKey: 'inventory.stock',
-      policyKey: 'inventory.stock.available.v1',
-      scope: 'microvertical',
-    },
-  );
-  assert.equal(Object.isFrozen(globalPolicy), true);
-  assert.equal(Object.isFrozen(modulePolicy), true);
-  assert.equal(isActionPolicy(globalPolicy), true);
-  assert.equal(isActionPolicy({ ...globalPolicy }), false);
-});
-
-void test('evaluates typed allow and safe denial outcomes', async () => {
-  const observed: ActionPolicyEvaluatorInput<typeof input.payload>[] = [];
-  const allowed = defineGlobalPolicy<typeof input.payload>({
-    evaluate: (evaluationInput) => {
-      observed.push(evaluationInput);
-      return Effect.void;
-    },
-    policyKey: 'global.allowed.v1',
+  expect({ policyKey: globalPolicy.policyKey, scope: globalPolicy.scope }).toEqual({
+    policyKey: 'global.tenant-active.v1',
+    scope: 'global',
   });
-  const denied = defineMicroverticalPolicy<typeof input.payload, 'inventory.stock'>({
-    evaluate: () =>
-      Effect.fail(denyPolicy('stock_unavailable', 'Requested stock is unavailable — retry later')),
+  expect({
+    owningModuleKey: modulePolicy.owningModuleKey,
+    policyKey: modulePolicy.policyKey,
+    scope: modulePolicy.scope,
+  }).toEqual({
     owningModuleKey: 'inventory.stock',
     policyKey: 'inventory.stock.available.v1',
+    scope: 'microvertical',
   });
-
-  await runEffectTestPromise(allowed.evaluate(input));
-  const denial = await runEffectTestPromise(Effect.flip(denied.evaluate(input)));
-
-  assert.deepEqual(observed, [input]);
-  assert.ok(Predicate.isTagged(denial, 'PolicyDenied'));
-  assert.equal(denial.reasonCode, 'stock_unavailable');
-  assert.equal(denial.reason, 'Requested stock is unavailable — retry later');
-  assert.equal(Object.isFrozen(denial), true);
+  expect(Object.isFrozen(globalPolicy)).toBe(true);
+  expect(Object.isFrozen(modulePolicy)).toBe(true);
+  expect(isActionPolicy(globalPolicy)).toBe(true);
+  expect(isActionPolicy({ ...globalPolicy })).toBe(false);
 });
 
-void test('rejects empty stable identifiers and denial messages', () => {
-  assert.throws(
-    () => defineGlobalPolicy({ evaluate: () => Effect.void, policyKey: '  ' }),
+it.effect(
+  'evaluates typed allow and safe denial outcomes',
+  Effect.fn(function* testProgram1() {
+    const observed: ActionPolicyEvaluatorInput<typeof input.payload>[] = [];
+    const allowed = defineGlobalPolicy<typeof input.payload>({
+      evaluate: (evaluationInput) => {
+        observed.push(evaluationInput);
+        return Effect.void;
+      },
+      policyKey: 'global.allowed.v1',
+    });
+    const denied = defineMicroverticalPolicy<typeof input.payload, 'inventory.stock'>({
+      evaluate: () =>
+        Effect.fail(
+          denyPolicy('stock_unavailable', 'Requested stock is unavailable — retry later'),
+        ),
+      owningModuleKey: 'inventory.stock',
+      policyKey: 'inventory.stock.available.v1',
+    });
+
+    yield* allowed.evaluate(input);
+    const denial = yield* Effect.flip(denied.evaluate(input));
+
+    expect(observed).toEqual([input]);
+    expect(Predicate.isTagged(denial, 'PolicyDenied')).toBe(true);
+
+    expect(denial.reasonCode).toBe('stock_unavailable');
+    expect(denial.reason).toBe('Requested stock is unavailable — retry later');
+    expect(Object.isFrozen(denial)).toBe(true);
+  }),
+);
+
+it('rejects empty stable identifiers and denial messages', () => {
+  expect(() => defineGlobalPolicy({ evaluate: () => Effect.void, policyKey: '  ' })).toThrow(
     TypeError,
   );
-  assert.throws(() => denyPolicy('', 'Safe message'), TypeError);
-  assert.throws(() => denyPolicy('stable_code', ''), TypeError);
+  expect(() => denyPolicy('', 'Safe message')).toThrow(TypeError);
+  expect(() => denyPolicy('stable_code', '')).toThrow(TypeError);
 });

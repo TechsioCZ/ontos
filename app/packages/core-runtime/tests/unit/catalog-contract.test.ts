@@ -1,12 +1,11 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { compareApplicationCatalog, expectedCoreTableCatalog } from '../../src/db/catalog.ts';
 import type { CatalogEntry } from '../../src/db/catalog.ts';
 
 const exactCatalog = expectedCoreTableCatalog.map<CatalogEntry>((qualifiedName) => {
   const [schemaName, tableName] = qualifiedName.split('.');
-  assert.equal((schemaName?.length ?? 0) > 0, true);
-  assert.equal((tableName?.length ?? 0) > 0, true);
+  expect((schemaName?.length ?? 0) > 0).toBe(true);
+  expect((tableName?.length ?? 0) > 0).toBe(true);
   if (schemaName === undefined || tableName === undefined) {
     throw new TypeError('Core catalog entries must be schema-qualified');
   }
@@ -18,14 +17,14 @@ const exactCatalog = expectedCoreTableCatalog.map<CatalogEntry>((qualifiedName) 
   };
 });
 
-void test('reports one missing expected Core table', () => {
+it('reports one missing expected Core table', () => {
   const difference = compareApplicationCatalog(exactCatalog.slice(1));
 
-  assert.deepEqual(difference.missing, [expectedCoreTableCatalog[0]]);
-  assert.deepEqual(difference.unexpected, []);
+  expect(difference.missing).toEqual([expectedCoreTableCatalog[0]]);
+  expect(difference.unexpected).toEqual([]);
 });
 
-void test('reports unexpected application tables and schemas', () => {
+it('reports unexpected application tables and schemas', () => {
   const difference = compareApplicationCatalog([
     ...exactCatalog,
     {
@@ -40,6 +39,6 @@ void test('reports unexpected application tables and schemas', () => {
     },
   ]);
 
-  assert.deepEqual(difference.missing, []);
-  assert.deepEqual(difference.unexpected, ['auth.*', 'public.unexpected_table']);
+  expect(difference.missing).toEqual([]);
+  expect(difference.unexpected).toEqual(['auth.*', 'public.unexpected_table']);
 });

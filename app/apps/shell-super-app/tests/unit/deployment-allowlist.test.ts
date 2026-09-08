@@ -1,5 +1,6 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { expect, test } from '@rstest/core';
+import { Effect } from 'effect';
+
+import { expect, it } from '@app/effect-rstest';
 import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import { createModuleDeploymentAllowlistBuildInput } from '../../module-deployment-allowlist.config.ts';
 
@@ -24,23 +25,23 @@ const validUrls = {
   'property-registry': 'http://127.0.0.1:4101/.well-known/ontos-module-manifest.json',
 };
 
-test('derives an immutable, topology-authorized and deterministically ordered allowlist', async () => {
-  const allowlist = await runEffectTestPromise(
-    deriveDeploymentAllowlist({
+it.effect('derives an immutable, topology-authorized and deterministically ordered allowlist', () =>
+  Effect.gen(function* testProgram1() {
+    const allowlist = yield* deriveDeploymentAllowlist({
       environment: 'development',
       overlay: overlay(validUrls),
       topology,
-    }),
-  );
-  expect(allowlist.entries.map(({ appId }) => appId)).toEqual([
-    'documents-center',
-    'property-registry',
-  ]);
-  expect(Object.isFrozen(allowlist)).toBe(true);
-  expect(Object.isFrozen(allowlist.entries)).toBe(true);
-});
+    });
+    expect(allowlist.entries.map(({ appId }) => appId)).toEqual([
+      'documents-center',
+      'property-registry',
+    ]);
+    expect(Object.isFrozen(allowlist)).toBe(true);
+    expect(Object.isFrozen(allowlist.entries)).toBe(true);
+  }),
+);
 
-test.each([
+it.effect.each([
   ['missing topology entry', { 'property-registry': validUrls['property-registry'] }],
   ['unknown shell entry', { ...validUrls, 'shell-super-app': validUrls['property-registry'] }],
   [
@@ -57,50 +58,52 @@ test.each([
   ],
   ['fragment', { ...validUrls, 'property-registry': `${validUrls['property-registry']}#private` }],
   ['arbitrary path', { ...validUrls, 'property-registry': 'http://localhost:4101/private.json' }],
-])('rejects %s configuration without authorizing a fetch', async (_label, manifests) => {
-  await expect(
-    runEffectTestPromise(
-      deriveDeploymentAllowlist({
-        environment: 'development',
-        overlay: overlay(manifests),
-        topology,
-      }),
-    ),
-  ).rejects.toMatchObject({ code: 'deployment_allowlist_invalid' });
-});
+] as const)('rejects %s configuration without authorizing a fetch', ([_label, manifests]) =>
+  Effect.gen(function* testProgram2() {
+    expect(
+      yield* Effect.flip(
+        deriveDeploymentAllowlist({
+          environment: 'development',
+          overlay: overlay(manifests),
+          topology,
+        }),
+      ),
+    ).toMatchObject({ code: 'deployment_allowlist_invalid' });
+  }),
+);
 
-test('requires HTTPS outside loopback development', async () => {
-  const productionUrls = {
-    'documents-center': 'https://documents.example.test/.well-known/ontos-module-manifest.json',
-    'property-registry': 'https://property.example.test/.well-known/ontos-module-manifest.json',
-  };
-  await expect(
-    runEffectTestPromise(
-      deriveDeploymentAllowlist({
-        environment: 'production',
-        overlay: overlay(
-          {
-            ...productionUrls,
-            'property-registry': validUrls['property-registry'],
-          },
-          'production',
-        ),
-        topology,
-      }),
-    ),
-  ).rejects.toMatchObject({ code: 'deployment_allowlist_invalid' });
-  await expect(
-    runEffectTestPromise(
-      deriveDeploymentAllowlist({
+it.effect('requires HTTPS outside loopback development', () =>
+  Effect.gen(function* testProgram3() {
+    const productionUrls = {
+      'documents-center': 'https://documents.example.test/.well-known/ontos-module-manifest.json',
+      'property-registry': 'https://property.example.test/.well-known/ontos-module-manifest.json',
+    };
+    expect(
+      yield* Effect.flip(
+        deriveDeploymentAllowlist({
+          environment: 'production',
+          overlay: overlay(
+            {
+              ...productionUrls,
+              'property-registry': validUrls['property-registry'],
+            },
+            'production',
+          ),
+          topology,
+        }),
+      ),
+    ).toMatchObject({ code: 'deployment_allowlist_invalid' });
+    expect(
+      yield* deriveDeploymentAllowlist({
         environment: 'production',
         overlay: overlay(productionUrls, 'production'),
         topology,
       }),
-    ),
-  ).resolves.toMatchObject({ entries: expect.any(Array) });
-});
+    ).toMatchObject({ entries: expect.any(Array) });
+  }),
+);
 
-test('builds production discovery from deployment URL configuration, never the development overlay', () => {
+it('builds production discovery from deployment URL configuration, never the development overlay', () => {
   const productionTopology = {
     verticals: [
       {

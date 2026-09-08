@@ -1,6 +1,6 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Schema } from 'effect';
+import { expect, it } from '@app/effect-rstest';
+
+import { Effect, Schema } from 'effect';
 import {
   CounterpartiesProviderRequestSchema,
   CounterpartiesProviderResponseSchema,
@@ -14,115 +14,123 @@ import {
   PARTY_SEARCH_SEMANTICS,
 } from '../../shared/domain/search-descriptor.ts';
 
-test('Party-owned search semantics expose only current approved V1 facts', () => {
+it('Party-owned search semantics expose only current approved V1 facts', () => {
   const searchableFacts: readonly string[] = PARTY_SEARCH_SEMANTICS.searchableFacts;
-  assert.deepEqual(PARTY_SEARCH_SEMANTICS.searchableFacts, [
+  expect(PARTY_SEARCH_SEMANTICS.searchableFacts).toEqual([
     'DISPLAY_NAME',
     'ACTIVE_OFFICIAL_IDENTIFIER',
     'ACTIVE_EMAIL',
     'ACTIVE_PHONE',
   ]);
-  assert.equal(searchableFacts.includes('ADDRESS'), false);
-  assert.equal(searchableFacts.includes('HISTORICAL_IDENTIFIER'), false);
-  assert.equal(PARTY_SEARCH_SEMANTICS.contactPointIdentityAuthority, 'NON_UNIQUE');
-  assert.equal(PARTY_SEARCH_SEMANTICS.resultMatchAuthority, 'NONE');
+  expect(searchableFacts.includes('ADDRESS')).toBe(false);
+  expect(searchableFacts.includes('HISTORICAL_IDENTIFIER')).toBe(false);
+  expect(PARTY_SEARCH_SEMANTICS.contactPointIdentityAuthority).toBe('NON_UNIQUE');
+  expect(PARTY_SEARCH_SEMANTICS.resultMatchAuthority).toBe('NONE');
 });
 
-test('Counterparty semantics retain Legal Entity and current-period role boundaries', () => {
-  assert.equal(COUNTERPARTY_SEARCH_SEMANTICS.legalEntityScope, 'REQUIRED_TRUSTED_CONTEXT');
-  assert.deepEqual(COUNTERPARTY_SEARCH_SEMANTICS.roleFilters, ['CUSTOMER', 'SUPPLIER']);
-  assert.equal(COUNTERPARTY_SEARCH_SEMANTICS.rolePeriodSemantics, 'CURRENT_AT_EFFECTIVE_TIME');
-  assert.equal(COUNTERPARTY_SEARCH_SEMANTICS.deduplicateBy, 'COUNTERPARTY_IDENTITY');
+it('Counterparty semantics retain Legal Entity and current-period role boundaries', () => {
+  expect(COUNTERPARTY_SEARCH_SEMANTICS.legalEntityScope).toBe('REQUIRED_TRUSTED_CONTEXT');
+  expect(COUNTERPARTY_SEARCH_SEMANTICS.roleFilters).toEqual(['CUSTOMER', 'SUPPLIER']);
+  expect(COUNTERPARTY_SEARCH_SEMANTICS.rolePeriodSemantics).toBe('CURRENT_AT_EFFECTIVE_TIME');
+  expect(COUNTERPARTY_SEARCH_SEMANTICS.deduplicateBy).toBe('COUNTERPARTY_IDENTITY');
 });
 
-test('Party Search accepts a bounded query and an explicit archived switch', () => {
-  assert.deepEqual(
-    Schema.decodeUnknownSync(PartiesProviderRequestSchema)({
-      includeArchived: true,
-      query: '  ACME  ',
-    }),
-    { includeArchived: true, query: 'ACME' },
-  );
-  assert.throws(() => Schema.decodeUnknownSync(PartiesProviderRequestSchema)({ query: '   ' }));
-  assert.throws(() =>
-    Schema.decodeUnknownSync(PartiesProviderRequestSchema)({ query: 'a'.repeat(201) }),
-  );
-});
+it.effect('Party Search accepts a bounded query and an explicit archived switch', () =>
+  Effect.gen(function* testScenario() {
+    expect(
+      yield* Schema.decodeUnknownEffect(PartiesProviderRequestSchema)({
+        includeArchived: true,
+        query: '  ACME  ',
+      }),
+    ).toEqual({ includeArchived: true, query: 'ACME' });
+    expect(() =>
+      Schema.decodeUnknownSync(PartiesProviderRequestSchema)({ query: '   ' }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(PartiesProviderRequestSchema)({ query: 'a'.repeat(201) }),
+    ).toThrow();
+  }),
+);
 
-test('Counterparty Search exposes only the closed current-role filter', () => {
-  assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartiesProviderRequestSchema)({
-      includeArchived: false,
-      query: 'ACME',
-      role: 'CUSTOMER',
-    }),
-    { includeArchived: false, query: 'ACME', role: 'CUSTOMER' },
-  );
-  assert.throws(() =>
-    Schema.decodeUnknownSync(CounterpartiesProviderRequestSchema)({
-      query: 'ACME',
-      role: 'BUSINESS_PARTNER',
-    }),
-  );
-});
+it.effect('Counterparty Search exposes only the closed current-role filter', () =>
+  Effect.gen(function* testScenario() {
+    expect(
+      yield* Schema.decodeUnknownEffect(CounterpartiesProviderRequestSchema)({
+        includeArchived: false,
+        query: 'ACME',
+        role: 'CUSTOMER',
+      }),
+    ).toEqual({ includeArchived: false, query: 'ACME', role: 'CUSTOMER' });
+    expect(() =>
+      Schema.decodeUnknownSync(CounterpartiesProviderRequestSchema)({
+        query: 'ACME',
+        role: 'BUSINESS_PARTNER',
+      }),
+    ).toThrow();
+  }),
+);
 
-test('Party Search result is a minimal canonical projection without PII match evidence', () => {
-  const result = Schema.decodeUnknownSync(PartiesProviderResponseSchema)([
-    {
-      archived: false,
-      matchedViaAlias: true,
-      ref: {
-        moduleId: 'party.registry',
-        resourceId: 'party-1',
-        resourceType: 'party.registry.party',
-        tenantId: '10000000-0000-4000-8000-000000000001',
-      },
-      title: 'ACME',
-    },
-  ]);
-
-  assert.deepEqual(Object.keys(result[0] ?? {}).toSorted(), [
-    'archived',
-    'matchedViaAlias',
-    'ref',
-    'title',
-  ]);
-  assert.equal('email' in (result[0] ?? {}), false);
-  assert.equal('identifier' in (result[0] ?? {}), false);
-  assert.equal('matchedValue' in (result[0] ?? {}), false);
-});
-
-test('Counterparty Search result distinguishes Counterparty and canonical Party', () => {
-  const tenantId = '10000000-0000-4000-8000-000000000001';
-  const result = Schema.decodeUnknownSync(CounterpartiesProviderResponseSchema)([
-    {
-      currentRoles: ['CUSTOMER', 'SUPPLIER'],
-      legalEntity: {
-        legalEntityId: '20000000-0000-4000-8000-000000000002',
-        tenantId,
-      },
-      party: {
+it.effect('Party Search result is a minimal canonical projection without PII match evidence', () =>
+  Effect.gen(function* testScenario() {
+    const result = yield* Schema.decodeUnknownEffect(PartiesProviderResponseSchema)([
+      {
         archived: false,
-        matchedViaAlias: false,
+        matchedViaAlias: true,
         ref: {
           moduleId: 'party.registry',
           resourceId: 'party-1',
           resourceType: 'party.registry.party',
-          tenantId,
+          tenantId: '10000000-0000-4000-8000-000000000001',
         },
         title: 'ACME',
       },
-      ref: {
-        moduleId: 'party.registry',
-        resourceId: 'counterparty-1',
-        resourceType: 'party.registry.counterparty',
-        tenantId,
-      },
-    },
-  ]);
+    ]);
 
-  assert.equal(result[0]?.ref.resourceType, 'party.registry.counterparty');
-  assert.equal(result[0]?.party.ref.resourceType, 'party.registry.party');
-  assert.equal('email' in (result[0]?.party ?? {}), false);
-  assert.equal('phone' in (result[0]?.party ?? {}), false);
-});
+    expect(Object.keys(result[0] ?? {}).toSorted()).toEqual([
+      'archived',
+      'matchedViaAlias',
+      'ref',
+      'title',
+    ]);
+    expect('email' in (result[0] ?? {})).toBe(false);
+    expect('identifier' in (result[0] ?? {})).toBe(false);
+    expect('matchedValue' in (result[0] ?? {})).toBe(false);
+  }),
+);
+
+it.effect('Counterparty Search result distinguishes Counterparty and canonical Party', () =>
+  Effect.gen(function* testScenario() {
+    const tenantId = '10000000-0000-4000-8000-000000000001';
+    const result = yield* Schema.decodeUnknownEffect(CounterpartiesProviderResponseSchema)([
+      {
+        currentRoles: ['CUSTOMER', 'SUPPLIER'],
+        legalEntity: {
+          legalEntityId: '20000000-0000-4000-8000-000000000002',
+          tenantId,
+        },
+        party: {
+          archived: false,
+          matchedViaAlias: false,
+          ref: {
+            moduleId: 'party.registry',
+            resourceId: 'party-1',
+            resourceType: 'party.registry.party',
+            tenantId,
+          },
+          title: 'ACME',
+        },
+        ref: {
+          moduleId: 'party.registry',
+          resourceId: 'counterparty-1',
+          resourceType: 'party.registry.counterparty',
+          tenantId,
+        },
+      },
+    ]);
+
+    expect(result[0]?.ref.resourceType).toBe('party.registry.counterparty');
+    expect(result[0]?.party.ref.resourceType).toBe('party.registry.party');
+    expect('email' in (result[0]?.party ?? {})).toBe(false);
+    expect('phone' in (result[0]?.party ?? {})).toBe(false);
+  }),
+);

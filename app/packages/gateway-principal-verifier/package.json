@@ -8,7 +8,7 @@
     "./server": "./src/server.ts"
   },
   "scripts": {
-    "test:unit": "node --test tests/unit/*.test.ts",
+    "test:unit": "rstest --project unit",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
@@ -19,6 +19,8 @@
   },
   "devDependencies": {
     "@effect/tsgo": "0.19.0",
-    "@types/node": "20.19.43"
+    "@types/node": "20.19.43",
+    "@app/effect-rstest": "workspace:*",
+    "@rstest/core": "0.11.10"
   }
 }

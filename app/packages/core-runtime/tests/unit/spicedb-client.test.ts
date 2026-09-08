@@ -1,38 +1,34 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { spiceDbClientSecurity } from '../../src/permissions/client.ts';
 import { SpiceDbConfigError } from '../../src/permissions/config-error.ts';
 
-void test('uses authenticated plaintext credentials for an explicitly insecure transport', () => {
-  assert.equal(
+it('uses authenticated plaintext credentials for an explicitly insecure transport', () => {
+  expect(
     spiceDbClientSecurity({
       endpoint: 'localhost:50051',
       insecureLocal: true,
     }),
-    v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS,
-  );
-  assert.equal(
+  ).toBe(v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS);
+  expect(
     spiceDbClientSecurity({
       deploymentEnvironment: 'stage',
       endpoint: 'spicedb:50051',
       insecureLocal: true,
     }),
-    v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS,
-  );
+  ).toBe(v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS);
 });
 
-void test('uses TLS credentials for a secure transport', () => {
-  assert.equal(
+it('uses TLS credentials for a secure transport', () => {
+  expect(
     spiceDbClientSecurity({
       endpoint: 'spicedb.internal.example:443',
       insecureLocal: false,
     }),
-    v1.ClientSecurity.SECURE,
-  );
+  ).toBe(v1.ClientSecurity.SECURE);
 });
 
-void test('rejects plaintext credentials for an arbitrary or non-stage endpoint', () => {
+it('rejects plaintext credentials for an arbitrary or non-stage endpoint', () => {
   for (const configuration of [
     { endpoint: 'spicedb.internal.example:50051', insecureLocal: true },
     { endpoint: 'spicedb:50051', insecureLocal: true },
@@ -42,6 +38,6 @@ void test('rejects plaintext credentials for an arbitrary or non-stage endpoint'
       insecureLocal: true,
     },
   ] as const) {
-    assert.throws(() => spiceDbClientSecurity(configuration), SpiceDbConfigError);
+    expect(() => spiceDbClientSecurity(configuration)).toThrow(SpiceDbConfigError);
   }
 });

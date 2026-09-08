@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import {
   buildInstalledModuleCatalog,
   resolveInstalledModuleCatalog,
@@ -50,7 +49,7 @@ const contract = (
   schemaVersion: '2',
 });
 
-void test('builds immutable deterministic dual indexes for distinct deployment and module IDs', () => {
+it('builds immutable deterministic dual indexes for distinct deployment and module IDs', () => {
   const catalog = buildInstalledModuleCatalog([
     {
       contract: contract('property-registry', 'property.registry'),
@@ -62,19 +61,18 @@ void test('builds immutable deterministic dual indexes for distinct deployment a
     },
   ]);
 
-  assert.deepEqual(catalog.deploymentAppIds, ['documents-center', 'property-registry']);
-  assert.deepEqual(catalog.moduleIds, ['documents.center', 'property.registry']);
-  assert.equal(
-    catalog.getByDeploymentAppId('property-registry')?.manifest.module.id,
+  expect(catalog.deploymentAppIds).toEqual(['documents-center', 'property-registry']);
+  expect(catalog.moduleIds).toEqual(['documents.center', 'property.registry']);
+  expect(catalog.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe(
     'property.registry',
   );
-  assert.equal(catalog.getByModuleId('property.registry')?.deployment.appId, 'property-registry');
-  assert.equal(Object.isFrozen(catalog), true);
-  assert.equal(Object.isFrozen(catalog.contracts), true);
-  assert.equal(Object.isFrozen(catalog.outboxSubscriptions), true);
+  expect(catalog.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
+  expect(Object.isFrozen(catalog)).toBe(true);
+  expect(Object.isFrozen(catalog.contracts)).toBe(true);
+  expect(Object.isFrozen(catalog.outboxSubscriptions)).toBe(true);
 });
 
-void test('accepts a valid owner-local subscription whose producer is not installed', () => {
+it('accepts a valid owner-local subscription whose producer is not installed', () => {
   const subscription = {
     consumerModuleKey: 'property.registry',
     entrypoint: {
@@ -95,10 +93,10 @@ void test('accepts a valid owner-local subscription whose producer is not instal
       expectedAppId: 'property-registry',
     },
   ]);
-  assert.deepEqual(catalog.outboxSubscriptions, [subscription]);
+  expect(catalog.outboxSubscriptions).toEqual([subscription]);
 });
 
-void test('rejects contradictory or incomplete Outbox subscription snapshots', () => {
+it('rejects contradictory or incomplete Outbox subscription snapshots', () => {
   const invalidSubscription = {
     consumerModuleKey: 'other.module',
     entrypoint: {
@@ -113,15 +111,15 @@ void test('rejects contradictory or incomplete Outbox subscription snapshots', (
     topic: 'missing.producer.created',
     workerKey: 'property.registry.projector',
   } as const;
-  assert.throws(() =>
+  expect(() =>
     buildInstalledModuleCatalog([
       {
         contract: contract('property-registry', 'property.registry', [invalidSubscription]),
         expectedAppId: 'property-registry',
       },
     ]),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     buildInstalledModuleCatalog([
       {
         contract: contract('property-registry', 'property.registry', [
@@ -133,10 +131,10 @@ void test('rejects contradictory or incomplete Outbox subscription snapshots', (
         expectedAppId: 'property-registry',
       },
     ]),
-  );
+  ).toThrow();
 
   const duplicateWorkerKey = 'shared.projector';
-  assert.throws(() =>
+  expect(() =>
     buildInstalledModuleCatalog([
       {
         contract: contract('property-registry', 'property.registry', [
@@ -177,19 +175,19 @@ void test('rejects contradictory or incomplete Outbox subscription snapshots', (
         expectedAppId: 'documents-center',
       },
     ]),
-  );
+  ).toThrow();
 });
 
-void test('rejects deployment mismatch, duplicate deployment IDs, and duplicate module claims', () => {
-  assert.throws(() =>
+it('rejects deployment mismatch, duplicate deployment IDs, and duplicate module claims', () => {
+  expect(() =>
     buildInstalledModuleCatalog([
       {
         contract: contract('property-registry', 'property.registry'),
         expectedAppId: 'different-app',
       },
     ]),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     buildInstalledModuleCatalog([
       {
         contract: contract('property-registry', 'property.registry'),
@@ -200,8 +198,8 @@ void test('rejects deployment mismatch, duplicate deployment IDs, and duplicate 
         expectedAppId: 'property-registry',
       },
     ]),
-  );
-  assert.throws(() =>
+  ).toThrow();
+  expect(() =>
     buildInstalledModuleCatalog([
       {
         contract: contract('property-registry', 'property.registry'),
@@ -212,21 +210,21 @@ void test('rejects deployment mismatch, duplicate deployment IDs, and duplicate 
         expectedAppId: 'property-other',
       },
     ]),
-  );
+  ).toThrow();
 });
 
-void test('rejects unsupported contract versions without weakening catalog safety', () => {
-  assert.throws(() =>
+it('rejects unsupported contract versions without weakening catalog safety', () => {
+  expect(() =>
     buildInstalledModuleCatalog([
       {
         contract: { ...contract('property-registry', 'property.registry'), schemaVersion: '0' },
         expectedAppId: 'property-registry',
       },
     ]),
-  );
+  ).toThrow();
 });
 
-void test('resolves healthy, incompatible, and unreachable deployments independently', () => {
+it('resolves healthy, incompatible, and unreachable deployments independently', () => {
   const catalog = resolveInstalledModuleCatalog([
     {
       contract: contract('documents-center', 'documents.center'),
@@ -247,8 +245,8 @@ void test('resolves healthy, incompatible, and unreachable deployments independe
     { expectedAppId: 'revoked-center', outcome: 'revoked' },
   ]);
 
-  assert.deepEqual(catalog.moduleIds, ['documents.center']);
-  assert.deepEqual(catalog.deploymentStatuses, [
+  expect(catalog.moduleIds).toEqual(['documents.center']);
+  expect(catalog.deploymentStatuses).toEqual([
     { appId: 'disabled-center', status: 'disabled' },
     { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
     { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
@@ -257,7 +255,7 @@ void test('resolves healthy, incompatible, and unreachable deployments independe
   ]);
 });
 
-void test('excludes every contradictory claimant while preserving unrelated deployments', () => {
+it('excludes every contradictory claimant while preserving unrelated deployments', () => {
   const catalog = resolveInstalledModuleCatalog([
     {
       contract: contract('documents-center', 'shared.module'),
@@ -276,15 +274,15 @@ void test('excludes every contradictory claimant while preserving unrelated depl
     },
   ]);
 
-  assert.deepEqual(catalog.moduleIds, ['reporting.center']);
-  assert.deepEqual(catalog.deploymentStatuses, [
+  expect(catalog.moduleIds).toEqual(['reporting.center']);
+  expect(catalog.deploymentStatuses).toEqual([
     { appId: 'documents-center', reason: 'incompatible', status: 'unavailable' },
     { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
     { appId: 'reporting-center', moduleId: 'reporting.center', status: 'available' },
   ]);
 });
 
-void test('rejects duplicate deployment identities from tolerant candidate promotion', () => {
+it('rejects duplicate deployment identities from tolerant candidate promotion', () => {
   const catalog = resolveInstalledModuleCatalog([
     {
       contract: contract('property-registry', 'property.registry'),
@@ -303,14 +301,14 @@ void test('rejects duplicate deployment identities from tolerant candidate promo
     },
   ]);
 
-  assert.deepEqual(catalog.moduleIds, ['documents.center']);
-  assert.deepEqual(catalog.deploymentStatuses, [
+  expect(catalog.moduleIds).toEqual(['documents.center']);
+  expect(catalog.deploymentStatuses).toEqual([
     { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
     { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
   ]);
 });
 
-void test('keeps authoritative revocation ahead of a stale fetched candidate', () => {
+it('keeps authoritative revocation ahead of a stale fetched candidate', () => {
   const catalog = resolveInstalledModuleCatalog([
     {
       contract: contract('property-registry', 'property.registry'),
@@ -326,8 +324,8 @@ void test('keeps authoritative revocation ahead of a stale fetched candidate', (
     },
   ]);
 
-  assert.deepEqual(catalog.moduleIds, ['documents.center']);
-  assert.deepEqual(catalog.deploymentStatuses, [
+  expect(catalog.moduleIds).toEqual(['documents.center']);
+  expect(catalog.deploymentStatuses).toEqual([
     { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
     { appId: 'property-registry', status: 'revoked' },
   ]);

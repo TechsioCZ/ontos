@@ -1,4 +1,4 @@
-import { afterEach, expect, rstest, test } from '@rstest/core';
+import { afterEach, expect, rstest, test } from '@app/effect-rstest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Menu as ActualMenu } from '@techsio/ui-kit/molecules/menu' with { rstest: 'importActual' };

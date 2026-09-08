@@ -1,7 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { Effect, Result } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
@@ -9,115 +6,120 @@ import {
   requestSearchRebuildWithAuthorization,
 } from '../../src/api/party-command-client.ts';
 
-test('fresh assertions and command metadata reach the independent owner deployment', async () => {
-  const requests: Request[] = [];
-  let assertions = 0;
-  const fakeFetch: typeof fetch = (input, init) => {
-    const request = new Request(input, init);
-    requests.push(request);
-    if (new URL(request.url).hostname === 'shell.example') {
-      assertions += 1;
+it.effect('fresh assertions and command metadata reach the independent owner deployment', () =>
+  Effect.gen(function* testProgram1() {
+    const requests: Request[] = [];
+    let assertions = 0;
+    const fakeFetch: typeof fetch = (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (new URL(request.url).hostname === 'shell.example') {
+        assertions += 1;
+        return Promise.resolve(
+          Response.json({ expiresAt: 2_000_000_000, token: `token-${assertions}` }),
+        );
+      }
       return Promise.resolve(
-        Response.json({ expiresAt: 2_000_000_000, token: `token-${assertions}` }),
+        Response.json({ requestId: '10000000-0000-4000-8000-000000000001', status: 'QUEUED' }),
       );
-    }
-    return Promise.resolve(
-      Response.json({ requestId: '10000000-0000-4000-8000-000000000001', status: 'QUEUED' }),
-    );
-  };
-  const options = {
-    baseUrl: 'https://party.example/party-registry-api',
-    correlationId: 'command-correlation',
-    gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
-    idempotencyKey: 'rebuild-1',
-    traceId: 'command-trace',
-  };
-  const invoke = () =>
-    runEffectTestPromise(
+    };
+    const options = {
+      baseUrl: 'https://party.example/party-registry-api',
+      correlationId: 'command-correlation',
+      gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
+      idempotencyKey: 'rebuild-1',
+      traceId: 'command-trace',
+    };
+    const invoke = () =>
       requestSearchRebuild({}, options).pipe(
         Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      );
+    const first = yield* invoke();
+    const second = yield* invoke();
+    expect(first.status).toBe('QUEUED');
+    expect(second.status).toBe('QUEUED');
+    expect(assertions).toBe(2);
+    const commands = requests.filter(
+      (request) => new URL(request.url).hostname === 'party.example',
+    );
+    expect(commands.map((request) => request.url)).toEqual(
+      Array.from(
+        { length: 2 },
+        () =>
+          'https://party.example/party-registry-api/party-registry/actions/request-search-rebuild',
       ),
     );
-  const first = await invoke();
-  const second = await invoke();
-  assert.equal(first.status, 'QUEUED');
-  assert.equal(second.status, 'QUEUED');
-  assert.equal(assertions, 2);
-  const commands = requests.filter((request) => new URL(request.url).hostname === 'party.example');
-  assert.deepEqual(
-    commands.map((request) => request.url),
-    Array.from(
-      { length: 2 },
-      () =>
-        'https://party.example/party-registry-api/party-registry/actions/request-search-rebuild',
-    ),
-  );
-  assert.deepEqual(
-    commands.map((request) => request.headers.get('authorization')),
-    ['Bearer token-1', 'Bearer token-2'],
-  );
-  for (const request of commands) {
-    assert.equal(request.headers.get('x-correlation-id'), 'command-correlation');
-    assert.equal(request.headers.get('x-trace-id'), 'command-trace');
-    assert.equal(request.headers.get('idempotency-key'), 'rebuild-1');
-  }
-});
+    expect(commands.map((request) => request.headers.get('authorization'))).toEqual([
+      'Bearer token-1',
+      'Bearer token-2',
+    ]);
+    for (const request of commands) {
+      expect(request.headers.get('x-correlation-id')).toBe('command-correlation');
+      expect(request.headers.get('x-trace-id')).toBe('command-trace');
+      expect(request.headers.get('idempotency-key')).toBe('rebuild-1');
+    }
+  }),
+);
 
-test('decodes declared errors without weakening their tag or stable conflict code', async () => {
-  const problem = {
-    _tag: 'PartyCommandConflictProblem',
-    code: 'action_request_hash_conflict',
-    detail: 'This key was used with a different command payload.',
-    status: 409,
-    title: 'Idempotency conflict',
-    type: 'urn:ontos:action:request-hash-conflict',
-  };
-  const fakeFetch: typeof fetch = () =>
-    Promise.resolve(
-      Response.json(problem, {
-        headers: { 'content-type': 'application/problem+json' },
-        status: 409,
-      }),
-    );
-  const outcome = await runEffectTestPromise(
-    requestSearchRebuildWithAuthorization({}, 'Bearer test', {
+it.effect('decodes declared errors without weakening their tag or stable conflict code', () =>
+  Effect.gen(function* testProgram2() {
+    const problem = {
+      _tag: 'PartyCommandConflictProblem',
+      code: 'action_request_hash_conflict',
+      detail: 'This key was used with a different command payload.',
+      status: 409,
+      title: 'Idempotency conflict',
+      type: 'urn:ontos:action:request-hash-conflict',
+    };
+    const fakeFetch: typeof fetch = () =>
+      Promise.resolve(
+        Response.json(problem, {
+          headers: { 'content-type': 'application/problem+json' },
+          status: 409,
+        }),
+      );
+    const outcome = yield* requestSearchRebuildWithAuthorization({}, 'Bearer test', {
       baseUrl: 'https://party.example/party-registry-api',
       correlationId: 'conflict',
       idempotencyKey: 'rebuild-1',
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
-  );
-  assert.ok(Result.isFailure(outcome));
-  assert.deepEqual(outcome.failure, problem);
-});
+    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    expect(Result.isFailure(outcome)).toBe(true);
+    if (!Result.isFailure(outcome)) {
+      throw new Error('Expected truthy value');
+    }
+    expect(outcome.failure).toEqual(problem);
+  }),
+);
 
-test('the browser default uses the relative mounted BFF prefix', async () => {
-  const urls: string[] = [];
-  const fakeFetch: typeof fetch = (input) => {
-    urls.push(String(input));
-    return Promise.resolve(
-      Response.json({ requestId: '10000000-0000-4000-8000-000000000001', status: 'QUEUED' }),
+it.effect('the browser default uses the relative mounted BFF prefix', () =>
+  Effect.gen(function* testProgram3() {
+    const urls: string[] = [];
+    const fakeFetch: typeof fetch = (input) => {
+      urls.push(String(input));
+      return Promise.resolve(
+        Response.json({ requestId: '10000000-0000-4000-8000-000000000001', status: 'QUEUED' }),
+      );
+    };
+    const location = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (location === undefined) {
+          Reflect.deleteProperty(globalThis, 'location');
+        } else {
+          Object.defineProperty(globalThis, 'location', location);
+        }
+      }),
     );
-  };
-  const location = Object.getOwnPropertyDescriptor(globalThis, 'location');
-  Object.defineProperty(globalThis, 'location', {
-    configurable: true,
-    value: { origin: 'https://shell.example', pathname: '/en' },
-  });
-  try {
-    await runEffectTestPromise(
-      requestSearchRebuildWithAuthorization({}, 'Bearer test', {
-        correlationId: 'relative',
-        idempotencyKey: 'rebuild-1',
-      }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
-    );
-    assert.deepEqual(urls, [
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: { origin: 'https://shell.example', pathname: '/en' },
+    });
+    yield* requestSearchRebuildWithAuthorization({}, 'Bearer test', {
+      correlationId: 'relative',
+      idempotencyKey: 'rebuild-1',
+    }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    expect(urls).toEqual([
       'https://shell.example/party-registry-api/party-registry/actions/request-search-rebuild',
     ]);
-  } finally {
-    if (location === undefined) {
-      Reflect.deleteProperty(globalThis, 'location');
-    } else {
-      Object.defineProperty(globalThis, 'location', location);
-    }
-  }
-});
+  }),
+);

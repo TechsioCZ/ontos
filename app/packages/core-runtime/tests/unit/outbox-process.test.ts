@@ -1,7 +1,5 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 import { NodeServices } from '@effect/platform-node';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { Deferred, Effect, Fiber, Layer, Stream } from 'effect';
 import { ChildProcess } from 'effect/unstable/process';
 
@@ -47,9 +45,9 @@ const gracefulShutdown = (signal: 'SIGINT' | 'SIGTERM') =>
     );
     const output = outputLines.join('\n');
 
-    assert.equal(Number(code), 0, `${errors}\n${output}`);
-    assert.match(output, /cycle:1/u);
-    assert.match(output, /disposed/u);
+    expect(Number(code), `${errors}\n${output}`).toBe(0);
+    expect(output).toMatch(/cycle:1/u);
+    expect(output).toMatch(/disposed/u);
   });
 
 const assertGracefulShutdown = (signal: 'SIGINT' | 'SIGTERM') =>
@@ -59,9 +57,9 @@ const assertGracefulShutdown = (signal: 'SIGINT' | 'SIGTERM') =>
   );
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  void test(
+  it.live(
     `${signal} interrupts polling and disposes the managed worker runtime`,
-    { timeout: 5000 },
-    makeEffectTestCallback(assertGracefulShutdown(signal)),
+    () => assertGracefulShutdown(signal),
+    5000,
   );
 }

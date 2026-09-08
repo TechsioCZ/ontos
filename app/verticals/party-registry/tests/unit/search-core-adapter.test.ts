@@ -1,6 +1,5 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
+
 import { Effect, Schema, Predicate } from 'effect';
 import { CoreSearchProjectionHitSchema } from '@app/core-runtime';
 import type { CoreSearchQueryRuntimeService } from '@app/core-runtime';
@@ -59,42 +58,42 @@ const wrongResourceHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)
   title: 'Wrong',
 });
 
-void test('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
-  runEffectTestPromise(
-    Effect.gen(function* partyAdapterQuery() {
-      const calls: unknown[] = [];
-      const core: CoreSearchQueryRuntimeService = {
-        search: (input) => {
-          calls.push(input);
-          return Effect.succeed([partyAliasHit]);
-        },
-      };
+it.effect('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
+  Effect.gen(function* partyAdapterQuery() {
+    const calls: unknown[] = [];
+    const core: CoreSearchQueryRuntimeService = {
+      search: (input) => {
+        calls.push(input);
+        return Effect.succeed([partyAliasHit]);
+      },
+    };
 
-      const gateway = makePartySearchProjectionGateway(core);
-      const hits = yield* gateway.searchParties({ includeArchived: true, query: 'ACME', tenantId });
+    const gateway = makePartySearchProjectionGateway(core);
+    const hits = yield* gateway.searchParties({ includeArchived: true, query: 'ACME', tenantId });
 
-      assert.deepEqual(calls, [
-        {
-          includeArchived: true,
-          moduleId: 'party.registry',
-          query: 'ACME',
-          resourceType: 'party.registry.party',
-          tenantId,
-        },
-      ]);
-      assert.deepEqual(hits, [
-        {
-          archived: false,
-          canonicalPartyRef: partyRef('survivor'),
-          matchedPartyRef: partyRef('absorbed'),
-          title: 'ACME',
-        },
-      ]);
-    }),
-  ));
+    expect(calls).toEqual([
+      {
+        includeArchived: true,
+        moduleId: 'party.registry',
+        query: 'ACME',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+    ]);
+    expect(hits).toEqual([
+      {
+        archived: false,
+        canonicalPartyRef: partyRef('survivor'),
+        matchedPartyRef: partyRef('absorbed'),
+        title: 'ACME',
+      },
+    ]);
+  }),
+);
 
-void test('Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods', () =>
-  runEffectTestPromise(
+it.effect(
+  'Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods',
+  () =>
     Effect.gen(function* counterpartyAdapterQuery() {
       const calls: unknown[] = [];
       const core: CoreSearchQueryRuntimeService = {
@@ -114,7 +113,7 @@ void test('Counterparty adapter uses trusted Legal Entity, effective time, role 
         tenantId,
       });
 
-      assert.deepEqual(calls, [
+      expect(calls).toEqual([
         {
           effectiveAt,
           facets: [{ key: 'current-role', values: ['CUSTOMER'] }],
@@ -126,7 +125,7 @@ void test('Counterparty adapter uses trusted Legal Entity, effective time, role 
           tenantId,
         },
       ]);
-      assert.deepEqual(hits, [
+      expect(hits).toEqual([
         {
           canonicalPartyRef: partyRef('survivor'),
           counterpartyRef: counterpartyRef('cp-1'),
@@ -144,10 +143,11 @@ void test('Counterparty adapter uses trusted Legal Entity, effective time, role 
         },
       ]);
     }),
-  ));
+);
 
-void test('Party adapter fails closed when a generic projection returns the wrong resource contract', () =>
-  runEffectTestPromise(
+it.effect(
+  'Party adapter fails closed when a generic projection returns the wrong resource contract',
+  () =>
     Effect.gen(function* invalidProjectionContract() {
       const core: CoreSearchQueryRuntimeService = {
         search: () => Effect.succeed([wrongResourceHit]),
@@ -160,6 +160,6 @@ void test('Party adapter fails closed when a generic projection returns the wron
           tenantId,
         }),
       );
-      assert.ok(Predicate.isTagged(failure, 'Failure'));
+      expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();
     }),
-  ));
+);

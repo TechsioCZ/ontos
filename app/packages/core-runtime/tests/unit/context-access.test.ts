@@ -1,8 +1,7 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
+
 import { v1 } from '@authzed/authzed-node';
-import { Effect, flow } from 'effect';
+import { Effect } from 'effect';
 import {
   LEGAL_ENTITY_PERMISSION_KEYS,
   TENANT_PERMISSION_KEYS,
@@ -17,12 +16,6 @@ import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
-const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
-  test(
-    name,
-    flow(() => Effect.asVoid(effect), runEffectTestPromise),
-  );
-};
 
 const responseFor = (
   request: v1.CheckBulkPermissionsRequest,
@@ -51,45 +44,45 @@ const makeClient = (
   close: () => {},
 });
 
-effectTest(
+it.effect(
   'uses one fully consistent batch and correlates allowed and denied module decisions',
-  Effect.gen(function* correlatesModuleDecisions() {
-    const requests: v1.CheckBulkPermissionsRequest[] = [];
-    const access = makeContextAccess(
-      makeClient((request) =>
-        Effect.sync(() => {
-          requests.push(request);
-          return responseFor(request, [
-            v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-            v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-          ]);
-        }),
-      ),
-    );
+  () =>
+    Effect.gen(function* correlatesModuleDecisions() {
+      const requests: v1.CheckBulkPermissionsRequest[] = [];
+      const access = makeContextAccess(
+        makeClient((request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return responseFor(request, [
+              v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+              v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+            ]);
+          }),
+        ),
+      );
 
-    const result = yield* access.modules({
-      legalEntityId,
-      moduleIds: ['property.registry', 'billing.core'],
-      principalId,
-      tenantId,
-    });
-    assert.deepEqual(result, [
-      { decision: 'allowed', key: 'property.registry' },
-      { decision: 'denied', key: 'billing.core' },
-    ]);
-    assert.equal(requests.length, 1);
-    assert.deepEqual(requests[0]?.consistency?.requirement, {
-      fullyConsistent: true,
-      oneofKind: 'fullyConsistent',
-    });
-    assert.equal(requests[0]?.items[0]?.resource?.objectType, 'module_access');
-    assert.equal(requests[0]?.items[0]?.permission, 'access');
-    assert.equal(requests[0]?.items[0]?.subject?.object?.objectId, principalId);
-  }),
+      const result = yield* access.modules({
+        legalEntityId,
+        moduleIds: ['property.registry', 'billing.core'],
+        principalId,
+        tenantId,
+      });
+      expect(result).toEqual([
+        { decision: 'allowed', key: 'property.registry' },
+        { decision: 'denied', key: 'billing.core' },
+      ]);
+      expect(requests.length).toBe(1);
+      expect(requests[0]?.consistency?.requirement).toEqual({
+        fullyConsistent: true,
+        oneofKind: 'fullyConsistent',
+      });
+      expect(requests[0]?.items[0]?.resource?.objectType).toBe('module_access');
+      expect(requests[0]?.items[0]?.permission).toBe('access');
+      expect(requests[0]?.items[0]?.subject?.object?.objectId).toBe(principalId);
+    }),
 );
 
-effectTest(
-  'checks resource writes independently from resource reads',
+it.effect('checks resource writes independently from resource reads', () =>
   Effect.gen(function* checksResourceWrites() {
     const permissions: string[] = [];
     const service = makeContextAccess(
@@ -108,13 +101,12 @@ effectTest(
       resources: [target],
       tenantId: 'tenant-1',
     });
-    assert.deepEqual(result, [{ decision: 'denied', key: 'property.registry:unit:unit-1' }]);
-    assert.deepEqual(permissions, ['write']);
+    expect(result).toEqual([{ decision: 'denied', key: 'property.registry:unit:unit-1' }]);
+    expect(permissions).toEqual(['write']);
   }),
 );
 
-effectTest(
-  'forwards every closed tenant permission key without widening it',
+it.effect('forwards every closed tenant permission key without widening it', () =>
   Effect.gen(function* forwardsTenantPermissionKeys() {
     const observed: string[] = [];
     const service = makeContextAccess(
@@ -135,17 +127,16 @@ effectTest(
           .tenants({ permission, principalId, tenantIds: [tenantId] })
           .pipe(
             Effect.map((result) =>
-              assert.deepEqual(result, [{ decision: 'allowed', key: tenantId }]),
+              expect(result).toEqual([{ decision: 'allowed', key: tenantId }]),
             ),
           ),
       ),
     );
-    assert.deepEqual(observed, TENANT_PERMISSION_KEYS);
+    expect(observed).toEqual(TENANT_PERMISSION_KEYS);
   }),
 );
 
-effectTest(
-  'forwards every closed Legal Entity permission key without widening it',
+it.effect('forwards every closed Legal Entity permission key without widening it', () =>
   Effect.gen(function* forwardsLegalEntityPermissionKeys() {
     const observed: string[] = [];
     const service = makeContextAccess(
@@ -166,31 +157,28 @@ effectTest(
           .legalEntities({ legalEntityIds: [legalEntityId], permission, principalId, tenantId })
           .pipe(
             Effect.map((result) =>
-              assert.deepEqual(result, [{ decision: 'allowed', key: legalEntityId }]),
+              expect(result).toEqual([{ decision: 'allowed', key: legalEntityId }]),
             ),
           ),
       ),
     );
-    assert.deepEqual(observed, LEGAL_ENTITY_PERMISSION_KEYS);
+    expect(observed).toEqual(LEGAL_ENTITY_PERMISSION_KEYS);
   }),
 );
 
-test('creates lossless tenant and legal-entity-qualified object identities', () => {
+it('creates lossless tenant and legal-entity-qualified object identities', () => {
   const resource = {
     moduleId: 'property.registry',
     resourceId: 'unit:with/slashes',
     resourceType: 'property.unit',
   };
-  assert.notEqual(
-    toLegalEntityAccessObjectId(tenantId, legalEntityId),
+  expect(toLegalEntityAccessObjectId(tenantId, legalEntityId)).not.toBe(
     toLegalEntityAccessObjectId('10000000-0000-4000-8000-000000000002', legalEntityId),
   );
-  assert.notEqual(
-    toModuleAccessObjectId(tenantId, legalEntityId, 'property.registry'),
+  expect(toModuleAccessObjectId(tenantId, legalEntityId, 'property.registry')).not.toBe(
     toModuleAccessObjectId(tenantId, legalEntityId, 'property-registry'),
   );
-  assert.notEqual(
-    toResourceAccessObjectId(tenantId, legalEntityId, resource),
+  expect(toResourceAccessObjectId(tenantId, legalEntityId, resource)).not.toBe(
     toResourceAccessObjectId(tenantId, legalEntityId, {
       ...resource,
       resourceId: 'unit-with/slashes',
@@ -198,8 +186,7 @@ test('creates lossless tenant and legal-entity-qualified object identities', () 
   );
 });
 
-effectTest(
-  'supports empty batches and exact resource filtering',
+it.effect('supports empty batches and exact resource filtering', () =>
   Effect.gen(function* supportsEmptyBatches() {
     let requests = 0;
     const access = makeContextAccess(
@@ -213,11 +200,8 @@ effectTest(
         }),
       ),
     );
-    assert.deepEqual(
-      yield* access.legalEntities({ legalEntityIds: [], principalId, tenantId }),
-      [],
-    );
-    assert.deepEqual(
+    expect(yield* access.legalEntities({ legalEntityIds: [], principalId, tenantId })).toEqual([]);
+    expect(
       yield* access.resources({
         legalEntityId,
         principalId,
@@ -227,63 +211,67 @@ effectTest(
         ],
         tenantId,
       }),
-      [
-        { decision: 'allowed', key: 'property.registry:property.unit:unit-1' },
-        { decision: 'denied', key: 'property.registry:property.unit:unit-2' },
-      ],
-    );
-    assert.equal(requests, 1);
+    ).toEqual([
+      { decision: 'allowed', key: 'property.registry:property.unit:unit-1' },
+      { decision: 'denied', key: 'property.registry:property.unit:unit-2' },
+    ]);
+    expect(requests).toBe(1);
   }),
 );
 
-effectTest(
+it.effect(
   'classifies client, partial, duplicate, malformed, and conditional results as unavailable',
-  Effect.gen(function* classifiesUnavailableResults() {
-    const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
-    const failures = [
-      makeClient(() =>
-        Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic'))),
-      ),
-      makeClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
-      makeClient((request) =>
-        Effect.succeed(
-          responseFor(request, [v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION]),
+  () =>
+    Effect.gen(function* classifiesUnavailableResults() {
+      const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
+      const failures = [
+        makeClient(() =>
+          Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic'))),
         ),
-      ),
-      makeClient((request) =>
-        Effect.sync(() => {
-          const response = responseFor(request, [
-            v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-          ]);
-          const [pair] = response.pairs;
-          return v1.CheckBulkPermissionsResponse.create({
-            pairs: pair === undefined ? [] : [{ response: pair.response }],
-          });
-        }),
-      ),
-    ];
-    const [failingClient] = failures;
-    assert.ok(failingClient);
-    yield* Effect.all(
-      failures.map((client) =>
-        makeContextAccess(client)
-          .legalEntities(input)
-          .pipe(
-            Effect.map((result) =>
-              assert.deepEqual(result, [{ decision: 'unavailable', key: legalEntityId }]),
-            ),
+        makeClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
+        makeClient((request) =>
+          Effect.succeed(
+            responseFor(request, [
+              v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION,
+            ]),
           ),
-      ),
-    );
-    assert.deepEqual(
-      yield* makeContextAccess(failingClient).legalEntities({
-        ...input,
-        legalEntityIds: [legalEntityId, legalEntityId],
-      }),
-      [
+        ),
+        makeClient((request) =>
+          Effect.sync(() => {
+            const response = responseFor(request, [
+              v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+            ]);
+            const [pair] = response.pairs;
+            return v1.CheckBulkPermissionsResponse.create({
+              pairs: pair === undefined ? [] : [{ response: pair.response }],
+            });
+          }),
+        ),
+      ];
+      const [failingClient] = failures;
+      expect(failingClient).toBeDefined();
+      if (failingClient === undefined) {
+        throw new Error('Missing failingClient');
+      }
+      yield* Effect.all(
+        failures.map((client) =>
+          makeContextAccess(client)
+            .legalEntities(input)
+            .pipe(
+              Effect.map((result) =>
+                expect(result).toEqual([{ decision: 'unavailable', key: legalEntityId }]),
+              ),
+            ),
+        ),
+      );
+      expect(
+        yield* makeContextAccess(failingClient).legalEntities({
+          ...input,
+          legalEntityIds: [legalEntityId, legalEntityId],
+        }),
+      ).toEqual([
         { decision: 'unavailable', key: legalEntityId },
         { decision: 'unavailable', key: legalEntityId },
-      ],
-    );
-  }),
+      ]);
+    }),
 );

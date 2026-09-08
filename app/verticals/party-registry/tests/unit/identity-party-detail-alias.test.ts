@@ -1,6 +1,4 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
@@ -63,77 +61,85 @@ const makeServices = (
   };
 };
 
-void test('Party Detail reads the final canonical Party after the complete historical alias chain', () => {
-  const { lookups, services } = makeServices([
-    alias('party-b', 'party-a'),
-    alias('party-a', 'party-c'),
-  ]);
-  const result = runEffectTestSync(
-    readPartyDetailFromServices(partyRef('party-b'), tenantId, services),
-  );
+it.effect(
+  'Party Detail reads the final canonical Party after the complete historical alias chain',
+  () =>
+    Effect.gen(function* verifyPartyDetail1() {
+      const { lookups, services } = makeServices([
+        alias('party-b', 'party-a'),
+        alias('party-a', 'party-c'),
+      ]);
+      const result = yield* readPartyDetailFromServices(partyRef('party-b'), tenantId, services);
 
-  assert.deepEqual(result, {
-    currentFactAssertions: [],
-    factHistory: Option.none(),
-    party: canonicalParty,
-    resolution: {
-      aliasChain: [partyRef('party-b'), partyRef('party-a')],
-      canonicalPartyRef: partyRef('party-c'),
-      kind: 'ALIAS',
-      requestedPartyRef: partyRef('party-b'),
-    },
-  });
-  assert.deepEqual(lookups, ['party-c']);
-  assert.equal(Schema.is(PartyDetailResponseSchema)(result), true);
-  const encoded = Schema.encodeSync(PartyDetailResponseSchema)(result);
-  assert.equal(encoded.factHistory, null);
-  assert.deepEqual(encoded.party, canonicalPartyWire);
-});
+      expect(result).toEqual({
+        currentFactAssertions: [],
+        factHistory: Option.none(),
+        party: canonicalParty,
+        resolution: {
+          aliasChain: [partyRef('party-b'), partyRef('party-a')],
+          canonicalPartyRef: partyRef('party-c'),
+          kind: 'ALIAS',
+          requestedPartyRef: partyRef('party-b'),
+        },
+      });
+      expect(lookups).toEqual(['party-c']);
+      expect(Schema.is(PartyDetailResponseSchema)(result)).toBe(true);
+      const encoded = yield* Schema.encodeEffect(PartyDetailResponseSchema)(result);
+      expect(encoded.factHistory).toBe(null);
+      expect(encoded.party).toEqual(canonicalPartyWire);
+    }),
+);
 
-void test('Party Detail preserves archived lifecycle independently of direct resolution metadata', () => {
-  const archivedAt = '2026-09-02T10:00:00.000Z';
-  const archivedParty = Schema.decodeUnknownSync(PartySchema)({
-    ...canonicalPartyWire,
-    archivedAt,
-  });
-  const { services } = makeServices([], archivedParty);
-  const result = runEffectTestSync(
-    readPartyDetailFromServices(partyRef('party-c'), tenantId, services),
-  );
+it.effect(
+  'Party Detail preserves archived lifecycle independently of direct resolution metadata',
+  () =>
+    Effect.gen(function* verifyPartyDetail2() {
+      const archivedAt = '2026-09-02T10:00:00.000Z';
+      const archivedParty = yield* Schema.decodeUnknownEffect(PartySchema)({
+        ...canonicalPartyWire,
+        archivedAt,
+      });
+      const { services } = makeServices([], archivedParty);
+      const result = yield* readPartyDetailFromServices(partyRef('party-c'), tenantId, services);
 
-  assert.deepEqual(result.party.archivedAt, Option.some(DateTime.makeUnsafe(archivedAt)));
-  assert.deepEqual(result.resolution, {
-    aliasChain: [],
-    canonicalPartyRef: partyRef('party-c'),
-    kind: 'DIRECT',
-    requestedPartyRef: partyRef('party-c'),
-  });
-});
+      expect(result.party.archivedAt).toEqual(Option.some(DateTime.makeUnsafe(archivedAt)));
+      expect(result.resolution).toEqual({
+        aliasChain: [],
+        canonicalPartyRef: partyRef('party-c'),
+        kind: 'DIRECT',
+        requestedPartyRef: partyRef('party-c'),
+      });
+    }),
+);
 
-void test('Party Detail fails closed for cycles and broken historical chains without reading an alias Party', () => {
-  for (const aliases of [
-    [alias('party-a', 'party-b'), alias('party-b', 'party-a')],
-    [alias('party-a', 'missing')],
-  ]) {
-    const { lookups, services } = makeServices(aliases);
-    const error = runEffectTestSync(
-      Effect.flip(readPartyDetailFromServices(partyRef('party-a'), tenantId, services)),
-    );
-    assert.ok(Predicate.isTagged(error, 'ReadHandlerUnavailable'));
-    assert.deepEqual(lookups, []);
-  }
-});
+it.effect(
+  'Party Detail fails closed for cycles and broken historical chains without reading an alias Party',
+  () =>
+    Effect.gen(function* verifyPartyDetail3() {
+      for (const aliases of [
+        [alias('party-a', 'party-b'), alias('party-b', 'party-a')],
+        [alias('party-a', 'missing')],
+      ]) {
+        const { lookups, services } = makeServices(aliases);
+        const error = yield* Effect.flip(
+          readPartyDetailFromServices(partyRef('party-a'), tenantId, services),
+        );
+        expect(Predicate.isTagged(error, 'ReadHandlerUnavailable')).toBe(true);
+        expect(lookups).toEqual([]);
+      }
+    }),
+);
 
-void test('Party Detail hides a missing direct Party and a cross-tenant requested reference', () => {
-  const { lookups, services } = makeServices([]);
-  for (const requested of [
-    partyRef('missing'),
-    { ...partyRef('party-c'), tenantId: otherTenantId },
-  ]) {
-    const error = runEffectTestSync(
-      Effect.flip(readPartyDetailFromServices(requested, tenantId, services)),
-    );
-    assert.ok(Predicate.isTagged(error, 'ReadHandlerNotFound'));
-  }
-  assert.deepEqual(lookups, []);
-});
+it.effect('Party Detail hides a missing direct Party and a cross-tenant requested reference', () =>
+  Effect.gen(function* verifyPartyDetail4() {
+    const { lookups, services } = makeServices([]);
+    for (const requested of [
+      partyRef('missing'),
+      { ...partyRef('party-c'), tenantId: otherTenantId },
+    ]) {
+      const error = yield* Effect.flip(readPartyDetailFromServices(requested, tenantId, services));
+      expect(Predicate.isTagged(error, 'ReadHandlerNotFound')).toBe(true);
+    }
+    expect(lookups).toEqual([]);
+  }),
+);

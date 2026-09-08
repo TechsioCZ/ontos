@@ -1,7 +1,4 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 
 import { Effect, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
@@ -13,24 +10,31 @@ import { AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts
 
 const ico = Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)('12345678');
 
-test('targets the mounted owner BFF prefix and supports a separate owner deployment', async () => {
-  const requests: string[] = [];
-  const fakeFetch: typeof globalThis.fetch = (input) => {
-    requests.push(String(input));
-    return Promise.resolve(new Response(null, { status: 503 }));
-  };
-  const location = Object.getOwnPropertyDescriptor(globalThis, 'location');
-  Object.defineProperty(globalThis, 'location', {
-    configurable: true,
-    value: { origin: 'https://shell.example', pathname: '/en/contacts' },
-  });
-  const capture = <Success, Failure>(request: Effect.Effect<Success, Failure>) =>
-    runEffectTestPromise(
-      request.pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch)),
+it.effect('targets the mounted owner BFF prefix and supports a separate owner deployment', () =>
+  Effect.gen(function* testProgram1() {
+    const requests: string[] = [];
+    const fakeFetch: typeof globalThis.fetch = (input) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response(null, { status: 503 }));
+    };
+    const location = Object.getOwnPropertyDescriptor(globalThis, 'location');
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (location === undefined) {
+          Reflect.deleteProperty(globalThis, 'location');
+        } else {
+          Object.defineProperty(globalThis, 'location', location);
+        }
+      }),
     );
-  try {
-    await capture(executeAresLookupWithAuthorization({ ico }, 'Bearer test', 'test'));
-    await capture(
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: { origin: 'https://shell.example', pathname: '/en/contacts' },
+    });
+    const capture = <Success, Failure>(request: Effect.Effect<Success, Failure>) =>
+      request.pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    yield* capture(executeAresLookupWithAuthorization({ ico }, 'Bearer test', 'test'));
+    yield* capture(
       executePartyDetailWithAuthorization(
         {
           partyRef: {
@@ -44,23 +48,17 @@ test('targets the mounted owner BFF prefix and supports a separate owner deploym
         'test',
       ),
     );
-    await capture(loadPartiesClientWithAuthorization({ query: 'Example' }, 'Bearer test', 'test'));
-    await capture(
+    yield* capture(loadPartiesClientWithAuthorization({ query: 'Example' }, 'Bearer test', 'test'));
+    yield* capture(
       executeAresLookupWithAuthorization({ ico }, 'Bearer test', 'test', {
         baseUrl: 'https://party.example/party-registry-api',
       }),
     );
-    assert.deepEqual(requests, [
+    expect(requests).toEqual([
       'https://shell.example/party-registry-api/reads/ares-lookup',
       'https://shell.example/party-registry-api/reads/party-detail',
       'https://shell.example/party-registry-api/party.registry/search/parties',
       'https://party.example/party-registry-api/reads/ares-lookup',
     ]);
-  } finally {
-    if (location === undefined) {
-      Reflect.deleteProperty(globalThis, 'location');
-    } else {
-      Object.defineProperty(globalThis, 'location', location);
-    }
-  }
-});
+  }),
+);

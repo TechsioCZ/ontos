@@ -1,10 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { TestClock } from 'effect/testing';
+import { expect, it } from '@app/effect-rstest';
 import { DateTime, Effect, Predicate } from 'effect';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused test harness models the narrow Drizzle native Effect query surface used by the owner-local service. expires: 2026-12-31. */
 import type { Table } from 'drizzle-orm';
 import { getTableName } from 'drizzle-orm';
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import {
   addCounterpartyRoleRecord,
   createCounterpartyRecord,
@@ -146,222 +145,202 @@ const endInput = (validTo: string, method: string) => ({
   validTo,
 });
 
-void test('keeps a future-ended role active until its exclusive effective end', () => {
-  const futureEnd = '2099-01-01T00:00:00.000Z';
-  const updated = roleRow({
-    endEvidenceRefs: ['contract:end'],
-    endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
-    endProvenanceSource: 'contracts.core',
-    endReason: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
-    endedByActionInvocationId: actionInvocationId,
-    endedByPrincipalId: principalId,
-    endedRecordedAt: date('2026-09-03T00:00:00.000Z'),
-    validTo: date(futureEnd),
-  });
-  const harness = transactionHarness([[counterpartyRow], [roleRow()]], [[updated]]);
+it.effect('keeps a future-ended role active until its exclusive effective end', () =>
+  Effect.gen(function* testScenario1() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const futureEnd = '2099-01-01T00:00:00.000Z';
+    const updated = roleRow({
+      endEvidenceRefs: ['contract:end'],
+      endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      endProvenanceSource: 'contracts.core',
+      endReason: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: date('2026-09-03T00:00:00.000Z'),
+      validTo: date(futureEnd),
+    });
+    const harness = transactionHarness([[counterpartyRow], [roleRow()]], [[updated]]);
 
-  return runEffectTestPromise(
-    endCounterpartyRoleRecord(
+    const result = yield* endCounterpartyRoleRecord(
       harness.transaction,
       endInput(futureEnd, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END'),
-    ),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'found'));
-    assert.equal(harness.updateSets[0]?.['state'], 'ACTIVE');
-    assert.equal(harness.updateSets[0]?.['isCurrent'], true);
-    assert.equal(harness.updateSets[0]?.['endProvenanceSource'], 'contracts.core');
-    assert.equal(
-      harness.updateSets[0]?.['endProvenanceMethod'],
+    );
+
+    expect(Predicate.isTagged(result, 'found')).toBe(true);
+    if (!Predicate.isTagged(result, 'found')) {
+      return yield* Effect.die(new Error('Unexpected result variant'));
+    }
+    expect(harness.updateSets[0]?.['state']).toBe('ACTIVE');
+    expect(harness.updateSets[0]?.['isCurrent']).toBe(true);
+    expect(harness.updateSets[0]?.['endProvenanceSource']).toBe('contracts.core');
+    expect(harness.updateSets[0]?.['endProvenanceMethod']).toBe(
       'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
     );
-    assert.equal(harness.insertValues.length, 2);
-    assert.equal(
-      harness.insertValues[1]?.['endProvenanceMethod'],
+    expect(harness.insertValues.length).toBe(2);
+    expect(harness.insertValues[1]?.['endProvenanceMethod']).toBe(
       'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
     );
-  });
-});
+  }),
+);
 
-void test('records a retrospective end as historical without deleting the role period', () => {
-  const pastEnd = '2021-01-01T00:00:00.000Z';
-  const updated = roleRow({
-    endEvidenceRefs: ['contract:end'],
-    endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
-    endProvenanceSource: 'contracts.core',
-    endReason: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
-    state: 'ENDED',
-    validTo: date(pastEnd),
-  });
-  const harness = transactionHarness([[counterpartyRow], [roleRow()]], [[updated]]);
+it.effect('records a retrospective end as historical without deleting the role period', () =>
+  Effect.gen(function* testScenario2() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const pastEnd = '2021-01-01T00:00:00.000Z';
+    const updated = roleRow({
+      endEvidenceRefs: ['contract:end'],
+      endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      endProvenanceSource: 'contracts.core',
+      endReason: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      state: 'ENDED',
+      validTo: date(pastEnd),
+    });
+    const harness = transactionHarness([[counterpartyRow], [roleRow()]], [[updated]]);
 
-  return runEffectTestPromise(
-    endCounterpartyRoleRecord(
+    yield* endCounterpartyRoleRecord(
       harness.transaction,
       endInput(pastEnd, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END'),
-    ),
-  ).then(() => {
-    assert.equal(harness.updateSets[0]?.['state'], 'ENDED');
-    assert.equal(harness.updateSets[0]?.['isCurrent'], false);
-  });
-});
+    );
 
-void test('rejects inactivity evidence before persisting a CUSTOMER end', () => {
-  const harness = transactionHarness([[counterpartyRow], [roleRow()]]);
+    expect(harness.updateSets[0]?.['state']).toBe('ENDED');
+    expect(harness.updateSets[0]?.['isCurrent']).toBe(false);
+  }),
+);
 
-  return runEffectTestPromise(
-    endCounterpartyRoleRecord(
+it.effect('rejects inactivity evidence before persisting a CUSTOMER end', () =>
+  Effect.gen(function* testScenario3() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const harness = transactionHarness([[counterpartyRow], [roleRow()]]);
+
+    const result = yield* endCounterpartyRoleRecord(
       harness.transaction,
       endInput('2027-01-01T00:00:00.000Z', 'ENGAGEMENT_INACTIVITY'),
-    ),
-  ).then((result) => {
-    assert.deepEqual(result, {
+    );
+
+    expect(result).toEqual({
       _tag: 'evidence_insufficient',
       method: 'ENGAGEMENT_INACTIVITY',
       roleType: 'CUSTOMER',
     });
-    assert.equal(harness.updateSets.length, 0);
-  });
-});
+    expect(harness.updateSets.length).toBe(0);
+  }),
+);
 
-void test('reuses an exactly repeated end without another write', () => {
-  const validTo = '2025-01-01T00:00:00.000Z';
-  const ended = roleRow({
-    endEvidenceRefs: ['contract:end'],
-    endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
-    endProvenanceSource: 'contracts.core',
-    endReason: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
-    state: 'ENDED',
-    validTo: date(validTo),
-  });
-  const harness = transactionHarness([[counterpartyRow], [ended]]);
+it.effect('reuses an exactly repeated end without another write', () =>
+  Effect.gen(function* testScenario4() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const validTo = '2025-01-01T00:00:00.000Z';
+    const ended = roleRow({
+      endEvidenceRefs: ['contract:end'],
+      endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      endProvenanceSource: 'contracts.core',
+      endReason: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      state: 'ENDED',
+      validTo: date(validTo),
+    });
+    const harness = transactionHarness([[counterpartyRow], [ended]]);
 
-  return runEffectTestPromise(
-    endCounterpartyRoleRecord(
+    const result = yield* endCounterpartyRoleRecord(
       harness.transaction,
       endInput(validTo, 'CONFIRMED_CUSTOMER_RELATIONSHIP_END'),
-    ),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'found'));
-    assert.equal(result.changed, false);
-    assert.equal(harness.updateSets.length, 0);
-  });
-});
+    );
 
-void test('reads end provenance independently from the role-add provenance', () => {
-  const ended = roleRow({
-    endEvidenceRefs: ['contract:end'],
-    endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
-    endProvenanceSource: 'customer-offboarding.core',
-    endReason: 'Customer agreement terminated',
-    state: 'ENDED',
-    validTo: date('2025-01-01T00:00:00.000Z'),
-  });
-  const harness = transactionHarness([[counterpartyRow], [ended]]);
+    expect(Predicate.isTagged(result, 'found')).toBe(true);
+    if (!Predicate.isTagged(result, 'found')) {
+      return yield* Effect.die(new Error('Unexpected result variant'));
+    }
+    expect(result.changed).toBe(false);
+    expect(harness.updateSets.length).toBe(0);
+  }),
+);
 
-  return runEffectTestPromise(
-    listCounterpartyRoleHistory(harness.transaction, tenantId, legalEntityId, counterpartyId),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'found'));
-    assert.deepEqual(result.value[0]?.endProvenance, {
+it.effect('reads end provenance independently from the role-add provenance', () =>
+  Effect.gen(function* testScenario5() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const ended = roleRow({
+      endEvidenceRefs: ['contract:end'],
+      endProvenanceMethod: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
+      endProvenanceSource: 'customer-offboarding.core',
+      endReason: 'Customer agreement terminated',
+      state: 'ENDED',
+      validTo: date('2025-01-01T00:00:00.000Z'),
+    });
+    const harness = transactionHarness([[counterpartyRow], [ended]]);
+
+    const result = yield* listCounterpartyRoleHistory(
+      harness.transaction,
+      tenantId,
+      legalEntityId,
+      counterpartyId,
+    );
+
+    expect(Predicate.isTagged(result, 'found')).toBe(true);
+    if (!Predicate.isTagged(result, 'found')) {
+      return yield* Effect.die(new Error('Unexpected result variant'));
+    }
+    expect(result.value[0]?.endProvenance).toEqual({
       evidenceReference: 'contract:end',
       method: 'CONFIRMED_CUSTOMER_RELATIONSHIP_END',
       reason: 'Customer agreement terminated',
       source: 'customer-offboarding.core',
     });
-  });
-});
+  }),
+);
 
-void test('allows the authorized tenant-admin path to read history without payload Legal Entity data', () => {
-  const harness = transactionHarness([
-    [{ ...counterpartyRow, storedPartyId: partyId }],
-    [roleRow()],
-  ]);
+it.effect(
+  'allows the authorized tenant-admin path to read history without payload Legal Entity data',
+  () =>
+    Effect.gen(function* testScenario6() {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+      );
+      const harness = transactionHarness([
+        [{ ...counterpartyRow, storedPartyId: partyId }],
+        [roleRow()],
+      ]);
 
-  return runEffectTestPromise(
-    listCounterpartyRoleHistory(harness.transaction, tenantId, undefined, counterpartyId),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'found'));
-    assert.equal(result.value[0]?.roleType, 'CUSTOMER');
-    assert.deepEqual(harness.selectedTables, [
-      'counterparty_admin_read_models',
-      'counterparty_role_admin_read_models',
-    ]);
-  });
-});
-
-void test('rejects an alias Party create target with canonical survivor guidance', () => {
-  const survivorId = '40000000-0000-4000-8000-000000000002';
-  const harness = transactionHarness([
-    [{ aliasPartyId: partyId, canonicalPartyId: survivorId, tenantId }],
-    [],
-    [{ partyId: survivorId }],
-  ]);
-
-  return runEffectTestPromise(
-    createCounterpartyRecord(harness.transaction, {
-      actionInvocationId,
-      legalEntityId,
-      partyId,
-      policyVersion: 'counterparty-context.v1',
-      principalId,
-      provenance: {
-        evidenceReference: 'contract:create',
-        method: 'SIGNED_CONTRACT',
-        reason: 'Signed commercial agreement',
-        source: 'contracts.core',
-      },
-      tenantId,
-    }),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'party_alias'));
-    assert.equal(result.canonicalPartyRef.resourceId, survivorId);
-    assert.equal(harness.insertValues.length, 0);
-  });
-});
-
-void test('admin detail follows a complete Party alias chain while retaining the stored reference', () => {
-  const middleId = '40000000-0000-4000-8000-000000000002';
-  const survivorId = '40000000-0000-4000-8000-000000000003';
-  const harness = transactionHarness([
-    [{ ...counterpartyRow, storedPartyId: partyId }],
-    [{ aliasPartyId: partyId, canonicalPartyId: middleId, tenantId }],
-    [{ aliasPartyId: middleId, canonicalPartyId: survivorId, tenantId }],
-    [],
-    [{ partyId: survivorId }],
-    [
-      {
-        archivedAt: null,
-        currentDisplayName: 'Survivor',
-        currentType: 'ORGANIZATION',
-        partyId: survivorId,
+      const result = yield* listCounterpartyRoleHistory(
+        harness.transaction,
         tenantId,
-      },
-    ],
-    [],
-  ]);
+        undefined,
+        counterpartyId,
+      );
 
-  return runEffectTestPromise(
-    findCounterpartyRecord(harness.transaction, tenantId, undefined, counterpartyId),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'found'));
-    assert.equal(result.value.party.storedPartyRef.resourceId, partyId);
-    assert.equal(result.value.party.canonicalPartyRef.resourceId, survivorId);
-    assert.equal(result.value.legalEntityRef.resourceId, legalEntityId);
-    assert.equal(harness.selectedTables.includes('counterparties'), false);
-    assert.equal(harness.selectedTables.includes('counterparty_role_periods'), false);
-  });
-});
+      expect(Predicate.isTagged(result, 'found')).toBe(true);
+      if (!Predicate.isTagged(result, 'found')) {
+        return yield* Effect.die(new Error('Unexpected result variant'));
+      }
+      expect(result.value[0]?.roleType).toBe('CUSTOMER');
+      expect(harness.selectedTables).toEqual([
+        'counterparty_admin_read_models',
+        'counterparty_role_admin_read_models',
+      ]);
+    }),
+);
 
-void test('creates the tenant-admin snapshot atomically without creating an implicit role', () => {
-  const party = { archivedAt: null, partyId, tenantId };
-  const harness = transactionHarness(
-    [[], [{ partyId }], [], [{ partyId }], [party]],
-    [],
-    [[counterpartyRow]],
-  );
+it.effect('rejects an alias Party create target with canonical survivor guidance', () =>
+  Effect.gen(function* testScenario7() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const survivorId = '40000000-0000-4000-8000-000000000002';
+    const harness = transactionHarness([
+      [{ aliasPartyId: partyId, canonicalPartyId: survivorId, tenantId }],
+      [],
+      [{ partyId: survivorId }],
+    ]);
 
-  return runEffectTestPromise(
-    createCounterpartyRecord(harness.transaction, {
+    const result = yield* createCounterpartyRecord(harness.transaction, {
       actionInvocationId,
       legalEntityId,
       partyId,
@@ -374,25 +353,113 @@ void test('creates the tenant-admin snapshot atomically without creating an impl
         source: 'contracts.core',
       },
       tenantId,
+    });
+
+    expect(Predicate.isTagged(result, 'party_alias')).toBe(true);
+    if (!Predicate.isTagged(result, 'party_alias')) {
+      return yield* Effect.die(new Error('Unexpected result variant'));
+    }
+    expect(result.canonicalPartyRef.resourceId).toBe(survivorId);
+    expect(harness.insertValues.length).toBe(0);
+  }),
+);
+
+it.effect(
+  'admin detail follows a complete Party alias chain while retaining the stored reference',
+  () =>
+    Effect.gen(function* testScenario8() {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+      );
+      const middleId = '40000000-0000-4000-8000-000000000002';
+      const survivorId = '40000000-0000-4000-8000-000000000003';
+      const harness = transactionHarness([
+        [{ ...counterpartyRow, storedPartyId: partyId }],
+        [{ aliasPartyId: partyId, canonicalPartyId: middleId, tenantId }],
+        [{ aliasPartyId: middleId, canonicalPartyId: survivorId, tenantId }],
+        [],
+        [{ partyId: survivorId }],
+        [
+          {
+            archivedAt: null,
+            currentDisplayName: 'Survivor',
+            currentType: 'ORGANIZATION',
+            partyId: survivorId,
+            tenantId,
+          },
+        ],
+        [],
+      ]);
+
+      const result = yield* findCounterpartyRecord(
+        harness.transaction,
+        tenantId,
+        undefined,
+        counterpartyId,
+      );
+
+      expect(Predicate.isTagged(result, 'found')).toBe(true);
+      if (!Predicate.isTagged(result, 'found')) {
+        return yield* Effect.die(new Error('Unexpected result variant'));
+      }
+      expect(result.value.party.storedPartyRef.resourceId).toBe(partyId);
+      expect(result.value.party.canonicalPartyRef.resourceId).toBe(survivorId);
+      expect(result.value.legalEntityRef.resourceId).toBe(legalEntityId);
+      expect(harness.selectedTables.includes('counterparties')).toBe(false);
+      expect(harness.selectedTables.includes('counterparty_role_periods')).toBe(false);
     }),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'found'));
-    assert.deepEqual(harness.insertedTables, ['counterparties', 'counterparty_admin_read_models']);
-    assert.equal(harness.insertValues[1]?.['storedPartyId'], partyId);
-  });
-});
+);
 
-void test('adds a future role and its admin history projection in the same transaction seam', () => {
-  const futureStart = '2099-01-01T00:00:00.000Z';
-  const futureRole = roleRow({ isCurrent: false, validFrom: date(futureStart) });
-  const harness = transactionHarness(
-    [[counterpartyRow], [], [{ partyId }], [{ archivedAt: null, partyId, tenantId }], []],
-    [],
-    [[futureRole]],
-  );
+it.effect('creates the tenant-admin snapshot atomically without creating an implicit role', () =>
+  Effect.gen(function* testScenario9() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const party = { archivedAt: null, partyId, tenantId };
+    const harness = transactionHarness(
+      [[], [{ partyId }], [], [{ partyId }], [party]],
+      [],
+      [[counterpartyRow]],
+    );
 
-  return runEffectTestPromise(
-    addCounterpartyRoleRecord(harness.transaction, {
+    const result = yield* createCounterpartyRecord(harness.transaction, {
+      actionInvocationId,
+      legalEntityId,
+      partyId,
+      policyVersion: 'counterparty-context.v1',
+      principalId,
+      provenance: {
+        evidenceReference: 'contract:create',
+        method: 'SIGNED_CONTRACT',
+        reason: 'Signed commercial agreement',
+        source: 'contracts.core',
+      },
+      tenantId,
+    });
+
+    expect(Predicate.isTagged(result, 'found')).toBe(true);
+    if (!Predicate.isTagged(result, 'found')) {
+      return yield* Effect.die(new Error('Unexpected result variant'));
+    }
+    expect(harness.insertedTables).toEqual(['counterparties', 'counterparty_admin_read_models']);
+    expect(harness.insertValues[1]?.['storedPartyId']).toBe(partyId);
+  }),
+);
+
+it.effect('adds a future role and its admin history projection in the same transaction seam', () =>
+  Effect.gen(function* testScenario10() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T00:00:00.000Z')),
+    );
+    const futureStart = '2099-01-01T00:00:00.000Z';
+    const futureRole = roleRow({ isCurrent: false, validFrom: date(futureStart) });
+    const harness = transactionHarness(
+      [[counterpartyRow], [], [{ partyId }], [{ archivedAt: null, partyId, tenantId }], []],
+      [],
+      [[futureRole]],
+    );
+
+    const result = yield* addCounterpartyRoleRecord(harness.transaction, {
       actionInvocationId,
       counterpartyId,
       legalEntityId,
@@ -407,14 +474,17 @@ void test('adds a future role and its admin history projection in the same trans
       tenantId,
       validFrom: futureStart,
       validTo: null,
-    }),
-  ).then((result) => {
-    assert.ok(Predicate.isTagged(result, 'found'));
-    assert.equal(harness.insertValues[0]?.['isCurrent'], false);
-    assert.deepEqual(harness.insertedTables, [
+    });
+
+    expect(Predicate.isTagged(result, 'found')).toBe(true);
+    if (!Predicate.isTagged(result, 'found')) {
+      return yield* Effect.die(new Error('Unexpected result variant'));
+    }
+    expect(harness.insertValues[0]?.['isCurrent']).toBe(false);
+    expect(harness.insertedTables).toEqual([
       'counterparty_role_periods',
       'counterparty_admin_read_models',
       'counterparty_role_admin_read_models',
     ]);
-  });
-});
+  }),
+);

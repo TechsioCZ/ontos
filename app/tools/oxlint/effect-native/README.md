@@ -23,7 +23,7 @@ pnpm lint:effect
 pnpm lint:effect --json
 
 # One rule's fixtures while developing it.
-RULE=no-nested-effect-run node --test tools/oxlint/effect-native/tests/fixtures.test.mts
+RULE=no-nested-effect-run pnpm exec rstest --project lint-rules tools/oxlint/effect-native/tests/fixtures.test.mts
 
 # Development probe: uses FIXTURE options, which may differ from production.
 node tools/oxlint/effect-native/tests/run-on-repo.mts no-nested-effect-run
@@ -137,3 +137,23 @@ references establish that boundary; an exported Promise helper remains an owned 
 comparisons, switches, and assertions. Negative lint fixtures are excluded because they deliberately
 contain forbidden syntax. Use Schema, native predicates, and Effect failure combinators to inspect
 values; full serialized-object assertions and diagnostic tag output remain valid.
+
+## Test runtime policy
+
+`no-effect-run-in-tests` rejects references, calls, imports, re-exports, and dynamic imports of
+`Effect.run*` inside tests, including test support and harness directories. Use `it.effect`,
+`it.live`, and `it.layer` from `@app/effect-rstest` so the runner owns services, scopes,
+test time, and configuration. There is no harness-path allowlist: the runner implementation in
+`packages/effect-rstest/src/**` is already outside test-file scope. That vendored upstream port is
+ignored by workspace lint; `packages/effect-rstest/tests/**` remains linted.
+
+Playwright/e2e adapters remain exempt through `ignorePaths`. Type-only imports, non-Effect
+bindings, and ManagedRuntime instance methods are not Effect root-function violations. Nested
+Effect re-entry is diagnosed by `no-nested-effect-run`. Additional rule options are `testPaths`,
+`effectModules`, and `effectModuleSources`; there is no fixer or suggestion.
+
+The workspace import policy rejects `node:test`, `node:assert`, `node:assert/strict`,
+`@rstest/core`, and the retired `@app/core-runtime/testing/effect-runtime` in application,
+package, vertical, script, and tooling tests, with `tests/e2e/**` exempt for Playwright.
+Test files disable Sonar's hard-coded runner detector and the async-Promise-function rule because
+Effect-native test APIs and `Effect.promise`/`Effect.tryPromise` thunks are intentional.

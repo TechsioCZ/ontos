@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { DateTime, Option, Schema } from 'effect';
+import { expect, it } from '@app/effect-rstest';
+import { Effect, DateTime, Option, Schema } from 'effect';
 import {
   PartyCandidateSchema,
   IsoTimestampSchema,
@@ -19,12 +18,12 @@ import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-de
 
 const decode = Schema.decodeUnknownSync;
 
-test('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identity', () => {
+it('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identity', () => {
   for (const partyType of ['PERSON', 'ORGANIZATION', 'UNRESOLVED']) {
-    assert.equal(decode(PartyTypeSchema)(partyType), partyType);
+    expect(decode(PartyTypeSchema)(partyType)).toBe(partyType);
   }
-  assert.throws(() => decode(PartyTypeSchema)('OTHER'));
-  assert.throws(() =>
+  expect(() => decode(PartyTypeSchema)('OTHER')).toThrow();
+  expect(() =>
     decode(PartyCandidateSchema)({
       displayName: '   ',
       evidenceRefs: [],
@@ -33,107 +32,111 @@ test('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identi
       provenance: { method: 'MANUAL', source: 'test' },
       validFrom: '2026-01-01T00:00:00.000Z',
     }),
-  );
+  ).toThrow();
 });
 
-test('Party Type update is enrichment-only; cross-kind changes require Correction', () => {
-  assert.equal(isPartyTypeEnrichment('UNRESOLVED', 'PERSON'), true);
-  assert.equal(isPartyTypeEnrichment('UNRESOLVED', 'ORGANIZATION'), true);
-  assert.equal(isPartyTypeEnrichment('PERSON', 'ORGANIZATION'), false);
-  assert.equal(isPartyTypeEnrichment('ORGANIZATION', 'PERSON'), false);
+it('Party Type update is enrichment-only; cross-kind changes require Correction', () => {
+  expect(isPartyTypeEnrichment('UNRESOLVED', 'PERSON')).toBe(true);
+  expect(isPartyTypeEnrichment('UNRESOLVED', 'ORGANIZATION')).toBe(true);
+  expect(isPartyTypeEnrichment('PERSON', 'ORGANIZATION')).toBe(false);
+  expect(isPartyTypeEnrichment('ORGANIZATION', 'PERSON')).toBe(false);
 });
 
-test('identity timestamps decode to canonical UTC values', () => {
-  assert.throws(() => decode(IsoTimestampSchema)('not-a-timestamp'));
+it('identity timestamps decode to canonical UTC values', () => {
+  expect(() => decode(IsoTimestampSchema)('not-a-timestamp')).toThrow();
   const leapDay = decode(IsoTimestampSchema)('2024-02-29T00:00:00Z');
-  assert.equal(DateTime.formatIso(leapDay), '2024-02-29T00:00:00.000Z');
+  expect(DateTime.formatIso(leapDay)).toBe('2024-02-29T00:00:00.000Z');
 });
 
-test('Party JSON round-trips timestamps as strings and absent values as null', () => {
-  const encoded = {
-    archivedAt: null,
-    createdAt: '2025-01-01T00:00:00.000Z',
-    displayName: null,
-    partyRef: makePartyRef(
-      '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222',
-    ),
-    partyType: 'UNRESOLVED' as const,
-    revision: 1,
-    updatedAt: '2026-01-01T00:00:00.000Z',
-  };
-  const decoded = decode(PartySchema)(encoded);
+it.effect('Party JSON round-trips timestamps as strings and absent values as null', () =>
+  Effect.gen(function* verifySchema1() {
+    const encoded = {
+      archivedAt: null,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      displayName: null,
+      partyRef: makePartyRef(
+        '11111111-1111-4111-8111-111111111111',
+        '22222222-2222-4222-8222-222222222222',
+      ),
+      partyType: 'UNRESOLVED' as const,
+      revision: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const decoded = decode(PartySchema)(encoded);
 
-  assert.equal(Option.isNone(decoded.archivedAt), true);
-  assert.equal(Option.isNone(decoded.displayName), true);
-  assert.deepEqual(Schema.encodeSync(PartySchema)(decoded), encoded);
-  assert.throws(() => decode(PartySchema)({ ...encoded, archivedAt: undefined }));
-  const { displayName: _displayName, ...missingDisplayName } = encoded;
-  assert.throws(() => decode(PartySchema)(missingDisplayName));
+    expect(Option.isNone(decoded.archivedAt)).toBe(true);
+    expect(Option.isNone(decoded.displayName)).toBe(true);
+    expect(yield* Schema.encodeEffect(PartySchema)(decoded)).toEqual(encoded);
+    expect(() => decode(PartySchema)({ ...encoded, archivedAt: undefined })).toThrow();
+    const { displayName: _displayName, ...missingDisplayName } = encoded;
+    expect(() => decode(PartySchema)(missingDisplayName)).toThrow();
 
-  const presentEncoded = {
-    ...encoded,
-    archivedAt: '2026-02-01T00:00:00.000Z',
-    displayName: 'Example organization',
-  };
-  assert.deepEqual(
-    Schema.encodeSync(PartySchema)(decode(PartySchema)(presentEncoded)),
-    presentEncoded,
-  );
-});
+    const presentEncoded = {
+      ...encoded,
+      archivedAt: '2026-02-01T00:00:00.000Z',
+      displayName: 'Example organization',
+    };
+    expect(yield* Schema.encodeEffect(PartySchema)(decode(PartySchema)(presentEncoded))).toEqual(
+      presentEncoded,
+    );
+  }),
+);
 
-test('Party Candidate accepts an evidenced identifier without inventing a display name', () => {
-  const encoded = {
-    evidenceRefs: ['source:official-record'],
-    officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
-    partyType: 'ORGANIZATION' as const,
-    provenance: { method: 'IMPORT', source: 'official-register' },
-    validFrom: '2026-01-01T00:00:00.000Z',
-  };
-  const candidate = decode(PartyCandidateSchema)(encoded);
-  assert.equal(candidate.displayName, undefined);
-  assert.equal(candidate.officialIdentifiers.length, 1);
-  assert.deepEqual(Schema.encodeSync(PartyCandidateSchema)(candidate), encoded);
-});
+it.effect('Party Candidate accepts an evidenced identifier without inventing a display name', () =>
+  Effect.gen(function* verifySchema2() {
+    const encoded = {
+      evidenceRefs: ['source:official-record'],
+      officialIdentifiers: [{ identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' }],
+      partyType: 'ORGANIZATION' as const,
+      provenance: { method: 'IMPORT', source: 'official-register' },
+      validFrom: '2026-01-01T00:00:00.000Z',
+    };
+    const candidate = decode(PartyCandidateSchema)(encoded);
+    expect(candidate.displayName).toBe(undefined);
+    expect(candidate.officialIdentifiers.length).toBe(1);
+    expect(yield* Schema.encodeEffect(PartyCandidateSchema)(candidate)).toEqual(encoded);
+  }),
+);
 
-test('Party references retain tenant, module, resource type, and resource identity', () => {
-  assert.deepEqual(
+it('Party references retain tenant, module, resource type, and resource identity', () => {
+  expect(
     makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'),
-    {
-      moduleId: 'party.registry',
-      resourceId: '22222222-2222-4222-8222-222222222222',
-      resourceType: 'party.registry.party',
-      tenantId: '11111111-1111-4111-8111-111111111111',
-    },
-  );
-});
-
-test('Party identity failures retain branded identifiers in encoded JSON', () => {
-  const partyId = '22222222-2222-4222-8222-222222222222';
-  const failure = new PartyNotFound({
-    code: 'party_not_found',
-    partyId: partyIdFromString(partyId),
-    reason: 'The Party does not exist',
-  });
-
-  assert.deepEqual(Schema.encodeSync(PartyNotFound)(failure), {
-    _tag: 'PartyNotFound',
-    code: 'party_not_found',
-    partyId,
-    reason: 'The Party does not exist',
+  ).toEqual({
+    moduleId: 'party.registry',
+    resourceId: '22222222-2222-4222-8222-222222222222',
+    resourceType: 'party.registry.party',
+    tenantId: '11111111-1111-4111-8111-111111111111',
   });
 });
 
-test('Party identity Actions are tenant-authorized, optionally scoped, and idempotent', () => {
+it.effect('Party identity failures retain branded identifiers in encoded JSON', () =>
+  Effect.gen(function* verifySchema3() {
+    const partyId = '22222222-2222-4222-8222-222222222222';
+    const failure = new PartyNotFound({
+      code: 'party_not_found',
+      partyId: partyIdFromString(partyId),
+      reason: 'The Party does not exist',
+    });
+
+    expect(yield* Schema.encodeEffect(PartyNotFound)(failure)).toEqual({
+      _tag: 'PartyNotFound',
+      code: 'party_not_found',
+      partyId,
+      reason: 'The Party does not exist',
+    });
+  }),
+);
+
+it('Party identity Actions are tenant-authorized, optionally scoped, and idempotent', () => {
   for (const action of [createPartyAction, updatePartyAction, unarchivePartyAction]) {
-    assert.equal(action.descriptor.legalEntityScope, 'optional');
-    assert.equal(action.descriptor.idempotency, 'required');
+    expect(action.descriptor.legalEntityScope).toBe('optional');
+    expect(action.descriptor.idempotency).toBe('required');
     // SAFETY: These identity permission callbacks are constant and do not inspect payload fields.
-    assert.equal(action.descriptor.tenantPermission?.({} as never), 'manage_party_identity');
+    expect(action.descriptor.tenantPermission?.({} as never)).toBe('manage_party_identity');
   }
 });
 
-test('Party unarchive declares durable blocked outcomes with case and decision references', () => {
+it('Party unarchive declares durable blocked outcomes with case and decision references', () => {
   const tenantId = '11111111-1111-4111-8111-111111111111';
   const firstPartyId = '22222222-2222-4222-8222-222222222222';
   const secondPartyId = '33333333-3333-4333-8333-333333333333';
@@ -158,9 +161,9 @@ test('Party unarchive declares durable blocked outcomes with case and decision r
       },
       reasonCode,
     });
-    assert.equal(result.outcome, 'BLOCKED');
+    expect(result.outcome).toBe('BLOCKED');
     if (result.outcome === 'BLOCKED') {
-      assert.equal(result.reasonCode, reasonCode);
+      expect(result.reasonCode).toBe(reasonCode);
     }
   }
 });

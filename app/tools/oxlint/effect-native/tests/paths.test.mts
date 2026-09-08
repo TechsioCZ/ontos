@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 
 import { isScriptFile, normalisePath } from '../shared/paths.ts';
 
@@ -11,7 +10,7 @@ const scriptPaths = [
   'packages/core-runtime/scripts/postgres/verify.mts',
 ];
 
-test('script classification agrees for relative, absolute, and normalized workspace paths', () => {
+it('script classification agrees for relative, absolute, and normalized workspace paths', () => {
   for (const path of scriptPaths) {
     const variants = [
       path,
@@ -21,13 +20,13 @@ test('script classification agrees for relative, absolute, and normalized worksp
       `\\\\server\\share\\app\\${path.replaceAll('/', '\\')}`,
     ];
     for (const filename of variants) {
-      assert.equal(isScriptFile(filename), true, filename);
-      assert.equal(isScriptFile(normalisePath(filename)), true, filename);
+      expect(isScriptFile(filename), filename).toBe(true);
+      expect(isScriptFile(normalisePath(filename)), filename).toBe(true);
     }
   }
 });
 
-test('script classification requires a complete scripts directory segment', () => {
+it('script classification requires a complete scripts directory segment', () => {
   for (const path of [
     'packages/core-runtime/src/verify.ts',
     'apps/shell-super-app/src/scripts.ts',
@@ -42,8 +41,8 @@ test('script classification requires a complete scripts directory segment', () =
       `/workspace/app/${path}`,
       `C:\\workspace\\app\\${path.replaceAll('/', '\\')}`,
     ]) {
-      assert.equal(isScriptFile(filename), false, filename);
-      assert.equal(isScriptFile(normalisePath(filename)), false, filename);
+      expect(isScriptFile(filename), filename).toBe(false);
+      expect(isScriptFile(normalisePath(filename)), filename).toBe(false);
     }
   }
 });

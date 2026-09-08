@@ -1,28 +1,25 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-// @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { Effect, Predicate } from 'effect';
 import { acquirePoolResource, makePartyDatabase } from '../../src/db/client.ts';
 
-void test('finalizes the Party Registry pool when its Effect scope closes', async () => {
-  let finalized = false;
-  await runEffectTestPromise(
-    Effect.scoped(
+it.effect('finalizes the Party Registry pool when its Effect scope closes', () =>
+  Effect.gen(function* testScenario1() {
+    let finalized = false;
+    yield* Effect.scoped(
       acquirePoolResource(() => ({
         end: () => {
           finalized = true;
           return Promise.resolve();
         },
       })),
-    ),
-  );
-  assert.equal(finalized, true);
-});
+    );
+    expect(finalized).toBe(true);
+  }),
+);
 
-void test('keeps Party Registry pool acquisition failure in the typed error channel', async () => {
-  const error = await runEffectTestPromise(
-    Effect.flip(
+it.effect('keeps Party Registry pool acquisition failure in the typed error channel', () =>
+  Effect.gen(function* testScenario2() {
+    const error = yield* Effect.flip(
       Effect.scoped(
         makePartyDatabase(
           {
@@ -37,8 +34,8 @@ void test('keeps Party Registry pool acquisition failure in the typed error chan
           },
         ),
       ),
-    ),
-  );
-  assert.ok(Predicate.isTagged(error, 'PartyDatabaseConnectionError'));
-  assert.equal(error.reason, 'Unable to initialize the Party Registry PostgreSQL connection pool');
-});
+    );
+    expect(Predicate.isTagged(error, 'PartyDatabaseConnectionError')).toBe(true);
+    expect(error.reason).toBe('Unable to initialize the Party Registry PostgreSQL connection pool');
+  }),
+);

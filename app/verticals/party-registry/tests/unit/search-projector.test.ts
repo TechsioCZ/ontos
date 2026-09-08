@@ -1,6 +1,6 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
+import { TestClock } from 'effect/testing';
+
 import { Effect, Exit, Match, Predicate } from 'effect';
 import {
   makeCoreSearchQueryRuntime,
@@ -68,8 +68,9 @@ const snapshot: PartySearchSourceSnapshot = {
   removedRefs: [],
   tenantId,
 };
-void test('post-commit projection makes only active permission-safe identity evidence searchable', () =>
-  runEffectTestPromise(
+it.effect(
+  'post-commit projection makes only active permission-safe identity evidence searchable',
+  () =>
     Effect.gen(function* testScenario() {
       const documents = yield* buildPartySearchDocuments(snapshot);
       const store = makeInMemoryCoreSearchProjectionStore();
@@ -91,20 +92,24 @@ void test('post-commit projection makes only active permission-safe identity evi
         });
       const publicHits = yield* query('public@example.test');
       const identifierHits = yield* query('12345678');
-      assert.equal(publicHits.length, 1);
-      assert.equal(identifierHits.length, 1);
-      assert.deepEqual(yield* query('private@example.test'), []);
-      assert.deepEqual(yield* query('+420123456789'), []);
-      assert.deepEqual(publicHits, [
+      expect(publicHits.length).toBe(1);
+      expect(identifierHits.length).toBe(1);
+      expect(yield* query('private@example.test')).toEqual([]);
+      expect(yield* query('+420123456789')).toEqual([]);
+      expect(publicHits).toEqual([
         { archived: false, facets: [], metadata: [], ref: partyRef, title: 'ACME' },
       ]);
     }),
-  ));
-void test('aliases collapse to canonical identity and only alias-only evidence labels the match', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'aliases collapse to canonical identity and only alias-only evidence labels the match',
+  () =>
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
-      assert.ok(party);
+      expect(party).toBeTruthy();
+      if (party === undefined) {
+        throw new Error('Expected value to be present');
+      }
       const store = makeInMemoryCoreSearchProjectionStore();
       const documents = yield* buildPartySearchDocuments({
         ...snapshot,
@@ -139,13 +144,13 @@ void test('aliases collapse to canonical identity and only alias-only evidence l
           tenantId,
         });
       const alias = yield* query('Old Company');
-      assert.equal(alias.length, 1);
-      assert.deepEqual(alias[0]?.ref, partyRef);
-      assert.equal(alias[0]?.matchedRef?.resourceId, 'absorbed');
+      expect(alias.length).toBe(1);
+      expect(alias[0]?.ref).toEqual(partyRef);
+      expect(alias[0]?.matchedRef?.resourceId).toBe('absorbed');
       const canonicalHits = yield* query('ACME');
-      assert.equal(canonicalHits[0]?.matchedRef, undefined);
+      expect(canonicalHits[0]?.matchedRef).toBe(undefined);
     }),
-  ));
+);
 const context: OutboxWorkerHandlerContext = {
   attemptNumber: 1,
   claimId: 'claim',
@@ -158,8 +163,9 @@ const context: OutboxWorkerHandlerContext = {
   topic: 'party.registry.party-updated.v1',
   workerKey: 'party.registry.project-party-updated-to-search',
 };
-void test('snapshot-generation replay is idempotent, archive/unarchive refreshes and older delivery cannot resurrect a tombstone', () =>
-  runEffectTestPromise(
+it.effect(
+  'snapshot-generation replay is idempotent, archive/unarchive refreshes and older delivery cannot resurrect a tombstone',
+  () =>
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let current = snapshot;
@@ -185,7 +191,7 @@ void test('snapshot-generation replay is idempotent, archive/unarchive refreshes
       yield* deliver();
       yield* deliver();
       const replayHits = yield* query();
-      assert.equal(replayHits.length, 1);
+      expect(replayHits.length).toBe(1);
       current = {
         ...snapshot,
         parties: snapshot.parties.map((party) => ({
@@ -195,16 +201,16 @@ void test('snapshot-generation replay is idempotent, archive/unarchive refreshes
         projectionVersion: '8',
       };
       yield* deliver();
-      assert.deepEqual(yield* query(), []);
+      expect(yield* query()).toEqual([]);
       const archivedHits = yield* query(true);
-      assert.equal(archivedHits[0]?.archived, true);
+      expect(archivedHits[0]?.archived).toBe(true);
       current = {
         ...snapshot,
         projectionVersion: '9',
       };
       yield* deliver();
       const unarchivedHits = yield* query();
-      assert.equal(unarchivedHits.length, 1);
+      expect(unarchivedHits.length).toBe(1);
       current = {
         ...snapshot,
         parties: [],
@@ -214,14 +220,18 @@ void test('snapshot-generation replay is idempotent, archive/unarchive refreshes
       yield* deliver();
       current = snapshot;
       yield* deliver();
-      assert.deepEqual(yield* query(true), []);
+      expect(yield* query(true)).toEqual([]);
     }),
-  ));
-void test('future-ended contact disappears at its period boundary without another lifecycle message', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'future-ended contact disappears at its period boundary without another lifecycle message',
+  () =>
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
-      assert.ok(party);
+      expect(party).toBeTruthy();
+      if (party === undefined) {
+        throw new Error('Expected value to be present');
+      }
       const store = makeInMemoryCoreSearchProjectionStore();
       const documents = yield* buildPartySearchDocuments({
         ...snapshot,
@@ -257,16 +267,20 @@ void test('future-ended contact disappears at its period boundary without anothe
           tenantId,
         });
       const currentHits = yield* query('2026-09-03T00:00:00.000Z');
-      assert.equal(currentHits.length, 1);
-      assert.deepEqual(yield* query('2026-09-04T00:00:00.000Z'), []);
+      expect(currentHits.length).toBe(1);
+      expect(yield* query('2026-09-04T00:00:00.000Z')).toEqual([]);
     }),
-  ));
-void test('Counterparty identity survives aliases, current-role expiry and canonical-party collisions', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'Counterparty identity survives aliases, current-role expiry and canonical-party collisions',
+  () =>
     Effect.gen(function* testScenario() {
       const legalEntityId = '20000000-0000-4000-8000-000000000002';
       const [party] = snapshot.parties;
-      assert.ok(party);
+      expect(party).toBeTruthy();
+      if (party === undefined) {
+        throw new Error('Expected value to be present');
+      }
       const aliasRef = {
         ...partyRef,
         resourceId: 'absorbed',
@@ -322,36 +336,37 @@ void test('Counterparty identity survives aliases, current-role expiry and canon
         tenantId,
       };
       const hits = yield* gateway.searchCounterparties(input);
-      assert.equal(hits.length, 2);
-      assert.deepEqual(
-        hits.map((hit) => hit.counterpartyRef.resourceId),
-        ['cp-1', 'cp-2'],
-      );
+      expect(hits.length).toBe(2);
+      expect(hits.map((hit) => hit.counterpartyRef.resourceId)).toEqual(['cp-1', 'cp-2']);
       const normalized = normalizeCounterpartySearchHits(input, hits);
       const normalizedItems = Match.value(normalized).pipe(
         Match.tag('SearchResults', ({ items }) => items),
         Match.tag('SearchProjectionViolation', ({ reason }) =>
-          assert.fail(`Expected normalized search results: ${reason}`),
+          expect.unreachable(`Expected normalized search results: ${reason}`),
         ),
         Match.exhaustive,
       );
-      assert.equal(normalizedItems[0]?.collision?.kind, 'CANONICAL_PARTY_COUNTERPARTY_COLLISION');
-      assert.equal(normalizedItems[0]?.party.matchedViaAlias, true);
-      assert.deepEqual(
+      expect(normalizedItems[0]?.collision?.kind).toBe('CANONICAL_PARTY_COUNTERPARTY_COLLISION');
+      expect(normalizedItems[0]?.party.matchedViaAlias).toBe(true);
+      expect(
         yield* gateway.searchCounterparties({
           ...input,
           effectiveAt: '2026-10-01T00:00:00.000Z',
         }),
-        [],
-      );
+      ).toEqual([]);
     }),
-  ));
-void test('shared public contact returns multiple Parties without uniqueness or matching authority', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'shared public contact returns multiple Parties without uniqueness or matching authority',
+  () =>
     Effect.gen(function* testScenario() {
+      yield* TestClock.setTime(Date.parse('2026-09-03T00:00:00.000Z'));
       const store = makeInMemoryCoreSearchProjectionStore();
       const [party] = snapshot.parties;
-      assert.ok(party);
+      expect(party).toBeTruthy();
+      if (party === undefined) {
+        throw new Error('Expected value to be present');
+      }
       const documents = yield* buildPartySearchDocuments({
         ...snapshot,
         parties: [
@@ -378,14 +393,12 @@ void test('shared public contact returns multiple Parties without uniqueness or 
         resourceType: 'party.registry.party',
         tenantId,
       });
-      assert.deepEqual(
-        hits.map((hit) => hit.ref.resourceId),
-        ['party-1', 'party-2'],
-      );
+      expect(hits.map((hit) => hit.ref.resourceId)).toEqual(['party-1', 'party-2']);
     }),
-  ));
-void test('rebuild reconciles omitted documents and preserves tombstones against stale lifecycle delivery', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'rebuild reconciles omitted documents and preserves tombstones against stale lifecycle delivery',
+  () =>
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let current = snapshot;
@@ -414,7 +427,7 @@ void test('rebuild reconciles omitted documents and preserves tombstones against
       yield* projector.project(context, {
         partyId: 'party-1',
       });
-      assert.deepEqual(
+      expect(
         yield* makeCoreSearchQueryRuntime(store).search({
           includeArchived: true,
           moduleId: 'party.registry',
@@ -422,12 +435,12 @@ void test('rebuild reconciles omitted documents and preserves tombstones against
           resourceType: 'party.registry.party',
           tenantId,
         }),
-        [],
-      );
+      ).toEqual([]);
     }),
-  ));
-void test('source failure is sanitized and leaves previously searchable state intact for retry', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'source failure is sanitized and leaves previously searchable state intact for retry',
+  () =>
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let fail = false;
@@ -462,15 +475,19 @@ void test('source failure is sanitized and leaves previously searchable state in
         resourceType: 'party.registry.party',
         tenantId,
       });
-      assert.ok(Predicate.isTagged(failure, 'Failure'));
-      assert.equal(priorHits.length, 1);
+      expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();
+      expect(priorHits.length).toBe(1);
     }),
-  ));
-void test('zero-length cancelled periods are never searchable and do not poison projection delivery', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'zero-length cancelled periods are never searchable and do not poison projection delivery',
+  () =>
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
-      assert.ok(party);
+      expect(party).toBeTruthy();
+      if (party === undefined) {
+        throw new Error('Expected value to be present');
+      }
       const result = yield* Effect.exit(
         buildPartySearchDocuments({
           ...snapshot,
@@ -510,53 +527,58 @@ void test('zero-length cancelled periods are never searchable and do not poison 
           ],
         }),
       );
-      assert.ok(Exit.isSuccess(result));
-      assert.deepEqual(
+      expect(Exit.isSuccess(result)).toBeTruthy();
+      if (!Exit.isSuccess(result)) {
+        throw new Error('Expected value to be present');
+      }
+      expect(
         result.value[0]?.temporalSearchableText?.filter((entry) => entry.value === 'cancelled'),
-        [],
-      );
-      assert.deepEqual(result.value[1]?.temporalFacets, []);
+      ).toEqual([]);
+      expect(result.value[1]?.temporalFacets).toEqual([]);
     }),
-  ));
-void test('projection generation is independent of an out-of-order business event sequence', () =>
-  runEffectTestPromise(
-    Effect.gen(function* testScenario() {
-      const store = makeInMemoryCoreSearchProjectionStore();
-      const projector = makePartySearchProjector(
-        {
-          load: () =>
-            Effect.succeed({
-              ...snapshot,
-              projectionVersion: '1',
-            }),
-        },
-        makeCoreSearchIngestion(store),
-        store,
-      );
-      yield* projector.project(
-        {
-          ...context,
-          tenantSequenceNo: 999n,
-        },
-        {
-          partyId: 'party-1',
-        },
-      );
-      const hits = yield* makeCoreSearchQueryRuntime(store).search({
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query: 'ACME',
-        resourceType: 'party.registry.party',
-        tenantId,
-      });
-      assert.equal(hits.length, 1);
-    }),
-  ));
-void test('correction and identifier/contact changes replace obsolete evidence instead of accumulating history', () =>
-  runEffectTestPromise(
+);
+it.effect('projection generation is independent of an out-of-order business event sequence', () =>
+  Effect.gen(function* testScenario() {
+    const store = makeInMemoryCoreSearchProjectionStore();
+    const projector = makePartySearchProjector(
+      {
+        load: () =>
+          Effect.succeed({
+            ...snapshot,
+            projectionVersion: '1',
+          }),
+      },
+      makeCoreSearchIngestion(store),
+      store,
+    );
+    yield* projector.project(
+      {
+        ...context,
+        tenantSequenceNo: 999n,
+      },
+      {
+        partyId: 'party-1',
+      },
+    );
+    const hits = yield* makeCoreSearchQueryRuntime(store).search({
+      includeArchived: false,
+      moduleId: 'party.registry',
+      query: 'ACME',
+      resourceType: 'party.registry.party',
+      tenantId,
+    });
+    expect(hits.length).toBe(1);
+  }),
+);
+it.effect(
+  'correction and identifier/contact changes replace obsolete evidence instead of accumulating history',
+  () =>
     Effect.gen(function* testScenario() {
       const [party] = snapshot.parties;
-      assert.ok(party);
+      expect(party).toBeTruthy();
+      if (party === undefined) {
+        throw new Error('Expected value to be present');
+      }
       const store = makeInMemoryCoreSearchProjectionStore();
       let current = snapshot;
       const projector = makePartySearchProjector(
@@ -598,15 +620,16 @@ void test('correction and identifier/contact changes replace obsolete evidence i
           resourceType: 'party.registry.party',
           tenantId,
         });
-      assert.deepEqual(yield* query('ACME'), []);
-      assert.deepEqual(yield* query('12345678'), []);
-      assert.deepEqual(yield* query('public@example.test'), []);
+      expect(yield* query('ACME')).toEqual([]);
+      expect(yield* query('12345678')).toEqual([]);
+      expect(yield* query('public@example.test')).toEqual([]);
       const corrected = yield* query('Corrected Company');
-      assert.equal(corrected.length, 1);
+      expect(corrected.length).toBe(1);
     }),
-  ));
-void test('a complete empty rebuild also rejects delayed evidence for a never-before-indexed Party', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'a complete empty rebuild also rejects delayed evidence for a never-before-indexed Party',
+  () =>
     Effect.gen(function* testScenario() {
       const store = makeInMemoryCoreSearchProjectionStore();
       let current: PartySearchSourceSnapshot = {
@@ -635,6 +658,6 @@ void test('a complete empty rebuild also rejects delayed evidence for a never-be
         resourceType: 'party.registry.party',
         tenantId,
       });
-      assert.deepEqual(hits, []);
+      expect(hits).toEqual([]);
     }),
-  ));
+);

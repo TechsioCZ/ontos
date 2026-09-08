@@ -1,6 +1,5 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
+
 import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   makeCoreSearchIngestion,
@@ -101,8 +100,8 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
     {
       load: (context, target) =>
         Effect.sync(() => {
-          assert.equal(context.tenantId, tenantId);
-          assert.deepEqual(target, { partyId: partyRef.resourceId });
+          expect(context.tenantId).toBe(tenantId);
+          expect(target).toEqual({ partyId: partyRef.resourceId });
           return canonical;
         }),
     },
@@ -130,7 +129,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
           workerKey: descriptor.workerKey,
         }).pipe(Effect.provideService(PartySearchProjector, projector));
       } else {
-        assert.equal(message.topic, 'party.registry.official-identifier-updated.v1');
+        expect(message.topic).toBe('party.registry.official-identifier-updated.v1');
         const { descriptor } = projectOfficialIdentifierUpdatedToSearchWorker;
         const payload = yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)(
           message.payloadJson,
@@ -159,37 +158,40 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
 };
 
 const assertAttachedIdentifierDelivery = (
-  harness: ReturnType<typeof makeActionTestHarness>,
+  harness: Effect.Success<ReturnType<typeof makeActionTestHarness>>,
   search: ReturnType<typeof makeSearchFixture>,
 ) =>
   Effect.gen(function* verifyCommittedIdentifierDelivery() {
     const [commit] = harness.snapshot().committed;
-    assert.ok(commit);
-    assert.equal(commit.evidence.outboxMessages.length, 1);
+    expect(commit).toBeTruthy();
+    if (commit === undefined) {
+      throw new Error('Expected value to be present');
+    }
+    expect(commit.evidence.outboxMessages.length).toBe(1);
     const [outbox] = commit.evidence.outboxMessages;
-    assert.ok(outbox);
-    assert.equal(
-      commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType,
+    expect(outbox).toBeTruthy();
+    if (outbox === undefined) {
+      throw new Error('Expected value to be present');
+    }
+    expect(commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType).toBe(
       'party.registry.official-identifier-added.v1',
     );
-    assert.deepEqual(outbox.message.payloadJson, { officialIdentifierRef, partyRef });
-    assert.deepEqual(yield* search.query(), []);
+    expect(outbox.message.payloadJson).toEqual({ officialIdentifierRef, partyRef });
+    expect(yield* search.query()).toEqual([]);
     yield* search.deliver(outbox.message);
     const hits = yield* search.query();
-    assert.deepEqual(
-      hits.map((hit) => hit.ref),
-      [partyRef],
-    );
+    expect(hits.map((hit) => hit.ref)).toEqual([partyRef]);
     yield* search.deliver(outbox.message);
-    assert.deepEqual(yield* search.query(), hits);
+    expect(yield* search.query()).toEqual(hits);
   });
 
-test('CreateParty MATCHED_EXISTING publishes an attached identifier and indexes it after delivery only', () =>
-  runEffectTestPromise(
+it.effect(
+  'CreateParty MATCHED_EXISTING publishes an attached identifier and indexes it after delivery only',
+  () =>
     Effect.gen(function* matchedExistingCreateScenario() {
       const search = makeSearchFixture([]);
       yield* search.seed;
-      const harness = makeActionTestHarness({
+      const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         services: [
           bindActionTestServices(createPartyAction, {
@@ -223,17 +225,18 @@ test('CreateParty MATCHED_EXISTING publishes an attached identifier and indexes 
         registration: createPartyAction,
         transport: { correlationId: 'identifier-sync', idempotencyKey: 'match-identifier-1' },
       });
-      assert.deepEqual(result, { decisionRef, outcome: 'MATCHED_EXISTING', partyRef });
+      expect(result).toEqual({ decisionRef, outcome: 'MATCHED_EXISTING', partyRef });
       yield* assertAttachedIdentifierDelivery(harness, search);
     }),
-  ));
+);
 
-test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it after delivery only', () =>
-  runEffectTestPromise(
+it.effect(
+  'reviewed MATCH_EXISTING publishes an attached identifier and indexes it after delivery only',
+  () =>
     Effect.gen(function* reviewedMatchScenario() {
       const search = makeSearchFixture([]);
       yield* search.seed;
-      const harness = makeActionTestHarness({
+      const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         services: [
           bindActionTestServices(resolveDuplicateCandidateMatchAction, {
@@ -266,7 +269,7 @@ test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it af
           idempotencyKey: 'review-match-identifier-1',
         },
       });
-      assert.deepEqual(result, {
+      expect(result).toEqual({
         caseRef,
         decisionRef,
         lifecycleState: 'RESOLVED',
@@ -275,10 +278,11 @@ test('reviewed MATCH_EXISTING publishes an attached identifier and indexes it af
       });
       yield* assertAttachedIdentifierDelivery(harness, search);
     }),
-  ));
+);
 
-test('END_VALIDITY refreshes search only after its committed identifier message and remains replay-safe', () =>
-  runEffectTestPromise(
+it.effect(
+  'END_VALIDITY refreshes search only after its committed identifier message and remains replay-safe',
+  () =>
     Effect.gen(function* endIdentifierSearchScenario() {
       const search = makeSearchFixture([identifier]);
       yield* search.seed;
@@ -291,7 +295,7 @@ test('END_VALIDITY refreshes search only after its committed identifier message 
         verifiedByPrincipalId: null,
       } as const;
       const after = { ...before, state: 'ENDED', validTo } as const;
-      const harness = makeActionTestHarness({
+      const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         services: [
           bindActionTestServices(updatePartyOfficialIdentifierAction, {
@@ -325,19 +329,24 @@ test('END_VALIDITY refreshes search only after its committed identifier message 
         transport: { correlationId: 'identifier-sync', idempotencyKey: 'end-identifier-1' },
       });
       const [commit] = harness.snapshot().committed;
-      assert.ok(commit);
-      assert.equal(commit.evidence.outboxMessages.length, 1);
+      expect(commit).toBeTruthy();
+      if (commit === undefined) {
+        throw new Error('Expected value to be present');
+      }
+      expect(commit.evidence.outboxMessages.length).toBe(1);
       const [outbox] = commit.evidence.outboxMessages;
-      assert.ok(outbox);
-      assert.equal(
-        commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType,
+      expect(outbox).toBeTruthy();
+      if (outbox === undefined) {
+        throw new Error('Expected value to be present');
+      }
+      expect(commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType).toBe(
         'party.registry.official-identifier-updated.v1',
       );
-      assert.deepEqual(outbox.message.payloadJson, { officialIdentifierRef, partyRef });
-      assert.equal((yield* search.query()).length, 1);
+      expect(outbox.message.payloadJson).toEqual({ officialIdentifierRef, partyRef });
+      expect((yield* search.query()).length).toBe(1);
       yield* search.deliver(outbox.message);
-      assert.deepEqual(yield* search.query(), []);
+      expect(yield* search.query()).toEqual([]);
       yield* search.deliver(outbox.message);
-      assert.deepEqual(yield* search.query(), []);
+      expect(yield* search.query()).toEqual([]);
     }),
-  ));
+);

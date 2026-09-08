@@ -1,19 +1,17 @@
-import assert from 'node:assert/strict';
-import { join } from 'node:path';
-import { test } from 'node:test';
+import { expect, it } from '@app/effect-rstest';
+import nodePath from 'node:path';
 import { appRoot, pluginDirectory, runOxlint } from './oxlint.mts';
 
-test('all repository source, including tools and root configuration, follows the Effect discrimination policy', () => {
+it('all repository source, including tools and root configuration, follows the Effect discrimination policy', () => {
   const run = runOxlint(
-    join(pluginDirectory, 'repository-policy.config.ts'),
+    nodePath.join(pluginDirectory, 'repository-policy.config.ts'),
     ['.', '--ignore-pattern', 'tools/oxlint/**/tests/fixtures/**'],
     appRoot,
   );
-  assert.deepEqual(
+  expect(
     run.diagnostics.map(
-      ({ filename, labels, code }) => `${filename}:${labels[0]?.span.line} ${code}`,
+      ({ code, filename, labels }) => `${filename}:${labels[0]?.span.line} ${code}`,
     ),
-    [],
-  );
-  assert.equal(run.exitCode, 0);
+  ).toEqual([]);
+  expect(run.exitCode).toBe(0);
 });

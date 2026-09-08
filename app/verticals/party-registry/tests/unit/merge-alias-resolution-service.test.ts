@@ -1,7 +1,6 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect, Option, Predicate } from 'effect';
+import { expect, it } from '@app/effect-rstest';
+
+import { Effect, Match, Option, Predicate } from 'effect';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
 import type { PartyAliasLookup } from '../../src/merge/party-alias-resolution.service.ts';
 
@@ -20,79 +19,93 @@ const lookup = (overrides: Partial<PartyAliasLookup> = {}): PartyAliasLookup => 
   ...overrides,
 });
 
-void test('central resolution service walks the complete canonical alias chain in one scoped transaction seam', () => {
-  const service = makePartyAliasResolutionService(lookup());
-  const result = runEffectTestSync(service.resolvePartyAlias(tenantId, 'party-b'));
+it.effect(
+  'central resolution service walks the complete canonical alias chain in one scoped transaction seam',
+  () =>
+    Effect.gen(function* aliasResolution1() {
+      const service = makePartyAliasResolutionService(lookup());
+      const result = yield* service.resolvePartyAlias(tenantId, 'party-b');
 
-  assert.deepEqual(result, {
-    canonicalPartyId: 'party-c',
-    requestedPartyId: 'party-b',
-    traversedAliasIds: ['party-b', 'party-a'],
-    wasAlias: true,
-  });
-});
-
-void test('central resolution fails closed for cycles, cross-tenant targets, and broken chains', () => {
-  const cycle = makePartyAliasResolutionService(
-    lookup({
-      findAlias: (_requestedTenantId, aliasPartyId) =>
-        Effect.succeed(
-          Option.some(
-            aliasPartyId === 'party-a'
-              ? { aliasPartyId: 'party-a', canonicalPartyId: 'party-b', tenantId }
-              : { aliasPartyId: 'party-b', canonicalPartyId: 'party-a', tenantId },
-          ),
-        ),
+      expect(result).toEqual({
+        canonicalPartyId: 'party-c',
+        requestedPartyId: 'party-b',
+        traversedAliasIds: ['party-b', 'party-a'],
+        wasAlias: true,
+      });
     }),
-  );
-  const cycleError = runEffectTestSync(Effect.flip(cycle.resolvePartyAlias(tenantId, 'party-a')));
-  assert.ok(Predicate.isTagged(cycleError, 'PartyAliasResolutionCycle'));
+);
 
-  const crossTenant = makePartyAliasResolutionService(
-    lookup({
-      findAlias: () =>
-        Effect.succeed(
-          Option.some({
-            aliasPartyId: 'party-b',
-            canonicalPartyId: 'party-a',
-            tenantId: '22222222-2222-4222-8222-222222222222',
-          }),
-        ),
+it.effect(
+  'central resolution fails closed for cycles, cross-tenant targets, and broken chains',
+  () =>
+    Effect.gen(function* aliasResolution2() {
+      const cycle = makePartyAliasResolutionService(
+        lookup({
+          findAlias: (_requestedTenantId, aliasPartyId) =>
+            Effect.succeed(
+              Option.some(
+                aliasPartyId === 'party-a'
+                  ? { aliasPartyId: 'party-a', canonicalPartyId: 'party-b', tenantId }
+                  : { aliasPartyId: 'party-b', canonicalPartyId: 'party-a', tenantId },
+              ),
+            ),
+        }),
+      );
+      const cycleError = yield* Effect.flip(cycle.resolvePartyAlias(tenantId, 'party-a'));
+      expect(Predicate.isTagged(cycleError, 'PartyAliasResolutionCycle')).toBe(true);
+
+      const crossTenant = makePartyAliasResolutionService(
+        lookup({
+          findAlias: () =>
+            Effect.succeed(
+              Option.some({
+                aliasPartyId: 'party-b',
+                canonicalPartyId: 'party-a',
+                tenantId: '22222222-2222-4222-8222-222222222222',
+              }),
+            ),
+        }),
+      );
+      const crossTenantError = yield* Effect.flip(
+        crossTenant.resolvePartyAlias(tenantId, 'party-b'),
+      );
+      expect(Predicate.isTagged(crossTenantError, 'PartyAliasResolutionCrossTenant')).toBe(true);
+
+      const broken = makePartyAliasResolutionService(
+        lookup({
+          findAlias: () => Effect.succeed(Option.none()),
+          partyExists: () => Effect.succeed(false),
+        }),
+      );
+      const brokenError = yield* Effect.flip(broken.resolvePartyAlias(tenantId, 'missing'));
+      expect(Predicate.isTagged(brokenError, 'PartyAliasResolutionBrokenChain')).toBe(true);
     }),
-  );
-  const crossTenantError = runEffectTestSync(
-    Effect.flip(crossTenant.resolvePartyAlias(tenantId, 'party-b')),
-  );
-  assert.ok(Predicate.isTagged(crossTenantError, 'PartyAliasResolutionCrossTenant'));
+);
 
-  const broken = makePartyAliasResolutionService(
-    lookup({
-      findAlias: () => Effect.succeed(Option.none()),
-      partyExists: () => Effect.succeed(false),
-    }),
-  );
-  const brokenError = runEffectTestSync(Effect.flip(broken.resolvePartyAlias(tenantId, 'missing')));
-  assert.ok(Predicate.isTagged(brokenError, 'PartyAliasResolutionBrokenChain'));
-});
+it.effect('central write guard returns typed canonical-survivor guidance and never forwards', () =>
+  Effect.gen(function* aliasResolution3() {
+    const service = makePartyAliasResolutionService(lookup());
+    const rejection = yield* Effect.flip(service.requireCanonicalWriteTarget(tenantId, 'party-b'));
 
-void test('central write guard returns typed canonical-survivor guidance and never forwards', () => {
-  const service = makePartyAliasResolutionService(lookup());
-  const rejection = runEffectTestSync(
-    Effect.flip(service.requireCanonicalWriteTarget(tenantId, 'party-b')),
-  );
-
-  assert.ok(Predicate.isTagged(rejection, 'PartyAliasWriteRejected'));
-  assert.deepEqual(rejection.aliasPartyRef, {
-    moduleId: 'party.registry',
-    resourceId: 'party-b',
-    resourceType: 'party.registry.party',
-    tenantId,
-  });
-  assert.deepEqual(rejection.canonicalPartyRef, {
-    moduleId: 'party.registry',
-    resourceId: 'party-c',
-    resourceType: 'party.registry.party',
-    tenantId,
-  });
-  assert.equal(rejection.code, 'party_alias_write_rejected');
-});
+    expect(Predicate.isTagged(rejection, 'PartyAliasWriteRejected')).toBe(true);
+    const aliasRejection = Match.value(rejection).pipe(
+      Match.tag('PartyAliasWriteRejected', (failure) => failure),
+      Match.orElse(() => {
+        throw new Error('Expected alias write rejection');
+      }),
+    );
+    expect(aliasRejection.aliasPartyRef).toEqual({
+      moduleId: 'party.registry',
+      resourceId: 'party-b',
+      resourceType: 'party.registry.party',
+      tenantId,
+    });
+    expect(aliasRejection.canonicalPartyRef).toEqual({
+      moduleId: 'party.registry',
+      resourceId: 'party-c',
+      resourceType: 'party.registry.party',
+      tenantId,
+    });
+    expect(rejection.code).toBe('party_alias_write_rejected');
+  }),
+);

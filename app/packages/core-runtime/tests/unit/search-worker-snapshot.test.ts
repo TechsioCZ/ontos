@@ -1,6 +1,4 @@
-import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { Effect, Schema, Predicate } from 'effect';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { CoreSearchProjectionUnavailable } from '../../src/search/projection.ts';
@@ -45,29 +43,20 @@ class SnapshotRetryFailure extends Schema.TaggedError<SnapshotRetryFailure>()(
   },
 ) {}
 
-const effectTest = <Value, Failure>(
-  name: string,
-  body: () => Effect.Effect<Value, Failure>,
-): void => {
-  void test(name, () => {
-    runEffectTestSync(body());
-  });
-};
-
 const readParty = (readExecutor: CoreSearchSnapshotReadExecutor) => {
-  assert.deepEqual(Object.keys(readExecutor), ['select']);
+  expect(Object.keys(readExecutor)).toEqual(['select']);
   return Effect.succeed('party');
 };
 
 const readCounterparty = (readExecutor: CoreSearchSnapshotReadExecutor) => {
-  assert.deepEqual(Object.keys(readExecutor), ['select']);
+  expect(Object.keys(readExecutor)).toEqual(['select']);
   return Effect.succeed('counterparty');
 };
 
 const readInvalid = () => Effect.succeed('invalid');
 const readStillInvalid = () => Effect.succeed('still invalid');
 
-effectTest(
+it.effect(
   'worker snapshot rejects caller-created and unregistered contexts before opening persistence',
   () => {
     let calls = 0;
@@ -91,16 +80,16 @@ effectTest(
         (candidate) => Effect.flip(snapshot.read(candidate, () => Effect.succeed('unreachable'))),
         { concurrency: 'unbounded' },
       );
-      assert.equal(failures.length, 3);
+      expect(failures.length).toBe(3);
       for (const failure of failures) {
-        assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid'));
+        expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(true);
       }
-      assert.equal(calls, 0);
+      expect(calls).toBe(0);
     });
   },
 );
 
-effectTest('identifier-update worker receives the verified Core snapshot capability', () => {
+it.effect('identifier-update worker receives the verified Core snapshot capability', () => {
   const reader = makeCoreSearchWorkerSnapshot({
     run: (_context, readSnapshot) =>
       readSnapshot(
@@ -123,11 +112,11 @@ effectTest('identifier-update worker receives the verified Core snapshot capabil
       }),
       (snapshot) => Effect.succeed(snapshot.projectionVersion),
     );
-    assert.equal(version, '1');
+    expect(version).toBe('1');
   });
 });
 
-effectTest(
+it.effect(
   'worker snapshot exposes select-only owner reads at one current watermark and restores scope',
   () => {
     const installedScopes: (string | undefined)[] = [];
@@ -151,26 +140,26 @@ effectTest(
     return Effect.gen(function* readCurrentOwnerSnapshot() {
       const result = yield* snapshot.read(attestOutboxWorkerHandlerContext(context), (view) =>
         Effect.gen(function* readOwnerProjection() {
-          assert.equal(view.projectionVersion, '42');
-          assert.equal(view.eventWatermark, '100');
-          assert.equal(view.tenantId, tenantId);
-          assert.deepEqual(view.legalEntityIds, [legalEntityId]);
+          expect(view.projectionVersion).toBe('42');
+          expect(view.eventWatermark).toBe('100');
+          expect(view.tenantId).toBe(tenantId);
+          expect(view.legalEntityIds).toEqual([legalEntityId]);
           const party = yield* view.tenant(readParty);
           const counterparty = yield* view.forLegalEntity(legalEntityId, readCounterparty);
           return { counterparty, party, projectionVersion: view.projectionVersion };
         }),
       );
-      assert.deepEqual(result, {
+      expect(result).toEqual({
         counterparty: 'counterparty',
         party: 'party',
         projectionVersion: '42',
       });
-      assert.deepEqual(installedScopes, [undefined, undefined, legalEntityId, undefined]);
+      expect(installedScopes).toEqual([undefined, undefined, legalEntityId, undefined]);
     });
   },
 );
 
-effectTest(
+it.effect(
   'worker snapshot rejects a Legal Entity outside its tenant enumeration and preserves owner failures',
   () => {
     const installedScopes: (string | undefined)[] = [];
@@ -198,20 +187,20 @@ effectTest(
           view.forLegalEntity('20000000-0000-4000-8000-000000000002', () => Effect.succeed('no')),
         ),
       );
-      assert.ok(Predicate.isTagged(invalidScope, 'CoreSearchProjectionInvalid'));
-      assert.deepEqual(installedScopes, []);
+      expect(Predicate.isTagged(invalidScope, 'CoreSearchProjectionInvalid')).toBe(true);
+      expect(installedScopes).toEqual([]);
       const failure = yield* Effect.flip(
         snapshot.read(verified, (view) =>
           view.forLegalEntity(legalEntityId, () => Effect.fail('owner-unavailable')),
         ),
       );
-      assert.equal(failure, 'owner-unavailable');
-      assert.deepEqual(installedScopes, [legalEntityId, undefined]);
+      expect(failure).toBe('owner-unavailable');
+      expect(installedScopes).toEqual([legalEntityId, undefined]);
     });
   },
 );
 
-effectTest('worker snapshot maps persistence failure to a sanitized unavailable error', () => {
+it.effect('worker snapshot maps persistence failure to a sanitized unavailable error', () => {
   const snapshot = makeCoreSearchWorkerSnapshot({
     run: () =>
       Effect.fail(
@@ -226,12 +215,12 @@ effectTest('worker snapshot maps persistence failure to a sanitized unavailable 
     const failure = yield* Effect.flip(
       snapshot.read(attestOutboxWorkerHandlerContext(context), () => Effect.succeed('no')),
     );
-    assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionUnavailable'));
-    assert.doesNotMatch(failure.reason, /private database/u);
+    expect(Predicate.isTagged(failure, 'CoreSearchProjectionUnavailable')).toBe(true);
+    expect(failure.reason).not.toMatch(/private database/u);
   });
 });
 
-effectTest(
+it.effect(
   'snapshot generation retries serialization conflicts only and bounds repeated contention',
   () => {
     let attempts = 0;
@@ -247,8 +236,8 @@ effectTest(
             )
           : Effect.succeed('fresh snapshot');
       }).pipe(retryCoreSearchSnapshot);
-      assert.equal(snapshot, 'fresh snapshot');
-      assert.equal(attempts, 3);
+      expect(snapshot).toBe('fresh snapshot');
+      expect(attempts).toBe(3);
 
       attempts = 0;
       const contention = yield* Effect.flip(
@@ -257,8 +246,8 @@ effectTest(
           return Effect.fail(new SnapshotRetryFailure({ code: '40001', message: 'contention' }));
         }).pipe(retryCoreSearchSnapshot),
       );
-      assert.match(contention.message, /contention/u);
-      assert.equal(attempts, 4);
+      expect(contention.message).toMatch(/contention/u);
+      expect(attempts).toBe(4);
 
       attempts = 0;
       const nonSerialization = yield* Effect.flip(
@@ -267,13 +256,13 @@ effectTest(
           return Effect.fail(new SnapshotRetryFailure({ message: 'not serialization' }));
         }).pipe(retryCoreSearchSnapshot),
       );
-      assert.match(nonSerialization.message, /not serialization/u);
-      assert.equal(attempts, 1);
+      expect(nonSerialization.message).toMatch(/not serialization/u);
+      expect(attempts).toBe(1);
     });
   },
 );
 
-effectTest('snapshot revokes escaped scope capabilities when the owner callback finishes', () => {
+it.effect('snapshot revokes escaped scope capabilities when the owner callback finishes', () => {
   const reader = makeCoreSearchWorkerSnapshot({
     run: (_context, readSnapshot) =>
       readSnapshot(
@@ -288,11 +277,11 @@ effectTest('snapshot revokes escaped scope capabilities when the owner callback 
       Effect.succeed,
     );
     const failure = yield* Effect.flip(escaped.tenant(() => Effect.succeed('stale')));
-    assert.ok(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid'));
+    expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(true);
   });
 });
 
-effectTest('nested scope rejection does not unlock the active owner read', () => {
+it.effect('nested scope rejection does not unlock the active owner read', () => {
   const reader = makeCoreSearchWorkerSnapshot({
     run: (_context, readSnapshot) =>
       readSnapshot(
@@ -306,8 +295,8 @@ effectTest('nested scope rejection does not unlock the active owner read', () =>
       Effect.gen(function* nestedReads() {
         const first = yield* Effect.flip(snapshot.forLegalEntity(legalEntityId, readInvalid));
         const second = yield* Effect.flip(snapshot.tenant(readStillInvalid));
-        assert.ok(Predicate.isTagged(first, 'CoreSearchProjectionInvalid'));
-        assert.ok(Predicate.isTagged(second, 'CoreSearchProjectionInvalid'));
+        expect(Predicate.isTagged(first, 'CoreSearchProjectionInvalid')).toBe(true);
+        expect(Predicate.isTagged(second, 'CoreSearchProjectionInvalid')).toBe(true);
       }),
     ),
   );

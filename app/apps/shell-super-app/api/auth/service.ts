@@ -1040,18 +1040,29 @@ const assembleAuthenticationService = (
   };
 };
 
-export const makeAuthenticationService = assembleAuthenticationService;
+export interface AuthenticationServiceOptions {
+  readonly allowFixtureSignUp?: boolean;
+}
 
-export const AuthenticationServiceLive = Layer.effect(
-  AuthenticationService,
-  Effect.gen(function* makeAuthenticationServiceEffect() {
+/**
+ * Builds the authentication service from AuthConfig, AuthDatabase, and PrincipalResolver in the
+ * caller's Effect context. Better Auth invokes its session hooks as Promises, so the resolver bridge
+ * is captured here and never leaves this module.
+ */
+export const makeAuthenticationService = Effect.fn('AuthenticationService.make')(
+  function* makeAuthenticationServiceEffect(options: AuthenticationServiceOptions = {}) {
     const configuration = yield* AuthConfig;
     const database = yield* AuthDatabase;
     const resolver = yield* PrincipalResolver;
     const effectContext = yield* Effect.context();
-    const runResolverEffect = Effect.runPromiseWith(effectContext);
-    return makeAuthenticationService(configuration, database.adapter, resolver, {
-      runResolverEffect,
+    return assembleAuthenticationService(configuration, database.adapter, resolver, {
+      ...options,
+      runResolverEffect: Effect.runPromiseWith(effectContext),
     });
-  }),
+  },
+);
+
+export const AuthenticationServiceLive = Layer.effect(
+  AuthenticationService,
+  makeAuthenticationService(),
 );

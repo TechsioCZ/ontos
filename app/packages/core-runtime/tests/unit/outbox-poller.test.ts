@@ -1,7 +1,5 @@
-import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Effect, Fiber, Layer, Schema } from 'effect';
+import { expect, it } from '@app/effect-rstest';
+import { Effect, Fiber, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -46,94 +44,80 @@ const emptyResult = {
   succeeded: 0,
 } as const;
 
-void test(
-  'uses safe one-second defaults and accepts bounded scalar overrides',
-  makeEffectTestCallback(
-    Effect.gen(function* validPollingConfiguration() {
-      assert.deepEqual(
-        yield* parseOutboxPollingConfig({
-          defaultClaimOwner: 'consumer:default',
-          environment: {},
-        }),
-        {
-          claimOwner: 'consumer:default',
-          maxDeliveries: 100,
-          pollIntervalMs: 1000,
-        },
-      );
+it.effect('uses safe one-second defaults and accepts bounded scalar overrides', () =>
+  Effect.gen(function* validPollingConfiguration() {
+    expect(
+      yield* parseOutboxPollingConfig({
+        defaultClaimOwner: 'consumer:default',
+        environment: {},
+      }),
+    ).toEqual({
+      claimOwner: 'consumer:default',
+      maxDeliveries: 100,
+      pollIntervalMs: 1000,
+    });
 
-      assert.deepEqual(
-        yield* parseOutboxPollingConfig({
-          defaultClaimOwner: 'consumer:default',
-          environment: {
-            OUTBOX_WORKER_CLAIM_OWNER: 'consumer:configured',
-            OUTBOX_WORKER_MAX_DELIVERIES: '25',
-            OUTBOX_WORKER_POLL_INTERVAL_MS: '250',
-          },
-        }),
-        {
-          claimOwner: 'consumer:configured',
-          maxDeliveries: 25,
-          pollIntervalMs: 250,
+    expect(
+      yield* parseOutboxPollingConfig({
+        defaultClaimOwner: 'consumer:default',
+        environment: {
+          OUTBOX_WORKER_CLAIM_OWNER: 'consumer:configured',
+          OUTBOX_WORKER_MAX_DELIVERIES: '25',
+          OUTBOX_WORKER_POLL_INTERVAL_MS: '250',
         },
-      );
-    }),
-  ),
+      }),
+    ).toEqual({
+      claimOwner: 'consumer:configured',
+      maxDeliveries: 25,
+      pollIntervalMs: 250,
+    });
+  }),
 );
 
-void test(
-  'rejects invalid polling values instead of falling back to a busy loop',
-  makeEffectTestCallback(
-    Effect.gen(function* invalidPollingConfiguration() {
-      const error = yield* Effect.flip(
-        parseOutboxPollingConfig({
-          defaultClaimOwner: 'consumer:default',
-          environment: { OUTBOX_WORKER_POLL_INTERVAL_MS: '0' },
-        }),
-      );
-      assert.equal(Schema.is(OutboxPollerConfigError)(error), true);
-    }),
-  ),
+it.effect('rejects invalid polling values instead of falling back to a busy loop', () =>
+  Effect.gen(function* invalidPollingConfiguration() {
+    const error = yield* Effect.flip(
+      parseOutboxPollingConfig({
+        defaultClaimOwner: 'consumer:default',
+        environment: { OUTBOX_WORKER_POLL_INTERVAL_MS: '0' },
+      }),
+    );
+    expect(Schema.is(OutboxPollerConfigError)(error)).toBe(true);
+  }),
 );
 
-void test(
-  'runs immediately, survives a typed cycle failure, and continues polling',
-  makeEffectTestCallback(
-    Effect.gen(function* pollingWithTestClock() {
-      const testClockServices = yield* Layer.build(TestClock.layer());
-      return yield* Effect.gen(function* pollingContinuesAfterFailure() {
-        let calls = 0;
-        const healthTransitions: string[] = [];
-        const runCycle: OutboxCycleRunner<typeof registration, never> = () =>
-          Effect.suspend(() => {
-            calls += 1;
-            return calls === 1
-              ? Effect.fail(
-                  new OutboxPersistenceError({
-                    code: 'outbox_persistence_failed',
-                    reason: 'controlled test failure',
-                  }),
-                )
-              : Effect.succeed(emptyResult);
-          });
-        const running = yield* runOutboxPollingLoop(
-          {
-            config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
-            health: {
-              cycleFailed: Effect.sync(() => healthTransitions.push('failed')),
-              cycleSucceeded: Effect.sync(() => healthTransitions.push('ready')),
-            },
-            registrations: [registration],
-            subscriptions: [registration.descriptor],
-          },
-          runCycle,
-        ).pipe(Effect.forkChild);
+it.effect('runs immediately, survives a typed cycle failure, and continues polling', () =>
+  Effect.gen(function* pollingContinuesAfterFailure() {
+    let calls = 0;
+    const healthTransitions: string[] = [];
+    const runCycle: OutboxCycleRunner<typeof registration, never> = () =>
+      Effect.suspend(() => {
+        calls += 1;
+        return calls === 1
+          ? Effect.fail(
+              new OutboxPersistenceError({
+                code: 'outbox_persistence_failed',
+                reason: 'controlled test failure',
+              }),
+            )
+          : Effect.succeed(emptyResult);
+      });
+    const running = yield* runOutboxPollingLoop(
+      {
+        config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+        health: {
+          cycleFailed: Effect.sync(() => healthTransitions.push('failed')),
+          cycleSucceeded: Effect.sync(() => healthTransitions.push('ready')),
+        },
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      },
+      runCycle,
+    ).pipe(Effect.forkChild);
 
-        yield* TestClock.adjust('20 millis');
-        yield* Fiber.interrupt(running);
-        assert.equal(calls, 3, 'polling loop did not continue');
-        assert.deepEqual(healthTransitions, ['failed', 'ready', 'ready']);
-      }).pipe(Effect.provide(testClockServices));
-    }).pipe(Effect.scoped),
-  ),
+    yield* TestClock.adjust('20 millis');
+    yield* Fiber.interrupt(running);
+    expect(calls, 'polling loop did not continue').toBe(3);
+    expect(healthTransitions).toEqual(['failed', 'ready', 'ready']);
+  }).pipe(Effect.scoped),
 );

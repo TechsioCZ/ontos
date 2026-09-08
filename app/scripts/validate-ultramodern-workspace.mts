@@ -292,12 +292,10 @@ const workspaceValidationContractDefinition = {
     'action:test:integration': 'pnpm --filter @app/core-runtime action:test:integration',
     'deployment-impact:plan': 'node ./scripts/plan-deployment-impact.mts',
     'test:deployment-impact':
-      'node scripts/generate-outbox-worker-deployment.mjs && node --test scripts/tests/plan-deployment-impact.test.mts scripts/tests/outbox-worker-delivery.test.mts',
-    'test:generation':
-      'node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/resource-generator.test.mts scripts/scaffolding/tests/retire-contribution.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts',
+      'node scripts/generate-outbox-worker-deployment.mjs && rstest --project scripts scripts/tests/plan-deployment-impact scripts/tests/outbox-worker-delivery',
+    'test:generation': 'rstest --project generation',
     'test:integration': 'pnpm -r --if-present run test:integration',
-    'test:scripts':
-      'node --test scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts',
+    'test:scripts': 'rstest --project scripts',
     'test:unit': 'pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component',
   },
   cloudflareSecurity: {
@@ -5071,6 +5069,7 @@ const assertTsConfigReferenceGraph = () => {
     SHARED_VALIDATOR_STRING_047,
     ...fullStackVerticals.map((vertical) => vertical.path),
     ...additionalShellPaths,
+    'packages/effect-rstest',
   ].map((referencePath) => ({ path: referencePath }));
   const expectedShellReferences = [
     SHARED_VALIDATOR_STRING_092,
@@ -7014,11 +7013,11 @@ for (const [scriptName, expectedCommand] of Object.entries(
 }
 const coreRuntimePackage = readJson(PackageJsonSchema, SHARED_VALIDATOR_STRING_093);
 assert(
-  coreRuntimePackage.scripts?.['test:unit'] === 'node --test tests/unit/*.test.ts',
+  coreRuntimePackage.scripts?.['test:unit'] === 'rstest --project unit',
   'Core runtime must expose its complete unit test surface',
 );
 assert(
-  coreRuntimePackage.scripts?.['test:integration'] === 'node --test tests/integration/*.test.ts',
+  coreRuntimePackage.scripts?.['test:integration'] === 'rstest --project integration',
   'Core runtime must expose its complete service-backed integration test surface',
 );
 assert(

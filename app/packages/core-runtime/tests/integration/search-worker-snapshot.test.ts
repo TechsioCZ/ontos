@@ -1,19 +1,8 @@
-import { makeEffectTestCallback as nativeTestCallback } from '@app/core-runtime/testing/effect-runtime';
+import { expect, it } from '@app/effect-rstest';
+
 import { NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import {
-  Cause,
-  Crypto,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  ManagedRuntime,
-  Exit as NativeExit,
-  Scope as NativeScope,
-} from 'effect';
-import assert from 'node:assert/strict';
-import test, { after as afterNativeDatabase } from 'node:test';
+import { Cause, Crypto, Deferred, Effect, Fiber, Option } from 'effect';
 import type { PoolClient } from 'pg';
 import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
@@ -29,14 +18,7 @@ import {
   makePostgresCoreSearchSnapshotBackend,
 } from '../../src/search/worker-snapshot.ts';
 import { makeTestDatabaseFromPool } from '../support/database.ts';
-import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
-);
-
-const workerSnapshotRuntime = ManagedRuntime.make(NodeServices.layer);
 const readLegalEntitySettings = (executor: CoreSearchSnapshotReadExecutor, eventId: string) =>
   executor
     .select({
@@ -68,14 +50,14 @@ const readSnapshotPosition = (
 const beginTransaction = (client: PoolClient) =>
   Effect.tryPromise({
     catch: (cause) => new Cause.UnknownError(cause),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
     try: () => client.query('begin'),
   });
 
 const commitTransaction = (client: PoolClient) =>
   Effect.tryPromise({
     catch: (cause) => new Cause.UnknownError(cause),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
     try: () => client.query('commit'),
   });
 
@@ -87,7 +69,7 @@ const insertPendingEvent = (
 ) =>
   Effect.tryPromise({
     catch: (cause) => new Cause.UnknownError(cause),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
     try: () =>
       client.query(
         `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3)`,
@@ -110,9 +92,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   });
   const source = makeCoreSearchWorkerSnapshot(
     makePostgresCoreSearchSnapshotBackend({
-      executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations).pipe(
-        NativeScope.provide(nativeDatabaseScope),
-      ),
+      executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations),
     }),
   );
   const insertEvent = (id: string) =>
@@ -120,21 +100,21 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       const subjectId = yield* crypto.randomUUIDv4;
       const result = yield* Effect.tryPromise({
         catch: (cause) => new Cause.UnknownError(cause),
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
         try: () =>
           admin.query<{ tenant_sequence_no: string }>(
             `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3) returning tenant_sequence_no::text`,
             [id, tenantId, subjectId],
           ),
       });
-      const [row] = result.rows;
-      assert.ok(row);
+      const row = Option.getOrThrow(Option.fromNullishOr(result.rows[0]));
+      expect(row).toBeDefined();
       return row.tenant_sequence_no;
     });
   const cleanup = Effect.gen(function* cleanupWorkerSnapshot() {
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
       try: () =>
         admin.query('delete from core.search_projection_generations where tenant_id = $1', [
           tenantId,
@@ -142,29 +122,29 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     });
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
       try: () => admin.query('delete from core.domain_events where tenant_id = $1', [tenantId]),
     });
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
       try: () => admin.query('delete from core.legal_entities where tenant_id = $1', [tenantId]),
     });
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
       try: () => admin.query('delete from core.tenants where tenant_id = $1', [tenantId]),
     });
     yield* Effect.all(
       [
         Effect.tryPromise({
           catch: (cause) => new Cause.UnknownError(cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
           try: () => admin.end(),
         }),
         Effect.tryPromise({
           catch: (cause) => new Cause.UnknownError(cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
           try: () => runtimePool.end(),
         }),
       ],
@@ -172,10 +152,11 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     );
   }).pipe(Effect.orDie);
 
-  yield* Effect.gen(function* exerciseWorkerSnapshots() {
+  yield* Effect.acquireRelease(Effect.void, () => cleanup);
+  const exercise = Effect.gen(function* exerciseWorkerSnapshots() {
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
       try: () =>
         admin.query(
           `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Snapshot tenant', 'active', 'en')`,
@@ -184,7 +165,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     });
     yield* Effect.tryPromise({
       catch: (cause) => new Cause.UnknownError(cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
       try: () =>
         admin.query(
           `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Snapshot LE', 'CZ', $1::uuid::text, 'active')`,
@@ -215,8 +196,8 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     let newerVersion = '';
     const result = yield* source.read(context, (snapshot) =>
       Effect.gen(function* inspectSnapshot() {
-        assert.equal(snapshot.projectionVersion, '1');
-        assert.equal(snapshot.eventWatermark, originalVersion);
+        expect(snapshot.projectionVersion).toBe('1');
+        expect(snapshot.eventWatermark).toBe(originalVersion);
         const settings = yield* snapshot.forLegalEntity(legalEntityId, readEventSettings);
         const newerEventId = yield* crypto.randomUUIDv4;
         newerVersion = yield* insertEvent(newerEventId);
@@ -224,7 +205,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
         return { settings, version: rows[0]?.version };
       }),
     );
-    assert.deepEqual(result.settings, [
+    expect(result.settings).toEqual([
       {
         isolation: 'repeatable read',
         legalEntity: legalEntityId,
@@ -232,13 +213,12 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
         tenant: tenantId,
       },
     ]);
-    assert.equal(result.version, originalVersion);
-    assert.equal(
+    expect(result.version).toBe(originalVersion);
+    expect(
       yield* source.read(context, (snapshot) => Effect.succeed(snapshot.projectionVersion)),
-      '2',
-    );
+    ).toBe('2');
     const nextSnapshot = yield* readSnapshotPosition(source, context);
-    assert.deepEqual(nextSnapshot, { eventWatermark: newerVersion, generation: '3' });
+    expect(nextSnapshot).toEqual({ eventWatermark: newerVersion, generation: '3' });
 
     // A second snapshot starts while the first owns the generation row. It must
     // retry its old RR snapshot after the first commits, never publish stale data
@@ -269,13 +249,13 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
           ? Effect.succeed(true)
           : Effect.tryPromise({
               catch: (cause) => new Cause.UnknownError(cause),
-              // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
               try: () => admin.query('select pg_sleep(0.01)'),
             }).pipe(
               Effect.andThen(
                 Effect.tryPromise({
                   catch: (cause) => new Cause.UnknownError(cause),
-                  // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
                   try: () =>
                     admin.query<{ count: number }>(
                       `select count(*)::int as count from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
@@ -286,15 +266,15 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
               Effect.map((activity) => activity.rows[0]?.count === 1),
             ),
     );
-    assert.equal(waiting, true, 'second snapshot must wait on first generation before retrying');
+    expect(waiting, 'second snapshot must wait on first generation before retrying').toBe(true);
     const latestEventId = yield* crypto.randomUUIDv4;
     const latestEvent = yield* insertEvent(latestEventId);
     yield* Deferred.succeed(release, null);
     const [firstResult, secondResult] = yield* Effect.all([Fiber.join(first), Fiber.join(second)], {
       concurrency: 'unbounded',
     });
-    assert.deepEqual(firstResult, { eventWatermark: newerVersion, generation: '4' });
-    assert.deepEqual(secondResult, { eventWatermark: latestEvent, generation: '5' });
+    expect(firstResult).toEqual({ eventWatermark: newerVersion, generation: '4' });
+    expect(secondResult).toEqual({ eventWatermark: latestEvent, generation: '5' });
 
     // Business transactions may commit event allocation sequences out of order.
     // Both snapshots below have the same event max but must get new generations.
@@ -310,11 +290,11 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
         const beforeLateCommit = yield* readSnapshotPosition(source, context);
         yield* commitTransaction(pending);
         const afterLateCommit = yield* readSnapshotPosition(source, context);
-        assert.deepEqual(beforeLateCommit, {
+        expect(beforeLateCommit).toEqual({
           eventWatermark: higherEvent,
           generation: '6',
         });
-        assert.deepEqual(afterLateCommit, {
+        expect(afterLateCommit).toEqual({
           eventWatermark: higherEvent,
           generation: '7',
         });
@@ -322,27 +302,24 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         catch: (cause) => new Cause.UnknownError(cause),
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
         try: () => admin.connect(),
       }),
       lateCommitSnapshot,
       (pending) =>
         Effect.tryPromise({
           catch: (cause) => new Cause.UnknownError(cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign pg SDK Promise boundary.
+
           try: () => pending.query('rollback'),
         }).pipe(Effect.orDie, Effect.ensuring(Effect.sync(() => pending.release()))),
     );
-  }).pipe(Effect.ensuring(cleanup));
-});
-
-void test('worker projection uses independent generations and one repeatable snapshot across tenant and Legal Entity scopes', (_context, done) => {
-  workerSnapshotRuntime.runCallback(workerSnapshotProgram, {
-    onExit: Exit.match({
-      onFailure: (cause) => done(Cause.squash(cause)),
-      onSuccess: () => done(),
-    }),
   });
+  yield* exercise;
 });
 
-test.after(workerSnapshotRuntime.dispose.bind(workerSnapshotRuntime));
+it.layer(NodeServices.layer, { excludeTestServices: true })('worker snapshots', (suite) => {
+  suite.effect(
+    'worker projection uses independent generations and one repeatable snapshot across tenant and Legal Entity scopes',
+    () => workerSnapshotProgram,
+  );
+});

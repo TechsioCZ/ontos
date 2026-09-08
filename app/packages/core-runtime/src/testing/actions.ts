@@ -36,7 +36,6 @@ import type { TenantModuleState } from '../modules/tenant-module-state-service.t
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
-import { runEffectTestSync } from './effect-runtime.ts';
 
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
@@ -146,7 +145,9 @@ const persistenceFailure = () =>
 const queryRows = (result: { readonly rows: readonly object[] }) => result.rows;
 const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionError({ cause }) });
 
-const actionTestHarness = (options: ActionTestHarnessOptions = {}) => {
+const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTestHarness(
+  options: ActionTestHarnessOptions = {},
+) {
   const invocations = new Map<string, ActionTestInvocation>();
   const idempotency = new Map<string, string>();
   const committed: FlushActionSuccessInput[] = [];
@@ -331,23 +332,21 @@ const actionTestHarness = (options: ActionTestHarnessOptions = {}) => {
       } satisfies Connection;
     });
   });
-  const database = runEffectTestSync(
-    Effect.scoped(
-      Effect.gen(function* makeTestDatabase() {
-        const reactivity = yield* Reactivity.make;
-        const client = yield* PgClient.makeWith({
-          acquirer: acquireConnection,
-          config: {},
-          listenAcquirer: Effect.die('Notifications are unavailable in the Action test harness'),
-          transactionAcquirer: acquireConnection,
-        }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.orDie);
-        return {
-          executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
-            Effect.provideService(PgClient.PgClient, client),
-          ),
-        };
-      }),
-    ),
+  const database = yield* Effect.scoped(
+    Effect.gen(function* makeTestDatabase() {
+      const reactivity = yield* Reactivity.make;
+      const client = yield* PgClient.makeWith({
+        acquirer: acquireConnection,
+        config: {},
+        listenAcquirer: Effect.die('Notifications are unavailable in the Action test harness'),
+        transactionAcquirer: acquireConnection,
+      }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.orDie);
+      return {
+        executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
+          Effect.provideService(PgClient.PgClient, client),
+        ),
+      };
+    }),
   );
   const contextAccess: ContextAccessService = {
     legalEntities: ({ legalEntityIds, permission }) =>
@@ -491,7 +490,7 @@ const actionTestHarness = (options: ActionTestHarnessOptions = {}) => {
         transactionCount,
       }),
   });
-};
+});
 
 export const makeActionTestHarness: typeof actionTestHarness = actionTestHarness;
 

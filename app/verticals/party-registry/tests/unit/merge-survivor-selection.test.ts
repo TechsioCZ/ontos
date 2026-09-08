@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
 import { Match, Predicate } from 'effect';
 import type { PartyRef } from '../../shared/resources/party.ts';
 import type {
@@ -46,12 +45,14 @@ const expectSelected = (result: CanonicalSurvivorSelection) =>
   Match.value(result).pipe(
     Match.tag('CanonicalSurvivorSelected', (selected) => selected),
     Match.tag('SurvivorSelectionBlocked', ({ blocker }) =>
-      assert.fail(`Expected a canonical survivor, but selection was blocked by ${blocker}`),
+      ((message: string): never => {
+        throw new Error(message);
+      })(`Expected a canonical survivor, but selection was blocked by ${blocker}`),
     ),
     Match.exhaustive,
   );
 
-void test('blocks survivor selection when authoritative identity truth is unresolved', () => {
+it('blocks survivor selection when authoritative identity truth is unresolved', () => {
   const result = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('party-a'),
@@ -59,14 +60,14 @@ void test('blocks survivor selection when authoritative identity truth is unreso
     ]),
   );
 
-  assert.deepEqual(result, {
+  expect(result).toEqual({
     _tag: 'SurvivorSelectionBlocked',
     blocker: 'AUTHORITATIVE_IDENTITY_CONFLICT',
     conflictingPartyRefs: [party('party-b')],
   });
 });
 
-void test('uses the governed hierarchy before reference count, lifecycle, completeness, or age', () => {
+it('uses the governed hierarchy before reference count, lifecycle, completeness, or age', () => {
   const result = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('well-established', {
@@ -84,36 +85,37 @@ void test('uses the governed hierarchy before reference count, lifecycle, comple
     ]),
   );
 
-  assert.ok(Predicate.isTagged(result, 'CanonicalSurvivorSelected'));
+  expect(Predicate.isTagged(result, 'CanonicalSurvivorSelected')).toBe(true);
   const selected = expectSelected(result);
-  assert.deepEqual(selected.survivorPartyRef, party('authoritative'));
-  assert.equal(selected.decidingCriterion, 'AUTHORITATIVE_EVIDENCE');
-  assert.equal(selected.policyVersion, 'party-merge-survivor-selection.v1');
-  assert.equal(selected.confirmedDuplicateDecisionId, 'decision-1');
-  assert.deepEqual(
-    selected.evidenceChain.map(({ criterion }) => criterion),
-    ['CONFIRMED_DUPLICATE_SET', 'IDENTITY_SAFETY', 'AUTHORITATIVE_EVIDENCE'],
-  );
+  expect(selected.survivorPartyRef).toEqual(party('authoritative'));
+  expect(selected.decidingCriterion).toBe('AUTHORITATIVE_EVIDENCE');
+  expect(selected.policyVersion).toBe('party-merge-survivor-selection.v1');
+  expect(selected.confirmedDuplicateDecisionId).toBe('decision-1');
+  expect(selected.evidenceChain.map(({ criterion }) => criterion)).toEqual([
+    'CONFIRMED_DUPLICATE_SET',
+    'IDENTITY_SAFETY',
+    'AUTHORITATIVE_EVIDENCE',
+  ]);
 });
 
-void test('uses reference stability, lifecycle, completeness, age, then resource identity deterministically', () => {
+it('uses reference stability, lifecycle, completeness, age, then resource identity deterministically', () => {
   const referenceWinner = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('a', { referenceStabilityRank: 1 }),
       candidate('b', { referenceStabilityRank: 2 }),
     ]),
   );
-  assert.equal(expectSelected(referenceWinner).decidingCriterion, 'REFERENCE_STABILITY');
+  expect(expectSelected(referenceWinner).decidingCriterion).toBe('REFERENCE_STABILITY');
 
   const deterministic = selectCanonicalSurvivor(
     confirmedSelection([candidate('party-b'), candidate('party-a')]),
   );
   const selected = expectSelected(deterministic);
-  assert.deepEqual(selected.survivorPartyRef, party('party-a'));
-  assert.equal(selected.decidingCriterion, 'STABLE_RESOURCE_IDENTITY');
+  expect(selected.survivorPartyRef).toEqual(party('party-a'));
+  expect(selected.decidingCriterion).toBe('STABLE_RESOURCE_IDENTITY');
 });
 
-void test('rejects a cross-tenant merge set before selection', () => {
+it('rejects a cross-tenant merge set before selection', () => {
   const result = selectCanonicalSurvivor(
     confirmedSelection([
       candidate('party-a'),
@@ -123,7 +125,7 @@ void test('rejects a cross-tenant merge set before selection', () => {
     ]),
   );
 
-  assert.deepEqual(result, {
+  expect(result).toEqual({
     _tag: 'SurvivorSelectionBlocked',
     blocker: 'CROSS_TENANT_MERGE_SET',
     conflictingPartyRefs: [
@@ -133,14 +135,14 @@ void test('rejects a cross-tenant merge set before selection', () => {
   });
 });
 
-void test('rejects selection without an explicit confirmed duplicate decision and matching evidence set', () => {
+it('rejects selection without an explicit confirmed duplicate decision and matching evidence set', () => {
   const candidates = [candidate('party-a'), candidate('party-b')];
-  assert.deepEqual(selectCanonicalSurvivor({ candidates, confirmation: null }), {
+  expect(selectCanonicalSurvivor({ candidates, confirmation: null })).toEqual({
     _tag: 'SurvivorSelectionBlocked',
     blocker: 'DUPLICATE_SET_NOT_CONFIRMED',
     conflictingPartyRefs: [party('party-a'), party('party-b')],
   });
-  assert.ok(
+  expect(
     Predicate.isTagged(
       selectCanonicalSurvivor({
         candidates,
@@ -153,17 +155,17 @@ void test('rejects selection without an explicit confirmed duplicate decision an
       }),
       'SurvivorSelectionBlocked',
     ),
-  );
+  ).toBe(true);
 });
 
-void test('retains immutable evaluated values and explains progressive elimination for three candidates', () => {
+it('retains immutable evaluated values and explains progressive elimination for three candidates', () => {
   const candidates = [
     candidate('party-a', { authoritativeEvidenceRank: 3, referenceStabilityRank: 2 }),
     candidate('party-b', { authoritativeEvidenceRank: 3, referenceStabilityRank: 1 }),
     candidate('party-c', { authoritativeEvidenceRank: 1, referenceStabilityRank: 100 }),
   ];
   const result = selectCanonicalSurvivor(confirmedSelection(candidates));
-  assert.ok(Predicate.isTagged(result, 'CanonicalSurvivorSelected'));
+  expect(Predicate.isTagged(result, 'CanonicalSurvivorSelected')).toBe(true);
   const selected = expectSelected(result);
   const authority = selected.evidenceChain.find(
     ({ criterion }) => criterion === 'AUTHORITATIVE_EVIDENCE',
@@ -171,45 +173,55 @@ void test('retains immutable evaluated values and explains progressive eliminati
   const stability = selected.evidenceChain.find(
     ({ criterion }) => criterion === 'REFERENCE_STABILITY',
   );
-  assert.ok(authority);
-  assert.ok(stability);
-  assert.match(authority.explanation, /2 of 3 eligible candidates remain/u);
-  assert.equal(selected.decidingCriterion, 'REFERENCE_STABILITY');
-  assert.deepEqual(
+  expect(authority).toBeDefined();
+  if (authority === undefined) {
+    throw new Error('Expected authority');
+  }
+  expect(stability).toBeDefined();
+  if (stability === undefined) {
+    throw new Error('Expected stability');
+  }
+  expect(authority.explanation).toMatch(/2 of 3 eligible candidates remain/u);
+  expect(selected.decidingCriterion).toBe('REFERENCE_STABILITY');
+  expect(
     authority.candidateSnapshots.map(({ candidate: snapshot, criterionValue, retainedAfter }) => ({
       criterionValue,
       id: snapshot.partyRef.resourceId,
       retainedAfter,
     })),
-    [
-      { criterionValue: 3, id: 'party-a', retainedAfter: true },
-      { criterionValue: 3, id: 'party-b', retainedAfter: true },
-      { criterionValue: 1, id: 'party-c', retainedAfter: false },
-    ],
-  );
-  assert.deepEqual(
+  ).toEqual([
+    { criterionValue: 3, id: 'party-a', retainedAfter: true },
+    { criterionValue: 3, id: 'party-b', retainedAfter: true },
+    { criterionValue: 1, id: 'party-c', retainedAfter: false },
+  ]);
+  expect(
     stability.candidateSnapshots.map(({ eligibleBefore, retainedAfter }) => ({
       eligibleBefore,
       retainedAfter,
     })),
-    [
-      { eligibleBefore: true, retainedAfter: true },
-      { eligibleBefore: true, retainedAfter: false },
-      { eligibleBefore: false, retainedAfter: false },
-    ],
-  );
+  ).toEqual([
+    { eligibleBefore: true, retainedAfter: true },
+    { eligibleBefore: true, retainedAfter: false },
+    { eligibleBefore: false, retainedAfter: false },
+  ]);
   const [saved] = authority.candidateSnapshots;
   const [original] = candidates;
-  assert.ok(saved);
-  assert.ok(original);
-  assert.deepEqual(saved.candidate, original);
+  expect(saved).toBeDefined();
+  if (saved === undefined) {
+    throw new Error('Expected saved');
+  }
+  expect(original).toBeDefined();
+  if (original === undefined) {
+    throw new Error('Expected original');
+  }
+  expect(saved.candidate).toEqual(original);
   Object.assign(original, {
     authoritativeEvidenceRank: 999,
     createdAt: '2030-01-01T00:00:00.000Z',
   });
-  assert.equal(saved.candidate.authoritativeEvidenceRank, 3);
-  assert.equal(saved.candidate.createdAt, '2024-01-01T00:00:00.000Z');
-  assert.ok(Object.isFrozen(saved.candidate));
-  assert.ok(Object.isFrozen(saved.candidate.partyRef));
-  assert.ok(Object.isFrozen(authority.candidateSnapshots));
+  expect(saved.candidate.authoritativeEvidenceRank).toBe(3);
+  expect(saved.candidate.createdAt).toBe('2024-01-01T00:00:00.000Z');
+  expect(Object.isFrozen(saved.candidate)).toBe(true);
+  expect(Object.isFrozen(saved.candidate.partyRef)).toBe(true);
+  expect(Object.isFrozen(authority.candidateSnapshots)).toBe(true);
 });

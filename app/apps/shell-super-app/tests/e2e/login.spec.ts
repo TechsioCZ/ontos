@@ -1,5 +1,4 @@
-import { Exit, Predicate, Scope } from 'effect';
-import { runEffectTestPromise, runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
+import { Effect, Exit, Predicate, Scope } from 'effect';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
@@ -38,13 +37,14 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   });
 };
 
-const fixtureScope = runEffectTestSync(Scope.make());
+// Playwright hooks are the Promise boundary for this scoped Effect fixture.
+const fixtureScope = Effect.runSync(Scope.make());
 
 test.beforeAll(
   async () =>
-    await runEffectTestPromise(createAuthenticationFixture().pipe(Scope.provide(fixtureScope))),
+    await Effect.runPromise(createAuthenticationFixture().pipe(Scope.provide(fixtureScope))),
 );
-test.afterAll(async () => await runEffectTestPromise(Scope.close(fixtureScope, Exit.void)));
+test.afterAll(async () => await Effect.runPromise(Scope.close(fixtureScope, Exit.void)));
 
 test('renders the exact anonymous English and Czech home states', async ({ page }) =>
   await page

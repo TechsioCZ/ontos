@@ -103,13 +103,11 @@ strictDepBuilds: true
 peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
-    '@effect/vitest>effect': 4.0.0-beta.107
 overrides:
   react-server-dom-rspack: 0.1.0
   '@tanstack/react-router': 1.170.25
   '@tanstack/router-core': 1.171.21
   '@effect/opentelemetry': 4.0.0-beta.107
-  '@effect/vitest': 4.0.0-beta.107
   effect: 4.0.0-beta.107
   node-fetch: ^3.3.2
 allowBuilds:

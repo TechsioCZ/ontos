@@ -1,4 +1,4 @@
-import { expect, test } from '@rstest/core';
+import { expect, test } from '@app/effect-rstest';
 import { Effect } from 'effect';
 import { runBrowserEffect } from '../../src/runtime/browser-effect-runtime.ts';
 

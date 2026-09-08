@@ -1,8 +1,5 @@
-import {
-  makeEffectTestCallback as nativeTestCallback,
-  runEffectTestPromise,
-  runEffectTestSync as runNativeSync,
-} from '@app/core-runtime/testing/effect-runtime';
+import { assert, expect, it } from '@app/effect-rstest';
+
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchQueryRuntimeLive,
@@ -14,18 +11,8 @@ import {
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 
 import { and, eq } from 'drizzle-orm';
-import {
-  Effect,
-  Exit,
-  Layer,
-  Exit as NativeExit,
-  Scope as NativeScope,
-  Redacted,
-  Predicate,
-} from 'effect';
-import assert from 'node:assert/strict';
+import { Effect, Exit, Layer, Redacted, Predicate } from 'effect';
 import { randomUUID } from 'node:crypto';
-import test, { after as afterNativeDatabase } from 'node:test';
 import { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
@@ -57,11 +44,6 @@ import {
   partiesRead,
   PartySearchProjectionGatewayLive,
 } from '../../src/search/parties.provider.ts';
-
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
-);
 
 type EncodedPartyCandidate = typeof PartyCandidateSchema.Encoded;
 const candidate = (
@@ -101,11 +83,11 @@ const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext)
       }),
     ),
   );
-const endPool = (pool: Pool) => pool.end();
-const promiseEffect = <Value>(operation: () => PromiseLike<Value>) => Effect.promise(operation);
+const endPool = (pool: Pool) => Effect.promise(() => pool.end());
 
-void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization', () =>
-  runEffectTestPromise(
+it.live(
+  'governed Party identity uses real PostgreSQL and SpiceDB for atomic claims, recovery and temporal authorization',
+  () =>
     Effect.scoped(
       Effect.gen(function* governedIdentityTestEffect() {
         const connections = yield* loadDatabaseConnectionPair();
@@ -137,11 +119,9 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
         );
         const adminPool = yield* Effect.acquireRelease(
           Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-          (pool) => promiseEffect(endPool.bind(undefined, pool)).pipe(Effect.orDie),
+          endPool,
         );
-        const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations).pipe(
-          NativeScope.provide(nativeDatabaseScope),
-        );
+        const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations);
         const fixtureContext = yield* Layer.build(fixture.layer);
         const otherContext = yield* Layer.build(other.layer);
         const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer>>) =>
@@ -188,23 +168,28 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
         const concurrent = yield* Effect.all([run(create(exact)), run(create(exact))], {
           concurrency: 2,
         });
-        assert.deepEqual(concurrent.map((result) => result.outcome).toSorted(), [
+        expect(concurrent.map((result) => result.outcome).toSorted()).toEqual([
           'CREATED',
           'MATCHED_EXISTING',
         ]);
         const created = concurrent.find((result) => result.outcome === 'CREATED');
-        assert.ok(created && created.outcome === 'CREATED');
+        assert.isOk(created && created.outcome === 'CREATED');
+
         const { partyRef } = created;
         let state = yield* snapshot();
-        assert.equal(state.partyRows.length, 1);
-        assert.equal(state.claims.length, 1);
-        assert.equal(state.decisions.length, 2);
-        assert.equal(state.assertions.length, 1);
-        assert.equal(state.core.events.length, 1);
-        assert.equal(state.core.outbox.length, 1);
-        assert.equal(state.core.audits.length, 2);
-        assert.ok(state.core.invocations.every((invocation) => invocation.status === 'succeeded'));
-        assert.ok(state.assertions[0]?.evidenceEvaluation?.subjectEligible);
+        expect(state.partyRows.length).toBe(1);
+        expect(state.claims.length).toBe(1);
+        expect(state.decisions.length).toBe(2);
+        expect(state.assertions.length).toBe(1);
+        expect(state.core.events.length).toBe(1);
+        expect(state.core.outbox.length).toBe(1);
+        expect(state.core.audits.length).toBe(2);
+        assert.isOk(
+          state.core.invocations.every((invocation) => invocation.status === 'succeeded'),
+        );
+
+        assert.isOk(state.assertions[0]?.evidenceEvaluation?.subjectEligible);
+
         const attachment = yield* run(
           create(
             candidate('27074358', {
@@ -215,15 +200,15 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             }),
           ),
         );
-        assert.equal(attachment.outcome, 'MATCHED_EXISTING');
+        expect(attachment.outcome).toBe('MATCHED_EXISTING');
         state = yield* snapshot();
-        assert.equal(state.partyRows.length, 1);
-        assert.equal(state.claims.length, 2);
-        assert.equal(state.core.events.length, 2);
-        assert.equal(state.core.outbox.length, 2);
+        expect(state.partyRows.length).toBe(1);
+        expect(state.claims.length).toBe(2);
+        expect(state.core.events.length).toBe(2);
+        expect(state.core.outbox.length).toBe(2);
 
         const second = yield* run(create(candidate('26168685')));
-        assert.equal(second.outcome, 'CREATED');
+        expect(second.outcome).toBe('CREATED');
         const split = candidate('26168685', {
           officialIdentifiers: [
             { identifierType: 'ICO', value: '26168685', verification: 'VERIFIED' },
@@ -232,16 +217,16 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
         });
         const ambiguity = yield* run(create(split));
         const repeated = yield* run(create(split));
-        assert.ok(ambiguity.outcome === 'AMBIGUOUS' && repeated.outcome === 'AMBIGUOUS');
-        assert.deepEqual(repeated.caseRef, ambiguity.caseRef);
+        assert.isOk(ambiguity.outcome === 'AMBIGUOUS' && repeated.outcome === 'AMBIGUOUS');
+
+        expect(repeated.caseRef).toEqual(ambiguity.caseRef);
         state = yield* snapshot();
-        assert.equal(state.partyRows.length, 2);
-        assert.equal(state.cases.length, 1);
-        assert.equal(
+        expect(state.partyRows.length).toBe(2);
+        expect(state.cases.length).toBe(1);
+        expect(
           state.decisions.filter((decision) => decision.committedCreateOutcome === 'AMBIGUOUS')
             .length,
-          2,
-        );
+        ).toBe(2);
 
         // Every Create outcome survives actual lost commit acknowledgement, followed by a new governed Read.
         const recoveryCandidates = [candidate('45274649'), exact, split];
@@ -251,16 +236,18 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             function* verifyCommitRecoveryEffect(value) {
               const key = randomUUID();
               fixture.faultNextTransaction('lost-ack');
-              assert.ok(
+              assert.isOk(
                 Predicate.isTagged(
                   yield* run(create(value, key).pipe(Effect.flip)),
                   'ActionCommitIndeterminate',
                 ),
               );
+
               const before = yield* snapshot();
               const invocation = before.core.invocations.find((row) => row.idempotencyKey === key);
-              assert.ok(invocation);
-              assert.ok(
+              assert.isOk(invocation);
+
+              assert.isOk(
                 Predicate.isTagged(
                   yield* run(
                     resolveActionCommit({
@@ -271,6 +258,7 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
                   'ActionAlreadyCommitted',
                 ),
               );
+
               const recovered = yield* run(
                 ReadRuntime.pipe(
                   Effect.flatMap((runtime) =>
@@ -286,25 +274,28 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
               const original = before.decisions.find(
                 (row) => row.actionInvocationId === invocation.actionInvocationId,
               );
-              assert.ok(original);
+              assert.isOk(original);
+
               const recoveredResult = committedCreateResult(recovered);
-              assert.ok(recoveredResult);
-              assert.equal(recoveredResult.outcome, original.committedCreateOutcome);
-              assert.equal(recoveredResult.decisionRef.resourceId, original.matchDecisionId);
-              assert.equal(recovered.partyRef?.resourceId ?? null, original.partyId);
-              assert.equal(recovered.caseRef?.resourceId ?? null, original.candidateCaseId);
-              assert.ok(
+              assert.isOk(recoveredResult);
+
+              expect(recoveredResult.outcome).toBe(original.committedCreateOutcome);
+              expect(recoveredResult.decisionRef.resourceId).toBe(original.matchDecisionId);
+              expect(recovered.partyRef?.resourceId ?? null).toBe(original.partyId);
+              expect(recovered.caseRef?.resourceId ?? null).toBe(original.candidateCaseId);
+              assert.isOk(
                 Predicate.isTagged(
                   yield* run(create(value, key).pipe(Effect.flip)),
                   'ActionAlreadyCommitted',
                 ),
               );
+
               const after = yield* snapshot();
-              assert.deepEqual(after.partyRows, before.partyRows);
-              assert.deepEqual(after.decisions, before.decisions);
-              assert.deepEqual(after.core.events, before.core.events);
-              assert.deepEqual(after.core.outbox, before.core.outbox);
-              assert.ok(
+              expect(after.partyRows).toEqual(before.partyRows);
+              expect(after.decisions).toEqual(before.decisions);
+              expect(after.core.events).toEqual(before.core.events);
+              expect(after.core.outbox).toEqual(before.core.outbox);
+              assert.isOk(
                 Predicate.isTagged(
                   yield* run(readPartyDetail(partyRef, fixture.denied).pipe(Effect.flip)),
                   'ReadPermissionDenied',
@@ -315,40 +306,43 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
           { concurrency: 1, discard: true },
         );
         const beforeDenied = yield* snapshot();
-        assert.ok(
+        assert.isOk(
           Predicate.isTagged(
             yield* run(create(candidate('00006947', { subjectEvidence: [] })).pipe(Effect.flip)),
             'PartyEvidenceInsufficient',
           ),
         );
+
         const afterDenied = yield* snapshot();
-        assert.deepEqual(afterDenied.partyRows, beforeDenied.partyRows);
-        assert.deepEqual(afterDenied.decisions, beforeDenied.decisions);
-        assert.deepEqual(afterDenied.cases, beforeDenied.cases);
+        expect(afterDenied.partyRows).toEqual(beforeDenied.partyRows);
+        expect(afterDenied.decisions).toEqual(beforeDenied.decisions);
+        expect(afterDenied.cases).toEqual(beforeDenied.cases);
         fixture.faultNextTransaction('rollback');
         yield* run(create(candidate('00006947')).pipe(Effect.flip));
         const rolledBack = yield* snapshot();
-        assert.deepEqual(rolledBack.partyRows, beforeDenied.partyRows);
-        assert.deepEqual(rolledBack.assertions, beforeDenied.assertions);
-        assert.deepEqual(rolledBack.claims, beforeDenied.claims);
-        assert.deepEqual(rolledBack.cases, beforeDenied.cases);
-        assert.deepEqual(rolledBack.core.audits, beforeDenied.core.audits);
-        assert.deepEqual(rolledBack.decisions, beforeDenied.decisions);
-        assert.deepEqual(rolledBack.core.events, beforeDenied.core.events);
-        assert.deepEqual(rolledBack.core.outbox, beforeDenied.core.outbox);
+        expect(rolledBack.partyRows).toEqual(beforeDenied.partyRows);
+        expect(rolledBack.assertions).toEqual(beforeDenied.assertions);
+        expect(rolledBack.claims).toEqual(beforeDenied.claims);
+        expect(rolledBack.cases).toEqual(beforeDenied.cases);
+        expect(rolledBack.core.audits).toEqual(beforeDenied.core.audits);
+        expect(rolledBack.decisions).toEqual(beforeDenied.decisions);
+        expect(rolledBack.core.events).toEqual(beforeDenied.core.events);
+        expect(rolledBack.core.outbox).toEqual(beforeDenied.core.outbox);
 
         const independent = yield* create(exact, randomUUID(), other.manager).pipe(
           Effect.provideContext(otherContext),
         );
-        assert.ok(independent.outcome === 'CREATED');
-        assert.notEqual(independent.partyRef.resourceId, partyRef.resourceId);
-        assert.ok(
+        assert.isOk(independent.outcome === 'CREATED');
+
+        expect(independent.partyRef.resourceId).not.toBe(partyRef.resourceId);
+        assert.isOk(
           Predicate.isTagged(
             yield* run(readPartyDetail(independent.partyRef, fixture.manager).pipe(Effect.flip)),
             'ReadHandlerNotFound',
           ),
         );
-        assert.ok(
+
+        assert.isOk(
           Predicate.isTagged(
             yield* run(
               create(candidate('00006947'), randomUUID(), fixture.legalEntityOnly).pipe(
@@ -358,12 +352,14 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             'ActionPermissionDenied',
           ),
         );
-        assert.ok(
+
+        assert.isOk(
           Predicate.isTagged(
             yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
             'ReadPermissionDenied',
           ),
         );
+
         const searchLayer = PartySearchProjectionGatewayLive.pipe(
           Layer.provide(CoreSearchQueryRuntimeLive),
         );
@@ -381,10 +377,11 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
           ),
           Effect.provideContext(searchContext),
         );
-        assert.ok(
+        assert.isOk(
           Predicate.isTagged(yield* run(deniedSearch.pipe(Effect.flip)), 'ReadPermissionDenied'),
         );
-        assert.ok(
+
+        assert.isOk(
           Predicate.isTagged(
             yield* run(
               ReadRuntime.pipe(
@@ -419,10 +416,11 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
         const counterparties = yield* Effect.all([run(counterparty()), run(counterparty())], {
           concurrency: 2,
         });
-        assert.deepEqual(counterparties.map((item) => item.created).toSorted(), [false, true]);
-        assert.deepEqual(counterparties[0]?.counterpartyRef, counterparties[1]?.counterpartyRef);
+        expect(counterparties.map((item) => item.created).toSorted()).toEqual([false, true]);
+        expect(counterparties[0]?.counterpartyRef).toEqual(counterparties[1]?.counterpartyRef);
         const counterpartyRef = counterparties[0]?.counterpartyRef;
-        assert.ok(counterpartyRef);
+        assert.isOk(counterpartyRef);
+
         const readCounterparty = () =>
           run(
             ReadRuntime.pipe(
@@ -438,10 +436,11 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
           );
         // Owning a business Counterparty does not itself grant resource permission.
         const forbiddenCounterpartyRead = yield* Effect.exit(readCounterparty());
-        assert.ok(Exit.isFailure(forbiddenCounterpartyRead));
+        assert.isOk(Exit.isFailure(forbiddenCounterpartyRead));
+
         yield* fixture.grantResourceAccess(counterpartyRef, fixture.legalEntityOnly.principalId);
         const projection = yield* readCounterparty();
-        assert.deepEqual(Object.keys(projection.party).toSorted(), [
+        expect(Object.keys(projection.party).toSorted()).toEqual([
           'archived',
           'canonicalPartyRef',
           'displayName',
@@ -491,10 +490,9 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
           }),
         );
         const counterpartyAfterRoleEnd = yield* readCounterparty();
-        assert.deepEqual(
-          counterpartyAfterRoleEnd.currentRoles.map((item) => item.roleType),
-          ['SUPPLIER'],
-        );
+        expect(counterpartyAfterRoleEnd.currentRoles.map((item) => item.roleType)).toEqual([
+          'SUPPLIER',
+        ]);
 
         const person = yield* run(
           create(
@@ -515,7 +513,8 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             }),
           ),
         );
-        assert.ok(person.outcome === 'AMBIGUOUS');
+        assert.isOk(person.outcome === 'AMBIGUOUS');
+
         const reviewedPerson = yield* run(
           runAction({
             registration: resolveDuplicateCandidateCreateAction,
@@ -528,7 +527,8 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             transport: transport(),
           }),
         );
-        assert.ok(reviewedPerson.partyRef);
+        assert.isOk(reviewedPerson.partyRef);
+
         const relationship = yield* run(
           runAction({
             registration: createPartyRelationshipAction,
@@ -545,7 +545,7 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
           }),
         );
         // Domain relationships never provision access to Party records.
-        assert.ok(
+        assert.isOk(
           Predicate.isTagged(
             yield* run(
               readPartyDetail(reviewedPerson.partyRef, fixture.legalEntityOnly).pipe(Effect.flip),
@@ -553,12 +553,14 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             'ReadPermissionDenied',
           ),
         );
-        assert.ok(
+
+        assert.isOk(
           Predicate.isTagged(
             yield* run(readPartyDetail(partyRef, fixture.legalEntityOnly).pipe(Effect.flip)),
             'ReadPermissionDenied',
           ),
         );
+
         const updatedRelationship = yield* run(
           runAction({
             registration: updatePartyRelationshipAction,
@@ -573,7 +575,7 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             transport: transport(),
           }),
         );
-        assert.equal(updatedRelationship.outcome, 'CHANGED');
+        expect(updatedRelationship.outcome).toBe('CHANGED');
         const endedRelationship = yield* run(
           runAction({
             registration: endPartyRelationshipAction,
@@ -588,12 +590,13 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             transport: transport(),
           }),
         );
-        assert.equal(endedRelationship.outcome, 'CHANGED');
+        expect(endedRelationship.outcome).toBe('CHANGED');
 
         // Seed a legacy unclaimed identifier assertion only in owner storage, then exercise
         // the public unarchive Action against another Party's real current exact claim.
         const legacy = yield* run(create(candidate('00006947')));
-        assert.ok(legacy.outcome === 'CREATED');
+        assert.isOk(legacy.outcome === 'CREATED');
+
         const legacyArchived = yield* run(
           runAction({
             registration: archivePartyAction,
@@ -616,7 +619,8 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             ),
           )
           .limit(1);
-        assert.ok(identifierTemplate);
+        assert.isOk(identifierTemplate);
+
         yield* admin.insert(partyOfficialIdentifiers).values({
           ...identifierTemplate,
           officialIdentifierId: randomUUID(),
@@ -634,7 +638,7 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             transport: transport(),
           }),
         );
-        assert.ok(
+        assert.isOk(
           collision.outcome === 'BLOCKED' && collision.reasonCode === 'EXACT_CLAIM_CONFLICT',
         );
 
@@ -652,9 +656,10 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
           }),
         );
         const archivedParty = yield* run(readPartyDetail(partyRef, fixture.manager));
-        assert.ok(archivedParty.party.archivedAt);
+        assert.isOk(archivedParty.party.archivedAt);
+
         const archivedCounterparty = yield* readCounterparty();
-        assert.equal(archivedCounterparty.party.archived, true);
+        expect(archivedCounterparty.party.archived).toBe(true);
         yield* run(counterparty().pipe(Effect.flip));
         const unarchive = yield* run(
           runAction({
@@ -668,10 +673,10 @@ void test('governed Party identity uses real PostgreSQL and SpiceDB for atomic c
             transport: transport(),
           }),
         );
-        assert.equal(unarchive.outcome, 'BLOCKED');
-        assert.ok(
+        expect(unarchive.outcome).toBe('BLOCKED');
+        assert.isOk(
           unarchive.outcome === 'BLOCKED' && unarchive.reasonCode === 'OPEN_DUPLICATE_CASE',
         );
       }),
     ),
-  ));
+);

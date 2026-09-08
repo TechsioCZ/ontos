@@ -1,8 +1,7 @@
 import { defineConfig } from 'oxlint';
 
-/** The operator/discriminant policy also covers tooling and root configuration files. */
+/** Repository policies also cover tooling tests and root configuration files. */
 export default defineConfig({
-  jsPlugins: [{ name: 'effect-native', specifier: './index.ts' }],
   categories: { correctness: 'off' },
   ignorePatterns: [
     '**/node_modules/**',
@@ -15,8 +14,37 @@ export default defineConfig({
     '**/repos/**',
     '**/tools/oxlint/**/tests/fixtures/**',
   ],
+  jsPlugins: [{ name: 'effect-native', specifier: './index.ts' }],
+  overrides: [
+    {
+      files: ['tools/**/tests/**'],
+      rules: {
+        'effect-native/no-effect-run-in-tests': 'error',
+        'eslint/no-restricted-imports': [
+          'error',
+          {
+            paths: [
+              { message: 'Import test APIs from @app/effect-rstest instead.', name: 'node:test' },
+              {
+                message: 'Import assertions from @app/effect-rstest instead.',
+                name: 'node:assert',
+              },
+              {
+                message: 'Import assertions from @app/effect-rstest instead.',
+                name: 'node:assert/strict',
+              },
+              {
+                message: 'Import test APIs from @app/effect-rstest instead.',
+                name: '@rstest/core',
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ],
   rules: {
     'effect-native/no-instanceof': 'error',
-    'effect-native/no-manual-tag-comparison': ['error', { include: ['**'], adtTags: [] }],
+    'effect-native/no-manual-tag-comparison': ['error', { adtTags: [], include: ['**'] }],
   },
 });

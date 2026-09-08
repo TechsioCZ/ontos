@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { Schema } from 'effect';
+import { expect, it } from '@app/effect-rstest';
+import { Effect, Schema } from 'effect';
 import {
   CounterpartyCreatePayloadSchema,
   CounterpartyCreateResultSchema,
@@ -80,8 +79,8 @@ const provenance = {
   source: 'contracts.core',
 } as const;
 
-test('declares required Legal Entity scope and Counterparty resource authorization', () => {
-  assert.deepEqual(
+it('declares required Legal Entity scope and Counterparty resource authorization', () => {
+  expect(
     [counterpartyCreateAction, counterpartyRoleAddAction, counterpartyRoleEndAction].map(
       ({ descriptor }) => ({
         actionKey: descriptor.actionKey,
@@ -91,353 +90,359 @@ test('declares required Legal Entity scope and Counterparty resource authorizati
         resourcePermission: descriptor.resourcePermission?.kind,
       }),
     ),
-    [
-      {
-        actionKey: 'party.registry.counterparty-create',
-        idempotency: 'required',
-        legalEntityPermission: 'manage_counterparty',
-        legalEntityScope: 'required',
-        resourcePermission: undefined,
-      },
-      {
-        actionKey: 'party.registry.counterparty-role-add',
-        idempotency: 'required',
-        legalEntityPermission: undefined,
-        legalEntityScope: 'required',
-        resourcePermission: 'resource',
-      },
-      {
-        actionKey: 'party.registry.counterparty-role-end',
-        idempotency: 'required',
-        legalEntityPermission: undefined,
-        legalEntityScope: 'required',
-        resourcePermission: 'resource',
-      },
-    ],
-  );
-});
-
-test('creates a durable Counterparty without inventing an implicit role', () => {
-  const payload = Schema.decodeUnknownSync(CounterpartyCreatePayloadSchema, {
-    onExcessProperty: 'error',
-  })({ partyRef, provenance });
-  assert.deepEqual(payload, { partyRef, provenance });
-  assert.throws(() =>
-    Schema.decodeUnknownSync(CounterpartyCreatePayloadSchema, { onExcessProperty: 'error' })({
-      partyRef,
-      provenance,
-      roleType: 'CUSTOMER',
-    }),
-  );
-  assert.throws(() =>
-    Schema.decodeUnknownSync(CounterpartyCreatePayloadSchema)({
-      partyRef,
-      provenance: { method: 'SIGNED_CONTRACT', reason: 'Evidence is mandatory.', source: 'test' },
-    }),
-  );
-  assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartyCreateResultSchema)({
-      counterpartyRef,
-      created: true,
-      legalEntityRef,
-      partyRef,
-    }),
-    { counterpartyRef, created: true, legalEntityRef, partyRef },
-  );
-});
-
-test('publishes only stable references and bounded lifecycle facts', () => {
-  assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartyCreatedOutboxPayloadSchema, {
-      onExcessProperty: 'error',
-    })({ counterpartyRef, legalEntityRef, partyRef }),
-    { counterpartyRef, legalEntityRef, partyRef },
-  );
-  const added = {
-    counterpartyRef,
-    rolePeriodRef,
-    roleType: 'SUPPLIER' as const,
-    validFrom: '2026-09-03T10:00:00.000Z',
-    validTo: null,
-  };
-  assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartyRoleAddedOutboxPayloadSchema)(added),
-    added,
-  );
-  assert.equal(
-    Schema.decodeUnknownSync(CounterpartyRoleEndedOutboxPayloadSchema)({
-      ...added,
-      validTo: '2027-01-31T23:59:59.000Z',
-    }).validTo,
-    '2027-01-31T23:59:59.000Z',
-  );
-  assert.throws(() =>
-    Schema.decodeUnknownSync(CounterpartyCreatedOutboxPayloadSchema, {
-      onExcessProperty: 'error',
-    })({ counterpartyRef, displayName: 'ACME', legalEntityRef, partyRef }),
-  );
-});
-
-test('preserves Counterparty JSON round trips for timestamps, references, and absence', () => {
-  const timestamp = '2026-09-03T10:00:00.000Z';
-  assert.equal(
-    Schema.encodeSync(CounterpartyIsoTimestampSchema)(
-      Schema.decodeUnknownSync(CounterpartyIsoTimestampSchema)(timestamp),
-    ),
-    timestamp,
-  );
-  assert.deepEqual(
-    Schema.encodeSync(LegalEntityRefSchema)(
-      Schema.decodeUnknownSync(LegalEntityRefSchema)(legalEntityRef),
-    ),
-    legalEntityRef,
-  );
-
-  const roleWithoutEndProvenance = {
-    provenance,
-    recordedAt: timestamp,
-    rolePeriodRef,
-    roleType: 'CUSTOMER' as const,
-    state: 'ACTIVE' as const,
-    validFrom: timestamp,
-    validTo: null,
-  };
-  assert.deepEqual(
-    Schema.encodeSync(CounterpartyRolePeriodSchema)(
-      Schema.decodeUnknownSync(CounterpartyRolePeriodSchema)(roleWithoutEndProvenance),
-    ),
-    roleWithoutEndProvenance,
-  );
-  assert.deepEqual(
-    Schema.encodeSync(CounterpartyRolePeriodSchema)(
-      Schema.decodeUnknownSync(CounterpartyRolePeriodSchema)({
-        ...roleWithoutEndProvenance,
-        endProvenance: null,
-      }),
-    ),
-    { ...roleWithoutEndProvenance, endProvenance: null },
-  );
-  assert.deepEqual(
-    Schema.encodeSync(CounterpartyAuditEvidenceSchema)(
-      Schema.decodeUnknownSync(CounterpartyAuditEvidenceSchema)({
-        evidenceReference: null,
-        provenanceMethod: provenance.method,
-        provenanceReason: provenance.reason,
-        provenanceSource: provenance.source,
-      }),
-    ),
+  ).toEqual([
     {
+      actionKey: 'party.registry.counterparty-create',
+      idempotency: 'required',
+      legalEntityPermission: 'manage_counterparty',
+      legalEntityScope: 'required',
+      resourcePermission: undefined,
+    },
+    {
+      actionKey: 'party.registry.counterparty-role-add',
+      idempotency: 'required',
+      legalEntityPermission: undefined,
+      legalEntityScope: 'required',
+      resourcePermission: 'resource',
+    },
+    {
+      actionKey: 'party.registry.counterparty-role-end',
+      idempotency: 'required',
+      legalEntityPermission: undefined,
+      legalEntityScope: 'required',
+      resourcePermission: 'resource',
+    },
+  ]);
+});
+
+it.effect('creates a durable Counterparty without inventing an implicit role', () =>
+  Effect.gen(function* contractScenario2() {
+    const payload = yield* Schema.decodeUnknownEffect(CounterpartyCreatePayloadSchema, {
+      onExcessProperty: 'error',
+    })({ partyRef, provenance });
+    expect(payload).toEqual({ partyRef, provenance });
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(CounterpartyCreatePayloadSchema, { onExcessProperty: 'error' })({
+          partyRef,
+          provenance,
+          roleType: 'CUSTOMER',
+        }),
+      ),
+    ).toBeDefined();
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(CounterpartyCreatePayloadSchema)({
+          partyRef,
+          provenance: {
+            method: 'SIGNED_CONTRACT',
+            reason: 'Evidence is mandatory.',
+            source: 'test',
+          },
+        }),
+      ),
+    ).toBeDefined();
+    expect(
+      yield* Schema.decodeUnknownEffect(CounterpartyCreateResultSchema)({
+        counterpartyRef,
+        created: true,
+        legalEntityRef,
+        partyRef,
+      }),
+    ).toEqual({ counterpartyRef, created: true, legalEntityRef, partyRef });
+  }),
+);
+
+it.effect('publishes only stable references and bounded lifecycle facts', () =>
+  Effect.gen(function* contractScenario3() {
+    expect(
+      yield* Schema.decodeUnknownEffect(CounterpartyCreatedOutboxPayloadSchema, {
+        onExcessProperty: 'error',
+      })({ counterpartyRef, legalEntityRef, partyRef }),
+    ).toEqual({ counterpartyRef, legalEntityRef, partyRef });
+    const added = {
+      counterpartyRef,
+      rolePeriodRef,
+      roleType: 'SUPPLIER' as const,
+      validFrom: '2026-09-03T10:00:00.000Z',
+      validTo: null,
+    };
+    expect(
+      yield* Schema.decodeUnknownEffect(CounterpartyRoleAddedOutboxPayloadSchema)(added),
+    ).toEqual(added);
+    expect(
+      (yield* Schema.decodeUnknownEffect(CounterpartyRoleEndedOutboxPayloadSchema)({
+        ...added,
+        validTo: '2027-01-31T23:59:59.000Z',
+      })).validTo,
+    ).toBe('2027-01-31T23:59:59.000Z');
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(CounterpartyCreatedOutboxPayloadSchema, {
+          onExcessProperty: 'error',
+        })({ counterpartyRef, displayName: 'ACME', legalEntityRef, partyRef }),
+      ),
+    ).toBeDefined();
+  }),
+);
+
+it.effect('preserves Counterparty JSON round trips for timestamps, references, and absence', () =>
+  Effect.gen(function* contractScenario4() {
+    const timestamp = '2026-09-03T10:00:00.000Z';
+    expect(
+      yield* Schema.encodeEffect(CounterpartyIsoTimestampSchema)(
+        yield* Schema.decodeUnknownEffect(CounterpartyIsoTimestampSchema)(timestamp),
+      ),
+    ).toBe(timestamp);
+    expect(
+      yield* Schema.encodeEffect(LegalEntityRefSchema)(
+        yield* Schema.decodeUnknownEffect(LegalEntityRefSchema)(legalEntityRef),
+      ),
+    ).toEqual(legalEntityRef);
+
+    const roleWithoutEndProvenance = {
+      provenance,
+      recordedAt: timestamp,
+      rolePeriodRef,
+      roleType: 'CUSTOMER' as const,
+      state: 'ACTIVE' as const,
+      validFrom: timestamp,
+      validTo: null,
+    };
+    expect(
+      yield* Schema.encodeEffect(CounterpartyRolePeriodSchema)(
+        yield* Schema.decodeUnknownEffect(CounterpartyRolePeriodSchema)(roleWithoutEndProvenance),
+      ),
+    ).toEqual(roleWithoutEndProvenance);
+    expect(
+      yield* Schema.encodeEffect(CounterpartyRolePeriodSchema)(
+        yield* Schema.decodeUnknownEffect(CounterpartyRolePeriodSchema)({
+          ...roleWithoutEndProvenance,
+          endProvenance: null,
+        }),
+      ),
+    ).toEqual({ ...roleWithoutEndProvenance, endProvenance: null });
+    expect(
+      yield* Schema.encodeEffect(CounterpartyAuditEvidenceSchema)(
+        yield* Schema.decodeUnknownEffect(CounterpartyAuditEvidenceSchema)({
+          evidenceReference: null,
+          provenanceMethod: provenance.method,
+          provenanceReason: provenance.reason,
+          provenanceSource: provenance.source,
+        }),
+      ),
+    ).toEqual({
       evidenceReference: null,
       provenanceMethod: provenance.method,
       provenanceReason: provenance.reason,
       provenanceSource: provenance.source,
-    },
-  );
-  assert.deepEqual(
-    Schema.encodeSync(CounterpartyPartyProjectionSchema)(
-      Schema.decodeUnknownSync(CounterpartyPartyProjectionSchema)({
-        archived: false,
-        canonicalPartyRef: partyRef,
-        displayName: null,
-        partyType: 'ORGANIZATION',
-        storedPartyRef: partyRef,
-      }),
-    ),
-    {
+    });
+    expect(
+      yield* Schema.encodeEffect(CounterpartyPartyProjectionSchema)(
+        yield* Schema.decodeUnknownEffect(CounterpartyPartyProjectionSchema)({
+          archived: false,
+          canonicalPartyRef: partyRef,
+          displayName: null,
+          partyType: 'ORGANIZATION',
+          storedPartyRef: partyRef,
+        }),
+      ),
+    ).toEqual({
       archived: false,
       canonicalPartyRef: partyRef,
       displayName: null,
       partyType: 'ORGANIZATION',
       storedPartyRef: partyRef,
-    },
-  );
-});
+    });
+  }),
+);
 
-test('accepts only CUSTOMER and SUPPLIER role periods with explicit evidence', () => {
-  for (const roleType of ['CUSTOMER', 'SUPPLIER'] as const) {
-    assert.equal(
-      Schema.decodeUnknownSync(CounterpartyRoleAddPayloadSchema)({
+it.effect('accepts only CUSTOMER and SUPPLIER role periods with explicit evidence', () =>
+  Effect.gen(function* contractScenario5() {
+    for (const roleType of ['CUSTOMER', 'SUPPLIER'] as const) {
+      expect(
+        (yield* Schema.decodeUnknownEffect(CounterpartyRoleAddPayloadSchema)({
+          counterpartyRef,
+          provenance,
+          roleType,
+          validFrom: '2026-09-03T10:00:00.000Z',
+        })).roleType,
+      ).toBe(roleType);
+    }
+    for (const roleType of ['BUSINESS_PARTNER', 'OTHER']) {
+      expect(
+        yield* Effect.flip(
+          Schema.decodeUnknownEffect(CounterpartyRoleAddPayloadSchema)({
+            counterpartyRef,
+            provenance,
+            roleType,
+            validFrom: '2026-09-03T10:00:00.000Z',
+          }),
+        ),
+      ).toBeDefined();
+    }
+    for (const validFrom of ['2026-02-30T00:00:00.000Z', '2026-01-01T00:00:00Z']) {
+      expect(
+        yield* Effect.flip(
+          Schema.decodeUnknownEffect(CounterpartyRoleAddPayloadSchema)({
+            counterpartyRef,
+            provenance,
+            roleType: 'CUSTOMER',
+            validFrom,
+          }),
+        ),
+      ).toBeDefined();
+    }
+    expect(
+      yield* Schema.decodeUnknownEffect(CounterpartyRoleAddResultSchema)({
         counterpartyRef,
-        provenance,
-        roleType,
-        validFrom: '2026-09-03T10:00:00.000Z',
-      }).roleType,
-      roleType,
-    );
-  }
-  for (const roleType of ['BUSINESS_PARTNER', 'OTHER']) {
-    assert.throws(() =>
-      Schema.decodeUnknownSync(CounterpartyRoleAddPayloadSchema)({
-        counterpartyRef,
-        provenance,
-        roleType,
-        validFrom: '2026-09-03T10:00:00.000Z',
-      }),
-    );
-  }
-  for (const validFrom of ['2026-02-30T00:00:00.000Z', '2026-01-01T00:00:00Z']) {
-    assert.throws(() =>
-      Schema.decodeUnknownSync(CounterpartyRoleAddPayloadSchema)({
-        counterpartyRef,
-        provenance,
+        rolePeriodRef,
         roleType: 'CUSTOMER',
-        validFrom,
+        validFrom: '2026-09-03T10:00:00.000Z',
+        validTo: null,
       }),
-    );
-  }
-  assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartyRoleAddResultSchema)({
+    ).toEqual({
       counterpartyRef,
       rolePeriodRef,
       roleType: 'CUSTOMER',
       validFrom: '2026-09-03T10:00:00.000Z',
       validTo: null,
-    }),
-    {
-      counterpartyRef,
-      rolePeriodRef,
-      roleType: 'CUSTOMER',
-      validFrom: '2026-09-03T10:00:00.000Z',
-      validTo: null,
-    },
-  );
-  assert.equal(
-    Schema.decodeUnknownSync(CounterpartyRoleAddPayloadSchema)({
-      counterpartyRef,
-      provenance: {
-        evidenceReference: provenance.evidenceReference,
-        method: provenance.method,
-        source: provenance.source,
-      },
-      roleType: 'CUSTOMER',
-      validFrom: '2026-09-03T10:00:00.000Z',
-    }).provenance.reason,
-    undefined,
-  );
-});
-
-test('ends one named role period without deleting Counterparty history', () => {
-  const payload = Schema.decodeUnknownSync(CounterpartyRoleEndPayloadSchema)({
-    counterpartyRef,
-    provenance,
-    rolePeriodRef,
-    validTo: '2027-01-31T23:59:59.000Z',
-  });
-  assert.deepEqual(payload, {
-    counterpartyRef,
-    provenance,
-    rolePeriodRef,
-    validTo: '2027-01-31T23:59:59.000Z',
-  });
-  assert.equal(
-    Schema.decodeUnknownSync(CounterpartyRoleEndResultSchema)({
-      counterpartyRef,
-      rolePeriodRef,
-      roleType: 'SUPPLIER',
-      validFrom: '2026-09-03T10:00:00.000Z',
-      validTo: '2027-01-31T23:59:59.000Z',
-    }).validTo,
-    '2027-01-31T23:59:59.000Z',
-  );
-  assert.equal(
-    Schema.decodeUnknownSync(CounterpartyRoleEndPayloadSchema)({
-      counterpartyRef,
-      provenance: {
-        evidenceReference: provenance.evidenceReference,
-        method: 'CONFIRMED_SUPPLIER_RELATIONSHIP_END',
-        source: provenance.source,
-      },
-      rolePeriodRef,
-      validTo: '2027-01-31T23:59:59.000Z',
-    }).provenance.reason,
-    undefined,
-  );
-});
-
-test('publishes a minimum Party projection and keeps full role history separate', () => {
-  const request = Schema.decodeUnknownSync(CounterpartyReadRequestSchema)({ counterpartyRef });
-  assert.deepEqual(request, { counterpartyRef });
-  const currentRole = {
-    provenance,
-    recordedAt: '2026-09-03T10:01:00.000Z',
-    rolePeriodRef,
-    roleType: 'CUSTOMER',
-    state: 'ACTIVE',
-    validFrom: '2026-09-03T10:00:00.000Z',
-    validTo: null,
-  } as const;
-  const result = Schema.decodeUnknownSync(CounterpartyReadResponseSchema, {
-    onExcessProperty: 'error',
-  })({
-    counterpartyRef,
-    createdAt: '2026-09-03T10:00:00.000Z',
-    currentRoles: [currentRole],
-    legalEntityRef,
-    party: {
-      archived: false,
-      canonicalPartyRef: partyRef,
-      displayName: 'ACME s.r.o.',
-      partyType: 'ORGANIZATION',
-      storedPartyRef: partyRef,
-    },
-  });
-  assert.equal(result.party.displayName, 'ACME s.r.o.');
-  assert.equal(
-    Schema.decodeUnknownSync(CounterpartyReadResponseSchema)({
-      ...result,
-      party: { ...result.party, displayName: null },
-    }).party.displayName,
-    null,
-  );
-  assert.deepEqual(
-    result.currentRoles.map(({ roleType }) => roleType),
-    ['CUSTOMER'],
-  );
-  assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartyReadResponseSchema)({
-      ...result,
-      currentRoles: [],
-    }).currentRoles,
-    [],
-  );
-  assert.throws(() =>
-    Schema.decodeUnknownSync(CounterpartyReadResponseSchema, { onExcessProperty: 'error' })({
-      ...result,
-      party: { ...result.party, contactPoints: [] },
-    }),
-  );
-
-  assert.deepEqual(
-    Schema.decodeUnknownSync(CounterpartyRoleHistoryRequestSchema)({ counterpartyRef }),
-    { counterpartyRef },
-  );
-  assert.equal(
-    Schema.decodeUnknownSync(CounterpartyRoleHistoryResponseSchema)({
-      counterpartyRef,
-      roles: [{ ...currentRole, state: 'ENDED', validTo: '2027-01-31T23:59:59.000Z' }],
-    }).roles[0]?.state,
-    'ENDED',
-  );
-  assert.equal(counterpartyReadRead.descriptor.permissionTarget, 'resource');
-  assert.equal(counterpartyRoleHistoryRead.descriptor.permissionTarget, 'resource');
-  assert.equal(counterpartyReadRead.descriptor.legalEntityScope, 'optional');
-  assert.equal(counterpartyRoleHistoryRead.descriptor.legalEntityScope, 'optional');
-  assert.deepEqual(counterpartyReadPermissionTarget({ counterpartyRef }), {
-    kind: 'any_of',
-    targets: [
-      {
-        kind: 'resource',
-        resource: {
-          moduleId: 'party.registry',
-          resourceId: counterpartyId,
-          resourceType: 'party.registry.counterparty',
+    });
+    expect(
+      (yield* Schema.decodeUnknownEffect(CounterpartyRoleAddPayloadSchema)({
+        counterpartyRef,
+        provenance: {
+          evidenceReference: provenance.evidenceReference,
+          method: provenance.method,
+          source: provenance.source,
         },
+        roleType: 'CUSTOMER',
+        validFrom: '2026-09-03T10:00:00.000Z',
+      })).provenance.reason,
+    ).toBe(undefined);
+  }),
+);
+
+it.effect('ends one named role period without deleting Counterparty history', () =>
+  Effect.gen(function* contractScenario6() {
+    const payload = yield* Schema.decodeUnknownEffect(CounterpartyRoleEndPayloadSchema)({
+      counterpartyRef,
+      provenance,
+      rolePeriodRef,
+      validTo: '2027-01-31T23:59:59.000Z',
+    });
+    expect(payload).toEqual({
+      counterpartyRef,
+      provenance,
+      rolePeriodRef,
+      validTo: '2027-01-31T23:59:59.000Z',
+    });
+    expect(
+      (yield* Schema.decodeUnknownEffect(CounterpartyRoleEndResultSchema)({
+        counterpartyRef,
+        rolePeriodRef,
+        roleType: 'SUPPLIER',
+        validFrom: '2026-09-03T10:00:00.000Z',
+        validTo: '2027-01-31T23:59:59.000Z',
+      })).validTo,
+    ).toBe('2027-01-31T23:59:59.000Z');
+    expect(
+      (yield* Schema.decodeUnknownEffect(CounterpartyRoleEndPayloadSchema)({
+        counterpartyRef,
+        provenance: {
+          evidenceReference: provenance.evidenceReference,
+          method: 'CONFIRMED_SUPPLIER_RELATIONSHIP_END',
+          source: provenance.source,
+        },
+        rolePeriodRef,
+        validTo: '2027-01-31T23:59:59.000Z',
+      })).provenance.reason,
+    ).toBe(undefined);
+  }),
+);
+
+it.effect('publishes a minimum Party projection and keeps full role history separate', () =>
+  Effect.gen(function* contractScenario7() {
+    const request = yield* Schema.decodeUnknownEffect(CounterpartyReadRequestSchema)({
+      counterpartyRef,
+    });
+    expect(request).toEqual({ counterpartyRef });
+    const currentRole = {
+      provenance,
+      recordedAt: '2026-09-03T10:01:00.000Z',
+      rolePeriodRef,
+      roleType: 'CUSTOMER',
+      state: 'ACTIVE',
+      validFrom: '2026-09-03T10:00:00.000Z',
+      validTo: null,
+    } as const;
+    const result = yield* Schema.decodeUnknownEffect(CounterpartyReadResponseSchema, {
+      onExcessProperty: 'error',
+    })({
+      counterpartyRef,
+      createdAt: '2026-09-03T10:00:00.000Z',
+      currentRoles: [currentRole],
+      legalEntityRef,
+      party: {
+        archived: false,
+        canonicalPartyRef: partyRef,
+        displayName: 'ACME s.r.o.',
+        partyType: 'ORGANIZATION',
+        storedPartyRef: partyRef,
       },
-      { kind: 'tenant', permission: 'manage_party_identity' },
-    ],
-  });
-  assert.deepEqual(
-    counterpartyRoleHistoryPermissionTarget({ counterpartyRef }),
-    counterpartyReadPermissionTarget({ counterpartyRef }),
-  );
-});
+    });
+    expect(result.party.displayName).toBe('ACME s.r.o.');
+    expect(
+      (yield* Schema.decodeUnknownEffect(CounterpartyReadResponseSchema)({
+        ...result,
+        party: { ...result.party, displayName: null },
+      })).party.displayName,
+    ).toBe(null);
+    expect(result.currentRoles.map(({ roleType }) => roleType)).toEqual(['CUSTOMER']);
+    expect(
+      (yield* Schema.decodeUnknownEffect(CounterpartyReadResponseSchema)({
+        ...result,
+        currentRoles: [],
+      })).currentRoles,
+    ).toEqual([]);
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(CounterpartyReadResponseSchema, { onExcessProperty: 'error' })({
+          ...result,
+          party: { ...result.party, contactPoints: [] },
+        }),
+      ),
+    ).toBeDefined();
+
+    expect(
+      yield* Schema.decodeUnknownEffect(CounterpartyRoleHistoryRequestSchema)({ counterpartyRef }),
+    ).toEqual({ counterpartyRef });
+    expect(
+      (yield* Schema.decodeUnknownEffect(CounterpartyRoleHistoryResponseSchema)({
+        counterpartyRef,
+        roles: [{ ...currentRole, state: 'ENDED', validTo: '2027-01-31T23:59:59.000Z' }],
+      })).roles[0]?.state,
+    ).toBe('ENDED');
+    expect(counterpartyReadRead.descriptor.permissionTarget).toBe('resource');
+    expect(counterpartyRoleHistoryRead.descriptor.permissionTarget).toBe('resource');
+    expect(counterpartyReadRead.descriptor.legalEntityScope).toBe('optional');
+    expect(counterpartyRoleHistoryRead.descriptor.legalEntityScope).toBe('optional');
+    expect(counterpartyReadPermissionTarget({ counterpartyRef })).toEqual({
+      kind: 'any_of',
+      targets: [
+        {
+          kind: 'resource',
+          resource: {
+            moduleId: 'party.registry',
+            resourceId: counterpartyId,
+            resourceType: 'party.registry.counterparty',
+          },
+        },
+        { kind: 'tenant', permission: 'manage_party_identity' },
+      ],
+    });
+    expect(counterpartyRoleHistoryPermissionTarget({ counterpartyRef })).toEqual(
+      counterpartyReadPermissionTarget({ counterpartyRef }),
+    );
+  }),
+);

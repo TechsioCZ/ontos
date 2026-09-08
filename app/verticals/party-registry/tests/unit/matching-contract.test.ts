@@ -1,6 +1,5 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, it } from '@app/effect-rstest';
+
 import { Effect } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -27,8 +26,9 @@ const evidenceScope = {
   tenantId: evidenceTenantId,
 };
 
-test('reviewed Create records metadata-only invariant evidence and commits its created event', () =>
-  runEffectTestPromise(
+it.effect(
+  'reviewed Create records metadata-only invariant evidence and commits its created event',
+  () =>
     Effect.gen(function* reviewedCreateEvidence() {
       const collector = createActionCollector(
         resolveDuplicateCandidateCreateAction.descriptor.domainEvents,
@@ -50,14 +50,15 @@ test('reviewed Create records metadata-only invariant evidence and commits its c
             }),
         },
       });
-      assert.equal(collector.snapshot().dataAccessEvents[0]?.evidenceCaptureMode, 'metadata_only');
-      assert.equal(collector.snapshot().domainEvents.length, 1);
-      assert.equal(collector.snapshot().outboxMessages.length, 1);
+      expect(collector.snapshot().dataAccessEvents[0]?.evidenceCaptureMode).toBe('metadata_only');
+      expect(collector.snapshot().domainEvents.length).toBe(1);
+      expect(collector.snapshot().outboxMessages.length).toBe(1);
     }),
-  ));
+);
 
-test('reviewed duplicate confirmation records safe invariant evidence without executing merge', () =>
-  runEffectTestPromise(
+it.effect(
+  'reviewed duplicate confirmation records safe invariant evidence without executing merge',
+  () =>
     Effect.gen(function* confirmationEvidence() {
       const collector = createActionCollector(
         confirmDuplicatePartiesAction.descriptor.domainEvents,
@@ -79,20 +80,19 @@ test('reviewed duplicate confirmation records safe invariant evidence without ex
             }),
         },
       });
-      assert.equal(collector.snapshot().dataAccessEvents[0]?.evidenceCaptureMode, 'metadata_only');
-      assert.deepEqual(collector.snapshot().domainEvents, []);
-      assert.deepEqual(collector.snapshot().outboxMessages, []);
+      expect(collector.snapshot().dataAccessEvents[0]?.evidenceCaptureMode).toBe('metadata_only');
+      expect(collector.snapshot().domainEvents).toEqual([]);
+      expect(collector.snapshot().outboxMessages).toEqual([]);
     }),
-  ));
+);
 
-test('claim locks are acquired in one deterministic order', () => {
-  assert.deepEqual(
+it('claim locks are acquired in one deterministic order', () => {
+  expect(
     sortClaimKeys(['CZ_DIC\u0000cz:dic\u0000CZ27074358', 'ICO\u0000cz:ico\u000027074358']),
-    ['CZ_DIC\u0000cz:dic\u0000CZ27074358', 'ICO\u0000cz:ico\u000027074358'],
-  );
+  ).toEqual(['CZ_DIC\u0000cz:dic\u0000CZ27074358', 'ICO\u0000cz:ico\u000027074358']);
 });
 
-test('all Duplicate Candidate resolutions are reviewed, idempotent tenant Actions', () => {
+it('all Duplicate Candidate resolutions are reviewed, idempotent tenant Actions', () => {
   for (const action of [
     resolveDuplicateCandidateMatchAction,
     resolveDuplicateCandidateCreateAction,
@@ -100,15 +100,15 @@ test('all Duplicate Candidate resolutions are reviewed, idempotent tenant Action
     dismissDuplicateCandidateAction,
     confirmDuplicatePartiesAction,
   ]) {
-    assert.equal(action.descriptor.legalEntityScope, 'optional');
-    assert.equal(action.descriptor.idempotency, 'required');
+    expect(action.descriptor.legalEntityScope).toBe('optional');
+    expect(action.descriptor.idempotency).toBe('required');
     // SAFETY: these descriptors use a constant permission resolver and never inspect the payload.
-    assert.equal(action.descriptor.tenantPermission?.({} as never), 'review_party_identity');
+    expect(action.descriptor.tenantPermission?.({} as never)).toBe('review_party_identity');
   }
 });
 
-test('claim lock identity is tenant-qualified, normalized, sorted, and deduplicated', () => {
-  assert.deepEqual(
+it('claim lock identity is tenant-qualified, normalized, sorted, and deduplicated', () => {
+  expect(
     tenantClaimLockKeys('tenant-b', [
       {
         identifierType: 'ICO',
@@ -129,9 +129,11 @@ test('claim lock identity is tenant-qualified, normalized, sorted, and deduplica
         verification: 'VERIFIED',
       },
     ]),
-    ['["tenant-b","CZ_DIC","CZ:DIC","CZ27074358"]', '["tenant-b","ICO","CZ:ICO","27074358"]'],
-  );
-  assert.notDeepEqual(
+  ).toEqual([
+    '["tenant-b","CZ_DIC","CZ:DIC","CZ27074358"]',
+    '["tenant-b","ICO","CZ:ICO","27074358"]',
+  ]);
+  expect(
     tenantClaimLockKeys('tenant-a', [
       {
         identifierType: 'ICO',
@@ -140,6 +142,7 @@ test('claim lock identity is tenant-qualified, normalized, sorted, and deduplica
         verification: 'VERIFIED',
       },
     ]),
+  ).not.toEqual(
     tenantClaimLockKeys('tenant-b', [
       {
         identifierType: 'ICO',
@@ -149,7 +152,7 @@ test('claim lock identity is tenant-qualified, normalized, sorted, and deduplica
       },
     ]),
   );
-  assert.equal(
+  expect(
     tenantClaimLockKeys('tenant-b', [
       {
         identifierType: 'ICO',
@@ -158,24 +161,22 @@ test('claim lock identity is tenant-qualified, normalized, sorted, and deduplica
         verification: 'VERIFIED',
       },
     ]).some((key) => key.includes('\u0000')),
-    false,
-  );
+  ).toBe(false);
 });
 
-test('authoritative exact claims cannot be outvoted by weak evidence', () => {
-  assert.deepEqual(evaluateExactClaims([]), { outcome: 'NO_MATCH', partyIds: [] });
-  assert.deepEqual(evaluateExactClaims(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']), {
+it('authoritative exact claims cannot be outvoted by weak evidence', () => {
+  expect(evaluateExactClaims([])).toEqual({ outcome: 'NO_MATCH', partyIds: [] });
+  expect(evaluateExactClaims(['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'])).toEqual({
     outcome: 'MATCHED',
     partyIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
   });
-  assert.deepEqual(
+  expect(
     evaluateExactClaims([
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     ]),
-    {
-      outcome: 'AMBIGUOUS',
-      partyIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
-    },
-  );
+  ).toEqual({
+    outcome: 'AMBIGUOUS',
+    partyIds: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
+  });
 });

@@ -1,10 +1,9 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
+import { TestClock } from 'effect/testing';
+import { expect, it } from '@app/effect-rstest';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This focused harness models only the Drizzle native Effect query surface exercised by Contact Point ending. expires: 2026-12-31. */
 import { is, SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
@@ -43,7 +42,6 @@ const updateContactPointRecord = (
   command: Parameters<typeof updateRecord>[2],
   aliases = directAliases,
 ) => updateRecord(transaction, scope, command, aliases);
-
 const contactRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   acceptedByActionInvocationId: actionInvocationId,
   acceptedByPrincipalId: principalId,
@@ -93,7 +91,6 @@ const contactRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   verifierReference: null,
   ...overrides,
 });
-
 const purposeRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   acceptedByActionInvocationId: actionInvocationId,
   acceptedByPrincipalId: principalId,
@@ -131,14 +128,12 @@ const purposeRow = (overrides: Readonly<Record<string, unknown>> = {}) => ({
   verifierReference: null,
   ...overrides,
 });
-
 interface Harness {
   readonly insertValues: readonly Readonly<Record<string, unknown>>[];
   readonly transaction: Parameters<typeof endContactPointRecord>[0];
   readonly updateSets: readonly Readonly<Record<string, unknown>>[];
   readonly selectWheres: readonly SQL[];
 }
-
 const transactionHarness = (
   selects: readonly (readonly Readonly<Record<string, unknown>>[])[],
   returningRows: readonly (readonly Readonly<Record<string, unknown>>[])[] = [],
@@ -197,14 +192,12 @@ const transactionHarness = (
   >[0];
   return { insertValues, selectWheres, transaction, updateSets };
 };
-
 const scope = {
   authMethod: 'system' as const,
   correlationId: 'contact-end-test',
   principalId,
   tenantId,
 };
-
 const wholeEndCommand = (effectiveEnd: string, reason = 'Party retired this mailbox') => ({
   acceptedByActionInvocationId: actionInvocationId,
   acceptedByPrincipalId: principalId,
@@ -224,117 +217,117 @@ const wholeEndCommand = (effectiveEnd: string, reason = 'Party retired this mail
   reason,
   target: { type: 'WHOLE_CONTACT_POINT' as const },
 });
-
-void test('stores future end provenance while keeping the contact current until the boundary', () =>
-  runEffectTestPromise(
+it.effect('stores future end provenance while keeping the contact current until the boundary', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const effectiveEnd = '2099-01-01T00:00:00.000Z';
+    const updated = contactRow({
+      endEvidenceRefs: ['evidence:contact-end:1'],
+      endProvenanceMethod: 'MANUAL_CONFIRMATION',
+      endProvenanceSource: 'USER_ASSERTION',
+      endReason: 'Party retired this mailbox',
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: instantAsDate('2026-09-03T00:00:00.000Z'),
+      revision: 2,
+      validTo: instantAsDate(effectiveEnd),
+    });
+    const harness = transactionHarness([
+      [contactRow()],
+      [{ partyId }],
+      [contactRow()],
+      [updated],
+      [],
+    ]);
+    const result = yield* endContactPointRecord(
+      harness.transaction,
+      scope,
+      wholeEndCommand(effectiveEnd),
+    );
+    expect(harness.updateSets[0]?.['state']).toBe('ACTIVE');
+    expect(harness.updateSets[0]?.['isCurrent']).toBe(true);
+    expect(harness.updateSets[0]?.['endEvidenceRefs']).toEqual(['evidence:contact-end:1']);
+    expect(harness.updateSets[0]?.['endReason']).toBe('Party retired this mailbox');
+    expect(result.contactPoint.end?.provenance.evidenceReferences).toEqual([
+      'evidence:contact-end:1',
+    ]);
+  }),
+);
+it.effect('stores end provenance on both a last ADDRESS purpose and its owning address', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const effectiveEnd = '2026-02-01T00:00:00.000Z';
+    const address = contactRow({
+      addressLine1: 'Na Prikope 1',
+      city: 'Praha',
+      contactPointType: 'ADDRESS',
+      countryCode: 'CZ',
+      displayValue: null,
+      normalizationVersion: null,
+      normalizedValue: null,
+      preferred: false,
+    });
+    const endedAddress = contactRow({
+      ...address,
+      endEvidenceRefs: ['evidence:contact-end:1'],
+      endProvenanceMethod: 'MANUAL_CONFIRMATION',
+      endProvenanceSource: 'USER_ASSERTION',
+      endReason: 'Party retired this mailbox',
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
+      isCurrent: false,
+      revision: 2,
+      state: 'ENDED',
+      validTo: instantAsDate(effectiveEnd),
+    });
+    const endedPurpose = purposeRow({
+      endEvidenceRefs: ['evidence:contact-end:1'],
+      endProvenanceMethod: 'MANUAL_CONFIRMATION',
+      endProvenanceSource: 'USER_ASSERTION',
+      endReason: 'Party retired this mailbox',
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
+      isCurrent: false,
+      revision: 2,
+      state: 'ENDED',
+      validTo: instantAsDate(effectiveEnd),
+    });
+    const harness = transactionHarness([
+      [address],
+      [{ partyId }],
+      [address],
+      [purposeRow()],
+      [endedAddress],
+      [endedPurpose],
+    ]);
+    const command = {
+      ...wholeEndCommand(effectiveEnd),
+      target: { target: { purpose: 'DELIVERY' as const }, type: 'ADDRESS_PURPOSE' as const },
+    };
+    const result = yield* endContactPointRecord(harness.transaction, scope, command);
+    expect(harness.updateSets.length).toBe(2);
+    expect(harness.updateSets[0]?.['endProvenanceSource']).toBe('USER_ASSERTION');
+    expect(harness.updateSets[1]?.['endProvenanceMethod']).toBe('MANUAL_CONFIRMATION');
+    expect(result.contactPoint.value.type).toBe('ADDRESS');
+    expect(
+      result.contactPoint.value.type === 'ADDRESS' &&
+        result.contactPoint.value.purposes[0]?.end?.reason,
+    ).toBe('Party retired this mailbox');
+  }),
+);
+it.effect(
+  'reuses only an exact end request and rejects changed evidence at the same boundary',
+  () =>
     Effect.gen(function* contactPointScenario() {
-      const effectiveEnd = '2099-01-01T00:00:00.000Z';
-      const updated = contactRow({
-        endEvidenceRefs: ['evidence:contact-end:1'],
-        endProvenanceMethod: 'MANUAL_CONFIRMATION',
-        endProvenanceSource: 'USER_ASSERTION',
-        endReason: 'Party retired this mailbox',
-        endedByActionInvocationId: actionInvocationId,
-        endedByPrincipalId: principalId,
-        endedRecordedAt: instantAsDate('2026-09-03T00:00:00.000Z'),
-        revision: 2,
-        validTo: instantAsDate(effectiveEnd),
-      });
-      const harness = transactionHarness([
-        [contactRow()],
-        [{ partyId }],
-        [contactRow()],
-        [updated],
-        [],
-      ]);
-
-      const result = yield* endContactPointRecord(
-        harness.transaction,
-        scope,
-        wholeEndCommand(effectiveEnd),
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
       );
-
-      assert.equal(harness.updateSets[0]?.['state'], 'ACTIVE');
-      assert.equal(harness.updateSets[0]?.['isCurrent'], true);
-      assert.deepEqual(harness.updateSets[0]?.['endEvidenceRefs'], ['evidence:contact-end:1']);
-      assert.equal(harness.updateSets[0]?.['endReason'], 'Party retired this mailbox');
-      assert.deepEqual(result.contactPoint.end?.provenance.evidenceReferences, [
-        'evidence:contact-end:1',
-      ]);
-    }),
-  ));
-
-void test('stores end provenance on both a last ADDRESS purpose and its owning address', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
-      const effectiveEnd = '2026-02-01T00:00:00.000Z';
-      const address = contactRow({
-        addressLine1: 'Na Prikope 1',
-        city: 'Praha',
-        contactPointType: 'ADDRESS',
-        countryCode: 'CZ',
-        displayValue: null,
-        normalizationVersion: null,
-        normalizedValue: null,
-        preferred: false,
-      });
-      const endedAddress = contactRow({
-        ...address,
-        endEvidenceRefs: ['evidence:contact-end:1'],
-        endProvenanceMethod: 'MANUAL_CONFIRMATION',
-        endProvenanceSource: 'USER_ASSERTION',
-        endReason: 'Party retired this mailbox',
-        endedByActionInvocationId: actionInvocationId,
-        endedByPrincipalId: principalId,
-        endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
-        isCurrent: false,
-        revision: 2,
-        state: 'ENDED',
-        validTo: instantAsDate(effectiveEnd),
-      });
-      const endedPurpose = purposeRow({
-        endEvidenceRefs: ['evidence:contact-end:1'],
-        endProvenanceMethod: 'MANUAL_CONFIRMATION',
-        endProvenanceSource: 'USER_ASSERTION',
-        endReason: 'Party retired this mailbox',
-        endedByActionInvocationId: actionInvocationId,
-        endedByPrincipalId: principalId,
-        endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
-        isCurrent: false,
-        revision: 2,
-        state: 'ENDED',
-        validTo: instantAsDate(effectiveEnd),
-      });
-      const harness = transactionHarness([
-        [address],
-        [{ partyId }],
-        [address],
-        [purposeRow()],
-        [endedAddress],
-        [endedPurpose],
-      ]);
-      const command = {
-        ...wholeEndCommand(effectiveEnd),
-        target: { target: { purpose: 'DELIVERY' as const }, type: 'ADDRESS_PURPOSE' as const },
-      };
-
-      const result = yield* endContactPointRecord(harness.transaction, scope, command);
-
-      assert.equal(harness.updateSets.length, 2);
-      assert.equal(harness.updateSets[0]?.['endProvenanceSource'], 'USER_ASSERTION');
-      assert.equal(harness.updateSets[1]?.['endProvenanceMethod'], 'MANUAL_CONFIRMATION');
-      assert.equal(result.contactPoint.value.type, 'ADDRESS');
-      assert.equal(
-        result.contactPoint.value.type === 'ADDRESS' &&
-          result.contactPoint.value.purposes[0]?.end?.reason,
-        'Party retired this mailbox',
-      );
-    }),
-  ));
-
-void test('reuses only an exact end request and rejects changed evidence at the same boundary', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
       const effectiveEnd = '2026-02-01T00:00:00.000Z';
       const ended = contactRow({
         endEvidenceRefs: ['evidence:contact-end:1'],
@@ -355,9 +348,8 @@ void test('reuses only an exact end request and rejects changed evidence at the 
         scope,
         wholeEndCommand(effectiveEnd),
       );
-      assert.equal(exact.changed, false);
-      assert.equal(exactHarness.updateSets.length, 0);
-
+      expect(exact.changed).toBe(false);
+      expect(exactHarness.updateSets.length).toBe(0);
       const changedHarness = transactionHarness([[ended], [{ partyId }], [ended]]);
       const changed = yield* Effect.exit(
         endContactPointRecord(
@@ -366,56 +358,54 @@ void test('reuses only an exact end request and rejects changed evidence at the 
           wholeEndCommand(effectiveEnd, 'A different reason'),
         ),
       );
-      assert.ok(Predicate.isTagged(changed, 'Failure'));
-      assert.equal(changedHarness.updateSets.length, 0);
+      expect(Predicate.isTagged(changed, 'Failure')).toBe(true);
+      expect(changedHarness.updateSets.length).toBe(0);
     }),
-  ));
-
-void test('stores correction end provenance on the preserved original Contact Point', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
-      const original = contactRow();
-      const corrected = contactRow({
-        endEvidenceRefs: ['evidence:wrong-mailbox:1'],
-        endProvenanceMethod: 'MANUAL_CONFIRMATION',
-        endProvenanceSource: 'USER_ASSERTION',
-        endReason: 'Mailbox was attached to the wrong Party',
-        endedByActionInvocationId: actionInvocationId,
-        endedByPrincipalId: principalId,
-        endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
-        isCurrent: false,
-        preferred: false,
-        revision: 2,
-        state: 'RETRACTED',
-        validTo: instantAsDate('2026-09-03T12:00:00.000Z'),
-      });
-      const harness = transactionHarness([[original], [{ partyId }], [original], [corrected], []]);
-
-      const result = yield* updateContactPointRecord(harness.transaction, scope, {
-        acceptedByActionInvocationId: actionInvocationId,
-        acceptedByPrincipalId: principalId,
-        change: {
-          evidenceReferences: ['evidence:wrong-mailbox:1'],
-          reason: 'Mailbox was attached to the wrong Party',
-          type: 'CORRECT_CONTACT_POINT',
-        },
-        contactPointRef: wholeEndCommand('2099-01-01T00:00:00.000Z').contactPointRef,
-        expectedRevision: 1,
-        provenance: {
-          authoritative: false,
-          method: 'MANUAL_CONFIRMATION',
-          source: 'USER_ASSERTION',
-        },
-      });
-
-      assert.equal(harness.updateSets[0]?.['state'], 'RETRACTED');
-      assert.equal(harness.updateSets[0]?.['endReason'], 'Mailbox was attached to the wrong Party');
-      assert.deepEqual(harness.updateSets[0]?.['endEvidenceRefs'], ['evidence:wrong-mailbox:1']);
-      assert.equal(harness.insertValues[0]?.['contactPointId'], contactPointId);
-      assert.equal(result.end?.reason, 'Mailbox was attached to the wrong Party');
-    }),
-  ));
-
+);
+it.effect('stores correction end provenance on the preserved original Contact Point', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const original = contactRow();
+    const corrected = contactRow({
+      endEvidenceRefs: ['evidence:wrong-mailbox:1'],
+      endProvenanceMethod: 'MANUAL_CONFIRMATION',
+      endProvenanceSource: 'USER_ASSERTION',
+      endReason: 'Mailbox was attached to the wrong Party',
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: instantAsDate('2026-09-03T12:00:00.000Z'),
+      isCurrent: false,
+      preferred: false,
+      revision: 2,
+      state: 'RETRACTED',
+      validTo: instantAsDate('2026-09-03T12:00:00.000Z'),
+    });
+    const harness = transactionHarness([[original], [{ partyId }], [original], [corrected], []]);
+    const result = yield* updateContactPointRecord(harness.transaction, scope, {
+      acceptedByActionInvocationId: actionInvocationId,
+      acceptedByPrincipalId: principalId,
+      change: {
+        evidenceReferences: ['evidence:wrong-mailbox:1'],
+        reason: 'Mailbox was attached to the wrong Party',
+        type: 'CORRECT_CONTACT_POINT',
+      },
+      contactPointRef: wholeEndCommand('2099-01-01T00:00:00.000Z').contactPointRef,
+      expectedRevision: 1,
+      provenance: {
+        authoritative: false,
+        method: 'MANUAL_CONFIRMATION',
+        source: 'USER_ASSERTION',
+      },
+    });
+    expect(harness.updateSets[0]?.['state']).toBe('RETRACTED');
+    expect(harness.updateSets[0]?.['endReason']).toBe('Mailbox was attached to the wrong Party');
+    expect(harness.updateSets[0]?.['endEvidenceRefs']).toEqual(['evidence:wrong-mailbox:1']);
+    expect(harness.insertValues[0]?.['contactPointId']).toBe(contactPointId);
+    expect(result.end?.reason).toBe('Mailbox was attached to the wrong Party');
+  }),
+);
 const addressRow = (overrides: Readonly<Record<string, unknown>> = {}) =>
   contactRow({
     addressLine1: 'Na Prikope 1',
@@ -428,7 +418,6 @@ const addressRow = (overrides: Readonly<Record<string, unknown>> = {}) =>
     preferred: false,
     ...overrides,
   });
-
 const updateCommand = (change: Parameters<typeof updateContactPointRecord>[2]['change']) => ({
   acceptedByActionInvocationId: actionInvocationId,
   acceptedByPrincipalId: principalId,
@@ -442,207 +431,216 @@ const updateCommand = (change: Parameters<typeof updateContactPointRecord>[2]['c
     source: 'EXTERNAL_EVIDENCE' as const,
   },
 });
-
-void test('re-adds a scheduled-ended purpose as a new period without reopening its history', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
-      const stalePurpose = purposeRow({
-        endEvidenceRefs: ['evidence:contact-end:1'],
-        endProvenanceMethod: 'MANUAL_CONFIRMATION',
-        endProvenanceSource: 'USER_ASSERTION',
-        endReason: 'Previous delivery period ended',
-        endedByActionInvocationId: actionInvocationId,
-        endedByPrincipalId: principalId,
-        endedRecordedAt: instantAsDate('2026-01-02T00:00:00.000Z'),
-        validTo: instantAsDate('2026-02-01T00:00:00.000Z'),
-      });
-      const renewedPurpose = purposeRow({
-        contactPointPurposeId: '60000000-0000-4000-8000-000000000002',
-        validFrom: instantAsDate('2026-09-03T12:00:00.000Z'),
-      });
-      const address = addressRow();
-      const harness = transactionHarness([
-        [address],
-        [{ partyId }],
-        [address],
-        [stalePurpose],
-        [addressRow({ revision: 2 })],
-        [{ ...stalePurpose, isCurrent: false, state: 'ENDED' }, renewedPurpose],
-      ]);
-      const result = yield* updateContactPointRecord(
+it.effect('re-adds a scheduled-ended purpose as a new period without reopening its history', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const stalePurpose = purposeRow({
+      endEvidenceRefs: ['evidence:contact-end:1'],
+      endProvenanceMethod: 'MANUAL_CONFIRMATION',
+      endProvenanceSource: 'USER_ASSERTION',
+      endReason: 'Previous delivery period ended',
+      endedByActionInvocationId: actionInvocationId,
+      endedByPrincipalId: principalId,
+      endedRecordedAt: instantAsDate('2026-01-02T00:00:00.000Z'),
+      validTo: instantAsDate('2026-02-01T00:00:00.000Z'),
+    });
+    const renewedPurpose = purposeRow({
+      contactPointPurposeId: '60000000-0000-4000-8000-000000000002',
+      validFrom: instantAsDate('2026-09-03T12:00:00.000Z'),
+    });
+    const address = addressRow();
+    const harness = transactionHarness([
+      [address],
+      [{ partyId }],
+      [address],
+      [stalePurpose],
+      [addressRow({ revision: 2 })],
+      [{ ...stalePurpose, isCurrent: false, state: 'ENDED' }, renewedPurpose],
+    ]);
+    const result = yield* updateContactPointRecord(
+      harness.transaction,
+      scope,
+      updateCommand({
+        assignment: { preferred: true, purpose: 'DELIVERY' },
+        type: 'SET_ADDRESS_PURPOSE',
+      }),
+    );
+    expect(harness.updateSets[0]?.['state']).toBe('ENDED');
+    expect(harness.updateSets[0]?.['revision']).toBe(2);
+    expect(harness.insertValues.length).toBe(1);
+    expect(harness.insertValues[0]?.['validTo']).toBe(undefined);
+    expect(harness.insertValues[0]?.['endReason']).toBe(undefined);
+    expect(result.value.type).toBe('ADDRESS');
+    if (result.value.type === 'ADDRESS') {
+      expect(result.value.purposes.length).toBe(2);
+      expect(result.value.purposes[0]?.current).toBe(false);
+      expect(result.value.purposes[1]?.validTo).toBe(null);
+    }
+  }),
+);
+it.effect('rejects a REGISTERED context collision as a typed domain conflict before mutation', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const address = addressRow();
+    const conflicting = purposeRow({
+      contactPointId: '30000000-0000-4000-8000-000000000002',
+      jurisdiction: 'CZ',
+      purposeKey: 'REGISTERED',
+      registryContext: 'ARES',
+    });
+    const harness = transactionHarness([[address], [{ partyId }], [address], [conflicting]]);
+    const error = yield* Effect.flip(
+      updateContactPointRecord(
         harness.transaction,
         scope,
         updateCommand({
-          assignment: { preferred: true, purpose: 'DELIVERY' },
+          assignment: {
+            preferred: true,
+            purpose: 'REGISTERED',
+            registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
+          },
           type: 'SET_ADDRESS_PURPOSE',
         }),
-      );
-      assert.equal(harness.updateSets[0]?.['state'], 'ENDED');
-      assert.equal(harness.updateSets[0]?.['revision'], 2);
-      assert.equal(harness.insertValues.length, 1);
-      assert.equal(harness.insertValues[0]?.['validTo'], undefined);
-      assert.equal(harness.insertValues[0]?.['endReason'], undefined);
-      assert.equal(result.value.type, 'ADDRESS');
-      if (result.value.type === 'ADDRESS') {
-        assert.equal(result.value.purposes.length, 2);
-        assert.equal(result.value.purposes[0]?.current, false);
-        assert.equal(result.value.purposes[1]?.validTo, null);
-      }
-    }),
-  ));
-
-void test('rejects a REGISTERED context collision as a typed domain conflict before mutation', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
-      const address = addressRow();
-      const conflicting = purposeRow({
-        contactPointId: '30000000-0000-4000-8000-000000000002',
-        jurisdiction: 'CZ',
-        purposeKey: 'REGISTERED',
-        registryContext: 'ARES',
-      });
-      const harness = transactionHarness([[address], [{ partyId }], [address], [conflicting]]);
-      const error = yield* Effect.flip(
-        updateContactPointRecord(
-          harness.transaction,
-          scope,
-          updateCommand({
-            assignment: {
+      ),
+    );
+    expect(Predicate.isTagged(error, 'PartyContactPointAlreadyExists')).toBe(true);
+    expect(harness.updateSets.length).toBe(0);
+    expect(harness.insertValues.length).toBe(0);
+    const condition = harness.selectWheres.at(3);
+    expect(condition).toBeDefined();
+    if (condition === undefined) {
+      return expect.unreachable('Expected SQL condition');
+    }
+    const query = new PgDialect().sqlToQuery(condition);
+    expect(query.sql).toMatch(/registry_context/u);
+    expect(query.sql).toMatch(/jurisdiction/u);
+    expect(query.params.includes('ARES')).toBe(true);
+    expect(query.params.includes('CZ')).toBe(true);
+    const addHarness = transactionHarness([[{ partyId }], [], [conflicting]]);
+    const addError = yield* Effect.flip(
+      addContactPointRecord(addHarness.transaction, scope, {
+        acceptedByActionInvocationId: actionInvocationId,
+        acceptedByPrincipalId: principalId,
+        contactPoint: {
+          address: { addressLine1: 'Another street 2', city: 'Praha', countryCode: 'CZ' },
+          purposes: [
+            {
               preferred: true,
               purpose: 'REGISTERED',
               registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
             },
-            type: 'SET_ADDRESS_PURPOSE',
-          }),
-        ),
-      );
-      assert.ok(Predicate.isTagged(error, 'PartyContactPointAlreadyExists'));
-      assert.equal(harness.updateSets.length, 0);
-      assert.equal(harness.insertValues.length, 0);
-      const condition = harness.selectWheres.at(3);
-      assert.ok(condition);
-      const query = new PgDialect().sqlToQuery(condition);
-      assert.match(query.sql, /registry_context/u);
-      assert.match(query.sql, /jurisdiction/u);
-      assert.ok(query.params.includes('ARES'));
-      assert.ok(query.params.includes('CZ'));
-
-      const addHarness = transactionHarness([[{ partyId }], [], [conflicting]]);
-      const addError = yield* Effect.flip(
-        addContactPointRecord(addHarness.transaction, scope, {
-          acceptedByActionInvocationId: actionInvocationId,
-          acceptedByPrincipalId: principalId,
-          contactPoint: {
-            address: { addressLine1: 'Another street 2', city: 'Praha', countryCode: 'CZ' },
-            purposes: [
-              {
-                preferred: true,
-                purpose: 'REGISTERED',
-                registryContext: { jurisdiction: 'CZ', registryKey: 'ARES' },
-              },
-            ],
-            type: 'ADDRESS',
-          },
-          partyRef: {
-            moduleId: 'party.registry',
-            resourceId: partyId,
-            resourceType: 'party.registry.party',
-            tenantId,
-          },
-          privacyClassification: 'PUBLIC',
-          provenance: {
-            authoritative: true,
-            evidenceReference: 'evidence:registry:2',
-            method: 'DOCUMENT_REVIEW',
-            source: 'EXTERNAL_EVIDENCE',
-          },
-          validFrom: '2026-01-01T00:00:00.000Z',
-          verification: { state: 'UNVERIFIED' },
-        }),
-      );
-      assert.ok(Predicate.isTagged(addError, 'PartyContactPointAlreadyExists'));
-      assert.equal(addHarness.insertValues.length, 0);
-      assert.equal(addHarness.updateSets.length, 0);
-    }),
-  ));
-
-void test('advances revisions on both the transferred purpose and its owning address', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
-      const address = addressRow();
-      const current = purposeRow({ preferred: false });
-      const previousPreferred = purposeRow({
-        contactPointId: '30000000-0000-4000-8000-000000000002',
-        contactPointPurposeId: '60000000-0000-4000-8000-000000000002',
-        revision: 7,
-      });
-      const harness = transactionHarness([
-        [address],
-        [{ partyId }],
-        [address],
-        [current, previousPreferred],
-        [addressRow({ revision: 2 })],
-        [{ ...current, preferred: true, revision: 2 }],
-      ]);
-      yield* updateContactPointRecord(
-        harness.transaction,
-        scope,
-        updateCommand({
-          assignment: { preferred: true, purpose: 'DELIVERY' },
-          type: 'SET_ADDRESS_PURPOSE',
-        }),
-      );
-      assert.equal(harness.updateSets[0]?.['revision'], 8);
-      assert.equal(harness.updateSets[0]?.['preferred'], false);
-      const revision = harness.updateSets[1]?.['revision'];
-      assert.ok(is(revision, SQL));
-      assert.match(new PgDialect().sqlToQuery(revision).sql, /revision.*\+ 1/u);
-      assert.equal(harness.updateSets[2]?.['revision'], 2);
-      assert.equal(harness.updateSets[3]?.['revision'], 2);
-    }),
-  ));
-
-void test('preserves original provenance evidence and appends deduplicated enrichment', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
-      const row = contactRow({
-        additionalEvidenceRefs: ['evidence:second'],
-        evidenceReference: 'evidence:first',
-      });
-      const updated = contactRow({
-        additionalEvidenceRefs: ['evidence:second', 'evidence:third'],
-        evidenceReference: 'evidence:first',
-        revision: 2,
-      });
-      const harness = transactionHarness([[row], [{ partyId }], [row], [updated], []]);
-      const result = yield* updateContactPointRecord(
-        harness.transaction,
-        scope,
-        updateCommand({
-          provenance: {
-            authoritative: false,
-            evidenceReference: 'evidence:third',
-            method: 'MANUAL_CONFIRMATION',
-            source: 'USER_ASSERTION',
-          },
-          type: 'ADD_PROVENANCE',
-        }),
-      );
-      assert.equal(harness.updateSets[0]?.['evidenceReference'], undefined);
-      assert.deepEqual(harness.updateSets[0]?.['additionalEvidenceRefs'], [
-        'evidence:second',
-        'evidence:third',
-      ]);
-      assert.deepEqual(result.provenance.evidenceReferences, [
-        'evidence:first',
-        'evidence:second',
-        'evidence:third',
-      ]);
-    }),
-  ));
-
-void test('rejects invalid E.164 and oversized extensions through the service typed-error path', () =>
-  runEffectTestPromise(
+          ],
+          type: 'ADDRESS',
+        },
+        partyRef: {
+          moduleId: 'party.registry',
+          resourceId: partyId,
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        privacyClassification: 'PUBLIC',
+        provenance: {
+          authoritative: true,
+          evidenceReference: 'evidence:registry:2',
+          method: 'DOCUMENT_REVIEW',
+          source: 'EXTERNAL_EVIDENCE',
+        },
+        validFrom: '2026-01-01T00:00:00.000Z',
+        verification: { state: 'UNVERIFIED' },
+      }),
+    );
+    expect(Predicate.isTagged(addError, 'PartyContactPointAlreadyExists')).toBe(true);
+    expect(addHarness.insertValues.length).toBe(0);
+    expect(addHarness.updateSets.length).toBe(0);
+  }),
+);
+it.effect('advances revisions on both the transferred purpose and its owning address', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const address = addressRow();
+    const current = purposeRow({ preferred: false });
+    const previousPreferred = purposeRow({
+      contactPointId: '30000000-0000-4000-8000-000000000002',
+      contactPointPurposeId: '60000000-0000-4000-8000-000000000002',
+      revision: 7,
+    });
+    const harness = transactionHarness([
+      [address],
+      [{ partyId }],
+      [address],
+      [current, previousPreferred],
+      [addressRow({ revision: 2 })],
+      [{ ...current, preferred: true, revision: 2 }],
+    ]);
+    yield* updateContactPointRecord(
+      harness.transaction,
+      scope,
+      updateCommand({
+        assignment: { preferred: true, purpose: 'DELIVERY' },
+        type: 'SET_ADDRESS_PURPOSE',
+      }),
+    );
+    expect(harness.updateSets[0]?.['revision']).toBe(8);
+    expect(harness.updateSets[0]?.['preferred']).toBe(false);
+    const revision = harness.updateSets[1]?.['revision'];
+    expect(is(revision, SQL)).toBe(true);
+    if (!is(revision, SQL)) {
+      return expect.unreachable('Expected SQL revision');
+    }
+    expect(new PgDialect().sqlToQuery(revision).sql).toMatch(/revision.*\+ 1/u);
+    expect(harness.updateSets[2]?.['revision']).toBe(2);
+    expect(harness.updateSets[3]?.['revision']).toBe(2);
+  }),
+);
+it.effect('preserves original provenance evidence and appends deduplicated enrichment', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const row = contactRow({
+      additionalEvidenceRefs: ['evidence:second'],
+      evidenceReference: 'evidence:first',
+    });
+    const updated = contactRow({
+      additionalEvidenceRefs: ['evidence:second', 'evidence:third'],
+      evidenceReference: 'evidence:first',
+      revision: 2,
+    });
+    const harness = transactionHarness([[row], [{ partyId }], [row], [updated], []]);
+    const result = yield* updateContactPointRecord(
+      harness.transaction,
+      scope,
+      updateCommand({
+        provenance: {
+          authoritative: false,
+          evidenceReference: 'evidence:third',
+          method: 'MANUAL_CONFIRMATION',
+          source: 'USER_ASSERTION',
+        },
+        type: 'ADD_PROVENANCE',
+      }),
+    );
+    expect(harness.updateSets[0]?.['evidenceReference']).toBe(undefined);
+    expect(harness.updateSets[0]?.['additionalEvidenceRefs']).toEqual([
+      'evidence:second',
+      'evidence:third',
+    ]);
+    expect(result.provenance.evidenceReferences).toEqual([
+      'evidence:first',
+      'evidence:second',
+      'evidence:third',
+    ]);
+  }),
+);
+it.effect(
+  'rejects invalid E.164 and oversized extensions through the service typed-error path',
+  () =>
     Effect.all(
       [
         { preferred: false, type: 'PHONE' as const, value: '+0123456789' },
@@ -676,17 +674,20 @@ void test('rejects invalid E.164 and oversized extensions through the service ty
               verification: { state: 'UNVERIFIED' },
             }),
           );
-          assert.ok(Predicate.isTagged(error, 'PartyContactPointInvalid'));
-          assert.equal(harness.selectWheres.length, 0);
-          assert.equal(harness.insertValues.length, 0);
+          expect(Predicate.isTagged(error, 'PartyContactPointInvalid')).toBe(true);
+          expect(harness.selectWheres.length).toBe(0);
+          expect(harness.insertValues.length).toBe(0);
         }),
       ),
     ).pipe(Effect.asVoid),
-  ));
-
-void test('rejects an explicit alias Party add but keeps durable ContactPoint updates readable through the full chain', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'rejects an explicit alias Party add but keeps durable ContactPoint updates readable through the full chain',
+  () =>
     Effect.gen(function* contactPointScenario() {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+      );
       const intermediatePartyId = '20000000-0000-4000-8000-000000000002';
       const canonicalPartyId = '20000000-0000-4000-8000-000000000003';
       const aliases = makePartyAliasResolutionService({
@@ -740,10 +741,12 @@ void test('rejects an explicit alias Party add but keeps durable ContactPoint up
           aliases,
         ),
       );
-      assert.ok(Schema.is(PartyAliasWriteRejected)(rejected));
-      assert.equal(rejected.canonicalPartyRef.resourceId, canonicalPartyId);
-      assert.equal(addHarness.insertValues.length, 0);
-
+      expect(Schema.is(PartyAliasWriteRejected)(rejected)).toBe(true);
+      expect(
+        (yield* Schema.decodeUnknownEffect(PartyAliasWriteRejected)(rejected)).canonicalPartyRef
+          .resourceId,
+      ).toBe(canonicalPartyId);
+      expect(addHarness.insertValues.length).toBe(0);
       const row = contactRow();
       const updateHarness = transactionHarness([
         [row],
@@ -761,10 +764,9 @@ void test('rejects an explicit alias Party add but keeps durable ContactPoint up
         }),
         aliases,
       );
-      assert.equal(updated.partyRef.resourceId, canonicalPartyId);
-      assert.equal(updated.storedPartyRef?.resourceId, partyId);
-      assert.equal(updateHarness.updateSets.length, 1);
-
+      expect(updated.partyRef.resourceId).toBe(canonicalPartyId);
+      expect(updated.storedPartyRef?.resourceId).toBe(partyId);
+      expect(updateHarness.updateSets.length).toBe(1);
       const readHarness = transactionHarness([[row], []]);
       const detail = yield* findPartyContactPointRecord(
         readHarness.transaction,
@@ -772,9 +774,8 @@ void test('rejects an explicit alias Party add but keeps durable ContactPoint up
         contactPointId,
         aliases,
       );
-      assert.equal(Option.getOrThrow(detail).partyRef.resourceId, canonicalPartyId);
-      assert.equal(Option.getOrThrow(detail).storedPartyRef.resourceId, partyId);
-
+      expect(Option.getOrThrow(detail).partyRef.resourceId).toBe(canonicalPartyId);
+      expect(Option.getOrThrow(detail).storedPartyRef.resourceId).toBe(partyId);
       const ended = contactRow({
         endEvidenceRefs: ['evidence:contact-end:1'],
         endProvenanceMethod: 'MANUAL_CONFIRMATION',
@@ -799,37 +800,44 @@ void test('rejects an explicit alias Party add but keeps durable ContactPoint up
         wholeEndCommand('2099-01-01T00:00:00.000Z'),
         aliases,
       );
-      assert.equal(endResult.contactPoint.partyRef.resourceId, canonicalPartyId);
-      assert.equal(endHarness.updateSets.length, 1);
+      expect(endResult.contactPoint.partyRef.resourceId).toBe(canonicalPartyId);
+      expect(endHarness.updateSets.length).toBe(1);
     }),
-  ));
-
-void test('advances the replaced channel preference revision as well as the selected contact', () =>
-  runEffectTestPromise(
+);
+it.effect('advances the replaced channel preference revision as well as the selected contact', () =>
+  Effect.gen(function* contactPointScenario() {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+    );
+    const row = contactRow({ preferred: false });
+    const harness = transactionHarness([
+      [row],
+      [{ partyId }],
+      [row],
+      [contactRow({ revision: 2 })],
+      [],
+    ]);
+    yield* updateContactPointRecord(
+      harness.transaction,
+      scope,
+      updateCommand({ preferred: true, type: 'SET_CHANNEL_PREFERRED' }),
+    );
+    const revision = harness.updateSets[0]?.['revision'];
+    expect(is(revision, SQL)).toBe(true);
+    if (!is(revision, SQL)) {
+      return expect.unreachable('Expected SQL revision');
+    }
+    expect(new PgDialect().sqlToQuery(revision).sql).toMatch(/revision.*\+ 1/u);
+    expect(harness.updateSets[1]?.['revision']).toBe(2);
+  }),
+);
+it.effect(
+  'persists bounded ARES provenance on the address and purpose without using observation time as effective time',
+  () =>
     Effect.gen(function* contactPointScenario() {
-      const row = contactRow({ preferred: false });
-      const harness = transactionHarness([
-        [row],
-        [{ partyId }],
-        [row],
-        [contactRow({ revision: 2 })],
-        [],
-      ]);
-      yield* updateContactPointRecord(
-        harness.transaction,
-        scope,
-        updateCommand({ preferred: true, type: 'SET_CHANNEL_PREFERRED' }),
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
       );
-      const revision = harness.updateSets[0]?.['revision'];
-      assert.ok(is(revision, SQL));
-      assert.match(new PgDialect().sqlToQuery(revision).sql, /revision.*\+ 1/u);
-      assert.equal(harness.updateSets[1]?.['revision'], 2);
-    }),
-  ));
-
-void test('persists bounded ARES provenance on the address and purpose without using observation time as effective time', () =>
-  runEffectTestPromise(
-    Effect.gen(function* contactPointScenario() {
       const externalEvidence = yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)({
         authorityPolicyKey: 'party_registry.ares_enrichment',
         authorityPolicyVersion: '1',
@@ -887,28 +895,29 @@ void test('persists bounded ARES provenance on the address and purpose without u
         validFrom: '2026-08-01T00:00:00.000Z',
         verification: { state: 'UNVERIFIED' },
       });
-      assert.deepEqual(harness.insertValues[0]?.['externalEvidence'], encodedExternalEvidence);
-      assert.deepEqual(harness.insertValues[1]?.['externalEvidence'], encodedExternalEvidence);
-      assert.deepEqual(
-        harness.insertValues[0]?.['validFrom'],
+      expect(harness.insertValues[0]?.['externalEvidence']).toEqual(encodedExternalEvidence);
+      expect(harness.insertValues[1]?.['externalEvidence']).toEqual(encodedExternalEvidence);
+      expect(harness.insertValues[0]?.['validFrom']).toEqual(
         instantAsDate('2026-08-01T00:00:00.000Z'),
       );
-      assert.equal(
+      expect(
         result.provenance.externalEvidence === undefined
           ? undefined
           : DateTime.formatIso(result.provenance.externalEvidence.observedAt),
-        '2026-09-03T10:00:00.000Z',
-      );
-      assert.equal(result.value.type, 'ADDRESS');
+      ).toBe('2026-09-03T10:00:00.000Z');
+      expect(result.value.type).toBe('ADDRESS');
       if (result.value.type === 'ADDRESS') {
-        assert.deepEqual(result.value.purposes[0]?.provenance.externalEvidence, externalEvidence);
+        expect(result.value.purposes[0]?.provenance.externalEvidence).toEqual(externalEvidence);
       }
     }),
-  ));
-
-void test('treats PHONE extensions as distinct endpoints while rejecting an exact duplicate extension', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'treats PHONE extensions as distinct endpoints while rejecting an exact duplicate extension',
+  () =>
     Effect.gen(function* contactPointScenario() {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+      );
       const existing = contactRow({
         contactPointType: 'PHONE',
         displayValue: '+420777123456',
@@ -943,21 +952,23 @@ void test('treats PHONE extensions as distinct endpoints while rejecting an exac
       });
       const newHarness = transactionHarness([[{ partyId }], [existing], []], [[created]]);
       const result = yield* addContactPointRecord(newHarness.transaction, scope, command('102'));
-      assert.equal(newHarness.insertValues.length, 1);
-      assert.equal(result.value.type === 'PHONE' && result.value.extension, '102');
-
+      expect(newHarness.insertValues.length).toBe(1);
+      expect(result.value.type === 'PHONE' && result.value.extension).toBe('102');
       const duplicateHarness = transactionHarness([[{ partyId }], [existing]]);
       const duplicate = yield* Effect.flip(
         addContactPointRecord(duplicateHarness.transaction, scope, command('101')),
       );
-      assert.ok(Predicate.isTagged(duplicate, 'PartyContactPointAlreadyExists'));
-      assert.equal(duplicateHarness.insertValues.length, 0);
+      expect(Predicate.isTagged(duplicate, 'PartyContactPointAlreadyExists')).toBe(true);
+      expect(duplicateHarness.insertValues.length).toBe(0);
     }),
-  ));
-
-void test('whole ADDRESS end preserves an earlier purpose end and its independent accepted evidence', () =>
-  runEffectTestPromise(
+);
+it.effect(
+  'whole ADDRESS end preserves an earlier purpose end and its independent accepted evidence',
+  () =>
     Effect.gen(function* contactPointScenario() {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z')),
+      );
       const address = addressRow();
       const earlierEndAudit = {
         endEvidenceRefs: ['evidence:delivery-contract-ended'],
@@ -1000,26 +1011,23 @@ void test('whole ADDRESS end preserves an earlier purpose end and its independen
         scope,
         wholeEndCommand('2099-01-01T00:00:00.000Z'),
       );
-      assert.equal(
-        harness.updateSets.length,
+      expect(harness.updateSets.length, 'only the address and still-open purpose are changed').toBe(
         2,
-        'only the address and still-open purpose are changed',
       );
-      assert.equal(harness.updateSets[1]?.['revision'], 2);
+      expect(harness.updateSets[1]?.['revision']).toBe(2);
       if (result.contactPoint.value.type === 'ADDRESS') {
         const [preserved] = result.contactPoint.value.purposes;
-        assert.equal(
+        expect(
           preserved?.validTo === null || preserved?.validTo === undefined
             ? preserved?.validTo
             : DateTime.formatIso(preserved.validTo),
-          '2090-01-01T00:00:00.000Z',
-        );
-        assert.equal(preserved?.end?.reason, 'Independent delivery contract end');
-        assert.deepEqual(preserved?.end?.provenance.evidenceReferences, [
+        ).toBe('2090-01-01T00:00:00.000Z');
+        expect(preserved?.end?.reason).toBe('Independent delivery contract end');
+        expect(preserved?.end?.provenance.evidenceReferences).toEqual([
           'evidence:delivery-contract-ended',
         ]);
       } else {
-        assert.fail('Expected ADDRESS result');
+        expect.unreachable('Expected ADDRESS result');
       }
     }),
-  ));
+);

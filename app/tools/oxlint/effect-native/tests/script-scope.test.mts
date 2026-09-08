@@ -1,7 +1,6 @@
-import assert from 'node:assert/strict';
+import { expect, it } from '@app/effect-rstest';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { test } from 'node:test';
+import nodePath from 'node:path';
 
 import { runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
@@ -26,26 +25,29 @@ export const makeOutboxProcessor = (dependencies: OutboxProcessorDependencies) =
 ];
 
 for (const { rule, source } of cases) {
-  test(`${rule} excludes nested scripts by default and honors includeScripts`, () => {
+  it(`${rule} excludes nested scripts by default and honors includeScripts`, () => {
     withTemporaryWorkspace((directory) => {
       const workspaces = ['apps/shell-super-app', 'verticals/contacts', 'packages/core-runtime'];
       const sources = workspaces.map((workspace) => `${workspace}/src/operation.ts`);
       const scripts = workspaces.map((workspace) => `${workspace}/scripts/operation.mts`);
       const paths = [...sources, ...scripts];
       for (const path of paths) {
-        const file = join(directory, path);
-        mkdirSync(dirname(file), { recursive: true });
+        const file = nodePath.join(directory, path);
+        mkdirSync(nodePath.dirname(file), { recursive: true });
         writeFileSync(file, source);
       }
-      const config = join(directory, '.oxlintrc.json');
+      const config = nodePath.join(directory, '.oxlintrc.json');
       for (const includeScripts of [false, true]) {
         writeFileSync(
           config,
           JSON.stringify({
-            jsPlugins: [
-              { name: 'effect-native', specifier: join(testsDirectory, 'fixture-plugin.ts') },
-            ],
             categories: { correctness: 'off' },
+            jsPlugins: [
+              {
+                name: 'effect-native',
+                specifier: nodePath.join(testsDirectory, 'fixture-plugin.ts'),
+              },
+            ],
             rules: {
               [`effect-native/${rule}`]: includeScripts
                 ? ['error', { includeScripts: true }]
@@ -56,28 +58,29 @@ for (const { rule, source } of cases) {
         for (const absolute of [false, true]) {
           const run = runOxlint(
             config,
-            absolute ? paths.map((path) => join(directory, path)) : paths,
+            absolute ? paths.map((path) => nodePath.join(directory, path)) : paths,
             directory,
             rule,
           );
-          assert.equal(
-            run.numberOfFiles,
-            paths.length,
-            `${rule}: every staged file must be linted`,
-          );
-          assert.equal(run.exitCode, 1, `${rule}: ordinary source must still report`);
-          for (const diagnostic of run.diagnostics)
-            assert.equal(diagnostic.code, `effect-native(${rule})`);
+          expect(run.numberOfFiles, `${rule}: every staged file must be linted`).toBe(paths.length);
+          expect(run.exitCode, `${rule}: ordinary source must still report`).toBe(1);
+          for (const diagnostic of run.diagnostics) {
+            expect(diagnostic.code).toBe(`effect-native(${rule})`);
+          }
           const reported = [
             ...new Set(
-              run.diagnostics.map((diagnostic) => diagnostic.filename.replaceAll('\\', '/')),
+              run.diagnostics.map((diagnostic) =>
+                (nodePath.isAbsolute(diagnostic.filename)
+                  ? nodePath.relative(directory, diagnostic.filename)
+                  : diagnostic.filename
+                ).replaceAll('\\', '/'),
+              ),
             ),
           ];
-          assert.deepEqual(
-            reported.sort(),
-            (includeScripts ? paths : sources).toSorted(),
+          expect(
+            reported.toSorted(),
             `${rule}: includeScripts=${includeScripts}, absolute=${absolute}`,
-          );
+          ).toEqual((includeScripts ? paths : sources).toSorted());
         }
       }
     });

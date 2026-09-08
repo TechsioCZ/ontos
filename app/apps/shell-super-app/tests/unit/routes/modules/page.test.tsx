@@ -1,7 +1,6 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
+import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
 import {
   LegalEntityIdSchema,
@@ -36,10 +35,6 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 
 rstest.mock('@techsio/ui-kit/atoms/status-text', () => ({
   StatusText: ({ children }: { readonly children: ReactNode }) => <span>{children}</span>,
-}));
-
-rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
-  runBrowserEffect: runEffectTestPromise,
 }));
 
 rstest.mock('../../../../src/api/vertical-clients.ts', () => ({
@@ -121,7 +116,7 @@ afterEach(() => {
   rstest.clearAllMocks();
 });
 
-test.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as const)(
+it.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as const)(
   'does not consult or invoke the private registry for a %s exact-page response',
   (state) => {
     useLoaderDataMock.mockReturnValue({ shell, state } satisfies ModuleTargetPageModel);
@@ -131,15 +126,19 @@ test.each(['selection_required', 'forbidden', 'not_found', 'unavailable'] as con
   },
 );
 
-test('invokes the exact private page loader only after a resolved authenticated response', async () => {
-  useLoaderDataMock.mockReturnValue(resolvedModel);
-  render(<ModuleTargetPage />);
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('contacts.core.page-customers:customer-1')).toBeTruthy();
-});
+it.live('invokes the exact private page loader only after a resolved authenticated response', () =>
+  Effect.gen(function* invokesTheExactPrivatePageLoader() {
+    useLoaderDataMock.mockReturnValue(resolvedModel);
+    render(<ModuleTargetPage />);
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1')),
+    ).toBeTruthy();
+  }),
+);
 
-test('reads loader data from the active Party Registry owner route', () => {
+it('reads loader data from the active Party Registry owner route', () => {
   useLoaderDataMock.mockImplementation(({ from }: { readonly from: string }) => {
     if (from !== '/$lang/contacts') {
       throw new Error(`Invariant failed: Could not find an active match from "${from}"`);
@@ -154,176 +153,216 @@ test('reads loader data from the active Party Registry owner route', () => {
   });
 });
 
-test('maps an unreachable approved remote to its safe local diagnostic', async () => {
-  loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
-  useLoaderDataMock.mockReturnValue(resolvedModel);
+it.live('maps an unreachable approved remote to its safe local diagnostic', () =>
+  Effect.gen(function* mapsAnUnreachableApprovedRemoteTo() {
+    loadRemotePageMock.mockRejectedValueOnce(new Error('private remote error'));
+    useLoaderDataMock.mockReturnValue(resolvedModel);
 
-  render(<ModuleTargetPage />);
+    render(<ModuleTargetPage />);
 
-  expect(await screen.findByText('shell.moduleTarget.unavailable')).toBeTruthy();
-});
+    expect(
+      yield* Effect.promise(() => screen.findByText('shell.moduleTarget.unavailable')),
+    ).toBeTruthy();
+  }),
+);
 
-test('rejects a malformed remote module before React receives it', async () => {
-  loadRemotePageMock.mockResolvedValueOnce({ default: 'not a component' });
-  useLoaderDataMock.mockReturnValue(resolvedModel);
+it.live('rejects a malformed remote module before React receives it', () =>
+  Effect.gen(function* rejectsAMalformedRemoteModuleBefore() {
+    loadRemotePageMock.mockResolvedValueOnce({ default: 'not a component' });
+    useLoaderDataMock.mockReturnValue(resolvedModel);
 
-  render(<ModuleTargetPage />);
+    render(<ModuleTargetPage />);
 
-  expect(await screen.findByText('shell.moduleTarget.incompatible')).toBeTruthy();
-  expect(remotePropsMock).not.toHaveBeenCalled();
-});
+    expect(
+      yield* Effect.promise(() => screen.findByText('shell.moduleTarget.incompatible')),
+    ).toBeTruthy();
+    expect(remotePropsMock).not.toHaveBeenCalled();
+  }),
+);
 
-test('passes an empty route-parameter record to a resolved static page', async () => {
-  useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
-  render(<ModuleTargetPage />);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('contacts.core.page-customers:static')).toBeTruthy();
-});
+it.live('passes an empty route-parameter record to a resolved static page', () =>
+  Effect.gen(function* passesAnEmptyRouteParameterRecord() {
+    useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
+    render(<ModuleTargetPage />);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:static')),
+    ).toBeTruthy();
+  }),
+);
 
-test('loads the generated Customers list page as a static exact target', async () => {
-  const customersListModel: ResolvedPageModel = {
-    ...resolvedModel,
-    routeParams: {},
-    target: targetFixture('contacts.core.page-customers-list', 'contacts.core.page.customers-list'),
-  };
-  useLoaderDataMock.mockReturnValue(customersListModel);
-  render(<ModuleTargetPage />);
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customersListModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('contacts.core.page-customers-list:static')).toBeTruthy();
-});
+it.live('loads the generated Customers list page as a static exact target', () =>
+  Effect.gen(function* loadsTheGeneratedCustomersListPage() {
+    const customersListModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: {},
+      target: targetFixture(
+        'contacts.core.page-customers-list',
+        'contacts.core.page.customers-list',
+      ),
+    };
+    useLoaderDataMock.mockReturnValue(customersListModel);
+    render(<ModuleTargetPage />);
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customersListModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customers-list:static')),
+    ).toBeTruthy();
+  }),
+);
 
-test('loads the approved Customer-detail remote once with the exact declared Customer ID', async () => {
-  const customerDetailModel: ResolvedPageModel = {
-    ...resolvedModel,
-    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-    target: targetFixture(
-      'contacts.core.page-customer-detail',
-      'contacts.core.page.customer-detail',
-    ),
-  };
-  useLoaderDataMock.mockReturnValue(customerDetailModel);
-  render(<ModuleTargetPage />);
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerDetailModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(
-    await screen.findByText(
-      'contacts.core.page-customer-detail:11111111-1111-4111-8111-111111111111',
-    ),
-  ).toBeTruthy();
-});
+it.live('loads the approved Customer-detail remote once with the exact declared Customer ID', () =>
+  Effect.gen(function* loadsTheApprovedCustomerDetailRemote() {
+    const customerDetailModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+      target: targetFixture(
+        'contacts.core.page-customer-detail',
+        'contacts.core.page.customer-detail',
+      ),
+    };
+    useLoaderDataMock.mockReturnValue(customerDetailModel);
+    render(<ModuleTargetPage />);
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerDetailModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(
+      yield* Effect.promise(() =>
+        screen.findByText(
+          'contacts.core.page-customer-detail:11111111-1111-4111-8111-111111111111',
+        ),
+      ),
+    ).toBeTruthy();
+  }),
+);
 
-test('loads the approved Contact-detail remote once with both exact hierarchical IDs', async () => {
-  const contactDetailModel: ResolvedPageModel = {
-    ...resolvedModel,
-    routeParams: {
-      contactId: '33333333-3333-4333-8333-333333333333',
-      id: '11111111-1111-4111-8111-111111111111',
-    },
-    target: targetFixture('contacts.core.page-contact-detail', 'contacts.core.page.contact-detail'),
-  };
-  useLoaderDataMock.mockReturnValue(contactDetailModel);
-  render(<ModuleTargetPage />);
+it.live('loads the approved Contact-detail remote once with both exact hierarchical IDs', () =>
+  Effect.gen(function* loadsTheApprovedContactDetailRemote() {
+    const contactDetailModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: {
+        contactId: '33333333-3333-4333-8333-333333333333',
+        id: '11111111-1111-4111-8111-111111111111',
+      },
+      target: targetFixture(
+        'contacts.core.page-contact-detail',
+        'contacts.core.page.contact-detail',
+      ),
+    };
+    useLoaderDataMock.mockReturnValue(contactDetailModel);
+    render(<ModuleTargetPage />);
 
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactDetailModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(remotePropsMock).toHaveBeenCalledWith({
-    routeParams: contactDetailModel.routeParams,
-    target: contactDetailModel.target,
-  });
-});
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactDetailModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(remotePropsMock).toHaveBeenCalledWith({
+      routeParams: contactDetailModel.routeParams,
+      target: contactDetailModel.target,
+    });
+  }),
+);
 
-test('passes ContactEdit both hierarchical IDs and the resolved fail-closed target', async () => {
-  const contactEditModel: ResolvedPageModel = {
-    ...resolvedModel,
-    routeParams: {
-      contactId: '33333333-3333-4333-8333-333333333333',
-      id: '11111111-1111-4111-8111-111111111111',
-    },
-    target: targetFixture(
-      'contacts.core.page-contact-edit',
-      'contacts.core.page.contact-edit',
-      false,
-    ),
-  };
-  useLoaderDataMock.mockReturnValue(contactEditModel);
-  render(<ModuleTargetPage />);
+it.live('passes ContactEdit both hierarchical IDs and the resolved fail-closed target', () =>
+  Effect.gen(function* passesContactEditBothHierarchicalIDsAnd() {
+    const contactEditModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: {
+        contactId: '33333333-3333-4333-8333-333333333333',
+        id: '11111111-1111-4111-8111-111111111111',
+      },
+      target: targetFixture(
+        'contacts.core.page-contact-edit',
+        'contacts.core.page.contact-edit',
+        false,
+      ),
+    };
+    useLoaderDataMock.mockReturnValue(contactEditModel);
+    render(<ModuleTargetPage />);
 
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactEditModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(remotePropsMock).toHaveBeenCalledWith({
-    routeParams: contactEditModel.routeParams,
-    target: contactEditModel.target,
-  });
-});
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactEditModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(remotePropsMock).toHaveBeenCalledWith({
+      routeParams: contactEditModel.routeParams,
+      target: contactEditModel.target,
+    });
+  }),
+);
 
-test('passes CustomerEdit its exact ID and fail-closed writable target', async () => {
-  const customerEditModel: ResolvedPageModel = {
-    ...resolvedModel,
-    routeParams: { id: 'customer-1' },
-    target: targetFixture(
-      'contacts.core.page-customer-edit',
-      'contacts.core.page.customer-edit',
-      false,
-    ),
-  };
-  useLoaderDataMock.mockReturnValue(customerEditModel);
-  render(<ModuleTargetPage />);
+it.live('passes CustomerEdit its exact ID and fail-closed writable target', () =>
+  Effect.gen(function* passesCustomerEditItsExactIDAnd() {
+    const customerEditModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: { id: 'customer-1' },
+      target: targetFixture(
+        'contacts.core.page-customer-edit',
+        'contacts.core.page.customer-edit',
+        false,
+      ),
+    };
+    useLoaderDataMock.mockReturnValue(customerEditModel);
+    render(<ModuleTargetPage />);
 
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerEditModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(remotePropsMock).toHaveBeenCalledWith({
-    routeParams: { id: 'customer-1' },
-    target: customerEditModel.target,
-  });
-  expect(await screen.findByText('contacts.core.page-customer-edit:customer-1')).toBeTruthy();
-});
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerEditModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(remotePropsMock).toHaveBeenCalledWith({
+      routeParams: { id: 'customer-1' },
+      target: customerEditModel.target,
+    });
+    expect(
+      yield* Effect.promise(() => screen.findByText('contacts.core.page-customer-edit:customer-1')),
+    ).toBeTruthy();
+  }),
+);
 
-test('passes CustomerCreate its bounded route context and resolved writable target', async () => {
-  const customerCreateModel: ResolvedPageModel = {
-    ...resolvedModel,
-    routeParams: { id: 'untrusted-route-context' },
-    target: targetFixture(
-      'contacts.core.page-customer-create',
-      'contacts.core.page.customer-create',
-    ),
-  };
-  useLoaderDataMock.mockReturnValue(customerCreateModel);
-  render(<ModuleTargetPage />);
+it.live('passes CustomerCreate its bounded route context and resolved writable target', () =>
+  Effect.gen(function* passesCustomerCreateItsBoundedRouteContext() {
+    const customerCreateModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: { id: 'untrusted-route-context' },
+      target: targetFixture(
+        'contacts.core.page-customer-create',
+        'contacts.core.page.customer-create',
+      ),
+    };
+    useLoaderDataMock.mockReturnValue(customerCreateModel);
+    render(<ModuleTargetPage />);
 
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerCreateModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(remotePropsMock).toHaveBeenCalledWith({
-    routeParams: { id: 'untrusted-route-context' },
-    target: customerCreateModel.target,
-  });
-  expect(
-    await screen.findByText('contacts.core.page-customer-create:untrusted-route-context'),
-  ).toBeTruthy();
-});
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerCreateModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(remotePropsMock).toHaveBeenCalledWith({
+      routeParams: { id: 'untrusted-route-context' },
+      target: customerCreateModel.target,
+    });
+    expect(
+      yield* Effect.promise(() =>
+        screen.findByText('contacts.core.page-customer-create:untrusted-route-context'),
+      ),
+    ).toBeTruthy();
+  }),
+);
 
-test('passes ContactCreate its exact ID and fail-closed writable target', async () => {
-  const contactCreateModel: ResolvedPageModel = {
-    ...resolvedModel,
-    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-    target: targetFixture(
-      'contacts.core.page-contact-create',
-      'contacts.core.page.contact-create',
-      false,
-    ),
-  };
-  useLoaderDataMock.mockReturnValue(contactCreateModel);
-  render(<ModuleTargetPage />);
+it.live('passes ContactCreate its exact ID and fail-closed writable target', () =>
+  Effect.gen(function* passesContactCreateItsExactIDAnd() {
+    const contactCreateModel: ResolvedPageModel = {
+      ...resolvedModel,
+      routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+      target: targetFixture(
+        'contacts.core.page-contact-create',
+        'contacts.core.page.contact-create',
+        false,
+      ),
+    };
+    useLoaderDataMock.mockReturnValue(contactCreateModel);
+    render(<ModuleTargetPage />);
 
-  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactCreateModel.target);
-  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(remotePropsMock).toHaveBeenCalledWith({
-    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
-    target: contactCreateModel.target,
-  });
-  expect(
-    await screen.findByText(
-      'contacts.core.page-contact-create:11111111-1111-4111-8111-111111111111',
-    ),
-  ).toBeTruthy();
-});
+    expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactCreateModel.target);
+    yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
+    expect(remotePropsMock).toHaveBeenCalledWith({
+      routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+      target: contactCreateModel.target,
+    });
+    expect(
+      yield* Effect.promise(() =>
+        screen.findByText('contacts.core.page-contact-create:11111111-1111-4111-8111-111111111111'),
+      ),
+    ).toBeTruthy();
+  }),
+);

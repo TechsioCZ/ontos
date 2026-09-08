@@ -1,5 +1,7 @@
-import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
-import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
+import { runBrowserEffect } from '../../../../src/runtime/browser-effect-runtime.ts' with {
+  rstest: 'importActual',
+};
+import { afterEach, beforeEach, expect, rstest, it } from '@app/effect-rstest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
@@ -148,9 +150,7 @@ const authenticatedModel = (): HomePageModel => ({
 
 beforeEach(() => {
   navigateMock.mockResolvedValue(undefined);
-  runBrowserEffectMock.mockImplementation(
-    async (effect: Effect.Effect<unknown, unknown>) => await runEffectTestPromise(effect),
-  );
+  runBrowserEffectMock.mockImplementation(runBrowserEffect);
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
   switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));
@@ -161,13 +161,13 @@ afterEach(() => {
   rstest.clearAllMocks();
 });
 
-test('anonymous home exposes only the localized login action', () => {
+it('anonymous home exposes only the localized login action', () => {
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
   expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/en/login');
   expect(screen.queryByRole('banner')).toBeNull();
 });
 
-test('authenticated home renders server-composed navigation and selected legal context', () => {
+it('authenticated home renders server-composed navigation and selected legal context', () => {
   render(<HomeView initialModel={authenticatedModel()} />);
   expect(screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')).toBe(
     '/en/modules/inventory.stock',
@@ -177,45 +177,78 @@ test('authenticated home renders server-composed navigation and selected legal c
   expect(screen.queryByText('inventory.stock')).toBeNull();
 });
 
-test('successful tenant switch performs a full document reload', async () => {
-  const user = userEvent.setup();
-  render(<HomeView initialModel={authenticatedModel()} />);
-  await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
-  await user.click(await screen.findByRole('option', { name: 'Zeta tenant' }));
-  await waitFor(() =>
-    expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: tenantId2 }, { locale: 'en' }),
-  );
-  await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }));
-});
+it.live('successful tenant switch performs a full document reload', () =>
+  Effect.gen(function* successfulTenantSwitchPerformsAFull() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() =>
+      user.click(screen.getByRole('combobox', { name: 'Current tenant' })),
+    );
+    const tenantOption = yield* Effect.promise(() =>
+      screen.findByRole('option', { name: 'Zeta tenant' }),
+    );
+    yield* Effect.promise(() => user.click(tenantOption));
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: tenantId2 }, { locale: 'en' }),
+      ),
+    );
+    yield* Effect.promise(() =>
+      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
+    );
+  }),
+);
 
-test('successful legal-entity switch performs a full document reload', async () => {
-  const user = userEvent.setup();
-  render(<HomeView initialModel={authenticatedModel()} />);
-  await user.click(screen.getByRole('combobox', { name: 'Current legal entity' }));
-  await user.click(await screen.findByRole('option', { name: 'Beta company' }));
-  await waitFor(() =>
-    expect(switchLegalEntityMock).toHaveBeenCalledWith(
-      { legalEntityId: legalEntityId2 },
-      { locale: 'en' },
-    ),
-  );
-  await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }));
-});
+it.live('successful legal-entity switch performs a full document reload', () =>
+  Effect.gen(function* successfulLegalEntitySwitchPerformsA() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() =>
+      user.click(screen.getByRole('combobox', { name: 'Current legal entity' })),
+    );
+    const legalEntityOption = yield* Effect.promise(() =>
+      screen.findByRole('option', { name: 'Beta company' }),
+    );
+    yield* Effect.promise(() => user.click(legalEntityOption));
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(switchLegalEntityMock).toHaveBeenCalledWith(
+          { legalEntityId: legalEntityId2 },
+          { locale: 'en' },
+        ),
+      ),
+    );
+    yield* Effect.promise(() =>
+      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
+    );
+  }),
+);
 
-test('search submission navigates to the localized Shell search route', async () => {
-  const user = userEvent.setup();
-  render(<HomeView initialModel={authenticatedModel()} />);
-  await user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1');
-  await user.click(screen.getByRole('button', { name: 'Search' }));
-  expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
-});
+it.live('search submission navigates to the localized Shell search route', () =>
+  Effect.gen(function* searchSubmissionNavigatesToTheLocalized() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() =>
+      user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'),
+    );
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Search' })));
+    expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
+  }),
+);
 
-test('logout clears the authenticated composition together', async () => {
-  const user = userEvent.setup();
-  render(<HomeView initialModel={authenticatedModel()} />);
-  await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
-  await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
-  await waitFor(() =>
-    expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '/en/login' }),
-  );
-});
+it.live('logout clears the authenticated composition together', () =>
+  Effect.gen(function* logoutClearsTheAuthenticatedCompositionTogether() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Ada Lovelace' })));
+    const logoutItem = yield* Effect.promise(() =>
+      screen.findByRole('menuitem', { name: 'Logout' }),
+    );
+    yield* Effect.promise(() => user.click(logoutItem));
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '/en/login' }),
+      ),
+    );
+  }),
+);

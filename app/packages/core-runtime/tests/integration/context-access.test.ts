@@ -1,8 +1,7 @@
+import { expect, it } from '@app/effect-rstest';
 import { NodeServices } from '@effect/platform-node';
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
-import { Crypto, Effect, FileSystem, flow, ManagedRuntime } from 'effect';
+import { Crypto, Effect, FileSystem } from 'effect';
 import {
   makeContextAccess,
   toLegalEntityAccessObjectId,
@@ -14,18 +13,6 @@ import {
   createSpiceDbPermissionClient,
 } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
-
-const integrationRuntime = ManagedRuntime.make(NodeServices.layer);
-
-const effectTest = <Value, Failure>(
-  name: string,
-  effect: Effect.Effect<Value, Failure, Crypto.Crypto | FileSystem.FileSystem>,
-): void => {
-  test(
-    name,
-    flow(() => Effect.asVoid(effect), integrationRuntime.runPromise),
-  );
-};
 
 const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 
@@ -70,7 +57,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     moduleObjectId === undefined ||
     resourceObjectId === undefined
   ) {
-    assert.fail('Expected valid SpiceDB object identifiers');
+    throw new Error('Expected valid SpiceDB object identifiers');
   }
   const client = v1.NewClient(
     configuration.preSharedKey,
@@ -85,7 +72,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const bootstrapLines = bootstrap.split('\n');
   const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;
   const schemaEnd = bootstrapLines.indexOf('relationships: |-');
-  assert.ok(schemaStart > 0 && schemaEnd > schemaStart);
+  expect(schemaStart > 0 && schemaEnd > schemaStart).toBeTruthy();
   const schemaBlock = bootstrapLines
     .slice(schemaStart, schemaEnd)
     .map((line) => line.replace(/^ {2}/u, ''))
@@ -151,7 +138,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
         { concurrency: 'unbounded' },
       );
       for (const decisions of tenantDecisions) {
-        assert.deepEqual(decisions, [
+        expect(decisions).toEqual([
           { decision: 'allowed', key: tenantId },
           { decision: 'denied', key: otherTenantId },
         ]);
@@ -168,28 +155,25 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
         { concurrency: 'unbounded' },
       );
       for (const decisions of legalEntityDecisions) {
-        assert.deepEqual(decisions, [
+        expect(decisions).toEqual([
           { decision: 'allowed', key: legalEntityId },
           { decision: 'denied', key: otherLegalEntityId },
         ]);
       }
-      assert.deepEqual(
+      expect(
         yield* access.modules({ legalEntityId, moduleIds: [moduleId], principalId, tenantId }),
-        [{ decision: 'allowed', key: moduleId }],
-      );
-      assert.deepEqual(
+      ).toEqual([{ decision: 'allowed', key: moduleId }]);
+      expect(
         yield* access.modules({
           legalEntityId,
           moduleIds: [moduleId],
           principalId,
           tenantId: otherTenantId,
         }),
-        [{ decision: 'denied', key: moduleId }],
-      );
-      assert.deepEqual(
+      ).toEqual([{ decision: 'denied', key: moduleId }]);
+      expect(
         yield* access.resources({ legalEntityId, principalId, resources: [resource], tenantId }),
-        [{ decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` }],
-      );
+      ).toEqual([{ decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` }]);
     }).pipe(Effect.ensuring(Effect.sync(() => permissionClient.close())));
   }).pipe(
     Effect.ensuring(
@@ -217,7 +201,9 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   );
 });
 
-effectTest(
-  'isolates live legal-entity, module, and resource batches by tenant and entity',
-  contextAccessProgram,
-);
+it.layer(NodeServices.layer, { excludeTestServices: true })('context-access', (suite) => {
+  suite.effect(
+    'isolates live legal-entity, module, and resource batches by tenant and entity',
+    () => contextAccessProgram,
+  );
+});

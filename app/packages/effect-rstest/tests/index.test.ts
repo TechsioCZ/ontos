@@ -32,15 +32,11 @@ it('throws fails when the thunk does not throw', () => {
   expect(() => throws(() => {})).toThrow();
 });
 
-const resolvedPromiseThrows: () => Promise<void> = throwsAsync.bind(
-  undefined,
-  Promise.resolve.bind(Promise),
-  undefined,
-);
+const resolvedPromiseThrows = throwsAsync.bind(undefined, Promise.resolve.bind(Promise), undefined);
 
 it.effect('throwsAsync fails when the promise resolves', () =>
   Effect.gen(function* throwsResolved() {
-    const result = yield* Effect.exit(Effect.tryPromise(resolvedPromiseThrows));
+    const result = yield* Effect.exit(Effect.tryPromise(() => resolvedPromiseThrows()));
     expect(Exit.isFailure(result)).toBe(true);
   }),
 );
