@@ -14,17 +14,12 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { ESTree } from '@oxlint/plugins';
 
-import { bindingsFor } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
+import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { booleanOption, compile, positiveInteger, stringList } from '../shared/options.ts';
+import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the production `includePaths` defaults instead of
- * forcing the fixture config to loosen them (`run-on-repo.mts` reuses that config verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_FACTORY_NAME_PATTERN = '^(make|create|build|define)[A-Z]';
 const DEFAULT_MAX_POSITIONAL_PARAMS = 2;
@@ -32,9 +27,6 @@ const DEFAULT_OPTION_BAG_TYPE_PATTERN = '(Options|Dependencies|Deps|Config)$';
 const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
 const DEFAULT_IGNORE_NAMES: readonly string[] = [];
-
-/** Wrappers between a written parameter and the binding it introduces. */
-const PARAMETER_WRAPPERS = new Set(['AssignmentPattern', 'RestElement', 'TSParameterProperty']);
 
 /** Expression wrappers between a function expression and the declaration that names it. */
 const VALUE_WRAPPERS = new Set([
@@ -76,81 +68,29 @@ interface RuleOptions {
   readonly optionBagTypePattern: RegExp;
 }
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  return value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
-function compile(value: unknown, fallback: string): RegExp {
-  const source = typeof value === 'string' && value.length > 0 ? value : fallback;
-  try {
-    return new RegExp(source, 'u');
-  } catch {
-    return new RegExp(fallback, 'u');
-  }
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Record<string, unknown>;
   const includePaths = stringList(given.includePaths, DEFAULT_INCLUDE_PATHS);
-  const max = given.maxPositionalParams;
   return {
     factoryNamePattern: compile(given.factoryNamePattern, DEFAULT_FACTORY_NAME_PATTERN),
-    flagOptionBags: typeof given.flagOptionBags === 'boolean' ? given.flagOptionBags : true,
+    flagOptionBags: booleanOption(given.flagOptionBags, true),
     ignore: stringList(given.ignore, DEFAULT_IGNORE),
     ignoreNames: new Set(stringList(given.ignoreNames, DEFAULT_IGNORE_NAMES)),
     includePaths: includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
-    includeScripts: typeof given.includeScripts === 'boolean' ? given.includeScripts : false,
-    includeTests: typeof given.includeTests === 'boolean' ? given.includeTests : false,
-    includeTypeSignatures:
-      typeof given.includeTypeSignatures === 'boolean' ? given.includeTypeSignatures : true,
-    maxPositionalParams:
-      typeof max === 'number' && Number.isInteger(max) && max >= 0
-        ? max
-        : DEFAULT_MAX_POSITIONAL_PARAMS,
+    includeScripts: booleanOption(given.includeScripts, false),
+    includeTests: booleanOption(given.includeTests, false),
+    includeTypeSignatures: booleanOption(given.includeTypeSignatures, true),
+    maxPositionalParams: positiveInteger(
+      given.maxPositionalParams,
+      DEFAULT_MAX_POSITIONAL_PARAMS,
+      0,
+    ),
     optionBagTypePattern: compile(given.optionBagTypePattern, DEFAULT_OPTION_BAG_TYPE_PATTERN),
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** `{ makeX: … }` / `{ "makeX": … }` → `"makeX"`; computed keys are unknowable and yield `null`. */
 function keyName(key: AnyNode, computed: boolean): string | null {
-  if (!computed && key.type === 'Identifier') return (key as { name: string }).name;
-  if (key.type === 'TemplateLiteral' && key.expressions.length === 0)
-    return key.quasis[0]?.value.cooked ?? null;
-  if (key.type === 'Literal') {
-    const value = (key as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  return null;
-}
-
-/** `AssignmentPattern` / `RestElement` / `TSParameterProperty` → the binding they wrap. */
-function unwrapBinding(node: AnyNode): AnyNode {
-  let current = node;
-  for (let guard = 0; guard < 4; guard += 1) {
-    if (!PARAMETER_WRAPPERS.has(current.type)) return current;
-    const inner =
-      (current as { left?: AnyNode }).left ??
-      (current as { argument?: AnyNode }).argument ??
-      (current as { parameter?: AnyNode }).parameter;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return staticKeyName(key, computed, { templates: true, rawTemplates: false, singleQuasi: false });
 }
 
 /**
@@ -175,6 +115,10 @@ function typeReferenceNames(annotation: AnyNode | null | undefined, depth = 0): 
     annotation.type === 'TSTypeAnnotation'
       ? (annotation as { typeAnnotation: AnyNode }).typeAnnotation
       : annotation;
+  return namesInType(node, depth);
+}
+
+function namesInType(node: AnyNode, depth: number): readonly string[] {
   if (TYPE_WRAPPERS.has(node.type)) {
     const inner =
       (node as { typeAnnotation?: AnyNode }).typeAnnotation ??
@@ -189,12 +133,13 @@ function typeReferenceNames(annotation: AnyNode | null | undefined, depth = 0): 
     return names;
   }
   if (node.type !== 'TSTypeReference') return [];
-  const typeName = (node as { typeName: AnyNode }).typeName;
-  if (typeName.type === 'Identifier') return [(typeName as { name: string }).name];
-  if (typeName.type === 'TSQualifiedName') {
-    const right = (typeName as { right: AnyNode }).right;
-    return right.type === 'Identifier' ? [(right as { name: string }).name] : [];
-  }
+  return referenceLeafNames((node as { typeName: AnyNode }).typeName);
+}
+
+function referenceLeafNames(typeName: AnyNode): readonly string[] {
+  if (typeName.type === 'Identifier') return [typeName.name];
+  if (typeName.type === 'TSQualifiedName' && typeName.right.type === 'Identifier')
+    return [typeName.right.name];
   return [];
 }
 
@@ -220,21 +165,23 @@ function declaredName(fn: AnyNode): FactoryName | null {
     parent = parentOf(parent);
   }
   if (parent === null) return null;
+  return holderName(parent, child);
+}
+
+function assignmentName(left: AnyNode): FactoryName | null {
+  if (left.type === 'Identifier') return { name: left.name, node: left };
+  if (left.type !== 'MemberExpression') return null;
+  const name = keyName(left.property, left.computed);
+  return name === null ? null : { name, node: left.property };
+}
+
+function holderName(parent: AnyNode, child: AnyNode): FactoryName | null {
   if (parent.type === 'VariableDeclarator') {
-    const holder = parent as unknown as { id: AnyNode; init: AnyNode | null };
-    if (holder.init !== child || holder.id.type !== 'Identifier') return null;
-    return { name: (holder.id as { name: string }).name, node: holder.id };
+    if (parent.init !== child || parent.id.type !== 'Identifier') return null;
+    return { name: parent.id.name, node: parent.id };
   }
   if (parent.type === 'AssignmentExpression') {
-    const holder = parent as unknown as { left: AnyNode; right: AnyNode };
-    if (holder.right !== child) return null;
-    if (holder.left.type === 'Identifier') {
-      return { name: (holder.left as { name: string }).name, node: holder.left };
-    }
-    if (holder.left.type !== 'MemberExpression') return null;
-    const member = holder.left as unknown as { property: AnyNode; computed: boolean };
-    const name = keyName(member.property, member.computed);
-    return name === null ? null : { name, node: member.property };
+    return parent.right === child ? assignmentName(parent.left) : null;
   }
   if (!NAMED_MEMBERS.has(parent.type)) return null;
   const holder = parent as unknown as { key: AnyNode; computed: boolean; value: AnyNode | null };
@@ -351,7 +298,6 @@ export const rule = defineRule({
     if (!options.includeScripts && isScriptFile(path)) return {};
     if (!options.includeTests && isTestFile(path)) return {};
 
-    const bindings = bindingsFor(context);
     // Resolve actual lexical imports and immutable aliases; raw text (including comments and
     // Node stream .pipe calls) is never evidence that a body constructs an Effect.
     const resolve = (node: any, seen = new Set<any>()): string | null => {
@@ -365,32 +311,26 @@ export const rule = defineRule({
         return object && key ? `${object}.${key}` : null;
       }
       if (node.type !== 'Identifier') return null;
-      for (
-        let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
-        scope;
-        scope = scope.upper
-      ) {
-        const variable = scope.set.get(node.name);
-        if (!variable) continue;
-        for (const def of variable.defs as any[]) {
-          if (def.type === 'ImportBinding') {
-            const source = def.parent?.source?.value;
-            if (source !== 'effect' && source !== 'effect/Effect') return null;
-            const imported = def.node.imported?.name ?? def.node.imported?.value;
-            return source === 'effect/Effect'
-              ? imported
-                ? `Effect.${imported}`
-                : 'Effect'
-              : (imported ?? 'root');
-          }
-          if (
-            def.type === 'Variable' &&
-            def.parent?.kind === 'const' &&
-            !variable.references.some((r: any) => r.isWrite() && !r.init)
-          )
-            return resolve(def.node.init, seen);
-        }
-        return null;
+      const variable = lookupVariable(context, node);
+      if (!variable) return null;
+      return resolveDefinitions(variable, seen);
+    };
+    const importIdentity = (def: any): string | null => {
+      const source = def.parent?.source?.value;
+      if (source !== 'effect' && source !== 'effect/Effect') return null;
+      const imported = def.node.imported?.name ?? def.node.imported?.value;
+      if (source === 'effect/Effect') return imported ? `Effect.${imported}` : 'Effect';
+      return imported ?? 'root';
+    };
+    const resolveDefinitions = (
+      variable: import('@oxlint/plugins').Variable,
+      seen: Set<any>,
+    ): string | null => {
+      for (const def of variable.defs as any[]) {
+        if (def.type === 'ImportBinding') return importIdentity(def);
+        if (def.type !== 'Variable' || def.parent?.kind !== 'const') continue;
+        if (!variable.references.some((r) => r.isWrite() && !r.init))
+          return resolve(def.node.init, seen);
       }
       return null;
     };
@@ -416,7 +356,10 @@ export const rule = defineRule({
     const dataType = (node: any, seen = new Set<any>()): boolean => {
       if (!node || seen.has(node)) return false;
       seen.add(node);
-      if (node.type === 'TSTypeAnnotation' || node.type === 'TSTypeOperator')
+      return classifyDataType(node, seen);
+    };
+    const classifyDataType = (node: any, seen: Set<any>): boolean => {
+      if (['TSTypeAnnotation', 'TSTypeOperator'].includes(node.type))
         return dataType(node.typeAnnotation, seen);
       if (
         [
@@ -429,38 +372,32 @@ export const rule = defineRule({
         ].includes(node.type)
       )
         return true;
-      if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType')
+      if (['TSUnionType', 'TSIntersectionType'].includes(node.type))
         return node.types.every((t: any) => dataType(t, new Set(seen)));
       if (node.type === 'TSArrayType') return dataType(node.elementType, seen);
       if (node.type === 'TSTypeLiteral' || node.type === 'TSInterfaceDeclaration') {
-        const members = node.members ?? node.body.body;
-        return (
-          members.every(
-            (m: any) =>
-              m.type === 'TSPropertySignature' && dataType(m.typeAnnotation, new Set(seen)),
-          ) &&
-          (node.extends ?? []).every((e: any) =>
-            dataType({ type: 'TSTypeReference', typeName: e.expression }, new Set(seen)),
-          )
-        );
+        return dataMembers(node, seen);
       }
       if (node.type !== 'TSTypeReference' || node.typeName.type !== 'Identifier') return false;
-      // Resolve from the use's lexical scope, not a file-wide name map.
-      for (
-        let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(
-          node.typeName,
-        );
-        scope;
-        scope = scope.upper
-      ) {
-        const variable = scope.set.get(node.typeName.name);
-        if (!variable) continue;
-        const declaration: any = variable.defs.find((d: any) =>
-          ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(d.node.type),
-        )?.node;
-        return declaration ? dataType(declaration.typeAnnotation ?? declaration, seen) : false;
-      }
-      return false;
+      return dataReference(node.typeName, seen);
+    };
+    const dataMembers = (node: any, seen: Set<any>): boolean => {
+      const members = node.members ?? node.body.body;
+      return (
+        members.every(
+          (m: any) => m.type === 'TSPropertySignature' && dataType(m.typeAnnotation, new Set(seen)),
+        ) &&
+        (node.extends ?? []).every((e: any) =>
+          dataType({ type: 'TSTypeReference', typeName: e.expression }, new Set(seen)),
+        )
+      );
+    };
+    const dataReference = (name: AnyNode, seen: Set<any>): boolean => {
+      const variable = lookupVariable(context, name);
+      const declaration: any = variable?.defs.find((d: any) =>
+        ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(d.node.type),
+      )?.node;
+      return declaration ? dataType(declaration.typeAnnotation ?? declaration, seen) : false;
     };
 
     const optionBagType = (params: readonly AnyNode[]): string | null => {
@@ -495,6 +432,15 @@ export const rule = defineRule({
         });
         return;
       }
+      inspectOptionBag(fn, identity, hasBody, params, count);
+    };
+    const inspectOptionBag = (
+      fn: AnyNode,
+      identity: FactoryName,
+      hasBody: boolean,
+      params: readonly AnyNode[],
+      count: number,
+    ): void => {
       if (!options.flagOptionBags || !hasBody || count === 0) return;
       const bagType = optionBagType(params);
       if (bagType === null) return;

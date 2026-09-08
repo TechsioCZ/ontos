@@ -10,7 +10,7 @@ import {
   resolveThenLoadModuleTarget,
   settleModuleEntrypointLoad,
 } from '../../../module-entrypoint-loader.ts';
-import { AuthenticatedDashboardLayout } from '../../../shell-frame.tsx';
+import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './page.data.ts';
 
@@ -114,37 +114,13 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
       </StatusText>
     );
   return (
-    <AuthenticatedDashboardLayout
-      {...(model.shell.selectedLegalEntityId === undefined
-        ? {}
-        : { currentLegalEntityId: model.shell.selectedLegalEntityId })}
+    <ShellContentLayout
+      controls={controls}
+      shell={model.shell}
       {...(model.state === 'resolved' ? { currentModuleId: model.target.moduleId } : {})}
-      currentTenantId={model.shell.identity.tenantId}
-      homeCurrent={false}
-      identity={{ displayName: model.shell.identity.displayName }}
-      legalEntityChoices={model.shell.legalEntities.items}
-      legalEntityState={model.shell.legalEntities.state}
-      legalEntitySwitchFailed={controls.legalEntitySwitchFailed}
-      legalEntitySwitchPending={controls.legalEntitySwitchPending}
-      logoutPending={controls.logoutPending}
-      navigation={model.shell.navigation.items}
-      onLegalEntityChange={controls.handleLegalEntityChange}
-      onLogout={controls.handleLogout}
-      onSearch={controls.handleSearch}
-      onTenantChange={controls.handleTenantChange}
-      tenantChoices={model.shell.tenants.items}
-      tenantState={model.shell.tenants.state}
-      tenantSwitchFailed={controls.tenantSwitchFailed}
-      tenantSwitchPending={controls.tenantSwitchPending}
-      unavailableDeployments={model.shell.navigation.unavailableDeployments}
     >
-      {controls.logoutFailed ? (
-        <StatusText aria-live="polite" showIcon status="error">
-          {t('shell.auth.logout.failed')}
-        </StatusText>
-      ) : null}
       {content}
-    </AuthenticatedDashboardLayout>
+    </ShellContentLayout>
   );
 };
 

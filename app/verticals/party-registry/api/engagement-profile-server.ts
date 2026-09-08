@@ -42,77 +42,71 @@ const attachActionProblem = (error: EngagementActionError): EngagementAttachProb
   return mapEngagementAttachProblem(mapped);
 };
 
-const runEngagementAction = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown>,
-  DomainErrorSchema extends Schema.ConstraintDecoder<EngagementActionError>,
-  DomainEvents extends DomainEventContractMap,
-  Owner extends string,
-  Services,
-  Requirements,
-  PublicProblem extends ContactsProblem,
->(
-  registration: ActionRegistration<
-    PayloadSchema,
-    ResultSchema,
-    DomainErrorSchema,
-    DomainEvents,
-    Owner,
+const engagementActionHandler =
+  <
+    PayloadSchema extends Schema.ConstraintDecoder<unknown> & Schema.ConstraintEncoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<EngagementActionError>,
+    DomainEvents extends DomainEventContractMap,
+    Owner extends string,
     Services,
-    Requirements
-  >,
-  payload: Schema.Schema.Type<PayloadSchema>,
-  headers: ContactsMutationHeaders,
-  requestHeaders: RequestHeaders,
-  mapError: (error: EngagementActionError) => PublicProblem,
-) =>
-  runActionHttp({
-    endpointHeaders: {
-      idempotencyKey: headers['idempotency-key'],
-      traceId: requestHeaders['x-trace-id'],
-    },
-    internalProblem: engagementProblem.internal,
-    invalidCorrelationProblem: engagementProblem.invalid,
-    mapError,
+    Requirements,
+    PublicProblem extends ContactsProblem,
+  >(
+    registration: ActionRegistration<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      Services,
+      Requirements
+    >,
+    mapError: (error: EngagementActionError) => PublicProblem,
+  ) =>
+  ({
     payload,
-    registration,
-    requestHeaders: {
-      authorization: Redacted.make(requestHeaders['authorization']),
-      'x-correlation-id': requestHeaders['x-correlation-id'],
-    },
-  }).pipe(Effect.catchIf(isEngagementAuthenticationProblem, failEngagementProblem));
+    headers,
+    request,
+  }: {
+    readonly payload: Schema.Schema.Type<PayloadSchema>;
+    readonly headers: ContactsMutationHeaders;
+    readonly request: { readonly headers: RequestHeaders };
+  }) => {
+    const requestHeaders = request.headers;
+    return runActionHttp({
+      endpointHeaders: {
+        idempotencyKey: headers['idempotency-key'],
+        traceId: requestHeaders['x-trace-id'],
+      },
+      internalProblem: engagementProblem.internal,
+      invalidCorrelationProblem: engagementProblem.invalid,
+      mapError,
+      payload,
+      registration,
+      requestHeaders: {
+        authorization: Redacted.make(requestHeaders['authorization']),
+        'x-correlation-id': requestHeaders['x-correlation-id'],
+      },
+    }).pipe(Effect.catchIf(isEngagementAuthenticationProblem, failEngagementProblem));
+  };
 
 export const organizationEngagementMutationsLive = HttpApiBuilder.group(
   partyRegistryApi,
   'organizationEngagementMutations',
   (handlers) =>
     handlers
-      .handle('attach', ({ headers, payload, request }) =>
-        runEngagementAction(
-          attachOrganizationEngagementAction,
-          payload,
-          headers,
-          request.headers,
-          attachActionProblem,
-        ),
+      .handle(
+        'attach',
+        engagementActionHandler(attachOrganizationEngagementAction, attachActionProblem),
       )
-      .handle('archive', ({ headers, payload, request }) =>
-        runEngagementAction(
-          archiveOrganizationEngagementAction,
-          payload,
-          headers,
-          request.headers,
-          mapEngagementActionProblem,
-        ),
+      .handle(
+        'archive',
+        engagementActionHandler(archiveOrganizationEngagementAction, mapEngagementActionProblem),
       )
-      .handle('unarchive', ({ headers, payload, request }) =>
-        runEngagementAction(
-          unarchiveOrganizationEngagementAction,
-          payload,
-          headers,
-          request.headers,
-          mapEngagementActionProblem,
-        ),
+      .handle(
+        'unarchive',
+        engagementActionHandler(unarchiveOrganizationEngagementAction, mapEngagementActionProblem),
       ),
 );
 
@@ -121,32 +115,14 @@ const personEngagementMutationsLive = HttpApiBuilder.group(
   'personEngagementMutations',
   (handlers) =>
     handlers
-      .handle('attach', ({ headers, payload, request }) =>
-        runEngagementAction(
-          attachPersonEngagementAction,
-          payload,
-          headers,
-          request.headers,
-          attachActionProblem,
-        ),
+      .handle('attach', engagementActionHandler(attachPersonEngagementAction, attachActionProblem))
+      .handle(
+        'archive',
+        engagementActionHandler(archivePersonEngagementAction, mapEngagementActionProblem),
       )
-      .handle('archive', ({ headers, payload, request }) =>
-        runEngagementAction(
-          archivePersonEngagementAction,
-          payload,
-          headers,
-          request.headers,
-          mapEngagementActionProblem,
-        ),
-      )
-      .handle('unarchive', ({ headers, payload, request }) =>
-        runEngagementAction(
-          unarchivePersonEngagementAction,
-          payload,
-          headers,
-          request.headers,
-          mapEngagementActionProblem,
-        ),
+      .handle(
+        'unarchive',
+        engagementActionHandler(unarchivePersonEngagementAction, mapEngagementActionProblem),
       ),
 );
 

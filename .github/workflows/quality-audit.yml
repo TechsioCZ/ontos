@@ -1,4 +1,4 @@
-name: Quality Audit Reports
+name: Quality Audit
 
 on:
   pull_request:
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   quality-audit:
-    name: Quality Audit (report only)
+    name: Quality Audit Guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -52,13 +52,16 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: mise exec -- pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Verify audit runner behavior
+      - name: Verify audit runner and gate behavior
         run: mise exec -- pnpm quality:audit:test
 
       # Findings succeed; invalid or incomplete analysis fails visibly.
       - name: Audit unused code, duplication, and complexity
         id: audit
         run: mise exec -- pnpm quality:audit --output .codex/reports/quality-audit
+
+      - name: Enforce calibrated quality guardrails
+        run: mise exec -- pnpm quality:audit:gate --summary .codex/reports/quality-audit/summary.json
 
       - name: Publish job summary
         if: ${{ always() && steps.prepare.outcome == 'success' }}

@@ -271,21 +271,6 @@ for (const changedPath of [
   });
 }
 
-for (const changedPath of [
-  'scripts/postgres/bootstrap-spicedb-database.mts',
-  'packages/core-runtime/src/install/spicedb-database-config.ts',
-]) {
-  test(`includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap change ${changedPath}`, async () => {
-    await withFixture(async (root) => {
-      const plan = await planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
-      assert.deepEqual(
-        plan.phases.map((phase) => phase.id),
-        ['migrator', 'spicedb', 'contacts', SHELL_ID],
-      );
-    });
-  });
-}
-
 test('expands shared-package changes to every consumer in dependency order', async () => {
   await withFixture(async (root) => {
     const plan = await planDeploymentImpact({
@@ -326,6 +311,8 @@ test('orders SpiceDB before all consumers for authorization runtime changes', as
 });
 
 for (const changedPath of [
+  'scripts/postgres/bootstrap-spicedb-database.mts',
+  'packages/core-runtime/src/install/spicedb-database-config.ts',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
   '.mise.toml',

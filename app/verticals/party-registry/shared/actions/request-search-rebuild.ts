@@ -9,4 +9,3 @@ export const RequestSearchRebuildResultSchema = Schema.Struct({
   requestId: ActionInvocationIdSchema,
   status: Schema.Literal('QUEUED'),
 });
-export type RequestSearchRebuildResult = typeof RequestSearchRebuildResultSchema.Type;

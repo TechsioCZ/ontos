@@ -1,6 +1,6 @@
 // Canonical schema-only contract extracted from the generated archive-party Action.
 import { Schema } from 'effect';
-import { PartySchema } from '../domain/identity-contracts.ts';
+
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const ArchivePartyPayloadSchema = Schema.Struct({
@@ -9,5 +9,4 @@ export const ArchivePartyPayloadSchema = Schema.Struct({
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
 });
 export type ArchivePartyPayload = typeof ArchivePartyPayloadSchema.Type;
-export const ArchivePartyResultSchema = PartySchema;
-export type ArchivePartyResult = typeof ArchivePartyResultSchema.Type;
+export { PartySchema as ArchivePartyResultSchema } from '../domain/identity-contracts.ts';

@@ -48,14 +48,7 @@ import type {
   AddPartyOfficialIdentifierResult,
 } from '../../shared/actions/add-party-official-identifier.ts';
 
-export {
-  AddPartyOfficialIdentifierPayloadSchema,
-  AddPartyOfficialIdentifierResultSchema,
-} from '../../shared/actions/add-party-official-identifier.ts';
-export type {
-  AddPartyOfficialIdentifierPayload,
-  AddPartyOfficialIdentifierResult,
-} from '../../shared/actions/add-party-official-identifier.ts';
+export type { AddPartyOfficialIdentifierPayload } from '../../shared/actions/add-party-official-identifier.ts';
 const ErrorSchema = Schema.Union([
   PartyNotFound,
   OfficialIdentifierClaimConflict,
@@ -236,10 +229,3 @@ export const addPartyOfficialIdentifierAction = defineAction(
       }),
     }),
 );
-export { createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
-export {
-  AddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxPayloadSchema,
-  AddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxProducerModuleKey,
-  AddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxTopic,
-} from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
-export type { AddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxPayload } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';

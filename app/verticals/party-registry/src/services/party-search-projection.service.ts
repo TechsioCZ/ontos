@@ -18,8 +18,6 @@ import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { PartySearchProjectionSource } from './party-search-projection-source.service.ts';
 
-export { PartySearchProjectionSource } from './party-search-projection-source.service.ts';
-
 export interface PartySearchSourceValue {
   readonly value: string;
   readonly state: string;
@@ -27,7 +25,7 @@ export interface PartySearchSourceValue {
   readonly validTo?: string;
 }
 
-export interface PartySearchSourceContact extends PartySearchSourceValue {
+interface PartySearchSourceContact extends PartySearchSourceValue {
   readonly type: 'EMAIL' | 'PHONE';
   readonly privacy: 'PUBLIC' | 'BUSINESS_SENSITIVE' | 'PERSONAL';
 }

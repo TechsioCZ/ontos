@@ -30,4 +30,3 @@ export const CounterpartyRoleAddResultSchema = Schema.Struct({
   validFrom: CounterpartyIsoTimestampSchema,
   validTo: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyIsoTimestampSchema)),
 });
-export type CounterpartyRoleAddResult = typeof CounterpartyRoleAddResultSchema.Type;

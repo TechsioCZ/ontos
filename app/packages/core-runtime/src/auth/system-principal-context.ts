@@ -68,9 +68,6 @@ interface SystemPrincipalContextRecordReader<
   readonly load: (input: { readonly principalId: string; readonly tenantId: string }) => Result;
 }
 
-export type SystemPrincipalContextRepositoryService =
-  SystemPrincipalContextRecordReader<SystemPrincipalContextRepositoryLoadResult>;
-
 const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
   cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
 
@@ -121,6 +118,15 @@ const systemPrincipalContextRepositoryFromDatabase = (database: {
       ),
 });
 
+const isEligibleSystemPrincipal = (
+  record: SystemPrincipalContextRecord,
+  registration: SystemWorkloadRegistration,
+): boolean => {
+  const kindAllowed =
+    record.kind === 'system' || (registration.allowServicePrincipal && record.kind === 'service');
+  return record.principalStatus === 'active' && record.tenantStatus === 'active' && kindAllowed;
+};
+
 export const systemPrincipalContextResolverFromRepository = <
   Result extends SystemPrincipalContextRepositoryLoadResult,
 >(
@@ -155,10 +161,7 @@ export const systemPrincipalContextResolverFromRepository = <
         });
       }
       const record = maybeRecord.value;
-      const kindAllowed =
-        record.kind === 'system' ||
-        (input.registration.allowServicePrincipal && record.kind === 'service');
-      if (record.principalStatus !== 'active' || record.tenantStatus !== 'active' || !kindAllowed) {
+      if (!isEligibleSystemPrincipal(record, input.registration)) {
         return yield* new SystemPrincipalContextDeniedError({
           code: 'system_principal_context_denied',
           reason: 'The configured system principal is not active and eligible in this tenant',

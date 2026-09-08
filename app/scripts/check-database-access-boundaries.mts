@@ -146,6 +146,9 @@ const resolveLocalSource = (
   return candidates.find((candidate) => sourceFiles.has(candidate));
 };
 
+const containsGlobalDatabaseCapability = (source: string): boolean =>
+  globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source);
+
 const importsGlobalDatabaseCapability = (
   file: string,
   sources: ReadonlyMap<string, string>,
@@ -169,7 +172,7 @@ const importsGlobalDatabaseCapability = (
   if (relative.startsWith(coreRuntimeSourcePrefix)) {
     return false;
   }
-  if (globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source)) {
+  if (containsGlobalDatabaseCapability(source)) {
     return true;
   }
   const nextVisiting = new Set(visiting).add(file);

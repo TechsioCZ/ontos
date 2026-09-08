@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit A6 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) calls for one outer
  * instrumentation seam and ambient identity annotations, replacing copied per-handler records.
@@ -18,19 +19,22 @@
 import { defineRule } from '@oxlint/plugins';
 import { fileURLToPath } from 'node:url';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-const EFFECT_ROOT_MODULE = 'effect';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses against the repository).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import {
+  unwrapNode as unwrap,
+  staticString,
+  memberName as staticMemberName,
+} from '../shared/ast.ts';
+import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
+import {
+  splitMembers,
+  collectNamespaceLocals,
+  collectDirectMemberImports,
+} from '../shared/imports.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 
@@ -87,31 +91,10 @@ const DEFAULT_SPAN_MEMBERS = ['Effect.withSpan', 'Effect.withLogSpan'];
 /** Barrels that re-export Effect namespaces verbatim; `Effect` from them is Effect's `Effect`. */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly seamFiles: readonly string[];
-  readonly identityKeys: readonly string[];
-  readonly annotationMembers: readonly string[];
-  readonly spanMembers: readonly string[];
-  readonly reexportModules: readonly string[];
-  readonly flagSpreadHelpers: boolean;
-  readonly includeTests: boolean;
-  readonly includeScripts: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+function readOptions(context: Context) {
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -128,38 +111,7 @@ function readOptions(context: Context): RuleOptions {
 
 /** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
 function scopePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
-  if (fixture?.[1]) return fixture[1];
-  const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
-  return unified.startsWith(root)
-    ? unified.slice(root.length)
-    : normalisePath(unified).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-/** `Effect.annotateLogs` → `["Effect", "annotateLogs"]`; malformed entries are dropped. */
-function splitMembers(members: readonly string[]): Map<string, Set<string>> {
-  const byNamespace = new Map<string, Set<string>>();
-  for (const entry of members) {
-    const dot = entry.indexOf('.');
-    if (dot <= 0 || dot === entry.length - 1) continue;
-    const namespace = entry.slice(0, dot);
-    const bucket = byNamespace.get(namespace) ?? new Set<string>();
-    bucket.add(entry.slice(dot + 1));
-    byNamespace.set(namespace, bucket);
-  }
-  return byNamespace;
+  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
 }
 
 /** `x-correlation-id`, `correlation_id` and `correlationId` all collapse to `correlationid`. */
@@ -182,129 +134,73 @@ function identityKeyFor(key: string, identities: ReadonlyMap<string, string>): s
   return null;
 }
 
-/** Non-computed `.annotateLogs`, or computed `["annotateLogs"]`. */
+/** Computed annotation members accept cooked static templates and expression wrappers. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
+  if (!node.computed) return staticMemberName(node);
   return literalString(node.property);
 }
 
-function unwrap(node: ESTree.Node): ESTree.Node {
-  while (
-    [
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSTypeAssertion',
-      'TSNonNullExpression',
-      'TSInstantiationExpression',
-      'ChainExpression',
-      'ParenthesizedExpression',
-    ].includes(node.type)
-  ) {
-    node = (node as unknown as { expression: ESTree.Node }).expression;
-  }
-  return node;
-}
-
 function literalString(node: ESTree.Node | null | undefined): string | null {
-  if (node === null || node === undefined) return null;
-  node = unwrap(node);
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (
-    node.type === 'TemplateLiteral' &&
-    node.expressions.length === 0 &&
-    node.quasis.length === 1
-  ) {
-    return node.quasis[0]?.value.cooked ?? null;
+  return staticString(node, { unwrap: {}, singleQuasi: true });
+}
+
+function excludedPath(path: string, options: RuleOptions): boolean {
+  if (/\.d\.[cm]?ts$/u.test(path)) return true;
+  if (/(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)) return true;
+  if (matchesGlobs(path, options.ignore) || matchesGlobs(path, options.seamFiles)) return true;
+  if (!matchesGlobs(path, options.include)) return true;
+  if (!options.includeTests && isTestFile(path)) return true;
+  return !options.includeScripts && /(?:^|\/)scripts\//u.test(path);
+}
+
+function qualifiedMember(base: string | null, key: string | null): string | null {
+  if (base === null || key === null) return null;
+  return base === '$root' ? key : `${base}.${key}`;
+}
+
+function destructuredMember(
+  pattern: ESTree.Node,
+  name: string,
+  base: string | null,
+): string | null {
+  if (pattern.type === 'Identifier') return base;
+  if (pattern.type !== 'ObjectPattern' || base === null) return null;
+  for (const property of pattern.properties) {
+    if (
+      property.type !== 'Property' ||
+      property.value.type !== 'Identifier' ||
+      property.value.name !== name
+    )
+      continue;
+    const key =
+      !property.computed && property.key.type === 'Identifier'
+        ? property.key.name
+        : literalString(property.key);
+    return qualifiedMember(base, key);
   }
   return null;
 }
 
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
+function objectArgument(
+  args: ESTree.CallExpression['arguments'],
+): ESTree.ObjectExpression | undefined {
+  for (const raw of args) {
+    const argument = unwrap(raw);
+    if (argument.type === 'ObjectExpression') return argument;
   }
-  return null;
+  return undefined;
 }
 
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because a module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, ...) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some(
-    (definition) =>
-      definition.type === 'ImportBinding' &&
-      definition.parent?.type === 'ImportDeclaration' &&
-      definition.parent.importKind !== 'type' &&
-      (definition.node.type !== 'ImportSpecifier' || definition.node.importKind !== 'type'),
-  );
+function annotationKeyArgument(args: ESTree.CallExpression['arguments']): ESTree.Node | undefined {
+  if (args.length === 2) return args[0];
+  if (args.length === 3) return args[1];
+  return undefined;
 }
 
-/**
- * Locals standing for a watched Effect namespace (`Effect`, aliased or submodule-imported) and locals
- * standing for the whole Effect barrel (`import * as E from "effect"` → `E.Effect.annotateLogs`).
- */
-function collectNamespaceLocals(
-  program: ESTree.Program,
-  bindings: EffectBindings,
-  watched: ReadonlySet<string>,
-  reexportModules: readonly string[],
-): { namespaced: ReadonlyMap<string, string>; barrel: ReadonlySet<string> } {
-  const namespaced = new Map<string, string>();
-  const barrel = new Set<string>();
-  for (const [local, namespace] of bindings.namespaces) {
-    if (watched.has(namespace)) namespaced.set(local, namespace);
-  }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (source !== EFFECT_ROOT_MODULE && !matchesGlobs(source, reexportModules)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') barrel.add(specifier.local.name);
-      else if (specifier.type === 'ImportSpecifier') {
-        const imported = importedName(specifier);
-        if (watched.has(imported)) namespaced.set(specifier.local.name, imported);
-      }
-    }
-  }
-  return { namespaced, barrel };
-}
-
-/** `effect/Effect`, `effect/unstable/.../Effect` — the trailing segment names the namespace. */
-const EFFECT_SUBMODULE = /^effect\/(?:.*\/)?(?<namespace>[A-Za-z][A-Za-z0-9_]*)$/u;
-
-/** Locals bound by `import { annotateLogs } from "effect/Effect"`, mapped to `Namespace.member`. */
-function collectDirectMemberImports(
-  program: ESTree.Program,
-  byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
-): ReadonlyMap<string, string> {
-  const locals = new Map<string, string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const namespace = EFFECT_SUBMODULE.exec(statement.source.value)?.groups?.namespace;
-    if (namespace === undefined) continue;
-    const members = byNamespace.get(namespace);
-    if (members === undefined) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported = importedName(specifier);
-      if (members.has(imported)) locals.set(specifier.local.name, `${namespace}.${imported}`);
-    }
-  }
-  return locals;
+function opaqueArgument(args: ESTree.CallExpression['arguments']): ESTree.Node | undefined {
+  if (args.length === 1) return args[0];
+  if (args.length === 2) return args[1];
+  return undefined;
 }
 
 export const rule = defineRule({
@@ -366,20 +262,14 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context);
     const path = scopePath(context.filename);
-    if (
-      /\.d\.[cm]?ts$/u.test(path) ||
-      /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
-    )
-      return {};
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (matchesGlobs(path, options.seamFiles)) return {};
-    if (!matchesGlobs(path, options.include)) return {};
-    if (!options.includeTests && isTestFile(path)) return {};
-    if (!options.includeScripts && /(?:^|\/)scripts\//u.test(path)) return {};
+    if (excludedPath(path, options)) return {};
 
-    const annotationByNamespace = splitMembers(options.annotationMembers);
-    const spanByNamespace = splitMembers(options.spanMembers);
-    const allByNamespace = splitMembers([...options.annotationMembers, ...options.spanMembers]);
+    const annotationByNamespace = splitMembers(options.annotationMembers).byNamespace;
+    const spanByNamespace = splitMembers(options.spanMembers).byNamespace;
+    const allByNamespace = splitMembers([
+      ...options.annotationMembers,
+      ...options.spanMembers,
+    ]).byNamespace;
     if (allByNamespace.size === 0) return {};
 
     const identities = new Map<string, string>();
@@ -395,61 +285,53 @@ export const rule = defineRule({
       watched,
       options.reexportModules,
     );
-    const directMembers = collectDirectMemberImports(program, allByNamespace);
+    const directMembers = new Map(
+      [...collectDirectMemberImports(program, allByNamespace)].map(
+        ([local, { namespace, member }]) => [local, `${namespace}.${member}`],
+      ),
+    );
     if (namespaced.size === 0 && barrel.size === 0 && directMembers.size === 0) return {};
+
+    const resolveAlias = (variable: Variable, name: string, seen: Set<Variable>): string | null => {
+      if (
+        seen.has(variable) ||
+        variable.references.some((reference) => reference.isWrite() && !reference.init)
+      )
+        return null;
+      seen.add(variable);
+      const definition = variable.defs[0];
+      if (
+        definition?.type !== 'Variable' ||
+        definition.node.type !== 'VariableDeclarator' ||
+        !definition.node.init
+      )
+        return null;
+      const declaration = definition.node;
+      return destructuredMember(declaration.id, name, resolveCallee(declaration.init!, seen));
+    };
+
+    const resolveIdentifier = (
+      callee: Extract<ESTree.Node, { type: 'Identifier' }>,
+      seen: Set<Variable>,
+    ): string | null => {
+      const variable = lookupVariable(context, callee);
+      if (variable && !resolvesToImport(context, callee, true))
+        return resolveAlias(variable, callee.name, seen);
+      return (
+        directMembers.get(callee.name) ??
+        namespaced.get(callee.name) ??
+        (barrel.has(callee.name) ? '$root' : null)
+      );
+    };
 
     /** Resolve immutable aliases by their lexical definitions, never by a global name table. */
     const resolveCallee = (input: ESTree.Node, seen = new Set<Variable>()): string | null => {
       const callee = unwrap(input);
-      if (callee.type === 'Identifier') {
-        const variable = lookupVariable(context, callee);
-        if (variable && !resolvesToImport(context, callee)) {
-          if (
-            seen.has(variable) ||
-            variable.references.some((reference) => reference.isWrite() && !reference.init)
-          )
-            return null;
-          seen.add(variable);
-          const definition = variable.defs[0];
-          if (
-            definition?.type !== 'Variable' ||
-            definition.node.type !== 'VariableDeclarator' ||
-            !definition.node.init
-          )
-            return null;
-          const declaration = definition.node;
-          const base = resolveCallee(declaration.init!, seen);
-          if (declaration.id.type === 'Identifier') return base;
-          if (declaration.id.type !== 'ObjectPattern' || base === null) return null;
-          for (const property of declaration.id.properties) {
-            if (
-              property.type !== 'Property' ||
-              property.value.type !== 'Identifier' ||
-              property.value.name !== callee.name
-            )
-              continue;
-            const key =
-              !property.computed && property.key.type === 'Identifier'
-                ? property.key.name
-                : literalString(property.key);
-            return key === null ? null : base === '$root' ? key : `${base}.${key}`;
-          }
-          return null;
-        }
-        return (
-          directMembers.get(callee.name) ??
-          namespaced.get(callee.name) ??
-          (barrel.has(callee.name) ? '$root' : null)
-        );
-      }
+      if (callee.type === 'Identifier') return resolveIdentifier(callee, seen);
       if (callee.type !== 'MemberExpression') return null;
       const member = memberName(callee);
       const base = resolveCallee(callee.object, seen);
-      return member === null || base === null
-        ? null
-        : base === '$root'
-          ? member
-          : `${base}.${member}`;
+      return qualifiedMember(base, member);
     };
 
     const reportIdentity = (node: ESTree.Node, key: string, member: string): void => {
@@ -484,15 +366,13 @@ export const rule = defineRule({
      */
     const inspectAnnotationCall = (node: ESTree.CallExpression, member: string): void => {
       const args = node.arguments;
-      if (args.length === 0) return;
-      for (const index of [0, 1]) {
-        const argument = args[index] === undefined ? undefined : unwrap(args[index]!);
-        if (argument === undefined || argument.type !== 'ObjectExpression') continue;
-        inspectRecord(argument, member);
+      const record = objectArgument(args.slice(0, 2));
+      if (record !== undefined) {
+        inspectRecord(record, member);
         return;
       }
       // `("key", value)` data-last, `(effect, "key", value)` data-first.
-      const keyNode = args.length === 2 ? args[0] : args.length === 3 ? args[1] : undefined;
+      const keyNode = annotationKeyArgument(args);
       const key = literalString(keyNode);
       if (key !== null && keyNode !== undefined) {
         const identity = identityKeyFor(key, identities);
@@ -500,27 +380,24 @@ export const rule = defineRule({
         return;
       }
       // No literal record and no literal key: a helper produced the annotations.
-      const opaque = args.length === 1 ? args[0] : args.length === 2 ? args[1] : undefined;
+      const opaque = opaqueArgument(args);
       if (opaque !== undefined && opaque.type !== 'ObjectExpression') reportOpaque(opaque, member);
     };
 
     /** `withSpan(name, { attributes })` / `withSpan(effect, name, { attributes })`. */
     const inspectSpanCall = (node: ESTree.CallExpression, member: string): void => {
-      for (const rawArgument of node.arguments) {
-        const argument = unwrap(rawArgument);
-        if (argument.type !== 'ObjectExpression') continue;
-        for (const property of argument.properties) {
-          if (property.type === 'SpreadElement') continue;
-          const key =
-            property.computed || property.key.type !== 'Identifier'
-              ? literalString(property.key)
-              : property.key.name;
-          if (key !== 'attributes') continue;
-          const value = unwrap(property.value);
-          if (value.type === 'ObjectExpression') inspectRecord(value, member);
-          else reportOpaque(value, member);
-        }
-        return;
+      const argument = objectArgument(node.arguments);
+      if (argument === undefined) return;
+      for (const property of argument.properties) {
+        if (property.type === 'SpreadElement') continue;
+        const key =
+          property.computed || property.key.type !== 'Identifier'
+            ? literalString(property.key)
+            : property.key.name;
+        if (key !== 'attributes') continue;
+        const value = unwrap(property.value);
+        if (value.type === 'ObjectExpression') inspectRecord(value, member);
+        else reportOpaque(value, member);
       }
     };
 

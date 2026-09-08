@@ -26,7 +26,7 @@ import {
 
 export type { ModuleStateSnapshot } from './module-state-snapshot.ts';
 
-export const ModuleStateDecisionSchema = Schema.Literals(['allow', 'deny']);
+const ModuleStateDecisionSchema = Schema.Literals(['allow', 'deny']);
 export type ModuleStateDecision = typeof ModuleStateDecisionSchema.Type;
 
 const allowedAccessByState: Readonly<

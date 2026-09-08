@@ -33,12 +33,9 @@ export {
   CounterpartyCreatePayloadSchema,
   CounterpartyCreateResultSchema,
 } from '../../shared/actions/counterparty-create.ts';
-export type {
-  CounterpartyCreatePayload,
-  CounterpartyCreateResult,
-} from '../../shared/actions/counterparty-create.ts';
+export type { CounterpartyCreatePayload } from '../../shared/actions/counterparty-create.ts';
 
-export const CounterpartyCreateError = Schema.Union([
+const CounterpartyCreateError = Schema.Union([
   PartyAliasWriteRejected,
   CounterpartyEvidenceInsufficient,
   CounterpartyPartyArchived,
@@ -209,11 +206,3 @@ export const counterpartyCreateAction = defineAction(
     });
   },
 );
-
-// <generated-outbox-message-exports>
-export { CounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxPayloadSchema } from './counterparty-create.party-registry-counterparty-created-v1.outbox-message.ts';
-export { CounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxProducerModuleKey } from './counterparty-create.party-registry-counterparty-created-v1.outbox-message.ts';
-export { CounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxTopic } from './counterparty-create.party-registry-counterparty-created-v1.outbox-message.ts';
-export { createCounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxMessage } from './counterparty-create.party-registry-counterparty-created-v1.outbox-message.ts';
-export type { CounterpartyCreatePartyRegistryCounterpartyCreatedV1OutboxPayload } from './counterparty-create.party-registry-counterparty-created-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

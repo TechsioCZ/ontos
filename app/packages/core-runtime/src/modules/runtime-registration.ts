@@ -93,9 +93,7 @@ const assertUnique = (values: readonly string[], label: string): void => {
   }
 };
 
-export const defineVerticalRuntimeRegistration = <const Manifest extends OntosModuleManifest>(
-  input: VerticalRuntimeRegistrationInput<Manifest>,
-): VerticalRuntimeRegistration<Manifest['module']['id']> => {
+const validateRuntimeActions = (input: VerticalRuntimeRegistrationInput): void => {
   const allowed = new Set(['actions', 'entrypoints', 'manifest', 'outboxWorkers']);
   for (const key of Reflect.ownKeys(input)) {
     if (!Predicate.isString(key) || !allowed.has(key)) {
@@ -115,13 +113,9 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
       failRuntimeRegistration('runtime Action must be the same value published by the manifest');
     }
   }
-  const workers = validateOutboxWorkerRegistrations(input.outboxWorkers);
-  for (const worker of workers) {
-    if (worker.descriptor.consumerModuleKey !== input.manifest.module.id) {
-      failRuntimeRegistration('runtime Outbox Worker owner must match the manifest module ID');
-    }
-  }
-  const entrypoints = input.entrypoints ?? emptyEntrypoints();
+};
+
+const validateRuntimeEntrypoints = (entrypoints: VerticalRuntimeEntrypointBindings): void => {
   const entrypointCategories = new Set(['api', 'components', 'pages', 'reports', 'search']);
   for (const key of Reflect.ownKeys(entrypoints)) {
     if (!Predicate.isString(key) || !entrypointCategories.has(key)) {
@@ -133,6 +127,20 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
       failRuntimeRegistration(`runtime ${category} entrypoints must be lazy thunks`);
     }
   }
+};
+
+export const defineVerticalRuntimeRegistration = <const Manifest extends OntosModuleManifest>(
+  input: VerticalRuntimeRegistrationInput<Manifest>,
+): VerticalRuntimeRegistration<Manifest['module']['id']> => {
+  validateRuntimeActions(input);
+  const workers = validateOutboxWorkerRegistrations(input.outboxWorkers);
+  for (const worker of workers) {
+    if (worker.descriptor.consumerModuleKey !== input.manifest.module.id) {
+      failRuntimeRegistration('runtime Outbox Worker owner must match the manifest module ID');
+    }
+  }
+  const entrypoints = input.entrypoints ?? emptyEntrypoints();
+  validateRuntimeEntrypoints(entrypoints);
   return new VerticalRuntimeRegistrationValue(input.manifest.module.id, {
     actions: Object.freeze([...input.actions]),
     entrypoints: Object.freeze({

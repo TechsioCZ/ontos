@@ -13,10 +13,9 @@ const digitWords = [
   'nine',
 ] as const;
 
-export class TailwindPrefixError extends Schema.TaggedError<TailwindPrefixError>()(
-  'TailwindPrefixError',
-  { message: Schema.String },
-) {}
+class TailwindPrefixError extends Schema.TaggedError<TailwindPrefixError>()('TailwindPrefixError', {
+  message: Schema.String,
+}) {}
 
 export const tailwindPrefixForNamespace = (namespace: string): string => {
   const prefix = namespace

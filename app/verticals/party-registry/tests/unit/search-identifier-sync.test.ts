@@ -4,7 +4,7 @@ import test from 'node:test';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   makeCoreSearchIngestion,
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type { OutboxMessage, OutboxWorkerHandlerContext } from '@app/core-runtime';
@@ -145,7 +145,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
   return {
     deliver,
     query: () =>
-      makeCoreSearchQueryRuntime(store).search({
+      createCoreSearchQueryRuntime(store).search({
         effectiveAt: '2026-09-03T00:00:00.000Z',
         includeArchived: false,
         moduleId: 'party.registry',
@@ -158,21 +158,26 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
   };
 };
 
+const assertIdentifierOutbox = (
+  harness: ReturnType<typeof makeActionTestHarness>,
+  eventType: string,
+) => {
+  const [commit] = harness.snapshot().committed;
+  assert.ok(commit);
+  assert.equal(commit.evidence.outboxMessages.length, 1);
+  const [outbox] = commit.evidence.outboxMessages;
+  assert.ok(outbox);
+  assert.equal(commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType, eventType);
+  assert.deepEqual(outbox.message.payloadJson, { officialIdentifierRef, partyRef });
+  return outbox;
+};
+
 const assertAttachedIdentifierDelivery = (
   harness: ReturnType<typeof makeActionTestHarness>,
   search: ReturnType<typeof makeSearchFixture>,
 ) =>
   Effect.gen(function* verifyCommittedIdentifierDelivery() {
-    const [commit] = harness.snapshot().committed;
-    assert.ok(commit);
-    assert.equal(commit.evidence.outboxMessages.length, 1);
-    const [outbox] = commit.evidence.outboxMessages;
-    assert.ok(outbox);
-    assert.equal(
-      commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType,
-      'party.registry.official-identifier-added.v1',
-    );
-    assert.deepEqual(outbox.message.payloadJson, { officialIdentifierRef, partyRef });
+    const outbox = assertIdentifierOutbox(harness, 'party.registry.official-identifier-added.v1');
     assert.deepEqual(yield* search.query(), []);
     yield* search.deliver(outbox.message);
     const hits = yield* search.query();
@@ -324,16 +329,10 @@ test('END_VALIDITY refreshes search only after its committed identifier message 
         registration: updatePartyOfficialIdentifierAction,
         transport: { correlationId: 'identifier-sync', idempotencyKey: 'end-identifier-1' },
       });
-      const [commit] = harness.snapshot().committed;
-      assert.ok(commit);
-      assert.equal(commit.evidence.outboxMessages.length, 1);
-      const [outbox] = commit.evidence.outboxMessages;
-      assert.ok(outbox);
-      assert.equal(
-        commit.evidence.domainEvents[outbox.domainEventIndex]?.eventType,
+      const outbox = assertIdentifierOutbox(
+        harness,
         'party.registry.official-identifier-updated.v1',
       );
-      assert.deepEqual(outbox.message.payloadJson, { officialIdentifierRef, partyRef });
       assert.equal((yield* search.query()).length, 1);
       yield* search.deliver(outbox.message);
       assert.deepEqual(yield* search.query(), []);

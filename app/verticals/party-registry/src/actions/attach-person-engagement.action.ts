@@ -6,13 +6,9 @@ import {
   defineTenantModuleEntrypoint,
   OperationContextUnavailable,
 } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import {
   AttachPersonEngagementPayloadSchema,
-  EngagementProfileConflict,
-  EngagementProfilePersistenceUnavailable,
-  PartyRegistryReferenceUnavailable,
   PersonEngagementProfileSchema,
 } from '../../shared/domain/engagement-profile.ts';
 import type {
@@ -25,35 +21,7 @@ import {
   validatePartyRegistryReferences,
 } from '../services/engagement-reference-validation.service.ts';
 
-export const AttachPersonEngagementPayload = AttachPersonEngagementPayloadSchema;
-export const AttachPersonEngagementResult = PersonEngagementProfileSchema;
-export const AttachPersonEngagementError = Schema.Union([
-  EngagementProfileConflict,
-  EngagementProfilePersistenceUnavailable,
-  PartyRegistryReferenceUnavailable,
-]);
-
-interface Services {
-  readonly create: (
-    payload: AttachPersonEngagementInput,
-  ) => Effect.Effect<
-    PersonEngagementProfile,
-    EngagementProfileConflict | EngagementProfilePersistenceUnavailable
-  >;
-  readonly validate: (
-    payload: AttachPersonEngagementInput,
-  ) => Effect.Effect<void, EngagementProfileConflict | PartyRegistryReferenceUnavailable>;
-}
-
-const handleAttachPersonEngagement = Effect.fn(
-  'AttachPersonEngagementAction.handleAttachPersonEngagement',
-)(function* handleAttachPersonEngagementEffect(
-  payload: AttachPersonEngagementInput,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-) {
-  yield* context.services.validate(payload);
-  return yield* context.services.create(payload);
-});
+import { AttachEngagementError, handleAttachEngagement } from './attach-engagement-handler.ts';
 
 export const attachPersonEngagementAction = defineAction(
   {
@@ -63,7 +31,7 @@ export const attachPersonEngagementAction = defineAction(
     },
     actionKey: 'party.registry.attach-person-engagement',
     auditProfile: 'standard',
-    domainErrorSchema: AttachPersonEngagementError,
+    domainErrorSchema: AttachEngagementError,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -75,12 +43,12 @@ export const attachPersonEngagementAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    payloadSchema: AttachPersonEngagementPayload,
+    payloadSchema: AttachPersonEngagementPayloadSchema,
     policies: [],
-    resultSchema: AttachPersonEngagementResult,
+    resultSchema: PersonEngagementProfileSchema,
     schemaVersion: '1',
   },
-  handleAttachPersonEngagement,
+  handleAttachEngagement<AttachPersonEngagementInput, PersonEngagementProfile>,
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

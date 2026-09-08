@@ -12,19 +12,16 @@ export {
   PartyRelationshipOverlapConflict,
   PartyRelationshipPersistenceUnavailable,
   PartyRelationshipRevisionConflict,
-  PartyRelationshipTypeUnsupported,
 } from './relationship-errors/index.ts';
 
 export const ContactPersonOfRelationshipType = 'CONTACT_PERSON_OF' as const;
 export const PartyRelationshipTypeSchema = Schema.Literal(ContactPersonOfRelationshipType);
-export type PartyRelationshipType = typeof PartyRelationshipTypeSchema.Type;
 
 export const RelationshipPartyTypeSchema = Schema.Literals([
   'PERSON',
   'ORGANIZATION',
   'UNRESOLVED',
 ]);
-export type RelationshipPartyType = typeof RelationshipPartyTypeSchema.Type;
 
 export const RelationshipIsoTimestampSchema = Schema.String.pipe(
   Schema.check(
@@ -101,14 +98,13 @@ export const EndPartyRelationshipPayloadSchema = Schema.Struct({
 });
 export type EndPartyRelationshipPayload = typeof EndPartyRelationshipPayloadSchema.Type;
 
-export const RelationshipStoredEndpointSchema = Schema.Struct({
+const RelationshipStoredEndpointSchema = Schema.Struct({
   canonicalPartyRef: PartyRefSchema,
   requestedAlias: Schema.OptionFromNullOr(PartyRefSchema),
   storedPartyRef: PartyRefSchema,
 });
-export type RelationshipStoredEndpoint = typeof RelationshipStoredEndpointSchema.Type;
 
-export const PartyRelationshipStateSchema = Schema.Literals(['SCHEDULED', 'CURRENT', 'HISTORICAL']);
+const PartyRelationshipStateSchema = Schema.Literals(['SCHEDULED', 'CURRENT', 'HISTORICAL']);
 export type PartyRelationshipState = typeof PartyRelationshipStateSchema.Type;
 
 export const PartyRelationshipAssertionStateSchema = Schema.Literals([
@@ -117,7 +113,6 @@ export const PartyRelationshipAssertionStateSchema = Schema.Literals([
   'RETRACTED',
   'DISPUTED',
 ]);
-export type PartyRelationshipAssertionState = typeof PartyRelationshipAssertionStateSchema.Type;
 
 export const RelationshipEndEvidenceSchema = Schema.Struct({
   effectiveAt: RelationshipIsoTimestampSchema,
@@ -125,7 +120,6 @@ export const RelationshipEndEvidenceSchema = Schema.Struct({
   reason: Schema.OptionFromNullOr(ReasonSchema),
   recordedAt: RelationshipIsoTimestampSchema,
 });
-export type RelationshipEndEvidence = typeof RelationshipEndEvidenceSchema.Type;
 
 export const UpdateRelationshipAuditEvidenceSchema = Schema.Struct({
   changeReason: ReasonSchema,
@@ -173,13 +167,11 @@ export const CreatePartyRelationshipResultSchema = Schema.Struct({
   outcome: Schema.Literals(['CREATED', 'REUSED_EXISTING']),
   relationship: PartyRelationshipDetailSchema,
 });
-export type CreatePartyRelationshipResult = typeof CreatePartyRelationshipResultSchema.Type;
 
 export const ChangePartyRelationshipResultSchema = Schema.Struct({
   outcome: Schema.Literals(['CHANGED', 'UNCHANGED']),
   relationship: PartyRelationshipDetailSchema,
 });
-export type ChangePartyRelationshipResult = typeof ChangePartyRelationshipResultSchema.Type;
 
 export const PartyRelationshipLifecycleEventPayloadSchema = Schema.Struct({
   fromPartyRef: PartyRefSchema,
@@ -190,13 +182,9 @@ export const PartyRelationshipLifecycleEventPayloadSchema = Schema.Struct({
   validFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
   validTo: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
 });
-export type PartyRelationshipLifecycleEventPayload =
-  typeof PartyRelationshipLifecycleEventPayloadSchema.Type;
 export const PartyRelationshipLifecycleEventPayloadJsonSchema = Schema.toEncoded(
   PartyRelationshipLifecycleEventPayloadSchema,
 );
-export type PartyRelationshipLifecycleEventPayloadJson =
-  typeof PartyRelationshipLifecycleEventPayloadJsonSchema.Type;
 
 export const partyRef = (tenantId: string, resourceId: string) => ({
   moduleId: 'party.registry' as const,

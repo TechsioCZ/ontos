@@ -26,18 +26,14 @@
 import { defineRule } from '@oxlint/plugins';
 import { fileURLToPath } from 'node:url';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
+import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { compile, stringList } from '../shared/options.ts';
 
 type AnyNode = ESTree.Node;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the production `includePaths` defaults instead of
- * forcing the fixture config to loosen them (`run-on-repo.mts` reuses that config verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_AMBIENT_KEYS: readonly string[] = ['correlationId', 'traceId', 'traceparent'];
 // Source-verified boundary/value declarations, not an exemption for their nested operations.
@@ -48,9 +44,6 @@ const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Type members are only inspected inside a real object-type body. */
 const MEMBER_CONTAINERS = new Set(['TSInterfaceBody', 'TSTypeLiteral']);
-
-/** Wrappers between a written parameter and the binding it introduces. */
-const PARAMETER_WRAPPERS = new Set(['AssignmentPattern', 'RestElement', 'TSParameterProperty']);
 
 /** Type wrappers that never change which members an object type declares. */
 const TYPE_WRAPPERS = new Set([
@@ -68,22 +61,6 @@ interface RuleOptions {
   readonly wireTypeNames: RegExp;
 }
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  return value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
-function compile(value: unknown, fallback: string): RegExp {
-  const source = typeof value === 'string' && value.length > 0 ? value : fallback;
-  try {
-    return new RegExp(source, 'u');
-  } catch {
-    return new RegExp(fallback, 'u');
-  }
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Record<string, unknown>;
   const ambientKeys = stringList(given.ambientKeys, DEFAULT_AMBIENT_KEYS);
@@ -98,49 +75,49 @@ function readOptions(raw: unknown): RuleOptions {
 }
 
 function scopePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
-  if (fixture?.[1]) return fixture[1];
-  const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
-  return unified.startsWith(root)
-    ? unified.slice(root.length)
-    : normalisePath(unified).replace(FIXTURE_PREFIX, '');
+  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
 }
 
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** Named or static string/template identity keys; dynamic computed keys are unknown. */
+/** Private fields are accepted here in addition to the shared static-key policy. */
 function keyName(key: AnyNode, computed: boolean): string | null {
-  if (!computed && (key.type === 'Identifier' || key.type === 'PrivateIdentifier')) return key.name;
-  if (key.type === 'TemplateLiteral' && key.expressions.length === 0)
-    return key.quasis[0]?.value.cooked ?? null;
-  if (key.type === 'Literal') {
-    const value = (key as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  return null;
+  if (!computed && key.type === 'PrivateIdentifier') return key.name;
+  return staticKeyName(key, computed);
 }
 
-/** `AssignmentPattern` / `RestElement` / `TSParameterProperty` → the binding they wrap. */
-function unwrapBinding(node: AnyNode): AnyNode {
-  let current = node;
-  for (let guard = 0; guard < 4; guard += 1) {
-    if (!PARAMETER_WRAPPERS.has(current.type)) return current;
-    const inner =
-      (current as { left?: AnyNode }).left ??
-      (current as { argument?: AnyNode }).argument ??
-      (current as { parameter?: AnyNode }).parameter;
-    if (inner === undefined) return current;
-    current = inner;
+const NAMED_DECLARATIONS = new Set([
+  'ClassDeclaration',
+  'ClassExpression',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'TSDeclareFunction',
+  'TSInterfaceDeclaration',
+  'TSTypeAliasDeclaration',
+  'VariableDeclarator',
+]);
+const KEYED_DECLARATIONS = new Set([
+  'AccessorProperty',
+  'MethodDefinition',
+  'Property',
+  'PropertyDefinition',
+  'TSMethodSignature',
+  'TSPropertySignature',
+]);
+
+function declarationName(node: AnyNode): string | null {
+  if (NAMED_DECLARATIONS.has(node.type)) {
+    const id = (node as { id?: AnyNode | null }).id;
+    return id?.type === 'Identifier' ? id.name : null;
   }
-  return current;
+  if (!KEYED_DECLARATIONS.has(node.type)) return null;
+  const holder = node as unknown as { key: AnyNode; computed: boolean };
+  return keyName(holder.key, holder.computed);
+}
+
+function stopsOwnerSearch(node: AnyNode): boolean {
+  if (node.type === 'BlockStatement') return true;
+  if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') return false;
+  const parent = parentOf(node);
+  return !parent || !['VariableDeclarator', 'Property', 'MethodDefinition'].includes(parent.type);
 }
 
 /**
@@ -148,55 +125,14 @@ function unwrapBinding(node: AnyNode): AnyNode {
  * Used to name the candidate and apply the explicit boundary-name convention.
  */
 function enclosingNames(node: AnyNode): readonly string[] {
-  const names: string[] = [];
   let current: AnyNode | null = parentOf(node);
   for (let guard = 0; guard < 32 && current !== null; guard += 1) {
-    switch (current.type) {
-      case 'ClassDeclaration':
-      case 'ClassExpression':
-      case 'FunctionDeclaration':
-      case 'FunctionExpression':
-      case 'TSDeclareFunction':
-      case 'TSInterfaceDeclaration':
-      case 'TSTypeAliasDeclaration': {
-        const id = (current as { id?: AnyNode | null }).id ?? null;
-        if (id !== null && id.type === 'Identifier') names.push((id as { name: string }).name);
-        break;
-      }
-      case 'VariableDeclarator': {
-        const id = (current as { id: AnyNode }).id;
-        if (id.type === 'Identifier') names.push((id as { name: string }).name);
-        break;
-      }
-      case 'AccessorProperty':
-      case 'MethodDefinition':
-      case 'Property':
-      case 'PropertyDefinition':
-      case 'TSMethodSignature':
-      case 'TSPropertySignature': {
-        const holder = current as unknown as { key: AnyNode; computed: boolean };
-        const name = keyName(holder.key, holder.computed);
-        if (name !== null) names.push(name);
-        break;
-      }
-      default:
-        break;
-    }
-    if (names.length > 0) return names;
-    // Never inherit a wire-shaped ancestor through an unrelated anonymous callback/body.
-    if (current.type === 'BlockStatement') return names;
-    if (current.type === 'ArrowFunctionExpression' || current.type === 'FunctionExpression') {
-      const parent = parentOf(current);
-      if (
-        parent?.type !== 'VariableDeclarator' &&
-        parent?.type !== 'Property' &&
-        parent?.type !== 'MethodDefinition'
-      )
-        return names;
-    }
+    const name = declarationName(current);
+    if (name !== null) return [name];
+    if (stopsOwnerSearch(current)) return [];
     current = parentOf(current);
   }
-  return names;
+  return [];
 }
 
 /** Keys declared by an inline object type on a destructured parameter, so they report only once. */
@@ -207,32 +143,68 @@ function inlineMemberKeys(annotation: AnyNode | null | undefined, depth = 0): Re
     annotation.type === 'TSTypeAnnotation'
       ? (annotation as { typeAnnotation: AnyNode }).typeAnnotation
       : annotation;
-  if (TYPE_WRAPPERS.has(node.type)) {
-    const inner =
-      (node as { typeAnnotation?: AnyNode }).typeAnnotation ??
-      (node as { elementType?: AnyNode }).elementType;
-    if (inner !== undefined) for (const key of inlineMemberKeys(inner, depth + 1)) keys.add(key);
-    return keys;
+  for (const child of inlineTypeChildren(node)) {
+    for (const key of inlineMemberKeys(child, depth + 1)) keys.add(key);
   }
-  if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') {
-    for (const member of (node as { types: readonly AnyNode[] }).types) {
-      for (const key of inlineMemberKeys(member, depth + 1)) keys.add(key);
-    }
-    return keys;
-  }
-  if (node.type !== 'TSTypeLiteral') return keys;
-  for (const member of (node as { members: readonly AnyNode[] }).members) {
-    if (member.type !== 'TSPropertySignature') continue;
-    const signature = member as unknown as {
-      key: AnyNode;
-      computed: boolean;
-      typeAnnotation: AnyNode | null;
-    };
-    const name = keyName(signature.key, signature.computed);
-    if (name !== null) keys.add(name);
-    for (const nested of inlineMemberKeys(signature.typeAnnotation, depth + 1)) keys.add(nested);
-  }
+  addInlinePropertyNames(node, keys);
   return keys;
+}
+
+function addInlinePropertyNames(node: AnyNode, keys: Set<string>): void {
+  if (node.type === 'TSTypeLiteral') {
+    for (const member of node.members) {
+      if (member.type !== 'TSPropertySignature') continue;
+      const name = keyName(member.key, member.computed);
+      if (name !== null) keys.add(name);
+    }
+  }
+}
+
+function inlineTypeChildren(node: AnyNode): readonly (AnyNode | null | undefined)[] {
+  if (TYPE_WRAPPERS.has(node.type)) {
+    const wrapper = node as { typeAnnotation?: AnyNode; elementType?: AnyNode };
+    return [wrapper.typeAnnotation ?? wrapper.elementType];
+  }
+  if (node.type === 'TSUnionType' || node.type === 'TSIntersectionType') return node.types;
+  if (node.type !== 'TSTypeLiteral') return [];
+  return node.members.flatMap((member) =>
+    member.type === 'TSPropertySignature' ? [member.typeAnnotation] : [],
+  );
+}
+
+function importedContextBinding(definition: Variable['defs'][number]): string | null {
+  const declaration = definition.parent;
+  if (declaration?.type !== 'ImportDeclaration') return null;
+  const specifier = definition.node;
+  if (declaration.importKind === 'type') return null;
+  if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
+  return contextImportName(declaration.source.value, specifier);
+}
+
+function contextImportName(source: string, specifier: AnyNode): string | null {
+  if (source === 'effect/Context')
+    return specifier.type === 'ImportSpecifier'
+      ? `Context.${keyName(specifier.imported, false)}`
+      : 'Context';
+  if (source !== 'effect' && source !== '@modern-js/plugin-bff/effect-edge') return null;
+  if (specifier.type === 'ImportNamespaceSpecifier') return '$root';
+  return specifier.type === 'ImportSpecifier' ? keyName(specifier.imported, false) : null;
+}
+
+function variableContextBinding(
+  context: Context,
+  node: AnyNode,
+  seen: Set<Variable>,
+): string | null {
+  const variable = lookupVariable(context, node);
+  if (!variable || seen.has(variable)) return null;
+  seen.add(variable);
+  const definition = variable.defs[0];
+  if (definition?.type === 'ImportBinding') return importedContextBinding(definition);
+  if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return null;
+  if (!definition.node.init) return null;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
+  return contextBinding(context, definition.node.init, seen);
 }
 
 function contextBinding(
@@ -257,46 +229,7 @@ function contextBinding(
     const key = keyName(node.property, node.computed);
     return base === null || key === null ? null : base === '$root' ? key : `${base}.${key}`;
   }
-  if (node.type !== 'Identifier') return null;
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  let variable: Variable | undefined;
-  while (scope) {
-    variable = scope.set.get(node.name);
-    if (variable) break;
-    scope = scope.upper;
-  }
-  if (!variable || seen.has(variable)) return null;
-  seen.add(variable);
-  const definition = variable.defs[0];
-  if (definition?.type === 'ImportBinding') {
-    const declaration = definition.parent;
-    if (declaration?.type !== 'ImportDeclaration') return null;
-    const specifier = definition.node;
-    if (
-      declaration.importKind === 'type' ||
-      (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type')
-    )
-      return null;
-    const source = declaration.source.value;
-    if (source === 'effect/Context')
-      return specifier.type === 'ImportSpecifier'
-        ? `Context.${keyName(specifier.imported, false)}`
-        : 'Context';
-    if (source !== 'effect' && source !== '@modern-js/plugin-bff/effect-edge') return null;
-    return specifier.type === 'ImportNamespaceSpecifier'
-      ? '$root'
-      : specifier.type === 'ImportSpecifier'
-        ? keyName(specifier.imported, false)
-        : null;
-  }
-  if (
-    definition?.type !== 'Variable' ||
-    definition.node.type !== 'VariableDeclarator' ||
-    !definition.node.init ||
-    variable.references.some((reference) => reference.isWrite() && !reference.init)
-  )
-    return null;
-  return contextBinding(context, definition.node.init, seen);
+  return variableContextBinding(context, node, seen);
 }
 
 /** Ambient service payloads and consumption-only casts declare no threaded operation input. */
@@ -326,6 +259,38 @@ function isAmbientOrReadType(context: Context, from: AnyNode): boolean {
     )
       return false;
     node = parentOf(node);
+  }
+  return false;
+}
+
+function isConciseWireProjection(owner: AnyNode, wireTypeNames: RegExp): boolean {
+  if (owner.type !== 'ArrowFunctionExpression' || owner.body.type !== 'ObjectExpression')
+    return false;
+  const output = owner.returnType?.typeAnnotation;
+  return (
+    output?.type === 'TSTypeReference' &&
+    output.typeName.type === 'Identifier' &&
+    wireTypeNames.test(output.typeName.name)
+  );
+}
+
+/** A flat inline row projection is the same serialization boundary as its wire return type. */
+function isWireProjection(from: AnyNode, wireTypeNames: RegExp): boolean {
+  let owner = parentOf(from);
+  while (
+    owner &&
+    ![
+      'BlockStatement',
+      'TSPropertySignature',
+      'TSInterfaceDeclaration',
+      'TSTypeAliasDeclaration',
+    ].includes(owner.type)
+  ) {
+    if (
+      ['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression'].includes(owner.type)
+    )
+      return isConciseWireProjection(owner, wireTypeNames);
+    owner = parentOf(owner);
   }
   return false;
 }
@@ -420,36 +385,7 @@ export const rule = defineRule({
       if (isWireEdge(names)) return;
       if (messageId === 'threadedField') {
         if (isAmbientOrReadType(context, from)) return;
-        // A flat inline row input projected to a known durable/wire type is the same
-        // serialization boundary as that type, not ambient identity carried inward.
-        let owner = parentOf(from);
-        while (
-          owner &&
-          ![
-            'BlockStatement',
-            'TSPropertySignature',
-            'TSInterfaceDeclaration',
-            'TSTypeAliasDeclaration',
-          ].includes(owner.type)
-        ) {
-          if (
-            owner.type === 'ArrowFunctionExpression' ||
-            owner.type === 'FunctionDeclaration' ||
-            owner.type === 'FunctionExpression'
-          ) {
-            const output = owner.returnType?.typeAnnotation;
-            if (
-              owner.type === 'ArrowFunctionExpression' &&
-              owner.body.type === 'ObjectExpression' &&
-              output?.type === 'TSTypeReference' &&
-              output.typeName.type === 'Identifier' &&
-              options.wireTypeNames.test(output.typeName.name)
-            )
-              return;
-            break;
-          }
-          owner = parentOf(owner);
-        }
+        if (isWireProjection(from, options.wireTypeNames)) return;
       }
       context.report({ data: { key, owner: names[0] ?? '<anonymous>' }, messageId, node });
     };

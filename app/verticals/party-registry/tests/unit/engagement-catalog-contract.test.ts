@@ -16,3 +16,18 @@ test('reports exact Contacts table catalog differences', () => {
     unexpected: [],
   });
 });
+
+test('keeps Contacts inventory separate while rejecting duplicate unknown tables once', () => {
+  assert.deepEqual(
+    compareContactsCatalog([
+      ...expectedContactsTableCatalog,
+      'party.counterparties',
+      'party.counterparties',
+    ]),
+    { missing: [], unexpected: ['party.counterparties'] },
+  );
+  assert.deepEqual(compareContactsCatalog([]), {
+    missing: expectedContactsTableCatalog.toSorted(),
+    unexpected: [],
+  });
+});

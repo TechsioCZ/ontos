@@ -17,24 +17,20 @@ const ProviderSubjectIdSchema = Schema.String.check(
 const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('AuthBindingId'),
 );
-export const BindManagedApiKeyPayloadSchema = Schema.Struct({
+const BindManagedApiKeyPayloadSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   providerSubjectId: ProviderSubjectIdSchema,
 });
 export type BindManagedApiKeyPayload = Schema.Schema.Type<typeof BindManagedApiKeyPayloadSchema>;
-export const BindManagedApiKeyResultSchema = Schema.Struct({
+const BindManagedApiKeyResultSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   status: Schema.Literal('active'),
 });
-export type BindManagedApiKeyResult = Schema.Schema.Type<typeof BindManagedApiKeyResultSchema>;
-type BindApiKey = PrincipalManagementRepositoryService['bindApiKey'];
-type Input = Parameters<BindApiKey>[0];
-type Result = ReturnType<BindApiKey>;
 const handle = Effect.fn('BindManagedApiKeyAction.handle')(function* bindManagedApiKeyActionHandle(
   payload: BindManagedApiKeyPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
-    { readonly bind: (input: Input) => Result }
+    { readonly bind: PrincipalManagementRepositoryService['bindApiKey'] }
   >,
 ) {
   const result = yield* context.services.bind({

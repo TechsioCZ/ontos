@@ -2,9 +2,9 @@ import type { Pool } from 'pg';
 import { PgClient } from '@effect/sql-pg';
 import type { AnyRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect, Stream } from 'effect';
+import { Effect } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { Connection } from 'effect/unstable/sql/SqlConnection';
+import { testSqlConnection } from './sql-connection.ts';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 import { coreRelations } from '../../src/db/schema.ts';
 import { runEffectTestSync } from './effect-runtime.ts';
@@ -16,16 +16,7 @@ export const makeTestDatabase = (
   runEffectTestSync(
     Effect.scoped(
       Effect.gen(function* makeNativeTestDatabase() {
-        const values = (sql: string, params: readonly unknown[]) =>
-          execute(sql, params).pipe(Effect.map((rows) => rows.map(Object.values)));
-        const connection: Connection = {
-          execute,
-          executeRaw: execute,
-          executeStream: (sql, params) => Stream.fromIterableEffect(execute(sql, params)),
-          executeUnprepared: execute,
-          executeValues: values,
-          executeValuesUnprepared: values,
-        };
+        const connection = testSqlConnection(execute);
         const reactivity = yield* Reactivity.make;
         const client = yield* PgClient.makeWith({
           acquirer: Effect.succeed(connection),

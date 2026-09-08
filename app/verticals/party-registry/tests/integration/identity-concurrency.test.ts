@@ -5,13 +5,14 @@ import {
 } from '@app/core-runtime/testing/effect-runtime';
 
 // @effect-diagnostics asyncFunction:off globalDate:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
 import assert from 'node:assert/strict';
 import test, { after as afterNativeDatabase } from 'node:test';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { openBoundaryDatabases } from '../support/database-boundary.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { normalizeOfficialIdentifier } from '../../shared/domain/identifier-contracts.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import {
@@ -37,45 +38,35 @@ afterNativeDatabase(
   NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
 );
 
+/** Both boundary roles read the same owned schema through the scope closed after these tests. */
+const openPartyDatabase = async (pool: Pool) =>
+  await runEffectTestPromise(
+    makeTestDatabaseFromPool(pool, partyRelations).pipe(NativeScope.provide(nativeDatabaseScope)),
+  );
+
 const tenantId = 'bc100000-0000-4000-8000-000000000001';
 const principalId = 'bc200000-0000-4000-8000-000000000001';
 
 test('real PostgreSQL identity locks serialize concurrent exact creates and repeated identifier acceptance', async () => {
-  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 2 });
-  const admin = await runEffectTestPromise(
-    makeTestDatabaseFromPool(adminPool, partyRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
+  const { admin, adminPool, runtime, runtimePool } = await openBoundaryDatabases(
+    openPartyDatabase,
+    2,
   );
-  const runtime = await runEffectTestPromise(
-    makeTestDatabaseFromPool(runtimePool, partyRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
-  );
-  const cleanup = async () => {
+  // Ordered child-before-parent so every delete respects the owned foreign keys.
+  const cleanup = async (): Promise<void> => {
     await runEffectTestPromise(
-      admin.delete(partyMatchDecisions).where(eq(partyMatchDecisions.tenantId, tenantId)),
+      purgeFixtureRows(
+        [
+          partyMatchDecisions,
+          duplicateCandidateCaseParties,
+          duplicateCandidateCases,
+          partyIdentifierClaims,
+          partyOfficialIdentifiers,
+          partyFactAssertions,
+          parties,
+        ].map((table) => admin.delete(table).where(eq(table.tenantId, tenantId))),
+      ),
     );
-    await runEffectTestPromise(
-      admin
-        .delete(duplicateCandidateCaseParties)
-        .where(eq(duplicateCandidateCaseParties.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      admin.delete(duplicateCandidateCases).where(eq(duplicateCandidateCases.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      admin.delete(partyIdentifierClaims).where(eq(partyIdentifierClaims.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      admin.delete(partyOfficialIdentifiers).where(eq(partyOfficialIdentifiers.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      admin.delete(partyFactAssertions).where(eq(partyFactAssertions.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(admin.delete(parties).where(eq(parties.tenantId, tenantId)));
   };
   const scoped = <Value, Failure>(
     operation: (transaction: PartyTransaction) => Effect.Effect<Value, Failure>,

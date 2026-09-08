@@ -11,6 +11,7 @@ import {
   MergeSurvivorSelectionReasonSchema,
 } from '../domain/merge-selection.ts';
 import { PartyRefSchema } from './party.ts';
+import type { PartyRef } from './party.ts';
 import {
   PartyRegistryResourceIdJsonSchema,
   PartyRegistryTenantIdJsonSchema,
@@ -23,6 +24,21 @@ export const PartyMergeRefSchema = Schema.Struct({
   tenantId: PartyRegistryTenantIdJsonSchema,
 });
 export type PartyMergeRef = typeof PartyMergeRefSchema.Type;
+
+const selectionEvidenceIsInvalid = (
+  selectionEvidenceChain: readonly (typeof MergeSelectionEvidenceStepSchema.Type)[],
+  selectionReason: typeof MergeSurvivorSelectionReasonSchema.Type,
+  survivorPartyRef: PartyRef,
+): boolean => {
+  const finalSelectionStep = selectionEvidenceChain.at(-1);
+  return (
+    selectionEvidenceChain[0]?.criterion !== 'CONFIRMED_DUPLICATE_SET' ||
+    selectionEvidenceChain[1]?.criterion !== 'IDENTITY_SAFETY' ||
+    finalSelectionStep?.criterion !== selectionReason ||
+    finalSelectionStep.winnerPartyRef?.resourceId !== survivorPartyRef.resourceId ||
+    finalSelectionStep.winnerPartyRef.tenantId !== survivorPartyRef.tenantId
+  );
+};
 
 /**
  * Prepared merge evidence only. PREPARED is deliberately the sole V1 state: no executable merge
@@ -72,14 +88,7 @@ export const PartyMergeSchema = Schema.Struct({
           path: ['absorbedPartyRefs'],
         });
       }
-      const finalSelectionStep = selectionEvidenceChain.at(-1);
-      if (
-        selectionEvidenceChain[0]?.criterion !== 'CONFIRMED_DUPLICATE_SET' ||
-        selectionEvidenceChain[1]?.criterion !== 'IDENTITY_SAFETY' ||
-        finalSelectionStep?.criterion !== selectionReason ||
-        finalSelectionStep.winnerPartyRef?.resourceId !== survivorPartyRef.resourceId ||
-        finalSelectionStep.winnerPartyRef.tenantId !== survivorPartyRef.tenantId
-      ) {
+      if (selectionEvidenceIsInvalid(selectionEvidenceChain, selectionReason, survivorPartyRef)) {
         issues.push({
           issue:
             'selection evidence must prove confirmation, safety, and the recorded survivor reason',

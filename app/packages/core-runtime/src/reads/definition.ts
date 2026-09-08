@@ -205,6 +205,29 @@ export type ReadRegistration<
   readonly [registrationMarker]: true;
 };
 
+const validateReadVocabulary = <Input, Result>(
+  descriptor: ReadDescriptor<
+    Schema.ConstraintDecoder<unknown>,
+    Schema.ConstraintDecoder<unknown>,
+    string
+  >,
+  permissionTargetResolver: ReadPermissionTargetResolver<Input>,
+  resultPermissionTargetResolver: ReadResultPermissionTargetResolver<Result> | undefined,
+): void => {
+  if (
+    !READ_ACCESS_KINDS.includes(descriptor.accessKind) ||
+    !READ_EVIDENCE_CAPTURE_MODES.includes(descriptor.evidencePolicy.captureMode) ||
+    !READ_PERMISSION_TARGETS.includes(descriptor.permissionTarget) ||
+    (descriptor.accessKind === 'search' && !Predicate.isFunction(resultPermissionTargetResolver)) ||
+    !Predicate.isFunction(permissionTargetResolver) ||
+    descriptor.evidencePolicy.policyKey.length === 0 ||
+    descriptor.readKey.length === 0 ||
+    descriptor.schemaVersion.length === 0
+  ) {
+    return failReadDefinition('Read metadata must use the closed governed-read vocabulary');
+  }
+};
+
 export const defineRead = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -230,18 +253,7 @@ export const defineRead = <
     executablePolicies = [],
   ] = definition;
   validateReadDescriptorInput(descriptor);
-  if (
-    !READ_ACCESS_KINDS.includes(descriptor.accessKind) ||
-    !READ_EVIDENCE_CAPTURE_MODES.includes(descriptor.evidencePolicy.captureMode) ||
-    !READ_PERMISSION_TARGETS.includes(descriptor.permissionTarget) ||
-    (descriptor.accessKind === 'search' && !Predicate.isFunction(resultPermissionTargetResolver)) ||
-    !Predicate.isFunction(permissionTargetResolver) ||
-    descriptor.evidencePolicy.policyKey.length === 0 ||
-    descriptor.readKey.length === 0 ||
-    descriptor.schemaVersion.length === 0
-  ) {
-    return failReadDefinition('Read metadata must use the closed governed-read vocabulary');
-  }
+  validateReadVocabulary(descriptor, permissionTargetResolver, resultPermissionTargetResolver);
   if (
     !Array.isArray(descriptor.policies) ||
     descriptor.policies.some(

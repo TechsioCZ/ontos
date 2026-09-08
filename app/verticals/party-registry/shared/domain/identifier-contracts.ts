@@ -1,17 +1,17 @@
 import { AresAppliedEvidenceSchema } from './ares-application.ts';
-import { DateTime, Option, Schema, SchemaGetter } from 'effect';
+import { Schema } from 'effect';
+import { CanonicalUtcTimestampJsonSchema } from './canonical-utc-timestamp.ts';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export { OfficialIdentifierClaimConflict } from './identifier-errors/claim-conflict.ts';
 export { OfficialIdentifierInvalid } from './identifier-errors/invalid.ts';
 
-export const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
-export type OfficialIdentifierType = typeof OfficialIdentifierTypeSchema.Type;
+const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
 export const IdentifierVerificationSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
 export type IdentifierVerification = typeof IdentifierVerificationSchema.Type;
 
-export const isValidCzechIco = (value: string): boolean => {
+const isValidCzechIco = (value: string): boolean => {
   if (!/^[0-9]{8}$/u.test(value)) {
     return false;
   }
@@ -89,23 +89,6 @@ export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
   'DISPUTED',
 ]);
 
-export const OfficialIdentifierIsoTimestampSchema = Schema.DateTimeUtcFromString;
-const OfficialIdentifierIsoTimestampJsonSchema = Schema.String.check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u),
-  Schema.makeFilter((value) => {
-    const parsed = DateTime.make(value);
-    const canonicalInput = value.length === 20 ? value.replace(/Z$/u, '.000Z') : value;
-    return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === canonicalInput
-      ? undefined
-      : 'invalid UTC calendar timestamp';
-  }),
-).pipe(
-  Schema.decode({
-    decode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
-    encode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
-  }),
-);
-
 export const OfficialIdentifierAssertionSchema = Schema.Struct({
   externalEvidence: Schema.optionalKey(
     Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema)),
@@ -115,10 +98,10 @@ export const OfficialIdentifierAssertionSchema = Schema.Struct({
   normalizedValue: Schema.String,
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
-  recordedAt: OfficialIdentifierIsoTimestampJsonSchema,
+  recordedAt: CanonicalUtcTimestampJsonSchema,
   state: OfficialIdentifierAssertionStateSchema,
-  validFrom: OfficialIdentifierIsoTimestampJsonSchema,
-  validTo: Schema.toEncoded(Schema.OptionFromNullOr(OfficialIdentifierIsoTimestampJsonSchema)),
+  validFrom: CanonicalUtcTimestampJsonSchema,
+  validTo: Schema.toEncoded(Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)),
   verification: IdentifierVerificationSchema,
 });
 export type OfficialIdentifierAssertion = typeof OfficialIdentifierAssertionSchema.Type;

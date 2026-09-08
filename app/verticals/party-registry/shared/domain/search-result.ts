@@ -16,7 +16,7 @@ export const PartySearchQuerySchema = Schema.Trim.check(
 export const CurrentCounterpartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 export type CurrentCounterpartyRole = typeof CurrentCounterpartyRoleSchema.Type;
 
-export const SearchLegalEntityContextSchema = Schema.Struct({
+const SearchLegalEntityContextSchema = Schema.Struct({
   legalEntityId: Schema.toEncoded(LegalEntityIdSchema),
   tenantId: Schema.toEncoded(TenantIdSchema),
 });
@@ -30,11 +30,10 @@ export const PartySearchResultSchema = Schema.Struct({
 });
 export type PartySearchResult = typeof PartySearchResultSchema.Type;
 
-export const CounterpartyCollisionSchema = Schema.Struct({
+const CounterpartyCollisionSchema = Schema.Struct({
   counterpartyRefs: Schema.Array(CounterpartyRefSchema),
   kind: Schema.Literal('CANONICAL_PARTY_COUNTERPARTY_COLLISION'),
 });
-export type CounterpartyCollision = typeof CounterpartyCollisionSchema.Type;
 
 export const CounterpartySearchResultSchema = Schema.Struct({
   collision: Schema.optionalKey(CounterpartyCollisionSchema),

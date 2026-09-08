@@ -3,16 +3,17 @@ import {
   runEffectTestPromise,
   runEffectTestSync as runNativeSync,
 } from '@app/core-runtime/testing/effect-runtime';
-import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
 
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 
 import { eq, inArray, sql } from 'drizzle-orm';
-import { Effect, Exit as NativeExit, Scope as NativeScope, Option } from 'effect';
+import { Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
 import assert from 'node:assert/strict';
 import test, { after as afterNativeDatabase } from 'node:test';
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { hasPostgreSqlCode, openBoundaryDatabases } from '../support/database-boundary.ts';
+import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import {
   contactsRelations,
   organizationEngagementProfiles,
@@ -24,39 +25,29 @@ afterNativeDatabase(
   NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
 );
 
+/** Both boundary roles read the same owned schema through the scope closed after these tests. */
+const openContactsDatabase = async (pool: Pool) =>
+  await runEffectTestPromise(
+    makeTestDatabaseFromPool(pool, contactsRelations).pipe(
+      NativeScope.provide(nativeDatabaseScope),
+    ),
+  );
+
 const tenantA = 'c1000000-0000-4000-8000-000000000001';
 const tenantB = 'c1000000-0000-4000-8000-000000000002';
 const fixtureTenants = [tenantA, tenantB] as const;
 
-const hasPostgreSqlCode =
-  (expected: string) =>
-  (error: Parameters<typeof findPostgresFailure>[0]): boolean =>
-    Option.exists(findPostgresFailure(error), ({ code }) => code === expected);
-
 test('enforces tenant isolation and canonical-reference uniqueness without cross-vertical FKs', async () => {
-  const connections = await runEffectTestPromise(loadDatabaseConnectionPair());
-  const adminPool = new Pool({ connectionString: connections.admin.connectionString });
-  const runtimePool = new Pool({ connectionString: connections.runtime.connectionString, max: 1 });
-  const admin = await runEffectTestPromise(
-    makeTestDatabaseFromPool(adminPool, contactsRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
-  );
-  const runtime = await runEffectTestPromise(
-    makeTestDatabaseFromPool(runtimePool, contactsRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    ),
-  );
-  const cleanup = async () => {
+  const { admin, adminPool, runtime, runtimePool } =
+    await openBoundaryDatabases(openContactsDatabase);
+  // Ordered child-before-parent so every delete respects the owned foreign keys.
+  const cleanup = async (): Promise<void> => {
     await runEffectTestPromise(
-      admin
-        .delete(personEngagementProfiles)
-        .where(inArray(personEngagementProfiles.tenantId, fixtureTenants)),
-    );
-    await runEffectTestPromise(
-      admin
-        .delete(organizationEngagementProfiles)
-        .where(inArray(organizationEngagementProfiles.tenantId, fixtureTenants)),
+      purgeFixtureRows(
+        [personEngagementProfiles, organizationEngagementProfiles].map((table) =>
+          admin.delete(table).where(inArray(table.tenantId, fixtureTenants)),
+        ),
+      ),
     );
   };
 

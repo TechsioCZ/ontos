@@ -142,6 +142,12 @@ const transactionHarness = (
 };
 /* eslint-enable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-chained-type-assertions */
 
+const assertNoIdentityWrites = (harness: ReturnType<typeof transactionHarness>) => {
+  assert.deepEqual(harness.insertedValues, []);
+  assert.deepEqual(harness.updateSets, []);
+  assert.deepEqual(harness.deletedTargets, []);
+};
+
 const assertTenantLockIsFirst = (harness: ReturnType<typeof transactionHarness>) => {
   // SAFETY: Every service under test first calls the tenant lock with one Drizzle SQL lock selection.
   const selection = harness.selectSelections[0] as { readonly lock: SQL };
@@ -683,9 +689,7 @@ test('Party type enrichment refuses another owner of a newly eligible identifier
         validFrom: '2026-01-01T00:00:00.000Z',
       });
       assert.equal(result._tag, 'conflict');
-      assert.deepEqual(harness.insertedValues, []);
-      assert.deepEqual(harness.updateSets, []);
-      assert.deepEqual(harness.deletedTargets, []);
+      assertNoIdentityWrites(harness);
     }),
   ));
 
@@ -782,9 +786,7 @@ test('identity updates reject a historical end earlier than the assertion being 
         validFrom: '2026-01-01T00:00:00.000Z',
       });
       assert.equal(result._tag, 'conflict');
-      assert.deepEqual(harness.insertedValues, []);
-      assert.deepEqual(harness.updateSets, []);
-      assert.deepEqual(harness.deletedTargets, []);
+      assertNoIdentityWrites(harness);
     }),
   ));
 

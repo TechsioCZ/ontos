@@ -70,27 +70,21 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope } from '@oxlint/plugins';
+import type { ESTree } from '@oxlint/plugins';
 
-import { isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
+import {
+  EXPRESSION_WRAPPERS,
+  keyName,
+  memberName,
+  parentOf,
+  skipWrappers,
+  unwrapNode,
+} from '../shared/ast.ts';
+import { isJsonHost, jsonExpressionSnippet } from '../shared/json-globals.ts';
+import { booleanOption, stringList } from '../shared/options.ts';
+import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
-
-const WORKSPACE_MARKERS: readonly string[] = ['/apps/', '/verticals/', '/packages/', '/scripts/'];
-
-/**
- * Absolute filename → the workspace-relative path the scope globs are written against.
- *
- * The *last* workspace marker wins so real sources (`<root>/apps/x/api/index.ts`) and the plugin's
- * own fixtures (`tools/.../fixtures/<rule>/invalid/apps/...`) classify identically; `normalisePath`
- * alone would stop at the enclosing `tools/` segment.
- */
-function workspacePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  let best = -1;
-  for (const marker of WORKSPACE_MARKERS) best = Math.max(best, unified.lastIndexOf(marker));
-  return best === -1 ? normalisePath(unified) : unified.slice(best + 1);
-}
 
 /** Globals that expose the ambient `JSON` object as a property (`globalThis.JSON.parse`). */
 const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self', 'frames']);
@@ -114,104 +108,38 @@ const DEFAULTS: RuleOptions = {
   includePaths: DEFAULT_INCLUDE_PATHS,
 };
 
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
-    ignoreTestFiles:
-      typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
+    ignoreTestFiles: booleanOption(given.ignoreTestFiles, DEFAULTS.ignoreTestFiles),
     includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
   };
 }
 
-/** Wrappers that do not change which value an expression evaluates to. */
-const TRANSPARENT_WRAPPERS = new Set([
-  'ParenthesizedExpression',
-  'ChainExpression',
-  'TSAsExpression',
-  'TSSatisfiesExpression',
-  'TSNonNullExpression',
-  'TSInstantiationExpression',
-  'TSTypeAssertion',
-]);
+const UNWRAP_OPTIONS = { wrappers: EXPRESSION_WRAPPERS, maxDepth: 8, sequence: true };
+const STRING_OPTIONS = {
+  templates: true,
+  rawTemplates: false,
+  singleQuasi: false,
+  unwrap: UNWRAP_OPTIONS,
+};
 
-/** Strip parentheses, `as`/`!` casts and optional-chain wrappers from an expression. */
 function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  for (let depth = 0; depth < 8; depth += 1) {
-    if (current.type === 'SequenceExpression') {
-      current = current.expressions.at(-1)!;
-      continue;
-    }
-    if (!TRANSPARENT_WRAPPERS.has(current.type)) return current;
-    const inner = (current as { expression?: AnyNode }).expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, UNWRAP_OPTIONS);
 }
 
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** `JSON.parse` / `JSON["parse"]` → `"parse"`; a dynamic key → `null`. */
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  const property = unwrap(node.property as AnyNode);
-  if (!node.computed)
-    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
-    return property.quasis[0]?.value.cooked ?? null;
-  if (property.type !== 'Literal') return null;
-  const value = (property as { value?: unknown }).value;
-  return typeof value === 'string' ? value : null;
+  if (!node.computed && unwrap(node.property).type !== 'Identifier') return null;
+  return memberName(node, STRING_OPTIONS);
 }
 
-/** `true` when `node` is the global `name` — not a local, parameter, class or imported binding. */
-function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): boolean {
-  if (node.type !== 'Identifier') return false;
-  if ((node as ESTree.IdentifierReference).name !== name) return false;
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    const valueBinding = variable?.defs.some((definition) => {
-      const def = definition as unknown as {
-        type: string;
-        node?: { importKind?: string };
-        parent?: { importKind?: string };
-      };
-      return (
-        def.type !== 'Type' &&
-        !(
-          def.type === 'ImportBinding' &&
-          (def.node?.importKind === 'type' || def.parent?.importKind === 'type')
-        )
-      );
-    });
-    if (valueBinding) return false;
-    // A type-only binding does not hide an outer value binding with this name.
-    scope = scope.upper;
-  }
-  return true;
-}
-
-function keyName(key: AnyNode): string | null {
-  key = unwrap(key);
-  if (key.type === 'TemplateLiteral' && key.expressions.length === 0)
-    return key.quasis[0]?.value.cooked ?? null;
-  if (key.type === 'Identifier') return (key as ESTree.IdentifierName).name;
-  if (key.type === 'Literal') {
-    const value = (key as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  return null;
+/** A single-input call whose callee is the supplied expression, through transparent wrappers. */
+function singleInputCall(node: AnyNode): ESTree.CallExpression | null {
+  const { node: callee, parent } = skipWrappers(node, EXPRESSION_WRAPPERS);
+  if (parent?.type !== 'CallExpression' || parent.callee !== callee) return null;
+  return parent.arguments.length === 1 ? parent : null;
 }
 
 /** Effect-native rule: JSON text is decoded by `Schema.fromJsonString`, never by `JSON.parse`. */
@@ -265,32 +193,32 @@ export const rule = defineRule({
     if (matchesAny(path, options.allowPaths)) return {};
     if (options.ignoreTestFiles && isTestFile(path)) return {};
 
-    const printed = (node: AnyNode): string => {
-      const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
-      return text.length > 72 ? `${text.slice(0, 69)}...` : text;
-    };
-
     const report = (node: AnyNode, messageId: string): void => {
-      context.report({ node, messageId, data: { expression: printed(node) } });
+      context.report({
+        node,
+        messageId,
+        data: { expression: jsonExpressionSnippet(context.sourceCode.getText(node)) },
+      });
     };
 
-    /** `true` when this expression evaluates to the ambient `JSON` global. */
-    const isJsonGlobal = (node: AnyNode): boolean => {
-      const inner = unwrap(node);
-      if (inner.type === 'Identifier') return isUnshadowedGlobal(context, inner, 'JSON');
-      if (inner.type === 'MemberExpression') {
-        // `globalThis.JSON`, `window["JSON"]`.
-        const member = inner as ESTree.MemberExpression;
-        if (staticPropertyName(member) !== 'JSON') return false;
-        const container = unwrap(member.object as AnyNode);
-        if (container.type !== 'Identifier') return false;
-        const containerName = (container as ESTree.IdentifierReference).name;
-        return (
-          CONTAINER_GLOBALS.has(containerName) &&
-          isUnshadowedGlobal(context, container, containerName)
-        );
-      }
-      return false;
+    const isJsonGlobal = (node: AnyNode): boolean =>
+      isJsonHost(context, node, {
+        containers: CONTAINER_GLOBALS,
+        unwrap,
+        memberName: staticPropertyName,
+      });
+
+    const isRoundTrip = (node: ESTree.MemberExpression): boolean => {
+      const call = singleInputCall(node);
+      if (call === null) return false;
+      const input = unwrap(call.arguments[0] as AnyNode);
+      if (input.type !== 'CallExpression' || input.arguments.length !== 1) return false;
+      const encoder = unwrap(input.callee as AnyNode);
+      return (
+        encoder.type === 'MemberExpression' &&
+        staticPropertyName(encoder) === 'stringify' &&
+        isJsonGlobal(encoder.object as AnyNode)
+      );
     };
 
     return {
@@ -300,26 +228,7 @@ export const rule = defineRule({
         if (!isJsonGlobal(node.object as AnyNode)) return;
         // A direct JSON round-trip is an in-memory copy, not an external document decode
         // (audit D native-object boundary). This does NOT prove it safe or equivalent to structuredClone.
-        let callee: AnyNode = node;
-        while (parentOf(callee) && TRANSPARENT_WRAPPERS.has(parentOf(callee)!.type))
-          callee = parentOf(callee)!;
-        const call = parentOf(callee);
-        if (
-          call?.type === 'CallExpression' &&
-          call.callee === callee &&
-          call.arguments.length === 1
-        ) {
-          const input = unwrap(call.arguments[0] as AnyNode);
-          if (input.type === 'CallExpression' && input.arguments.length === 1) {
-            const encoder = unwrap(input.callee as AnyNode);
-            if (
-              encoder.type === 'MemberExpression' &&
-              staticPropertyName(encoder) === 'stringify' &&
-              isJsonGlobal(encoder.object as AnyNode)
-            )
-              return;
-          }
-        }
+        if (isRoundTrip(node)) return;
         report(node as unknown as AnyNode, 'nativeJsonParse');
       },
 
@@ -336,7 +245,7 @@ export const rule = defineRule({
         if (source === null || !isJsonGlobal(source)) return;
         for (const property of node.properties) {
           if (property.type !== 'Property') continue;
-          if (keyName((property as { key: AnyNode }).key) !== 'parse') continue;
+          if (keyName(property.key, false, STRING_OPTIONS) !== 'parse') continue;
           report(property as unknown as AnyNode, 'nativeJsonParseBinding');
         }
       },

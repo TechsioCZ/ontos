@@ -63,7 +63,22 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
+
+import {
+  parentOf,
+  keyName,
+  unwrapNode,
+  skipWrappers as sharedSkipWrappers,
+  walk as walkAst,
+} from '../shared/ast.ts';
+import { resolveVariable, isTrackedReference as trackedReference } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
+import {
+  isNonReferencePosition,
+  isInTypePosition as inTypePosition,
+} from '../shared/reference-positions.ts';
+import { nearestFunction, isTopLevel, programLevelFunctionName } from '../shared/script-entry.ts';
 
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
@@ -181,111 +196,33 @@ function readOptions(raw: unknown): RuleOptions {
   };
 }
 
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
+/** Preserve this rule's narrower transparent-wrapper policy. */
+function skipWrappers(node: AnyNode) {
+  return sharedSkipWrappers(node, TRANSPARENT_PARENTS);
 }
-
-function isNode(value: unknown): value is AnyNode {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as { type?: unknown }).type === 'string'
-  );
-}
-
-/** Depth-first walk over the AST, skipping the circular `parent` links. */
-function walk(node: AnyNode, visit: (node: AnyNode) => void): void {
-  visit(node);
-  for (const key of Object.keys(node)) {
-    if (key === 'parent') continue;
-    const value: unknown = (node as unknown as Record<string, unknown>)[key];
-    if (Array.isArray(value)) {
-      for (const entry of value) if (isNode(entry)) walk(entry, visit);
-    } else if (isNode(value)) walk(value, visit);
-  }
-}
-
-/** Climb through parentheses/type wrappers; returns the outermost equivalent node and its parent. */
-function skipWrappers(node: AnyNode): { readonly node: AnyNode; readonly parent: AnyNode | null } {
-  let current = node;
-  let parent = parentOf(current);
-  while (parent !== null && TRANSPARENT_PARENTS.has(parent.type)) {
-    current = parent;
-    parent = parentOf(current);
-  }
-  return { node: current, parent };
-}
-
-/** Strip parentheses and expression-level TS wrappers, going inwards. */
 function unwrapExpression(node: AnyNode): AnyNode {
-  let current = node;
-  for (;;) {
-    if (!TRANSPARENT_PARENTS.has(current.type)) return current;
-    const inner: unknown = (current as unknown as Record<string, unknown>)['expression'];
-    if (!isNode(inner)) return current;
-    current = inner;
-  }
+  return unwrapNode(node, { wrappers: TRANSPARENT_PARENTS });
 }
-
 function isInTypePosition(node: AnyNode): boolean {
-  let current = parentOf(node);
-  while (current !== null && current.type !== 'Program') {
-    if (current.type.startsWith('TS') && !TS_EXPRESSION_NODES.has(current.type)) return true;
-    current = parentOf(current);
-  }
-  return false;
+  return inTypePosition(node, TS_EXPRESSION_NODES);
 }
-
-/** Parents where an identifier is a declaration key or module-record name, never a value reference. */
+const DECLARATION_PARENTS = new Set(['LabeledStatement', 'BreakStatement', 'ContinueStatement']);
+const DECLARATION_KEYS = new Set([
+  'Property',
+  'PropertyDefinition',
+  'MethodDefinition',
+  'AccessorProperty',
+]);
 function isDeclarationPosition(node: AnyNode): boolean {
-  const parent = parentOf(node);
-  if (parent === null) return false;
-  switch (parent.type) {
-    case 'ImportSpecifier':
-    case 'ImportDefaultSpecifier':
-    case 'ImportNamespaceSpecifier':
-    case 'ExportSpecifier':
-    case 'LabeledStatement':
-    case 'BreakStatement':
-    case 'ContinueStatement':
-      return true;
-    case 'MemberExpression':
-      return (
-        (parent as ESTree.MemberExpression).property === node &&
-        !(parent as ESTree.MemberExpression).computed
-      );
-    case 'Property':
-    case 'PropertyDefinition':
-    case 'MethodDefinition':
-    case 'AccessorProperty':
-      return (
-        (parent as unknown as { key?: unknown }).key === node &&
-        (parent as unknown as { computed?: boolean }).computed !== true
-      );
-    default:
-      return false;
-  }
+  return isNonReferencePosition(node, {
+    detached: false,
+    nonReferenceParents: DECLARATION_PARENTS,
+    keyParents: DECLARATION_KEYS,
+    strictComputed: true,
+  });
 }
-
-/** Static member/property name, including `X["run"]` and the template-literal computed form. */
 function staticName(key: AnyNode, computed: boolean): string | null {
-  if (!computed) {
-    if (key.type === 'Identifier') return (key as ESTree.IdentifierName).name;
-    if (key.type === 'Literal' && typeof (key as { value?: unknown }).value === 'string') {
-      return (key as unknown as { value: string }).value;
-    }
-    return null;
-  }
-  if (key.type === 'Literal' && typeof (key as { value?: unknown }).value === 'string') {
-    return (key as unknown as { value: string }).value;
-  }
-  if (key.type === 'TemplateLiteral') {
-    const template = key as ESTree.TemplateLiteral;
-    if (template.expressions.length !== 0 || template.quasis.length !== 1) return null;
-    const quasi = template.quasis[0];
-    return quasi === undefined ? null : (quasi.value.cooked ?? quasi.value.raw);
-  }
-  return null;
+  return keyName(key, computed, { templates: computed, rawTemplates: true, singleQuasi: true });
 }
 
 function sameSpan(left: AnyNode, right: AnyNode): boolean {
@@ -295,33 +232,8 @@ function sameSpan(left: AnyNode, right: AnyNode): boolean {
   );
 }
 
-function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(from);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when `identifier` really resolves to the tracked `import`/alias declaration, so a shadowing
- * parameter, local or destructuring key of the same name never reports. An identifier oxlint cannot
- * resolve is trusted (its scope analysis does not model every TS construct), keeping the rule strict.
- */
 function isTrackedReference(context: Context, identifier: AnyNode, declaration: AnyNode): boolean {
-  if (identifier.type !== 'Identifier') return false;
-  const variable = resolveVariable(
-    context,
-    (identifier as ESTree.IdentifierReference).name,
-    identifier,
-  );
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return false;
-  return variable.defs.some((definition) =>
-    sameSpan(definition.name as unknown as AnyNode, declaration),
-  );
+  return trackedReference(context, identifier, declaration, sameSpan);
 }
 
 interface NamespaceBinding {
@@ -346,184 +258,194 @@ interface RunBindings {
   readonly tracked: boolean;
 }
 
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
 /**
  * Collect every local that can reach an `Effect.run*` entry point. Type-only imports are skipped:
  * they are erased, so no reference can start a fiber.
  */
+interface BindingState {
+  readonly context: Context;
+  readonly namespaces: Map<string, NamespaceBinding>;
+  readonly packages: Map<string, AnyNode>;
+  readonly runLocals: Map<string, RunLocalBinding>;
+  readonly effectModules: readonly string[];
+}
+function collectNamedRunner(
+  state: BindingState,
+  specifier: ESTree.ImportSpecifier,
+  source: string,
+): void {
+  if (specifier.importKind === 'type') return;
+  const imported = importedName(specifier);
+  const local = specifier.local;
+  const submodule = source.split('/').at(-1) ?? '';
+  if (state.effectModules.includes(imported)) {
+    state.namespaces.set(local.name, { declaration: local, namespace: imported });
+  } else if (
+    RUN_MEMBER.test(imported) &&
+    (source === 'effect' || state.effectModules.includes(submodule))
+  ) {
+    state.runLocals.set(local.name, {
+      declaration: local,
+      member: imported,
+      namespace: source === 'effect' ? (state.effectModules[0] ?? 'Effect') : submodule,
+    });
+  }
+}
+function collectRunnerImport(state: BindingState, statement: ESTree.ImportDeclaration): void {
+  if (statement.importKind === 'type' || !EFFECT_MODULE.test(statement.source.value)) return;
+  const source = statement.source.value;
+  const submodule = source.split('/').at(-1) ?? '';
+  for (const specifier of statement.specifiers) {
+    if (specifier.type === 'ImportSpecifier') collectNamedRunner(state, specifier, source);
+    else if (specifier.type === 'ImportNamespaceSpecifier') {
+      if (source === 'effect') state.packages.set(specifier.local.name, specifier.local);
+      else if (state.effectModules.includes(submodule))
+        state.namespaces.set(specifier.local.name, {
+          declaration: specifier.local,
+          namespace: submodule,
+        });
+    }
+  }
+}
 function collectRunBindings(
   context: Context,
   program: ESTree.Program,
   effectModules: readonly string[],
 ): RunBindings {
-  const namespaces = new Map<string, NamespaceBinding>();
-  const packages = new Map<string, AnyNode>();
-  const runLocals = new Map<string, RunLocalBinding>();
-
+  const state: BindingState = {
+    context,
+    effectModules,
+    namespaces: new Map(),
+    packages: new Map(),
+    runLocals: new Map(),
+  };
   for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if ((statement as { importKind?: string }).importKind === 'type') continue;
-    const source = statement.source.value;
-    if (!EFFECT_MODULE.test(source)) continue;
-    const isRoot = source === 'effect';
-    const submodule = source.split('/').at(-1) ?? '';
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportSpecifier') {
-        if ((specifier as { importKind?: string }).importKind === 'type') continue;
-        const imported = importedName(specifier);
-        const local = specifier.local as unknown as AnyNode;
-        if (effectModules.includes(imported)) {
-          namespaces.set(specifier.local.name, { declaration: local, namespace: imported });
-        } else if (RUN_MEMBER.test(imported) && (isRoot || effectModules.includes(submodule))) {
-          // `import { runPromise } from "effect/Effect"` — a bare runner with no namespace object.
-          runLocals.set(specifier.local.name, {
-            declaration: local,
-            member: imported,
-            namespace: isRoot ? (effectModules[0] ?? 'Effect') : submodule,
-          });
-        }
-      } else if (specifier.type === 'ImportNamespaceSpecifier') {
-        const local = specifier.local as unknown as AnyNode;
-        if (isRoot) packages.set(specifier.local.name, local);
-        else if (effectModules.includes(submodule)) {
-          namespaces.set(specifier.local.name, { declaration: local, namespace: submodule });
-        }
-      }
-    }
+    if (statement.type === 'ImportDeclaration') collectRunnerImport(state, statement);
   }
-
-  if (namespaces.size > 0 || packages.size > 0) {
-    propagateAliases(context, program, namespaces, packages, runLocals, effectModules);
-  }
-
+  if (state.namespaces.size > 0 || state.packages.size > 0) propagateAliases(state, program);
   return {
-    namespaces,
-    packages,
-    runLocals,
-    tracked: namespaces.size > 0 || packages.size > 0 || runLocals.size > 0,
+    namespaces: state.namespaces,
+    packages: state.packages,
+    runLocals: state.runLocals,
+    tracked: state.namespaces.size > 0 || state.packages.size > 0 || state.runLocals.size > 0,
   };
 }
-
-/**
- * Follow `const Fx = Effect;`, `const Fx = Pkg.Effect;`, `const run = Effect.runPromise;` and
- * `const { runFork } = Effect;` to a fixed point, so a one-line re-binding cannot defeat the rule.
- */
-function propagateAliases(
-  context: Context,
-  program: ESTree.Program,
-  namespaces: Map<string, NamespaceBinding>,
-  packages: Map<string, AnyNode>,
-  runLocals: Map<string, RunLocalBinding>,
-  effectModules: readonly string[],
-): void {
+type AliasKind = NamespaceBinding | 'package';
+function packageNamespace(
+  state: BindingState,
+  member: ESTree.MemberExpression,
+): NamespaceBinding | null {
+  const name = staticName(member.property, member.computed);
+  if (name === null || !state.effectModules.includes(name)) return null;
+  const object = unwrapExpression(member.object);
+  if (object.type !== 'Identifier') return null;
+  const declaration = state.packages.get(object.name);
+  return declaration !== undefined && isTrackedReference(state.context, object, declaration)
+    ? { declaration: object, namespace: name }
+    : null;
+}
+function aliasKind(state: BindingState, init: AnyNode): AliasKind | null {
+  if (init.type === 'MemberExpression') return packageNamespace(state, init);
+  if (init.type !== 'Identifier') return null;
+  const known = state.namespaces.get(init.name);
+  if (known !== undefined && isTrackedReference(state.context, init, known.declaration))
+    return known;
+  const declaration = state.packages.get(init.name);
+  return declaration !== undefined && isTrackedReference(state.context, init, declaration)
+    ? 'package'
+    : null;
+}
+function addBinding<T>(map: Map<string, T>, name: string, value: T): boolean {
+  if (map.has(name)) return false;
+  map.set(name, value);
+  return true;
+}
+function bindAlias(
+  state: BindingState,
+  target: ESTree.BindingIdentifier,
+  kind: AliasKind,
+): boolean {
+  return kind === 'package'
+    ? addBinding(state.packages, target.name, target)
+    : addBinding(state.namespaces, target.name, { declaration: target, namespace: kind.namespace });
+}
+function bindProperty(
+  state: BindingState,
+  property: Extract<ESTree.ObjectPattern['properties'][number], { type: 'Property' }>,
+  kind: AliasKind,
+): boolean {
+  const key = staticName(property.key, property.computed);
+  if (key === null) return false;
+  const value = property.value.type === 'AssignmentPattern' ? property.value.left : property.value;
+  if (value.type !== 'Identifier') return false;
+  if (kind === 'package') {
+    return (
+      state.effectModules.includes(key) &&
+      addBinding(state.namespaces, value.name, { declaration: value, namespace: key })
+    );
+  }
+  return (
+    RUN_MEMBER.test(key) &&
+    addBinding(state.runLocals, value.name, {
+      declaration: value,
+      member: key,
+      namespace: kind.namespace,
+    })
+  );
+}
+function runnerAlias(
+  state: BindingState,
+  init: AnyNode,
+): { member: string; namespace: string } | null {
+  if (init.type !== 'MemberExpression') return null;
+  const namespace = namespaceOfObject(
+    state.context,
+    init,
+    state.namespaces,
+    state.packages,
+    state.effectModules,
+  );
+  const member = staticName(init.property, init.computed);
+  return namespace !== null && member !== null && RUN_MEMBER.test(member)
+    ? { member, namespace }
+    : null;
+}
+function propagateDeclarator(state: BindingState, declarator: ESTree.VariableDeclarator): boolean {
+  if (declarator.init == null) return false;
+  const init = unwrapExpression(declarator.init);
+  const target = declarator.id;
+  const runner = runnerAlias(state, init);
+  if (runner !== null) {
+    return (
+      target.type === 'Identifier' &&
+      addBinding(state.runLocals, target.name, { declaration: target, ...runner })
+    );
+  }
+  const kind = aliasKind(state, init);
+  if (kind === null) return false;
+  if (target.type === 'Identifier') return bindAlias(state, target, kind);
+  if (target.type !== 'ObjectPattern') return false;
+  let changed = false;
+  for (const property of target.properties) {
+    if (property.type === 'Property' && bindProperty(state, property, kind)) changed = true;
+  }
+  return changed;
+}
+/** Bounded fixed point retains declaration order and the original five-pass limit. */
+function propagateAliases(state: BindingState, program: ESTree.Program): void {
   const declarators: ESTree.VariableDeclarator[] = [];
-  walk(program as unknown as AnyNode, (node) => {
-    if (node.type === 'VariableDeclarator' && (node as ESTree.VariableDeclarator).init != null) {
-      declarators.push(node as ESTree.VariableDeclarator);
-    }
-  });
-  if (declarators.length === 0) return;
-
+  walkAst(
+    program,
+    {},
+    (node) => {
+      if (node.type === 'VariableDeclarator' && node.init != null) declarators.push(node);
+    },
+    false,
+  );
   for (let pass = 0; pass < 5; pass += 1) {
     let changed = false;
     for (const declarator of declarators) {
-      const rawInit = declarator.init;
-      if (rawInit == null) continue;
-      const init = unwrapExpression(rawInit as unknown as AnyNode);
-      const target = declarator.id as unknown as AnyNode;
-
-      // `const run = Effect.runPromise;` / `const run = Fx.Effect["runSync"];`
-      if (init.type === 'MemberExpression') {
-        const member = init as ESTree.MemberExpression;
-        const namespace = namespaceOfObject(context, member, namespaces, packages, effectModules);
-        const name = staticName(member.property as unknown as AnyNode, member.computed);
-        if (namespace !== null && name !== null && RUN_MEMBER.test(name)) {
-          if (
-            target.type === 'Identifier' &&
-            !runLocals.has((target as ESTree.BindingIdentifier).name)
-          ) {
-            runLocals.set((target as ESTree.BindingIdentifier).name, {
-              declaration: target,
-              member: name,
-              namespace,
-            });
-            changed = true;
-          }
-          continue;
-        }
-      }
-
-      // `const Fx = Effect;` / `const Fx = Pkg.Effect;` / `const { runFork } = Effect;`
-      let kind: NamespaceBinding | 'package' | null = null;
-      if (init.type === 'Identifier') {
-        const name = (init as ESTree.IdentifierReference).name;
-        const known = namespaces.get(name);
-        if (known !== undefined && isTrackedReference(context, init, known.declaration))
-          kind = known;
-        else {
-          const declaration = packages.get(name);
-          if (declaration !== undefined && isTrackedReference(context, init, declaration))
-            kind = 'package';
-        }
-      } else if (init.type === 'MemberExpression') {
-        const member = init as ESTree.MemberExpression;
-        const name = staticName(member.property as unknown as AnyNode, member.computed);
-        if (name !== null && effectModules.includes(name)) {
-          const object = unwrapExpression(member.object as unknown as AnyNode);
-          if (object.type === 'Identifier') {
-            const declaration = packages.get((object as ESTree.IdentifierReference).name);
-            if (declaration !== undefined && isTrackedReference(context, object, declaration)) {
-              kind = { declaration: object, namespace: name };
-            }
-          }
-        }
-      }
-      if (kind === null) continue;
-
-      if (target.type === 'Identifier') {
-        const name = (target as ESTree.BindingIdentifier).name;
-        if (kind === 'package') {
-          if (!packages.has(name)) {
-            packages.set(name, target);
-            changed = true;
-          }
-        } else if (!namespaces.has(name)) {
-          namespaces.set(name, { declaration: target, namespace: kind.namespace });
-          changed = true;
-        }
-        continue;
-      }
-      if (target.type !== 'ObjectPattern') continue;
-      for (const property of (target as ESTree.ObjectPattern).properties) {
-        if (property.type !== 'Property') continue;
-        const key = staticName(property.key as unknown as AnyNode, property.computed);
-        if (key === null) continue;
-        const rawValue = property.value as unknown as AnyNode;
-        const value =
-          rawValue.type === 'AssignmentPattern'
-            ? ((rawValue as ESTree.AssignmentPattern).left as unknown as AnyNode)
-            : rawValue;
-        if (value.type !== 'Identifier') continue;
-        const local = (value as ESTree.BindingIdentifier).name;
-        if (kind === 'package') {
-          // `const { Effect } = Pkg;`
-          if (effectModules.includes(key) && !namespaces.has(local)) {
-            namespaces.set(local, { declaration: value, namespace: key });
-            changed = true;
-          }
-          continue;
-        }
-        // `const { runFork } = Effect;`
-        if (RUN_MEMBER.test(key) && !runLocals.has(local)) {
-          runLocals.set(local, { declaration: value, member: key, namespace: kind.namespace });
-          changed = true;
-        }
-      }
+      if (propagateDeclarator(state, declarator)) changed = true;
     }
     if (!changed) return;
   }
@@ -578,6 +500,15 @@ function runMember(
     if (!isTrackedReference(context, object, tracked.declaration)) return null;
     return { member, namespace };
   }
+  return packageRunMember(context, object, bindings, effectModules, member);
+}
+function packageRunMember(
+  context: Context,
+  object: AnyNode,
+  bindings: RunBindings,
+  effectModules: readonly string[],
+  member: string,
+): { namespace: string; member: string } | null {
   if (object.type !== 'MemberExpression') return null;
   // `import * as Fx from "effect"` -> `Fx.Effect.runSync(...)`.
   const inner = object as ESTree.MemberExpression;
@@ -591,54 +522,16 @@ function runMember(
   return { member, namespace };
 }
 
-function nearestFunction(node: AnyNode): AnyNode | null {
-  let current = parentOf(node);
-  while (current !== null) {
-    if (FUNCTION_LIKE.has(current.type)) return current;
-    current = parentOf(current);
-  }
-  return null;
+/** Return a call only when the wrapped expression is its callee. */
+function invocation(node: AnyNode): ESTree.CallExpression | null {
+  const wrapped = skipWrappers(node);
+  return wrapped.parent?.type === 'CallExpression' && wrapped.parent.callee === wrapped.node
+    ? wrapped.parent
+    : null;
 }
-
-/** `true` when the node is evaluated during module evaluation, not inside any function body. */
-function isTopLevel(node: AnyNode): boolean {
-  return nearestFunction(node) === null;
-}
-
-/** A declaration/statement directly in `Program`, optionally behind `export` / `export default`. */
-function isProgramLevelStatement(node: AnyNode): boolean {
-  const parent = parentOf(node);
-  if (parent === null) return false;
-  if (parent.type === 'Program') return true;
-  if (parent.type !== 'ExportNamedDeclaration' && parent.type !== 'ExportDefaultDeclaration')
-    return false;
-  return parentOf(parent)?.type === 'Program';
-}
-
-/** Name of a Program-level `function main() {}` / `const main = () => {}`, else `null`. */
-function programLevelFunctionName(fn: AnyNode): string | null {
-  if (fn.type === 'FunctionDeclaration') {
-    if (!isProgramLevelStatement(fn)) return null;
-    const id = (fn as ESTree.Function).id;
-    return id === null || id === undefined ? null : id.name;
-  }
-  if (fn.type !== 'FunctionExpression' && fn.type !== 'ArrowFunctionExpression') return null;
-  const declarator = parentOf(fn);
-  if (declarator === null || declarator.type !== 'VariableDeclarator') return null;
-  if ((declarator as ESTree.VariableDeclarator).init !== fn) return null;
-  const id = (declarator as ESTree.VariableDeclarator).id;
-  if (id.type !== 'Identifier') return null;
-  const declaration = parentOf(declarator);
-  if (declaration === null || declaration.type !== 'VariableDeclaration') return null;
-  return isProgramLevelStatement(declaration) ? id.name : null;
-}
-
-/** `void (async () => { ... })()` / `(function () { ... })()` evaluated during module evaluation. */
 function isTopLevelImmediatelyInvoked(fn: AnyNode): boolean {
-  const { node, parent } = skipWrappers(fn);
-  if (parent === null || parent.type !== 'CallExpression') return false;
-  if ((parent as ESTree.CallExpression).callee !== node) return false;
-  return isTopLevel(parent);
+  const call = invocation(fn);
+  return call !== null && isTopLevel(call);
 }
 
 /** `export { main }` / `export default main` mention the entrypoint without invoking it. */
@@ -666,12 +559,7 @@ function isOnlyCalledFromTopLevel(context: Context, fn: AnyNode, name: string): 
       !isExportReference(reference.identifier as unknown as AnyNode),
   );
   if (uses.length === 0) return false;
-  return uses.every((reference) => {
-    const { node, parent } = skipWrappers(reference.identifier as unknown as AnyNode);
-    if (parent === null || parent.type !== 'CallExpression') return false;
-    if ((parent as ESTree.CallExpression).callee !== node) return false;
-    return isTopLevel(parent);
-  });
+  return uses.every((reference) => isTopLevelImmediatelyInvoked(reference.identifier as AnyNode));
 }
 
 /**
@@ -789,9 +677,28 @@ function promiseChainMethod(site: AnyNode): string | null {
   );
   if (method === null || (!PROMISE_CHAIN_METHODS.has(method) && method !== CLEANUP_CHAIN_METHOD))
     return null;
-  const invoked = skipWrappers(member);
-  if (invoked.parent === null || invoked.parent.type !== 'CallExpression') return null;
-  return (invoked.parent as ESTree.CallExpression).callee === invoked.node ? method : null;
+  return invocation(member) !== null ? method : null;
+}
+
+function isAliasInitializer(node: AnyNode): boolean {
+  const wrapped = skipWrappers(node);
+  const parent = wrapped.parent;
+  return (
+    parent?.type === 'VariableDeclarator' &&
+    parent.init === wrapped.node &&
+    parent.id.type === 'Identifier'
+  );
+}
+function chargeSlot(charged: Array<Array<readonly Decision[]>>, path: readonly Decision[]): number {
+  const slot = charged.findIndex((alternatives) =>
+    alternatives.every((other) => mutuallyExclusive(other, path)),
+  );
+  if (slot !== -1) {
+    charged[slot]?.push(path);
+    return slot;
+  }
+  charged.push([path]);
+  return charged.length - 1;
 }
 
 interface RunSite {
@@ -911,24 +818,12 @@ export const rule = defineRule({
         if (matched === null) return;
         const self = node as unknown as AnyNode;
         if (isInTypePosition(self)) return;
-        const { node: reference, parent } = skipWrappers(self);
-        if (
-          parent !== null &&
-          parent.type === 'CallExpression' &&
-          (parent as ESTree.CallExpression).callee === reference
-        ) {
-          addSite(parent, matched.namespace, matched.member);
+        const call = invocation(self);
+        if (call !== null) {
+          addSite(call, matched.namespace, matched.member);
           return;
         }
-        // `const run = Effect.runPromise;` is a *binding*, not a run: its call sites are the runs.
-        if (
-          parent !== null &&
-          parent.type === 'VariableDeclarator' &&
-          (parent as ESTree.VariableDeclarator).init === reference &&
-          (parent as ESTree.VariableDeclarator).id.type === 'Identifier'
-        ) {
-          return;
-        }
+        if (isAliasInitializer(self)) return;
         // A point-free reference (`pipe(program, Effect.runPromise)`) still starts a root fiber.
         addSite(self, matched.namespace, matched.member);
       },
@@ -940,16 +835,7 @@ export const rule = defineRule({
         if (sameSpan(identifier, tracked.declaration)) return;
         if (isDeclarationPosition(identifier) || isInTypePosition(identifier)) return;
         if (!isTrackedReference(context, identifier, tracked.declaration)) return;
-        const { node: reference, parent } = skipWrappers(identifier);
-        if (
-          parent !== null &&
-          parent.type === 'CallExpression' &&
-          (parent as ESTree.CallExpression).callee === reference
-        ) {
-          addSite(parent, tracked.namespace, tracked.member);
-          return;
-        }
-        addSite(identifier, tracked.namespace, tracked.member);
+        addSite(invocation(identifier) ?? identifier, tracked.namespace, tracked.member);
       },
       'Program:exit'() {
         if (sites.length === 0) return;
@@ -977,13 +863,7 @@ export const rule = defineRule({
           const path = decisionPath(site.node);
           // A slot may be reused only if this site is exclusive with EVERY alternative
           // already occupying it, not merely one site in some other branch.
-          let slot = charged.findIndex((alternatives) =>
-            alternatives.every((other) => mutuallyExclusive(other, path)),
-          );
-          if (slot === -1) {
-            slot = charged.length;
-            charged.push([path]);
-          } else charged[slot]?.push(path);
+          const slot = chargeSlot(charged, path);
           if (isInLoop(site.node)) {
             context.report({ node: site.node, messageId: 'runInLoop', data });
             continue;

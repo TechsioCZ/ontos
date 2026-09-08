@@ -1,103 +1,15 @@
-import { Cause, Schema } from 'effect';
+import { Schema } from 'effect';
 
-const reason = { reason: Schema.String } as const;
+export { OutboxClaimLostError } from './outbox-claim-lost-error.ts';
+export { OutboxHandlerExecutionError } from './outbox-handler-execution-error.ts';
+export { OutboxPayloadDecodeError } from './outbox-payload-decode-error.ts';
+export { OutboxPollerConfigError } from './outbox-poller-config-error.ts';
+export { OutboxWorkerDescriptorError } from './outbox-worker-descriptor-error.ts';
 
-const OutboxWorkerDescriptorErrorContract = Schema.TaggedStruct('OutboxWorkerDescriptorError', {
-  code: Schema.Literal('outbox_worker_descriptor_invalid'),
-  ...reason,
-});
-type OutboxWorkerDescriptorErrorSelf = typeof OutboxWorkerDescriptorErrorContract.Type &
-  Cause.YieldableError;
-const OutboxWorkerDescriptorErrorValue = Schema.TaggedError<OutboxWorkerDescriptorErrorSelf>()(
-  'OutboxWorkerDescriptorError',
-  { code: Schema.Literal('outbox_worker_descriptor_invalid'), ...reason },
-);
-export type OutboxWorkerDescriptorError = InstanceType<typeof OutboxWorkerDescriptorErrorValue>;
-export { OutboxWorkerDescriptorErrorValue as OutboxWorkerDescriptorError };
-
-const OutboxPayloadDecodeErrorContract = Schema.TaggedStruct('OutboxPayloadDecodeError', {
-  code: Schema.Literal('outbox_payload_invalid'),
-  ...reason,
-});
-type OutboxPayloadDecodeErrorSelf = typeof OutboxPayloadDecodeErrorContract.Type &
-  Cause.YieldableError;
-const OutboxPayloadDecodeErrorValue = Schema.TaggedError<OutboxPayloadDecodeErrorSelf>()(
-  'OutboxPayloadDecodeError',
-  { code: Schema.Literal('outbox_payload_invalid'), ...reason },
-);
-export type OutboxPayloadDecodeError = InstanceType<typeof OutboxPayloadDecodeErrorValue>;
-export { OutboxPayloadDecodeErrorValue as OutboxPayloadDecodeError };
-
-const OutboxPersistenceErrorContract = Schema.TaggedStruct('OutboxPersistenceError', {
-  code: Schema.Literal('outbox_persistence_failed'),
-  ...reason,
-});
-type OutboxPersistenceErrorSelf = typeof OutboxPersistenceErrorContract.Type & Cause.YieldableError;
-const OutboxPersistenceErrorValue = Schema.TaggedError<OutboxPersistenceErrorSelf>()(
+export class OutboxPersistenceError extends Schema.TaggedError<OutboxPersistenceError>()(
   'OutboxPersistenceError',
-  { code: Schema.Literal('outbox_persistence_failed'), ...reason },
-);
-export type OutboxPersistenceError = InstanceType<typeof OutboxPersistenceErrorValue>;
-export { OutboxPersistenceErrorValue as OutboxPersistenceError };
-
-const OutboxClaimLostErrorContract = Schema.TaggedStruct('OutboxClaimLostError', {
-  code: Schema.Literal('outbox_claim_lost'),
-  ...reason,
-});
-type OutboxClaimLostErrorSelf = typeof OutboxClaimLostErrorContract.Type & Cause.YieldableError;
-const OutboxClaimLostErrorValue = Schema.TaggedError<OutboxClaimLostErrorSelf>()(
-  'OutboxClaimLostError',
-  { code: Schema.Literal('outbox_claim_lost'), ...reason },
-);
-export type OutboxClaimLostError = InstanceType<typeof OutboxClaimLostErrorValue>;
-export { OutboxClaimLostErrorValue as OutboxClaimLostError };
-
-const OutboxModuleStateErrorContract = Schema.TaggedStruct('OutboxModuleStateError', {
-  code: Schema.Literal('outbox_consumer_module_inactive'),
-  ...reason,
-});
-type OutboxModuleStateErrorSelf = typeof OutboxModuleStateErrorContract.Type & Cause.YieldableError;
-const OutboxModuleStateErrorValue = Schema.TaggedError<OutboxModuleStateErrorSelf>()(
-  'OutboxModuleStateError',
-  { code: Schema.Literal('outbox_consumer_module_inactive'), ...reason },
-);
-export type OutboxModuleStateError = InstanceType<typeof OutboxModuleStateErrorValue>;
-export { OutboxModuleStateErrorValue as OutboxModuleStateError };
-
-const OutboxHandlerExecutionErrorContract = Schema.TaggedStruct('OutboxHandlerExecutionError', {
-  code: Schema.Literal('outbox_handler_execution_failed'),
-  ...reason,
-});
-type OutboxHandlerExecutionErrorSelf = typeof OutboxHandlerExecutionErrorContract.Type &
-  Cause.YieldableError;
-const OutboxHandlerExecutionErrorValue = Schema.TaggedError<OutboxHandlerExecutionErrorSelf>()(
-  'OutboxHandlerExecutionError',
-  { code: Schema.Literal('outbox_handler_execution_failed'), ...reason },
-);
-export type OutboxHandlerExecutionError = InstanceType<typeof OutboxHandlerExecutionErrorValue>;
-export { OutboxHandlerExecutionErrorValue as OutboxHandlerExecutionError };
-
-const OutboxPollerConfigErrorContract = Schema.TaggedStruct('OutboxPollerConfigError', {
-  code: Schema.Literal('outbox_poller_config_invalid'),
-  ...reason,
-});
-type OutboxPollerConfigErrorSelf = typeof OutboxPollerConfigErrorContract.Type &
-  Cause.YieldableError;
-const OutboxPollerConfigErrorValue = Schema.TaggedError<OutboxPollerConfigErrorSelf>()(
-  'OutboxPollerConfigError',
-  { code: Schema.Literal('outbox_poller_config_invalid'), ...reason },
-);
-export type OutboxPollerConfigError = InstanceType<typeof OutboxPollerConfigErrorValue>;
-export { OutboxPollerConfigErrorValue as OutboxPollerConfigError };
-
-export type OutboxWorkerError =
-  | OutboxClaimLostError
-  | OutboxHandlerExecutionError
-  | OutboxModuleStateError
-  | OutboxPayloadDecodeError
-  | OutboxPollerConfigError
-  | OutboxPersistenceError
-  | OutboxWorkerDescriptorError;
+  { code: Schema.Literal('outbox_persistence_failed'), reason: Schema.String },
+) {}
 
 const PERSISTENCE_CAUSE_PROPERTY = 'ontosOutboxPersistenceCause';
 
@@ -110,14 +22,6 @@ export const outboxPersistenceError = <FailureCause>(
   });
   Object.defineProperty(failure, PERSISTENCE_CAUSE_PROPERTY, { value: cause });
   return failure;
-};
-
-export const getOutboxPersistenceCause = (
-  failure: OutboxPersistenceError,
-): Cause.Cause<never> | undefined => {
-  const cause =
-    PERSISTENCE_CAUSE_PROPERTY in failure ? failure[PERSISTENCE_CAUSE_PROPERTY] : undefined;
-  return cause === undefined ? undefined : Cause.die(cause);
 };
 
 export const sanitizeOutboxErrorMessage = (message: string): string =>

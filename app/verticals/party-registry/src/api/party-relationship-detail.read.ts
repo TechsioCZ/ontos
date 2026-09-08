@@ -18,7 +18,7 @@ import type {
 } from '../../shared/domain/relationship-contract.ts';
 import { findPartyRelationshipRecord } from '../services/party-relationship-persistence.service.ts';
 
-export const partyRelationshipDetailEntrypoint = defineTenantModuleEntrypoint({
+const partyRelationshipDetailEntrypoint = defineTenantModuleEntrypoint({
   authorization: { kind: 'context_permission', permission: 'module.access' },
   access: 'read',
   entrypointKey: 'party.registry.api.party-relationship-detail',

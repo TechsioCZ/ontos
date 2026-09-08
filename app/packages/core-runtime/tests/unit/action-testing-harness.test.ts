@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
+import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { ACTION_RUNTIME_STAGES } from '../../src/actions/runtime.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { bindActionTestServices, makeActionTestHarness } from '../../src/testing/actions.ts';
@@ -94,6 +95,8 @@ test('defaults authorization closed and never starts a transaction for a denial'
   assert.equal(snapshot.invocations.length, 1);
   assert.equal(snapshot.invocations[0]?.status, 'rejected');
   assert.equal(snapshot.permissionDenials.length, 1);
+  assert.equal(snapshot.policyDenials.length, 0);
+  assert.equal(snapshot.invocations[0]?.completedAt?.getTime(), 0);
   assert.equal(snapshot.transactionCount, 0);
   assert.equal(snapshot.stages.includes('handler_executed'), false);
 });
@@ -175,3 +178,38 @@ test('rejects missing idempotency before creating an invocation', async () => {
   assert.equal(failure._tag, 'ActionIdempotencyKeyRequired');
   assert.equal(harness.snapshot().invocations.length, 0);
 });
+
+test('persists policy denials separately from permission denials before handler execution', async () =>
+  await runEffectTestPromise(
+    Effect.gen(function* policyDenialSnapshot() {
+      const registration = defineAction(
+        {
+          ...lifecycleAction.descriptor,
+          policies: [
+            defineGlobalPolicy({
+              evaluate: () => Effect.fail(denyPolicy('counter_locked', 'Counter is locked')),
+              policyKey: 'global.counter-locked.v1',
+            }),
+          ],
+        },
+        () => Effect.die('A denied policy must not execute the handler'),
+      );
+      const harness = makeActionTestHarness({
+        actionPermission: 'allowed',
+        tenantPermission: 'allowed',
+      });
+      yield* harness.runtime.runAction({ ...request, registration }).pipe(Effect.flip);
+      const snapshot = harness.snapshot();
+      assert.equal(snapshot.policyDenials.length, 1);
+      assert.equal(snapshot.permissionDenials.length, 0);
+      assert.equal(snapshot.invocations[0]?.status, 'rejected');
+      assert.equal(snapshot.invocations[0]?.completedAt?.getTime(), 0);
+      assert.equal(
+        snapshot.policyDenials[0]?.actionInvocationId,
+        snapshot.invocations[0]?.actionInvocationId,
+      );
+      assert.equal(snapshot.transactionCount, 0);
+      assert.equal(snapshot.committed.length, 0);
+      assert.equal(snapshot.stages.includes('handler_executed'), false);
+    }),
+  ));

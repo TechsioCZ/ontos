@@ -45,10 +45,11 @@ export const localSpiceDbValues = (
   const existing = existingValues(lines);
   const grpcPort = overrides.grpcPort ?? existing.SPICEDB_GRPC_PORT ?? '50051';
   const httpPort = overrides.httpPort ?? existing.SPICEDB_HTTP_PORT ?? '8443';
-  const preSharedKey =
+  const resolvePreSharedKey = () =>
     (overrides.preSharedKey === undefined ? undefined : Redacted.value(overrides.preSharedKey)) ??
     existing.SPICEDB_PRESHARED_KEY ??
     'ontos-local-development-key';
+  const preSharedKey = resolvePreSharedKey();
 
   return {
     SPICEDB_ENDPOINT:

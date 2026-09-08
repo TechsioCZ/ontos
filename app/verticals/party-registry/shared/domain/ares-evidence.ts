@@ -18,7 +18,6 @@ const validDateOnly = Schema.makeFilter((value: string) => {
 export const AresSubjectLookupIcoSchema = Schema.Trim.check(Schema.isPattern(/^\d{8}$/u)).pipe(
   Schema.brand('AresSubjectLookupIco'),
 );
-export type AresSubjectLookupIco = typeof AresSubjectLookupIcoSchema.Type;
 
 export const AresDicSchema = Schema.Trim.check(
   Schema.isPattern(/^CZ\d{8,10}$/u),
@@ -61,7 +60,7 @@ export const AresRegisteredAddressSchema = Schema.Struct({
 });
 export type AresRegisteredAddress = typeof AresRegisteredAddressSchema.Type;
 
-export const AresSubjectObservationSchema = Schema.Struct({
+const AresSubjectObservationSchema = Schema.Struct({
   businessName: Schema.OptionFromNullOr(boundedText(500)),
   dic: Schema.OptionFromNullOr(AresDicSchema),
   dissolvedOn: Schema.OptionFromNullOr(AresDateOnlySchema),
@@ -70,7 +69,6 @@ export const AresSubjectObservationSchema = Schema.Struct({
   legalFormCode: Schema.OptionFromNullOr(AresLegalFormCodeSchema),
   registeredAddress: Schema.OptionFromNullOr(AresRegisteredAddressSchema),
 });
-export type AresSubjectObservation = typeof AresSubjectObservationSchema.Type;
 
 export const AresSubjectEvidenceSchema = Schema.Struct({
   cacheAgeSeconds: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),

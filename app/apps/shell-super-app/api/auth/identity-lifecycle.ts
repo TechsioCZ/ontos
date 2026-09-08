@@ -48,7 +48,7 @@ const IdentityLifecycleOperationErrorSchema = Schema.TaggedStruct(
   'IdentityLifecycleOperationError',
   identityLifecycleOperationErrorFields,
 );
-export const IdentityLifecycleOperationError = Schema.TaggedError<
+const IdentityLifecycleOperationError = Schema.TaggedError<
   Schema.Schema.Type<typeof IdentityLifecycleOperationErrorSchema>
 >()('IdentityLifecycleOperationError', identityLifecycleOperationErrorFields);
 export type IdentityLifecycleError =

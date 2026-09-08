@@ -22,7 +22,7 @@ import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
 
-export const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
+const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
 export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
 
 export interface RunOutboxWorkerProcessInput<

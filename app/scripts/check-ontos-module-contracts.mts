@@ -267,15 +267,18 @@ const validateEmittedContract = (
     ) {
       yield* failure(`${contractPath} contains forbidden private path metadata`);
     }
-    const headersPath = path.join(publicDirectory, '_headers');
-    const headers = yield* fileSystem.readFileString(headersPath);
-    if (
-      !headers.includes('Cache-Control: no-cache') ||
-      !headers.includes('Content-Type: application/json') ||
-      !/^ {2}ETag: "[a-f0-9]{64}"$/mu.test(headers)
-    ) {
-      yield* failure(`${headersPath} is missing the immutable module-contract response headers`);
-    }
+    const validateResponseHeaders = Effect.gen(function* validateResponseHeadersEffect() {
+      const headersPath = path.join(publicDirectory, '_headers');
+      const headers = yield* fileSystem.readFileString(headersPath);
+      if (
+        !headers.includes('Cache-Control: no-cache') ||
+        !headers.includes('Content-Type: application/json') ||
+        !/^ {2}ETag: "[a-f0-9]{64}"$/mu.test(headers)
+      ) {
+        yield* failure(`${headersPath} is missing the immutable module-contract response headers`);
+      }
+    });
+    yield* validateResponseHeaders;
   });
 
 const manifestMarkers = [

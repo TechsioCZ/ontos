@@ -1,6 +1,6 @@
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,6 +21,7 @@ const emptyLayout = 'export default function Layout() { return null; }';
 const compilerConfig = 'tsconfig.base.json';
 const pluginName = '@effect/language-service';
 const compilerOptionKind = 'compiler-option';
+const tsgoName = '@effect/tsgo';
 const tsgoReadme = 'node_modules/@effect/tsgo/README.md';
 const tsgoPackage = 'node_modules/@effect/tsgo/package.json';
 const compilerDocumentation =
@@ -119,7 +120,7 @@ await test('runtime consumers require the exact CSS, shell, deployment and compi
       cssUsed,
       launchedFile,
       resetFile,
-      '@effect/tsgo',
+      tsgoName,
       pluginName,
       readinessConfig,
     ]) {
@@ -220,7 +221,7 @@ await test('DTS compiler resolution belongs to the invoking workspace and exclud
     write(root, configFile, source);
     write(root, `${shellRoot}/${tsgoReadme}`, 'tries `typescript`, then `@typescript/native`');
     const initial = await facts(root);
-    for (const target of ['@effect/tsgo', '@typescript/native']) {
+    for (const target of [tsgoName, '@typescript/native']) {
       assert.ok(initial.some((fact) => fact.target === target && fact.workspace === shellRoot));
     }
     write(root, configFile, `/* ${source} */\nexport default {};`);
@@ -320,6 +321,59 @@ await test('real Knip keeps unused neighboring files, dependency names and expor
     for (const name of ['unusedLauncherExport', 'unusedResetExport', 'unusedConfigExport']) {
       assert.ok(exports.has(name), name);
     }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+await test('shared framework runner retains compiler/readiness evidence without accepting unused neighbors', async () => {
+  const root = await fixture();
+  const runnerFile = 'scripts/shared/ultramodern-command.mts';
+  try {
+    const runner = readFileSync(
+      new URL('../shared/ultramodern-command.mts', import.meta.url),
+      'utf-8',
+    );
+    write(root, runnerFile, runner);
+    for (const command of ['typecheck', 'performance-readiness']) {
+      write(
+        root,
+        `scripts/ultramodern-${command}.mts`,
+        readFileSync(new URL(`../ultramodern-${command}.mts`, import.meta.url), 'utf-8'),
+      );
+    }
+    const modeled = await facts(root);
+    for (const target of [tsgoName, pluginName, readinessConfig, `${readinessConfig}#default`]) {
+      assert.ok(
+        modeled.some((fact) => fact.target === target),
+        target,
+      );
+    }
+    write(
+      root,
+      runnerFile,
+      runner.replace(
+        'ChildProcess.make(launch.executable, launch.args,',
+        'ChildProcess.make("unrelated", [],',
+      ),
+    );
+    const disconnected = await facts(root);
+    assert.ok(!disconnected.some((fact) => fact.target === tsgoName));
+    assert.ok(!disconnected.some((fact) => fact.target === readinessConfig));
+    write(root, runnerFile, runner);
+    write(
+      root,
+      'scripts/ultramodern-typecheck.mts',
+      "import { runUltramodernScript } from './shared/unrelated.mts'; runUltramodernScript({ command: 'typecheck' });",
+    );
+    write(
+      root,
+      'scripts/ultramodern-performance-readiness.mts',
+      "import { runUltramodernScript } from './shared/ultramodern-command.mts'; runUltramodernScript({ command: 'unrelated' });",
+    );
+    const neighbors = await facts(root);
+    assert.ok(!neighbors.some((fact) => fact.target === tsgoName));
+    assert.ok(!neighbors.some((fact) => fact.target === readinessConfig));
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

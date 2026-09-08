@@ -60,20 +60,16 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { booleanOption, optionRecord, stringArray } from '../shared/options.ts';
+import { keyName } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { schemaIdentity } from '../shared/schema-identity.ts';
+import { isNonReferencePosition, isInErasedTypePosition } from '../shared/reference-positions.ts';
 
-const SCHEMA_NAMESPACE = 'Schema';
-const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim against the repo).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 /** Synchronous, throwing codec entry points. Everything here has an `Effect`/`Result` sibling. */
 const DEFAULT_MEMBERS = [
@@ -109,182 +105,19 @@ interface RuleOptions {
   readonly reexportModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     allowPaths: stringArray(record.allowPaths, DEFAULT_ALLOW_PATHS),
-    ignoreTestFiles: boolean(record.ignoreTestFiles, true),
+    ignoreTestFiles: booleanOption(record.ignoreTestFiles, true),
     members: stringArray(record.members, DEFAULT_MEMBERS),
     reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-/** Non-computed `.decodeUnknownSync`, or computed `["decodeUnknownSync"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = unwrapExpression(node.property);
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
-    return property.quasis[0]?.value.cooked ?? null;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  return null;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/** Declaration / key positions where an identifier is not a *reference* to the import. */
-function isDeclarationPosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
-  const parent = node.parent;
-  if (parent === null || parent === undefined) return true;
-  if (parent.type === 'ImportSpecifier' || parent.type === 'ImportDefaultSpecifier') return true;
-  if (parent.type === 'ImportNamespaceSpecifier' || parent.type === 'ExportSpecifier') return true;
-  // Erased type syntax is never a runtime codec reference. Expression wrappers retain values.
-  let ancestor: ESTree.Node | null = parent;
-  let child: ESTree.Node = node;
-  while (ancestor) {
-    if (
-      ancestor.type.startsWith('TS') &&
-      !('expression' in ancestor && ancestor.expression === child)
-    )
-      return true;
-    child = ancestor;
-    ancestor = ancestor.parent ?? null;
-  }
-  if (parent.type === 'VariableDeclarator' && parent.id === node) return true;
-  if (parent.type === 'MemberExpression' && parent.property === node && !parent.computed)
-    return true;
-  if (parent.type === 'Property' && parent.key === node && !parent.computed) return true;
-  if (parent.type === 'PropertyDefinition' && parent.key === node && !parent.computed) return true;
-  if (parent.type === 'MethodDefinition' && parent.key === node && !parent.computed) return true;
-  return false;
-}
-
-function unwrapExpression(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  while (
-    [
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'ChainExpression',
-      'ParenthesizedExpression',
-      'TSInstantiationExpression',
-      'TSTypeAssertion',
-    ].includes(current.type)
-  ) {
-    if (!('expression' in current)) break;
-    current = current.expression as ESTree.Node;
-  }
-  return current;
-}
-
-/** Resolve only lexical imports and immutable same-file aliases; no cross-file or mutation inference. */
-function schemaIdentity(
-  context: Context,
-  input: ESTree.Node,
-  reexports: readonly string[] = [],
-  depth = 0,
-): string | null {
-  if (depth > 16) return null;
-  const node = unwrapExpression(input);
-  if (node.type === 'MemberExpression') {
-    const host = schemaIdentity(context, node.object, reexports, depth + 1);
-    const member = memberName(node);
-    return host === '@schema'
-      ? member
-      : host === '@effect' && member === 'Schema'
-        ? '@schema'
-        : null;
-  }
-  if (node.type !== 'Identifier') return null;
-  const variable = lookupVariable(context, node);
-  if (!variable) return null;
-  for (const def of variable.defs) {
-    if (def.type === 'ImportBinding') {
-      const specifier = def.node;
-      const declaration = def.parent;
-      if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') continue;
-      if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue;
-      const source = declaration.source.value;
-      if (EFFECT_SCHEMA_MODULE.test(source)) {
-        if (specifier.type === 'ImportNamespaceSpecifier') return '@schema';
-        if (specifier.type === 'ImportSpecifier') return importedName(specifier);
-      }
-      if (source === 'effect' || matchesGlobs(source, reexports)) {
-        if (specifier.type === 'ImportNamespaceSpecifier') return '@effect';
-        if (specifier.type === 'ImportSpecifier' && importedName(specifier) === 'Schema')
-          return '@schema';
-      }
-    }
-    if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator' || def.node.init === null)
-      continue;
-    const declarator = def.node;
-    if (declarator.init === null) continue;
-    if (declarator.parent?.type !== 'VariableDeclaration' || declarator.parent.kind !== 'const')
-      continue;
-    if (declarator.id.type === 'Identifier')
-      return schemaIdentity(context, declarator.init, reexports, depth + 1);
-    if (declarator.id.type !== 'ObjectPattern') continue;
-    const host = schemaIdentity(context, declarator.init, reexports, depth + 1);
-    for (const property of declarator.id.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.value.type !== 'Identifier' ||
-        property.value.name !== node.name
-      )
-        continue;
-      const key =
-        !property.computed && property.key.type === 'Identifier'
-          ? property.key.name
-          : property.key.type === 'Literal' && typeof property.key.value === 'string'
-            ? property.key.value
-            : property.key.type === 'TemplateLiteral' && property.key.expressions.length === 0
-              ? property.key.quasis[0]?.value.cooked
-              : null;
-      if (host === '@schema') return key ?? null;
-      if (host === '@effect' && key === 'Schema') return '@schema';
-    }
-  }
-  return null;
+/** Runtime references exclude both name positions and erased TS ancestry. */
+function isDeclarationPosition(node: ESTree.Node): boolean {
+  return isNonReferencePosition(node, { variableBindings: true }) || isInErasedTypePosition(node);
 }
 
 export const rule = defineRule({
@@ -299,14 +132,6 @@ export const rule = defineRule({
         'so the failure stays in a typed channel.',
     },
     messages: {
-      syncCodec:
-        '`{{namespace}}.{{member}}` throws instead of failing typed: the `SchemaError` escapes as a defect ' +
-        'or gets caught and collapsed, discarding the `ParseIssue` (audit A3 — ambient configuration parsed ' +
-        'with synchronous Schema decoding and throws; audit A7 — topology/authorization evidence decoded ' +
-        'with `JSON.parse` + sync Schema + casts). Use `{{namespace}}.{{effectful}}` (or ' +
-        '`{{namespace}}.{{result}}` where no Effect context exists) so the decode failure stays in the ' +
-        'error channel, and decode configuration through `Config.schema` with a root `ConfigProvider` ' +
-        'instead of parsing it inline. Framework config roots and tests are already allowed by this rule.',
       syncCodecBare:
         '`{{member}}` (imported from `effect/Schema`) throws instead of failing typed: the `SchemaError` ' +
         'escapes as a defect or gets caught and collapsed, discarding the `ParseIssue` (audit A3/A7). ' +
@@ -359,7 +184,10 @@ export const rule = defineRule({
     };
     return {
       MemberExpression(node) {
-        const member = schemaIdentity(context, node, options.reexportModules);
+        const member = schemaIdentity(context, node, options.reexportModules, 0, {
+          templates: true,
+          unwrap: {},
+        });
         if (member !== null && members.has(member)) report(node, member);
       },
       Identifier(node) {
@@ -367,23 +195,24 @@ export const rule = defineRule({
         // Destructured aliases report at capture, not at every subsequent use.
         const variable = lookupVariable(context, node);
         if (!variable?.defs.some((def) => def.type === 'ImportBinding')) return;
-        const member = schemaIdentity(context, node, options.reexportModules);
+        const member = schemaIdentity(context, node, options.reexportModules, 0, {
+          templates: true,
+          unwrap: {},
+        });
         if (member !== null && members.has(member)) report(node, member);
       },
       VariableDeclarator(node) {
         if (node.id.type !== 'ObjectPattern' || node.init === null) return;
-        if (schemaIdentity(context, node.init, options.reexportModules) !== '@schema') return;
+        if (
+          schemaIdentity(context, node.init, options.reexportModules, 0, {
+            templates: true,
+            unwrap: {},
+          }) !== '@schema'
+        )
+          return;
         for (const property of node.id.properties) {
           if (property.type !== 'Property') continue;
-          const key = property.key;
-          const member =
-            !property.computed && key.type === 'Identifier'
-              ? key.name
-              : key.type === 'Literal' && typeof key.value === 'string'
-                ? key.value
-                : key.type === 'TemplateLiteral' && key.expressions.length === 0
-                  ? key.quasis[0]?.value.cooked
-                  : null;
+          const member = keyName(property.key, property.computed);
           if (member && members.has(member)) report(property, member);
         }
       },

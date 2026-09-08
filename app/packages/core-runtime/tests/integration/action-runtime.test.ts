@@ -1,3 +1,4 @@
+import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { runEffectTestPromise, runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import assert from 'node:assert/strict';
@@ -101,53 +102,22 @@ const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   targetResourceType: 'test-state',
 });
 
-const inventoryStockContract: OntosModuleDeploymentContract = {
-  deployment: { appId: 'inventory-stock', buildMarker: 'integration-test' },
-  manifest: {
-    activation: {
-      defaultState: 'inactive',
-      preservesHistoryWhenInactive: true,
-      scope: 'tenant',
-      supportedStates: [
-        'inactive',
-        'active',
-        'read_only',
-        'suspended',
-        'quarantined',
-        'deprecated',
-        'archived',
-      ],
-    },
-    module: {
-      description: 'Inventory integration fixture',
-      displayName: 'Inventory',
-      id: 'inventory.stock',
-      implementedAs: 'ultramodern_microvertical',
-      kind: 'business_module',
-    },
-    publicSurface: {
-      actions: [],
-      api: [],
-      components: [],
-      events: [],
-      reports: [],
-      resourceTypes: [],
-      search: [],
-      shellContributions: {
-        mediaAttachments: [],
-        navigation: [],
-        pages: [],
-        publicComponents: [],
-        reports: [],
-        resourceDetails: [],
-        search: [],
-        timelines: [],
-      },
-    },
-  },
-  runtime: { outboxSubscriptions: [] },
-  schemaVersion: '2',
-};
+const inventoryStockContract: OntosModuleDeploymentContract = makeModuleContractFixture({
+  appId: 'inventory-stock',
+  buildMarker: 'integration-test',
+  description: 'Inventory integration fixture',
+  displayName: 'Inventory',
+  moduleId: 'inventory.stock',
+  supportedStates: [
+    'inactive',
+    'active',
+    'read_only',
+    'suspended',
+    'quarantined',
+    'deprecated',
+    'archived',
+  ],
+});
 
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: Object.freeze([inventoryStockContract]),
@@ -179,6 +149,27 @@ const withDatabase = <Value, Error>(
   );
 
 type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
+
+const withTransactionOverride = (
+  database: ContextServiceContract,
+  override: Pick<ContextServiceContract['executor'], 'transaction'>,
+): ContextServiceContract => ({
+  executor: Object.assign(Object.create(database.executor), override),
+});
+
+const invocationEvidence = (database: ContextServiceContract, key: string) =>
+  Effect.gen(function* readInvocationEvidence() {
+    const [invocation] = yield* database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, key));
+    assert.ok(invocation);
+    const audits = yield* database.executor
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+    return { audits, invocation };
+  });
 
 const EvidencePersistenceStageSchema = Schema.Literals([
   'audit',
@@ -220,12 +211,7 @@ const withEvidencePersistenceFailure = (
         );
       }),
   } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
-  const executor: ContextServiceContract['executor'] = Object.assign(
-    Object.create(database.executor),
-    transactionOverride,
-  );
-
-  return { executor };
+  return withTransactionOverride(database, transactionOverride);
 };
 
 const databasePromise = async <Value>(
@@ -296,41 +282,23 @@ before(async () => {
 after(async () => {
   await databasePromise(async (database) => {
     await runEffectTestPromise(
-      database.executor.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor
-        .delete(tenantModuleStateChanges)
-        .where(eq(tenantModuleStateChanges.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(principals).where(eq(principals.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(
-      database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+      Effect.forEach(
+        [
+          outboxMessages,
+          domainEvents,
+          dataAccessEvents,
+          auditEvents,
+          tenantModuleStateChanges,
+          tenantModuleStates,
+          actionInvocations,
+          principalAuthBindings,
+          principals,
+          legalEntities,
+          tenants,
+        ],
+        (table) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
+        { discard: true },
+      ),
     );
   });
 });
@@ -716,19 +684,7 @@ void test('commits allowed Policy checkpoints atomically before handler success 
       }),
     );
 
-    const [invocation] = await runEffectTestPromise(
-      database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key)),
-    );
-    assert.ok(invocation);
-    const audits = await runEffectTestPromise(
-      database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
-    );
+    const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
 
     assert.deepEqual(observed, ['policy', 'handler']);
     assert.equal(invocation.status, 'succeeded');
@@ -954,19 +910,7 @@ void test('rolls back every denied-Policy finalization persistence failure', asy
           }),
         ),
       );
-      const [invocation] = await runEffectTestPromise(
-        database.executor
-          .select()
-          .from(actionInvocations)
-          .where(eq(actionInvocations.idempotencyKey, key)),
-      );
-      assert.ok(invocation);
-      const audits = await runEffectTestPromise(
-        database.executor
-          .select()
-          .from(auditEvents)
-          .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
-      );
+      const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
 
       assert.equal(
         failureTag(exit),
@@ -1223,19 +1167,7 @@ void test('keeps Policy rejection terminal and deduplicates repeated and concurr
     };
     const first = await runEffectTestPromise(Effect.exit(runtime.runAction(input)));
     const retry = await runEffectTestPromise(Effect.exit(runtime.runAction(input)));
-    const [invocation] = await runEffectTestPromise(
-      database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key)),
-    );
-    assert.ok(invocation);
-    const audits = await runEffectTestPromise(
-      database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
-    );
+    const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
 
     assert.equal(failureTag(first), 'ActionPolicyDenied');
     assert.equal(failureTag(retry), 'ActionInvocationStateError');
@@ -1354,19 +1286,7 @@ void test('never lets a losing Policy denial replace a running or successful inv
       Effect.exit(deniedRuntime.runAction({ ...sharedInput, registration: denied })),
     );
     const [successResult, rejectedExit] = await Promise.all([success, rejected]);
-    const [invocation] = await runEffectTestPromise(
-      database.executor
-        .select()
-        .from(actionInvocations)
-        .where(eq(actionInvocations.idempotencyKey, key)),
-    );
-    assert.ok(invocation);
-    const audits = await runEffectTestPromise(
-      database.executor
-        .select()
-        .from(auditEvents)
-        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
-    );
+    const { audits, invocation } = await runEffectTestPromise(invocationEvidence(database, key));
 
     assert.equal(successResult.value, 'same');
     assert.equal(failureTag(rejectedExit), 'ActionInvocationPersistenceError');
@@ -1598,12 +1518,8 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
           .transaction(transactionBody)
           .pipe(Effect.andThen(Effect.die(acknowledgementLost))),
     } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
-    const uncertainExecutor: ContextServiceContract['executor'] = Object.assign(
-      Object.create(database.executor),
-      uncertainTransaction,
-    );
     const uncertainRuntime = makeActionRuntime(
-      { executor: uncertainExecutor },
+      withTransactionOverride(database, uncertainTransaction),
       repository,
       allowedPermission,
       testOperationalScopeResolver,
@@ -1719,12 +1635,8 @@ void test('resolves a lost commit acknowledgement from the durable succeeded mar
           )
           .pipe(Effect.catchCause(() => Effect.die(acknowledgementLost))),
     } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
-    const uncertainRollbackExecutor: ContextServiceContract['executor'] = Object.assign(
-      Object.create(database.executor),
-      uncertainRollbackTransaction,
-    );
     const uncertainOpenRuntime = makeActionRuntime(
-      { executor: uncertainRollbackExecutor },
+      withTransactionOverride(database, uncertainRollbackTransaction),
       repository,
       allowedPermission,
       testOperationalScopeResolver,

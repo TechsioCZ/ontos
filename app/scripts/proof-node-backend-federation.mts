@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, Option, Path, Schema, Stdio } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Config, Console, Effect, Exit, Option, Path, Predicate, Schema, Stdio } from 'effect';
+import { ChildProcessSpawner } from 'effect/unstable/process';
+
+import { ultramodernLaunch } from './shared/ultramodern-launch.mts';
 
 class BackendFederationProofLaunchError extends Schema.TaggedError<BackendFederationProofLaunchError>()(
   'BackendFederationProofLaunchError',
@@ -21,52 +23,27 @@ const program = Effect.gen(function* backendFederationProofProgram() {
     Config.withDefault(path.resolve(import.meta.dirname, '..')),
   );
   const ultramodernArgs = ['ultramodern', 'backend-federation-proof', ...forwardedArgs];
-  const launch = Option.match(createBin, {
-    onNone: () => ({
-      args: ultramodernArgs,
-      executable: 'modern-js-create',
-      shell: path.sep === '\\',
-      target: 'modern-js-create from PATH',
+  const launch = ultramodernLaunch(createBin, ultramodernArgs, workspaceRoot, path.sep);
+  return yield* processSpawner.exitCode(launch.command).pipe(
+    Effect.matchEffect({
+      onFailure: (cause) => {
+        if (cause.reason.method === 'exitCode') {
+          return Effect.succeed(1);
+        }
+        const launchCause = cause.reason.cause;
+        const causeMessage = Predicate.isError(launchCause) ? launchCause.message : cause.message;
+        return Effect.fail(
+          new BackendFederationProofLaunchError({
+            cause,
+            message: `Failed to launch ${launch.target} for UltraModern command "${ultramodernArgs
+              .slice(1)
+              .join(' ')}": ${causeMessage}`,
+          }),
+        );
+      },
+      onSuccess: (status) => Effect.succeed(Number(status)),
     }),
-    onSome: (bin) => ({
-      args: [bin, ...ultramodernArgs],
-      executable: process.execPath,
-      shell: false,
-      target: `${process.execPath} with ULTRAMODERN_CREATE_BIN=${bin}`,
-    }),
-  });
-
-  return yield* processSpawner
-    .exitCode(
-      ChildProcess.make(launch.executable, launch.args, {
-        env: { ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot },
-        extendEnv: true,
-        shell: launch.shell,
-        stderr: 'inherit',
-        stdin: 'inherit',
-        stdout: 'inherit',
-      }),
-    )
-    .pipe(
-      Effect.matchEffect({
-        onFailure: (cause) => {
-          if (cause.reason.method === 'exitCode') {
-            return Effect.succeed(1);
-          }
-          const launchCause = cause.reason.cause;
-          const causeMessage = launchCause instanceof Error ? launchCause.message : cause.message;
-          return Effect.fail(
-            new BackendFederationProofLaunchError({
-              cause,
-              message: `Failed to launch ${launch.target} for UltraModern command "${ultramodernArgs
-                .slice(1)
-                .join(' ')}": ${causeMessage}`,
-            }),
-          );
-        },
-        onSuccess: (status) => Effect.succeed(Number(status)),
-      }),
-    );
+  );
 });
 
 const exit = await Effect.runPromiseExit(

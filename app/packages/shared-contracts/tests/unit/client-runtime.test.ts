@@ -247,34 +247,23 @@ test('keeps declared backend failures in the typed Effect error channel', async 
   assert.deepEqual(outcome.failure, problem);
 });
 
-test('keeps transport failures in the typed Effect error channel', async () => {
-  const outcome = await Effect.runPromise(
-    makeEffectBffClient({
-      api: RepresentativeApi,
-      defaultApiPrefix: 'https://owner.example/representative-api',
-    }).pipe(
-      Effect.flatMap((client) => client.representative.read({})),
-      Effect.result,
-      Effect.provideService(FetchHttpClient.Fetch, controlledTransportFailureFetch),
-    ),
-  );
+for (const [failureKind, transport, expectedTag] of [
+  ['transport', controlledTransportFailureFetch, 'HttpClientError'],
+  ['response decoding', invalidResponseFetch, 'SchemaError'],
+] as const) {
+  test(`keeps ${failureKind} failures in the typed Effect error channel`, async () => {
+    const outcome = await Effect.runPromise(
+      makeEffectBffClient({
+        api: RepresentativeApi,
+        defaultApiPrefix: 'https://owner.example/representative-api',
+      }).pipe(
+        Effect.flatMap((client) => client.representative.read({})),
+        Effect.result,
+        Effect.provideService(FetchHttpClient.Fetch, transport),
+      ),
+    );
 
-  assert.ok(Result.isFailure(outcome));
-  assert.equal(outcome.failure._tag, 'HttpClientError');
-});
-
-test('keeps response decoding failures in the typed Effect error channel', async () => {
-  const outcome = await Effect.runPromise(
-    makeEffectBffClient({
-      api: RepresentativeApi,
-      defaultApiPrefix: 'https://owner.example/representative-api',
-    }).pipe(
-      Effect.flatMap((client) => client.representative.read({})),
-      Effect.result,
-      Effect.provideService(FetchHttpClient.Fetch, invalidResponseFetch),
-    ),
-  );
-
-  assert.ok(Result.isFailure(outcome));
-  assert.equal(outcome.failure._tag, 'SchemaError');
-});
+    assert.ok(Result.isFailure(outcome));
+    assert.equal(outcome.failure._tag, expectedTag);
+  });
+}

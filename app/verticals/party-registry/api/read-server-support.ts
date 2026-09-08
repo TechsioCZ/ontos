@@ -1,6 +1,6 @@
 export { microVerticalOperationAttributes as operationAttributes } from '@app/shared-contracts';
 
-export const DEFAULT_PARTY_REGISTRY_SHELL_ORIGIN = 'http://localhost:3020';
+const DEFAULT_PARTY_REGISTRY_SHELL_ORIGIN = 'http://localhost:3020';
 
 export const resolvePartyRegistryShellOrigin = (value: string | undefined): string =>
   value !== undefined && value.trim().length > 0 ? value : DEFAULT_PARTY_REGISTRY_SHELL_ORIGIN;

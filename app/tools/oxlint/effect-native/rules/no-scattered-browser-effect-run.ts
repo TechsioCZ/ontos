@@ -49,6 +49,7 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
+import { memberName as staticMemberName, unwrapNode } from '../shared/ast.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { globToRegExp, isTestFile, matchesAny } from '../shared/paths.ts';
@@ -138,15 +139,7 @@ function moduleExportName(name: ESTree.Node): string | null {
 
 /** `x.member`, `x["member"]` and a substitution-free `x[`member`]` → `"member"`; dynamic → `null`. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  if (property.type === 'Literal')
-    return typeof property.value === 'string' ? property.value : null;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0) {
-    const quasi = property.quasis[0];
-    return quasi === undefined ? null : (quasi.value.cooked ?? quasi.value.raw);
-  }
-  return null;
+  return staticMemberName(node, { templates: true, rawTemplates: true });
 }
 
 /** True when `name` at `node` still resolves to the module-level import (no shadowing binding). */
@@ -163,6 +156,13 @@ function resolvesToModuleImport(context: Context, node: ESTree.Node, name: strin
   return true;
 }
 
+function runnerImportName(
+  specifier: ESTree.ImportDeclaration['specifiers'][number],
+): string | null {
+  if (specifier.type !== 'ImportSpecifier') return specifier.local.name;
+  return specifier.importKind === 'type' ? null : moduleExportName(specifier.imported);
+}
+
 /** Locals bound to an ad hoc runner by name, default or namespace import; local → imported name. */
 function collectRunnerImports(
   program: ESTree.Program,
@@ -172,16 +172,9 @@ function collectRunnerImports(
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
     for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportSpecifier') {
-        if (specifier.importKind === 'type') continue;
-        const imported = moduleExportName(specifier.imported);
-        if (imported !== null && runnerNames.includes(imported))
-          locals.set(specifier.local.name, imported);
-        continue;
-      }
-      // `import runEffectRequest from "..."` / `import * as runEffectRequest from "..."`.
-      if (runnerNames.includes(specifier.local.name))
-        locals.set(specifier.local.name, specifier.local.name);
+      const imported = runnerImportName(specifier);
+      if (imported !== null && runnerNames.includes(imported))
+        locals.set(specifier.local.name, imported);
     }
   }
   return locals;
@@ -223,13 +216,7 @@ function collectRootNamespaceImports(
 }
 
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  while (VALUE_WRAPPERS.has(current.type)) {
-    const expression = (current as { expression?: ESTree.Node }).expression;
-    if (expression === undefined) break;
-    current = expression;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: VALUE_WRAPPERS });
 }
 
 function ancestorsOf(node: ESTree.Node): ESTree.Node[] {
@@ -239,33 +226,63 @@ function ancestorsOf(node: ESTree.Node): ESTree.Node[] {
   return ancestors.reverse();
 }
 
-/** The boundary key (`queryFn`, `loader`, ...) owning the nearest enclosing function, if any. */
-function boundaryKeyFor(
-  context: Context,
-  node: ESTree.Node,
+const BOUNDARY_OWNER_TYPES = new Set(['Property', 'VariableDeclarator']);
+
+/** Undefined continues the ancestor search; null stops without a boundary. */
+function ancestorBoundary(
+  ancestor: ESTree.Node,
+  owner: ESTree.Node,
   boundaryKeys: readonly string[],
-): string | null {
+): string | null | undefined {
+  if (ancestor.type === 'Property' && !ancestor.computed) {
+    const key = moduleExportName(ancestor.key);
+    return key !== null && boundaryKeys.includes(key) ? key : null;
+  }
+  if (ancestor.type === 'VariableDeclarator' && ancestor.id.type === 'Identifier')
+    return boundaryKeys.includes(ancestor.id.name) ? ancestor.id.name : null;
+  if (!FUNCTION_TYPES.has(ancestor.type)) return undefined;
+  return BOUNDARY_OWNER_TYPES.has(owner.type) ? undefined : null;
+}
+
+/** The boundary owning the nearest enclosing function, if any. */
+function boundaryKeyFor(node: ESTree.Node, boundaryKeys: readonly string[]): string | null {
   const ancestors = ancestorsOf(node);
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const ancestor = ancestors[index];
     if (ancestor === undefined) continue;
-    const owner = index > 0 ? ancestors[index - 1] : undefined;
+    const owner = ancestors[index - 1];
     if (owner === undefined) return null;
-    if (ancestor.type === 'Property' && !ancestor.computed) {
-      const key = moduleExportName(ancestor.key);
-      if (key !== null && boundaryKeys.includes(key)) return key;
-      return null;
-    }
-    if (ancestor.type === 'VariableDeclarator' && ancestor.id.type === 'Identifier') {
-      return boundaryKeys.includes(ancestor.id.name) ? ancestor.id.name : null;
-    }
-    if (FUNCTION_TYPES.has(ancestor.type)) {
-      // Only the function directly owned by a boundary property/binding counts.
-      if (owner.type === 'Property' || owner.type === 'VariableDeclarator') continue;
-      return null;
-    }
+    const boundary = ancestorBoundary(ancestor, owner, boundaryKeys);
+    if (boundary !== undefined) return boundary;
   }
   return null;
+}
+
+const DECLARATION_PARENTS = new Set([
+  'ImportSpecifier',
+  'ImportDefaultSpecifier',
+  'ImportNamespaceSpecifier',
+  'ExportSpecifier',
+]);
+const CLASS_KEY_PARENTS = new Set(['PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
+
+function isNonReferenceKey(
+  node: Extract<ESTree.Node, { type: 'Identifier' }>,
+  parent: ESTree.Node,
+): boolean {
+  if (parent.type === 'MemberExpression') return !parent.computed && parent.property === node;
+  if (parent.type === 'Property')
+    return !parent.computed && parent.key === node && !parent.shorthand;
+  if (!CLASS_KEY_PARENTS.has(parent.type)) return false;
+  const property = parent as ESTree.PropertyDefinition;
+  return property.key === node && !property.computed;
+}
+
+function isRunnerReference(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
+  const parent = node.parent;
+  if (parent === null) return false;
+  if (DECLARATION_PARENTS.has(parent.type) || TYPE_POSITION_PARENTS.has(parent.type)) return false;
+  return !isNonReferenceKey(node, parent);
 }
 
 export const rule = defineRule({
@@ -327,26 +344,32 @@ export const rule = defineRule({
     let rootNamespaces: ReadonlySet<string> = new Set();
     const reported: Array<{ readonly start: number; readonly end: number }> = [];
 
-    /** `Effect.runPromise` / `Effect["runPromise"]` / `effect.Effect.runPromise` on real imports. */
+    const importedNamespace = (node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
+      const namespace = bindings.namespaces.get(node.name);
+      return (
+        namespace !== undefined &&
+        RUNNER_NAMESPACES.has(namespace) &&
+        resolvesToModuleImport(context, node, node.name)
+      );
+    };
+
+    const rootRunSeam = (object: ESTree.MemberExpression, member: string): string | null => {
+      const root = unwrap(object.object);
+      if (root.type !== 'Identifier' || !rootNamespaces.has(root.name)) return null;
+      const namespace = memberName(object);
+      if (namespace === null || !RUNNER_NAMESPACES.has(namespace)) return null;
+      if (!resolvesToModuleImport(context, root, root.name)) return null;
+      return `${root.name}.${namespace}.${member}`;
+    };
+
+    /** Runners on a directly imported namespace or on the root Effect namespace. */
     const runSeam = (node: ESTree.MemberExpression): string | null => {
       const object = unwrap(node.object);
       const member = memberName(node);
       if (member === null || !RUN_MEMBER.test(member)) return null;
-      if (object.type === 'Identifier') {
-        const namespace = bindings.namespaces.get(object.name);
-        if (namespace === undefined || !RUNNER_NAMESPACES.has(namespace)) return null;
-        if (!resolvesToModuleImport(context, object, object.name)) return null;
-        return `${object.name}.${member}`;
-      }
-      if (object.type === 'MemberExpression') {
-        const root = unwrap(object.object);
-        if (root.type !== 'Identifier' || !rootNamespaces.has(root.name)) return null;
-        const namespace = memberName(object);
-        if (namespace === null || !RUNNER_NAMESPACES.has(namespace)) return null;
-        if (!resolvesToModuleImport(context, root, root.name)) return null;
-        return `${root.name}.${namespace}.${member}`;
-      }
-      return null;
+      if (object.type === 'Identifier')
+        return importedNamespace(object) ? `${object.name}.${member}` : null;
+      return object.type === 'MemberExpression' ? rootRunSeam(object, member) : null;
     };
 
     /** `api.runEffectRequest(...)` where `api` is a namespace import of the runner's module. */
@@ -399,12 +422,51 @@ export const rule = defineRule({
       const site = siteOf(node);
       if (reported.some((range) => site.start >= range.start && site.end <= range.end)) return;
       reported.push(site);
-      const key = boundaryKeyFor(context, node, options.boundaryKeys);
+      const key = boundaryKeyFor(node, options.boundaryKeys);
       if (key === null) {
         context.report({ data: { runner }, messageId: 'adHocRun', node });
       } else {
         context.report({ data: { key, runner }, messageId: 'queryBoundary', node });
       }
+    };
+
+    const reportDestructuredRunner = (
+      property: ESTree.ObjectPattern['properties'][number],
+      namespace: string,
+    ): void => {
+      if (property.type !== 'Property' || property.computed) return;
+      const key = moduleExportName(property.key);
+      if (key === null || !RUN_MEMBER.test(key)) return;
+      context.report({
+        data: { runner: `${namespace}.${key}` },
+        messageId: 'destructuredRunner',
+        node: property,
+      });
+    };
+
+    const isRunnerExport = (
+      specifier: ESTree.ExportSpecifier,
+      source: string | null,
+      local: string,
+    ): boolean => {
+      if (source === null)
+        return (
+          (runnerImports.has(local) || importedRunMember(local)) &&
+          resolvesToModuleImport(context, specifier.local, local)
+        );
+      const exported = moduleExportName(specifier.exported);
+      return [local, exported].some((name) => name !== null && options.runnerNames.includes(name));
+    };
+
+    const reportRunnerExport = (specifier: ESTree.ExportSpecifier, source: string | null): void => {
+      if (specifier.exportKind === 'type') return;
+      const local = moduleExportName(specifier.local);
+      if (local === null || !isRunnerExport(specifier, source, local)) return;
+      context.report({
+        data: { runner: moduleExportName(specifier.exported) ?? local },
+        messageId: 'runnerReexport',
+        node: specifier,
+      });
     };
 
     return {
@@ -421,29 +483,7 @@ export const rule = defineRule({
       },
       Identifier(node) {
         if (!runnerImports.has(node.name) && !importedRunMember(node.name)) return;
-        const parent = ancestorsOf(node).at(-1);
-        if (parent === undefined) return;
-        // Declaration and re-export sites are handled by their own visitors.
-        if (parent.type === 'ImportSpecifier' || parent.type === 'ImportDefaultSpecifier') return;
-        if (parent.type === 'ImportNamespaceSpecifier' || parent.type === 'ExportSpecifier') return;
-        if (parent.type === 'MemberExpression' && !parent.computed && parent.property === node)
-          return;
-        if (
-          parent.type === 'Property' &&
-          !parent.computed &&
-          parent.key === node &&
-          !parent.shorthand
-        )
-          return;
-        if (
-          (parent.type === 'PropertyDefinition' ||
-            parent.type === 'MethodDefinition' ||
-            parent.type === 'AccessorProperty') &&
-          parent.key === node &&
-          !parent.computed
-        )
-          return;
-        if (TYPE_POSITION_PARENTS.has(parent.type)) return;
+        if (!isRunnerReference(node)) return;
         if (!resolvesToModuleImport(context, node, node.name)) return;
         reportSite(node, node.name);
       },
@@ -451,42 +491,13 @@ export const rule = defineRule({
         if (node.id.type !== 'ObjectPattern') return;
         const init = node.init;
         if (init === null || init === undefined || init.type !== 'Identifier') return;
-        const namespace = bindings.namespaces.get(init.name);
-        if (namespace === undefined || !RUNNER_NAMESPACES.has(namespace)) return;
-        if (!resolvesToModuleImport(context, init, init.name)) return;
-        for (const property of node.id.properties) {
-          if (property.type !== 'Property' || property.computed) continue;
-          const key = moduleExportName(property.key);
-          if (key === null || !RUN_MEMBER.test(key)) continue;
-          context.report({
-            data: { runner: `${init.name}.${key}` },
-            messageId: 'destructuredRunner',
-            node: property,
-          });
-        }
+        if (!importedNamespace(init)) return;
+        for (const property of node.id.properties) reportDestructuredRunner(property, init.name);
       },
       ExportNamedDeclaration(node) {
         if (node.exportKind === 'type') return;
-        const source = node.source?.value ?? null;
-        // Namespace barrels are not run seams; only known runner exports are governed.
-        for (const specifier of node.specifiers) {
-          if (specifier.exportKind === 'type') continue;
-          const local = moduleExportName(specifier.local);
-          const exported = moduleExportName(specifier.exported);
-          if (local === null) continue;
-          const named = [local, exported].filter((name): name is string => name !== null);
-          const isRunner =
-            source === null
-              ? (runnerImports.has(local) || importedRunMember(local)) &&
-                resolvesToModuleImport(context, specifier.local, local)
-              : named.some((name) => options.runnerNames.includes(name));
-          if (!isRunner) continue;
-          context.report({
-            data: { runner: isRunner ? (exported ?? local) : local },
-            messageId: 'runnerReexport',
-            node: specifier,
-          });
-        }
+        for (const specifier of node.specifiers)
+          reportRunnerExport(specifier, node.source?.value ?? null);
       },
       ExportAllDeclaration(node) {
         if (node.exportKind === 'type') return;

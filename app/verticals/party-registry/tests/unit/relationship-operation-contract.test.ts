@@ -1,7 +1,9 @@
+import { runEffectTestSync } from '@app/core-runtime/testing/effect-runtime';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DateTime, Option, Schema } from 'effect';
 import { createPartyRelationshipAction } from '../../src/actions/create-party-relationship.action.ts';
+import { encodeRelationshipEventPayload } from '../../src/actions/relationship-event-payload.ts';
 import { endPartyRelationshipAction } from '../../src/actions/end-party-relationship.action.ts';
 import { updatePartyRelationshipAction } from '../../src/actions/update-party-relationship.action.ts';
 import { partyRelationshipDetailRead } from '../../src/api/party-relationship-detail.read.ts';
@@ -93,6 +95,15 @@ test('relationship detail preserves canonical and stored alias endpoint context'
     revision: 4,
     state: 'HISTORICAL',
     to: { canonicalPartyRef: to, requestedAlias: null, storedPartyRef: to },
+    validFrom: '2026-01-01T00:00:00.000Z',
+    validTo: '2026-09-01T00:00:00.000Z',
+  });
+  assert.deepEqual(runEffectTestSync(encodeRelationshipEventPayload(detail)), {
+    fromPartyRef: canonicalFrom,
+    relationshipRef,
+    relationshipType: 'CONTACT_PERSON_OF',
+    revision: 4,
+    toPartyRef: to,
     validFrom: '2026-01-01T00:00:00.000Z',
     validTo: '2026-09-01T00:00:00.000Z',
   });

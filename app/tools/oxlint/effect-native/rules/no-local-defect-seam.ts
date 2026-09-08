@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A4** — "Rebuild the error system around typed channels and contract-owned Problem
  * Details" and **A6** — "Activate real observability at the runtime roots"
@@ -52,21 +53,27 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
+import { effectOrigin } from '../shared/effect-identity.ts';
+import {
+  collectDirectMemberImports,
+  collectNamespaceLocals,
+  splitMembers,
+} from '../shared/imports.ts';
+import { stringArray } from '../shared/options.ts';
+import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { isInTypePosition, isNonReferencePosition } from '../shared/reference-positions.ts';
 
-const EFFECT_ROOT_MODULE = 'effect';
-/** `effect/Cause`, `effect/unstable/.../Effect`, ... — the trailing segment is the namespace. */
-const EFFECT_SUBMODULE = /^effect\/(?:.*\/)?(?<namespace>[A-Za-z][A-Za-z0-9_]*)$/u;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses against the repository).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+const RUNTIME_TS_EXPRESSIONS = new Set([
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSNonNullExpression',
+  'TSInstantiationExpression',
+  'TSTypeAssertion',
+]);
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 
@@ -110,28 +117,10 @@ const DEFAULT_MEMBERS = [
 /** Barrels that re-export Effect namespaces verbatim; `Effect` from them is Effect's `Effect`. */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly seamPaths: readonly string[];
-  readonly members: readonly string[];
-  readonly reexportModules: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeScripts: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+function readOptions(context: Context) {
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -143,246 +132,11 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
-/** `Effect.catchCause` → `["Effect", "catchCause"]`; unknown namespaces are dropped by the caller. */
-function splitMembers(members: readonly string[]): {
-  byNamespace: ReadonlyMap<string, ReadonlySet<string>>;
-  namespaces: ReadonlySet<string>;
-} {
-  const byNamespace = new Map<string, Set<string>>();
-  for (const entry of members) {
-    const dot = entry.indexOf('.');
-    if (dot <= 0 || dot === entry.length - 1) continue;
-    const namespace = entry.slice(0, dot);
-    const member = entry.slice(dot + 1);
-    const bucket = byNamespace.get(namespace) ?? new Set<string>();
-    bucket.add(member);
-    byNamespace.set(namespace, bucket);
-  }
-  return { byNamespace, namespaces: new Set(byNamespace.keys()) };
-}
-
-/**
- * Locals standing for a watched Effect namespace (`Effect`, `Cause`, ...) and locals standing for the
- * whole Effect barrel (`import * as E from "effect"` → `E.Cause.hasDies`). The `effect`/`effect/*`
- * half comes from the shared binding collector; `reexportModules` covers verbatim re-export barrels.
- */
-function collectNamespaceLocals(
-  program: ESTree.Program,
-  bindings: EffectBindings,
-  watched: ReadonlySet<string>,
-  reexportModules: readonly string[],
-): { namespaced: ReadonlyMap<string, string>; barrel: ReadonlySet<string> } {
-  const namespaced = new Map<string, string>();
-  const barrel = new Set<string>();
-  for (const [local, namespace] of bindings.namespaces) {
-    if (watched.has(namespace)) namespaced.set(local, namespace);
-  }
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    const isEffectRoot = source === EFFECT_ROOT_MODULE;
-    const isReexport = matchesGlobs(source, reexportModules);
-    if (!isEffectRoot && !isReexport) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') barrel.add(specifier.local.name);
-      else if (specifier.type === 'ImportSpecifier') {
-        const imported = importedName(specifier);
-        if (watched.has(imported)) namespaced.set(specifier.local.name, imported);
-      }
-    }
-  }
-  return { namespaced, barrel };
-}
-
-/**
- * Locals bound by `import { hasDies } from "effect/Cause"` — bare references must be caught. Maps the
- * local name to the qualified `Namespace.member` the import resolves to.
- */
-function collectDirectMemberImports(
-  program: ESTree.Program,
-  byNamespace: ReadonlyMap<string, ReadonlySet<string>>,
-): ReadonlyMap<string, string> {
-  const locals = new Map<string, string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const namespace = EFFECT_SUBMODULE.exec(statement.source.value)?.groups?.namespace;
-    if (namespace === undefined) continue;
-    const members = byNamespace.get(namespace);
-    if (members === undefined) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported = importedName(specifier);
-      if (members.has(imported)) locals.set(specifier.local.name, `${namespace}.${imported}`);
-    }
-  }
-  return locals;
-}
-
-/** Non-computed `.hasDies`, or computed `["hasDies"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  return null;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, ...) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
-}
-
-/** Declaration and property-key positions are not references to the imported value. */
-function isReferencePosition(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
-  const parent = node.parent;
-  if (parent === null || parent === undefined) return false;
-  if (parent.type === 'ImportSpecifier' || parent.type === 'ImportDefaultSpecifier') return false;
-  if (parent.type === 'ImportNamespaceSpecifier' || parent.type === 'ExportSpecifier') return false;
-  if (parent.type === 'MemberExpression' && parent.property === node && !parent.computed)
-    return false;
-  if (parent.type === 'Property' && parent.key === node && !parent.computed) return false;
-  if (parent.type === 'PropertyDefinition' && parent.key === node && !parent.computed) return false;
-  if (parent.type === 'MethodDefinition' && parent.key === node && !parent.computed) return false;
-  return true;
-}
-
-// Resolve runtime identity, not spelling. Only immutable same-file aliases are followed;
-// dynamic imports, mutable rebinding and arbitrary cross-module re-exports remain unknown.
-function effectOrigin(
-  context: Context,
-  input: ESTree.Node,
-  barrels: readonly string[],
-  depth = 0,
-): readonly string[] | null {
-  if (depth > 24) return null;
-  let node = input;
-  while (
-    [
-      'ParenthesizedExpression',
-      'ChainExpression',
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TSInstantiationExpression',
-      'TSTypeAssertion',
-    ].includes(node.type)
-  ) {
-    node = (node as { expression: ESTree.Node }).expression;
-  }
-  const keyOf = (key: ESTree.Node, computed: boolean): string | null => {
-    if (!computed && key.type === 'Identifier') return key.name;
-    if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-    if (key.type === 'TemplateLiteral' && key.expressions.length === 0)
-      return key.quasis[0]?.value.cooked ?? null;
-    return null;
-  };
-  if (node.type === 'MemberExpression') {
-    const key = keyOf(node.property, node.computed);
-    const base = effectOrigin(context, node.object, barrels, depth + 1);
-    return base && key !== null ? [...base, key] : null;
-  }
-  if (node.type !== 'Identifier') return null;
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-    context.sourceCode.getScope(node);
-  while (scope) {
-    const variable = scope.set.get(node.name);
-    const defs = variable?.defs.filter(
-      (def) =>
-        !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSTypeParameter'].includes(
-          def.node.type,
-        ),
-    );
-    if (!variable || !defs?.length) {
-      scope = scope.upper;
-      continue;
-    }
-    if (defs.length !== 1) return null;
-    const def = defs[0]!;
-    if (def.type === 'ImportBinding') {
-      const spec = def.node;
-      const declaration = def.parent?.type === 'ImportDeclaration' ? def.parent : spec.parent;
-      if (
-        declaration?.type !== 'ImportDeclaration' ||
-        declaration.importKind === 'type' ||
-        (spec as { importKind?: string }).importKind === 'type'
-      )
-        return null;
-      const source = declaration.source.value;
-      const root = source === 'effect' || barrels.some((glob) => globToRegExp(glob).test(source));
-      if (!root && !source.startsWith('effect/')) return null;
-      const base = root ? [] : [source.split('/').at(-1)!];
-      if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-        return base;
-      if (spec.type !== 'ImportSpecifier') return null;
-      return [
-        ...base,
-        spec.imported.type === 'Identifier' ? spec.imported.name : spec.imported.value,
-      ];
-    }
-    const declaration = def.node;
-    if (
-      declaration.type !== 'VariableDeclarator' ||
-      !declaration.init ||
-      declaration.parent?.type !== 'VariableDeclaration' ||
-      declaration.parent.kind !== 'const'
-    )
-      return null;
-    if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-      return null;
-    const base = effectOrigin(context, declaration.init, barrels, depth + 1);
-    if (!base) return null;
-    if (declaration.id.type === 'Identifier') return base;
-    if (declaration.id.type !== 'ObjectPattern') return null;
-    for (const property of declaration.id.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.value.type !== 'Identifier' ||
-        property.value.name !== node.name
-      )
-        continue;
-      const key = keyOf(property.key, property.computed);
-      return key === null ? null : [...base, key];
-    }
-    return null;
-  }
-  return null;
+function isIncludedPath(path: string, options: RuleOptions): boolean {
+  if (matchesGlobs(path, options.ignore) || matchesGlobs(path, options.seamPaths)) return false;
+  if (!matchesGlobs(path, options.include)) return false;
+  if (!options.includeTests && isTestFile(path)) return false;
+  return options.includeScripts || !isScriptFile(path);
 }
 
 export const rule = defineRule({
@@ -430,11 +184,7 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context);
     const path = scopePath(context.filename);
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (matchesGlobs(path, options.seamPaths)) return {};
-    if (!matchesGlobs(path, options.include)) return {};
-    if (!options.includeTests && isTestFile(path)) return {};
-    if (!options.includeScripts && isScriptFile(path)) return {};
+    if (!isIncludedPath(path, options)) return {};
 
     const { byNamespace, namespaces: watched } = splitMembers(options.members);
     if (byNamespace.size === 0) return {};
@@ -466,7 +216,7 @@ export const rule = defineRule({
     return {
       MemberExpression: inspect,
       Identifier(node) {
-        if (!isReferencePosition(node)) return;
+        if (isNonReferencePosition(node)) return;
         const variable = lookupVariable(context, node);
         if (
           !variable?.references.some(
@@ -475,21 +225,7 @@ export const rule = defineRule({
         )
           return;
         // Type queries and type-member names are not runtime seam references.
-        let ancestor = node.parent;
-        while (ancestor && ancestor.type !== 'Program') {
-          if (
-            ancestor.type.startsWith('TS') &&
-            ![
-              'TSAsExpression',
-              'TSSatisfiesExpression',
-              'TSNonNullExpression',
-              'TSInstantiationExpression',
-              'TSTypeAssertion',
-            ].includes(ancestor.type)
-          )
-            return;
-          ancestor = ancestor.parent;
-        }
+        if (isInTypePosition(node, RUNTIME_TS_EXPRESSIONS)) return;
         inspect(node);
       },
     };

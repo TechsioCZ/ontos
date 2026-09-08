@@ -29,16 +29,10 @@ import {
 } from '../../shared/actions/end-contact-point.ts';
 import type { EndContactPointPayload } from '../../shared/actions/end-contact-point.ts';
 
-export {
-  EndContactPointPayloadSchema,
-  EndContactPointResultSchema,
-} from '../../shared/actions/end-contact-point.ts';
-export type {
-  EndContactPointPayload,
-  EndContactPointResult,
-} from '../../shared/actions/end-contact-point.ts';
+export { EndContactPointPayloadSchema } from '../../shared/actions/end-contact-point.ts';
+export type { EndContactPointPayload } from '../../shared/actions/end-contact-point.ts';
 
-export const EndContactPointErrorSchema = Schema.Union([
+const EndContactPointErrorSchema = Schema.Union([
   PartyContactPointNotFound,
   PartyContactPointInvalid,
   PartyContactPointLifecycleConflict,
@@ -152,11 +146,3 @@ export const endContactPointAction = defineAction(
       end: (command: EndContactPointCommand) => endContactPointRecord(transaction, scope, command),
     }),
 );
-
-// <generated-outbox-message-exports>
-export { createEndContactPointPartyRegistryContactPointEndedV1OutboxMessage } from './end-contact-point.party-registry-contact-point-ended-v1.outbox-message.ts';
-export { EndContactPointPartyRegistryContactPointEndedV1OutboxPayloadSchema } from './end-contact-point.party-registry-contact-point-ended-v1.outbox-message.ts';
-export { EndContactPointPartyRegistryContactPointEndedV1OutboxProducerModuleKey } from './end-contact-point.party-registry-contact-point-ended-v1.outbox-message.ts';
-export { EndContactPointPartyRegistryContactPointEndedV1OutboxTopic } from './end-contact-point.party-registry-contact-point-ended-v1.outbox-message.ts';
-export type { EndContactPointPartyRegistryContactPointEndedV1OutboxPayload } from './end-contact-point.party-registry-contact-point-ended-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

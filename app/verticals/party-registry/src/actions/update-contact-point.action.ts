@@ -39,18 +39,10 @@ import {
 } from '../../shared/actions/update-contact-point.ts';
 import type { UpdateContactPointPayload } from '../../shared/actions/update-contact-point.ts';
 
-export {
-  ContactPointMetadataChangeSchema,
-  UpdateContactPointPayloadSchema,
-  UpdateContactPointResultSchema,
-} from '../../shared/actions/update-contact-point.ts';
-export type {
-  ContactPointMetadataChange,
-  UpdateContactPointPayload,
-  UpdateContactPointResult,
-} from '../../shared/actions/update-contact-point.ts';
+export { UpdateContactPointPayloadSchema } from '../../shared/actions/update-contact-point.ts';
+export type { UpdateContactPointPayload } from '../../shared/actions/update-contact-point.ts';
 
-export const UpdateContactPointErrorSchema = Schema.Union([
+const UpdateContactPointErrorSchema = Schema.Union([
   PartyAliasWriteRejected,
   PartyContactPointNotFound,
   PartyContactPointAlreadyExists,
@@ -283,11 +275,3 @@ export const updateContactPointAction = defineAction(
         ),
     }),
 );
-
-// <generated-outbox-message-exports>
-export { createUpdateContactPointPartyRegistryContactPointUpdatedV1OutboxMessage } from './update-contact-point.party-registry-contact-point-updated-v1.outbox-message.ts';
-export { UpdateContactPointPartyRegistryContactPointUpdatedV1OutboxPayloadSchema } from './update-contact-point.party-registry-contact-point-updated-v1.outbox-message.ts';
-export { UpdateContactPointPartyRegistryContactPointUpdatedV1OutboxProducerModuleKey } from './update-contact-point.party-registry-contact-point-updated-v1.outbox-message.ts';
-export { UpdateContactPointPartyRegistryContactPointUpdatedV1OutboxTopic } from './update-contact-point.party-registry-contact-point-updated-v1.outbox-message.ts';
-export type { UpdateContactPointPartyRegistryContactPointUpdatedV1OutboxPayload } from './update-contact-point.party-registry-contact-point-updated-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

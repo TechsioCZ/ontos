@@ -33,16 +33,10 @@ import {
 } from '../../shared/actions/add-contact-point.ts';
 import type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
 
-export {
-  AddContactPointPayloadSchema,
-  AddContactPointResultSchema,
-} from '../../shared/actions/add-contact-point.ts';
-export type {
-  AddContactPointPayload,
-  AddContactPointResult,
-} from '../../shared/actions/add-contact-point.ts';
+export { AddContactPointPayloadSchema } from '../../shared/actions/add-contact-point.ts';
+export type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
 
-export const AddContactPointErrorSchema = Schema.Union([
+const AddContactPointErrorSchema = Schema.Union([
   PartyAliasWriteRejected,
   PartyContactPointPartyNotFound,
   PartyContactPointAlreadyExists,
@@ -179,11 +173,3 @@ export const addContactPointAction = defineAction(
       add: (command: AddContactPointCommand) => addContactPointRecord(transaction, scope, command),
     }),
 );
-
-// <generated-outbox-message-exports>
-export { AddContactPointPartyRegistryContactPointAddedV1OutboxPayloadSchema } from './add-contact-point.party-registry-contact-point-added-v1.outbox-message.ts';
-export { AddContactPointPartyRegistryContactPointAddedV1OutboxProducerModuleKey } from './add-contact-point.party-registry-contact-point-added-v1.outbox-message.ts';
-export { AddContactPointPartyRegistryContactPointAddedV1OutboxTopic } from './add-contact-point.party-registry-contact-point-added-v1.outbox-message.ts';
-export { createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage } from './add-contact-point.party-registry-contact-point-added-v1.outbox-message.ts';
-export type { AddContactPointPartyRegistryContactPointAddedV1OutboxPayload } from './add-contact-point.party-registry-contact-point-added-v1.outbox-message.ts';
-// </generated-outbox-message-exports>

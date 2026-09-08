@@ -152,25 +152,29 @@ interface RuleOptions {
   readonly testClockIndicators?: readonly string[];
 }
 
+function withDefault<T>(value: T | null | undefined, fallback: T): T {
+  return value ?? fallback;
+}
+
 function readOptions(raw: RuleOptions | undefined): Required<RuleOptions> {
   const value = raw ?? {};
   return {
-    includeTests: value.includeTests ?? true,
-    includeScripts: value.includeScripts ?? false,
-    requireTestClockInTests: value.requireTestClockInTests ?? true,
-    allowNodeTestMockTimers: value.allowNodeTestMockTimers ?? true,
-    adapterFiles: value.adapterFiles ?? [],
-    ignore: value.ignore ?? DEFAULT_IGNORE_PATHS,
-    includePaths: value.includePaths ?? DEFAULT_INCLUDE_PATHS,
-    testPaths: value.testPaths ?? [],
-    productionPaths: value.productionPaths ?? [],
-    timerGlobals: value.timerGlobals ?? DEFAULT_TIMER_GLOBALS,
-    globalObjects: value.globalObjects ?? DEFAULT_GLOBAL_OBJECTS,
-    timerModules: value.timerModules ?? DEFAULT_TIMER_MODULES,
-    effectTimeMembers: value.effectTimeMembers ?? DEFAULT_EFFECT_TIME_MEMBERS,
-    clockMembers: value.clockMembers ?? DEFAULT_CLOCK_MEMBERS,
-    dateTimeMembers: value.dateTimeMembers ?? DEFAULT_DATE_TIME_MEMBERS,
-    testClockIndicators: value.testClockIndicators ?? DEFAULT_TEST_CLOCK_INDICATORS,
+    includeTests: withDefault(value.includeTests, true),
+    includeScripts: withDefault(value.includeScripts, false),
+    requireTestClockInTests: withDefault(value.requireTestClockInTests, true),
+    allowNodeTestMockTimers: withDefault(value.allowNodeTestMockTimers, true),
+    adapterFiles: withDefault(value.adapterFiles, []),
+    ignore: withDefault(value.ignore, DEFAULT_IGNORE_PATHS),
+    includePaths: withDefault(value.includePaths, DEFAULT_INCLUDE_PATHS),
+    testPaths: withDefault(value.testPaths, []),
+    productionPaths: withDefault(value.productionPaths, []),
+    timerGlobals: withDefault(value.timerGlobals, DEFAULT_TIMER_GLOBALS),
+    globalObjects: withDefault(value.globalObjects, DEFAULT_GLOBAL_OBJECTS),
+    timerModules: withDefault(value.timerModules, DEFAULT_TIMER_MODULES),
+    effectTimeMembers: withDefault(value.effectTimeMembers, DEFAULT_EFFECT_TIME_MEMBERS),
+    clockMembers: withDefault(value.clockMembers, DEFAULT_CLOCK_MEMBERS),
+    dateTimeMembers: withDefault(value.dateTimeMembers, DEFAULT_DATE_TIME_MEMBERS),
+    testClockIndicators: withDefault(value.testClockIndicators, DEFAULT_TEST_CLOCK_INDICATORS),
   };
 }
 
@@ -227,6 +231,32 @@ function resolve(context: Context, node: AnyNode, name: string): Resolution {
     scope = scope.upper;
   }
   return 'global';
+}
+
+function isIncludedFile(filename: string, options: Required<RuleOptions>): boolean {
+  if (!matchesAny(filename, options.includePaths)) return false;
+  if (matchesAny(filename, options.ignore)) return false;
+  if (matchesAny(filename, options.adapterFiles)) return false;
+  return !isScriptFile(filename) || options.includeScripts;
+}
+
+function isTestPath(filename: string, options: Required<RuleOptions>): boolean {
+  if (matchesAny(filename, options.testPaths)) return true;
+  if (matchesAny(filename, options.productionPaths)) return false;
+  return isTestFile(filename);
+}
+
+/** Stop at dynamic members, retaining the unresolved root for callers to reject. */
+function memberRoot(input: AnyNode): { root: AnyNode; chain: string[] } {
+  let root = unwrap(input);
+  const chain: string[] = [];
+  while (root.type === 'MemberExpression') {
+    const key = staticKey(root.property, root.computed);
+    if (key === null) break;
+    chain.push(key);
+    root = unwrap(root.object);
+  }
+  return { root, chain };
 }
 
 export const rule = defineRule({
@@ -386,16 +416,8 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context.options[0] as RuleOptions | undefined);
     const filename = context.filename;
-    if (!matchesAny(filename, options.includePaths)) return {};
-    if (matchesAny(filename, options.ignore)) return {};
-    if (matchesAny(filename, options.adapterFiles)) return {};
-    if (isScriptFile(filename) && !options.includeScripts) return {};
-
-    const inTest = matchesAny(filename, options.testPaths)
-      ? true
-      : matchesAny(filename, options.productionPaths)
-        ? false
-        : isTestFile(filename);
+    if (!isIncludedFile(filename, options)) return {};
+    const inTest = isTestPath(filename, options);
     if (inTest && !options.includeTests) return {};
 
     const timerGlobals = new Set(options.timerGlobals);
@@ -447,6 +469,107 @@ export const rule = defineRule({
       return false;
     }
 
+    function isClockImport(source: string, imported: string): boolean {
+      if (imported === 'TestClock') return source === 'effect/testing';
+      return testClockIndicators.has(imported);
+    }
+
+    function collectClockEvidence(source: string, values: ESTree.ImportDeclaration['specifiers']) {
+      for (const specifier of values) {
+        if (specifier.type === 'ImportNamespaceSpecifier' && source === 'effect/testing')
+          testingNamespaces.add(specifier.local.name);
+        if (specifier.type !== 'ImportSpecifier') continue;
+        const imported =
+          specifier.imported.type === 'Identifier'
+            ? specifier.imported.name
+            : specifier.imported.value;
+        if (isClockImport(source, imported)) hasTestClock = true;
+        if (source === 'node:test' && imported === 'mock') nodeTestMocks.add(specifier.local.name);
+      }
+    }
+
+    function collectTimerBindings(node: ESTree.ImportDeclaration) {
+      for (const specifier of node.specifiers) {
+        if (
+          specifier.type === 'ImportNamespaceSpecifier' ||
+          specifier.type === 'ImportDefaultSpecifier'
+        ) {
+          timerBindings.set(specifier.local.name, NAMESPACE_BINDING);
+          continue;
+        }
+        if (specifier.type !== 'ImportSpecifier') continue;
+        if (specifier.importKind === 'type') continue;
+        const imported =
+          specifier.imported.type === 'Identifier'
+            ? specifier.imported.name
+            : specifier.imported.value;
+        timerBindings.set(specifier.local.name, imported);
+      }
+    }
+
+    function collectTimeImports(node: ESTree.ImportDeclaration, source: string) {
+      if (!checkEffectTime) return;
+      const submodule = SUBMODULE_SOURCE.exec(source)?.[1];
+      if (submodule === undefined) return;
+      for (const specifier of node.specifiers) {
+        if (specifier.type !== 'ImportSpecifier') continue;
+        if (specifier.importKind === 'type') continue;
+        const imported =
+          specifier.imported.type === 'Identifier'
+            ? specifier.imported.name
+            : specifier.imported.value;
+        if (!isRealTimeMember(submodule, imported)) continue;
+        timeSites.push({ node: specifier, callee: `${submodule}.${imported}` });
+      }
+    }
+
+    function collectIdentifierCall(
+      node: ESTree.CallExpression,
+      callee: Extract<AnyNode, { type: 'Identifier' }>,
+    ) {
+      const name = callee.name;
+      const resolution = resolve(context, callee, name);
+      if (resolution === 'import') {
+        if (timerBindings.has(name)) bindingSites.push({ node: callee, callee: name });
+        return;
+      }
+      if (resolution !== 'global' || name !== 'require' || node.arguments[0] === undefined) return;
+      const source = staticKey(node.arguments[0], true);
+      if (source !== null && timerModules.has(source)) importSites.push({ node, callee: source });
+    }
+
+    function enablesMockTimers(object: AnyNode, member: string): boolean {
+      if (member !== 'enable' || object.type !== 'MemberExpression') return false;
+      if (staticKey(object.property, object.computed) !== 'timers') return false;
+      const root = unwrap(object.object);
+      return (
+        root.type === 'Identifier' &&
+        nodeTestMocks.has(root.name) &&
+        resolve(context, root, root.name) === 'import'
+      );
+    }
+
+    function isGlobalTimerMember(node: ESTree.MemberExpression): boolean {
+      const { root, chain } = memberRoot(node.object);
+      return (
+        root.type === 'Identifier' &&
+        globalObjects.has(root.name) &&
+        resolve(context, root, root.name) === 'global' &&
+        timerGlobals.has(staticKey(node.property, node.computed) ?? '') &&
+        chain.every((key) => globalObjects.has(key))
+      );
+    }
+
+    function isTestClockMember(node: ESTree.MemberExpression): boolean {
+      const object = unwrap(node.object);
+      return (
+        object.type === 'Identifier' &&
+        testingNamespaces.has(object.name) &&
+        staticKey(node.property, node.computed) === 'TestClock' &&
+        resolve(context, object, object.name) === 'import'
+      );
+    }
+
     return {
       Program(node) {
         bindings = collectEffectBindings(node);
@@ -496,133 +619,34 @@ export const rule = defineRule({
           (specifier) => specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type',
         );
         if (node.specifiers.length > 0 && values.length === 0) return;
-        for (const specifier of values) {
-          if (specifier.type === 'ImportNamespaceSpecifier' && source === 'effect/testing')
-            testingNamespaces.add(specifier.local.name);
-          if (specifier.type !== 'ImportSpecifier') continue;
-          const imported =
-            specifier.imported.type === 'Identifier'
-              ? specifier.imported.name
-              : specifier.imported.value;
-          if (source === 'effect/testing' && imported === 'TestClock') hasTestClock = true;
-          if (testClockIndicators.has(imported) && imported !== 'TestClock') hasTestClock = true;
-          if (source === 'node:test' && imported === 'mock')
-            nodeTestMocks.add(specifier.local.name);
-        }
+        collectClockEvidence(source, values);
         if (timerModules.has(source)) {
           importSites.push({ node, callee: source });
-          for (const specifier of node.specifiers) {
-            if (
-              specifier.type === 'ImportNamespaceSpecifier' ||
-              specifier.type === 'ImportDefaultSpecifier'
-            ) {
-              timerBindings.set(specifier.local.name, NAMESPACE_BINDING);
-              continue;
-            }
-            if (specifier.type !== 'ImportSpecifier') continue;
-            if (specifier.importKind === 'type') continue;
-            const imported =
-              specifier.imported.type === 'Identifier'
-                ? specifier.imported.name
-                : specifier.imported.value;
-            timerBindings.set(specifier.local.name, imported);
-          }
+          collectTimerBindings(node);
           return;
         }
-        if (!checkEffectTime) return;
-        const submodule = SUBMODULE_SOURCE.exec(source)?.[1];
-        if (submodule === undefined) return;
-        for (const specifier of node.specifiers) {
-          if (specifier.type !== 'ImportSpecifier') continue;
-          if (specifier.importKind === 'type') continue;
-          const imported =
-            specifier.imported.type === 'Identifier'
-              ? specifier.imported.name
-              : specifier.imported.value;
-          if (!isRealTimeMember(submodule, imported)) continue;
-          timeSites.push({ node: specifier, callee: `${submodule}.${imported}` });
-        }
+        collectTimeImports(node, source);
       },
 
       CallExpression(node) {
         const callee = unwrap(node.callee);
-
         if (callee.type === 'Identifier') {
-          const name = callee.name;
-          const resolution = resolve(context, callee, name);
-          if (resolution === 'import') {
-            if (timerBindings.has(name)) bindingSites.push({ node: callee, callee: name });
-            return;
-          }
-          if (resolution === 'global' && name === 'require' && node.arguments[0] !== undefined) {
-            const source = staticKey(node.arguments[0], true);
-            if (source !== null && timerModules.has(source))
-              importSites.push({ node, callee: source });
-          }
+          collectIdentifierCall(node, callee);
           return;
         }
-
         if (callee.type !== 'MemberExpression') return;
-        let object = unwrap(callee.object);
         const member = staticKey(callee.property, callee.computed);
         if (member === null) return;
-
-        // Only a real node:test mock binding may provide virtual native timers.
-        if (
-          object.type === 'MemberExpression' &&
-          staticKey(object.property, object.computed) === 'timers'
-        ) {
-          const root = unwrap(object.object);
-          if (
-            root.type === 'Identifier' &&
-            nodeTestMocks.has(root.name) &&
-            resolve(context, root, root.name) === 'import' &&
-            member === 'enable'
-          )
-            hasMockTimers = true;
-        }
-        const chain: string[] = [];
-        while (object.type === 'MemberExpression') {
-          const key = staticKey(object.property, object.computed);
-          if (key === null) return;
-          chain.push(key);
-          object = unwrap(object.object);
-        }
-
-        if (object.type !== 'Identifier') return;
-        const objectName = object.name;
-
-        if (timerBindings.has(objectName) && resolve(context, object, objectName) === 'import') {
+        if (enablesMockTimers(unwrap(callee.object), member)) hasMockTimers = true;
+        const { root } = memberRoot(callee.object);
+        if (root.type !== 'Identifier') return;
+        if (timerBindings.has(root.name) && resolve(context, root, root.name) === 'import')
           bindingSites.push({ node: callee, callee: printed(callee) });
-          return;
-        }
       },
 
       MemberExpression(node) {
-        let root = unwrap(node.object);
-        const chain: string[] = [];
-        while (root.type === 'MemberExpression') {
-          const key = staticKey(root.property, root.computed);
-          if (key === null) break;
-          chain.push(key);
-          root = unwrap(root.object);
-        }
-        if (
-          root.type === 'Identifier' &&
-          globalObjects.has(root.name) &&
-          resolve(context, root, root.name) === 'global' &&
-          timerGlobals.has(staticKey(node.property, node.computed) ?? '') &&
-          chain.every((key) => globalObjects.has(key))
-        )
-          nativeSites.push({ node, callee: printed(node) });
-        const object = unwrap(node.object);
-        if (
-          object.type === 'Identifier' &&
-          testingNamespaces.has(object.name) &&
-          staticKey(node.property, node.computed) === 'TestClock' &&
-          resolve(context, object, object.name) === 'import'
-        )
-          hasTestClock = true;
+        if (isGlobalTimerMember(node)) nativeSites.push({ node, callee: printed(node) });
+        if (isTestClockMember(node)) hasTestClock = true;
         if (!checkEffectTime) return;
         const resolved = timeMemberOf(node);
         if (resolved === null) return;

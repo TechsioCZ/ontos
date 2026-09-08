@@ -480,6 +480,21 @@ const resolveProofRoutes = (
   return [configuredSsrRoute?.startsWith('/') === true ? configuredSsrRoute : '/'];
 };
 
+const deriveAppConfiguration = (rawApp: typeof RawAppSchema.Type) => {
+  const cloudflare = rawApp.deploy?.cloudflare;
+  return {
+    apiPrefix: rawApp.api?.prefix?.replace(/\/+$/u, ''),
+    id: rawApp.id,
+    jsonSmokeChecks: cloudflare?.jsonSmokeChecks ?? [],
+    port: rawApp.port,
+    proofRoutes: resolveProofRoutes(
+      cloudflare?.distributedSsrProofRoutes ?? [],
+      cloudflare?.routes?.ssr,
+    ),
+    verticalRefs: rawApp.moduleFederation?.verticalRefs ?? [],
+  };
+};
+
 const loadApps = (workspaceRoot: string): ProofEffect<readonly App[]> =>
   Effect.gen(function* loadAppsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -504,21 +519,12 @@ const loadApps = (workspaceRoot: string): ProofEffect<readonly App[]> =>
             kind === 'vertical'
               ? yield* readExecutionEnvelope(rawApp.id, outputRoot, rawApp.deliveryUnit?.unitId)
               : undefined;
-          const cloudflare = rawApp.deploy?.cloudflare;
           return {
-            apiPrefix: rawApp.api?.prefix?.replace(/\/+$/u, ''),
+            ...deriveAppConfiguration(rawApp),
             envelope: executedEnvelope?.envelope,
             envelopePath: executedEnvelope?.envelopePath,
-            id: rawApp.id,
-            jsonSmokeChecks: cloudflare?.jsonSmokeChecks ?? [],
             kind,
             outputRoot,
-            port: rawApp.port,
-            proofRoutes: resolveProofRoutes(
-              cloudflare?.distributedSsrProofRoutes ?? [],
-              cloudflare?.routes?.ssr,
-            ),
-            verticalRefs: rawApp.moduleFederation?.verticalRefs ?? [],
             wrangler,
           };
         }),
@@ -566,22 +572,26 @@ const createWorkerConfiguration = (
       boundModules.some((module) => module.logicalPath === mainLogicalPath),
       `${app.id} Miniflare main ${mainLogicalPath} is not in the selected module set`,
     );
-    const apiBackend = app.envelope?.surfaces.apiBackend ?? [];
-    const ssr = app.envelope?.surfaces.ssr ?? [];
-    yield* ensure(
-      app.kind !== 'vertical' ||
-        (apiBackend.length > 0 &&
-          apiBackend.every((logicalPath) =>
-            boundModules.some((module) => module.logicalPath === logicalPath),
-          )),
-      `${app.id} BFF worker surface is not selected by Miniflare`,
-    );
-    yield* ensure(
-      app.kind !== 'vertical' ||
-        (ssr.includes(mainLogicalPath) &&
-          boundModules.every((module) => [...ssr, ...apiBackend].includes(module.logicalPath))),
-      `${app.id} Miniflare main/SSR modules are not envelope-bound SSR surfaces`,
-    );
+    const validateSelectedSurfaces = Effect.gen(function* validateSelectedSurfacesEffect() {
+      const apiBackend = app.envelope?.surfaces.apiBackend ?? [];
+      const ssr = app.envelope?.surfaces.ssr ?? [];
+      const selectedPaths = new Set(boundModules.map((module) => module.logicalPath));
+      yield* ensure(
+        app.kind !== 'vertical' ||
+          (apiBackend.length > 0 &&
+            apiBackend.every((logicalPath) => selectedPaths.has(logicalPath))),
+        `${app.id} BFF worker surface is not selected by Miniflare`,
+      );
+      yield* ensure(
+        app.kind !== 'vertical' ||
+          (ssr.includes(mainLogicalPath) &&
+            boundModules.every((module) => [...ssr, ...apiBackend].includes(module.logicalPath))),
+        `${app.id} Miniflare main/SSR modules are not envelope-bound SSR surfaces`,
+      );
+
+      return { apiBackend };
+    });
+    const { apiBackend } = yield* validateSelectedSurfaces;
     const name = yield* workerName(app);
     const options: ProofWorkerOptions = {
       assets: {
@@ -1277,6 +1287,27 @@ const proveBoundary = (
     );
   });
 
+const routeHtml = (
+  response: MiniflareResponse,
+  appId: string,
+  route: string,
+  outboundRequests: readonly OutboundRequest[],
+  outboundStart: number,
+) =>
+  Effect.gen(function* routeHtmlEffect() {
+    const html = yield* Effect.tryPromise({
+      catch: (cause) => proofError(`${appId} route ${route} body failed`, cause),
+      try: async () => await response.text(),
+    });
+    const routeOutboundRequests = outboundRequests.slice(outboundStart);
+    const outboundEvidence = yield* encodeJson(routeOutboundRequests);
+    yield* ensure(
+      response.status === 200,
+      `${appId} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${outboundEvidence}; response: ${html.slice(0, 500)} ... ${html.slice(-1000)}`,
+    );
+    return { html, routeOutboundRequests };
+  });
+
 const proveShellRoute = (
   apps: readonly App[],
   miniflare: Miniflare,
@@ -1296,15 +1327,12 @@ const proveShellRoute = (
           headers: { accept: 'text/html' },
         }),
     });
-    const html = yield* Effect.tryPromise({
-      catch: (cause) => proofError(`${shell.id} route ${route} body failed`, cause),
-      try: async () => await response.text(),
-    });
-    const routeOutboundRequests = state.outboundRequests.slice(outboundStart);
-    const outboundEvidence = yield* encodeJson(routeOutboundRequests);
-    yield* ensure(
-      response.status === 200,
-      `${shell.id} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${outboundEvidence}; response: ${html.slice(0, 500)} ... ${html.slice(-1000)}`,
+    const { html, routeOutboundRequests } = yield* routeHtml(
+      response,
+      shell.id,
+      route,
+      state.outboundRequests,
+      outboundStart,
     );
     yield* ensure(
       !html.includes(DEGRADED_BOUNDARY_MARKER),
@@ -1353,7 +1381,6 @@ const proveShellRoute = (
 const proveRemote = (
   miniflare: Miniflare,
   remote: App,
-  shell: App,
   state: ShellProofState,
 ): Effect.Effect<void, WorkerdProofError> =>
   Effect.gen(function* proveRemoteEffect() {
@@ -1372,15 +1399,12 @@ const proveRemote = (
             headers: { accept: 'text/html' },
           }),
       });
-      const html = yield* Effect.tryPromise({
-        catch: (cause) => proofError(`${remote.id} route ${route} body failed`, cause),
-        try: async () => await response.text(),
-      });
-      const routeOutboundRequests = state.outboundRequests.slice(outboundStart);
-      const outboundEvidence = yield* encodeJson(routeOutboundRequests);
-      yield* ensure(
-        response.status === 200,
-        `${remote.id} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${outboundEvidence}; response: ${html.slice(0, 500)} ... ${html.slice(-1000)}`,
+      const { html, routeOutboundRequests } = yield* routeHtml(
+        response,
+        remote.id,
+        route,
+        state.outboundRequests,
+        outboundStart,
       );
       yield* ensure(
         response.headers.get(CONTENT_TYPE_HEADER)?.includes('text/html') === true,
@@ -1403,10 +1427,6 @@ const proveRemote = (
       });
       state.renderedRemoteIds.add(remote.id);
     }
-    yield* ensure(
-      state.renderedRemoteIds.has(remote.id),
-      `${shell.id} proof routes are missing independently rendered ${remote.id} content`,
-    );
   });
 
 const runShellProof = (
@@ -1470,7 +1490,7 @@ const runShellProof = (
       (route) => proveShellRoute(apps, miniflare, route, shell, shellWorkerName, state),
       { concurrency: 1 },
     );
-    yield* Effect.forEach(remotes, (remote) => proveRemote(miniflare, remote, shell, state), {
+    yield* Effect.forEach(remotes, (remote) => proveRemote(miniflare, remote, state), {
       concurrency: 1,
     });
     const apiProofs = yield* runApiProofs(apps, miniflare, shell, executionByAppId);

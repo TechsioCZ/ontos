@@ -55,13 +55,7 @@ const expectedColumns = [
 const organizationEngagementProfileRelation = `${CONTACTS_SCHEMA_NAME}.organization_engagement_profiles`;
 const personEngagementProfileRelation = `${CONTACTS_SCHEMA_NAME}.person_engagement_profiles`;
 
-const infrastructureMatches = (verified: InfrastructureCatalogRow, adminUser: string): boolean =>
-  verified.organization_owner === adminUser &&
-  verified.person_owner === adminUser &&
-  verified.foreign_key_count === 0 &&
-  verified.journal_count === 1 &&
-  verified.policy_count === 8 &&
-  verified.rls_count === 2 &&
+const runtimePrivilegesMatch = (verified: InfrastructureCatalogRow): boolean =>
   !verified.runtime_create &&
   verified.runtime_usage &&
   verified.runtime_select &&
@@ -70,6 +64,15 @@ const infrastructureMatches = (verified: InfrastructureCatalogRow, adminUser: st
   verified.runtime_delete &&
   !verified.role_super &&
   !verified.role_bypass_rls;
+
+const infrastructureMatches = (verified: InfrastructureCatalogRow, adminUser: string): boolean =>
+  verified.organization_owner === adminUser &&
+  verified.person_owner === adminUser &&
+  verified.foreign_key_count === 0 &&
+  verified.journal_count === 1 &&
+  verified.policy_count === 8 &&
+  verified.rls_count === 2 &&
+  runtimePrivilegesMatch(verified);
 
 const verification = Effect.gen(function* verifyContactsDatabase() {
   const connections = yield* loadDatabaseConnectionPair();

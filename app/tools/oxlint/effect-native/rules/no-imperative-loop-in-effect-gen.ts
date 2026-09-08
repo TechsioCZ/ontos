@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-imperative-loop-in-effect-gen
  *
@@ -73,19 +74,27 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/** Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`. */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
-
-const EFFECT_NAMESPACE = 'Effect';
-const EFFECT_ROOT_MODULE = 'effect';
-const EFFECT_EFFECT_MODULE = /^effect\/(?:.*\/)?Effect$/u;
+import {
+  asNode as sharedAsNode,
+  FUNCTION_TYPES,
+  identityUnwrap,
+  nearestFunction as enclosingFunction,
+  parentOf,
+  walk,
+  type Syntax as AnyNode,
+} from '../shared/ast.ts';
+import { lookupVariable as lexicalVariable } from '../shared/bindings.ts';
+import { isGenCallee } from '../shared/effect-identity.ts';
+import {
+  bindingsWithExtraModules,
+  collectDirectMemberImports,
+  collectRootNamespaces,
+} from '../shared/imports.ts';
+import { booleanOption as boolean, stringArray } from '../shared/options.ts';
+import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tools/**', '**/*.d.ts'];
-const DEFAULT_SCRIPT_GLOBS = ['scripts/**', '**/scripts/**'];
 /** Wrappers whose generator argument is an Effect program body. */
 const DEFAULT_GEN_MEMBERS = ['gen', 'fn', 'fnUntraced'];
 /** Barrels that re-export `Effect` verbatim, so `Effect.gen` there is the same generator. */
@@ -94,11 +103,6 @@ const DEFAULT_EFFECT_MODULES = [
   '@modern-js/plugin-bff/effect-edge',
 ];
 
-const FUNCTION_TYPES = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-]);
 const MEMBER_TYPES = new Set([
   'ComputedMemberExpression',
   'MemberExpression',
@@ -112,33 +116,10 @@ const LOOP_LABELS: Record<string, string> = {
   WhileStatement: 'while',
 };
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeScripts: boolean;
-  readonly allowForOfWithoutMutation: boolean;
-  readonly flagCounters: boolean;
-  readonly genMembers: readonly string[];
-  readonly effectModules: readonly string[];
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+function readOptions(context: Context) {
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -151,47 +132,24 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-interface AnyNode {
-  readonly type: string;
-  readonly start: number;
-  readonly end: number;
-  readonly parent?: AnyNode | null;
-  readonly [key: string]: unknown;
-}
+const LOOP_EXPRESSION_WRAPPERS = new Set([
+  'ParenthesizedExpression',
+  'ChainExpression',
+  'TSNonNullExpression',
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSInstantiationExpression',
+]);
 
 function asNode(value: unknown): AnyNode | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as { type?: unknown; start?: unknown };
-  if (typeof candidate.type !== 'string' || typeof candidate.start !== 'number') return null;
-  return value as AnyNode;
+  return sharedAsNode(value, true);
 }
 
-function parentOf(node: AnyNode | null): AnyNode | null {
-  return (node?.parent as AnyNode | null | undefined) ?? null;
-}
-
-/** Strip parens, `!`, `as`, `satisfies` and optional-chaining wrappers to reach the real expression. */
+/** Keep the loop walker's 16-hop bound and validate every wrapper child's span. */
 function unwrap(value: unknown): AnyNode | null {
   let current = asNode(value);
-  for (let guard = 0; current !== null && guard < 16; guard += 1) {
-    if (
-      current.type !== 'ParenthesizedExpression' &&
-      current.type !== 'ChainExpression' &&
-      current.type !== 'TSNonNullExpression' &&
-      current.type !== 'TSAsExpression' &&
-      current.type !== 'TSSatisfiesExpression' &&
-      current.type !== 'TSInstantiationExpression'
-    ) {
-      return current;
-    }
+  for (let depth = 0; current !== null && depth < 16; depth += 1) {
+    if (!LOOP_EXPRESSION_WRAPPERS.has(current.type)) return current;
     const inner = asNode(current.expression);
     if (inner === null) return current;
     current = inner;
@@ -199,147 +157,16 @@ function unwrap(value: unknown): AnyNode | null {
   return current;
 }
 
-/** Non-computed `.gen`, or computed `["gen"]`. */
-function memberName(node: AnyNode): string | null {
-  const property = asNode(node.property);
-  if (property === null) return null;
-  if (node.computed !== true)
-    return property.type === 'Identifier' ? (property.name as string) : null;
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  if (property.type === 'StringLiteral' && typeof property.value === 'string')
-    return property.value;
-  return null;
-}
-
-/** Locals bound by `import * as X from "effect"` — `X.Effect.gen` must still be recognised. */
-function collectRootNamespaces(program: ESTree.Program): ReadonlySet<string> {
-  const locals = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.source.value !== EFFECT_ROOT_MODULE) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') locals.add(specifier.local.name);
-    }
+/** A return exits the loop unless a surrounding try can override it. */
+function isTerminalYield(node: AnyNode, loop: AnyNode): boolean {
+  let parent = parentOf(node);
+  while (parent !== null && unwrap(parent) === node) parent = parentOf(parent);
+  if (parent?.type !== 'ReturnStatement') return false;
+  while (parent !== null && parent !== loop) {
+    if (parent.type === 'TryStatement') return false;
+    parent = parentOf(parent);
   }
-  return locals;
-}
-
-/** Locals bound by `import { gen, fn } from "effect/Effect"` — bare `gen(function* ())` must be caught. */
-function collectDirectMemberImports(
-  program: ESTree.Program,
-  members: readonly string[],
-): ReadonlySet<string> {
-  const locals = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (!EFFECT_EFFECT_MODULE.test(statement.source.value)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      if (members.includes(imported)) locals.add(specifier.local.name);
-    }
-  }
-  return locals;
-}
-
-/** Extend `effect` bindings with named `Effect` imports from configured re-export barrels. */
-function bindingsWithExtraModules(
-  program: ESTree.Program,
-  modules: readonly string[],
-): EffectBindings {
-  const base = collectEffectBindings(program);
-  if (modules.length === 0) return base;
-  const namespaces = new Map(base.namespaces);
-  let importsEffect = base.importsEffect;
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (!modules.includes(statement.source.value)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      if (imported !== EFFECT_NAMESPACE) continue;
-      namespaces.set(specifier.local.name, EFFECT_NAMESPACE);
-      importsEffect = true;
-    }
-  }
-  return { importsEffect, namespaces };
-}
-
-interface GeneratorMatcher {
-  readonly context: Context;
-  readonly effectModules: readonly string[];
-  readonly bindings: EffectBindings;
-  readonly rootNamespaces: ReadonlySet<string>;
-  readonly directMembers: ReadonlySet<string>;
-  readonly genMembers: readonly string[];
-}
-
-/** `Effect.gen` / `E.gen` / `X.Effect.gen` / bare `gen` (direct member import), incl. computed + optional. */
-function isGenCallee(callee: AnyNode | null, matcher: GeneratorMatcher): boolean {
-  if (callee === null) return false;
-  const target = identityUnwrap(callee as unknown as ESTree.Node);
-  if (target.type === 'CallExpression') return isGenCallee(asNode(target.callee), matcher);
-  const path = bindingPath(matcher.context, target, matcher.effectModules);
-  return path?.length === 2 && path[0] === 'Effect' && matcher.genMembers.includes(path[1] ?? '');
-}
-
-/** Nearest enclosing function of `node`, or `null` at `Program` level. */
-function enclosingFunction(node: AnyNode): AnyNode | null {
-  let current = parentOf(node);
-  while (current !== null) {
-    if (FUNCTION_TYPES.has(current.type)) return current;
-    current = parentOf(current);
-  }
-  return null;
-}
-
-type Walker = (node: AnyNode) => boolean;
-
-function childrenOf(
-  node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
-): AnyNode[] {
-  const keys = visitorKeys[node.type];
-  const names = keys ?? Object.keys(node).filter((key) => key !== 'parent' && key !== 'type');
-  const children: AnyNode[] = [];
-  for (const name of names) {
-    const value = node[name];
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        const child = asNode(entry);
-        if (child !== null) children.push(child);
-      }
-      continue;
-    }
-    const child = asNode(value);
-    if (child !== null) children.push(child);
-  }
-  return children;
-}
-
-/** Depth-first walk; `visit` returns `false` to skip the node's children. */
-function walk(
-  node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
-  visit: Walker,
-): void {
-  const stack: AnyNode[] = [node];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (current === undefined) break;
-    if (!visit(current)) continue;
-    const children = childrenOf(current, visitorKeys);
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      const child = children[index];
-      if (child !== undefined) stack.push(child);
-    }
-  }
+  return true;
 }
 
 /**
@@ -355,16 +182,8 @@ function containsDelegatingYield(
     if (found) return false;
     if (node !== loop && FUNCTION_TYPES.has(node.type)) return false;
     if (node.type === 'YieldExpression' && node.delegate === true) {
-      // A pure search that returns its only yield cannot sequence effects across iterations.
-      // A return inside try/finally may be overridden, and a throw may be caught: keep those.
-      let parent = parentOf(node);
-      while (parent !== null && unwrap(parent) === node) parent = parentOf(parent);
-      let terminal = parent?.type === 'ReturnStatement';
-      while (terminal && parent !== null && parent !== loop) {
-        if (parent.type === 'TryStatement') terminal = false;
-        parent = parentOf(parent);
-      }
-      if (!terminal) found = true;
+      // Returns in try/finally may be overridden, so those yields still sequence effects.
+      found = !isTerminalYield(node, loop);
       return false;
     }
     return true;
@@ -391,10 +210,7 @@ function collectLoopMutations(
     target = unwrap(target);
     while (target !== null && MEMBER_TYPES.has(target.type)) target = unwrap(target.object);
     if (target?.type === 'Identifier') {
-      const variable = lexicalVariable(
-        context,
-        target as unknown as Extract<ESTree.Node, { type: 'Identifier' }>,
-      );
+      const variable = lexicalVariable(context, target);
       if (variable !== null) assigned.add(variable);
     }
     return true;
@@ -475,108 +291,59 @@ function collectGeneratorLets(
   return declarations;
 }
 
-// Resolve lexical value bindings, not identifier spellings. Only immutable local aliases are
-// followed; arbitrary object mutation, re-export contents and dynamic keys need type/data-flow analysis.
-function lexicalVariable(context: Context, node: Extract<ESTree.Node, { type: 'Identifier' }>) {
-  let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
-  while (scope !== null) {
-    const variable = scope.set.get(node.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+function isIncludedFile(context: Context, options: RuleOptions): boolean {
+  const path = scopePath(context.filename);
+  if (matchesGlobs(path, options.ignore)) return false;
+  const inScripts = isScriptFile(path);
+  if (!options.includeScripts && inScripts) return false;
+  // Opting scripts in also widens the default include globs.
+  if (!matchesGlobs(path, options.include) && !(options.includeScripts && inScripts)) return false;
+  return options.includeTests || !isTestFile(path);
 }
-function staticString(node: ESTree.Node): string | null {
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? null;
-  return null;
+
+function allowsUnmutatingForOf(
+  loop: AnyNode,
+  options: RuleOptions,
+  mutatesOuter: boolean,
+): boolean {
+  return options.allowForOfWithoutMutation && loop.type === 'ForOfStatement' && !mutatesOuter;
 }
-function identityUnwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (;;) {
-    if (current.type === 'SequenceExpression') {
-      const last = current.expressions.at(-1);
-      if (last === undefined) return current;
-      current = last;
-    } else if (
-      [
-        'ChainExpression',
-        'ParenthesizedExpression',
-        'TSAsExpression',
-        'TSTypeAssertion',
-        'TSNonNullExpression',
-        'TSSatisfiesExpression',
-        'TSInstantiationExpression',
-      ].includes(current.type)
-    ) {
-      current = (current as unknown as { expression: ESTree.Node }).expression;
-    } else return current;
-  }
+
+function hasGeneratorImports(program: ESTree.Program, options: RuleOptions): boolean {
+  const rootNamespaces = collectRootNamespaces(program);
+  const directMembers = collectDirectMemberImports(
+    program,
+    new Map([['Effect', new Set(options.genMembers)]]),
+  );
+  const bindings = bindingsWithExtraModules(program, options.effectModules);
+  return bindings.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0;
 }
-function bindingPath(
+
+function generatorDefinitionValue(
   context: Context,
-  expression: ESTree.Node,
-  extraModules: readonly string[] = [],
+  definition: import('@oxlint/plugins').Variable['defs'][number] | undefined,
+  seen: Set<unknown>,
+): ESTree.Node | null {
+  if (definition?.type === 'FunctionName') return definition.node;
+  if (definition?.type !== 'Variable') return null;
+  const declaration = definition.node as ESTree.VariableDeclarator;
+  if ((definition.parent as ESTree.VariableDeclaration)?.kind !== 'const') return null;
+  return declaration.init === null ? null : generatorValue(context, declaration.init, seen);
+}
+
+function generatorValue(
+  context: Context,
+  value: ESTree.Node,
   seen = new Set<unknown>(),
-): readonly string[] | null {
-  const node = identityUnwrap(expression);
-  if (node.type === 'MemberExpression') {
-    const key =
-      !node.computed && node.property.type === 'Identifier'
-        ? node.property.name
-        : staticString(node.property);
-    const root = bindingPath(context, node.object, extraModules, seen);
-    return root !== null && key !== null ? [...root, key] : null;
-  }
+): ESTree.Node | null {
+  const node = identityUnwrap(value);
+  if (node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration')
+    return node.generator ? node : null;
   if (node.type !== 'Identifier') return null;
   const variable = lexicalVariable(context, node);
-  if (variable === null || seen.has(variable)) return null;
+  if (variable === null || seen.has(variable) || variable.defs.length !== 1) return null;
   seen.add(variable);
-  if (variable.defs.length !== 1) return null;
-  const definition = variable.defs[0];
-  if (definition === undefined) return null;
-  if (definition.type === 'ImportBinding') {
-    const specifier = definition.node as
-      | ESTree.ImportSpecifier
-      | ESTree.ImportNamespaceSpecifier
-      | ESTree.ImportDefaultSpecifier;
-    const declaration = definition.parent as ESTree.ImportDeclaration;
-    if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
-    if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
-    const source = declaration.source.value;
-    if (source !== 'effect' && !source.startsWith('effect/') && !extraModules.includes(source))
-      return null;
-    const last = source.split('/').at(-1) ?? '';
-    const base = source.startsWith('effect/') && /^[A-Z]/u.test(last) ? [last] : [];
-    if (specifier.type === 'ImportNamespaceSpecifier') return base;
-    if (specifier.type !== 'ImportSpecifier') return null;
-    const imported =
-      specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
-    return [...base, imported];
-  }
-  if (definition.type !== 'Variable') return null;
-  const declaration = definition.node as ESTree.VariableDeclarator;
-  const parent = definition.parent as ESTree.VariableDeclaration;
-  if (parent?.kind !== 'const' || declaration.init === null) return null;
-  const base = bindingPath(context, declaration.init, extraModules, seen);
-  if (base === null) return null;
-  if (declaration.id.type === 'Identifier') return base;
-  if (declaration.id.type !== 'ObjectPattern') return null;
-  for (const property of declaration.id.properties) {
-    if (
-      property.type === 'RestElement' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== node.name
-    )
-      continue;
-    const key =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : staticString(property.key);
-    return key === null ? null : [...base, key];
-  }
-  return null;
+  return generatorDefinitionValue(context, variable.defs[0], seen);
 }
 
 export const rule = defineRule({
@@ -635,49 +402,37 @@ export const rule = defineRule({
   },
   create(context) {
     const options = readOptions(context);
-    const path = scopePath(context.filename);
-    if (matchesGlobs(path, options.ignore)) return {};
-    const inScripts = isScriptFile(path) || matchesGlobs(path, DEFAULT_SCRIPT_GLOBS);
-    if (!options.includeScripts && inScripts) return {};
-    // `includeScripts` also widens `include`, so the root `scripts/` tree is reachable without
-    // restating the default `include` globs in the config.
-    if (!matchesGlobs(path, options.include) && !(options.includeScripts && inScripts)) return {};
-    if (!options.includeTests && isTestFile(path)) return {};
+    if (!isIncludedFile(context, options)) return {};
+    if (!hasGeneratorImports(context.sourceCode.ast, options)) return {};
 
-    const program = context.sourceCode.ast;
-    const rootNamespaces = collectRootNamespaces(program);
-    const directMembers = collectDirectMemberImports(program, options.genMembers);
-    const bindings = bindingsWithExtraModules(program, options.effectModules);
-    if (!bindings.importsEffect && rootNamespaces.size === 0 && directMembers.size === 0) return {};
-
-    const matcher: GeneratorMatcher = {
-      context,
-      effectModules: options.effectModules,
-      bindings,
-      directMembers,
-      genMembers: options.genMembers,
-      rootNamespaces,
-    };
     const visitorKeys = context.sourceCode.visitorKeys;
     const generatorLets = new Map<number, readonly DeclaredBinding[]>();
     const reportedCounters = new Set<number>();
     const effectGenerators = new Set<number>();
     const loops: { node: ESTree.Node; fn: AnyNode | null }[] = [];
-    const generatorValue = (value: ESTree.Node, seen = new Set<unknown>()): ESTree.Node | null => {
-      const node = identityUnwrap(value);
-      if (node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration')
-        return node.generator ? node : null;
-      if (node.type !== 'Identifier') return null;
-      const variable = lexicalVariable(context, node);
-      if (variable === null || seen.has(variable) || variable.defs.length !== 1) return null;
-      seen.add(variable);
-      const def = variable.defs[0];
-      if (def?.type === 'FunctionName') return def.node;
-      if (def?.type !== 'Variable') return null;
-      const decl = def.node as ESTree.VariableDeclarator;
-      return (def.parent as ESTree.VariableDeclaration)?.kind === 'const' && decl.init !== null
-        ? generatorValue(decl.init, seen)
-        : null;
+    const reportCounters = (
+      loop: AnyNode,
+      fn: AnyNode,
+      assigned: ReadonlySet<import('@oxlint/plugins').Variable>,
+      label: string,
+    ): void => {
+      let declarations = generatorLets.get(fn.start);
+      if (declarations === undefined) {
+        declarations = collectGeneratorLets(fn, visitorKeys);
+        generatorLets.set(fn.start, declarations);
+      }
+      for (const declaration of declarations) {
+        if (declaration.start >= loop.start && declaration.end <= loop.end) continue;
+        const variable = lexicalVariable(context, declaration.idNode);
+        if (variable === null || !assigned.has(variable)) continue;
+        if (reportedCounters.has(declaration.start)) continue;
+        reportedCounters.add(declaration.start);
+        context.report({
+          data: { loop: label, name: declaration.name },
+          messageId: 'mutableCounter',
+          node: declaration.idNode,
+        });
+      }
     };
 
     const checkLoop = (node: ESTree.Node, fn: AnyNode | null): void => {
@@ -689,9 +444,7 @@ export const rule = defineRule({
       if (!containsDelegatingYield(loop, visitorKeys)) return;
 
       const mutations = collectLoopMutations(loop, context, visitorKeys);
-      const mutatesOuter = mutations.mutatesOuter;
-      if (options.allowForOfWithoutMutation && loop.type === 'ForOfStatement' && !mutatesOuter)
-        return;
+      if (allowsUnmutatingForOf(loop, options, mutations.mutatesOuter)) return;
 
       const keyword = context.sourceCode.getFirstToken(node);
       context.report({
@@ -700,37 +453,18 @@ export const rule = defineRule({
         node: (keyword ?? node) as ESTree.Node,
       });
 
-      if (!options.flagCounters) return;
-      let declarations = generatorLets.get(fn.start);
-      if (declarations === undefined) {
-        declarations = collectGeneratorLets(fn, visitorKeys);
-        generatorLets.set(fn.start, declarations);
-      }
-      for (const declaration of declarations) {
-        if (declaration.start >= loop.start && declaration.end <= loop.end) continue;
-        const variable = lexicalVariable(
-          context,
-          declaration.idNode as unknown as Extract<ESTree.Node, { type: 'Identifier' }>,
-        );
-        if (variable === null || !mutations.assigned.has(variable)) continue;
-        if (reportedCounters.has(declaration.start)) continue;
-        reportedCounters.add(declaration.start);
-        context.report({
-          data: { loop: label, name: declaration.name },
-          messageId: 'mutableCounter',
-          node: declaration.idNode as unknown as ESTree.Node,
-        });
-      }
+      if (options.flagCounters) reportCounters(loop, fn, mutations.assigned, label);
     };
 
     const collectLoop = (node: ESTree.Node): void => {
-      loops.push({ node, fn: enclosingFunction(node as unknown as AnyNode) });
+      loops.push({ node, fn: enclosingFunction(node) });
     };
     return {
       CallExpression(node) {
-        if (!isGenCallee(asNode(node.callee), matcher)) return;
+        if (!isGenCallee(context, asNode(node.callee), options.genMembers, options.effectModules))
+          return;
         for (const argument of node.arguments) {
-          const generator = generatorValue(argument);
+          const generator = generatorValue(context, argument);
           if (generator !== null) effectGenerators.add(generator.start);
         }
       },

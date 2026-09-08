@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -33,7 +33,12 @@ test('rule discovery uses file URLs in workspaces containing spaces, URL delimit
       join(rules, 'unselected.ts'),
       'throw new Error("unselected rule must not load"); export const rule = {};',
     );
-    const moduleUrl = pathToFileURL(join(shared, 'discover-rules.ts')).href;
+    const alias = join(directory, 'workspace-link');
+    symlinkSync(workspace, alias, 'dir');
+    const modulePath = join(alias, 'shared', 'discover-rules.ts');
+    const moduleUrl = pathToFileURL(modulePath).href;
+    // Node resolves symlinked workspace roots before exposing the import's parent URL.
+    const resolvedModuleUrl = pathToFileURL(realpathSync(modulePath)).href;
     const result = spawnSync(
       process.execPath,
       [
@@ -46,7 +51,7 @@ test('rule discovery uses file URLs in workspaces containing spaces, URL delimit
         let imports = 0;
         const hooks = registerHooks({
           resolve(specifier, context, nextResolve) {
-            if (context.parentURL === ${JSON.stringify(moduleUrl)} && specifier.includes('selected.ts')) {
+            if (context.parentURL === ${JSON.stringify(resolvedModuleUrl)} && specifier.includes('selected.ts')) {
               imports += 1;
               assert.equal(new URL(specifier).protocol, 'file:');
             }

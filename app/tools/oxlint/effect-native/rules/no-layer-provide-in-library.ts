@@ -1,3 +1,4 @@
+import { isNonReferencePosition } from '../shared/reference-positions.ts';
 /**
  * effect-native/no-layer-provide-in-library
  *
@@ -372,6 +373,49 @@ export const rule = defineRule({
       reports.push({ node, messageId: 'layerProvideInLibrary', data: { member } });
     }
 
+    function collectDirectReferences(): void {
+      // 4. Bare references to `import { provide } from "effect/Layer"` locals.
+      for (const identifier of identifierCandidates) {
+        if (!resolvesToImport(identifier, directMembers)) continue;
+        queue(identifier, directMembers.get(identifier.name) ?? identifier.name);
+      }
+    }
+
+    function addLayerAliases(pattern: ESTree.Node): boolean {
+      let changed = false;
+      for (const identifier of patternIdentifiers(pattern)) {
+        if (layerAliasBindings.has(identifier.start)) continue;
+        layerAliasBindings.add(identifier.start);
+        changed = true;
+      }
+      return changed;
+    }
+
+    function collectLayerAliases(declarator: ESTree.VariableDeclarator): boolean {
+      const init = declarator.init;
+      if (init === null) return false;
+      if (isLayerNamespaceExpression(init)) return addLayerAliases(declarator.id);
+      if (declarator.id.type !== 'ObjectPattern') return false;
+      if (init.type !== 'Identifier' || !resolvesToImport(init, effectRoots)) return false;
+      let changed = false;
+      for (const property of declarator.id.properties) {
+        if (property.type !== 'Property' || patternKeyName(property) !== LAYER_NAMESPACE) continue;
+        if (addLayerAliases(property.value)) changed = true;
+      }
+      return changed;
+    }
+
+    function collectDestructuredMembers(declarator: ESTree.VariableDeclarator): void {
+      const init = declarator.init;
+      if (init === null || declarator.id.type !== 'ObjectPattern') return;
+      if (!isLayerNamespaceExpression(init)) return;
+      for (const property of declarator.id.properties) {
+        if (property.type !== 'Property') continue;
+        const name = patternKeyName(property);
+        if (name !== null && members.has(name)) queue(property, name);
+      }
+    }
+
     return {
       MemberExpression(node) {
         if (isTypePosition(node)) return;
@@ -384,16 +428,7 @@ export const rule = defineRule({
       Identifier(node) {
         if (isTypePosition(node)) return;
         if (directMembers.size === 0 || !directMembers.has(node.name)) return;
-        const parent = node.parent;
-        if (parent === null || parent === undefined) return;
-        // Declaration sites and non-reference positions are not uses of the escape hatch.
-        if (parent.type === 'ImportSpecifier' || parent.type === 'ImportDefaultSpecifier') return;
-        if (parent.type === 'ImportNamespaceSpecifier' || parent.type === 'ExportSpecifier') return;
-        if (parent.type === 'MemberExpression' && parent.property === node && !parent.computed)
-          return;
-        if (parent.type === 'Property' && parent.key === node && !parent.computed) return;
-        if (parent.type === 'PropertyDefinition' && parent.key === node && !parent.computed) return;
-        if (parent.type === 'MethodDefinition' && parent.key === node && !parent.computed) return;
+        if (isNonReferencePosition(node)) return;
         identifierCandidates.push(node);
       },
       VariableDeclarator(node) {
@@ -401,49 +436,14 @@ export const rule = defineRule({
       },
       // A pure re-export composes no layer; A1 governs provision, not barrel vocabulary.
       'Program:exit'() {
-        // 1. Fixed point over local rebindings of the `Layer` namespace.
         let changed = true;
         while (changed) {
           changed = false;
           for (const declarator of declarators) {
-            const init = declarator.init;
-            if (init === null) continue;
-            // `const L = Layer` / `const L = Effect.Layer` / `const L2 = L`.
-            if (isLayerNamespaceExpression(init)) {
-              for (const identifier of patternIdentifiers(declarator.id)) {
-                if (layerAliasBindings.has(identifier.start)) continue;
-                layerAliasBindings.add(identifier.start);
-                changed = true;
-              }
-              continue;
-            }
-            // `const { Layer } = Effect` / `const { Layer: L } = Effect`.
-            if (declarator.id.type !== 'ObjectPattern') continue;
-            if (init.type !== 'Identifier' || !resolvesToImport(init, effectRoots)) continue;
-            for (const property of declarator.id.properties) {
-              if (property.type !== 'Property') continue;
-              if (patternKeyName(property) !== LAYER_NAMESPACE) continue;
-              for (const identifier of patternIdentifiers(property.value)) {
-                if (layerAliasBindings.has(identifier.start)) continue;
-                layerAliasBindings.add(identifier.start);
-                changed = true;
-              }
-            }
+            if (collectLayerAliases(declarator)) changed = true;
           }
         }
-
-        // 2. `const { provide, provideMerge } = <layer namespace>` drops the namespace entirely.
-        for (const declarator of declarators) {
-          const init = declarator.init;
-          if (init === null || declarator.id.type !== 'ObjectPattern') continue;
-          if (!isLayerNamespaceExpression(init)) continue;
-          for (const property of declarator.id.properties) {
-            if (property.type !== 'Property') continue;
-            const name = patternKeyName(property);
-            if (name === null || !members.has(name)) continue;
-            queue(property, name);
-          }
-        }
+        for (const declarator of declarators) collectDestructuredMembers(declarator);
 
         // 3. `Layer.provide` in every spelling, confirmed against scope.
         for (const candidate of memberCandidates) {
@@ -451,11 +451,7 @@ export const rule = defineRule({
           queue(candidate.node, candidate.member);
         }
 
-        // 4. Bare references to `import { provide } from "effect/Layer"` locals.
-        for (const identifier of identifierCandidates) {
-          if (!resolvesToImport(identifier, directMembers)) continue;
-          queue(identifier, directMembers.get(identifier.name) ?? identifier.name);
-        }
+        collectDirectReferences();
 
         reports.sort((left, right) => left.node.start - right.node.start);
         for (const report of reports) {

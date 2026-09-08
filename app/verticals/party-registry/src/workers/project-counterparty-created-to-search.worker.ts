@@ -3,29 +3,16 @@
 // @ontos-outbox-worker-owner party.registry
 // @ontos-outbox-worker-producer party.registry
 // @ontos-outbox-worker-topic party.registry.counterparty-created.v1
-import { Effect } from 'effect';
-import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
-import { PartySearchProjector } from '../services/party-search-projection.service.ts';
+import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { definePartySearchWorker } from './party-search-worker.ts';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/party-registry/outbox/party-registry-counterparty-created-v1';
 
-const handleProjectCounterpartyCreatedToSearch = Effect.fn(
-  'handleProjectCounterpartyCreatedToSearch',
-)(function* projectCommittedEvent(
-  payload: typeof OutboxPayloadSchema.Type,
-  context: OutboxWorkerHandlerContext,
-) {
-  const projector = yield* PartySearchProjector;
-  yield* projector.project(context, { counterpartyId: payload.counterpartyRef.resourceId });
-});
-
-export const projectCounterpartyCreatedToSearchWorker = defineOutboxWorker(
+export const { worker: projectCounterpartyCreatedToSearchWorker } = definePartySearchWorker(
   {
-    consumerModuleKey: 'party.registry',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
       authorization: { kind: 'owner_local_background' },
@@ -33,17 +20,12 @@ export const projectCounterpartyCreatedToSearchWorker = defineOutboxWorker(
       moduleKey: 'party.registry',
       role: 'worker',
     }),
-    leaseDurationMs: 30_000,
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    retryPolicy: {
-      initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
-      multiplier: 2,
-    },
     topic: outboxTopic,
-    workerKey: 'party.registry.project-counterparty-created-to-search',
   },
-  handleProjectCounterpartyCreatedToSearch,
+  {
+    spanName: 'handleProjectCounterpartyCreatedToSearch',
+    target: (payload) => ({ counterpartyId: payload.counterpartyRef.resourceId }),
+  },
 );

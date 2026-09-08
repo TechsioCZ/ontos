@@ -134,8 +134,3 @@ export const lockAndResolveClaims = Effect.fn('PartyIdentifierClaimService.lockA
     );
   },
 );
-
-export const partyIdentifierClaimService = Effect.succeed({
-  lockAndResolveClaims,
-  lockTenantIdentityWrites,
-});

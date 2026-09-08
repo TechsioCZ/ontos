@@ -1,3 +1,7 @@
+import {
+  hasUltramodernDispatch,
+  hasUltramodernSkillsDispatch,
+} from './shared/ultramodern-wrapper-source.mts';
 import { ok as assertCondition } from 'node:assert';
 import type { execFileSync as nodeExecFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -287,57 +291,252 @@ const jsonEquivalent = Schema.toEquivalence(Schema.Unknown);
 const IdentifierEntrySchema = Schema.Struct({ id: Schema.String });
 type IdentifierEntry = typeof IdentifierEntrySchema.Type;
 const isIdentifierEntry = Schema.is(IdentifierEntrySchema);
+const createQualityGates = () => ({
+  assets: {
+    cacheControlRequiredForCss: true,
+    cssPreloadRequired: true,
+    cssResponseRequired: true,
+    sourcemapsPubliclyReferenced: false,
+  },
+  budgets: {
+    cssAssetMaxBytes: 750_000,
+    localeJsonMaxBytes: 100_000,
+    mfManifestMaxBytes: 500_000,
+    sitemapXmlMaxBytes: 500_000,
+    ssrHtmlMaxBytes: 250_000,
+  },
+  csp: {
+    decision: SHARED_VALIDATOR_STRING_109,
+    finalMode: SHARED_VALIDATOR_STRING_110,
+  },
+  indexing: {
+    previewNoindex: true,
+    productionPublicRoutesIndexable: true,
+  },
+  publicRoutes: {
+    requireRobotsSitemapConsistency: true,
+    requireSitemapWhenPresent: true,
+    requireWebManifestWhenPresent: true,
+  },
+  statusCodes: {
+    notFoundRoute: SHARED_VALIDATOR_STRING_030,
+    unknownRouteStatus: 404,
+  },
+});
+const createVerticalNodeExecution = () => ({
+  adapterVersion: SHARED_VALIDATOR_STRING_054,
+  containerEntry: SHARED_VALIDATOR_STRING_072,
+  expected: {
+    buildMarker: SHARED_VALIDATOR_STRING_038,
+    unitId: SHARED_VALIDATOR_STRING_046,
+  },
+  expose: SHARED_VALIDATOR_STRING_004,
+  kind: SHARED_VALIDATOR_STRING_088,
+  manifestEnv: SHARED_VALIDATOR_STRING_153,
+  manifestUrl: SHARED_VALIDATOR_STRING_071,
+  remoteName: SHARED_VALIDATOR_STRING_160,
+  remoteType: SHARED_VALIDATOR_STRING_063,
+  runtimePackage: SHARED_VALIDATOR_STRING_026,
+});
+const createVerticalCloudflareExecution = () => ({
+  kind: SHARED_VALIDATOR_STRING_058,
+  publicUrlEnv: SHARED_VALIDATOR_STRING_147,
+  ssr: {
+    assetsBinding: 'ASSETS',
+    effectBffBundle: SHARED_VALIDATOR_STRING_013,
+    routeManifest: SHARED_VALIDATOR_STRING_012,
+    ssrBundle: SHARED_VALIDATOR_STRING_014,
+    workerEntry: SHARED_VALIDATOR_STRING_010,
+    workerManifest: SHARED_VALIDATOR_STRING_011,
+  },
+  workerDispatch: {
+    dispatchNamespaceEnv: SHARED_VALIDATOR_STRING_154,
+    dispatchWorkerNameEnv: SHARED_VALIDATOR_STRING_158,
+    preferred: SHARED_VALIDATOR_STRING_126,
+    requestInterface: 'fetch',
+    serviceBinding: SHARED_VALIDATOR_STRING_156,
+    serviceBindingEnv: SHARED_VALIDATOR_STRING_157,
+  },
+  workerName: SHARED_VALIDATOR_STRING_044,
+  zephyr: {
+    applicationUidEnv: SHARED_VALIDATOR_STRING_170,
+    integration: SHARED_VALIDATOR_STRING_076,
+    runtime: SHARED_VALIDATOR_STRING_139,
+    snapshotIdEnv: SHARED_VALIDATOR_STRING_171,
+    versionIdEnv: SHARED_VALIDATOR_STRING_172,
+  },
+});
+
+const createCloudflareSecurityContract = () => ({
+  contentSecurityPolicy: {
+    directives: {
+      'base-uri': ["'self'"],
+      'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
+      'default-src': ["'self'"],
+      'font-src': ["'self'", 'data:', 'https:', 'http:'],
+      'form-action': ["'self'"],
+      'frame-ancestors': ["'self'"],
+      'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
+      'manifest-src': ["'self'", 'https:', 'http:'],
+      'object-src': ["'none'"],
+      'script-src': [
+        "'self'",
+        SHARED_VALIDATOR_STRING_016,
+        SHARED_VALIDATOR_STRING_015,
+        'https:',
+        'http:',
+        'blob:',
+      ],
+      'style-src': ["'self'", SHARED_VALIDATOR_STRING_016, 'https:', 'http:'],
+      'worker-src': ["'self'", 'blob:'],
+    },
+    mode: SHARED_VALIDATOR_STRING_107,
+    reason: SHARED_VALIDATOR_STRING_108,
+  },
+  enabled: true,
+  headers: {
+    contentTypeOptions: 'nosniff',
+    permissionsPolicy: SHARED_VALIDATOR_STRING_055,
+    referrerPolicy: SHARED_VALIDATOR_STRING_140,
+  },
+  noindex: {
+    localhost: true,
+    previewHostnames: [],
+    workersDev: true,
+  },
+});
+
+const createVerticalExecutionSurfaces = () => ({
+  cloudflare: createVerticalCloudflareExecution(),
+  node: createVerticalNodeExecution(),
+});
+
+const createShellCloudflareContract = () => ({
+  assetsBinding: 'ASSETS',
+  compatibilityDate: SHARED_VALIDATOR_STRING_036,
+  compatibilityFlags: [SHARED_VALIDATOR_STRING_089, SHARED_VALIDATOR_STRING_070],
+  evidence: {
+    proofScript: SHARED_VALIDATOR_STRING_119,
+    reportDefault: SHARED_VALIDATOR_STRING_008,
+  },
+  publicUrlEnv: SHARED_VALIDATOR_STRING_148,
+  qualityGates: createQualityGates(),
+  routes: {
+    locale: '/locales/en/shell.json',
+    mfManifest: SHARED_VALIDATOR_STRING_031,
+    ssr: '/en',
+  },
+  security: createCloudflareSecurityContract(),
+  target: SHARED_VALIDATOR_STRING_056,
+  workerName: 'app-shell-super-app',
+});
+
+const createVerticalCloudflareContract = () => ({
+  assetsBinding: 'ASSETS',
+  compatibilityDate: SHARED_VALIDATOR_STRING_036,
+  compatibilityFlags: [SHARED_VALIDATOR_STRING_089, SHARED_VALIDATOR_STRING_070],
+  evidence: {
+    proofScript: SHARED_VALIDATOR_STRING_119,
+    reportDefault: SHARED_VALIDATOR_STRING_008,
+  },
+  jsonSmokeChecks: [
+    {
+      expect: {
+        'checks.api': 'ready',
+        'checks.moduleFederation': 'ready',
+        'checks.ssr': 'ready',
+        status: 'ready',
+      },
+      id: 'party-registry-readiness-smoke',
+      route: SHARED_VALIDATOR_STRING_034,
+    },
+  ],
+  publicUrlEnv: SHARED_VALIDATOR_STRING_147,
+  qualityGates: createQualityGates(),
+  routes: {
+    apiReadiness: SHARED_VALIDATOR_STRING_034,
+    mfManifest: SHARED_VALIDATOR_STRING_031,
+  },
+  security: createCloudflareSecurityContract(),
+  target: SHARED_VALIDATOR_STRING_056,
+  workerName: SHARED_VALIDATOR_STRING_044,
+});
+
+const createVerticalBackendFederationContract = () => ({
+  cache: {
+    cloudflareSnapshot: 'immutable',
+    nodeManifest: 'no-store',
+    nodeUnpinnedContainer: 'revalidate',
+    nodeVersionedContainer: 'immutable',
+  },
+  compatibility: {
+    contractVersion: SHARED_VALIDATOR_STRING_079,
+    effectVersion: SHARED_VALIDATOR_STRING_039,
+    moduleFederationVersion: '2.8.0',
+    packageName: SHARED_VALIDATOR_STRING_018,
+  },
+  deliveryUnit: {
+    buildMarker: SHARED_VALIDATOR_STRING_038,
+    kind: SHARED_VALIDATOR_STRING_077,
+    packageName: SHARED_VALIDATOR_STRING_018,
+    schemaVersion: 1,
+    sourceRevision: 'workspace',
+    unitId: SHARED_VALIDATOR_STRING_046,
+    version: '0.1.0',
+  },
+  executionSurfaces: createVerticalExecutionSurfaces(),
+  exposes: {
+    './effect-api': {
+      client: SHARED_VALIDATOR_STRING_167,
+      contract: SHARED_VALIDATOR_STRING_166,
+      openapi: SHARED_VALIDATOR_STRING_033,
+      readiness: SHARED_VALIDATOR_STRING_034,
+      runtime: SHARED_VALIDATOR_STRING_162,
+    },
+  },
+  fallback: {
+    failureEvent: 'modernjs:microvertical-server-fallback',
+    strategy: 'typed-effect-error',
+    timeoutMs: 1500,
+  },
+  name: SHARED_VALIDATOR_STRING_160,
+  role: SHARED_VALIDATOR_STRING_078,
+  runtimeFramework: 'effect',
+  strictEffectApproach: true,
+  versionBoundary: {
+    api: {
+      buildMarker: 'verticals/party-registry/shared/ultramodern-build.ts',
+      publicUrlEnv: SHARED_VALIDATOR_STRING_147,
+      readiness: SHARED_VALIDATOR_STRING_034,
+    },
+    identityRoot: SHARED_VALIDATOR_STRING_065,
+    invariant: SHARED_VALIDATOR_STRING_168,
+    packageName: SHARED_VALIDATOR_STRING_018,
+    ui: {
+      buildMarker: 'verticals/party-registry/src/routes/ultramodern-route-metadata.ts',
+      manifestEnv: SHARED_VALIDATOR_STRING_155,
+      manifestUrl: SHARED_VALIDATOR_STRING_073,
+    },
+  },
+});
+
 const workspaceValidationContractDefinition = {
   ciEvidenceScripts: {
     'action:test:integration': 'pnpm --filter @app/core-runtime action:test:integration',
     'deployment-impact:plan': 'node ./scripts/plan-deployment-impact.mts',
+    'quality:audit': 'node ./scripts/quality-audit.mts',
+    'quality:audit:gate': 'node ./scripts/quality-audit-gate.mts',
+    'quality:check': 'pnpm quality:audit && pnpm quality:audit:gate',
     'test:deployment-impact':
       'node scripts/generate-outbox-worker-deployment.mjs && node --test scripts/tests/plan-deployment-impact.test.mts scripts/tests/outbox-worker-delivery.test.mts',
     'test:generation':
       'node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/resource-generator.test.mts scripts/scaffolding/tests/retire-contribution.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts',
     'test:integration': 'pnpm -r --if-present run test:integration',
     'test:scripts':
-      'node --test scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts',
+      'node --test scripts/tests/boundary-source-structure.test.mts scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts scripts/tests/api-only-tooling.test.mts scripts/tests/generated-slot-entries.test.mts scripts/tests/root-environment.test.mts scripts/tests/typecheck-project-references.test.mts scripts/tests/ultramodern-command.test.mts scripts/tests/code-tools-i18n.test.mts scripts/tests/dependency-declarations.test.mts',
     'test:unit': 'pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component',
   },
-  cloudflareSecurity: {
-    contentSecurityPolicy: {
-      directives: {
-        'base-uri': ["'self'"],
-        'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-        'default-src': ["'self'"],
-        'font-src': ["'self'", 'data:', 'https:', 'http:'],
-        'form-action': ["'self'"],
-        'frame-ancestors': ["'self'"],
-        'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-        'manifest-src': ["'self'", 'https:', 'http:'],
-        'object-src': ["'none'"],
-        'script-src': [
-          "'self'",
-          SHARED_VALIDATOR_STRING_016,
-          SHARED_VALIDATOR_STRING_015,
-          'https:',
-          'http:',
-          'blob:',
-        ],
-        'style-src': ["'self'", SHARED_VALIDATOR_STRING_016, 'https:', 'http:'],
-        'worker-src': ["'self'", 'blob:'],
-      },
-      mode: SHARED_VALIDATOR_STRING_107,
-      reason: SHARED_VALIDATOR_STRING_108,
-    },
-    enabled: true,
-    headers: {
-      contentTypeOptions: 'nosniff',
-      permissionsPolicy: SHARED_VALIDATOR_STRING_055,
-      referrerPolicy: SHARED_VALIDATOR_STRING_140,
-    },
-    noindex: {
-      localhost: true,
-      previewHostnames: [],
-      workersDev: true,
-    },
-  },
+  cloudflareSecurity: createCloudflareSecurityContract(),
   cohort: {
     appIds: [SHARED_VALIDATOR_STRING_131, SHARED_VALIDATOR_STRING_098],
     backendAppIds: [SHARED_VALIDATOR_STRING_098],
@@ -1091,51 +1290,7 @@ const workspaceValidationContractDefinition = {
               unitId: SHARED_VALIDATOR_STRING_046,
               version: '0.1.0',
             },
-            executionSurfaces: {
-              cloudflare: {
-                kind: SHARED_VALIDATOR_STRING_058,
-                publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-                ssr: {
-                  assetsBinding: 'ASSETS',
-                  effectBffBundle: SHARED_VALIDATOR_STRING_013,
-                  routeManifest: SHARED_VALIDATOR_STRING_012,
-                  ssrBundle: SHARED_VALIDATOR_STRING_014,
-                  workerEntry: SHARED_VALIDATOR_STRING_010,
-                  workerManifest: SHARED_VALIDATOR_STRING_011,
-                },
-                workerDispatch: {
-                  dispatchNamespaceEnv: SHARED_VALIDATOR_STRING_154,
-                  dispatchWorkerNameEnv: SHARED_VALIDATOR_STRING_158,
-                  preferred: SHARED_VALIDATOR_STRING_126,
-                  requestInterface: 'fetch',
-                  serviceBinding: SHARED_VALIDATOR_STRING_156,
-                  serviceBindingEnv: SHARED_VALIDATOR_STRING_157,
-                },
-                workerName: SHARED_VALIDATOR_STRING_044,
-                zephyr: {
-                  applicationUidEnv: SHARED_VALIDATOR_STRING_170,
-                  integration: SHARED_VALIDATOR_STRING_076,
-                  runtime: SHARED_VALIDATOR_STRING_139,
-                  snapshotIdEnv: SHARED_VALIDATOR_STRING_171,
-                  versionIdEnv: SHARED_VALIDATOR_STRING_172,
-                },
-              },
-              node: {
-                adapterVersion: SHARED_VALIDATOR_STRING_054,
-                containerEntry: SHARED_VALIDATOR_STRING_072,
-                expected: {
-                  buildMarker: SHARED_VALIDATOR_STRING_038,
-                  unitId: SHARED_VALIDATOR_STRING_046,
-                },
-                expose: SHARED_VALIDATOR_STRING_004,
-                kind: SHARED_VALIDATOR_STRING_088,
-                manifestEnv: SHARED_VALIDATOR_STRING_153,
-                manifestUrl: SHARED_VALIDATOR_STRING_071,
-                remoteName: SHARED_VALIDATOR_STRING_160,
-                remoteType: SHARED_VALIDATOR_STRING_063,
-                runtimePackage: SHARED_VALIDATOR_STRING_026,
-              },
-            },
+            executionSurfaces: createVerticalExecutionSurfaces(),
             id: SHARED_VALIDATOR_STRING_098,
             name: SHARED_VALIDATOR_STRING_160,
             path: SHARED_VALIDATOR_STRING_161,
@@ -1337,93 +1492,7 @@ const workspaceValidationContractDefinition = {
             version: '0.1.0',
           },
           deploy: {
-            cloudflare: {
-              assetsBinding: 'ASSETS',
-              compatibilityDate: SHARED_VALIDATOR_STRING_036,
-              compatibilityFlags: [SHARED_VALIDATOR_STRING_089, SHARED_VALIDATOR_STRING_070],
-              evidence: {
-                proofScript: SHARED_VALIDATOR_STRING_119,
-                reportDefault: SHARED_VALIDATOR_STRING_008,
-              },
-              publicUrlEnv: SHARED_VALIDATOR_STRING_148,
-              qualityGates: {
-                assets: {
-                  cacheControlRequiredForCss: true,
-                  cssPreloadRequired: true,
-                  cssResponseRequired: true,
-                  sourcemapsPubliclyReferenced: false,
-                },
-                budgets: {
-                  cssAssetMaxBytes: 750_000,
-                  localeJsonMaxBytes: 100_000,
-                  mfManifestMaxBytes: 500_000,
-                  sitemapXmlMaxBytes: 500_000,
-                  ssrHtmlMaxBytes: 250_000,
-                },
-                csp: {
-                  decision: SHARED_VALIDATOR_STRING_109,
-                  finalMode: SHARED_VALIDATOR_STRING_110,
-                },
-                indexing: {
-                  previewNoindex: true,
-                  productionPublicRoutesIndexable: true,
-                },
-                publicRoutes: {
-                  requireRobotsSitemapConsistency: true,
-                  requireSitemapWhenPresent: true,
-                  requireWebManifestWhenPresent: true,
-                },
-                statusCodes: {
-                  notFoundRoute: SHARED_VALIDATOR_STRING_030,
-                  unknownRouteStatus: 404,
-                },
-              },
-              routes: {
-                locale: '/locales/en/shell.json',
-                mfManifest: SHARED_VALIDATOR_STRING_031,
-                ssr: '/en',
-              },
-              security: {
-                contentSecurityPolicy: {
-                  directives: {
-                    'base-uri': ["'self'"],
-                    'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-                    'default-src': ["'self'"],
-                    'font-src': ["'self'", 'data:', 'https:', 'http:'],
-                    'form-action': ["'self'"],
-                    'frame-ancestors': ["'self'"],
-                    'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-                    'manifest-src': ["'self'", 'https:', 'http:'],
-                    'object-src': ["'none'"],
-                    'script-src': [
-                      "'self'",
-                      SHARED_VALIDATOR_STRING_016,
-                      SHARED_VALIDATOR_STRING_015,
-                      'https:',
-                      'http:',
-                      'blob:',
-                    ],
-                    'style-src': ["'self'", SHARED_VALIDATOR_STRING_016, 'https:', 'http:'],
-                    'worker-src': ["'self'", 'blob:'],
-                  },
-                  mode: SHARED_VALIDATOR_STRING_107,
-                  reason: SHARED_VALIDATOR_STRING_108,
-                },
-                enabled: true,
-                headers: {
-                  contentTypeOptions: 'nosniff',
-                  permissionsPolicy: SHARED_VALIDATOR_STRING_055,
-                  referrerPolicy: SHARED_VALIDATOR_STRING_140,
-                },
-                noindex: {
-                  localhost: true,
-                  previewHostnames: [],
-                  workersDev: true,
-                },
-              },
-              target: SHARED_VALIDATOR_STRING_056,
-              workerName: 'app-shell-super-app',
-            },
+            cloudflare: createShellCloudflareContract(),
           },
           displayName: 'Shell Super App',
           id: SHARED_VALIDATOR_STRING_131,
@@ -1462,107 +1531,7 @@ const workspaceValidationContractDefinition = {
             serverEntry: SHARED_VALIDATOR_STRING_162,
             stem: SHARED_VALIDATOR_STRING_098,
           },
-          backendFederation: {
-            cache: {
-              cloudflareSnapshot: 'immutable',
-              nodeManifest: 'no-store',
-              nodeUnpinnedContainer: 'revalidate',
-              nodeVersionedContainer: 'immutable',
-            },
-            compatibility: {
-              contractVersion: SHARED_VALIDATOR_STRING_079,
-              effectVersion: SHARED_VALIDATOR_STRING_039,
-              moduleFederationVersion: '2.8.0',
-              packageName: SHARED_VALIDATOR_STRING_018,
-            },
-            deliveryUnit: {
-              buildMarker: SHARED_VALIDATOR_STRING_038,
-              kind: SHARED_VALIDATOR_STRING_077,
-              packageName: SHARED_VALIDATOR_STRING_018,
-              schemaVersion: 1,
-              sourceRevision: 'workspace',
-              unitId: SHARED_VALIDATOR_STRING_046,
-              version: '0.1.0',
-            },
-            executionSurfaces: {
-              cloudflare: {
-                kind: SHARED_VALIDATOR_STRING_058,
-                publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-                ssr: {
-                  assetsBinding: 'ASSETS',
-                  effectBffBundle: SHARED_VALIDATOR_STRING_013,
-                  routeManifest: SHARED_VALIDATOR_STRING_012,
-                  ssrBundle: SHARED_VALIDATOR_STRING_014,
-                  workerEntry: SHARED_VALIDATOR_STRING_010,
-                  workerManifest: SHARED_VALIDATOR_STRING_011,
-                },
-                workerDispatch: {
-                  dispatchNamespaceEnv: SHARED_VALIDATOR_STRING_154,
-                  dispatchWorkerNameEnv: SHARED_VALIDATOR_STRING_158,
-                  preferred: SHARED_VALIDATOR_STRING_126,
-                  requestInterface: 'fetch',
-                  serviceBinding: SHARED_VALIDATOR_STRING_156,
-                  serviceBindingEnv: SHARED_VALIDATOR_STRING_157,
-                },
-                workerName: SHARED_VALIDATOR_STRING_044,
-                zephyr: {
-                  applicationUidEnv: SHARED_VALIDATOR_STRING_170,
-                  integration: SHARED_VALIDATOR_STRING_076,
-                  runtime: SHARED_VALIDATOR_STRING_139,
-                  snapshotIdEnv: SHARED_VALIDATOR_STRING_171,
-                  versionIdEnv: SHARED_VALIDATOR_STRING_172,
-                },
-              },
-              node: {
-                adapterVersion: SHARED_VALIDATOR_STRING_054,
-                containerEntry: SHARED_VALIDATOR_STRING_072,
-                expected: {
-                  buildMarker: SHARED_VALIDATOR_STRING_038,
-                  unitId: SHARED_VALIDATOR_STRING_046,
-                },
-                expose: SHARED_VALIDATOR_STRING_004,
-                kind: SHARED_VALIDATOR_STRING_088,
-                manifestEnv: SHARED_VALIDATOR_STRING_153,
-                manifestUrl: SHARED_VALIDATOR_STRING_071,
-                remoteName: SHARED_VALIDATOR_STRING_160,
-                remoteType: SHARED_VALIDATOR_STRING_063,
-                runtimePackage: SHARED_VALIDATOR_STRING_026,
-              },
-            },
-            exposes: {
-              './effect-api': {
-                client: SHARED_VALIDATOR_STRING_167,
-                contract: SHARED_VALIDATOR_STRING_166,
-                openapi: SHARED_VALIDATOR_STRING_033,
-                readiness: SHARED_VALIDATOR_STRING_034,
-                runtime: SHARED_VALIDATOR_STRING_162,
-              },
-            },
-            fallback: {
-              failureEvent: 'modernjs:microvertical-server-fallback',
-              strategy: 'typed-effect-error',
-              timeoutMs: 1500,
-            },
-            name: SHARED_VALIDATOR_STRING_160,
-            role: SHARED_VALIDATOR_STRING_078,
-            runtimeFramework: 'effect',
-            strictEffectApproach: true,
-            versionBoundary: {
-              api: {
-                buildMarker: 'verticals/party-registry/shared/ultramodern-build.ts',
-                publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-                readiness: SHARED_VALIDATOR_STRING_034,
-              },
-              identityRoot: SHARED_VALIDATOR_STRING_065,
-              invariant: SHARED_VALIDATOR_STRING_168,
-              packageName: SHARED_VALIDATOR_STRING_018,
-              ui: {
-                buildMarker: 'verticals/party-registry/src/routes/ultramodern-route-metadata.ts',
-                manifestEnv: SHARED_VALIDATOR_STRING_155,
-                manifestUrl: SHARED_VALIDATOR_STRING_073,
-              },
-            },
-          },
+          backendFederation: createVerticalBackendFederationContract(),
           deliveryUnit: {
             buildMarker: SHARED_VALIDATOR_STRING_038,
             kind: SHARED_VALIDATOR_STRING_077,
@@ -1573,104 +1542,7 @@ const workspaceValidationContractDefinition = {
             version: '0.1.0',
           },
           deploy: {
-            cloudflare: {
-              assetsBinding: 'ASSETS',
-              compatibilityDate: SHARED_VALIDATOR_STRING_036,
-              compatibilityFlags: [SHARED_VALIDATOR_STRING_089, SHARED_VALIDATOR_STRING_070],
-              evidence: {
-                proofScript: SHARED_VALIDATOR_STRING_119,
-                reportDefault: SHARED_VALIDATOR_STRING_008,
-              },
-              jsonSmokeChecks: [
-                {
-                  expect: {
-                    'checks.api': 'ready',
-                    'checks.moduleFederation': 'ready',
-                    'checks.ssr': 'ready',
-                    status: 'ready',
-                  },
-                  id: 'party-registry-readiness-smoke',
-                  route: SHARED_VALIDATOR_STRING_034,
-                },
-              ],
-              publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-              qualityGates: {
-                assets: {
-                  cacheControlRequiredForCss: true,
-                  cssPreloadRequired: true,
-                  cssResponseRequired: true,
-                  sourcemapsPubliclyReferenced: false,
-                },
-                budgets: {
-                  cssAssetMaxBytes: 750_000,
-                  localeJsonMaxBytes: 100_000,
-                  mfManifestMaxBytes: 500_000,
-                  sitemapXmlMaxBytes: 500_000,
-                  ssrHtmlMaxBytes: 250_000,
-                },
-                csp: {
-                  decision: SHARED_VALIDATOR_STRING_109,
-                  finalMode: SHARED_VALIDATOR_STRING_110,
-                },
-                indexing: {
-                  previewNoindex: true,
-                  productionPublicRoutesIndexable: true,
-                },
-                publicRoutes: {
-                  requireRobotsSitemapConsistency: true,
-                  requireSitemapWhenPresent: true,
-                  requireWebManifestWhenPresent: true,
-                },
-                statusCodes: {
-                  notFoundRoute: SHARED_VALIDATOR_STRING_030,
-                  unknownRouteStatus: 404,
-                },
-              },
-              routes: {
-                apiReadiness: SHARED_VALIDATOR_STRING_034,
-                mfManifest: SHARED_VALIDATOR_STRING_031,
-              },
-              security: {
-                contentSecurityPolicy: {
-                  directives: {
-                    'base-uri': ["'self'"],
-                    'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-                    'default-src': ["'self'"],
-                    'font-src': ["'self'", 'data:', 'https:', 'http:'],
-                    'form-action': ["'self'"],
-                    'frame-ancestors': ["'self'"],
-                    'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-                    'manifest-src': ["'self'", 'https:', 'http:'],
-                    'object-src': ["'none'"],
-                    'script-src': [
-                      "'self'",
-                      SHARED_VALIDATOR_STRING_016,
-                      SHARED_VALIDATOR_STRING_015,
-                      'https:',
-                      'http:',
-                      'blob:',
-                    ],
-                    'style-src': ["'self'", SHARED_VALIDATOR_STRING_016, 'https:', 'http:'],
-                    'worker-src': ["'self'", 'blob:'],
-                  },
-                  mode: SHARED_VALIDATOR_STRING_107,
-                  reason: SHARED_VALIDATOR_STRING_108,
-                },
-                enabled: true,
-                headers: {
-                  contentTypeOptions: 'nosniff',
-                  permissionsPolicy: SHARED_VALIDATOR_STRING_055,
-                  referrerPolicy: SHARED_VALIDATOR_STRING_140,
-                },
-                noindex: {
-                  localhost: true,
-                  previewHostnames: [],
-                  workersDev: true,
-                },
-              },
-              target: SHARED_VALIDATOR_STRING_056,
-              workerName: SHARED_VALIDATOR_STRING_044,
-            },
+            cloudflare: createVerticalCloudflareContract(),
           },
           displayName: 'Party Registry Vertical',
           domain: SHARED_VALIDATOR_STRING_098,
@@ -1711,53 +1583,12 @@ const workspaceValidationContractDefinition = {
       serverExecution: {
         'party-registry': {
           apiBaseUrl: 'http://localhost:4102/party-registry-api',
-          cloudflare: {
-            kind: SHARED_VALIDATOR_STRING_058,
-            publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-            ssr: {
-              assetsBinding: 'ASSETS',
-              effectBffBundle: SHARED_VALIDATOR_STRING_013,
-              routeManifest: SHARED_VALIDATOR_STRING_012,
-              ssrBundle: SHARED_VALIDATOR_STRING_014,
-              workerEntry: SHARED_VALIDATOR_STRING_010,
-              workerManifest: SHARED_VALIDATOR_STRING_011,
-            },
-            workerDispatch: {
-              dispatchNamespaceEnv: SHARED_VALIDATOR_STRING_154,
-              dispatchWorkerNameEnv: SHARED_VALIDATOR_STRING_158,
-              preferred: SHARED_VALIDATOR_STRING_126,
-              requestInterface: 'fetch',
-              serviceBinding: SHARED_VALIDATOR_STRING_156,
-              serviceBindingEnv: SHARED_VALIDATOR_STRING_157,
-            },
-            workerName: SHARED_VALIDATOR_STRING_044,
-            zephyr: {
-              applicationUidEnv: SHARED_VALIDATOR_STRING_170,
-              integration: SHARED_VALIDATOR_STRING_076,
-              runtime: SHARED_VALIDATOR_STRING_139,
-              snapshotIdEnv: SHARED_VALIDATOR_STRING_171,
-              versionIdEnv: SHARED_VALIDATOR_STRING_172,
-            },
-          },
+          cloudflare: createVerticalCloudflareExecution(),
           deliveryUnit: {
             buildMarker: SHARED_VALIDATOR_STRING_038,
             unitId: SHARED_VALIDATOR_STRING_046,
           },
-          node: {
-            adapterVersion: SHARED_VALIDATOR_STRING_054,
-            containerEntry: SHARED_VALIDATOR_STRING_072,
-            expected: {
-              buildMarker: SHARED_VALIDATOR_STRING_038,
-              unitId: SHARED_VALIDATOR_STRING_046,
-            },
-            expose: SHARED_VALIDATOR_STRING_004,
-            kind: SHARED_VALIDATOR_STRING_088,
-            manifestEnv: SHARED_VALIDATOR_STRING_153,
-            manifestUrl: SHARED_VALIDATOR_STRING_071,
-            remoteName: SHARED_VALIDATOR_STRING_160,
-            remoteType: SHARED_VALIDATOR_STRING_063,
-            runtimePackage: SHARED_VALIDATOR_STRING_026,
-          },
+          node: createVerticalNodeExecution(),
           versionBoundary: SHARED_VALIDATOR_STRING_168,
         },
       },
@@ -1918,93 +1749,7 @@ const workspaceValidationContractDefinition = {
           kind: 'shell-core-capability',
           owners: [SHARED_VALIDATOR_STRING_131, SHARED_VALIDATOR_STRING_064],
         },
-        cloudflare: {
-          assetsBinding: 'ASSETS',
-          compatibilityDate: SHARED_VALIDATOR_STRING_036,
-          compatibilityFlags: [SHARED_VALIDATOR_STRING_089, SHARED_VALIDATOR_STRING_070],
-          evidence: {
-            proofScript: SHARED_VALIDATOR_STRING_119,
-            reportDefault: SHARED_VALIDATOR_STRING_008,
-          },
-          publicUrlEnv: SHARED_VALIDATOR_STRING_148,
-          qualityGates: {
-            assets: {
-              cacheControlRequiredForCss: true,
-              cssPreloadRequired: true,
-              cssResponseRequired: true,
-              sourcemapsPubliclyReferenced: false,
-            },
-            budgets: {
-              cssAssetMaxBytes: 750_000,
-              localeJsonMaxBytes: 100_000,
-              mfManifestMaxBytes: 500_000,
-              sitemapXmlMaxBytes: 500_000,
-              ssrHtmlMaxBytes: 250_000,
-            },
-            csp: {
-              decision: SHARED_VALIDATOR_STRING_109,
-              finalMode: SHARED_VALIDATOR_STRING_110,
-            },
-            indexing: {
-              previewNoindex: true,
-              productionPublicRoutesIndexable: true,
-            },
-            publicRoutes: {
-              requireRobotsSitemapConsistency: true,
-              requireSitemapWhenPresent: true,
-              requireWebManifestWhenPresent: true,
-            },
-            statusCodes: {
-              notFoundRoute: SHARED_VALIDATOR_STRING_030,
-              unknownRouteStatus: 404,
-            },
-          },
-          routes: {
-            locale: '/locales/en/shell.json',
-            mfManifest: SHARED_VALIDATOR_STRING_031,
-            ssr: '/en',
-          },
-          security: {
-            contentSecurityPolicy: {
-              directives: {
-                'base-uri': ["'self'"],
-                'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-                'default-src': ["'self'"],
-                'font-src': ["'self'", 'data:', 'https:', 'http:'],
-                'form-action': ["'self'"],
-                'frame-ancestors': ["'self'"],
-                'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-                'manifest-src': ["'self'", 'https:', 'http:'],
-                'object-src': ["'none'"],
-                'script-src': [
-                  "'self'",
-                  SHARED_VALIDATOR_STRING_016,
-                  SHARED_VALIDATOR_STRING_015,
-                  'https:',
-                  'http:',
-                  'blob:',
-                ],
-                'style-src': ["'self'", SHARED_VALIDATOR_STRING_016, 'https:', 'http:'],
-                'worker-src': ["'self'", 'blob:'],
-              },
-              mode: SHARED_VALIDATOR_STRING_107,
-              reason: SHARED_VALIDATOR_STRING_108,
-            },
-            enabled: true,
-            headers: {
-              contentTypeOptions: 'nosniff',
-              permissionsPolicy: SHARED_VALIDATOR_STRING_055,
-              referrerPolicy: SHARED_VALIDATOR_STRING_140,
-            },
-            noindex: {
-              localhost: true,
-              previewHostnames: [],
-              workersDev: true,
-            },
-          },
-          target: SHARED_VALIDATOR_STRING_056,
-          workerName: 'app-shell-super-app',
-        },
+        cloudflare: createShellCloudflareContract(),
         deliveryUnit: {
           buildMarker: '090dd0a19fdd0853',
           kind: SHARED_VALIDATOR_STRING_077,
@@ -2097,205 +1842,8 @@ const workspaceValidationContractDefinition = {
             runtime: 'effect',
             serverEntry: SHARED_VALIDATOR_STRING_162,
           },
-          backendFederation: {
-            cache: {
-              cloudflareSnapshot: 'immutable',
-              nodeManifest: 'no-store',
-              nodeUnpinnedContainer: 'revalidate',
-              nodeVersionedContainer: 'immutable',
-            },
-            compatibility: {
-              contractVersion: SHARED_VALIDATOR_STRING_079,
-              effectVersion: SHARED_VALIDATOR_STRING_039,
-              moduleFederationVersion: '2.8.0',
-              packageName: SHARED_VALIDATOR_STRING_018,
-            },
-            deliveryUnit: {
-              buildMarker: SHARED_VALIDATOR_STRING_038,
-              kind: SHARED_VALIDATOR_STRING_077,
-              packageName: SHARED_VALIDATOR_STRING_018,
-              schemaVersion: 1,
-              sourceRevision: 'workspace',
-              unitId: SHARED_VALIDATOR_STRING_046,
-              version: '0.1.0',
-            },
-            executionSurfaces: {
-              cloudflare: {
-                kind: SHARED_VALIDATOR_STRING_058,
-                publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-                ssr: {
-                  assetsBinding: 'ASSETS',
-                  effectBffBundle: SHARED_VALIDATOR_STRING_013,
-                  routeManifest: SHARED_VALIDATOR_STRING_012,
-                  ssrBundle: SHARED_VALIDATOR_STRING_014,
-                  workerEntry: SHARED_VALIDATOR_STRING_010,
-                  workerManifest: SHARED_VALIDATOR_STRING_011,
-                },
-                workerDispatch: {
-                  dispatchNamespaceEnv: SHARED_VALIDATOR_STRING_154,
-                  dispatchWorkerNameEnv: SHARED_VALIDATOR_STRING_158,
-                  preferred: SHARED_VALIDATOR_STRING_126,
-                  requestInterface: 'fetch',
-                  serviceBinding: SHARED_VALIDATOR_STRING_156,
-                  serviceBindingEnv: SHARED_VALIDATOR_STRING_157,
-                },
-                workerName: SHARED_VALIDATOR_STRING_044,
-                zephyr: {
-                  applicationUidEnv: SHARED_VALIDATOR_STRING_170,
-                  integration: SHARED_VALIDATOR_STRING_076,
-                  runtime: SHARED_VALIDATOR_STRING_139,
-                  snapshotIdEnv: SHARED_VALIDATOR_STRING_171,
-                  versionIdEnv: SHARED_VALIDATOR_STRING_172,
-                },
-              },
-              node: {
-                adapterVersion: SHARED_VALIDATOR_STRING_054,
-                containerEntry: SHARED_VALIDATOR_STRING_072,
-                expected: {
-                  buildMarker: SHARED_VALIDATOR_STRING_038,
-                  unitId: SHARED_VALIDATOR_STRING_046,
-                },
-                expose: SHARED_VALIDATOR_STRING_004,
-                kind: SHARED_VALIDATOR_STRING_088,
-                manifestEnv: SHARED_VALIDATOR_STRING_153,
-                manifestUrl: SHARED_VALIDATOR_STRING_071,
-                remoteName: SHARED_VALIDATOR_STRING_160,
-                remoteType: SHARED_VALIDATOR_STRING_063,
-                runtimePackage: SHARED_VALIDATOR_STRING_026,
-              },
-            },
-            exposes: {
-              './effect-api': {
-                client: SHARED_VALIDATOR_STRING_167,
-                contract: SHARED_VALIDATOR_STRING_166,
-                openapi: SHARED_VALIDATOR_STRING_033,
-                readiness: SHARED_VALIDATOR_STRING_034,
-                runtime: SHARED_VALIDATOR_STRING_162,
-              },
-            },
-            fallback: {
-              failureEvent: 'modernjs:microvertical-server-fallback',
-              strategy: 'typed-effect-error',
-              timeoutMs: 1500,
-            },
-            name: SHARED_VALIDATOR_STRING_160,
-            role: SHARED_VALIDATOR_STRING_078,
-            runtimeFramework: 'effect',
-            strictEffectApproach: true,
-            versionBoundary: {
-              api: {
-                buildMarker: 'verticals/party-registry/shared/ultramodern-build.ts',
-                publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-                readiness: SHARED_VALIDATOR_STRING_034,
-              },
-              identityRoot: SHARED_VALIDATOR_STRING_065,
-              invariant: SHARED_VALIDATOR_STRING_168,
-              packageName: SHARED_VALIDATOR_STRING_018,
-              ui: {
-                buildMarker: 'verticals/party-registry/src/routes/ultramodern-route-metadata.ts',
-                manifestEnv: SHARED_VALIDATOR_STRING_155,
-                manifestUrl: SHARED_VALIDATOR_STRING_073,
-              },
-            },
-          },
-          cloudflare: {
-            assetsBinding: 'ASSETS',
-            compatibilityDate: SHARED_VALIDATOR_STRING_036,
-            compatibilityFlags: [SHARED_VALIDATOR_STRING_089, SHARED_VALIDATOR_STRING_070],
-            evidence: {
-              proofScript: SHARED_VALIDATOR_STRING_119,
-              reportDefault: SHARED_VALIDATOR_STRING_008,
-            },
-            jsonSmokeChecks: [
-              {
-                expect: {
-                  'checks.api': 'ready',
-                  'checks.moduleFederation': 'ready',
-                  'checks.ssr': 'ready',
-                  status: 'ready',
-                },
-                id: 'party-registry-readiness-smoke',
-                route: SHARED_VALIDATOR_STRING_034,
-              },
-            ],
-            publicUrlEnv: SHARED_VALIDATOR_STRING_147,
-            qualityGates: {
-              assets: {
-                cacheControlRequiredForCss: true,
-                cssPreloadRequired: true,
-                cssResponseRequired: true,
-                sourcemapsPubliclyReferenced: false,
-              },
-              budgets: {
-                cssAssetMaxBytes: 750_000,
-                localeJsonMaxBytes: 100_000,
-                mfManifestMaxBytes: 500_000,
-                sitemapXmlMaxBytes: 500_000,
-                ssrHtmlMaxBytes: 250_000,
-              },
-              csp: {
-                decision: SHARED_VALIDATOR_STRING_109,
-                finalMode: SHARED_VALIDATOR_STRING_110,
-              },
-              indexing: {
-                previewNoindex: true,
-                productionPublicRoutesIndexable: true,
-              },
-              publicRoutes: {
-                requireRobotsSitemapConsistency: true,
-                requireSitemapWhenPresent: true,
-                requireWebManifestWhenPresent: true,
-              },
-              statusCodes: {
-                notFoundRoute: SHARED_VALIDATOR_STRING_030,
-                unknownRouteStatus: 404,
-              },
-            },
-            routes: {
-              apiReadiness: SHARED_VALIDATOR_STRING_034,
-              mfManifest: SHARED_VALIDATOR_STRING_031,
-            },
-            security: {
-              contentSecurityPolicy: {
-                directives: {
-                  'base-uri': ["'self'"],
-                  'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-                  'default-src': ["'self'"],
-                  'font-src': ["'self'", 'data:', 'https:', 'http:'],
-                  'form-action': ["'self'"],
-                  'frame-ancestors': ["'self'"],
-                  'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-                  'manifest-src': ["'self'", 'https:', 'http:'],
-                  'object-src': ["'none'"],
-                  'script-src': [
-                    "'self'",
-                    SHARED_VALIDATOR_STRING_016,
-                    SHARED_VALIDATOR_STRING_015,
-                    'https:',
-                    'http:',
-                    'blob:',
-                  ],
-                  'style-src': ["'self'", SHARED_VALIDATOR_STRING_016, 'https:', 'http:'],
-                  'worker-src': ["'self'", 'blob:'],
-                },
-                mode: SHARED_VALIDATOR_STRING_107,
-                reason: SHARED_VALIDATOR_STRING_108,
-              },
-              enabled: true,
-              headers: {
-                contentTypeOptions: 'nosniff',
-                permissionsPolicy: SHARED_VALIDATOR_STRING_055,
-                referrerPolicy: SHARED_VALIDATOR_STRING_140,
-              },
-              noindex: {
-                localhost: true,
-                previewHostnames: [],
-                workersDev: true,
-              },
-            },
-            target: SHARED_VALIDATOR_STRING_056,
-            workerName: SHARED_VALIDATOR_STRING_044,
-          },
+          backendFederation: createVerticalBackendFederationContract(),
+          cloudflare: createVerticalCloudflareContract(),
           deliveryUnit: {
             buildMarker: SHARED_VALIDATOR_STRING_038,
             kind: SHARED_VALIDATOR_STRING_077,
@@ -2412,21 +1960,6 @@ interface CompactApp {
   readonly port?: number;
   readonly portEnv?: string;
 }
-interface CompactShell {
-  readonly deliveryUnit?: DeliveryUnit;
-  readonly id: string;
-  readonly kind: string;
-  readonly mfName?: string;
-  readonly moduleFederation: Json;
-  readonly name: string;
-  readonly owner?: AdditionalShell['owner'];
-  readonly package: string;
-  readonly path: string;
-  readonly port: number;
-  readonly portEnv: string;
-  readonly tailwindPrefix: string;
-  readonly verticalRefs?: readonly string[];
-}
 interface BridgeConfig {
   readonly enabled: boolean;
   readonly gates?: readonly {
@@ -2442,7 +1975,7 @@ interface CompactConfig extends Omit<
 > {
   readonly bridge?: BridgeConfig;
   readonly packageSource: CompactConfigDocument['packageSource'] & { readonly registry?: string };
-  readonly shells?: readonly CompactShell[];
+  readonly shells?: unknown;
   readonly topology: Omit<CompactConfigDocument['topology'], 'apps'> & {
     readonly apps?: readonly CompactApp[];
   };
@@ -2519,27 +2052,6 @@ interface DeliveryUnit {
   readonly unitId?: string;
   readonly version?: string;
 }
-type AdditionalShell = IdentifierEntry & {
-  readonly degradedState?: {
-    readonly appId: string;
-    readonly required: boolean;
-    readonly status: string;
-  };
-  readonly deliveryUnit?: DeliveryUnit;
-  readonly id: string;
-  readonly mfName: string;
-  readonly moduleFederation: Json;
-  readonly owner: {
-    readonly id: string;
-    readonly kind: string;
-  };
-  readonly packageName: string;
-  readonly path: string;
-  readonly port: number;
-  readonly portEnv: string;
-  readonly tailwindPrefix: string;
-  readonly verticalRefs?: readonly string[];
-};
 const StringValuesSchema = Schema.Record(Schema.String, Schema.String);
 const PackageJsonSchema = Schema.Struct({
   dependencies: Schema.optionalKey(StringValuesSchema),
@@ -2649,7 +2161,7 @@ type WorkspaceValidationContract = Omit<
   typeof workspaceValidationContractDefinition,
   'cohort' | 'generatedSurfacePolicy'
 > & {
-  readonly additionalShells?: readonly AdditionalShell[];
+  readonly additionalShells?: unknown;
   readonly cohort: Omit<
     typeof workspaceValidationContractDefinition.cohort,
     | 'additionalShellBuildMarkerIds'
@@ -2720,8 +2232,6 @@ const { shellRouteMetaPaths } = workspaceValidationContract;
 const compactConfigPath = workspaceValidationContract.metadata.compactConfig.path;
 const { retiredMetadataPaths } = workspaceValidationContract.legacy;
 const modernPackageCohort = workspaceValidationContract.cohort.modernPackages;
-const expectedAdditionalShellIds = workspaceValidationContract.cohort.additionalShellIds ?? [];
-const expectedAdditionalShells = workspaceValidationContract.additionalShells ?? [];
 const expectedPrimaryShellVerticalIds =
   workspaceValidationContract.topology?.referenceTopology?.shell?.verticalRefs ??
   workspaceValidationContract.cohort.verticalIds;
@@ -2790,20 +2300,6 @@ const assertAnyOf = (relativePaths: readonly string[]): void => {
     relativePaths.some((relativePath) => fs.existsSync(path.join(root, relativePath))),
     `Missing one of: ${relativePaths.join(', ')}`,
   );
-};
-const requiredShellWorkerCompositionPath = (shellPath: string): string => {
-  const workerCompositionPath = `${shellPath}/src/routes/vertical-components.worker.tsx`;
-  if (fs.existsSync(path.join(root, workerCompositionPath))) {
-    return workerCompositionPath;
-  }
-
-  const browserComposition = readText(`${shellPath}/src/routes/vertical-components.tsx`);
-  const frameworkGeneratedComposition =
-    browserComposition.includes('const createRemoteComponent =') &&
-    browserComposition.includes('export const VerticalShowcase =');
-  return frameworkGeneratedComposition
-    ? workerCompositionPath
-    : `${shellPath}/src/federated-components.worker.tsx`;
 };
 const sortedCopy = <Value,>(
   values: readonly Value[],
@@ -3020,6 +2516,34 @@ const assertGeneratedSurfacePattern = (
     `generated surface policy ${rule.id}.${pattern.id} fixArea is required`,
   );
 };
+const assertGeneratedSurfaceRules = (contract: WorkspaceValidationContract): void => {
+  const { generatedSurfacePolicy } = contract;
+  assert(
+    generatedSurfacePolicy.schemaVersion === 1,
+    `Unsupported generated surface policy schemaVersion ${formatJson(generatedSurfacePolicy.schemaVersion)}; expected 1`,
+  );
+  assertUniqueIdEntries(
+    generatedSurfacePolicy.rules,
+    'workspace validation contract generated surface policy rules',
+  );
+  for (const rule of generatedSurfacePolicy.rules) {
+    assertUniqueStrings(
+      rule.paths.map((entry) => entry.path),
+      `generated surface policy ${rule.id} paths`,
+    );
+    assert(
+      Array.isArray(rule.paths) && rule.paths.length > 0,
+      `generated surface policy ${rule.id} must target generated paths`,
+    );
+    for (const target of rule.paths) {
+      assertGeneratedSurfaceTarget(rule, target);
+    }
+    assertUniqueIdEntries(rule.patterns, `generated surface policy ${rule.id} patterns`);
+    for (const pattern of rule.patterns) {
+      assertGeneratedSurfacePattern(rule, pattern);
+    }
+  }
+};
 const assertWorkspaceValidationContract = (contract: WorkspaceValidationContract): void => {
   assert(!Array.isArray(contract), 'Workspace validation contract must be a JSON object');
   assert(
@@ -3053,28 +2577,6 @@ const assertWorkspaceValidationContract = (contract: WorkspaceValidationContract
   );
   assertUniqueStrings(contract.cohort.appIds, 'workspace validation contract app cohort');
   assertUniqueStrings(
-    contract.cohort.additionalShellIds ?? [],
-    'workspace validation contract additional-shell cohort',
-  );
-  const additionalShellCohortChecks: readonly (readonly [AdditionalShellCohortField, string])[] = [
-    [SHARED_VALIDATOR_STRING_043, 'workspace validation contract additional-shell owner cohort'],
-    [
-      SHARED_VALIDATOR_STRING_042,
-      'workspace validation contract additional-shell delivery-unit cohort',
-    ],
-    [
-      SHARED_VALIDATOR_STRING_041,
-      'workspace validation contract additional-shell degraded-state cohort',
-    ],
-    [
-      SHARED_VALIDATOR_STRING_040,
-      'workspace validation contract additional-shell build-marker cohort',
-    ],
-  ];
-  for (const [field, label] of additionalShellCohortChecks) {
-    assertUniqueStrings(contract.cohort[field] ?? [], label);
-  }
-  assertUniqueStrings(
     contract.cohort.backendAppIds,
     'workspace validation contract backend app cohort',
   );
@@ -3093,32 +2595,7 @@ const assertWorkspaceValidationContract = (contract: WorkspaceValidationContract
     'workspace validation contract package manifest paths',
   );
 
-  const { generatedSurfacePolicy } = contract;
-  assert(
-    generatedSurfacePolicy.schemaVersion === 1,
-    `Unsupported generated surface policy schemaVersion ${formatJson(generatedSurfacePolicy.schemaVersion)}; expected 1`,
-  );
-  assertUniqueIdEntries(
-    generatedSurfacePolicy.rules,
-    'workspace validation contract generated surface policy rules',
-  );
-  for (const rule of generatedSurfacePolicy.rules) {
-    assertUniqueStrings(
-      rule.paths.map((entry) => entry.path),
-      `generated surface policy ${rule.id} paths`,
-    );
-    assert(
-      Array.isArray(rule.paths) && rule.paths.length > 0,
-      `generated surface policy ${rule.id} must target generated paths`,
-    );
-    for (const target of rule.paths) {
-      assertGeneratedSurfaceTarget(rule, target);
-    }
-    assertUniqueIdEntries(rule.patterns, `generated surface policy ${rule.id} patterns`);
-    for (const pattern of rule.patterns) {
-      assertGeneratedSurfacePattern(rule, pattern);
-    }
-  }
+  assertGeneratedSurfaceRules(contract);
 };
 const generatedSurfacePolicyFiles = (target: GeneratedSurfaceTarget): string[] => {
   const absolutePath = path.join(root, target.path);
@@ -3176,6 +2653,58 @@ const skipSourceComment = (source: string, start: number): number => {
   }
   return start;
 };
+const isSourceQuote = (character: string | undefined): boolean =>
+  character !== undefined && '\'"`'.includes(character);
+const matchesJsxAttribute = (source: string, cursor: number, attributeName: string): boolean => {
+  if (
+    !source.startsWith(attributeName, cursor) ||
+    isJsxNameCharacter(source[cursor - 1]) ||
+    isJsxNameCharacter(source[cursor + attributeName.length])
+  ) {
+    return false;
+  }
+  let equalsIndex = cursor + attributeName.length;
+  while (/\s/u.test(source[equalsIndex] ?? '')) {
+    equalsIndex += 1;
+  }
+  return source[equalsIndex] === '=';
+};
+const skipJsxNonAttributeSource = (source: string, cursor: number): number => {
+  if (isSourceQuote(source[cursor])) {
+    return skipQuotedSource(source, cursor);
+  }
+  return source[cursor] === '/' ? Math.max(cursor + 1, skipSourceComment(source, cursor)) : cursor;
+};
+const findOpeningElementAttribute = (
+  source: string,
+  start: number,
+  attributeName: string,
+): { readonly index: number } | null => {
+  let cursor = start;
+  let expressionDepth = 0;
+  while (cursor < source.length) {
+    const character = source[cursor];
+    const afterSkippedSource = skipJsxNonAttributeSource(source, cursor);
+    if (afterSkippedSource !== cursor) {
+      cursor = afterSkippedSource;
+      continue;
+    }
+    if (character === '{') {
+      expressionDepth += 1;
+    } else if (character === '}') {
+      expressionDepth = Math.max(0, expressionDepth - 1);
+    } else if (expressionDepth === 0) {
+      if (character === '>') {
+        return null;
+      }
+      if (matchesJsxAttribute(source, cursor, attributeName)) {
+        return { index: cursor };
+      }
+    }
+    cursor += 1;
+  }
+  return null;
+};
 const findJsxAttribute = (
   source: string,
   matcher: NonNullable<GeneratedSurfacePattern['structuralMatcher']>,
@@ -3183,49 +2712,14 @@ const findJsxAttribute = (
   const opening = `<${matcher.elementName}`;
   let elementIndex = source.indexOf(opening);
   while (elementIndex !== -1) {
-    const elementBoundary = source[elementIndex + opening.length];
-    if (!isJsxNameCharacter(elementBoundary)) {
-      let cursor = elementIndex + opening.length;
-      let expressionDepth = 0;
-      while (cursor < source.length) {
-        const character = source[cursor];
-        if (character === "'" || character === '"' || character === '`') {
-          cursor = skipQuotedSource(source, cursor);
-        } else if (character === '/') {
-          const afterComment = skipSourceComment(source, cursor);
-          if (afterComment === cursor) {
-            cursor += 1;
-          } else {
-            cursor = afterComment;
-          }
-        } else if (character === '{') {
-          expressionDepth += 1;
-          cursor += 1;
-        } else if (character === '}') {
-          expressionDepth = Math.max(0, expressionDepth - 1);
-          cursor += 1;
-        } else if (character === '>' && expressionDepth === 0) {
-          break;
-        } else if (
-          expressionDepth === 0 &&
-          source.startsWith(matcher.attributeName, cursor) &&
-          !isJsxNameCharacter(source[cursor - 1]) &&
-          !isJsxNameCharacter(source[cursor + matcher.attributeName.length])
-        ) {
-          let equalsIndex = cursor + matcher.attributeName.length;
-          while (/\s/u.test(source[equalsIndex] ?? '')) {
-            equalsIndex += 1;
-          }
-          if (source[equalsIndex] === '=') {
-            return { index: cursor };
-          }
-          cursor += 1;
-        } else {
-          cursor += 1;
-        }
+    const start = elementIndex + opening.length;
+    if (!isJsxNameCharacter(source[start])) {
+      const match = findOpeningElementAttribute(source, start, matcher.attributeName);
+      if (match !== null) {
+        return match;
       }
     }
-    elementIndex = source.indexOf(opening, elementIndex + opening.length);
+    elementIndex = source.indexOf(opening, start);
   }
   return null;
 };
@@ -3239,6 +2733,26 @@ const findGeneratedSurfacePolicyMatch = (
   return pattern.expression === undefined
     ? null
     : new RegExp(pattern.expression, pattern.flags).exec(source);
+};
+const assertSingleShellDeclarations = (): void => {
+  assert(
+    workspaceValidationContract.cohort.additionalShellIds === undefined,
+    'Single-shell workspace must not declare additionalShellIds',
+  );
+  assert(
+    workspaceValidationContract.cohort?.additionalShellManifests === undefined,
+    'Single-shell workspace must not declare additional-shell manifests',
+  );
+  assert(
+    workspaceValidationContract.additionalShells === undefined,
+    'Single-shell workspace must not declare additional-shell records',
+  );
+  for (const field of additionalShellCohortFields) {
+    assert(
+      workspaceValidationContract.cohort?.[field] === undefined,
+      `Single-shell workspace must not declare ${field}`,
+    );
+  }
 };
 const assertGeneratedSurfacePolicy = () => {
   for (const rule of workspaceValidationContract.generatedSurfacePolicy.rules) {
@@ -3258,44 +2772,7 @@ const assertGeneratedSurfacePolicy = () => {
       }
     }
   }
-  if ((workspaceValidationContract.cohort?.additionalShellIds ?? []).length > 0) {
-    const additionalShellIds = workspaceValidationContract.cohort.additionalShellIds ?? [];
-    for (const field of additionalShellCohortFields) {
-      assertSameJson(
-        workspaceValidationContract.cohort?.[field],
-        additionalShellIds,
-        `workspace validation contract ${field}`,
-        'restore every generated additional-shell cohort',
-      );
-    }
-    assertSameIdCohort(
-      workspaceValidationContract.cohort?.additionalShellManifests,
-      additionalShellIds,
-      'workspace validation contract additional-shell manifests',
-      'restore every generated additional-shell package manifest',
-    );
-    assertSameIdCohort(
-      workspaceValidationContract.additionalShells,
-      additionalShellIds,
-      'workspace validation contract additional-shell records',
-      'restore every generated additional-shell contract record',
-    );
-  } else {
-    assert(
-      workspaceValidationContract.cohort?.additionalShellManifests === undefined,
-      'Single-shell workspace must not declare additional-shell manifests',
-    );
-    assert(
-      workspaceValidationContract.additionalShells === undefined,
-      'Single-shell workspace must not declare additional-shell records',
-    );
-    for (const field of additionalShellCohortFields) {
-      assert(
-        workspaceValidationContract.cohort?.[field] === undefined,
-        `Single-shell workspace must not declare ${field}`,
-      );
-    }
-  }
+  assertSingleShellDeclarations();
 };
 const compactConfigPolicyView = (config: CompactConfig): Json => ({
   agentSkills: config.agentSkills,
@@ -3308,6 +2785,62 @@ const compactConfigPolicyView = (config: CompactConfig): Json => ({
   tooling: config.tooling,
   workspace: config.workspace,
 });
+const assertLegacyMetadataFields = (): void => {
+  assertObject(
+    ultramodernConfig.packageSource,
+    `${compactConfigPath} packageSource`,
+    'restore generated compact package-source metadata',
+  );
+  for (const field of workspaceValidationContract.legacy.forbiddenCompactConfigFields) {
+    assert(
+      !Object.hasOwn(ultramodernConfig, field),
+      `Stale legacy field ${compactConfigPath}.${field} is forbidden`,
+    );
+  }
+  for (const field of workspaceValidationContract.legacy.forbiddenPackageSourceFields) {
+    assert(
+      !Object.hasOwn(ultramodernConfig.packageSource, field),
+      `Stale legacy field ${compactConfigPath}.packageSource.${field} is forbidden`,
+    );
+  }
+  for (const field of workspaceValidationContract.legacy.forbiddenTopologyFields) {
+    assert(
+      !Object.hasOwn(topology, field),
+      `Stale legacy field ${workspaceValidationContract.metadata.referenceTopology.path}.${field} is forbidden`,
+    );
+  }
+};
+const assertMetadataPackageManifests = (): void => {
+  for (const manifest of workspaceValidationContract.cohort.packageManifests) {
+    assertExists(manifest.path);
+    const packageJson = readJson(PackageJsonSchema, manifest.path);
+    assert(
+      packageJson.name === manifest.packageName,
+      `${manifest.path} package name must be ${manifest.packageName}`,
+    );
+    if (manifest.role === 'shell' || manifest.role === 'vertical') {
+      assert(
+        packageJson.modernjs?.appId === manifest.id,
+        `${manifest.path} modernjs.appId must be ${manifest.id}`,
+      );
+    }
+  }
+  if (expectedReleaseCohort !== undefined) {
+    const releaseCohortContract = workspaceValidationContract.metadata.releaseCohort;
+    assertSelfCheck(
+      releaseCohortContract?.path === SHARED_VALIDATOR_STRING_009,
+      'authenticated release cohort projection',
+      'Expected release-cohort metadata path is missing or invalid',
+      SHARED_VALIDATOR_STRING_009,
+    );
+    assertSameJson(
+      readJson(ComparableJsonSchema, releaseCohortContract.path),
+      expectedReleaseCohort,
+      'authenticated release cohort projection',
+      releaseCohortContract.path,
+    );
+  }
+};
 const assertStructuredWorkspaceMetadata = (): void => {
   const observedMetadata = [
     {
@@ -3352,30 +2885,7 @@ const assertStructuredWorkspaceMetadata = (): void => {
     );
   }
 
-  assertObject(
-    ultramodernConfig.packageSource,
-    `${compactConfigPath} packageSource`,
-    'restore generated compact package-source metadata',
-  );
-  for (const field of workspaceValidationContract.legacy.forbiddenCompactConfigFields) {
-    assert(
-      !Object.hasOwn(ultramodernConfig, field),
-      `Stale legacy field ${compactConfigPath}.${field} is forbidden`,
-    );
-  }
-  for (const field of workspaceValidationContract.legacy.forbiddenPackageSourceFields) {
-    assert(
-      !Object.hasOwn(ultramodernConfig.packageSource, field),
-      `Stale legacy field ${compactConfigPath}.packageSource.${field} is forbidden`,
-    );
-  }
-  for (const field of workspaceValidationContract.legacy.forbiddenTopologyFields) {
-    assert(
-      !Object.hasOwn(topology, field),
-      `Stale legacy field ${workspaceValidationContract.metadata.referenceTopology.path}.${field} is forbidden`,
-    );
-  }
-
+  assertLegacyMetadataFields();
   assertSameIdCohort(
     ultramodernConfig.topology?.apps,
     workspaceValidationContract.cohort.appIds,
@@ -3421,35 +2931,7 @@ const assertStructuredWorkspaceMetadata = (): void => {
     'restore the complete generated ownership cohort',
   );
 
-  for (const manifest of workspaceValidationContract.cohort.packageManifests) {
-    assertExists(manifest.path);
-    const packageJson = readJson(PackageJsonSchema, manifest.path);
-    assert(
-      packageJson.name === manifest.packageName,
-      `${manifest.path} package name must be ${manifest.packageName}`,
-    );
-    if (manifest.role === 'shell' || manifest.role === 'vertical') {
-      assert(
-        packageJson.modernjs?.appId === manifest.id,
-        `${manifest.path} modernjs.appId must be ${manifest.id}`,
-      );
-    }
-  }
-  if (expectedReleaseCohort !== undefined) {
-    const releaseCohortContract = workspaceValidationContract.metadata.releaseCohort;
-    assertSelfCheck(
-      releaseCohortContract?.path === SHARED_VALIDATOR_STRING_009,
-      'authenticated release cohort projection',
-      'Expected release-cohort metadata path is missing or invalid',
-      SHARED_VALIDATOR_STRING_009,
-    );
-    assertSameJson(
-      readJson(ComparableJsonSchema, releaseCohortContract.path),
-      expectedReleaseCohort,
-      'authenticated release cohort projection',
-      releaseCohortContract.path,
-    );
-  }
+  assertMetadataPackageManifests();
 };
 const assertStructuredWorkspaceMetadataSemantics = (): void => {
   assertSameJson(
@@ -3623,6 +3105,17 @@ const normalizedAppPortEnv = (
     ? SHARED_VALIDATOR_STRING_130
     : `VERTICAL_${toEnvSegment(domain ?? id)}_PORT`;
 };
+const normalizedApiExports = (
+  appPath: string,
+  api: NormalizedApp['api'],
+): Pick<NormalizedApp, 'apiClientExport' | 'apiContractExport'> => {
+  const packageExports = readJson(PackageJsonSchema, `${appPath}/package.json`).exports ?? {};
+  const apiContractExport = packageExports['./api'] === undefined ? undefined : './api';
+  const clientExport =
+    api?.protocol === 'rpc' ? SHARED_VALIDATOR_STRING_003 : SHARED_VALIDATOR_STRING_002;
+  const apiClientExport = packageExports[clientExport] === undefined ? undefined : clientExport;
+  return { apiClientExport, apiContractExport };
+};
 const normalizeCompactApp = (rawApp: CompactApp): NormalizedApp => {
   const { api: rawApi, domain: rawDomain, id, port: rawPort, portEnv: rawPortEnv } = rawApp;
   const kind = rawApp.kind === 'vertical' ? 'vertical' : 'shell';
@@ -3635,15 +3128,7 @@ const normalizeCompactApp = (rawApp: CompactApp): NormalizedApp => {
   // Preserve the API protocol so the synthesized generated contract can branch
   // between REST and RPC surfaces.
   const api = normalizedAppApi(rawApi, domain, id);
-  const packageExports = readJson(PackageJsonSchema, `${appPath}/package.json`).exports ?? {};
-  const apiContractExport = packageExports['./api'] === undefined ? undefined : './api';
-  let apiClientExport: NormalizedApp['apiClientExport'];
-  if (api?.protocol === 'rpc' && packageExports[SHARED_VALIDATOR_STRING_003] !== undefined) {
-    apiClientExport = SHARED_VALIDATOR_STRING_003;
-  }
-  if (api?.protocol !== 'rpc' && packageExports[SHARED_VALIDATOR_STRING_002] !== undefined) {
-    apiClientExport = SHARED_VALIDATOR_STRING_002;
-  }
+  const { apiClientExport, apiContractExport } = normalizedApiExports(appPath, api);
   const mfName = normalizedAppMfName(moduleFederation.name, domain, id, kind);
   const port = normalizedAppPort(rawPort, kind);
   const portEnv = normalizedAppPortEnv(rawPortEnv, domain, id, kind);
@@ -3817,38 +3302,7 @@ const createPublicHead = () => ({
     required: ['twitter:card', 'twitter:title', 'twitter:description'],
   },
 });
-const createQualityGates = () => ({
-  assets: {
-    cacheControlRequiredForCss: true,
-    cssPreloadRequired: true,
-    cssResponseRequired: true,
-    sourcemapsPubliclyReferenced: false,
-  },
-  budgets: {
-    cssAssetMaxBytes: 750_000,
-    localeJsonMaxBytes: 100_000,
-    mfManifestMaxBytes: 500_000,
-    sitemapXmlMaxBytes: 500_000,
-    ssrHtmlMaxBytes: 250_000,
-  },
-  csp: {
-    decision: SHARED_VALIDATOR_STRING_109,
-    finalMode: SHARED_VALIDATOR_STRING_110,
-  },
-  indexing: {
-    previewNoindex: true,
-    productionPublicRoutesIndexable: true,
-  },
-  publicRoutes: {
-    requireRobotsSitemapConsistency: true,
-    requireSitemapWhenPresent: true,
-    requireWebManifestWhenPresent: true,
-  },
-  statusCodes: {
-    notFoundRoute: SHARED_VALIDATOR_STRING_030,
-    unknownRouteStatus: 404,
-  },
-});
+
 const createCloudflareRoutes = (app: NormalizedApp) => {
   const hasRenderedSurface = app.kind === 'shell' || app.exposes.length > 0;
   return {
@@ -4072,6 +3526,21 @@ const createApiContract = (app: NormalizedApp) => {
     ...createEffectOperationContract(app),
   };
 };
+const createAppFederationContract = (app: NormalizedApp, apps: readonly NormalizedApp[]) => ({
+  browserSafeExposesOnly: true,
+  dts:
+    app.kind === 'shell' || app.exposes.length > 0
+      ? {
+          compilerInstance: SHARED_VALIDATOR_STRING_068,
+          displayErrorInTerminal: true,
+          tsConfigPath: SHARED_VALIDATOR_STRING_007,
+        }
+      : undefined,
+  exposes: app.exposes,
+  name: app.mfName,
+  remotes: app.verticalRefs.length > 0 ? remoteContractsFor(app, apps) : undefined,
+  verticalRefs: app.verticalRefs.length > 0 ? app.verticalRefs : undefined,
+});
 const createAppContract = (app: NormalizedApp, apps: readonly NormalizedApp[]) => ({
   api: createApiContract(app),
   config: createAppConfigContract(app),
@@ -4101,21 +3570,7 @@ const createAppContract = (app: NormalizedApp, apps: readonly NormalizedApp[]) =
     uiSurface: 'ui',
     version: '0.1.0',
   },
-  moduleFederation: {
-    browserSafeExposesOnly: true,
-    dts:
-      app.kind === 'shell' || app.exposes.length > 0
-        ? {
-            compilerInstance: SHARED_VALIDATOR_STRING_068,
-            displayErrorInTerminal: true,
-            tsConfigPath: SHARED_VALIDATOR_STRING_007,
-          }
-        : undefined,
-    exposes: app.exposes,
-    name: app.mfName,
-    remotes: app.verticalRefs.length > 0 ? remoteContractsFor(app, apps) : undefined,
-    verticalRefs: app.verticalRefs.length > 0 ? app.verticalRefs : undefined,
-  },
+  moduleFederation: createAppFederationContract(app, apps),
   package: app.package ?? packageNameFor(packageScope, app.packageSuffix),
   path: app.path,
   routes: {
@@ -4416,7 +3871,12 @@ const requiredMicroVerticalPaths = (vertical: FullStackVertical): string[] => [
         `${vertical.path}/src/routes/layout.tsx`,
         `${vertical.path}/src/routes/ultramodern-route-head.tsx`,
         `${vertical.path}/src/routes/ultramodern-route-metadata.ts`,
-        ...(vertical.hasOwnerPage ? [`${vertical.path}/src/routes/[lang]/page.tsx`] : []),
+        ...(vertical.hasOwnerPage
+          ? [
+              `${vertical.path}/src/routes/[lang]/page.tsx`,
+              `${vertical.path}/src/routes/ultramodern-jsonld.ts`,
+            ]
+          : []),
         ...(vertical.exposes.includes('./Widget')
           ? [`${vertical.path}/src/routes/[lang]/_mf/fragment/widget/page.tsx`]
           : []),
@@ -4437,6 +3897,9 @@ const requiredMicroVerticalPaths = (vertical: FullStackVertical): string[] => [
 // UI/MF artifacts an `api-only` unit must NOT emit (headless invariant), and
 // API/BFF artifacts a `ui-only`/Horizontal Remote unit must NOT emit.
 const forbiddenMicroVerticalPaths = (vertical: FullStackVertical): string[] => [
+  // Structured data is owner-page-only: a unit that renders no owner page emits no
+  // `application/ld+json`, so it must not ship the JSON-LD helper module either.
+  ...(vertical.hasOwnerPage ? [] : [`${vertical.path}/src/routes/ultramodern-jsonld.ts`]),
   ...(vertical.emitsUi
     ? []
     : [
@@ -4540,6 +4003,13 @@ const assertTopologyVerticalDeliveryUnitContract = (
     );
   }
 };
+const topologyVerticalFederationView = (topologyEntry: ReferenceTopologyVertical) => ({
+  exposes: topologyEntry.moduleFederation?.exposes ?? [],
+  manifestUrl: topologyEntry.moduleFederation?.manifestUrl,
+  name: topologyEntry.moduleFederation?.name,
+  remotes: (topologyEntry.moduleFederation?.remotes ?? []).map(remoteContractSubset),
+  verticalRefs: topologyEntry.moduleFederation?.verticalRefs ?? [],
+});
 const assertTopologyVerticalContract = (vertical: FullStackVertical): void => {
   const topologyEntry = findById(topology.verticals, vertical.id);
   const expectedRefs = vertical.verticalRefs ?? [];
@@ -4560,13 +4030,7 @@ const assertTopologyVerticalContract = (vertical: FullStackVertical): void => {
           }
         : undefined,
       kind: topologyEntry.kind,
-      moduleFederation: {
-        exposes: topologyEntry.moduleFederation?.exposes ?? [],
-        manifestUrl: topologyEntry.moduleFederation?.manifestUrl,
-        name: topologyEntry.moduleFederation?.name,
-        remotes: (topologyEntry.moduleFederation?.remotes ?? []).map(remoteContractSubset),
-        verticalRefs: topologyEntry.moduleFederation?.verticalRefs ?? [],
-      },
+      moduleFederation: topologyVerticalFederationView(topologyEntry),
       package: topologyEntry.package,
       path: topologyEntry.path,
     },
@@ -4652,41 +4116,33 @@ const assertShellDependenciesForVertical = (
   vertical: FullStackVertical,
   expectedShellVerticalIds: readonly string[],
 ): void => {
-  const shellPackages = [
-    {
-      path: SHARED_VALIDATOR_STRING_047,
-      pkg: shellPackage,
-      uiRefs: expectedShellVerticalIds,
-    },
-    ...expectedAdditionalShells.map((shell) => ({
-      path: shell.path,
-      pkg: readJson(PackageJsonSchema, `${shell.path}/package.json`),
-      uiRefs: shell.verticalRefs ?? [],
-    })),
-  ];
-  for (const shellEntry of shellPackages) {
-    const composed = shellEntry.uiRefs.includes(vertical.id) && vertical.exposes.length > 0;
-    if (vertical.emitsApi || composed) {
-      assertSameJson(
-        valueForKey(Object.entries(shellEntry.pkg.dependencies ?? {}), vertical.packageName),
-        SHARED_VALIDATOR_STRING_169,
-        `${shellEntry.path}/package.json dependencies.${vertical.packageName}`,
-        'restore shell dependency for the MicroVertical consumer',
-      );
-    }
-    if (composed) {
-      assertSameJson(
-        valueForKey(
-          Object.entries(shellEntry.pkg[SHARED_VALIDATOR_STRING_173] ?? {}),
-          vertical.zephyrAlias,
-        ),
-        `${vertical.packageName}@workspace:*`,
-        `${shellEntry.path}/package.json zephyr:dependencies.${vertical.zephyrAlias}`,
-        'restore shell Zephyr dependency metadata for the MicroVertical',
-      );
-    }
+  const composed = expectedShellVerticalIds.includes(vertical.id) && vertical.exposes.length > 0;
+  if (vertical.emitsApi || composed) {
+    assertSameJson(
+      valueForKey(Object.entries(shellPackage.dependencies ?? {}), vertical.packageName),
+      SHARED_VALIDATOR_STRING_169,
+      `${SHARED_VALIDATOR_STRING_047}/package.json dependencies.${vertical.packageName}`,
+      'restore shell dependency for the MicroVertical consumer',
+    );
+  }
+  if (composed) {
+    assertSameJson(
+      valueForKey(
+        Object.entries(shellPackage[SHARED_VALIDATOR_STRING_173] ?? {}),
+        vertical.zephyrAlias,
+      ),
+      `${vertical.packageName}@workspace:*`,
+      `${SHARED_VALIDATOR_STRING_047}/package.json zephyr:dependencies.${vertical.zephyrAlias}`,
+      'restore shell Zephyr dependency metadata for the MicroVertical',
+    );
   }
 };
+const generatedVerticalFederationView = (contractEntry: ReturnType<typeof createAppContract>) => ({
+  exposes: contractEntry.moduleFederation?.exposes ?? [],
+  name: contractEntry.moduleFederation?.name,
+  remotes: (contractEntry.moduleFederation?.remotes ?? []).map(remoteContractSubset),
+  verticalRefs: contractEntry.moduleFederation?.verticalRefs ?? [],
+});
 const assertGeneratedVerticalContract = (
   vertical: FullStackVertical,
   generatedContract: ReturnType<typeof readGeneratedContractView>,
@@ -4711,12 +4167,7 @@ const assertGeneratedVerticalContract = (
           }
         : undefined,
       kind: contractEntry.kind,
-      moduleFederation: {
-        exposes: contractEntry.moduleFederation?.exposes ?? [],
-        name: contractEntry.moduleFederation?.name,
-        remotes: (contractEntry.moduleFederation?.remotes ?? []).map(remoteContractSubset),
-        verticalRefs: contractEntry.moduleFederation?.verticalRefs ?? [],
-      },
+      moduleFederation: generatedVerticalFederationView(contractEntry),
       package: contractEntry.package,
       path: contractEntry.path,
       ssr: contractEntry.ssr,
@@ -4743,6 +4194,44 @@ const assertGeneratedVerticalContract = (
     `${generatedContractLabel} apps.${vertical.id}`,
     regenerateMicroVerticalContractFix,
   );
+};
+const assertGeneratedPrimaryShellContract = (
+  generatedContract: ReturnType<typeof readGeneratedContractView>,
+  expectedShellVerticalIds: readonly string[],
+  expectedShellRemotes: ReturnType<typeof expectedRemoteContractSubset>[],
+): boolean => {
+  const shellContract = findById(generatedContract.apps, SHARED_VALIDATOR_STRING_131);
+  assertObject(
+    shellContract,
+    `${generatedContractLabel} apps.shell-super-app`,
+    'regenerate the generated shell contract entry',
+  );
+  if (shellContract === undefined) {
+    return false;
+  }
+  assertSameJson(
+    shellContract.moduleFederation?.verticalRefs ?? [],
+    expectedShellVerticalIds,
+    `${generatedContractLabel} shell moduleFederation.verticalRefs`,
+    'regenerate the generated shell Module Federation contract',
+  );
+  assertSameJson(
+    (shellContract.moduleFederation?.remotes ?? []).map(remoteContractSubset),
+    expectedShellRemotes,
+    `${generatedContractLabel} shell moduleFederation.remotes`,
+    'regenerate the generated shell Module Federation contract',
+  );
+  assertSameJson(
+    shellContract.ssr,
+    {
+      mode: 'stream',
+      moduleFederationAppSSR: true,
+    },
+    `${generatedContractLabel} shell SSR contract`,
+    'restore generated streaming SSR Module Federation settings',
+  );
+
+  return true;
 };
 const assertMicroVerticalContractGraph = (
   generatedContract: ReturnType<typeof readGeneratedContractView>,
@@ -4829,37 +4318,15 @@ const assertMicroVerticalContractGraph = (
     'regenerate the generated contract after topology changes',
   );
 
-  const shellContract = findById(generatedContract.apps, SHARED_VALIDATOR_STRING_131);
-  assertObject(
-    shellContract,
-    `${generatedContractLabel} apps.shell-super-app`,
-    'regenerate the generated shell contract entry',
-  );
-  if (shellContract === undefined) {
+  if (
+    !assertGeneratedPrimaryShellContract(
+      generatedContract,
+      expectedShellVerticalIds,
+      expectedShellRemotes,
+    )
+  ) {
     return;
   }
-  assertSameJson(
-    shellContract.moduleFederation?.verticalRefs ?? [],
-    expectedShellVerticalIds,
-    `${generatedContractLabel} shell moduleFederation.verticalRefs`,
-    'regenerate the generated shell Module Federation contract',
-  );
-  assertSameJson(
-    (shellContract.moduleFederation?.remotes ?? []).map(remoteContractSubset),
-    expectedShellRemotes,
-    `${generatedContractLabel} shell moduleFederation.remotes`,
-    'regenerate the generated shell Module Federation contract',
-  );
-  assertSameJson(
-    shellContract.ssr,
-    {
-      mode: 'stream',
-      moduleFederationAppSSR: true,
-    },
-    `${generatedContractLabel} shell SSR contract`,
-    'restore generated streaming SSR Module Federation settings',
-  );
-
   for (const vertical of fullStackVerticals) {
     for (const requiredPath of requiredMicroVerticalPaths(vertical)) {
       assertRequiredVerticalFile(vertical)(requiredPath);
@@ -4914,6 +4381,20 @@ const assertProjectReferenceEmitConfig = (tsConfig: TsConfig, packagePath: strin
     `${packagePath} must keep TS-Go build info in the generated cache`,
   );
 };
+const expectedVerticalTypecheckIncludes = (
+  vertical: FullStackVertical,
+  verticalPackage: PackageJson,
+) =>
+  vertical.typecheckIncludes ?? [
+    'src',
+    SHARED_VALIDATOR_STRING_075,
+    SHARED_VALIDATOR_STRING_091,
+    'shared',
+    ...(vertical.emitsApi ? ['api'] : []),
+    ...(verticalPackage.modernjs?.ontosModule === undefined
+      ? []
+      : ['vertical.manifest.ts', 'vertical.registration.ts']),
+  ];
 const assertVerticalTsConfigReferenceGraph = (vertical: FullStackVertical): void => {
   const verticalTsConfig = readJson(TsConfigSchema, `${vertical.path}/tsconfig.json`);
   const verticalMfTypesTsConfig = readJson(
@@ -5020,16 +4501,7 @@ const assertVerticalTsConfigReferenceGraph = (vertical: FullStackVertical): void
   );
   assertSameJson(
     verticalTsConfig.include ?? [],
-    vertical.typecheckIncludes ?? [
-      'src',
-      SHARED_VALIDATOR_STRING_075,
-      SHARED_VALIDATOR_STRING_091,
-      'shared',
-      ...(vertical.emitsApi ? ['api'] : []),
-      ...(verticalPackage.modernjs?.ontosModule === undefined
-        ? []
-        : ['vertical.manifest.ts', 'vertical.registration.ts']),
-    ],
+    expectedVerticalTypecheckIncludes(vertical, verticalPackage),
     `${vertical.path}/tsconfig.json include`,
     'restore the generated MicroVertical typecheck boundary',
   );
@@ -5057,6 +4529,22 @@ const assertVerticalTsConfigReferenceGraph = (vertical: FullStackVertical): void
   );
 };
 
+const primaryShellTsConfigReferences = () => {
+  const expectedShellReferences = [
+    SHARED_VALIDATOR_STRING_092,
+    ...sharedPackagePaths.filter((packagePath) => packagePath !== SHARED_VALIDATOR_STRING_177),
+    ...(topology.shell?.verticalRefs ?? [])
+      .flatMap((verticalRef) => {
+        const vertical = fullStackVerticals.find((candidate) => candidate.id === verticalRef);
+        return vertical === undefined ? [] : [vertical];
+      })
+      // The shell only project-references verticals whose API client types it
+      // imports; UI-only remotes are federated at runtime, not type-referenced.
+      .filter((vertical) => vertical.emitsApi)
+      .map((vertical) => vertical.path),
+  ].map((referencePath) => referenceFrom(SHARED_VALIDATOR_STRING_047, referencePath));
+  return expectedShellReferences;
+};
 const assertTsConfigReferenceGraph = () => {
   const baseTsConfig = readJson(TsConfigSchema, 'tsconfig.base.json');
   const rootTsConfig = readJson(TsConfigSchema, 'tsconfig.json');
@@ -5071,19 +4559,7 @@ const assertTsConfigReferenceGraph = () => {
     ...fullStackVerticals.map((vertical) => vertical.path),
     ...additionalShellPaths,
   ].map((referencePath) => ({ path: referencePath }));
-  const expectedShellReferences = [
-    SHARED_VALIDATOR_STRING_092,
-    ...sharedPackagePaths.filter((packagePath) => packagePath !== SHARED_VALIDATOR_STRING_177),
-    ...(topology.shell?.verticalRefs ?? [])
-      .flatMap((verticalRef) => {
-        const vertical = fullStackVerticals.find((candidate) => candidate.id === verticalRef);
-        return vertical === undefined ? [] : [vertical];
-      })
-      // The shell only project-references verticals whose API client types it
-      // imports; UI-only remotes are federated at runtime, not type-referenced.
-      .filter((vertical) => vertical.emitsApi)
-      .map((vertical) => vertical.path),
-  ].map((referencePath) => referenceFrom(SHARED_VALIDATOR_STRING_047, referencePath));
+  const expectedShellReferences = primaryShellTsConfigReferences();
 
   assertSameJson(
     rootTsConfig.files,
@@ -5133,47 +4609,6 @@ const assertTsConfigReferenceGraph = () => {
   for (const vertical of fullStackVerticals) {
     assertVerticalTsConfigReferenceGraph(vertical);
   }
-
-  for (const shell of expectedAdditionalShells) {
-    const additionalShellTsConfig = readJson(TsConfigSchema, `${shell.path}/tsconfig.json`);
-    const additionalShellMfTypesTsConfig = readJson(
-      TsConfigSchema,
-      `${shell.path}/tsconfig.mf-types.json`,
-    );
-    const expectedAdditionalShellReferences = [
-      ...sharedPackagePaths,
-      ...(shell.verticalRefs ?? [])
-        .flatMap((verticalRef) => {
-          const referencedVertical = fullStackVerticals.find(
-            (candidate) => candidate.id === verticalRef,
-          );
-          return referencedVertical === undefined ? [] : [referencedVertical];
-        })
-        .map((referencedVertical) => referencedVertical.path),
-    ].map((referencePath) => referenceFrom(shell.path, referencePath));
-    assertSameJson(
-      additionalShellTsConfig.references ?? [],
-      expectedAdditionalShellReferences,
-      `${shell.path}/tsconfig.json references`,
-      'restore the generated additional-shell project-reference graph',
-    );
-    assertSameJson(
-      additionalShellTsConfig.include ?? [],
-      ['src', SHARED_VALIDATOR_STRING_075, SHARED_VALIDATOR_STRING_091, 'shared'],
-      `${shell.path}/tsconfig.json include`,
-      'restore the generated additional-shell typecheck boundary',
-    );
-    assertProjectReferenceEmitConfig(additionalShellTsConfig, shell.path);
-    assertSameJson(
-      additionalShellMfTypesTsConfig,
-      {
-        extends: SHARED_VALIDATOR_STRING_001,
-        include: [SHARED_VALIDATOR_STRING_137],
-      },
-      `${shell.path}/tsconfig.mf-types.json`,
-      'restore the generated additional-shell Module Federation DTS boundary',
-    );
-  }
 };
 const packageJsonFiles = (startDir: string): string[] => {
   const files: string[] = [];
@@ -5215,9 +4650,47 @@ const packageDependencySections = [
   'optionalDependencies',
   'peerDependencies',
 ] as const;
+const observeModernPackageDependencies = (
+  packageJson: PackageJson,
+  relativePath: string,
+  observedModernPackageNames: Set<string>,
+): void => {
+  const modernPackageNameSet = new Set(workspaceValidationContract.cohort.modernPackages);
+  const standaloneModernTools = workspaceValidationContract.cohort.standaloneModernTools ?? {};
+  for (const packageName of modernDependencyNames(packageJson)) {
+    observedModernPackageNames.add(packageName);
+    if (!modernPackageNameSet.has(packageName)) {
+      const expected = valueForKey(Object.entries(standaloneModernTools), packageName);
+      assert(
+        expected !== undefined,
+        `${relativePath} declares ${packageName} outside package source metadata`,
+      );
+      const declared = packageDependencySections.map(
+        (section) => packageJson[section]?.[packageName],
+      );
+      assert(
+        declared.every((specifier) => specifier === undefined || specifier === expected),
+        `${relativePath} ${packageName} must match standalone package source metadata`,
+      );
+    }
+  }
+};
+const assertModernPackageSpecifiers = (packageJson: PackageJson, relativePath: string): void => {
+  const modernPackageNames = workspaceValidationContract.cohort.modernPackages;
+  for (const section of packageDependencySections) {
+    for (const packageName of modernPackageNames) {
+      const actual = packageJson[section]?.[packageName];
+      if (actual !== undefined) {
+        assert(
+          actual === expectedModernPackageSpecifier(packageName),
+          `${relativePath} ${section}.${packageName} must match package source metadata`,
+        );
+      }
+    }
+  }
+};
 const assertModernPackageCohort = () => {
   const modernPackageNames = workspaceValidationContract.cohort.modernPackages;
-  const modernPackageNameSet = new Set(modernPackageNames);
   const standaloneModernTools = workspaceValidationContract.cohort.standaloneModernTools ?? {};
   const observedModernPackageNames = new Set<string>();
   const observedAppIds: string[] = [];
@@ -5239,34 +4712,8 @@ const assertModernPackageCohort = () => {
     ) {
       observedAppIds.push(packageJson.modernjs.appId);
     }
-    for (const packageName of modernDependencyNames(packageJson)) {
-      observedModernPackageNames.add(packageName);
-      if (!modernPackageNameSet.has(packageName)) {
-        const expected = valueForKey(Object.entries(standaloneModernTools), packageName);
-        assert(
-          expected !== undefined,
-          `${relativePath} declares ${packageName} outside package source metadata`,
-        );
-        const declared = packageDependencySections.map(
-          (section) => packageJson[section]?.[packageName],
-        );
-        assert(
-          declared.every((specifier) => specifier === undefined || specifier === expected),
-          `${relativePath} ${packageName} must match standalone package source metadata`,
-        );
-      }
-    }
-    for (const section of packageDependencySections) {
-      for (const packageName of modernPackageNames) {
-        const actual = packageJson[section]?.[packageName];
-        if (actual !== undefined) {
-          assert(
-            actual === expectedModernPackageSpecifier(packageName),
-            `${relativePath} ${section}.${packageName} must match package source metadata`,
-          );
-        }
-      }
-    }
+    observeModernPackageDependencies(packageJson, relativePath, observedModernPackageNames);
+    assertModernPackageSpecifiers(packageJson, relativePath);
   }
 
   for (const packageName of modernPackageNames) {
@@ -5422,10 +4869,6 @@ const assertPublicHeadContract = (
     `${appId} structured data inference must stay disabled`,
   );
   assert(
-    publicHead.structuredData.helperModule === './src/routes/ultramodern-jsonld',
-    `${appId} structured data helper module is incorrect`,
-  );
-  assert(
     publicHead.structuredData.sanitizesHtmlOpenBracket,
     `${appId} structured data must sanitize HTML open brackets`,
   );
@@ -5451,6 +4894,10 @@ const assertPublicHeadContract = (
     }
     return;
   }
+  assert(
+    publicHead.structuredData.helperModule === './src/routes/ultramodern-jsonld',
+    `${appId} structured data helper module is incorrect`,
+  );
   for (const snippet of [
     "from '@modern-js/runtime/head'",
     '<title>{title}</title>',
@@ -5729,10 +5176,9 @@ const requiredPaths = [
   'apps/shell-super-app/src/routes/index.css',
   'apps/shell-super-app/src/routes/layout.tsx',
   'apps/shell-super-app/src/routes/shell-frame.tsx',
+  'apps/shell-super-app/src/routes/ultramodern-jsonld.ts',
   'apps/shell-super-app/src/routes/ultramodern-route-head.tsx',
   'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-  'apps/shell-super-app/src/routes/vertical-components.tsx',
-  requiredShellWorkerCompositionPath(SHARED_VALIDATOR_STRING_047),
   'apps/shell-super-app/src/routes/[lang]/page.tsx',
   ...shellRouteMetaPaths,
   SHARED_VALIDATOR_STRING_093,
@@ -5775,36 +5221,6 @@ for (const vertical of fullStackVerticals) {
   // config in a headless api-only unit, or an API contract in a UI-only unit).
   for (const forbiddenPath of forbiddenMicroVerticalPaths(vertical)) {
     assertForbiddenVerticalFile(vertical)(forbiddenPath);
-  }
-}
-for (const shell of expectedAdditionalShells) {
-  requiredPaths.push(
-    `${shell.path}/package.json`,
-    `${shell.path}/tsconfig.json`,
-    `${shell.path}/tsconfig.mf-types.json`,
-    `${shell.path}/modern.config.ts`,
-    `${shell.path}/module-federation.config.ts`,
-    `${shell.path}/src/modern-app-env.d.ts`,
-    `${shell.path}/src/modern.runtime.ts`,
-    `${shell.path}/src/api/vertical-clients.ts`,
-    `${shell.path}/locales/en/translation.json`,
-    `${shell.path}/locales/en/${shellNamespace}.json`,
-    `${shell.path}/locales/cs/translation.json`,
-    `${shell.path}/locales/cs/${shellNamespace}.json`,
-    `${shell.path}/src/routes/index.css`,
-    `${shell.path}/src/routes/layout.tsx`,
-    `${shell.path}/src/routes/shell-frame.tsx`,
-    `${shell.path}/src/routes/vertical-components.tsx`,
-    requiredShellWorkerCompositionPath(shell.path),
-    `${shell.path}/src/routes/ultramodern-route-head.tsx`,
-    `${shell.path}/src/routes/ultramodern-route-metadata.ts`,
-    `${shell.path}/src/routes/[lang]/page.tsx`,
-    ...shellRouteMetaPaths.map((relativePath) =>
-      relativePath.replace(/^apps\/shell-super-app/u, shell.path),
-    ),
-  );
-  if (tailwindEnabled) {
-    requiredPaths.push(`${shell.path}/tailwind.config.ts`);
   }
 }
 for (const requiredPath of requiredPaths) {
@@ -6187,25 +5603,57 @@ const sourceRegexCanFollow = (scanner: SourceScanner): boolean => {
     scanner.regexPrecedingKeywords.has(scanner.currentWord)
   );
 };
+const scanSourceSlash = (scanner: SourceScanner, next: string): number | undefined => {
+  if (next === '/') {
+    scanner.state = 'line';
+    return 1;
+  }
+  if (next === '*') {
+    scanner.state = 'block';
+    scanner.result += ' ';
+    return 1;
+  }
+  if (sourceRegexCanFollow(scanner)) {
+    scanner.state = 'regex';
+    scanner.regexInClass = false;
+    emitSourceCodeCharacter(scanner, '/');
+    return 0;
+  }
+  return undefined;
+};
+const scanSourceInterpolation = (scanner: SourceScanner, character: string): boolean => {
+  if (
+    character === '}' &&
+    scanner.interpolations.length > 0 &&
+    scanner.interpolations.at(-1) === 0
+  ) {
+    scanner.interpolations.pop();
+    scanner.state = 'template';
+    scanner.result += character;
+    scanner.lastSignificant = character;
+    scanner.currentWord = '';
+    return true;
+  }
+  if (scanner.interpolations.length > 0) {
+    const lastIndex = scanner.interpolations.length - 1;
+    if (character === '{') {
+      scanner.interpolations[lastIndex] += 1;
+    } else if (character === '}') {
+      scanner.interpolations[lastIndex] -= 1;
+    }
+  }
+  return false;
+};
 const scanSourceCodeCharacter = (
   scanner: SourceScanner,
   character: string,
   next: string,
 ): number => {
-  if (character === '/' && next === '/') {
-    scanner.state = 'line';
-    return 1;
-  }
-  if (character === '/' && next === '*') {
-    scanner.state = 'block';
-    scanner.result += ' ';
-    return 1;
-  }
-  if (character === '/' && sourceRegexCanFollow(scanner)) {
-    scanner.state = 'regex';
-    scanner.regexInClass = false;
-    emitSourceCodeCharacter(scanner, character);
-    return 0;
+  if (character === '/') {
+    const consumed = scanSourceSlash(scanner, next);
+    if (consumed !== undefined) {
+      return consumed;
+    }
   }
   if (character === "'" || character === '"') {
     scanner.state = character === "'" ? 'single' : 'double';
@@ -6217,27 +5665,9 @@ const scanSourceCodeCharacter = (
     scanner.result += character;
     return 0;
   }
-  if (
-    character === '}' &&
-    scanner.interpolations.length > 0 &&
-    scanner.interpolations.at(-1) === 0
-  ) {
-    scanner.interpolations.pop();
-    scanner.state = 'template';
-    scanner.result += character;
-    scanner.lastSignificant = character;
-    scanner.currentWord = '';
-    return 0;
+  if (!scanSourceInterpolation(scanner, character)) {
+    emitSourceCodeCharacter(scanner, character);
   }
-  if (scanner.interpolations.length > 0) {
-    const lastIndex = scanner.interpolations.length - 1;
-    if (character === '{') {
-      scanner.interpolations[lastIndex] += 1;
-    } else if (character === '}') {
-      scanner.interpolations[lastIndex] -= 1;
-    }
-  }
-  emitSourceCodeCharacter(scanner, character);
   return 0;
 };
 const scanSourceLineComment = (scanner: SourceScanner, character: string): number => {
@@ -6492,41 +5922,49 @@ const assertThinShellPolicy = (policy: StructuralShellPolicy): void => {
     }
   }
 };
+const assertFederatedCompositionFile = (
+  file: string,
+  host: FederatedCompositionSourcePolicy['hosts'][number],
+  policy: FederatedCompositionSourcePolicy,
+): void => {
+  const source = stripSourceComments(fs.readFileSync(file, 'utf-8'));
+  const relative = path.relative(root, file).split(path.sep).join('/');
+  for (const pattern of policy.forbiddenSourcePatterns) {
+    const match = new RegExp(pattern.expression, pattern.flags).exec(source);
+    assert(
+      match === null,
+      selfCheckFailure(
+        `federated composition ${pattern.id}`,
+        `${pattern.diagnostic} Found forbidden source at ${relative}:${match?.index ?? 0}`,
+        'compose remote rendering through framework Module Federation primitives',
+      ),
+    );
+  }
+  // Declaration files cannot execute. Ambient federation declarations may
+  // re-export a workspace component solely to preserve its public prop
+  // type, so their specifiers are not runtime implementation imports.
+  if (!/\.d\.(?:ts|mts|cts)$/u.test(relative)) {
+    for (const specifier of runtimeModuleSpecifiers(source)) {
+      const remote = remoteImplementationFor(specifier, host.remotes);
+      assert(
+        remote === undefined,
+        selfCheckFailure(
+          'federated composition remote-runtime-package-import',
+          `Host ${host.id} imports remote render implementation ${specifier} from ${remote?.id} at ${relative}`,
+          'use import type for contracts or compose the implementation through Module Federation',
+        ),
+      );
+    }
+  }
+};
 const assertFederatedCompositionSourcePolicy = (policy: FederatedCompositionSourcePolicy): void => {
   for (const host of policy.hosts) {
     const srcAbsolute = path.join(root, host.srcDir);
-    if (fs.existsSync(srcAbsolute)) {
-      for (const file of collectSourceFiles(srcAbsolute)) {
-        const source = stripSourceComments(fs.readFileSync(file, 'utf-8'));
-        const relative = path.relative(root, file).split(path.sep).join('/');
-        for (const pattern of policy.forbiddenSourcePatterns) {
-          const match = new RegExp(pattern.expression, pattern.flags).exec(source);
-          assert(
-            match === null,
-            selfCheckFailure(
-              `federated composition ${pattern.id}`,
-              `${pattern.diagnostic} Found forbidden source at ${relative}:${match?.index ?? 0}`,
-              'compose remote rendering through framework Module Federation primitives',
-            ),
-          );
-        }
-        // Declaration files cannot execute. Ambient federation declarations may
-        // re-export a workspace component solely to preserve its public prop
-        // type, so their specifiers are not runtime implementation imports.
-        if (!/\.d\.(?:ts|mts|cts)$/u.test(relative)) {
-          for (const specifier of runtimeModuleSpecifiers(source)) {
-            const remote = remoteImplementationFor(specifier, host.remotes);
-            assert(
-              remote === undefined,
-              selfCheckFailure(
-                'federated composition remote-runtime-package-import',
-                `Host ${host.id} imports remote render implementation ${specifier} from ${remote?.id} at ${relative}`,
-                'use import type for contracts or compose the implementation through Module Federation',
-              ),
-            );
-          }
-        }
-      }
+    if (!fs.existsSync(srcAbsolute)) {
+      continue;
+    }
+    for (const file of collectSourceFiles(srcAbsolute)) {
+      assertFederatedCompositionFile(file, host, policy);
     }
   }
 };
@@ -6541,242 +5979,7 @@ const assertStructuralShellPolicy = (): void => {
   }
 };
 assertStructuralShellPolicy();
-const assertAdditionalShellSources = (shell: (typeof expectedAdditionalShells)[number]): void => {
-  const modernConfig = readText(`${shell.path}/modern.config.ts`);
-  const moduleFederationConfig = readText(`${shell.path}/module-federation.config.ts`);
-  const runtimeConfig = readText(`${shell.path}/src/modern.runtime.ts`);
-  const styles = readText(`${shell.path}/src/routes/index.css`);
-  const shellFrame = readText(`${shell.path}/src/routes/shell-frame.tsx`);
-  const routePage = readText(`${shell.path}/src/routes/[lang]/page.tsx`);
-  const remoteComponents = readText(`${shell.path}/src/routes/vertical-components.tsx`);
-  const workerRemoteComponents = readText(requiredShellWorkerCompositionPath(shell.path));
-  assert(
-    modernConfig.includes(`const appId = '${shell.id}';`),
-    `${shell.id} modern.config.ts appId is incorrect`,
-  );
-  assert(
-    modernConfig.includes(
-      `const port = Number(getBuildConfigEnvironment('${shell.portEnv}') ?? ${shell.port});`,
-    ),
-    `${shell.id} modern.config.ts port is incorrect`,
-  );
-  assert(
-    modernConfig.includes(`uniqueName('${shell.mfName}')`),
-    `${shell.id} modern.config.ts Rspack identity is incorrect`,
-  );
-  assert(
-    moduleFederationConfig.includes(`name: '${shell.mfName}'`),
-    `${shell.id} Module Federation container name is incorrect`,
-  );
-  assert(
-    new RegExp(`appId:\\s*['"]${shell.id}['"]`, 'u').test(runtimeConfig),
-    `${shell.id} runtime boundary metadata must identify its own shell`,
-  );
-  assert(
-    routePage.includes('ShellFrame') && routePage.includes('VerticalShowcase'),
-    `${shell.id} route page must use its own shell composition host`,
-  );
-  assert(
-    remoteComponents.includes(`data-modern-boundary-id="${shell.mfName}"`),
-    `${shell.id} remote composition boundary must use its own MF identity`,
-  );
-  assert(
-    !workerRemoteComponents.includes('@module-federation') &&
-      !workerRemoteComponents.includes('import('),
-    `${shell.id} Worker SSR must not include native Module Federation runtime or remote imports`,
-  );
-  if (tailwindEnabled) {
-    assert(
-      styles.includes(`prefix(${shell.tailwindPrefix})`),
-      `${shell.id} styles must use its shell-specific Tailwind prefix`,
-    );
-  }
-  assert(
-    shellFrame.includes(`${shell.tailwindPrefix}:`),
-    `${shell.id} shell-frame must use its shell-specific Tailwind prefix`,
-  );
-  if ((shell.verticalRefs ?? []).length > 0) {
-    assert(
-      workerRemoteComponents.includes('DistributedSsrBoundary'),
-      `${shell.id} Worker SSR must use distributed fragment boundaries`,
-    );
-    assert(
-      shell.degradedState?.required ?? false,
-      `${shell.id} degraded-state contract must be required for remote consumption`,
-    );
-    assert(
-      remoteComponents.includes(`${shell.tailwindPrefix}:text-red-900`),
-      `${shell.id} degraded fallback must report its own shell identity`,
-    );
-    assert(
-      remoteComponents.includes('fallback: <RemoteUnavailable />'),
-      `${shell.id} consumption points must have a degraded fallback`,
-    );
-    assert(
-      !remoteComponents.includes('data-modern-boundary-id="shellSuperApp"'),
-      `${shell.id} degraded fallback must not report the primary shell`,
-    );
-  }
-};
-
-const assertAdditionalShellOwnerAndDeliveryUnit = (
-  shell: (typeof expectedAdditionalShells)[number],
-  configShell: CompactShell,
-): boolean => {
-  const { owner } = configShell;
-  assertObject(
-    owner,
-    `${compactConfigPath} shells.${shell.id}.owner`,
-    'record exactly one owner for every configured Delivery Unit',
-  );
-  if (owner === undefined) {
-    return false;
-  }
-  assert(
-    ['team', 'agent', 'agent-team'].includes(owner.kind) &&
-      isString(owner.id) &&
-      owner.id.length > 0,
-    `${compactConfigPath} shells.${shell.id}.owner must identify one accountable owner`,
-  );
-  assertSameJson(
-    owner,
-    shell.owner,
-    `${compactConfigPath} shells.${shell.id}.owner`,
-    'restore the generated additional-shell owner attribution',
-  );
-  assertObject(
-    configShell.deliveryUnit,
-    `${compactConfigPath} shells.${shell.id}.deliveryUnit`,
-    'restore the generated additional-shell Delivery Unit identity',
-  );
-  if (configShell.deliveryUnit === undefined) {
-    return false;
-  }
-  assert(
-    isString(configShell.deliveryUnit.unitId) &&
-      configShell.deliveryUnit.unitId.length > 0 &&
-      isString(configShell.deliveryUnit.buildMarker) &&
-      configShell.deliveryUnit.buildMarker.length > 0,
-    `${compactConfigPath} shells.${shell.id}.deliveryUnit must carry unitId and buildMarker`,
-  );
-  return true;
-};
-const assertAdditionalShellContract = (
-  shell: (typeof expectedAdditionalShells)[number],
-  configuredShellById: ReadonlyMap<string, CompactShell>,
-): void => {
-  const configShell = configuredShellById.get(shell.id);
-  assertObject(
-    configShell,
-    `${compactConfigPath} shells.${shell.id}`,
-    'restore the generated additional-shell config record',
-  );
-  if (configShell === undefined) {
-    return;
-  }
-  assertSameJson(
-    {
-      deliveryUnit: configShell.deliveryUnit,
-      id: configShell.id,
-      kind: configShell.kind,
-      mfName: configShell.mfName,
-      moduleFederation: configShell.moduleFederation,
-      name: configShell.name,
-      owner: configShell.owner,
-      package: configShell.package,
-      path: configShell.path,
-      port: configShell.port,
-      portEnv: configShell.portEnv,
-      verticalRefs: configShell.verticalRefs,
-    },
-    {
-      deliveryUnit: shell.deliveryUnit,
-      id: shell.id,
-      kind: 'shell',
-      mfName: shell.mfName,
-      moduleFederation: shell.moduleFederation,
-      name: shell.id.replace(/^shell-/u, ''),
-      owner: shell.owner,
-      package: shell.packageName,
-      path: shell.path,
-      port: shell.port,
-      portEnv: shell.portEnv,
-      verticalRefs: shell.verticalRefs,
-    },
-    `${compactConfigPath} shells.${shell.id}`,
-    'restore the complete additional-shell config record',
-  );
-  assert(
-    !Object.hasOwn(overlay.ports ?? {}, shell.id),
-    `${shell.id} port must stay in config.shells, not the development overlay`,
-  );
-  if (!assertAdditionalShellOwnerAndDeliveryUnit(shell, configShell)) {
-    return;
-  }
-
-  const packagePath = `${shell.path}/package.json`;
-  const packageJson = readJson(PackageJsonSchema, packagePath);
-  assert(packageJson.name === shell.packageName, `${shell.id} package name is incorrect`);
-  assert(
-    packageJson.modernjs?.appId === shell.id,
-    `${shell.id} package modernjs.appId is incorrect`,
-  );
-  assert(packageJson.modernjs?.role === 'shell', `${shell.id} package modernjs.role must be shell`);
-  assert(
-    packageJson.scripts?.[SHARED_VALIDATOR_STRING_060] === SHARED_VALIDATOR_STRING_144,
-    `${shell.id} must expose cloudflare:deploy`,
-  );
-  assert(
-    packageJson.scripts?.[SHARED_VALIDATOR_STRING_061]?.includes(`--app ${shell.id}`) ?? false,
-    `${shell.id} must expose cloudflare:proof`,
-  );
-
-  const buildArtifact = readJson(
-    BuildArtifactSchema,
-    `${shell.path}/shared/ultramodern-build.json`,
-  );
-  const buildSource = readText(`${shell.path}/shared/ultramodern-build.ts`);
-  assert(
-    buildArtifact.deliveryUnit?.appId === shell.id,
-    `${shell.id} build artifact appId is incorrect`,
-  );
-  assert(
-    buildArtifact.deliveryUnit?.buildMarker === shell.deliveryUnit?.buildMarker,
-    `${shell.id} build marker is not participating in the build artifact`,
-  );
-  assertSameJson(
-    deliveryUnitBlock(configShell.deliveryUnit),
-    deliveryUnitBlock(shell.deliveryUnit),
-    `${compactConfigPath} shells.${shell.id}.deliveryUnit`,
-    deliveryUnitIdentityFixArea,
-  );
-  assertSameJson(
-    deliveryUnitBlock(buildArtifact.deliveryUnit),
-    deliveryUnitBlock(shell.deliveryUnit),
-    `${shell.path}/shared/ultramodern-build.json deliveryUnit`,
-    deliveryUnitIdentityFixArea,
-  );
-  assert(
-    buildSource.includes(
-      'export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;',
-    ),
-    `${shell.path}/shared/ultramodern-build.ts must expose the shell delivery-unit identity`,
-  );
-  assertBuildFacadeExport(
-    buildSource,
-    SHARED_VALIDATOR_STRING_152,
-    'ultramodernBuildArtifact.surfaces.ui',
-    `${shell.path}/shared/ultramodern-build.ts ultramodernUiMarker`,
-  );
-  assert(
-    shell.degradedState?.appId === shell.id && shell.degradedState?.status === 'degraded',
-    `${shell.id} degraded-state contract must identify its own shell`,
-  );
-
-  assertAdditionalShellSources(shell);
-};
-
-const assertAdditionalShellCohort = () => {
+const assertConfiguredDevelopmentPorts = (): void => {
   const primaryShellConfig = findById(
     ultramodernConfig.topology?.apps,
     SHARED_VALIDATOR_STRING_131,
@@ -6787,10 +5990,6 @@ const assertAdditionalShellCohort = () => {
     ...(Object.hasOwn(overlayPorts, SHARED_VALIDATOR_STRING_131)
       ? []
       : [{ id: SHARED_VALIDATOR_STRING_131, port: primaryShellConfig?.port }]),
-    ...expectedAdditionalShells.map((shell) => ({
-      id: shell.id,
-      port: shell.port,
-    })),
   ];
   const portsByValue = new Map<number, string>();
   for (const { id, port } of configuredPorts) {
@@ -6806,102 +6005,12 @@ const assertAdditionalShellCohort = () => {
     );
     portsByValue.set(port, id);
   }
-
-  if (expectedAdditionalShellIds.length === 0) {
-    assert(
-      ultramodernConfig.shells === undefined,
-      'Single-shell workspace must not declare config.shells',
-    );
-    return;
-  }
-
-  assertSameIdCohort(
-    ultramodernConfig.shells,
-    expectedAdditionalShellIds,
-    `${compactConfigPath} shells`,
-    'restore every configured additional shell',
-  );
-  const configuredShellRecords = ultramodernConfig.shells ?? [];
-  const configuredShellById = new Map(configuredShellRecords.map((shell) => [shell.id, shell]));
-  assertUniqueStrings(
-    [
-      primaryShellConfig?.moduleFederation?.name,
-      ...expectedAdditionalShells.map((shell) => shell.mfName),
-    ].flatMap((name) => (name === undefined ? [] : [name])),
-    'configured shell Module Federation identities',
-  );
-  assertUniqueStrings(
-    expectedAdditionalShells.flatMap((shell) => {
-      const marker = shell.deliveryUnit?.buildMarker;
-      return marker === undefined ? [] : [marker];
-    }),
-    'configured shell build markers',
-  );
-
-  const configuredOrigins = sortedCopy([...portsByValue.keys()], (left, right) => left - right).map(
-    (port) => `http://localhost:${port}`,
-  );
-
-  for (const shell of expectedAdditionalShells) {
-    assertAdditionalShellContract(shell, configuredShellById);
-  }
-
-  for (const appPath of [
-    SHARED_VALIDATOR_STRING_047,
-    ...expectedAdditionalShells.map((shell) => shell.path),
-    ...fullStackVerticals.map((vertical) => vertical.path),
-  ]) {
-    const modernConfig = readText(`${appPath}/modern.config.ts`);
-    for (const origin of configuredOrigins) {
-      assert(
-        modernConfig.includes(`'${origin}'`),
-        `${appPath} MF dev CORS must allow configured origin ${origin}`,
-      );
-    }
-    assert(
-      modernConfig.includes('credentials: false'),
-      `${appPath} MF asset CORS must disable credentials`,
-    );
-    assert(
-      !modernConfig.includes('credentials: true'),
-      `${appPath} MF asset CORS must not enable credentials`,
-    );
-    assert(
-      !/origin:\s*(?:true|\*|['"]\*['"])/u.test(modernConfig),
-      `${appPath} MF dev CORS must not reflect arbitrary origins`,
-    );
-  }
-
-  // Zerops artifacts exist whenever the workspace has delivery units at all
-  // (ui-only and horizontal-remote units deploy too); a shell-only workspace
-  // must not carry one.
-  if (hasDeliveryUnits) {
-    assertExists(SHARED_VALIDATOR_STRING_174);
-    const zeropsYaml = readText(SHARED_VALIDATOR_STRING_174);
-    assert(
-      zeropsYaml.includes(`setup: ${quoteYamlString(SHARED_VALIDATOR_STRING_132)}`),
-      'shell-super-app must have a Zerops service',
-    );
-    for (const shell of expectedAdditionalShells) {
-      const runtimePath = `.zerops/runtime/${shell.id}`;
-      assert(
-        zeropsYaml.includes(`setup: ${quoteYamlString(shell.id)}`),
-        `${shell.id} must have a Zerops service`,
-      );
-      assert(
-        zeropsYaml.includes(`start: cd ${quoteShellValue(runtimePath)} && npm run serve`),
-        `${shell.id} Zerops service start command is missing`,
-      );
-      assert(
-        zeropsYaml.includes(`        ${shell.portEnv}: ${quoteYamlString(String(shell.port))}`),
-        `${shell.id} Zerops service port environment is missing`,
-      );
-    }
-  } else {
-    assertNotExists(SHARED_VALIDATOR_STRING_174);
-  }
 };
-assertAdditionalShellCohort();
+assertConfiguredDevelopmentPorts();
+assert(
+  ultramodernConfig.shells === undefined,
+  'Single-shell workspace must not declare config.shells',
+);
 assert(
   rootPackage.devDependencies?.[SHARED_VALIDATOR_STRING_024] ===
     expectedModernPackageSpecifier(SHARED_VALIDATOR_STRING_024),
@@ -7207,8 +6316,8 @@ assert(
     !rootPackage.scripts.check.includes('pnpm node:proof') &&
     rootPackage.scripts.check.endsWith(
       bridgeConfig
-        ? '&& pnpm performance:readiness && pnpm bridge:check'
-        : '&& pnpm performance:readiness',
+        ? '&& pnpm performance:readiness && pnpm bridge:check && pnpm quality:check'
+        : '&& pnpm performance:readiness && pnpm quality:check',
     ),
   'Root check must remain static while running default-on performance readiness diagnostics and bridge gates when configured',
 );
@@ -7441,16 +6550,12 @@ if (hasDeliveryUnits) {
 const performanceReadinessConfig = readText(SHARED_VALIDATOR_STRING_121);
 const assertToolWrapper = (scriptPath: string, command: string): void => {
   const source = readText(scriptPath);
-  assert(source.includes('modern-js-create'), `${scriptPath} must delegate to modern-js-create`);
   assert(
-    source.includes('ULTRAMODERN_CREATE_BIN'),
-    `${scriptPath} must support local create-bin overrides for generated-workspace tests`,
+    hasUltramodernDispatch(source, command, readText('scripts/shared/ultramodern-command.mts')) ||
+      (command === 'skills' &&
+        hasUltramodernSkillsDispatch(source, readText('scripts/shared/ultramodern-launch.mts'))),
+    `${scriptPath} must delegate ${command} through the override-aware UltraModern runner`,
   );
-  assert(
-    source.includes("'ultramodern'") || source.includes('"ultramodern"'),
-    `${scriptPath} must dispatch through the UltraModern tool surface`,
-  );
-  assert(source.includes(command), `${scriptPath} must dispatch ${command}`);
 };
 assert(
   performanceReadinessConfig.includes('UltramodernPerformanceReadinessDiagnosticsConfig'),
@@ -7685,7 +6790,9 @@ assert(
   'Shell route metadata compatibility manifest must be marked generated',
 );
 assert(
-  shellRouteMetadata.includes("authoring: 'colocated-route-meta'"),
+  shellRouteMetadata.includes(
+    'Author route metadata in colocated src/routes/**/route.meta.ts files.',
+  ),
   'Shell route metadata manifest must advertise colocated authoring',
 );
 const expectedZephyrDependencies = Object.fromEntries(
@@ -8125,7 +7232,9 @@ for (const vertical of fullStackVerticals) {
       `${vertical.id} route metadata compatibility manifest must be marked generated`,
     );
     assert(
-      routeMetadata.includes("authoring: 'colocated-route-meta'"),
+      routeMetadata.includes(
+        'Author route metadata in colocated src/routes/**/route.meta.ts files.',
+      ),
       `${vertical.id} route metadata manifest must advertise colocated authoring`,
     );
   }

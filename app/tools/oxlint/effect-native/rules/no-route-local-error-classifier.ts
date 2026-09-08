@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A9** — "Preserve typed Effects through the frontend" ("ten route-specific error
  * classifiers", "Exhaustive `Match` against a shared frontend failure vocabulary") and **A4** —
@@ -60,16 +61,13 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `routeGlobs` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { compile, stringArray } from '../shared/options.ts';
+import { isNode, memberName, type Syntax } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
 
 const DEFAULT_ROUTE_GLOBS = ['apps/*/src/routes/**', 'verticals/*/src/routes/**'];
 
@@ -110,37 +108,10 @@ interface RuleOptions {
   readonly allowTestFiles: boolean;
 }
 
-type AnyNode = Record<string, unknown> & { readonly type: string };
-
-function isNode(value: unknown): value is AnyNode {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as { type?: unknown }).type === 'string'
-  );
-}
-
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function compile(value: unknown, fallback: string, flags: string): RegExp {
-  const source = typeof value === 'string' && value.length > 0 ? value : fallback;
-  try {
-    return new RegExp(source, flags);
-  } catch {
-    return new RegExp(fallback, flags);
-  }
-}
+type AnyNode = Syntax;
 
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     routeGlobs: stringArray(record.routeGlobs, DEFAULT_ROUTE_GLOBS),
     namePattern: compile(record.namePattern, DEFAULT_NAME_PATTERN, 'u'),
@@ -155,15 +126,6 @@ function readOptions(context: Context): RuleOptions {
     allowedNames: stringArray(record.allowedNames, []),
     allowTestFiles: record.allowTestFiles === true,
   };
-}
-
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
 }
 
 /**
@@ -189,12 +151,15 @@ function forEachNode(
     seen.add(current);
     if (skip !== undefined && skip(current)) continue;
     visit(current);
-    for (const key of Object.keys(current)) {
-      if (key === 'parent') continue;
-      const value = current[key];
-      if (value === null || typeof value !== 'object') continue;
-      stack.push(value);
-    }
+    pushChildren(current, stack);
+  }
+}
+
+function pushChildren(node: AnyNode, stack: unknown[]): void {
+  for (const key of Object.keys(node)) {
+    if (key === 'parent') continue;
+    const value = node[key];
+    if (value !== null && typeof value === 'object') stack.push(value);
   }
 }
 
@@ -232,84 +197,43 @@ function collectTypeName(typeName: unknown, into: Set<string>): void {
   collectTypeName(typeName.right, into);
 }
 
-/**
- * `import type { ErrorClassificationInput as X }` → `X` really *is* the projection type, while a
- * local alias that merely prints as `ErrorClassificationInput` is not. Maps local → imported name.
- */
-/** Identifier names bound to the literal `'_tag'`, so `error[TAG]` is still a discriminant read. */
-/** Non-computed `.x`, computed `["x"]`, or computed `[TAG]` where `const TAG = '_tag'`. */
-function memberPropertyName(node: AnyNode, tagKeyAliases: ReadonlySet<string>): string | null {
-  const property = node.property;
-  if (!isNode(property)) return null;
-  if (node.computed === true) {
-    if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-    if (
-      property.type === 'Identifier' &&
-      typeof property.name === 'string' &&
-      tagKeyAliases.has(property.name)
-    ) {
-      return TAG_PROPERTY;
-    }
-    return null;
-  }
-  if (property.type === 'PrivateIdentifier') return null;
-  return property.type === 'Identifier' && typeof property.name === 'string' ? property.name : null;
-}
-
-/** `error.reason._tag` → `error`; stops at anything that is not a member/assertion wrapper. */
-function rootIdentifierName(node: unknown): string | null {
-  let current: unknown = node;
-  while (isNode(current)) {
-    if (current.type === 'Identifier')
-      return typeof current.name === 'string' ? current.name : null;
-    if (current.type === 'MemberExpression') {
-      current = current.object;
-      continue;
-    }
-    if (TRANSPARENT_EXPRESSIONS.has(current.type)) {
-      current = current.expression;
-      continue;
-    }
-    return null;
+/** Every identifier a binding pattern introduces (`{ error }`, `[first]`, `{ a: { b } }`, rest, default). */
+function unwrapParameter(pattern: unknown): AnyNode | null {
+  let target = pattern;
+  const edges: Readonly<Record<string, string>> = {
+    TSParameterProperty: 'parameter',
+    AssignmentPattern: 'left',
+    RestElement: 'argument',
+  };
+  while (isNode(target)) {
+    const edge = edges[target.type];
+    if (edge === undefined) return target;
+    target = target[edge];
   }
   return null;
 }
 
-/** Every identifier a binding pattern introduces (`{ error }`, `[first]`, `{ a: { b } }`, rest, default). */
 function patternBindingNames(pattern: unknown, into: Set<string>): void {
-  let target: unknown = pattern;
-  while (isNode(target)) {
-    if (target.type === 'TSParameterProperty') {
-      target = target.parameter;
-      continue;
-    }
-    if (target.type === 'AssignmentPattern') {
-      target = target.left;
-      continue;
-    }
-    if (target.type === 'RestElement') {
-      target = target.argument;
-      continue;
-    }
-    break;
-  }
-  if (!isNode(target)) return;
+  const target = unwrapParameter(pattern);
+  if (target === null) return;
   if (target.type === 'Identifier') {
     if (typeof target.name === 'string') into.add(target.name);
     return;
   }
   if (target.type === 'ObjectPattern') {
-    const properties = Array.isArray(target.properties) ? target.properties : [];
-    for (const property of properties) {
-      if (!isNode(property)) continue;
-      if (property.type === 'Property') patternBindingNames(property.value, into);
-      else patternBindingNames(property, into);
-    }
+    collectObjectBindings(target.properties, into);
     return;
   }
-  if (target.type === 'ArrayPattern') {
-    const elements = Array.isArray(target.elements) ? target.elements : [];
-    for (const element of elements) patternBindingNames(element, into);
+  if (target.type === 'ArrayPattern' && Array.isArray(target.elements)) {
+    for (const element of target.elements) patternBindingNames(element, into);
+  }
+}
+
+function collectObjectBindings(properties: unknown, into: Set<string>): void {
+  if (!Array.isArray(properties)) return;
+  for (const property of properties) {
+    if (!isNode(property)) continue;
+    patternBindingNames(property.type === 'Property' ? property.value : property, into);
   }
 }
 
@@ -339,22 +263,7 @@ interface ParameterShape {
 }
 
 function parameterShape(parameter: unknown): ParameterShape {
-  let target: unknown = parameter;
-  while (isNode(target)) {
-    if (target.type === 'TSParameterProperty') {
-      target = target.parameter;
-      continue;
-    }
-    if (target.type === 'AssignmentPattern') {
-      target = target.left;
-      continue;
-    }
-    if (target.type === 'RestElement') {
-      target = target.argument;
-      continue;
-    }
-    break;
-  }
+  const target = unwrapParameter(parameter);
   if (!isNode(target))
     return { name: null, bindings: [], typeNames: new Set(), destructuresTag: false };
   const typeNames = referencedTypeNames(target.typeAnnotation);
@@ -376,13 +285,41 @@ function parameterShape(parameter: unknown): ParameterShape {
  */
 function variableAt(context: Context, node: AnyNode): Variable | null {
   if (node.type !== 'Identifier' || typeof node.name !== 'string') return null;
-  let scope: Scope | null = context.sourceCode.getScope(node as unknown as ESTree.Node);
-  while (scope !== null) {
-    const variable = scope.set.get(node.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
+  return lookupVariable(context, node as unknown as ESTree.Node);
+}
+
+function computedTagKey(context: Context, node: AnyNode): boolean {
+  if (node.computed !== true || !isNode(node.property)) return false;
+  const variable = variableAt(context, node.property);
+  if (
+    variable === null ||
+    variable.references.some((reference) => reference.isWrite() && !reference.init)
+  )
+    return false;
+  return variable.defs.some((definition) => {
+    if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator')
+      return false;
+    const init = unwrapExpression(definition.node.init);
+    return init?.type === 'Literal' && init.value === TAG_PROPERTY;
+  });
+}
+
+function readsParameterTag(
+  context: Context,
+  node: AnyNode,
+  fromParameter: (value: unknown) => boolean,
+): boolean {
+  if (node.type === 'MemberExpression') {
+    const key = memberName(node);
+    const isTag = key === TAG_PROPERTY || (key === null && computedTagKey(context, node));
+    return isTag && fromParameter(node.object);
   }
-  return null;
+  return (
+    node.type === 'VariableDeclarator' &&
+    isNode(node.id) &&
+    patternHasTagKey(node.id) &&
+    fromParameter(node.init)
+  );
 }
 
 function discriminatesTag(
@@ -415,27 +352,7 @@ function discriminatesTag(
   };
   let found = false;
   forEachNode(body, (node) => {
-    if (found) return;
-    if (node.type === 'MemberExpression') {
-      let key = memberPropertyName(node, new Set());
-      if (key === null && node.computed === true && isNode(node.property)) {
-        const variable = variableAt(context, node.property);
-        if (
-          variable !== null &&
-          !variable.references.some((reference) => reference.isWrite() && !reference.init)
-        ) {
-          for (const definition of variable.defs) {
-            if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator')
-              continue;
-            const init = unwrapExpression(definition.node.init);
-            if (init?.type === 'Literal' && init.value === TAG_PROPERTY) key = TAG_PROPERTY;
-          }
-        }
-      }
-      if (key === TAG_PROPERTY && fromParameter(node.object)) found = true;
-    } else if (node.type === 'VariableDeclarator' && isNode(node.id) && patternHasTagKey(node.id)) {
-      if (fromParameter(node.init)) found = true;
-    }
+    if (!found) found = readsParameterTag(context, node, fromParameter);
   });
   return found;
 }
@@ -449,7 +366,11 @@ function isExitEnvelope(context: Context, parameter: unknown): boolean {
   if (!isNode(target) || !isNode(target.typeAnnotation)) return false;
   const type = target.typeAnnotation.typeAnnotation;
   if (!isNode(type) || type.type !== 'TSTypeReference' || !isNode(type.typeName)) return false;
-  let root = type.typeName;
+  return exitTypeReference(context, type.typeName);
+}
+
+function exitTypeReference(context: Context, name: AnyNode): boolean {
+  let root = name;
   const parts: string[] = [];
   while (root.type === 'TSQualifiedName' && isNode(root.left) && isNode(root.right)) {
     if (typeof root.right.name !== 'string') return false;
@@ -459,27 +380,21 @@ function isExitEnvelope(context: Context, parameter: unknown): boolean {
   const variable = variableAt(context, root);
   if (variable === null) return false;
   return variable.defs.some((definition) => {
-    if (definition.type !== 'ImportBinding') return false;
-    const declaration = definition.parent;
-    if (declaration?.type !== 'ImportDeclaration') return false;
-    const source = declaration.source.value;
-    const specifier = definition.node;
-    if (specifier.type === 'ImportSpecifier') {
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      return (
-        (source === 'effect' && imported === 'Exit' && parts.join('.') === 'Exit') ||
-        (source === 'effect/Exit' && imported === 'Exit' && parts.length === 0)
-      );
-    }
-    return (
-      specifier.type === 'ImportNamespaceSpecifier' &&
-      ((source === 'effect/Exit' && parts.join('.') === 'Exit') ||
-        (source === 'effect' && parts.join('.') === 'Exit.Exit'))
-    );
+    if (definition.type !== 'ImportBinding' || definition.parent?.type !== 'ImportDeclaration')
+      return false;
+    return isExitImport(definition.node, definition.parent.source.value, parts.join('.'));
   });
+}
+
+function isExitImport(specifier: ESTree.Node, source: unknown, path: string): boolean {
+  if (specifier.type === 'ImportSpecifier') {
+    if (importedName(specifier) !== 'Exit') return false;
+    return (source === 'effect' && path === 'Exit') || (source === 'effect/Exit' && path === '');
+  }
+  if (specifier.type !== 'ImportNamespaceSpecifier') return false;
+  return (
+    (source === 'effect/Exit' && path === 'Exit') || (source === 'effect' && path === 'Exit.Exit')
+  );
 }
 
 /** Type identity needs an import, not just a matching printed local type name. */
@@ -491,25 +406,27 @@ function importsClassifierType(context: Context, parameter: unknown, expected: s
     const root = name.type === 'TSQualifiedName' && isNode(name.left) ? name.left : name;
     const variable = variableAt(context, root);
     if (variable === null) return;
-    for (const definition of variable.defs) {
-      if (definition.type !== 'ImportBinding') continue;
-      const imported = definition.node;
-      if (name.type === 'Identifier' && imported.type === 'ImportSpecifier') {
-        const key =
-          imported.imported.type === 'Identifier'
-            ? imported.imported.name
-            : imported.imported.value;
-        if (key === expected) found = true;
-      } else if (
-        name.type === 'TSQualifiedName' &&
-        imported.type === 'ImportNamespaceSpecifier' &&
-        isNode(name.right) &&
-        name.right.name === expected
+    if (
+      variable.defs.some(
+        (definition) =>
+          definition.type === 'ImportBinding' &&
+          matchesClassifierImport(name, definition.node, expected),
       )
-        found = true;
-    }
+    )
+      found = true;
   });
   return found;
+}
+
+function matchesClassifierImport(name: AnyNode, imported: ESTree.Node, expected: string): boolean {
+  if (name.type === 'Identifier' && imported.type === 'ImportSpecifier')
+    return importedName(imported) === expected;
+  return (
+    name.type === 'TSQualifiedName' &&
+    imported.type === 'ImportNamespaceSpecifier' &&
+    isNode(name.right) &&
+    name.right.name === expected
+  );
 }
 
 /**
@@ -529,7 +446,7 @@ function bindingAnchor(node: ESTree.Node): AnyNode {
     if (
       parent.type === 'CallExpression' &&
       Array.isArray(parent.arguments) &&
-      parent.arguments.includes(current)
+      (parent.arguments as readonly unknown[]).includes(current)
     ) {
       current = parent;
       continue;
@@ -548,53 +465,86 @@ function keyName(key: unknown): string | null {
   return null;
 }
 
-/** Definition name for a function-like node, taken from the declaration site. */
-function definitionName(node: ESTree.Node): { name: string; node: ESTree.Node } | null {
+type Definition = { name: string; node: ESTree.Node };
+
+function identifierDefinition(value: unknown): Definition | null {
+  if (!isNode(value) || value.type !== 'Identifier' || typeof value.name !== 'string') return null;
+  return { name: value.name, node: value };
+}
+
+function assignmentDefinition(left: unknown): Definition | null {
+  const identifier = identifierDefinition(left);
+  if (identifier !== null) return identifier;
+  if (!isNode(left) || left.type !== 'MemberExpression') return null;
+  const name = memberName(left);
+  return name === null ? null : { name, node: left };
+}
+
+function anchorDefinition(anchor: AnyNode): Definition | null {
+  const parent = anchor.parent;
+  if (!isNode(parent)) return null;
+  if (parent.type === 'VariableDeclarator' && parent.init === anchor)
+    return identifierDefinition(parent.id);
+  if (parent.type === 'AssignmentExpression' && parent.right === anchor)
+    return assignmentDefinition(parent.left);
+  return propertyDefinition(parent, anchor);
+}
+
+function propertyDefinition(parent: AnyNode, anchor: AnyNode): Definition | null {
+  if (!['Property', 'PropertyDefinition', 'MethodDefinition'].includes(parent.type)) return null;
+  if (parent.value !== anchor || parent.computed === true) return null;
+  const name = keyName(parent.key);
+  return name === null ? null : { name, node: parent.key as ESTree.Node };
+}
+
+/** Prefer declaration-site names over internal named function expressions. */
+function definitionName(node: ESTree.Node): Definition | null {
   const candidate = node as unknown as AnyNode;
-  if (
-    candidate.type === 'FunctionDeclaration' &&
-    isNode(candidate.id) &&
-    typeof candidate.id.name === 'string'
-  ) {
-    return { name: candidate.id.name, node: candidate.id as unknown as ESTree.Node };
+  if (candidate.type === 'FunctionDeclaration') {
+    const id = candidate.id;
+    if (isNode(id) && typeof id.name === 'string') return { name: id.name, node: id };
   }
-  const anchor = bindingAnchor(node);
-  const parent = (anchor as { parent?: unknown }).parent;
-  if (isNode(parent)) {
-    if (parent.type === 'VariableDeclarator' && parent.init === anchor) {
-      const id = parent.id;
-      if (isNode(id) && id.type === 'Identifier' && typeof id.name === 'string') {
-        return { name: id.name, node: id as unknown as ESTree.Node };
-      }
-    } else if (
-      (parent.type === 'Property' ||
-        parent.type === 'PropertyDefinition' ||
-        parent.type === 'MethodDefinition') &&
-      parent.value === anchor &&
-      parent.computed !== true
-    ) {
-      const name = keyName(parent.key);
-      if (name !== null) return { name, node: parent.key as unknown as ESTree.Node };
-    } else if (parent.type === 'AssignmentExpression' && parent.right === anchor) {
-      const left = parent.left;
-      if (isNode(left) && left.type === 'Identifier' && typeof left.name === 'string') {
-        return { name: left.name, node: left as unknown as ESTree.Node };
-      }
-      if (isNode(left) && left.type === 'MemberExpression') {
-        const property = memberPropertyName(left, new Set());
-        if (property !== null) return { name: property, node: left as unknown as ESTree.Node };
-      }
-    }
+  const definition = anchorDefinition(bindingAnchor(node));
+  if (definition !== null) return definition;
+  if (candidate.type !== 'FunctionExpression') return null;
+  const id = candidate.id;
+  return isNode(id) && typeof id.name === 'string' ? { name: id.name, node: id } : null;
+}
+
+function discriminatedParameter(
+  context: Context,
+  raw: AnyNode,
+  parameter: unknown,
+  options: RuleOptions,
+): string | null {
+  if (isExitEnvelope(context, parameter)) return null;
+  const shape = parameterShape(parameter);
+  const typeMatches = [...shape.typeNames].some((type) => options.errorParameterPattern.test(type));
+  const errorBindings = shape.bindings.filter((binding) =>
+    options.errorParameterPattern.test(binding),
+  );
+  if (shape.destructuresTag && (typeMatches || errorBindings.length > 0))
+    return shape.name ?? '{ _tag }';
+  if (!isNode(parameter)) return null;
+  return (
+    (typeMatches ? shape.bindings : errorBindings).find((binding) =>
+      discriminatesTag(context, raw.body, binding, parameter),
+    ) ?? null
+  );
+}
+
+function classifierInput(
+  context: Context,
+  parameters: readonly unknown[],
+  options: RuleOptions,
+): string | undefined {
+  for (const parameter of parameters) {
+    const matched = options.classifierInputTypes.find((type) =>
+      importsClassifierType(context, parameter, type),
+    );
+    if (matched !== undefined) return matched;
   }
-  // `const f = function named() {}`, `export default function () {}`, inline callbacks.
-  if (
-    candidate.type === 'FunctionExpression' &&
-    isNode(candidate.id) &&
-    typeof candidate.id.name === 'string'
-  ) {
-    return { name: candidate.id.name, node: candidate.id as unknown as ESTree.Node };
-  }
-  return null;
+  return undefined;
 }
 
 export const rule = defineRule({
@@ -672,77 +622,65 @@ export const rule = defineRule({
       return false;
     };
 
-    const inspect = (node: ESTree.Node): void => {
-      if (reported.has(node)) return;
-      const raw = node as unknown as AnyNode;
-      const parameters = Array.isArray(raw.params) ? raw.params : [];
-      const shapes = parameters.map((parameter) => parameterShape(parameter));
-      const definition = definitionName(node);
-      const name = definition?.name ?? null;
+    const inspectParameters = (node: ESTree.Node, definition: Definition | null): void => {
+      const anonymous = definition === null;
+      if (anonymous && !options.includeInlineHandlers) return;
       const target = definition?.node ?? node;
-      if (name !== null && options.allowedNames.includes(name)) return;
-      const anonymous = name === null;
-      if (anonymous && insideReportedFunction(node)) return;
-
-      // Axis 1 — the definition is named like a classifier.
-      if (name !== null && options.namePattern.test(name)) {
-        reported.add(node);
-        context.report({ node: target, messageId: 'namedClassifier', data: { name } });
-        return;
-      }
-
-      // Axis 2 — a parameter is annotated with the erased-union projection type.
-      for (const [index, shape] of shapes.entries()) {
-        const matched = options.classifierInputTypes.find((type) =>
-          importsClassifierType(context, parameters[index], type),
-        );
-        if (matched === undefined) continue;
-        if (anonymous && !options.includeInlineHandlers) continue;
+      const name = definition?.name ?? '(anonymous)';
+      const raw = node as AnyNode;
+      const parameters: readonly unknown[] = Array.isArray(raw.params) ? raw.params : [];
+      const matched = classifierInput(context, parameters, options);
+      if (matched !== undefined) {
         reported.add(node);
         context.report({
           node: target,
           messageId: 'classifierInput',
-          data: { name: name ?? '(anonymous)', type: matched },
+          data: { name, type: matched },
         });
         return;
       }
+      inspectDiscrimination(node, parameters, target, name, anonymous);
+    };
 
+    const inspectDiscrimination = (
+      node: ESTree.Node,
+      parameters: readonly unknown[],
+      target: ESTree.Node,
+      name: string,
+      anonymous: boolean,
+    ): void => {
       if (!options.detectTagDiscrimination) return;
-      if (anonymous && !options.includeInlineHandlers) return;
-
-      // Axis 3 — an error-shaped parameter whose `_tag` this function discriminates.
-      for (const [index, shape] of shapes.entries()) {
-        if (isExitEnvelope(context, parameters[index])) continue;
-        const typeMatches = [...shape.typeNames].some((type) =>
-          options.errorParameterPattern.test(type),
-        );
-        if (
-          shape.destructuresTag &&
-          (typeMatches ||
-            shape.bindings.some((binding) => options.errorParameterPattern.test(binding)))
-        ) {
-          reported.add(node);
-          context.report({
-            node: target,
-            messageId: anonymous ? 'inlineClassifier' : 'tagDiscriminator',
-            data: { name: name ?? '(anonymous)', parameter: shape.name ?? '{ _tag }' },
-          });
-          return;
-        }
-        for (const binding of shape.bindings) {
-          if (!options.errorParameterPattern.test(binding) && !typeMatches) continue;
-          const parameter = parameters[index];
-          if (!isNode(parameter) || !discriminatesTag(context, raw.body, binding, parameter))
-            continue;
-          reported.add(node);
-          context.report({
-            node: target,
-            messageId: anonymous ? 'inlineClassifier' : 'tagDiscriminator',
-            data: { name: name ?? '(anonymous)', parameter: binding },
-          });
-          return;
-        }
+      for (const parameter of parameters) {
+        const binding = discriminatedParameter(context, node as AnyNode, parameter, options);
+        if (binding === null) continue;
+        reported.add(node);
+        context.report({
+          node: target,
+          messageId: anonymous ? 'inlineClassifier' : 'tagDiscriminator',
+          data: { name, parameter: binding },
+        });
+        return;
       }
+    };
+
+    const inspect = (node: ESTree.Node): void => {
+      if (reported.has(node)) return;
+      const definition = definitionName(node);
+      if (definition === null) {
+        if (!insideReportedFunction(node)) inspectParameters(node, null);
+        return;
+      }
+      if (options.allowedNames.includes(definition.name)) return;
+      if (options.namePattern.test(definition.name)) {
+        reported.add(node);
+        context.report({
+          node: definition.node,
+          messageId: 'namedClassifier',
+          data: { name: definition.name },
+        });
+        return;
+      }
+      inspectParameters(node, definition);
     };
 
     return {

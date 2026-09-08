@@ -305,50 +305,6 @@ test('stale revision and foreign-tenant relationship correction fail before busi
   );
 });
 
-test('UNRESOLVED Party Type enrichment is rejected before mutation by correction', async () => {
-  const h = transactionHarness([
-    [],
-    [{ partyId }],
-    [],
-    [{ partyId }],
-    [
-      {
-        assertionId,
-        factKind: 'PARTY_TYPE',
-        isCurrent: true,
-        normalizedValue: 'UNRESOLVED',
-        partyId,
-        state: 'ACTIVE',
-      },
-    ],
-  ]);
-  const command = decode(PartyCorrectionCommandSchema)({
-    ...evidence,
-    factKind: 'PARTY_TYPE',
-    partyId,
-    replacementValue: 'PERSON',
-    subjectEvidence: [
-      {
-        basis: 'REVIEWED_DOCUMENT',
-        evidenceRef: 'record/42',
-        kind: 'ACTOR_ATTESTATION',
-        observedSubject: 'PERSON',
-        statement: 'Reviewed this external organization',
-        subjectKey: 'one-subject',
-      },
-    ],
-    targetAssertionId: assertionId,
-  });
-  const error = await runEffectTestPromise(
-    Effect.flip(
-      correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
-    ),
-  );
-  assert.equal(error._tag, 'PartyCorrectionConflict');
-  assert.match(error.reason, /enrichment/u);
-  assert.equal(h.updateSets.length, 0);
-});
-
 test('detail exposes immutable original/result semantics, governance, and source distinct from actor', async () => {
   const h = transactionHarness([
     [
@@ -472,62 +428,84 @@ test('correction history requires reviewer authority; ordinary identity read per
   assert.notDeepEqual(target, { kind: 'tenant', permission: 'read_party_identity' });
 });
 
-test('Party Type correction reconciles newly eligible claims before superseding the original fact', async () => {
-  const h = transactionHarness([
-    [],
-    [{ partyId }],
-    [],
-    [{ partyId }],
-    [
-      {
-        assertionId,
-        factKind: 'PARTY_TYPE',
-        isCurrent: true,
-        normalizedValue: 'PERSON',
-        partyId,
-        state: 'ACTIVE',
-      },
+for (const scenario of [
+  {
+    name: 'UNRESOLVED Party Type enrichment is rejected before mutation by correction',
+    original: 'UNRESOLVED',
+    replacement: 'PERSON',
+    claimReads: [],
+    reason: /enrichment/u,
+  },
+  {
+    name: 'Party Type correction reconciles newly eligible claims before superseding the original fact',
+    original: 'PERSON',
+    replacement: 'ORGANIZATION',
+    claimReads: [
+      [],
+      [
+        {
+          identifierTypeKey: 'ICO',
+          namespace: 'CZ:ICO',
+          normalizedValue: '27074358',
+          officialIdentifierId: replacementId,
+          verificationState: 'VERIFIED',
+        },
+      ],
+      [],
+      [{ partyId: organizationId }],
     ],
-    [],
-    [
-      {
-        identifierTypeKey: 'ICO',
-        namespace: 'CZ:ICO',
-        normalizedValue: '27074358',
-        officialIdentifierId: replacementId,
-        verificationState: 'VERIFIED',
-      },
-    ],
-    [],
-    [{ partyId: organizationId }],
-  ]);
-  const command = decode(PartyCorrectionCommandSchema)({
-    ...evidence,
-    factKind: 'PARTY_TYPE',
-    partyId,
-    replacementValue: 'ORGANIZATION',
-    subjectEvidence: [
-      {
-        basis: 'REVIEWED_DOCUMENT',
-        evidenceRef: 'record/42',
-        kind: 'ACTOR_ATTESTATION',
-        observedSubject: 'ORGANIZATION',
-        statement: 'Reviewed this external organization',
-        subjectKey: 'one-subject',
-      },
-    ],
-    targetAssertionId: assertionId,
+    reason: /exclusive identifier claims/u,
+  },
+]) {
+  test(scenario.name, async () => {
+    const h = transactionHarness([
+      [],
+      [{ partyId }],
+      [],
+      [{ partyId }],
+      [
+        {
+          assertionId,
+          factKind: 'PARTY_TYPE',
+          isCurrent: true,
+          normalizedValue: scenario.original,
+          partyId,
+          state: 'ACTIVE',
+        },
+      ],
+      ...scenario.claimReads,
+    ]);
+    const command = decode(PartyCorrectionCommandSchema)({
+      ...evidence,
+      factKind: 'PARTY_TYPE',
+      partyId,
+      replacementValue: scenario.replacement,
+      subjectEvidence: [
+        {
+          basis: 'REVIEWED_DOCUMENT',
+          evidenceRef: 'record/42',
+          kind: 'ACTOR_ATTESTATION',
+          observedSubject: scenario.replacement,
+          statement: 'Reviewed this external organization',
+          subjectKey: 'one-subject',
+        },
+      ],
+      targetAssertionId: assertionId,
+    });
+    const error = await runEffectTestPromise(
+      Effect.flip(
+        correctPartyFactRecord(h.transaction, tenantId, command, {
+          actionInvocationId,
+          principalId,
+        }),
+      ),
+    );
+    assert.equal(error._tag, 'PartyCorrectionConflict');
+    assert.match(error.reason, scenario.reason);
+    assert.equal(h.updateSets.length, 0);
+    assert.equal(h.insertValues.length, 0);
   });
-  const error = await runEffectTestPromise(
-    Effect.flip(
-      correctPartyFactRecord(h.transaction, tenantId, command, { actionInvocationId, principalId }),
-    ),
-  );
-  assert.equal(error._tag, 'PartyCorrectionConflict');
-  assert.match(error.reason, /exclusive identifier claims/u);
-  assert.equal(h.updateSets.length, 0);
-  assert.equal(h.insertValues.length, 0);
-});
+}
 
 test('type Correction cannot treat a reviewer decision or source label as subject evidence', async () => {
   const h = transactionHarness([

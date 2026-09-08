@@ -12,29 +12,23 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 const uuid = Schema.String.check(Schema.isUUID());
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const displayName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
-export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
+const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName,
   kind: Schema.Literals(['service', 'integration', 'system']),
 });
 export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
   typeof CreateNonHumanPrincipalPayloadSchema
 >;
-export const CreateNonHumanPrincipalResultSchema = Schema.Struct({
+const CreateNonHumanPrincipalResultSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   status: Schema.Literal('active'),
 });
-export type CreateNonHumanPrincipalResult = Schema.Schema.Type<
-  typeof CreateNonHumanPrincipalResultSchema
->;
-type CreateNonHumanPrincipal = PrincipalManagementRepositoryService['createNonHumanPrincipal'];
-type Input = Parameters<CreateNonHumanPrincipal>[0];
-type Result = ReturnType<CreateNonHumanPrincipal>;
 
 const handle = (
   payload: CreateNonHumanPrincipalPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
-    { readonly create: (input: Input) => Result }
+    { readonly create: PrincipalManagementRepositoryService['createNonHumanPrincipal'] }
   >,
 ) =>
   context.services.create({ ...payload, tenantId: context.scope.tenantId }).pipe(

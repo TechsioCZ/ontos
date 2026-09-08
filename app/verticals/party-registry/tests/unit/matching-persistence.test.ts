@@ -424,6 +424,32 @@ test('Create Party matching an existing subject publishes each newly accepted id
     }),
   ));
 
+const invokeReviewedMatch = (subject: ReturnType<typeof harness>) =>
+  Effect.gen(function* invokeReviewedMatchEffect() {
+    const collector = createActionCollector(
+      resolveDuplicateCandidateMatchAction.descriptor.domainEvents,
+      'party.registry',
+      resolveDuplicateCandidateMatchAction.descriptor.accessEvidencePolicy,
+    );
+    const result = yield* getActionHandler(resolveDuplicateCandidateMatchAction)(
+      {
+        caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
+        expectedRevision: 1,
+        reason: resolutionInput.reason,
+        selectedPartyRef: makePartyRef(tenantId, partyC),
+      },
+      {
+        ...collector,
+        actionInvocationId,
+        scope: actionScope,
+        services: {
+          resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
+        },
+      },
+    );
+    return { collector, result };
+  });
+
 test('reviewed matching publishes the accepted identifier through its declared Action event and linked outbox', () =>
   runEffectTestPromise(
     Effect.gen(function* reviewedMatchingPublishesTheAcceptedIdentifierThrough() {
@@ -436,27 +462,7 @@ test('reviewed matching publishes the accepted identifier through its declared A
           [partyOfficialIdentifiers, [[]]],
         ]),
       );
-      const collector = createActionCollector(
-        resolveDuplicateCandidateMatchAction.descriptor.domainEvents,
-        'party.registry',
-        resolveDuplicateCandidateMatchAction.descriptor.accessEvidencePolicy,
-      );
-      const result = yield* getActionHandler(resolveDuplicateCandidateMatchAction)(
-        {
-          caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
-          expectedRevision: 1,
-          reason: resolutionInput.reason,
-          selectedPartyRef: makePartyRef(tenantId, partyC),
-        },
-        {
-          ...collector,
-          actionInvocationId,
-          scope: actionScope,
-          services: {
-            resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
-          },
-        },
-      );
+      const { collector, result } = yield* invokeReviewedMatch(subject);
       assert.equal(result.outcome, 'MATCH_EXISTING');
       assert.equal('addedOfficialIdentifierRefs' in result, false);
       const evidence = collector.snapshot();
@@ -614,27 +620,7 @@ test('reviewed matching with already-owned claims creates no duplicate identifie
           [partyIdentifierClaims, [[{ officialIdentifierId, partyId: partyC }]]],
         ]),
       );
-      const collector = createActionCollector(
-        resolveDuplicateCandidateMatchAction.descriptor.domainEvents,
-        'party.registry',
-        resolveDuplicateCandidateMatchAction.descriptor.accessEvidencePolicy,
-      );
-      const result = yield* getActionHandler(resolveDuplicateCandidateMatchAction)(
-        {
-          caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
-          expectedRevision: 1,
-          reason: resolutionInput.reason,
-          selectedPartyRef: makePartyRef(tenantId, partyC),
-        },
-        {
-          ...collector,
-          actionInvocationId,
-          scope: actionScope,
-          services: {
-            resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
-          },
-        },
-      );
+      const { collector, result } = yield* invokeReviewedMatch(subject);
       assert.equal(result.outcome, 'MATCH_EXISTING');
       assert.deepEqual(collector.snapshot().domainEvents, []);
       assert.deepEqual(collector.snapshot().outboxMessages, []);

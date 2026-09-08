@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit A6/B4 (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`) asks for Effect.fn
  * on service operations and handlers. Named Effect.fn standardizes spans and definition/call-site
@@ -20,18 +21,24 @@
 import { defineRule } from '@oxlint/plugins';
 import { fileURLToPath } from 'node:url';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { matchesGlobs, isTestFile, normalisePath, rootedScopePath } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import {
+  parentOf,
+  unwrapNode as unwrap,
+  memberName as sharedMemberName,
+  keyName as sharedKeyName,
+} from '../shared/ast.ts';
+import { resolvesToImport as sharedResolvesToImport } from '../shared/bindings.ts';
+import {
+  collectRootNamespaces as sharedRootNamespaces,
+  collectNamedImports,
+  importDeclarations,
+} from '../shared/imports.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 
@@ -67,18 +74,8 @@ interface RuleOptions {
   readonly reexportModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   const minParams =
     typeof record.minParams === 'number' && Number.isInteger(record.minParams)
       ? record.minParams
@@ -97,92 +94,16 @@ function readOptions(context: Context): RuleOptions {
 
 /** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
 function scopePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  const fixture =
-    /(?:^|\/)tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\/(.*)$/u.exec(unified);
-  if (fixture?.[1]) return fixture[1];
-  const root = fileURLToPath(new URL('../../../../', import.meta.url)).replaceAll('\\', '/');
-  return unified.startsWith(root)
-    ? unified.slice(root.length)
-    : normalisePath(unified).replace(FIXTURE_PREFIX, '');
+  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
 }
 
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function parentOf(node: ESTree.Node): ESTree.Node | null {
-  return (node as { parent?: ESTree.Node | null }).parent ?? null;
-}
-
-/** Strip wrappers that never change what an expression denotes. */
-function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (;;) {
-    if (
-      current.type === 'ChainExpression' ||
-      current.type === 'TSNonNullExpression' ||
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSInstantiationExpression' ||
-      current.type === 'ParenthesizedExpression'
-    ) {
-      const inner = (current as unknown as { expression?: ESTree.Node }).expression;
-      if (inner === undefined) return current;
-      current = inner;
-      continue;
-    }
-    if (current.type === 'TSTypeAssertion') {
-      const inner = (current as unknown as { expression?: ESTree.Node }).expression;
-      if (inner === undefined) return current;
-      current = inner;
-      continue;
-    }
-    return current;
-  }
-}
-
-/** Non-computed `.gen`, or computed `["gen"]`. */
 function memberName(node: ESTree.MemberExpression): string | null {
   if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = unwrap(node.property);
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
-    return property.quasis[0]?.value.cooked ?? null;
-  return null;
+  return sharedMemberName(node, { templates: true, unwrap: {} });
 }
 
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, …) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null || variable.defs.length === 0) return true;
-  return variable.defs.some(
-    (definition) =>
-      definition.type === 'ImportBinding' &&
-      definition.parent?.type === 'ImportDeclaration' &&
-      definition.parent.importKind !== 'type' &&
-      (definition.node.type !== 'ImportSpecifier' || definition.node.importKind !== 'type'),
-  );
+function resolvesToImport(context: Context, identifier: ESTree.Node): boolean {
+  return sharedResolvesToImport(context, identifier, true);
 }
 
 /**
@@ -193,16 +114,10 @@ function collectRootNamespaces(
   program: ESTree.Program,
   reexportModules: readonly string[],
 ): ReadonlySet<string> {
-  const locals = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (source !== EFFECT_ROOT_MODULE && !reexportModules.includes(source)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') locals.add(specifier.local.name);
-    }
-  }
-  return locals;
+  return sharedRootNamespaces(
+    program,
+    (source) => source === EFFECT_ROOT_MODULE || reexportModules.includes(source),
+  );
 }
 
 /**
@@ -213,40 +128,22 @@ function collectReexportBindings(
   program: ESTree.Program,
   reexportModules: readonly string[],
 ): { readonly namespaces: ReadonlyMap<string, string>; readonly found: boolean } {
-  const namespaces = new Map<string, string>();
-  let found = false;
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (!reexportModules.includes(statement.source.value)) continue;
-    found = true;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      namespaces.set(specifier.local.name, imported);
-    }
-  }
-  return { namespaces, found };
+  const accepts = (source: string): boolean => reexportModules.includes(source);
+  return {
+    namespaces: collectNamedImports(program, accepts),
+    found: importDeclarations(program, accepts).length > 0,
+  };
 }
 
 /** Locals bound by `import { gen as effectGen } from "effect/Effect"`. */
 function collectDirectMemberImports(program: ESTree.Program, member: string): ReadonlySet<string> {
-  const locals = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (!EFFECT_EFFECT_MODULE.test(statement.source.value)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      if (imported === member) locals.add(specifier.local.name);
-    }
-  }
-  return locals;
+  return new Set(
+    collectNamedImports(
+      program,
+      (source) => EFFECT_EFFECT_MODULE.test(source),
+      new Set([member]),
+    ).keys(),
+  );
 }
 
 interface Resolver {
@@ -271,17 +168,8 @@ function resolveNamespaceMember(
   const member = memberName(node);
   if (member === null) return null;
   const object = unwrap(node.object);
-  if (object.type === 'Identifier') {
-    if (
-      resolver.rootNamespaces.has(object.name) &&
-      member === PIPE_MEMBER &&
-      resolvesToImport(context, object)
-    )
-      return { namespace: 'Function', member };
-    const namespace = resolver.bindings.namespaces.get(object.name);
-    if (namespace === undefined) return null;
-    return resolvesToImport(context, object) ? { namespace, member } : null;
-  }
+  if (object.type === 'Identifier')
+    return resolveIdentifierMember(object, member, context, resolver);
   // `E.Effect.gen` where `E` is `import * as E from "effect"`.
   if (object.type !== 'MemberExpression') return null;
   const namespace = memberName(object);
@@ -289,6 +177,23 @@ function resolveNamespaceMember(
   if (object.object.type !== 'Identifier') return null;
   if (!resolver.rootNamespaces.has(object.object.name)) return null;
   return resolvesToImport(context, object.object) ? { namespace, member } : null;
+}
+
+function resolveIdentifierMember(
+  object: Extract<ESTree.Node, { type: 'Identifier' }>,
+  member: string,
+  context: Context,
+  resolver: Resolver,
+): { namespace: string; member: string } | null {
+  if (
+    resolver.rootNamespaces.has(object.name) &&
+    member === PIPE_MEMBER &&
+    resolvesToImport(context, object)
+  )
+    return { namespace: 'Function', member };
+  const namespace = resolver.bindings.namespaces.get(object.name);
+  if (namespace === undefined) return null;
+  return resolvesToImport(context, object) ? { namespace, member } : null;
 }
 
 /** Does this call expression denote `Effect.gen(...)`? */
@@ -314,67 +219,82 @@ function genAnchor(node: ESTree.CallExpression): ESTree.Node {
  * Peel `.pipe(...)` chains and `pipe(value, …)` calls so
  * `Effect.gen(...).pipe(Effect.withSpan('X'))` still reduces to the `Effect.gen` call.
  */
+const preserving = new Set([
+  'withSpan',
+  'withLogSpan',
+  'annotateLogs',
+  'annotateSpans',
+  'map',
+  'flatMap',
+  'tap',
+  'tapError',
+  'tapCause',
+  'mapError',
+  'catch',
+  'catchTag',
+  'catchTags',
+  'catchCause',
+  'provide',
+  'provideService',
+  'provideServiceEffect',
+  'ensuring',
+  'onExit',
+  'scoped',
+  'orDie',
+  'retry',
+  'timeout',
+  'timeoutOrElse',
+  'as',
+  'asVoid',
+  'exit',
+  'result',
+  'option',
+  'withConcurrency',
+  'withMinimumLogLevel',
+]);
+
+function isDataFirstPipe(callee: ESTree.Node, context: Context, resolver: Resolver): boolean {
+  if (callee.type === 'Identifier')
+    return resolver.pipeLocals.has(callee.name) && resolvesToImport(context, callee);
+  if (callee.type !== 'MemberExpression') return false;
+  const matched = resolveNamespaceMember(callee, context, resolver);
+  return (
+    matched !== null && matched.member === PIPE_MEMBER && PIPE_NAMESPACES.has(matched.namespace)
+  );
+}
+
+function isPreservingOperator(
+  argument: ESTree.Node,
+  context: Context,
+  resolver: Resolver,
+): boolean {
+  let operator = unwrap(argument);
+  if (operator.type === 'CallExpression') operator = unwrap(operator.callee);
+  if (operator.type !== 'MemberExpression') return false;
+  const resolved = resolveNamespaceMember(operator, context, resolver);
+  return resolved?.namespace === EFFECT_NAMESPACE && preserving.has(resolved.member);
+}
+
+function isPipeMethod(callee: ESTree.Node, dataFirst: boolean): boolean {
+  return callee.type === 'MemberExpression' && memberName(callee) === PIPE_MEMBER && !dataFirst;
+}
+
 function peelPipes(expression: ESTree.Node, context: Context, resolver: Resolver): ESTree.Node {
   let current = unwrap(expression);
   for (let guard = 0; guard < 64; guard += 1) {
     if (current.type !== 'CallExpression') return current;
     const callee = unwrap(current.callee);
-    const matched =
-      callee.type === 'MemberExpression' ? resolveNamespaceMember(callee, context, resolver) : null;
-    const dataFirst =
-      callee.type === 'Identifier'
-        ? resolver.pipeLocals.has(callee.name) && resolvesToImport(context, callee)
-        : matched !== null &&
-          matched.member === PIPE_MEMBER &&
-          PIPE_NAMESPACES.has(matched.namespace);
-    const method =
-      callee.type === 'MemberExpression' && memberName(callee) === PIPE_MEMBER && !dataFirst;
+    const dataFirst = isDataFirstPipe(callee, context, resolver);
+    const method = isPipeMethod(callee, dataFirst);
     if (!dataFirst && !method) return current;
     // A pipeline can leave Effect (runners, predicates, or arbitrary user functions). Only
     // peel syntactically known Effect-to-Effect operators, never assume a pipe preserves types.
-    const preserving = new Set([
-      'withSpan',
-      'withLogSpan',
-      'annotateLogs',
-      'annotateSpans',
-      'map',
-      'flatMap',
-      'tap',
-      'tapError',
-      'tapCause',
-      'mapError',
-      'catch',
-      'catchTag',
-      'catchTags',
-      'catchCause',
-      'provide',
-      'provideService',
-      'provideServiceEffect',
-      'ensuring',
-      'onExit',
-      'scoped',
-      'orDie',
-      'retry',
-      'timeout',
-      'timeoutOrElse',
-      'as',
-      'asVoid',
-      'exit',
-      'result',
-      'option',
-      'withConcurrency',
-      'withMinimumLogLevel',
-    ]);
-    for (const argument of current.arguments.slice(dataFirst ? 1 : 0)) {
-      let operator = unwrap(argument);
-      if (operator.type === 'CallExpression') operator = unwrap(operator.callee);
-      const resolved =
-        operator.type === 'MemberExpression'
-          ? resolveNamespaceMember(operator, context, resolver)
-          : null;
-      if (resolved?.namespace !== EFFECT_NAMESPACE || !preserving.has(resolved.member))
-        return expression;
-    }
+    if (
+      !current.arguments
+        .slice(dataFirst ? 1 : 0)
+        .every((argument) => isPreservingOperator(argument, context, resolver))
+    )
+      return expression;
     const next = dataFirst ? current.arguments[0] : (callee as ESTree.MemberExpression).object;
     if (next === undefined || next.type === 'SpreadElement') return current;
     current = unwrap(next);
@@ -386,6 +306,19 @@ function peelPipes(expression: ESTree.Node, context: Context, resolver: Resolver
  * The single expression the function evaluates to, or `null` when the body does more than that.
  * Leading `const`/`let`/`var` declarations are tolerated when `allowLeadingConstants`.
  */
+function isAllowedLeadingStatement(
+  statement: ESTree.Node,
+  allowLeadingConstants: boolean,
+): boolean {
+  if (
+    new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclaration', 'TSDeclareFunction']).has(
+      statement.type,
+    )
+  )
+    return true;
+  return allowLeadingConstants && statement.type === 'VariableDeclaration';
+}
+
 function soleReturnedExpression(
   fn: { readonly body?: ESTree.Node | null },
   allowLeadingConstants: boolean,
@@ -396,15 +329,12 @@ function soleReturnedExpression(
   const statements = body.body.filter((statement) => statement.type !== 'EmptyStatement');
   const last = statements.at(-1);
   if (last === undefined || last.type !== 'ReturnStatement' || last.argument === null) return null;
-  for (const statement of statements.slice(0, -1)) {
-    if (
-      statement.type === 'TSTypeAliasDeclaration' ||
-      statement.type === 'TSInterfaceDeclaration' ||
-      statement.type === 'TSDeclareFunction'
-    )
-      continue;
-    if (!allowLeadingConstants || statement.type !== 'VariableDeclaration') return null;
-  }
+  if (
+    !statements
+      .slice(0, -1)
+      .every((statement) => isAllowedLeadingStatement(statement, allowLeadingConstants))
+  )
+    return null;
   return last.argument;
 }
 
@@ -463,34 +393,44 @@ function isExemptArgument(
 }
 
 function keyName(node: ESTree.Node | null | undefined, computed: boolean): string | null {
-  if (node === null || node === undefined) return null;
-  if (!computed && node.type === 'Identifier') return node.name;
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  return null;
+  return sharedKeyName(node, computed, { templates: false });
 }
 
-/** The declaration name attached to a node, if the node is being named by its parent. */
+/** Name of an assignment's identifier or member target. */
+function assignmentName(left: ESTree.Node): string | null {
+  if (left.type === 'Identifier') return left.name;
+  return left.type === 'MemberExpression' ? memberName(left) : null;
+}
+
+const PROPERTY_CONTAINERS: ReadonlySet<string> = new Set([
+  'Property',
+  'PropertyDefinition',
+  'MethodDefinition',
+  'AccessorProperty',
+]);
+
+function propertyContainerName(parent: ESTree.Node): string | null {
+  const property = parent as Extract<ESTree.Node, { type: 'Property' }>;
+  return keyName(property.key, property.computed === true);
+}
+
+function identifierName(node: ESTree.Node): string | null {
+  return node.type === 'Identifier' ? node.name : null;
+}
+
+/** The declaration name attached to a node by its parent. */
 function nameFromParent(parent: ESTree.Node): string | null {
+  if (PROPERTY_CONTAINERS.has(parent.type)) return propertyContainerName(parent);
   switch (parent.type) {
     case 'VariableDeclarator':
-      return parent.id.type === 'Identifier' ? parent.id.name : null;
-    case 'Property':
-      return keyName(parent.key as ESTree.Node, parent.computed === true);
-    case 'PropertyDefinition':
-    case 'MethodDefinition':
-    case 'AccessorProperty':
-      return keyName(parent.key as ESTree.Node, parent.computed === true);
+      return identifierName(parent.id);
     case 'ClassDeclaration':
     case 'ClassExpression':
-      return parent.id !== null && parent.id !== undefined ? parent.id.name : null;
-    case 'AssignmentExpression': {
-      const left = parent.left;
-      if (left.type === 'Identifier') return left.name;
-      if (left.type === 'MemberExpression') return memberName(left);
-      return null;
-    }
+      return parent.id?.name ?? null;
+    case 'AssignmentExpression':
+      return assignmentName(parent.left);
     case 'TSModuleDeclaration':
-      return parent.id.type === 'Identifier' ? parent.id.name : null;
+      return identifierName(parent.id);
     default:
       return null;
   }
@@ -599,6 +539,20 @@ function parameterList(fn: ESTree.Node): string {
   return names.join(', ');
 }
 
+function isIncludedPath(path: string, options: RuleOptions): boolean {
+  if (!matchesGlobs(path, options.include)) return false;
+  if (
+    /\.d\.[cm]?ts$/u.test(path) ||
+    /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
+  )
+    return false;
+  if (matchesGlobs(path, options.ignore)) return false;
+  if (!options.includeTests && isTestFile(path)) return false;
+  if (!options.includeScripts && /(?:^|\/)scripts\//u.test(path)) return false;
+
+  return true;
+}
+
 /** A6/B4: service operations and handlers must be `Effect.fn`, not `arrow => Effect.gen`. */
 export const rule = defineRule({
   meta: {
@@ -647,15 +601,7 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context);
     const path = scopePath(context.filename);
-    if (!matchesGlobs(path, options.include)) return {};
-    if (
-      /\.d\.[cm]?ts$/u.test(path) ||
-      /(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)
-    )
-      return {};
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (!options.includeTests && isTestFile(path)) return {};
-    if (!options.includeScripts && /(?:^|\/)scripts\//u.test(path)) return {};
+    if (!isIncludedPath(path, options)) return {};
 
     const program = context.sourceCode.ast;
     const direct = collectEffectBindings(program);

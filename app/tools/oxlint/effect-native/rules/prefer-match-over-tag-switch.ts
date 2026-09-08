@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/prefer-match-over-tag-switch
  *
@@ -80,14 +81,9 @@ import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { stringArray, positiveInteger } from '../shared/options.ts';
+import { unwrapNode } from '../shared/ast.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -119,34 +115,10 @@ const MAX_UNWRAP_DEPTH = 32;
 /** Longest discriminant rendering embedded in a diagnostic message. */
 const MAX_DISCRIMINANT_LENGTH = 60;
 
-interface RuleOptions {
-  readonly tagProperties: readonly string[];
-  readonly discriminantProperties: readonly string[];
-  readonly minLiteralCases: number;
-  readonly allowExhaustive: boolean;
-  readonly exhaustiveHelpers: readonly string[];
-  readonly adtTags: readonly string[];
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly ignoreTests: boolean;
-}
+type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function positiveInteger(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : fallback;
-}
-
-function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+function readOptions(context: Context) {
+  const record = optionRecord(context.options?.[0]);
   return {
     tagProperties: stringArray(record.tagProperties, DEFAULT_TAG_PROPERTIES),
     discriminantProperties: stringArray(
@@ -163,44 +135,9 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Strip the syntax that never changes what a switch actually dispatches on. */
+/** Keep the original bounded, sequence-last discriminant policy. */
 function unwrapExpression(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth += 1) {
-    switch (current.type) {
-      case 'SequenceExpression': {
-        // A comma expression evaluates to its last operand; preceding work must be retained
-        // by a manual migration, but it does not change the selected discriminant.
-        const last = current.expressions.at(-1);
-        if (last === undefined) return current;
-        current = last;
-        break;
-      }
-      case 'ChainExpression':
-        current = current.expression;
-        break;
-      case 'ParenthesizedExpression':
-      case 'TSNonNullExpression':
-      case 'TSAsExpression':
-      case 'TSSatisfiesExpression':
-      case 'TSTypeAssertion':
-      case 'TSInstantiationExpression':
-        current = current.expression;
-        break;
-      default:
-        return current;
-    }
-  }
-  return current;
+  return unwrapNode(node, { maxDepth: MAX_UNWRAP_DEPTH, sequence: true });
 }
 
 /** Static string value of a `case` test: `'ready'` and `` `ready` `` both yield `"ready"`. */
@@ -314,38 +251,89 @@ function isExhaustiveHelperCall(
   return name !== null && options.exhaustiveHelpers.includes(name);
 }
 
+function statementExpression(statement: ESTree.Node): ESTree.Node | null | undefined {
+  if (statement.type === 'ReturnStatement' || statement.type === 'ThrowStatement')
+    return statement.argument;
+  return statement.type === 'ExpressionStatement' ? statement.expression : null;
+}
+
+function statementIsExhaustive(
+  statement: ESTree.Node,
+  options: RuleOptions,
+  bindings: EffectBindings,
+): boolean {
+  if (statement.type === 'VariableDeclaration') {
+    return statement.declarations.some(
+      (declarator) =>
+        declarator.id.type === 'Identifier' && isNeverAnnotation(declarator.id.typeAnnotation),
+    );
+  }
+  const expression = statementExpression(statement);
+  if (expression === null || expression === undefined) return false;
+  if (
+    (expression.type === 'TSAsExpression' || expression.type === 'TSSatisfiesExpression') &&
+    isNeverAnnotation(expression.typeAnnotation)
+  )
+    return true;
+  return isExhaustiveHelperCall(unwrapExpression(expression), options, bindings);
+}
+
 /** `true` when the `default:` branch proves exhaustiveness to the compiler. */
 function hasExhaustiveGuard(
   node: ESTree.SwitchCase,
   options: RuleOptions,
   bindings: EffectBindings,
 ): boolean {
-  for (const statement of defaultStatements(node)) {
-    if (statement.type === 'VariableDeclaration') {
-      for (const declarator of statement.declarations) {
-        if (declarator.id.type === 'Identifier' && isNeverAnnotation(declarator.id.typeAnnotation))
-          return true;
-      }
+  return defaultStatements(node).some((statement) =>
+    statementIsExhaustive(statement, options, bindings),
+  );
+}
+
+function summarizeCases(cases: readonly ESTree.SwitchCase[]) {
+  const literals: string[] = [];
+  let everyCaseIsLiteral = true;
+  let testCount = 0;
+  let numericTestCount = 0;
+  let defaultCase: ESTree.SwitchCase | null = null;
+  for (const switchCase of cases) {
+    if (switchCase.test === null || switchCase.test === undefined) {
+      defaultCase = switchCase;
       continue;
     }
-    const expression =
-      statement.type === 'ReturnStatement'
-        ? statement.argument
-        : statement.type === 'ThrowStatement'
-          ? statement.argument
-          : statement.type === 'ExpressionStatement'
-            ? statement.expression
-            : null;
-    if (expression === null || expression === undefined) continue;
-    if (
-      (expression.type === 'TSAsExpression' || expression.type === 'TSSatisfiesExpression') &&
-      isNeverAnnotation(expression.typeAnnotation)
-    ) {
-      return true;
-    }
-    if (isExhaustiveHelperCall(unwrapExpression(expression), options, bindings)) return true;
+    testCount += 1;
+    if (isNumericTest(switchCase.test)) numericTestCount += 1;
+    const literal = staticStringTest(switchCase.test);
+    if (literal === null) everyCaseIsLiteral = false;
+    else literals.push(literal);
   }
-  return false;
+  return {
+    literals,
+    everyCaseIsLiteral,
+    defaultCase,
+    allTestsNumeric: testCount > 0 && numericTestCount === testCount,
+  };
+}
+
+function reportSwitch(
+  context: Context,
+  node: ESTree.SwitchStatement,
+  options: RuleOptions,
+  literals: readonly string[],
+  property: string | null,
+): void {
+  const adtTag = literals.find((literal) => options.adtTags.includes(literal));
+  const messageId =
+    adtTag !== undefined ? 'adtSwitch' : property !== null ? 'tagSwitch' : 'literalSwitch';
+  context.report({
+    node: node.discriminant,
+    messageId,
+    data: {
+      count: String(literals.length),
+      discriminant: describeDiscriminant(context, node.discriminant),
+      property: property ?? 'this vocabulary',
+      tag: adtTag ?? '',
+    },
+  });
 }
 
 export const rule = defineRule({
@@ -424,27 +412,10 @@ export const rule = defineRule({
         const discriminant = unwrapExpression(node.discriminant);
         const candidate = discriminantProperty(discriminant, options);
 
-        const literals: string[] = [];
-        let everyCaseIsLiteral = true;
-        let testCount = 0;
-        let numericTestCount = 0;
-        let defaultCase: ESTree.SwitchCase | null = null;
-        for (const switchCase of node.cases) {
-          if (switchCase.test === null || switchCase.test === undefined) {
-            defaultCase = switchCase;
-            continue;
-          }
-          testCount += 1;
-          if (isNumericTest(switchCase.test)) numericTestCount += 1;
-          const literal = staticStringTest(switchCase.test);
-          if (literal === null) everyCaseIsLiteral = false;
-          else literals.push(literal);
-        }
-
-        // An open numeric protocol space (HTTP status, `ts.SyntaxKind`) is D-tier, not a tagged
-        // union — so a `discriminantProperties` name only reports once the case tests show it is
-        // not one. `_tag` is exempt: Effect discriminators are strings.
-        const allTestsNumeric = testCount > 0 && numericTestCount === testCount;
+        const { literals, everyCaseIsLiteral, defaultCase, allTestsNumeric } = summarizeCases(
+          node.cases,
+        );
+        // Numeric protocol spaces are allowed; Effect tag properties remain string discriminators.
         const property =
           candidate !== null && (candidate.kind === 'tag' || !allTestsNumeric)
             ? candidate.name
@@ -461,19 +432,7 @@ export const rule = defineRule({
           return;
         }
 
-        const adtTag = literals.find((literal) => options.adtTags.includes(literal));
-        const messageId =
-          adtTag !== undefined ? 'adtSwitch' : property !== null ? 'tagSwitch' : 'literalSwitch';
-        context.report({
-          node: node.discriminant,
-          messageId,
-          data: {
-            count: String(literals.length),
-            discriminant: describeDiscriminant(context, node.discriminant),
-            property: property ?? 'this vocabulary',
-            tag: adtTag ?? '',
-          },
-        });
+        reportSwitch(context, node, options, literals, property);
       },
     };
   },

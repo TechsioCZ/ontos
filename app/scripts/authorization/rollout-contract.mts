@@ -1,8 +1,8 @@
-import { DateTime, Effect, FileSystem, Result, Schema } from 'effect';
+import { DateTime, Result, Schema } from 'effect';
 import { dedupe as dedupeArray, sort as sortArray } from 'effect/Array';
 import { String as StringOrder } from 'effect/Order';
 
-export const AUTHORIZATION_ROLLOUT_SCHEMA_VERSION = 1 as const;
+const AUTHORIZATION_ROLLOUT_SCHEMA_VERSION = 1 as const;
 
 const AuthorizationRolloutContractSchema = Schema.Struct({
   activatedAt: Schema.DateTimeUtcFromString,
@@ -149,14 +149,3 @@ export const validateAuthorizationRolloutContract = (
   Result.getOrThrow(
     Result.flatMap(decodeContract(raw), (contract) => validateDecodedContract(contract, context)),
   );
-
-export const loadAuthorizationRolloutContract = (file: string, context: RolloutValidationContext) =>
-  Effect.gen(function* loadAuthorizationRolloutContractEffect() {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const source = yield* fileSystem.readFileString(file);
-    const contract = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(AuthorizationRolloutContractSchema),
-      { onExcessProperty: 'error' },
-    )(source).pipe(Effect.mapError(malformedContract));
-    return yield* Effect.fromResult(validateDecodedContract(contract, context));
-  });

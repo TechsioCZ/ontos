@@ -1,3 +1,40 @@
+diff --git a/dist/cjs/cli/oxlint.cjs b/dist/cjs/cli/oxlint.cjs
+index 5ccf1e9670dc9e6f4555c330f948dd3c5b61c1eb..e6d28368813ad8a21a532c34c00eb990224bb570 100644
+--- a/dist/cjs/cli/oxlint.cjs
++++ b/dist/cjs/cli/oxlint.cjs
+@@ -135,8 +135,6 @@ const runOxlintRules = ({ cwd, targets, rules })=>{
+             ...resolvedTargets,
+             '--config',
+             configPath,
+-            '--format',
+-            'unix',
+             '--quiet'
+         ], {
+             cwd,
+diff --git a/dist/cjs/oxlint-plugin/rules/no-manual-locale-copy-branching.cjs b/dist/cjs/oxlint-plugin/rules/no-manual-locale-copy-branching.cjs
+index 0b6edb6fec0eee7cbde212b541b806ac56611eab..572aa9ddd76387172bff32eb7617d6f39002c220 100644
+--- a/dist/cjs/oxlint-plugin/rules/no-manual-locale-copy-branching.cjs
++++ b/dist/cjs/oxlint-plugin/rules/no-manual-locale-copy-branching.cjs
+@@ -54,7 +54,7 @@ const createNoManualLocaleCopyBranchingRule = ()=>({
+             const reportBranch = (node, text)=>{
+                 context.report({
+                     node,
+-                    message: `Move locale-specific copy branch to i18n resources: ${JSON.stringify(normalizeVisibleText(text))}`
++                    message: `Move locale-specific copy branch to i18n resources: ${JSON.stringify((0, external_ast_cjs_namespaceObject.normalizeVisibleText)(text))}`
+                 });
+             };
+             return {
+@@ -64,8 +64,8 @@ const createNoManualLocaleCopyBranchingRule = ()=>({
+                         node.consequent,
+                         node.alternate
+                     ]){
+-                        const text = expressionStringValue(branch);
+-                        if (text && hasLetters(text) && !isAllowedBranchLiteral(text.trim())) reportBranch(branch, text);
++                        const text = (0, external_ast_cjs_namespaceObject.expressionStringValue)(branch);
++                        if (text && (0, external_ast_cjs_namespaceObject.hasLetters)(text) && !isAllowedBranchLiteral(text.trim())) reportBranch(branch, text);
+                     }
+                 }
+             };
 diff --git a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs b/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
 index 274117ad372e9fdc0a95da28731999524a8ef842..37edeeeb3489619996ab9beb7becd1ac77280dda 100644
 --- a/dist/cjs/oxlint-plugin/rules/strict-effect-api-boundaries.cjs
@@ -542,6 +579,29 @@ index 274117ad372e9fdc0a95da28731999524a8ef842..37edeeeb3489619996ab9beb7becd1ac
                      }
                      if ((0, external_ast_cjs_namespaceObject.isSharedApiContractFile)(filename)) {
                          (0, external_ast_cjs_namespaceObject.reportMissingProgramPattern)(context, node, source, /\bHttpApi\.make\b/u, 'Generated shared API contracts must declare an HttpApi contract.');
+diff --git a/dist/esm/cli/oxlint.js b/dist/esm/cli/oxlint.js
+index 9325d7959be8599e06e3cd052aa5eb43137d2566..6f4aad039f17343164c7040a03575a7d84c307da 100644
+--- a/dist/esm/cli/oxlint.js
++++ b/dist/esm/cli/oxlint.js
+@@ -87,8 +87,6 @@ const runOxlintRules = ({ cwd, targets, rules })=>{
+             ...resolvedTargets,
+             '--config',
+             configPath,
+-            '--format',
+-            'unix',
+             '--quiet'
+         ], {
+             cwd,
+diff --git a/dist/esm/oxlint-plugin/rules/no-manual-locale-copy-branching.js b/dist/esm/oxlint-plugin/rules/no-manual-locale-copy-branching.js
+index 12e69ce6ba16c94541bb8adfdd8a2df3701d934b..787917cc125aa236dacfad10297d762036955c1a 100644
+--- a/dist/esm/oxlint-plugin/rules/no-manual-locale-copy-branching.js
++++ b/dist/esm/oxlint-plugin/rules/no-manual-locale-copy-branching.js
+@@ -1,4 +1,4 @@
+-import { getSourceText } from "../ast.js";
++import { expressionStringValue, getSourceText, hasLetters, normalizeVisibleText } from "../ast.js";
+ const looksLikeLocaleTest = (context, node)=>{
+     const text = getSourceText(context, node);
+     return /\b(?:language|locale|lng|currentLanguage)\b/u.test(text) && /(?:={2,3}|!==?|\.\s*startsWith\s*\()/u.test(text) && /['"][a-z]{2}(?:-[A-Za-z0-9]+)?['"]/u.test(text);
 diff --git a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
 index edb519487006c65d15bdef2150b7ddae2f54ab3e..dbc9cad9a0fb3e55d20da65308caa979f545925e 100644
 --- a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
@@ -1082,6 +1142,30 @@ index edb519487006c65d15bdef2150b7ddae2f54ab3e..dbc9cad9a0fb3e55d20da65308caa979
                      }
                      if (isSharedApiContractFile(filename)) {
                          reportMissingProgramPattern(context, node, source, /\bHttpApi\.make\b/u, 'Generated shared API contracts must declare an HttpApi contract.');
+diff --git a/dist/esm-node/cli/oxlint.js b/dist/esm-node/cli/oxlint.js
+index b6951d613f380534a7966398dbb2af9c050dbdbf..0a810f7112d077b84a7685c8833729cf650a8ab8 100644
+--- a/dist/esm-node/cli/oxlint.js
++++ b/dist/esm-node/cli/oxlint.js
+@@ -88,8 +88,6 @@ const runOxlintRules = ({ cwd, targets, rules })=>{
+             ...resolvedTargets,
+             '--config',
+             configPath,
+-            '--format',
+-            'unix',
+             '--quiet'
+         ], {
+             cwd,
+diff --git a/dist/esm-node/oxlint-plugin/rules/no-manual-locale-copy-branching.js b/dist/esm-node/oxlint-plugin/rules/no-manual-locale-copy-branching.js
+index d357dfcb3708de5c343a32961de8ed0e29e2f34e..6af206ece5e822e1fc542c7498ca217db8d3f844 100644
+--- a/dist/esm-node/oxlint-plugin/rules/no-manual-locale-copy-branching.js
++++ b/dist/esm-node/oxlint-plugin/rules/no-manual-locale-copy-branching.js
+@@ -1,5 +1,5 @@
+ import "node:module";
+-import { getSourceText } from "../ast.js";
++import { expressionStringValue, getSourceText, hasLetters, normalizeVisibleText } from "../ast.js";
+ const looksLikeLocaleTest = (context, node)=>{
+     const text = getSourceText(context, node);
+     return /\b(?:language|locale|lng|currentLanguage)\b/u.test(text) && /(?:={2,3}|!==?|\.\s*startsWith\s*\()/u.test(text) && /['"][a-z]{2}(?:-[A-Za-z0-9]+)?['"]/u.test(text);
 diff --git a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
 index 044b7e175b0df7c266c3ddbbe915888f059a322a..7ef9d6c8c38a86018b918d9c76521b995277ac52 100644
 --- a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js

@@ -4,7 +4,7 @@
 
 export const ultramodernRouteNamespace = 'party-registry' as const;
 
-export const ultramodernRouteMetadata = [
+const ultramodernRouteMetadata = [
   {
     canonicalPath: '/contacts',
     descriptionKey: 'party-registry.pages.contacts.description',
@@ -36,20 +36,5 @@ export const ultramodernRouteMetadata = [
 ] as const;
 
 export const ultramodernLocalisedUrls = {
-  '/contacts': {
-    cs: '/contacts',
-    en: '/contacts',
-  },
-} as const;
-
-export const ultramodernPublicRoutes = [] as const;
-
-export const ultramodernRouteConfig = {
-  authoring: 'colocated-route-meta',
-  generatedManifest: true,
-  localisedUrls: ultramodernLocalisedUrls,
-  namespace: ultramodernRouteNamespace,
-  publicRoutes: ultramodernPublicRoutes,
-  routes: ultramodernRouteMetadata,
-  source: 'route-owned',
+  [ultramodernRouteMetadata[0].canonicalPath]: ultramodernRouteMetadata[0].localisedPaths,
 } as const;

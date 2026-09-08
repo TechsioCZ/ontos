@@ -15,7 +15,7 @@ import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
 import type { PartyContactPointPersistenceUnavailable } from '../../shared/domain/contact-point-errors.ts';
 import { findPartyContactPointRecord } from '../services/party-contact-point-persistence.service.ts';
 
-export const partyContactPointDetailEntrypoint = defineTenantModuleEntrypoint({
+const partyContactPointDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'party.registry.api.party-contact-point-detail',

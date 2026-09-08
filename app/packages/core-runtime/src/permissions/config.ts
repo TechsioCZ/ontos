@@ -1,15 +1,5 @@
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Effect, Option, Redacted, Schema } from 'effect';
+import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { SpiceDbConfigError } from './config-error.ts';
 
@@ -35,10 +25,6 @@ const makeSpiceDbConfigValue = (settings: {
 
 export type SpiceDbConfigValue = ReturnType<typeof makeSpiceDbConfigValue> &
   Partial<Record<'deploymentEnvironment', string>>;
-
-export class SpiceDbConfig extends Context.Service<SpiceDbConfig, SpiceDbConfigValue>()(
-  '@app/core-runtime/permissions/config/SpiceDbConfig',
-) {}
 
 export type SpiceDbEnvironment = Readonly<
   Partial<
@@ -177,41 +163,6 @@ export const parseSpiceDbConfig = (
 ): Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> =>
   parseSpiceDbConfigWith(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
 
-const nodeFileSystem = process.getBuiltinModule('node:fs');
-
-const loadFileConfigProvider = Effect.fn('Config.loadFileConfigProvider')(function* loadProvider(
-  envPath: string,
-) {
-  const result = yield* Effect.sync(() => {
-    try {
-      return {
-        contents: nodeFileSystem.readFileSync(envPath, 'utf-8'),
-        status: 'loaded',
-      } as const;
-    } catch (error) {
-      if (
-        Predicate.hasProperty(error, 'code') &&
-        (error.code === 'ENOENT' || error.code === 'NOT_FOUND_DOTENV_ENVIRONMENT')
-      ) {
-        return { status: 'missing' } as const;
-      }
-      return {
-        error: configFailureWithCause(`Unable to load the root environment from ${envPath}`, error),
-        status: 'failed',
-      } as const;
-    }
-  });
-
-  return yield* Match.value(result).pipe(
-    Match.discriminatorsExhaustive('status')({
-      failed: ({ error }) => Effect.fail(error),
-      loaded: ({ contents }) =>
-        Effect.succeed(ConfigProvider.fromDotEnvContents(contents, { preserveEmptyStrings: true })),
-      missing: () => Effect.succeed(ConfigProvider.fromUnknown({})),
-    }),
-  );
-});
-
 export const loadSpiceDbConfig = (
   options: LoadSpiceDbConfigOptions = {},
 ): Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> => {
@@ -221,11 +172,10 @@ export const loadSpiceDbConfig = (
       : ConfigProvider.fromUnknown(options.environment, { preserveEmptyStrings: true });
   const envPath = options.envPath ?? SPICEDB_ROOT_ENV_PATH;
 
-  return loadFileConfigProvider(envPath).pipe(
+  return loadDotEnvProvider(envPath, configFailureWithCause).pipe(
+    Effect.withSpan('Config.loadFileConfigProvider'),
     Effect.flatMap((fileProvider) =>
       parseSpiceDbConfigWith(ConfigProvider.orElse(environmentProvider, fileProvider)),
     ),
   );
 };
-
-export const SpiceDbConfigLive = Layer.effect(SpiceDbConfig, loadSpiceDbConfig());

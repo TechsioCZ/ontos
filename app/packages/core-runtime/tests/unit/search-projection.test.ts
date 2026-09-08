@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import {
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
 
@@ -63,7 +63,7 @@ effectTest(
   'a projection rebuild floor prevents unseen stale resources and rejects divergent equal-version rebuilds',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = makeCoreSearchQueryRuntime(store);
+    const runtime = createCoreSearchQueryRuntime(store);
     const rebuild = {
       documents: [],
       moduleId: partyRef.moduleId,
@@ -106,7 +106,7 @@ effectTest(
   'Core Search identifies alias-only matches while canonical evidence takes precedence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = makeCoreSearchQueryRuntime(store);
+    const runtime = createCoreSearchQueryRuntime(store);
     return Effect.gen(function* testAliasMatches() {
       yield* store.apply({
         document: party({
@@ -204,7 +204,7 @@ effectTest(
   'Core Search honors half-open evidence periods for canonical and subject aliases',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = makeCoreSearchQueryRuntime(store);
+    const runtime = createCoreSearchQueryRuntime(store);
     return Effect.gen(function* testHalfOpenEvidencePeriods() {
       yield* store.apply({
         document: party({
@@ -259,7 +259,7 @@ effectTest(
 
 effectTest('Core Search rebuilds one owned projection atomically and isolates tenants', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
-  const runtime = makeCoreSearchQueryRuntime(store);
+  const runtime = createCoreSearchQueryRuntime(store);
 
   return Effect.gen(function* testOwnedProjectionRebuild() {
     yield* store.replace({
@@ -322,7 +322,7 @@ effectTest(
   'Core Search applies typed Legal Entity and role facets without returning match evidence',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = makeCoreSearchQueryRuntime(store);
+    const runtime = createCoreSearchQueryRuntime(store);
     const counterpartyRef = {
       moduleId: 'party.registry',
       resourceId: '40000000-0000-4000-8000-000000000001',
@@ -416,7 +416,7 @@ effectTest(
   'Core Search rejects malformed or cross-owner rebuild documents without partial replacement',
   () => {
     const store = makeInMemoryCoreSearchProjectionStore();
-    const runtime = makeCoreSearchQueryRuntime(store);
+    const runtime = createCoreSearchQueryRuntime(store);
     return Effect.gen(function* testMalformedRebuildDocuments() {
       yield* store.replace({
         documents: [party()],
@@ -450,7 +450,7 @@ effectTest(
 
 effectTest('Core Search makes duplicate and out-of-order lifecycle observations harmless', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
-  const runtime = makeCoreSearchQueryRuntime(store);
+  const runtime = createCoreSearchQueryRuntime(store);
   const versionTwo = party({ projectionVersion: '2', title: 'Current title' });
   return Effect.gen(function* testDuplicateLifecycleObservations() {
     yield* store.apply({ document: versionTwo, kind: 'upsert' });

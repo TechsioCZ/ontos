@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const testsDirectory = dirname(fileURLToPath(import.meta.url));
@@ -11,7 +11,7 @@ const oxlintEntryPoint = fileURLToPath(
   new URL('bin/oxlint', import.meta.resolve('oxlint/package.json')),
 );
 
-export interface Diagnostic {
+interface Diagnostic {
   readonly code: string;
   readonly filename: string;
   readonly message: string;
@@ -28,6 +28,33 @@ export interface LintRun {
   readonly numberOfFiles: number;
 }
 
+function validateDiagnostic(diagnostic: Diagnostic): void {
+  if (
+    diagnostic === null ||
+    typeof diagnostic.code !== 'string' ||
+    typeof diagnostic.filename !== 'string' ||
+    typeof diagnostic.message !== 'string' ||
+    !Array.isArray(diagnostic.labels) ||
+    !['error', 'warning'].includes(diagnostic.severity)
+  ) {
+    throw new Error(`Oxlint returned a malformed diagnostic: ${JSON.stringify(diagnostic)}`);
+  }
+}
+
+function validateReport(
+  parsed: { diagnostics?: Diagnostic[]; number_of_files?: number },
+  stdout: string,
+): asserts parsed is { diagnostics: Diagnostic[]; number_of_files: number } {
+  if (
+    parsed === null ||
+    !Array.isArray(parsed.diagnostics) ||
+    !Number.isInteger(parsed.number_of_files) ||
+    (parsed.number_of_files ?? 0) <= 0
+  ) {
+    throw new Error(`Oxlint returned an incomplete or empty-file report:\n${stdout}`);
+  }
+}
+
 /** A crashed loader, empty run, or malformed output must never look like zero violations. */
 export function parseOxlintOutput(stdout: string, stderr: string, status: number | null): LintRun {
   if (status !== 0 && status !== 1) {
@@ -40,26 +67,8 @@ export function parseOxlintOutput(stdout: string, stderr: string, status: number
   } catch (cause) {
     throw new Error(`Oxlint did not return a JSON report:\n${stdout}`, { cause });
   }
-  if (
-    parsed === null ||
-    !Array.isArray(parsed.diagnostics) ||
-    !Number.isInteger(parsed.number_of_files) ||
-    (parsed.number_of_files ?? 0) <= 0
-  ) {
-    throw new Error(`Oxlint returned an incomplete or empty-file report:\n${stdout}`);
-  }
-  for (const diagnostic of parsed.diagnostics) {
-    if (
-      diagnostic === null ||
-      typeof diagnostic.code !== 'string' ||
-      typeof diagnostic.filename !== 'string' ||
-      typeof diagnostic.message !== 'string' ||
-      !Array.isArray(diagnostic.labels) ||
-      !['error', 'warning'].includes(diagnostic.severity)
-    ) {
-      throw new Error(`Oxlint returned a malformed diagnostic: ${JSON.stringify(diagnostic)}`);
-    }
-  }
+  validateReport(parsed, stdout);
+  for (const diagnostic of parsed.diagnostics) validateDiagnostic(diagnostic);
   const hasErrors = parsed.diagnostics.some((diagnostic) => diagnostic.severity === 'error');
   if ((status === 0 && hasErrors) || (status === 1 && parsed.diagnostics.length === 0)) {
     throw new Error(`Oxlint exit status ${status} contradicts its diagnostics.`);
@@ -120,8 +129,4 @@ export function listFilesRecursively(directory: string): readonly string[] {
 
 export function fixtureConfigPath(rule: string): string {
   return join(fixturesDirectory, rule, '.oxlintrc.json');
-}
-
-export function relativeToApp(path: string): string {
-  return relative(appRoot, path).replaceAll('\\', '/');
 }

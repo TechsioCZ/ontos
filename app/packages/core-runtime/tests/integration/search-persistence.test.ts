@@ -12,7 +12,7 @@ import { Pool } from 'pg';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
-import { makeCoreSearchQueryRuntime } from '../../src/search/projection.ts';
+import { createCoreSearchQueryRuntime } from '../../src/search/projection.ts';
 import { makeTestDatabaseFromPool } from '../support/database.ts';
 import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 
@@ -61,7 +61,7 @@ effectTest(
         NativeScope.provide(nativeDatabaseScope),
       ),
     });
-    const search = makeCoreSearchQueryRuntime(store);
+    const search = createCoreSearchQueryRuntime(store);
     const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
       aliases: [
         {
@@ -227,7 +227,7 @@ effectTest(
         ),
       });
       const floorSearch = () =>
-        makeCoreSearchQueryRuntime(restarted).search({
+        createCoreSearchQueryRuntime(restarted).search({
           includeArchived: false,
           moduleId: floorRef.moduleId,
           query: 'unseen',

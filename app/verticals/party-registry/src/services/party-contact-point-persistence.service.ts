@@ -141,6 +141,13 @@ const provenanceDto = Effect.fn('PartyContactPointPersistenceService.provenanceD
   },
 );
 
+const encodeExternalEvidence = (provenance: AddContactPointCommand['provenance']) =>
+  provenance.externalEvidence === undefined
+    ? Effect.succeed(null)
+    : Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(provenance.externalEvidence).pipe(
+        Effect.mapError(unavailable),
+      );
+
 const verificationDto = (row: VerificationRecord) => ({
   ...(row.verificationMethod === null ? {} : { method: row.verificationMethod }),
   state: row.verificationState as 'REJECTED' | 'UNVERIFIED' | 'VERIFIED',
@@ -215,6 +222,11 @@ const isPurposeCurrentAt = (row: PurposeRecord, now: Date): boolean =>
   toEpochMillis(row.validFrom) <= toEpochMillis(now) &&
   (row.validTo === null || toEpochMillis(row.validTo) > toEpochMillis(now));
 
+const purposeRegistryColumns = (context: AddressPurposeAssignment['registryContext']) => ({
+  jurisdiction: context?.jurisdiction.toUpperCase() ?? 'ZZ',
+  registryContext: context?.registryKey ?? 'GENERAL',
+});
+
 const purposeDto = Effect.fn('PartyContactPointPersistenceService.purposeDto')(
   function* makePurposeDto(row: PurposeRecord, now: Date) {
     return {
@@ -241,6 +253,42 @@ const purposeDto = Effect.fn('PartyContactPointPersistenceService.purposeDto')(
   },
 );
 
+const contactPointValueDto = (
+  row: PartyContactPointRecord,
+  purposeDtos: readonly Effect.Success<ReturnType<typeof purposeDto>>[],
+) => {
+  const value =
+    row.contactPointType === 'EMAIL'
+      ? {
+          displayValue: row.displayValue ?? '',
+          lookupValue: row.normalizedValue ?? '',
+          preferred: row.preferred,
+          type: 'EMAIL' as const,
+        }
+      : row.contactPointType === 'PHONE'
+        ? {
+            countryCode: row.phoneCountryCode,
+            displayValue: row.displayValue ?? '',
+            extension: row.phoneExtension,
+            lookupValue: row.normalizedValue ?? '',
+            preferred: row.preferred,
+            type: 'PHONE' as const,
+          }
+        : {
+            address: {
+              addressLine1: row.addressLine1,
+              addressLine2: row.addressLine2,
+              city: row.city,
+              countryCode: row.countryCode ?? '',
+              postalCode: row.postalCode,
+              region: row.region,
+            },
+            purposes: purposeDtos,
+            type: 'ADDRESS' as const,
+          };
+  return value;
+};
+
 const contactPointDto = Effect.fn('PartyContactPointPersistenceService.contactPointDto')(
   function* makeContactPointDto(input: {
     readonly now: Date;
@@ -252,35 +300,7 @@ const contactPointDto = Effect.fn('PartyContactPointPersistenceService.contactPo
     const purposeDtos = yield* Effect.forEach(purposes, (purpose) => purposeDto(purpose, now), {
       concurrency: 1,
     });
-    const value =
-      row.contactPointType === 'EMAIL'
-        ? {
-            displayValue: row.displayValue ?? '',
-            lookupValue: row.normalizedValue ?? '',
-            preferred: row.preferred,
-            type: 'EMAIL' as const,
-          }
-        : row.contactPointType === 'PHONE'
-          ? {
-              countryCode: row.phoneCountryCode,
-              displayValue: row.displayValue ?? '',
-              extension: row.phoneExtension,
-              lookupValue: row.normalizedValue ?? '',
-              preferred: row.preferred,
-              type: 'PHONE' as const,
-            }
-          : {
-              address: {
-                addressLine1: row.addressLine1,
-                addressLine2: row.addressLine2,
-                city: row.city,
-                countryCode: row.countryCode ?? '',
-                postalCode: row.postalCode,
-                region: row.region,
-              },
-              purposes: purposeDtos,
-              type: 'ADDRESS' as const,
-            };
+    const value = contactPointValueDto(row, purposeDtos);
     return {
       contactPointRef: contactPointRef(row.tenantId, row.contactPointId),
       current:
@@ -346,6 +366,32 @@ const loadDto = Effect.fn('PartyContactPointPersistenceService.loadDto')(
   },
 );
 
+const storedAddressKey = (row: PartyContactPointRecord) =>
+  normalizedAddressKey({
+    ...(row.addressLine1 === null ? {} : { addressLine1: row.addressLine1 }),
+    ...(row.addressLine2 === null ? {} : { addressLine2: row.addressLine2 }),
+    ...(row.city === null ? {} : { city: row.city }),
+    countryCode: row.countryCode ?? '',
+    ...(row.postalCode === null ? {} : { postalCode: row.postalCode }),
+    ...(row.region === null ? {} : { region: row.region }),
+  });
+
+const enrichedEvidenceReferences = (
+  row: PartyContactPointRecord,
+  provenance: AddContactPointCommand['provenance'],
+) => {
+  const additionalEvidenceRefs = [
+    ...new Set([
+      ...row.additionalEvidenceRefs,
+      ...(provenance.evidenceReference === undefined ||
+      provenance.evidenceReference === row.evidenceReference
+        ? []
+        : [provenance.evidenceReference]),
+    ]),
+  ];
+  return additionalEvidenceRefs;
+};
+
 const sameCanonicalContact = (
   row: PartyContactPointRecord,
   command: AddContactPointCommand,
@@ -365,17 +411,7 @@ const sameCanonicalContact = (
   if (command.contactPoint.type !== 'ADDRESS') {
     return false;
   }
-  return (
-    normalizedAddressKey(command.contactPoint.address) ===
-    normalizedAddressKey({
-      ...(row.addressLine1 === null ? {} : { addressLine1: row.addressLine1 }),
-      ...(row.addressLine2 === null ? {} : { addressLine2: row.addressLine2 }),
-      ...(row.city === null ? {} : { city: row.city }),
-      countryCode: row.countryCode ?? '',
-      ...(row.postalCode === null ? {} : { postalCode: row.postalCode }),
-      ...(row.region === null ? {} : { region: row.region }),
-    })
-  );
+  return normalizedAddressKey(command.contactPoint.address) === storedAddressKey(row);
 };
 
 const lockParty = (transaction: PartyScopedTransaction, tenantId: string, partyId: string) =>
@@ -511,6 +547,54 @@ const transferPurposePreference = Effect.fn(
   });
 });
 
+const contactValueColumns = (normalized: ReturnType<typeof normalizeContactPointInput>) => {
+  const addressColumns =
+    normalized.type === 'ADDRESS'
+      ? normalized.address
+      : {
+          addressLine1: null,
+          addressLine2: null,
+          city: null,
+          countryCode: null,
+          postalCode: null,
+          region: null,
+        };
+  const channelColumns =
+    normalized.type === 'ADDRESS'
+      ? {
+          displayValue: null,
+          normalizationVersion: null,
+          normalizedValue: null,
+          preferred: false,
+        }
+      : {
+          displayValue: normalized.displayValue,
+          normalizationVersion: 'party-contact-v1',
+          normalizedValue: normalized.lookupValue,
+          preferred: normalized.preferred,
+        };
+  const phoneColumns =
+    normalized.type === 'PHONE'
+      ? {
+          phoneCountryCode: normalized.countryCode,
+          phoneExtension: normalized.extension,
+        }
+      : { phoneCountryCode: null, phoneExtension: null };
+  return { ...addressColumns, ...channelColumns, ...phoneColumns };
+};
+
+const acceptedVerificationColumns = (command: AddContactPointCommand) => ({
+  verificationMethod: command.verification.method ?? null,
+  verificationState: command.verification.state,
+  verifiedAt:
+    command.verification.verifiedAt === undefined
+      ? null
+      : DateTime.toDateUtc(command.verification.verifiedAt),
+  verifiedByPrincipalId:
+    command.verification.state === 'VERIFIED' ? command.acceptedByPrincipalId : null,
+  verifierReference: command.verification.verifierReference ?? null,
+});
+
 export const addContactPointRecord = Effect.fn(
   'PartyContactPointPersistenceService.addContactPointRecord',
 )(function* addContactPoint(
@@ -549,12 +633,7 @@ export const addContactPointRecord = Effect.fn(
       return normalizeContactPointInput(contactPoint);
     },
   });
-  const externalEvidence =
-    command.provenance.externalEvidence === undefined
-      ? null
-      : yield* Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(
-          command.provenance.externalEvidence,
-        ).pipe(Effect.mapError(unavailable));
+  const externalEvidence = yield* encodeExternalEvidence(command.provenance);
   const [party] = yield* lockParty(transaction, scope.tenantId, command.partyRef.resourceId);
   if (party === undefined) {
     return yield* new PartyContactPointPartyNotFound({
@@ -646,44 +725,10 @@ export const addContactPointRecord = Effect.fn(
       )
       .pipe(Effect.mapError(unavailable));
   }
-  const addressColumns =
-    normalized.type === 'ADDRESS'
-      ? normalized.address
-      : {
-          addressLine1: null,
-          addressLine2: null,
-          city: null,
-          countryCode: null,
-          postalCode: null,
-          region: null,
-        };
-  const channelColumns =
-    normalized.type === 'ADDRESS'
-      ? {
-          displayValue: null,
-          normalizationVersion: null,
-          normalizedValue: null,
-          preferred: false,
-        }
-      : {
-          displayValue: normalized.displayValue,
-          normalizationVersion: 'party-contact-v1',
-          normalizedValue: normalized.lookupValue,
-          preferred: normalized.preferred,
-        };
-  const phoneColumns =
-    normalized.type === 'PHONE'
-      ? {
-          phoneCountryCode: normalized.countryCode,
-          phoneExtension: normalized.extension,
-        }
-      : { phoneCountryCode: null, phoneExtension: null };
   const [created] = yield* transaction
     .insert(partyContactPoints)
     .values({
-      ...addressColumns,
-      ...channelColumns,
-      ...phoneColumns,
+      ...contactValueColumns(normalized),
       acceptedByActionInvocationId: command.acceptedByActionInvocationId,
       acceptedByPrincipalId: command.acceptedByPrincipalId,
       contactPointType: normalized.type,
@@ -698,15 +743,7 @@ export const addContactPointRecord = Effect.fn(
       provenanceSource: command.provenance.source,
       tenantId: scope.tenantId,
       validFrom: instantAsDate(command.validFrom),
-      verificationMethod: command.verification.method ?? null,
-      verificationState: command.verification.state,
-      verifiedAt:
-        command.verification.verifiedAt === undefined
-          ? null
-          : DateTime.toDateUtc(command.verification.verifiedAt),
-      verifiedByPrincipalId:
-        command.verification.state === 'VERIFIED' ? command.acceptedByPrincipalId : null,
-      verifierReference: command.verification.verifierReference ?? null,
+      ...acceptedVerificationColumns(command),
     })
     .returning()
     .pipe(Effect.mapError(unavailable));
@@ -1097,27 +1134,14 @@ export const updateContactPointRecord = Effect.fn(
           reason: 'Replacing external observation evidence would erase accepted provenance',
         });
       }
-      const additionalEvidenceRefs = [
-        ...new Set([
-          ...row.additionalEvidenceRefs,
-          ...(change.provenance.evidenceReference === undefined ||
-          change.provenance.evidenceReference === row.evidenceReference
-            ? []
-            : [change.provenance.evidenceReference]),
-        ]),
-      ];
+      const additionalEvidenceRefs = enrichedEvidenceReferences(row, change.provenance);
       if (additionalEvidenceRefs.length > 32) {
         return yield* new PartyContactPointInvalid({
           code: 'party_contact_point_invalid',
           reason: 'Contact Point evidence enrichment exceeds its bounded history',
         });
       }
-      const externalEvidence =
-        change.provenance.externalEvidence === undefined
-          ? null
-          : yield* Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(
-              change.provenance.externalEvidence,
-            ).pipe(Effect.mapError(unavailable));
+      const externalEvidence = yield* encodeExternalEvidence(change.provenance);
       yield* transaction
         .update(partyContactPoints)
         .set({
@@ -1194,12 +1218,7 @@ export const updateContactPointRecord = Effect.fn(
         current?.contactPointPurposeId,
       );
     }
-    const externalEvidence =
-      command.provenance.externalEvidence === undefined
-        ? null
-        : yield* Schema.encodeUnknownEffect(AresAppliedEvidenceSchema)(
-            command.provenance.externalEvidence,
-          ).pipe(Effect.mapError(unavailable));
+    const externalEvidence = yield* encodeExternalEvidence(command.provenance);
     if (current === undefined) {
       yield* transaction
         .insert(partyContactPointPurposes)
@@ -1210,7 +1229,7 @@ export const updateContactPointRecord = Effect.fn(
           evidenceReference: command.provenance.evidenceReference ?? null,
           externalEvidence,
           isCurrent: true,
-          jurisdiction: assignment.registryContext?.jurisdiction.toUpperCase() ?? 'ZZ',
+          ...purposeRegistryColumns(assignment.registryContext),
           partyId: row.partyId,
           policyVersion: 'party-contact-point.v1',
           preferred: assignment.preferred,
@@ -1218,7 +1237,6 @@ export const updateContactPointRecord = Effect.fn(
           provenanceMethod: command.provenance.method,
           provenanceSource: command.provenance.source,
           purposeKey: assignment.purpose,
-          registryContext: assignment.registryContext?.registryKey ?? 'GENERAL',
           tenantId: scope.tenantId,
           validFrom: operationTime,
         })
@@ -1248,6 +1266,23 @@ export const updateContactPointRecord = Effect.fn(
     return yield* loadUpdatedContactPoint({ aliases, row, scope, transaction });
   }).pipe(Effect.withSpan('PartyContactPointPersistenceService.setAddressPurpose'));
 });
+
+const validatePurposeEnd = Effect.fn('PartyContactPointPersistenceService.validatePurposeEnd')(
+  function* validatePurposeEnd(purpose: PurposeRecord, effectiveEndMillis: number) {
+    if (purpose.validTo !== null) {
+      return yield* new PartyContactPointCorrectionRequired({
+        code: 'party_contact_point_correction_required',
+        reason: 'Changing a planned ADDRESS purpose end requires correction semantics',
+      });
+    }
+    if (effectiveEndMillis < toEpochMillis(purpose.validFrom)) {
+      return yield* new PartyContactPointInvalid({
+        code: 'party_contact_point_invalid',
+        reason: 'The effective end cannot precede the ADDRESS purpose effective start',
+      });
+    }
+  },
+);
 
 export const endContactPointRecord = Effect.fn(
   'PartyContactPointPersistenceService.endContactPointRecord',
@@ -1375,18 +1410,7 @@ export const endContactPointRecord = Effect.fn(
               reason: 'The ADDRESS purpose is not current or was ended at a different time',
             });
           }
-          if (purpose.validTo !== null) {
-            return yield* new PartyContactPointCorrectionRequired({
-              code: 'party_contact_point_correction_required',
-              reason: 'Changing a planned ADDRESS purpose end requires correction semantics',
-            });
-          }
-          if (effectiveEndMillis < toEpochMillis(purpose.validFrom)) {
-            return yield* new PartyContactPointInvalid({
-              code: 'party_contact_point_invalid',
-              reason: 'The effective end cannot precede the ADDRESS purpose effective start',
-            });
-          }
+          yield* validatePurposeEnd(purpose, effectiveEndMillis);
           yield* transaction
             .update(partyContactPointPurposes)
             .set({

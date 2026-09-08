@@ -1,9 +1,6 @@
 // Canonical schema-only contract extracted from the generated resolve-duplicate-candidate-match Action.
 import { Schema } from 'effect';
-import {
-  DuplicateCaseResolutionPayloadSchema,
-  DuplicateCaseResolutionResultSchema,
-} from '../domain/matching-contracts.ts';
+import { DuplicateCaseResolutionPayloadSchema } from '../domain/matching-contracts.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const ResolveDuplicateCandidateMatchPayloadSchema = Schema.Struct({
@@ -12,6 +9,4 @@ export const ResolveDuplicateCandidateMatchPayloadSchema = Schema.Struct({
 });
 export type ResolveDuplicateCandidateMatchPayload =
   typeof ResolveDuplicateCandidateMatchPayloadSchema.Type;
-export const ResolveDuplicateCandidateMatchResultSchema = DuplicateCaseResolutionResultSchema;
-export type ResolveDuplicateCandidateMatchResult =
-  typeof ResolveDuplicateCandidateMatchResultSchema.Type;
+export { DuplicateCaseResolutionResultSchema as ResolveDuplicateCandidateMatchResultSchema } from '../domain/matching-contracts.ts';

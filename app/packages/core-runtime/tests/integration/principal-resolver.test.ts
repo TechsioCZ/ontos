@@ -1,25 +1,13 @@
-import {
-  makeEffectTestCallback as nativeTestCallback,
-  makeEffectTestCallback,
-} from '@app/core-runtime/testing/effect-runtime';
+import { makeEffectTestCallback } from '@app/core-runtime/testing/effect-runtime';
 
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
+import { DateTime, Effect } from 'effect';
 import assert from 'node:assert/strict';
-import test, { after as afterNativeDatabase } from 'node:test';
-import { Pool } from 'pg';
+import test from 'node:test';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
-import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
-
-const nativeDatabaseScope = runNativeSync(NativeScope.make());
-const databaseEffect = <Value>(operation: () => PromiseLike<Value>) =>
-  Effect.promise(() => operation());
-afterNativeDatabase(
-  NativeScope.close(nativeDatabaseScope, NativeExit.void).pipe(nativeTestCallback),
-);
+import { principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
 
 const tenantOne = '10000000-0000-4000-8000-000000000001';
 const tenantTwo = '10000000-0000-4000-8000-000000000002';
@@ -27,18 +15,11 @@ const principalOne = '20000000-0000-4000-8000-000000000001';
 const principalTwo = '20000000-0000-4000-8000-000000000002';
 const subject = 'better-auth-integration-subject';
 
-const effectTest = <Value, Failure>(name: string, effect: Effect.Effect<Value, Failure>): void => {
-  test(name, makeEffectTestCallback(effect));
-};
-
-effectTest(
+test(
   'lists and selects multiple tenant-scoped principals and fails closed after access changes',
   Effect.gen(function* principalResolverIntegration() {
     const configuration = yield* loadDatabaseConfig();
-    const pool = new Pool({ connectionString: configuration.connectionString });
-    const database = yield* makeTestDatabaseFromPool(pool, coreRelations).pipe(
-      NativeScope.provide(nativeDatabaseScope),
-    );
+    const { executor: database } = yield* makeCoreDatabase(configuration);
     const resolver = makePrincipalResolver({ executor: database });
     const cleanup = Effect.gen(function* cleanPrincipalResolverFixtures() {
       yield* database
@@ -160,9 +141,6 @@ effectTest(
         resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
       );
       assert.equal(inactiveTenant._tag, 'TenantInactiveError');
-    }).pipe(
-      Effect.ensuring(cleanup.pipe(Effect.orDie)),
-      Effect.ensuring(databaseEffect(pool.end.bind(pool)).pipe(Effect.orDie)),
-    );
-  }),
+    }).pipe(Effect.ensuring(cleanup.pipe(Effect.orDie)));
+  }).pipe(Effect.scoped, makeEffectTestCallback),
 );

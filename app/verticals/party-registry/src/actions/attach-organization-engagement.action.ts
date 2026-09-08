@@ -6,13 +6,9 @@ import {
   defineTenantModuleEntrypoint,
   OperationContextUnavailable,
 } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 import {
   AttachOrganizationEngagementPayloadSchema,
-  EngagementProfileConflict,
-  EngagementProfilePersistenceUnavailable,
-  PartyRegistryReferenceUnavailable,
   OrganizationEngagementProfileSchema,
 } from '../../shared/domain/engagement-profile.ts';
 import type {
@@ -25,35 +21,7 @@ import {
   validatePartyRegistryReferences,
 } from '../services/engagement-reference-validation.service.ts';
 
-export const AttachOrganizationEngagementPayload = AttachOrganizationEngagementPayloadSchema;
-export const AttachOrganizationEngagementResult = OrganizationEngagementProfileSchema;
-export const AttachOrganizationEngagementError = Schema.Union([
-  EngagementProfileConflict,
-  EngagementProfilePersistenceUnavailable,
-  PartyRegistryReferenceUnavailable,
-]);
-
-interface Services {
-  readonly create: (
-    payload: AttachOrganizationEngagementInput,
-  ) => Effect.Effect<
-    OrganizationEngagementProfile,
-    EngagementProfileConflict | EngagementProfilePersistenceUnavailable
-  >;
-  readonly validate: (
-    payload: AttachOrganizationEngagementInput,
-  ) => Effect.Effect<void, EngagementProfileConflict | PartyRegistryReferenceUnavailable>;
-}
-
-const handleAttachOrganizationEngagement = Effect.fn(
-  'AttachOrganizationEngagementAction.handleAttachOrganizationEngagement',
-)(function* handleAttachOrganizationEngagementEffect(
-  payload: AttachOrganizationEngagementInput,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-) {
-  yield* context.services.validate(payload);
-  return yield* context.services.create(payload);
-});
+import { AttachEngagementError, handleAttachEngagement } from './attach-engagement-handler.ts';
 
 export const attachOrganizationEngagementAction = defineAction(
   {
@@ -63,7 +31,7 @@ export const attachOrganizationEngagementAction = defineAction(
     },
     actionKey: 'party.registry.attach-organization-engagement',
     auditProfile: 'standard',
-    domainErrorSchema: AttachOrganizationEngagementError,
+    domainErrorSchema: AttachEngagementError,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -75,12 +43,12 @@ export const attachOrganizationEngagementAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'required',
     owningModuleKey: 'party.registry',
-    payloadSchema: AttachOrganizationEngagementPayload,
+    payloadSchema: AttachOrganizationEngagementPayloadSchema,
     policies: [],
-    resultSchema: AttachOrganizationEngagementResult,
+    resultSchema: OrganizationEngagementProfileSchema,
     schemaVersion: '1',
   },
-  handleAttachOrganizationEngagement,
+  handleAttachEngagement<AttachOrganizationEngagementInput, OrganizationEngagementProfile>,
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

@@ -1,6 +1,6 @@
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 // @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { sql } from 'drizzle-orm';
+import { getTableName, sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 import type { CatalogEntry } from '../src/db/catalog.ts';
 import { compareApplicationCatalog } from '../src/db/catalog.ts';
@@ -67,7 +67,7 @@ const verifyTypedQuery = <Result,>(
     Effect.asVoid,
   );
 
-const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
+const verifyRuntimeRole = Effect.gen(function* verifyRuntimeRoleEffect() {
   const database = yield* CoreDatabase;
   const runtimeRole = yield* database.executor
     .execute<RuntimeRoleRow>(
@@ -90,7 +90,11 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
       reason: 'The application runtime role must be non-superuser and must not bypass RLS',
     });
   }
+  return yield* Effect.void;
+});
 
+const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect() {
+  const database = yield* CoreDatabase;
   for (const [tableName, operations] of [
     ['search_index_entries', ['delete', 'insert', 'select', 'update']],
     ['search_projection_generations', ['insert', 'select', 'update']],
@@ -144,125 +148,11 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
       });
     }
   }
+  return yield* Effect.void;
+});
 
-  const requiredCompositeConstraints = [
-    'core_action_invocations_tenant_auth_binding_fk',
-    'core_action_invocations_tenant_impersonator_fk',
-    'core_action_invocations_tenant_legal_entity_fk',
-    'core_action_invocations_tenant_principal_fk',
-    'core_audit_events_tenant_auth_binding_fk',
-    'core_audit_events_tenant_impersonator_fk',
-    'core_audit_events_tenant_invocation_fk',
-    'core_audit_events_tenant_legal_entity_fk',
-    'core_audit_events_tenant_principal_fk',
-    'core_auth_bindings_tenant_principal_fk',
-    'core_data_access_events_tenant_auth_binding_fk',
-    'core_data_access_events_tenant_impersonator_fk',
-    'core_data_access_events_tenant_invocation_fk',
-    'core_data_access_events_tenant_legal_entity_fk',
-    'core_data_access_events_tenant_principal_fk',
-    'core_domain_events_tenant_invocation_fk',
-    'core_domain_events_tenant_legal_entity_fk',
-    'core_evidence_tenant_asset_fk',
-    'core_evidence_tenant_audit_fk',
-    'core_evidence_tenant_data_access_fk',
-    'core_evidence_tenant_domain_event_fk',
-    'core_evidence_tenant_invocation_fk',
-    'core_evidence_tenant_legal_entity_fk',
-    'core_media_assets_tenant_legal_entity_fk',
-    'core_media_assets_tenant_principal_fk',
-    'core_media_links_tenant_asset_fk',
-    'core_media_links_tenant_invocation_fk',
-    'core_media_links_tenant_principal_fk',
-    'core_module_state_changes_tenant_invocation_fk',
-    'core_module_state_changes_tenant_principal_fk',
-    'core_outbox_messages_tenant_domain_event_fk',
-    'core_search_index_entries_tenant_legal_entity_fk',
-  ].toSorted();
-  const constraintRows = yield* database.executor
-    .execute<{ conname: string }>(
-      sql`
-        select constraint_record.conname
-        from pg_catalog.pg_constraint as constraint_record
-        inner join pg_catalog.pg_namespace as namespace
-          on namespace.oid = constraint_record.connamespace
-        where namespace.nspname = ${CORE_SCHEMA_NAME}
-        order by constraint_record.conname
-      `,
-      'objects',
-    )
-    .pipe(
-      Effect.mapError(
-        () => new DatabaseVerificationError({ reason: 'Unable to verify same-tenant constraints' }),
-      ),
-    );
-  const presentCompositeConstraints = constraintRows
-    .map((row) => row.conname)
-    .filter((name) => requiredCompositeConstraints.includes(name))
-    .toSorted();
-  if (
-    presentCompositeConstraints.length !== requiredCompositeConstraints.length ||
-    presentCompositeConstraints.some((name, index) => name !== requiredCompositeConstraints[index])
-  ) {
-    return yield* new DatabaseVerificationError({
-      reason: 'Required composite same-tenant constraints are missing',
-    });
-  }
-  const typedQueries = [
-    verifyTypedQuery('tenants', () => database.executor.select().from(tenants).limit(0)),
-    verifyTypedQuery('legal_entities', () =>
-      database.executor.select().from(legalEntities).limit(0),
-    ),
-    verifyTypedQuery('principals', () => database.executor.select().from(principals).limit(0)),
-    verifyTypedQuery('principal_auth_bindings', () =>
-      database.executor.select().from(principalAuthBindings).limit(0),
-    ),
-    verifyTypedQuery('tenant_module_states', () =>
-      database.executor.select().from(tenantModuleStates).limit(0),
-    ),
-    verifyTypedQuery('action_invocations', () =>
-      database.executor.select().from(actionInvocations).limit(0),
-    ),
-    verifyTypedQuery('tenant_module_state_changes', () =>
-      database.executor.select().from(tenantModuleStateChanges).limit(0),
-    ),
-    verifyTypedQuery('audit_events', () => database.executor.select().from(auditEvents).limit(0)),
-    verifyTypedQuery('data_access_events', () =>
-      database.executor.select().from(dataAccessEvents).limit(0),
-    ),
-    verifyTypedQuery('domain_events', () => database.executor.select().from(domainEvents).limit(0)),
-    verifyTypedQuery('outbox_messages', () =>
-      database.executor.select().from(outboxMessages).limit(0),
-    ),
-    verifyTypedQuery('outbox_deliveries', () =>
-      database.executor.select().from(outboxDeliveries).limit(0),
-    ),
-    verifyTypedQuery('outbox_attempts', () =>
-      database.executor.select().from(outboxAttempts).limit(0),
-    ),
-    verifyTypedQuery('media_assets', () => database.executor.select().from(mediaAssets).limit(0)),
-    verifyTypedQuery('media_links', () => database.executor.select().from(mediaLinks).limit(0)),
-    verifyTypedQuery('evidence_references', () =>
-      database.executor.select().from(evidenceReferences).limit(0),
-    ),
-    verifyTypedQuery('search_index_entries', () =>
-      database.executor.select().from(searchIndexEntries).limit(0),
-    ),
-    verifyTypedQuery('search_projection_generations', () =>
-      database.executor.select().from(searchProjectionGenerations).limit(0),
-    ),
-    verifyTypedQuery('search_projection_rebuilds', () =>
-      database.executor.select().from(searchProjectionRebuilds).limit(0),
-    ),
-    verifyTypedQuery('worker_checkpoints', () =>
-      database.executor.select().from(workerCheckpoints).limit(0),
-    ),
-  ] as const;
-
-  for (const query of typedQueries) {
-    yield* query;
-  }
-
+const verifyCatalog = Effect.gen(function* verifyCatalogEffect() {
+  const database = yield* CoreDatabase;
   // Necessary migration-verification exception: Drizzle has no typed builder
   // for PostgreSQL catalog metadata. Values stay parameterized and the query is
   // covered by exact-set mismatch tests.
@@ -353,6 +243,106 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
       reason: `Core catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
     });
   }
+  return yield* Effect.void;
+});
+
+const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
+  const database = yield* CoreDatabase;
+  yield* verifyRuntimeRole;
+  yield* verifySearchIsolation;
+  const requiredCompositeConstraints = [
+    'core_action_invocations_tenant_auth_binding_fk',
+    'core_action_invocations_tenant_impersonator_fk',
+    'core_action_invocations_tenant_legal_entity_fk',
+    'core_action_invocations_tenant_principal_fk',
+    'core_audit_events_tenant_auth_binding_fk',
+    'core_audit_events_tenant_impersonator_fk',
+    'core_audit_events_tenant_invocation_fk',
+    'core_audit_events_tenant_legal_entity_fk',
+    'core_audit_events_tenant_principal_fk',
+    'core_auth_bindings_tenant_principal_fk',
+    'core_data_access_events_tenant_auth_binding_fk',
+    'core_data_access_events_tenant_impersonator_fk',
+    'core_data_access_events_tenant_invocation_fk',
+    'core_data_access_events_tenant_legal_entity_fk',
+    'core_data_access_events_tenant_principal_fk',
+    'core_domain_events_tenant_invocation_fk',
+    'core_domain_events_tenant_legal_entity_fk',
+    'core_evidence_tenant_asset_fk',
+    'core_evidence_tenant_audit_fk',
+    'core_evidence_tenant_data_access_fk',
+    'core_evidence_tenant_domain_event_fk',
+    'core_evidence_tenant_invocation_fk',
+    'core_evidence_tenant_legal_entity_fk',
+    'core_media_assets_tenant_legal_entity_fk',
+    'core_media_assets_tenant_principal_fk',
+    'core_media_links_tenant_asset_fk',
+    'core_media_links_tenant_invocation_fk',
+    'core_media_links_tenant_principal_fk',
+    'core_module_state_changes_tenant_invocation_fk',
+    'core_module_state_changes_tenant_principal_fk',
+    'core_outbox_messages_tenant_domain_event_fk',
+    'core_search_index_entries_tenant_legal_entity_fk',
+  ].toSorted();
+  const constraintRows = yield* database.executor
+    .execute<{ conname: string }>(
+      sql`
+        select constraint_record.conname
+        from pg_catalog.pg_constraint as constraint_record
+        inner join pg_catalog.pg_namespace as namespace
+          on namespace.oid = constraint_record.connamespace
+        where namespace.nspname = ${CORE_SCHEMA_NAME}
+        order by constraint_record.conname
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () => new DatabaseVerificationError({ reason: 'Unable to verify same-tenant constraints' }),
+      ),
+    );
+  const presentCompositeConstraints = constraintRows
+    .map((row) => row.conname)
+    .filter((name) => requiredCompositeConstraints.includes(name))
+    .toSorted();
+  if (
+    presentCompositeConstraints.length !== requiredCompositeConstraints.length ||
+    presentCompositeConstraints.some((name, index) => name !== requiredCompositeConstraints[index])
+  ) {
+    return yield* new DatabaseVerificationError({
+      reason: 'Required composite same-tenant constraints are missing',
+    });
+  }
+  const typedQueries = [
+    tenants,
+    legalEntities,
+    principals,
+    principalAuthBindings,
+    tenantModuleStates,
+    actionInvocations,
+    tenantModuleStateChanges,
+    auditEvents,
+    dataAccessEvents,
+    domainEvents,
+    outboxMessages,
+    outboxDeliveries,
+    outboxAttempts,
+    mediaAssets,
+    mediaLinks,
+    evidenceReferences,
+    searchIndexEntries,
+    searchProjectionGenerations,
+    searchProjectionRebuilds,
+    workerCheckpoints,
+  ].map((table) =>
+    verifyTypedQuery(getTableName(table), () => database.executor.select().from(table).limit(0)),
+  );
+
+  for (const query of typedQueries) {
+    yield* query;
+  }
+
+  yield* verifyCatalog;
 
   return {
     tableCount: typedQueries.length,

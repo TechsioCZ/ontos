@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-promise-shaped-port
  *
@@ -16,11 +17,9 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/** Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`. */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { globToRegExp, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { stringArray, booleanOption as boolean } from '../shared/options.ts';
+import { parentOf, typeNameSegments } from '../shared/ast.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE = [
@@ -52,44 +51,12 @@ const DEFAULT_ALLOW_NAMES = [
 const DEFAULT_PROMISE_TYPES = ['Promise', 'PromiseLike'];
 const DEFAULT_EFFECT_MODULES: readonly string[] = [];
 
-const EFFECT_NAMESPACE = 'Effect';
-const EFFECT_ROOT_MODULE = 'effect';
-/** `Effect.*` members whose argument subtree *is* the blessed Promise↔Effect conversion point. */
-const PROMISE_BOUNDARY_MEMBERS = new Set(['promise', 'tryPromise', 'tryMapPromise']);
-
 const TSX_FILE = /\.[cm]?[jt]sx$/u;
 
 type AnyNode = ESTree.Node & { readonly parent?: ESTree.Node | null };
 
-interface RuleOptions {
-  readonly include: readonly string[];
-  readonly ignore: readonly string[];
-  readonly includeTests: boolean;
-  readonly includeTsx: boolean;
-  readonly allowPaths: readonly string[];
-  readonly driverCallbacks: readonly string[];
-  readonly allowNames: readonly string[];
-  readonly effectModules: readonly string[];
-  readonly promiseTypes: readonly string[];
-  readonly includeFunctionDeclarations: boolean;
-}
-
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+function readOptions(context: Context) {
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -102,78 +69,6 @@ function readOptions(context: Context): RuleOptions {
     promiseTypes: stringArray(record.promiseTypes, DEFAULT_PROMISE_TYPES),
     includeFunctionDeclarations: boolean(record.includeFunctionDeclarations, true),
   };
-}
-
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function parentOf(node: AnyNode | null): AnyNode | null {
-  return (node?.parent as AnyNode | null | undefined) ?? null;
-}
-
-/** Same-file `type X = ...` names, so a local `type Promise = ...` shadow disables the match. */
-function collectTypeAliasNames(program: ESTree.Program): ReadonlySet<string> {
-  const names = new Set<string>();
-  const visit = (statements: readonly ESTree.Node[]): void => {
-    for (const statement of statements) {
-      if (statement.type === 'TSTypeAliasDeclaration') names.add(statement.id.name);
-      else if (statement.type === 'ExportNamedDeclaration' && statement.declaration !== null) {
-        visit([statement.declaration as ESTree.Node]);
-      } else if (
-        statement.type === 'TSModuleDeclaration' &&
-        statement.body?.type === 'TSModuleBlock'
-      ) {
-        visit(statement.body.body as readonly ESTree.Node[]);
-      }
-    }
-  };
-  visit(program.body as readonly ESTree.Node[]);
-  return names;
-}
-
-/** Locals bound to the whole `effect` root barrel (`import * as E from "effect"` → `E.Effect.tryPromise`). */
-function collectEffectBarrels(program: ESTree.Program): ReadonlySet<string> {
-  const barrels = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.source.value !== EFFECT_ROOT_MODULE) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') barrels.add(specifier.local.name);
-    }
-  }
-  return barrels;
-}
-
-/** Extra namespaces re-exported by first-party barrels listed in `effectModules`. */
-function collectBarrelBindings(
-  program: ESTree.Program,
-  modules: readonly string[],
-): ReadonlyMap<string, string> {
-  const extra = new Map<string, string>();
-  if (modules.length === 0) return extra;
-  const patterns = modules.map((module) => globToRegExp(module));
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (!patterns.some((pattern) => pattern.test(source))) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportSpecifier') {
-        const imported =
-          specifier.imported.type === 'Identifier'
-            ? specifier.imported.name
-            : specifier.imported.value;
-        extra.set(specifier.local.name, imported);
-      } else if (specifier.type === 'ImportNamespaceSpecifier') {
-        extra.set(specifier.local.name, specifier.local.name);
-      }
-    }
-  }
-  return extra;
 }
 
 /** Flatten a static member chain (`E.Effect.tryPromise`) into its identifier segments. */
@@ -196,16 +91,6 @@ function memberSegments(node: ESTree.Node): readonly string[] | null {
   if (current.type !== 'Identifier') return null;
   segments.unshift(current.name);
   return segments;
-}
-
-/** Flatten `Promise` / `Effect.Effect` type names into their dotted segments. */
-function typeNameSegments(name: ESTree.TSTypeName): readonly string[] | null {
-  if (name.type === 'Identifier') return [name.name];
-  if (name.type === 'TSQualifiedName') {
-    const left = typeNameSegments(name.left);
-    return left === null ? null : [...left, name.right.name];
-  }
-  return null;
 }
 
 const FUNCTION_TYPES = new Set([
@@ -274,11 +159,6 @@ export const rule = defineRule({
     if (!options.includeTsx && TSX_FILE.test(path)) return {};
 
     const program = context.sourceCode.ast;
-    const effect: EffectBindings = collectEffectBindings(program);
-    const barrelBindings = collectBarrelBindings(program, options.effectModules);
-    const namespaces = new Map<string, string>([...effect.namespaces, ...barrelBindings]);
-    const barrels = collectEffectBarrels(program);
-    const localTypeAliases = collectTypeAliasNames(program);
     const driverCallbacks = new Set(options.driverCallbacks);
     const allowNames = new Set(options.allowNames);
 
@@ -305,43 +185,45 @@ export const rule = defineRule({
       }
       return null;
     };
+    const computedKey = (key: any): unknown => {
+      if (key.type === 'Literal') return key.value;
+      if (key.type === 'TemplateLiteral' && !key.expressions.length)
+        return key.quasis[0]?.value.cooked;
+      return null;
+    };
+    const importedExportName = (def: any): string | undefined =>
+      def.node.imported?.name ?? def.node.imported?.value;
+    const importBindingPath = (def: any): string => {
+      const source = def.parent?.source?.value;
+      const name = importedExportName(def);
+      if (source === 'effect' || matchesGlobs(source ?? '', options.effectModules))
+        return `effect:${name ?? 'root'}`;
+      if (source === 'effect/Effect') return `effect:Effect${name ? `.${name}` : ''}`;
+      return `${source}:${name ?? '*'}`;
+    };
+    const immutableDefinition = (def: any, variable: any): boolean =>
+      def.type === 'Variable' &&
+      def.parent?.kind === 'const' &&
+      !variable.references.some((r: any) => r.isWrite() && !r.init);
+    const importedIdentifier = (node: any, seen: Set<any>): string | null => {
+      if (node.type !== 'Identifier') return null;
+      const variable = variableFor(node, node.name);
+      for (const def of variable?.defs ?? []) {
+        if (def.type === 'ImportBinding') return importBindingPath(def);
+        if (immutableDefinition(def, variable)) return imported(def.node.init, seen);
+      }
+      return !variable?.defs.length && node.name === 'globalThis' ? 'globalThis' : null;
+    };
     const imported = (raw: any, seen = new Set<any>()): string | null => {
       const node = unwrap(raw);
       if (!node || seen.has(node)) return null;
       seen.add(node);
       if (node.type === 'MemberExpression') {
         const left = imported(node.object, seen);
-        const key = !node.computed
-          ? node.property.name
-          : node.property.type === 'Literal'
-            ? node.property.value
-            : node.property.type === 'TemplateLiteral' && !node.property.expressions.length
-              ? node.property.quasis[0]?.value.cooked
-              : null;
+        const key = node.computed ? computedKey(node.property) : node.property.name;
         return left && typeof key === 'string' ? `${left}.${key}` : null;
       }
-      if (node.type !== 'Identifier') return null;
-      const variable = variableFor(node, node.name);
-      for (const def of variable?.defs ?? []) {
-        if (def.type === 'ImportBinding') {
-          const source = def.parent?.source?.value;
-          const name = def.node.imported?.name ?? def.node.imported?.value;
-          if (
-            source === 'effect' ||
-            options.effectModules.some((m) => globToRegExp(m).test(source ?? ''))
-          )
-            return `effect:${name ?? 'root'}`;
-          if (source === 'effect/Effect') return `effect:Effect${name ? `.${name}` : ''}`;
-          return `${source}:${name ?? '*'}`;
-        }
-        if (
-          def.type === 'Variable' &&
-          def.parent?.kind === 'const' &&
-          !variable.references.some((r: any) => r.isWrite() && !r.init)
-        )
-          return imported(def.node.init, seen);
-      }
-      return !variable?.defs.length && node.name === 'globalThis' ? 'globalThis' : null;
+      return importedIdentifier(node, seen);
     };
     const walk = (node: any, visit: (node: any) => void): void => {
       if (!node || typeof node !== 'object') return;
@@ -461,6 +343,18 @@ export const rule = defineRule({
     };
 
     /** Better Auth owns this exact hook signature, not arbitrary services nested in its options. */
+    const isAuthHookPath = (keys: readonly string[]): boolean =>
+      keys.length === 4 &&
+      keys[0] === 'databaseHooks' &&
+      ['user', 'session', 'account', 'verification'].includes(keys[1]!) &&
+      ['create', 'update', 'delete'].includes(keys[2]!) &&
+      ['before', 'after'].includes(keys[3]!);
+    const isObjectValue = (parent: any, current: any): boolean =>
+      parent.type === 'Property' &&
+      parent.value === current &&
+      parent.parent?.type === 'ObjectExpression';
+    const authPropertyKey = (parent: any): unknown =>
+      parent.computed ? computedKey(parent.key) : (parent.key.name ?? parent.key.value);
     const atAuthHook = (node: any): boolean => {
       let current = node;
       const keys: string[] = [];
@@ -470,19 +364,8 @@ export const rule = defineRule({
           current = parent;
           continue;
         }
-        if (
-          parent.type !== 'Property' ||
-          parent.value !== current ||
-          parent.parent?.type !== 'ObjectExpression'
-        )
-          break;
-        const key = !parent.computed
-          ? (parent.key.name ?? parent.key.value)
-          : parent.key.type === 'Literal'
-            ? parent.key.value
-            : parent.key.type === 'TemplateLiteral' && !parent.key.expressions.length
-              ? parent.key.quasis[0]?.value.cooked
-              : null;
+        if (!isObjectValue(parent, current)) break;
+        const key = authPropertyKey(parent);
         if (typeof key !== 'string') return false;
         keys.unshift(key);
         current = parent.parent;
@@ -492,11 +375,7 @@ export const rule = defineRule({
         call?.type === 'CallExpression' &&
         call.arguments[0] === current &&
         imported(call.callee) === 'better-auth:betterAuth' &&
-        keys.length === 4 &&
-        keys[0] === 'databaseHooks' &&
-        ['user', 'session', 'account', 'verification'].includes(keys[1]!) &&
-        ['create', 'update', 'delete'].includes(keys[2]!) &&
-        ['before', 'after'].includes(keys[3]!)
+        isAuthHookPath(keys)
       );
     };
 
@@ -517,6 +396,29 @@ export const rule = defineRule({
       annotation: ESTree.TSTypeAnnotation | null | undefined,
     ): string | null => {
       if (annotation === null || annotation === undefined) return null;
+      const isGlobalPromiseReference = (
+        raw: any,
+        names: readonly string[],
+        name: string,
+      ): boolean =>
+        names.length === 2 &&
+        names[0] === 'globalThis' &&
+        !variableFor(raw, 'globalThis')?.defs.length &&
+        options.promiseTypes.includes(name);
+      const resolveReference = (raw: any, seen: Set<any>): string | null => {
+        const names = typeNameSegments(raw.typeName);
+        if (!names) return null;
+        const name = names.at(-1)!;
+        if (isGlobalPromiseReference(raw, names, name)) return `${name}<…>`;
+        if (names.length !== 1) return null;
+        const variable = variableFor(raw.typeName, name);
+        const alias = variable?.defs.find(
+          (d: any) => d.node.type === 'TSTypeAliasDeclaration',
+        )?.node;
+        if (alias) return resolve(alias.typeAnnotation, seen);
+        if (variable?.defs.length || !options.promiseTypes.includes(name)) return null;
+        return `${name}<…>`;
+      };
       const resolve = (raw: any, seen = new Set<any>()): string | null => {
         if (!raw || seen.has(raw)) return null;
         seen.add(raw);
@@ -530,24 +432,7 @@ export const rule = defineRule({
           return null;
         }
         if (raw.type !== 'TSTypeReference') return null;
-        const names = typeNameSegments(raw.typeName);
-        if (!names) return null;
-        const name = names.at(-1)!;
-        if (
-          names.length === 2 &&
-          names[0] === 'globalThis' &&
-          !variableFor(raw, 'globalThis')?.defs.length &&
-          options.promiseTypes.includes(name)
-        )
-          return `${name}<…>`;
-        if (names.length !== 1) return null;
-        const variable = variableFor(raw.typeName, name);
-        const alias = variable?.defs.find(
-          (d: any) => d.node.type === 'TSTypeAliasDeclaration',
-        )?.node;
-        if (alias) return resolve(alias.typeAnnotation, seen);
-        if (variable?.defs.length || !options.promiseTypes.includes(name)) return null;
-        return `${name}<…>`;
+        return resolveReference(raw, seen);
       };
       return resolve(annotation);
     };
@@ -571,16 +456,18 @@ export const rule = defineRule({
       let hops = 0;
       while (current !== null && hops < 6) {
         if (
-          current.type === 'Property' ||
-          current.type === 'MethodDefinition' ||
-          current.type === 'TSAbstractMethodDefinition' ||
-          current.type === 'PropertyDefinition' ||
-          current.type === 'TSAbstractPropertyDefinition' ||
-          current.type === 'TSPropertySignature' ||
-          current.type === 'TSMethodSignature' ||
-          current.type === 'TSTypeAliasDeclaration' ||
-          current.type === 'VariableDeclarator' ||
-          current.type === 'FunctionDeclaration'
+          [
+            'Property',
+            'MethodDefinition',
+            'TSAbstractMethodDefinition',
+            'PropertyDefinition',
+            'TSAbstractPropertyDefinition',
+            'TSPropertySignature',
+            'TSMethodSignature',
+            'TSTypeAliasDeclaration',
+            'VariableDeclarator',
+            'FunctionDeclaration',
+          ].includes(current.type)
         ) {
           return current;
         }
@@ -633,12 +520,12 @@ export const rule = defineRule({
       // `const deleteRecovery: (id: string) => Promise<void> = ...` — a declared binding, not a
       // callback parameter (whose annotated `Identifier` has a function as its parent).
       if (owner.type === 'Identifier') return parentOf(owner)?.type === 'VariableDeclarator';
-      return (
-        owner.type === 'TSPropertySignature' ||
-        owner.type === 'TSIndexSignature' ||
-        owner.type === 'PropertyDefinition' ||
-        owner.type === 'TSAbstractPropertyDefinition'
-      );
+      return [
+        'TSPropertySignature',
+        'TSIndexSignature',
+        'PropertyDefinition',
+        'TSAbstractPropertyDefinition',
+      ].includes(owner.type);
     };
 
     // ---------------------------------------------------------------- (B) implementations
@@ -656,6 +543,14 @@ export const rule = defineRule({
     };
 
     /** An implementation position that *owns* behaviour: a service record, a class, a module binding. */
+    const referencedAsObjectValue = (declarator: any): boolean => {
+      const id = declarator.id;
+      if (id.type !== 'Identifier') return false;
+      return variableFor(id, id.name)?.references.some(
+        (r: any) =>
+          r.isRead() && r.identifier.parent && isObjectValue(r.identifier.parent, r.identifier),
+      );
+    };
     const isImplementationPosition = (node: AnyNode): boolean => {
       let current = node;
       let parent = parentOf(current);
@@ -664,33 +559,14 @@ export const rule = defineRule({
         parent = parentOf(current);
       }
       if (parent === null) return false;
-      if (parent.type === 'Property') {
-        return (
-          (parent as unknown as ESTree.ObjectProperty).value ===
-            (current as unknown as ESTree.Expression) &&
-          parentOf(parent)?.type === 'ObjectExpression'
-        );
-      }
-      if (parent.type === 'MethodDefinition' || parent.type === 'TSAbstractMethodDefinition')
-        return true;
-      if (parent.type === 'PropertyDefinition' || parent.type === 'TSAbstractPropertyDefinition')
-        return true;
+      if (parent.type === 'Property') return isObjectValue(parent, current);
+      if (['MethodDefinition', 'TSAbstractMethodDefinition'].includes(parent.type)) return true;
+      if (['PropertyDefinition', 'TSAbstractPropertyDefinition'].includes(parent.type)) return true;
       if (parent.type === 'VariableDeclarator') {
         return (
           (parent as unknown as ESTree.VariableDeclarator).init ===
             (current as unknown as ESTree.Expression) &&
-          (isModuleScopeDeclarator(parent) ||
-            (() => {
-              const id = (parent as any).id;
-              if (id.type !== 'Identifier') return false;
-              return variableFor(id, id.name)?.references.some(
-                (r: any) =>
-                  r.isRead() &&
-                  r.identifier.parent?.type === 'Property' &&
-                  r.identifier.parent.value === r.identifier &&
-                  r.identifier.parent.parent?.type === 'ObjectExpression',
-              );
-            })())
+          (isModuleScopeDeclarator(parent) || referencedAsObjectValue(parent))
         );
       }
       return false;
@@ -707,37 +583,49 @@ export const rule = defineRule({
       );
     };
 
+    const isDirectAdapter = (body: any): boolean => {
+      if (body?.type === 'ImportExpression') return true;
+      return (
+        body?.type === 'CallExpression' &&
+        imported(body.callee) === '@modern-js/plugin-bff/effect-client:runEffectRequest'
+      );
+    };
+    const exportedOwner = (owner: any): boolean =>
+      owner.parent?.type === 'ExportNamedDeclaration' ||
+      owner.parent?.parent?.type === 'ExportNamedDeclaration';
+    const exemptReference = (ref: any, seen: Set<any>): boolean => {
+      const call = ref.identifier.parent;
+      if (call?.type !== 'CallExpression' || call.callee !== ref.identifier) return false;
+      if (atDriverEdge(call)) return true;
+      for (let current = call.parent; current; current = current.parent)
+        if (FUNCTION_TYPES.has(current.type)) return exemptHelper(current, new Set(seen));
+      return false;
+    };
     const exemptHelper = (fn: any, seen = new Set<any>()): boolean => {
       if (seen.has(fn)) return false;
       seen.add(fn);
       const body = functionBody(fn);
-      if (body?.type === 'ImportExpression') return true;
-      if (
-        body?.type === 'CallExpression' &&
-        imported(body.callee) === '@modern-js/plugin-bff/effect-client:runEffectRequest'
-      )
-        return true;
+      if (isDirectAdapter(body)) return true;
       const owner = namedOwner(fn);
       const id = (owner as any).id;
       if (!id || id.type !== 'Identifier') return false;
-      if (
-        (owner as any).parent?.type === 'ExportNamedDeclaration' ||
-        (owner as any).parent?.parent?.type === 'ExportNamedDeclaration'
-      )
-        return false;
+      if (exportedOwner(owner)) return false;
       const variable = variableFor(id, id.name);
       const refs = variable?.references.filter((r: any) => r.isRead()) ?? [];
       if (!refs.length) return false;
-      return refs.every((ref: any) => {
-        const call = ref.identifier.parent;
-        if (call?.type !== 'CallExpression' || call.callee !== ref.identifier) return false;
-        if (atDriverEdge(call)) return true;
-        for (let current = call.parent; current; current = current.parent)
-          if (FUNCTION_TYPES.has(current.type)) return exemptHelper(current, new Set(seen));
-        return false;
-      });
+      return refs.every((ref: any) => exemptReference(ref, seen));
     };
 
+    const ownsImplementation = (node: AnyNode): boolean =>
+      node.type === 'FunctionDeclaration'
+        ? options.includeFunctionDeclarations && isModuleScopeFunction(node)
+        : isImplementationPosition(node);
+    const allowedRoute = (node: AnyNode, member: string): boolean =>
+      allowNames.has(member) &&
+      /(?:^|\/)src\/routes\//u.test(path) &&
+      ['VariableDeclarator', 'FunctionDeclaration'].includes(namedOwner(node).type);
+    const atImplementationBoundary = (node: AnyNode): boolean =>
+      atDriverEdge(node) || atAuthHook(node) || exemptHelper(node);
     const checkImplementation = (node: AnyNode): void => {
       const fn = node as unknown as {
         readonly async?: boolean;
@@ -746,20 +634,12 @@ export const rule = defineRule({
       const wrapper = promiseReference(fn.returnType);
       const isAsync = fn.async === true;
       if (!isAsync && wrapper === null) return;
-      if (node.type === 'FunctionDeclaration') {
-        if (!options.includeFunctionDeclarations) return;
-        if (!isModuleScopeFunction(node)) return;
-      } else if (!isImplementationPosition(node)) return;
-      if (atDriverEdge(node) || atAuthHook(node) || exemptHelper(node)) return;
+      if (!ownsImplementation(node)) return;
+      if (atImplementationBoundary(node)) return;
       if (insideReportedFunction(node)) return;
       const member = nameOf(node);
       // Framework router entrypoints (`loader`, `action`, ...) are forced to return a Promise.
-      if (
-        allowNames.has(member) &&
-        /(?:^|\/)src\/routes\//u.test(path) &&
-        ['VariableDeclarator', 'FunctionDeclaration'].includes(namedOwner(node).type)
-      )
-        return;
+      if (allowedRoute(node, member)) return;
       reportedFunctions.add(node.start);
       report(node as ESTree.Node, isAsync ? 'asyncPort' : 'promiseReturningImplementation', {
         member,

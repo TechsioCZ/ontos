@@ -37,6 +37,24 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   });
 };
 
+const login = async (page: Page, language: 'cs' | 'en') => {
+  await gotoHydratedLogin(page, language);
+  const form = hydratedLoginForm(page);
+  const labels =
+    language === 'en'
+      ? { login: /^Login\s*\*$/u, password: /^Password/u, submit: 'Login', url: /\/en\/?$/u }
+      : {
+          login: /^Přihlašovací jméno\s*\*$/u,
+          password: /^Heslo/u,
+          submit: 'Přihlásit se',
+          url: /\/cs\/?$/u,
+        };
+  await form.getByRole('textbox', { name: labels.login }).fill(e2eCredentials.email);
+  await form.getByLabel(labels.password).fill(e2eCredentials.password);
+  await form.getByRole('button', { name: labels.submit }).click();
+  await expect(page).toHaveURL(labels.url);
+};
+
 let cleanupFixture: (() => Promise<void>) | undefined;
 
 test.beforeAll(
@@ -48,34 +66,22 @@ test.beforeAll(
 
 test.afterAll(async () => await cleanupFixture?.());
 
-test('renders the exact anonymous English and Czech home states', async ({ page }) =>
-  await page
-    .goto('/en/')
-    .then(
-      async () =>
-        await Promise.all([
-          expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
-          expect(page.getByRole('link')).toHaveCount(1),
-          expect(page.getByRole('button')).toHaveCount(0),
-          expect(page.getByRole('checkbox')).toHaveCount(0),
-          expect(page.locator('header[aria-label]')).toHaveCount(0),
-          expect(page.getByRole('complementary')).toHaveCount(0),
-          expect(page.getByRole('region')).toHaveCount(0),
-        ]),
-    )
-    .then(async () => await page.goto('/cs/'))
-    .then(
-      async () =>
-        await Promise.all([
-          expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible(),
-          expect(page.getByRole('link')).toHaveCount(1),
-          expect(page.getByRole('button')).toHaveCount(0),
-          expect(page.getByRole('checkbox')).toHaveCount(0),
-          expect(page.locator('header[aria-label]')).toHaveCount(0),
-          expect(page.getByRole('complementary')).toHaveCount(0),
-          expect(page.getByRole('region')).toHaveCount(0),
-        ]),
-    ));
+test('renders the exact anonymous English and Czech home states', async ({ page }) => {
+  const expectAnonymousHome = async (language: string, label: string) => {
+    await page.goto(`/${language}/`);
+    await Promise.all([
+      expect(page.getByRole('link', { name: label })).toBeVisible(),
+      expect(page.getByRole('link')).toHaveCount(1),
+      expect(page.getByRole('button')).toHaveCount(0),
+      expect(page.getByRole('checkbox')).toHaveCount(0),
+      expect(page.locator('header[aria-label]')).toHaveCount(0),
+      expect(page.getByRole('complementary')).toHaveCount(0),
+      expect(page.getByRole('region')).toHaveCount(0),
+    ]);
+  };
+  await expectAnonymousHome('en', 'Login');
+  await expectAnonymousHome('cs', 'Přihlásit se');
+});
 
 test('keeps English and Czech login pages free of authenticated dashboard chrome', async ({
   page,
@@ -169,43 +175,49 @@ test('loads localized English and Czech Contacts pages only after login', async 
   await page.goto('/cs/contacts');
   await expect(page.getByRole('heading', { name: 'Contacts' })).toHaveCount(0);
 
-  await gotoHydratedLogin(page, 'cs');
-  const form = hydratedLoginForm(page);
-  await form
-    .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
-    .fill(e2eCredentials.email);
-  await form.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
-  await form.getByRole('button', { name: 'Přihlásit se' }).click();
-  await expect(page).toHaveURL(/\/cs\/?$/u);
+  await login(page, 'cs');
   await expect(page.getByText('Nasazení modulu je dočasně nedostupné.')).toHaveCount(0);
 
   const contactsLink = page.locator('a[href="/cs/contacts"]');
   await expect(contactsLink).toHaveAttribute('href', '/cs/contacts');
   await contactsLink.click();
 
-  await expect(page).toHaveURL(/\/cs\/contacts\/?$/u);
-  await expect(page.getByRole('heading', { name: 'Kontakty' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Modul' })).toHaveCount(0);
-  await expect(
-    page.getByText(
+  const expectContacts = async (content: {
+    description: string;
+    empty: string;
+    heading: string;
+    module: string;
+    placeholder: string;
+    url: RegExp;
+  }) => {
+    await expect(page).toHaveURL(content.url);
+    await expect(page.getByRole('heading', { name: content.heading })).toBeVisible();
+    await expect(page.getByRole('heading', { name: content.module })).toHaveCount(0);
+    await expect(page.getByText(content.description)).toBeVisible();
+    await expect(page.getByText(content.placeholder)).toHaveCount(0);
+    await expect(page.getByText(content.empty)).toHaveCount(0);
+  };
+  await expectContacts({
+    description:
       'Party Registry uchovává kanonické strany, protistrany a jejich profily zapojení v jednom modulu.',
-    ),
-  ).toBeVisible();
-  await expect(page.getByText('Tato stránka je připravena k implementaci.')).toHaveCount(0);
-  await expect(page.getByText('Zatím zde není žádný obsah.')).toHaveCount(0);
+    empty: 'Zatím zde není žádný obsah.',
+    heading: 'Kontakty',
+    module: 'Modul',
+    placeholder: 'Tato stránka je připravena k implementaci.',
+    url: /\/cs\/contacts\/?$/u,
+  });
   await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toBeVisible();
 
   await page.goto('/en/contacts');
-  await expect(page).toHaveURL(/\/en\/contacts\/?$/u);
-  await expect(page.getByRole('heading', { name: 'Contacts' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Module' })).toHaveCount(0);
-  await expect(
-    page.getByText(
+  await expectContacts({
+    description:
       'Party Registry keeps canonical Parties, Counterparties, and their engagement profiles in one module.',
-    ),
-  ).toBeVisible();
-  await expect(page.getByText('This page is ready for implementation.')).toHaveCount(0);
-  await expect(page.getByText('No content has been added yet.')).toHaveCount(0);
+    empty: 'No content has been added yet.',
+    heading: 'Contacts',
+    module: 'Module',
+    placeholder: 'This page is ready for implementation.',
+    url: /\/en\/contacts\/?$/u,
+  });
   await expect(page.getByText('The module is temporarily unavailable. Try again.')).toHaveCount(0);
   const dashboardSidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
   await expect(dashboardSidebar).toBeVisible();
@@ -225,12 +237,7 @@ test('loads localized English and Czech Contacts pages only after login', async 
 test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({
   page,
 }) => {
-  await gotoHydratedLogin(page, 'en');
-  const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
-  await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
-  await form.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/en\/?$/u);
+  await login(page, 'en');
 
   const expectPersistentShell = async (path: string, status: string) => {
     await page.goto(path);
@@ -295,12 +302,7 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
   page,
 }) => {
-  await gotoHydratedLogin(page, 'en');
-  const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
-  await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
-  await form.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/en\/?$/u);
+  await login(page, 'en');
 
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
   await expect(tenant).toContainText(e2eTenants.first.name);
@@ -335,14 +337,7 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   page,
 }) => {
   let failSwitch = true;
-  await gotoHydratedLogin(page, 'cs');
-  const form = hydratedLoginForm(page);
-  await form
-    .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
-    .fill(e2eCredentials.email);
-  await form.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
-  await form.getByRole('button', { name: 'Přihlásit se' }).click();
-  await expect(page).toHaveURL(/\/cs\/?$/u);
+  await login(page, 'cs');
   await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, async (route) => {
     if (failSwitch) {
       failSwitch = false;
@@ -464,12 +459,7 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   page,
 }) => {
   await page.setViewportSize({ height: 667, width: 375 });
-  await gotoHydratedLogin(page, 'en');
-  const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
-  await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
-  await form.getByRole('button', { name: 'Login' }).click();
-  await expect(page).toHaveURL(/\/en\/?$/u);
+  await login(page, 'en');
   await page.route(
     `**${shellAuthenticationApiContract.switchTenantPath}`,
     async (route) => await route.abort('failed'),

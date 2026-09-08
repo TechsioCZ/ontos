@@ -4,42 +4,13 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import type { GatewayPrincipalVerificationOptions } from '@app/gateway-principal-verifier/server';
 import { Effect } from 'effect';
 import type { Redacted } from 'effect';
 
-export {
-  ACTION_PRINCIPAL_BEARER_CHALLENGE,
-  ActionPrincipalConfigurationErrorSchema,
-  ActionPrincipalExpiredErrorSchema,
-  ActionPrincipalInvalidErrorSchema,
-  ActionPrincipalMissingErrorSchema,
-  ActionPrincipalScopeErrorSchema,
-  ActionPrincipalUnavailableErrorSchema,
-} from '@app/gateway-principal-verifier/server';
-export type {
-  ActionPrincipalConfigurationError,
-  ActionPrincipalError,
-  ActionPrincipalExpiredError,
-  ActionPrincipalInvalidError,
-  ActionPrincipalMissingError,
-  ActionPrincipalScopeError,
-  ActionPrincipalUnavailableError,
-} from '@app/gateway-principal-verifier/server';
-
-export const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
-export {
-  GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier,
-  GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive,
-} from '@app/gateway-principal-verifier/server';
-export type ActionPrincipalVerificationOptions = GatewayPrincipalVerificationOptions;
+const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
+export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 
 const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
-
-export const verifyActionPrincipal = (
-  authorization: Redacted.Redacted<string | undefined>,
-  options: ActionPrincipalVerificationOptions = {},
-) => principalVerifier.verify(authorization, options);
 
 const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
   GatewayAssertionRedemptionService.pipe(

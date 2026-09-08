@@ -103,145 +103,117 @@ export {
   AddContactPointResultSchema,
 } from './actions/add-contact-point.ts';
 export type AddContactPointPayload = typeof AddContactPointPayloadSchema.Type;
-export type AddContactPointResult = typeof AddContactPointResultSchema.Type;
 export {
   AddPartyOfficialIdentifierPayloadSchema,
   AddPartyOfficialIdentifierResultSchema,
 } from './actions/add-party-official-identifier.ts';
 export type AddPartyOfficialIdentifierPayload = typeof AddPartyOfficialIdentifierPayloadSchema.Type;
-export type AddPartyOfficialIdentifierResult = typeof AddPartyOfficialIdentifierResultSchema.Type;
 export { ArchivePartyPayloadSchema, ArchivePartyResultSchema } from './actions/archive-party.ts';
 export type ArchivePartyPayload = typeof ArchivePartyPayloadSchema.Type;
-export type ArchivePartyResult = typeof ArchivePartyResultSchema.Type;
 export {
   ConfirmDuplicatePartiesPayloadSchema,
   ConfirmDuplicatePartiesResultSchema,
 } from './actions/confirm-duplicate-parties.ts';
 export type ConfirmDuplicatePartiesPayload = typeof ConfirmDuplicatePartiesPayloadSchema.Type;
-export type ConfirmDuplicatePartiesResult = typeof ConfirmDuplicatePartiesResultSchema.Type;
 export {
   CorrectPartyFactPayloadSchema,
   CorrectPartyFactResultSchema,
 } from './actions/correct-party-fact.ts';
 export type CorrectPartyFactPayload = typeof CorrectPartyFactPayloadSchema.Type;
-export type CorrectPartyFactResult = typeof CorrectPartyFactResultSchema.Type;
 export {
   CounterpartyCreatePayloadSchema,
   CounterpartyCreateResultSchema,
 } from './actions/counterparty-create.ts';
 export type CounterpartyCreatePayload = typeof CounterpartyCreatePayloadSchema.Type;
-export type CounterpartyCreateResult = typeof CounterpartyCreateResultSchema.Type;
 export {
   CounterpartyRoleAddPayloadSchema,
   CounterpartyRoleAddResultSchema,
 } from './actions/counterparty-role-add.ts';
 export type CounterpartyRoleAddPayload = typeof CounterpartyRoleAddPayloadSchema.Type;
-export type CounterpartyRoleAddResult = typeof CounterpartyRoleAddResultSchema.Type;
 export {
   CounterpartyRoleEndPayloadSchema,
   CounterpartyRoleEndResultSchema,
 } from './actions/counterparty-role-end.ts';
 export type CounterpartyRoleEndPayload = typeof CounterpartyRoleEndPayloadSchema.Type;
-export type CounterpartyRoleEndResult = typeof CounterpartyRoleEndResultSchema.Type;
 export {
   CreatePartyRelationshipPayloadSchema,
   CreatePartyRelationshipResultSchema,
 } from './domain/relationship-contract.ts';
 export type CreatePartyRelationshipPayload = typeof CreatePartyRelationshipPayloadSchema.Type;
-export type CreatePartyRelationshipResult = typeof CreatePartyRelationshipResultSchema.Type;
 export {
   CreatePartyPayloadJsonSchema,
   CreatePartyPayloadSchema,
   CreatePartyResultSchema,
 } from './actions/create-party.ts';
 export type CreatePartyPayload = typeof CreatePartyPayloadSchema.Type;
-export type CreatePartyResult = typeof CreatePartyResultSchema.Type;
 export {
   DismissDuplicateCandidatePayloadSchema,
   DismissDuplicateCandidateResultSchema,
 } from './actions/dismiss-duplicate-candidate.ts';
 export type DismissDuplicateCandidatePayload = typeof DismissDuplicateCandidatePayloadSchema.Type;
-export type DismissDuplicateCandidateResult = typeof DismissDuplicateCandidateResultSchema.Type;
 export {
   EndContactPointPayloadSchema,
   EndContactPointResultSchema,
 } from './actions/end-contact-point.ts';
 export type EndContactPointPayload = typeof EndContactPointPayloadSchema.Type;
-export type EndContactPointResult = typeof EndContactPointResultSchema.Type;
 export {
   EndPartyOfficialIdentifierPayloadSchema,
   EndPartyOfficialIdentifierResultSchema,
 } from './actions/end-party-official-identifier.ts';
 export type EndPartyOfficialIdentifierPayload = typeof EndPartyOfficialIdentifierPayloadSchema.Type;
-export type EndPartyOfficialIdentifierResult = typeof EndPartyOfficialIdentifierResultSchema.Type;
 export {
   EndPartyRelationshipPayloadSchema,
   ChangePartyRelationshipResultSchema as EndPartyRelationshipResultSchema,
 } from './domain/relationship-contract.ts';
 export type EndPartyRelationshipPayload = typeof EndPartyRelationshipPayloadSchema.Type;
-export type EndPartyRelationshipResult = typeof EndPartyRelationshipResultSchema.Type;
 export {
   MarkDuplicateCandidateNeedsEvidencePayloadSchema,
   MarkDuplicateCandidateNeedsEvidenceResultSchema,
 } from './actions/mark-duplicate-candidate-needs-evidence.ts';
 export type MarkDuplicateCandidateNeedsEvidencePayload =
   typeof MarkDuplicateCandidateNeedsEvidencePayloadSchema.Type;
-export type MarkDuplicateCandidateNeedsEvidenceResult =
-  typeof MarkDuplicateCandidateNeedsEvidenceResultSchema.Type;
 export { MatchPartyPayloadSchema, MatchPartyResultSchema } from './actions/match-party.ts';
 export type MatchPartyPayload = typeof MatchPartyPayloadSchema.Type;
-export type MatchPartyResult = typeof MatchPartyResultSchema.Type;
 export {
   RequestSearchRebuildPayloadSchema,
   RequestSearchRebuildResultSchema,
 } from './actions/request-search-rebuild.ts';
 export type RequestSearchRebuildPayload = typeof RequestSearchRebuildPayloadSchema.Type;
-export type RequestSearchRebuildResult = typeof RequestSearchRebuildResultSchema.Type;
 export {
   ResolveDuplicateCandidateCreatePayloadSchema,
   ResolveDuplicateCandidateCreateResultSchema,
 } from './actions/resolve-duplicate-candidate-create.ts';
 export type ResolveDuplicateCandidateCreatePayload =
   typeof ResolveDuplicateCandidateCreatePayloadSchema.Type;
-export type ResolveDuplicateCandidateCreateResult =
-  typeof ResolveDuplicateCandidateCreateResultSchema.Type;
 export {
   ResolveDuplicateCandidateMatchPayloadSchema,
   ResolveDuplicateCandidateMatchResultSchema,
 } from './actions/resolve-duplicate-candidate-match.ts';
 export type ResolveDuplicateCandidateMatchPayload =
   typeof ResolveDuplicateCandidateMatchPayloadSchema.Type;
-export type ResolveDuplicateCandidateMatchResult =
-  typeof ResolveDuplicateCandidateMatchResultSchema.Type;
 export {
   UnarchivePartyPayloadSchema,
   UnarchivePartyResultSchema,
 } from './actions/unarchive-party.ts';
 export type UnarchivePartyPayload = typeof UnarchivePartyPayloadSchema.Type;
-export type UnarchivePartyResult = typeof UnarchivePartyResultSchema.Type;
 export {
   UpdateContactPointPayloadSchema,
   UpdateContactPointResultSchema,
 } from './actions/update-contact-point.ts';
 export type UpdateContactPointPayload = typeof UpdateContactPointPayloadSchema.Type;
-export type UpdateContactPointResult = typeof UpdateContactPointResultSchema.Type;
 export {
   UpdatePartyOfficialIdentifierPayloadSchema,
   UpdatePartyOfficialIdentifierResultSchema,
 } from './actions/update-party-official-identifier.ts';
 export type UpdatePartyOfficialIdentifierPayload =
   typeof UpdatePartyOfficialIdentifierPayloadSchema.Type;
-export type UpdatePartyOfficialIdentifierResult =
-  typeof UpdatePartyOfficialIdentifierResultSchema.Type;
 export {
   UpdatePartyRelationshipPayloadSchema,
   ChangePartyRelationshipResultSchema as UpdatePartyRelationshipResultSchema,
 } from './domain/relationship-contract.ts';
 export type UpdatePartyRelationshipPayload = typeof UpdatePartyRelationshipPayloadSchema.Type;
-export type UpdatePartyRelationshipResult = typeof UpdatePartyRelationshipResultSchema.Type;
 export { UpdatePartyPayloadSchema, UpdatePartyResultSchema } from './actions/update-party.ts';
 export type UpdatePartyPayload = typeof UpdatePartyPayloadSchema.Type;
-export type UpdatePartyResult = typeof UpdatePartyResultSchema.Type;
 
 // Absence reaches the explicit 428 mapping; every typed command client requires a key.
 export const PartyCommandHeadersSchema = Schema.Struct({
@@ -333,14 +305,12 @@ export const PartyCommandUnavailableProblemSchema = makeRetryableProblemDetailsS
   503,
 );
 
-const PartyCommandInvocationIdSchema = ActionInvocationIdSchema;
-
 export const PartyCommandAlreadyCommittedProblemSchema = makeProblemDetailsSchema(
   'PartyCommandAlreadyCommittedProblem',
   409,
   {
     code: Schema.Literal('action_already_committed'),
-    invocationId: PartyCommandInvocationIdSchema,
+    invocationId: ActionInvocationIdSchema,
     resolution: Schema.Literal('REFRESH_GOVERNED_READS'),
     retryCommand: Schema.Literal(false),
   },
@@ -351,21 +321,21 @@ export const PartyCommandCommitIndeterminateProblemSchema = makeProblemDetailsSc
   'PartyCommandCommitIndeterminateProblem',
   503,
   {
-    invocationId: PartyCommandInvocationIdSchema,
+    invocationId: ActionInvocationIdSchema,
     resolution: Schema.Literal('RESOLVE_COMMIT'),
     retryCommand: Schema.Literal(false),
   },
 );
 
 export const ResolvePartyCommandCommitPayloadSchema = Schema.Struct({
-  invocationId: PartyCommandInvocationIdSchema,
+  invocationId: ActionInvocationIdSchema,
 });
 export type ResolvePartyCommandCommitPayload = typeof ResolvePartyCommandCommitPayloadSchema.Type;
 
 export const ResolvePartyCommandCommitResultSchema = Schema.TaggedStruct(
   'PartyCommandCommitResolution',
   {
-    invocationId: PartyCommandInvocationIdSchema,
+    invocationId: ActionInvocationIdSchema,
     retryCommand: Schema.Literal(false),
     state: Schema.Literals(['OPEN', 'COMMITTED']),
   },

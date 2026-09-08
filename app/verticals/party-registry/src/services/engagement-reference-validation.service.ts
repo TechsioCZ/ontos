@@ -17,13 +17,13 @@ export interface EngagementPartyReferences {
   readonly partyRef: PartyRef;
 }
 
-export interface PartyRegistryCounterpartyProjection {
+interface PartyRegistryCounterpartyProjection {
   readonly counterpartyRef: CounterpartyRef;
   readonly partyRef: PartyRef;
   readonly roleTypes: readonly ('CUSTOMER' | 'SUPPLIER')[];
 }
 
-export interface PartyRegistryPartyProjection {
+interface PartyRegistryPartyProjection {
   readonly archived: boolean;
   readonly partyRef: PartyRef;
   readonly partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED';
@@ -127,6 +127,36 @@ export const partyRegistryReferenceOperations = ({
       : Effect.fail(mismatch('The Party reference does not belong to the trusted tenant')),
 });
 
+const validateCounterpartyReference = Effect.fn(
+  'EngagementReferenceValidationService.validateCounterpartyReference',
+)(function* validateCounterpartyReferenceEffect(
+  operations: PartyRegistryReferenceOperations,
+  counterpartyRef: CounterpartyRef,
+  partyRef: PartyRef,
+  party: PartyRegistryPartyProjection,
+) {
+  const counterparty = yield* operations.readCounterparty(counterpartyRef);
+  if (
+    counterparty.counterpartyRef.resourceId !== counterpartyRef.resourceId ||
+    counterparty.counterpartyRef.tenantId !== counterpartyRef.tenantId ||
+    counterpartyRef.tenantId !== partyRef.tenantId ||
+    counterparty.partyRef.resourceId !== party.partyRef.resourceId ||
+    counterparty.partyRef.tenantId !== partyRef.tenantId
+  ) {
+    return yield* new EngagementProfileConflict({
+      code: 'contacts_party_counterparty_mismatch',
+      reason: 'The Counterparty does not resolve to the supplied Party',
+    });
+  }
+  if (!counterparty.roleTypes.includes('CUSTOMER')) {
+    return yield* new EngagementProfileConflict({
+      code: 'contacts_counterparty_customer_role_required',
+      reason: 'An explicit commercial context requires a current CUSTOMER role',
+    });
+  }
+  return yield* Effect.void;
+});
+
 export const validatePartyRegistryReferences = Effect.fn(
   'EngagementReferenceValidationService.validatePartyRegistryReferences',
 )(function* validatePartyRegistryReferencesEffect(
@@ -169,24 +199,10 @@ export const validatePartyRegistryReferences = Effect.fn(
   if (refs.counterpartyRef === undefined) {
     return yield* Effect.void;
   }
-  const counterparty = yield* operations.readCounterparty(refs.counterpartyRef);
-  if (
-    counterparty.counterpartyRef.resourceId !== refs.counterpartyRef.resourceId ||
-    counterparty.counterpartyRef.tenantId !== refs.counterpartyRef.tenantId ||
-    refs.counterpartyRef.tenantId !== refs.partyRef.tenantId ||
-    counterparty.partyRef.resourceId !== party.partyRef.resourceId ||
-    counterparty.partyRef.tenantId !== refs.partyRef.tenantId
-  ) {
-    return yield* new EngagementProfileConflict({
-      code: 'contacts_party_counterparty_mismatch',
-      reason: 'The Counterparty does not resolve to the supplied Party',
-    });
-  }
-  if (!counterparty.roleTypes.includes('CUSTOMER')) {
-    return yield* new EngagementProfileConflict({
-      code: 'contacts_counterparty_customer_role_required',
-      reason: 'An explicit commercial context requires a current CUSTOMER role',
-    });
-  }
-  return yield* Effect.void;
+  return yield* validateCounterpartyReference(
+    operations,
+    refs.counterpartyRef,
+    refs.partyRef,
+    party,
+  );
 });

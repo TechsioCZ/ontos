@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/require-concurrency-option
  *
@@ -66,18 +67,25 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import {
+  skipWrappers,
+  staticString,
+  unwrapNode,
+  memberName as staticMemberName,
+} from '../shared/ast.ts';
+import { bindingPath } from '../shared/effect-identity.ts';
+import { stringArray, positiveInteger } from '../shared/options.ts';
+import {
+  collectRootNamespaces,
+  collectDirectMemberImports,
+  collectNamedImports,
+  importDeclarations,
+} from '../shared/imports.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
 /** `effect/Effect`, `effect/Stream`, and any nested re-export path ending in those names. */
 const EFFECT_SUBMODULE = /^effect\/(?:.*\/)?(Effect|Stream)$/u;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to loosen options (which `run-on-repo.mts` reuses against the real repo).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 /** B1 is about production workers, reads and route loaders. */
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
@@ -170,25 +178,11 @@ interface RuleOptions {
   readonly streamMembers: ReadonlySet<string>;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
-  const minItems =
-    typeof record.minItems === 'number' && Number.isInteger(record.minItems)
-      ? record.minItems
-      : DEFAULT_MIN_ITEMS;
+  const record = optionRecord(context.options?.[0]);
   return {
     allowUnbounded: record.allowUnbounded === true,
-    minItems: minItems < 0 ? DEFAULT_MIN_ITEMS : minItems,
+    minItems: positiveInteger(record.minItems, DEFAULT_MIN_ITEMS, 0),
     strictSpread: record.strictSpread === true,
     includeTests: record.includeTests === true,
     includeScripts: record.includeScripts === true,
@@ -199,64 +193,21 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
+const CALL_WRAPPERS: ReadonlySet<string> = new Set([
+  'ChainExpression',
+  'TSNonNullExpression',
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSInstantiationExpression',
+  'ParenthesizedExpression',
+]);
 
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Top-level `scripts/` (via the shared helper) plus package-local `scripts/` directories. */
-function isScriptPath(path: string): boolean {
-  return isScriptFile(path) || /(?:^|\/)scripts\//u.test(path);
-}
-
-/** Strip the wrappers that sit between an expression and its semantic value. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  while (
-    current.type === 'ChainExpression' ||
-    current.type === 'TSNonNullExpression' ||
-    current.type === 'TSAsExpression' ||
-    current.type === 'TSSatisfiesExpression' ||
-    current.type === 'TSInstantiationExpression' ||
-    current.type === 'ParenthesizedExpression'
-  ) {
-    const inner: ESTree.Node | undefined = (current as unknown as { expression?: ESTree.Node })
-      .expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: CALL_WRAPPERS });
 }
 
-/** Non-computed `.member`, or computed `["member"]`. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = node.property;
-  return staticString(property);
-}
-
-/**
- * Locals bound by `import * as EFX from "effect"` (or from a re-export barrel) — `EFX.Effect.forEach`
- * must still be caught.
- */
-function collectRootNamespaces(
-  program: ESTree.Program,
-  reexportModules: readonly string[],
-): ReadonlySet<string> {
-  const locals = new Set<string>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (source !== EFFECT_ROOT_MODULE && !matchesGlobs(source, reexportModules)) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') locals.add(specifier.local.name);
-    }
-  }
-  return locals;
+  return staticMemberName(node, { templates: true });
 }
 
 /**
@@ -268,64 +219,18 @@ function collectBindings(
   reexportModules: readonly string[],
 ): EffectBindings {
   const shared = collectEffectBindings(program);
-  const namespaces = new Map(shared.namespaces);
-  let importsEffect = shared.importsEffect;
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (!matchesGlobs(statement.source.value, reexportModules)) continue;
-    importsEffect = true;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      namespaces.set(specifier.local.name, imported);
-    }
-  }
-  return { namespaces, importsEffect };
-}
-
-/** Locals bound by `import { forEach as each } from "effect/Effect"` — bare calls must be caught. */
-function collectDirectMemberImports(
-  program: ESTree.Program,
-): ReadonlyMap<string, { namespace: string; member: string }> {
-  const locals = new Map<string, { namespace: string; member: string }>();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const namespace = EFFECT_SUBMODULE.exec(statement.source.value)?.[1];
-    if (namespace === undefined) continue;
-    for (const specifier of statement.specifiers) {
-      if (specifier.type !== 'ImportSpecifier') continue;
-      const imported =
-        specifier.imported.type === 'Identifier'
-          ? specifier.imported.name
-          : specifier.imported.value;
-      locals.set(specifier.local.name, { namespace, member: imported });
-    }
-  }
-  return locals;
+  const accepts = (source: string) => matchesGlobs(source, reexportModules);
+  const namespaces = new Map([...shared.namespaces, ...collectNamedImports(program, accepts)]);
+  return {
+    namespaces,
+    importsEffect: shared.importsEffect || importDeclarations(program, accepts).length > 0,
+  };
 }
 
 /** A curried application `f(...)(...)`, or an operator slot in `pipe(subject, …)` / `subject.pipe(…)`. */
 function isDataLastPosition(call: ESTree.CallExpression, context: Context): boolean {
-  let current: ESTree.Node = call;
-  let parent: ESTree.Node | null | undefined = call.parent;
-  // Skip the wrappers that a `as`/`!`/parenthesis introduces between the call and its parent.
-  while (
-    parent !== null &&
-    parent !== undefined &&
-    (parent.type === 'ChainExpression' ||
-      parent.type === 'TSNonNullExpression' ||
-      parent.type === 'TSAsExpression' ||
-      parent.type === 'TSSatisfiesExpression' ||
-      parent.type === 'TSInstantiationExpression' ||
-      parent.type === 'ParenthesizedExpression')
-  ) {
-    current = parent;
-    parent = parent.parent;
-  }
-  if (parent === null || parent === undefined || parent.type !== 'CallExpression') return false;
+  const { node: current, parent } = skipWrappers(call, CALL_WRAPPERS);
+  if (parent?.type !== 'CallExpression') return false;
   if (unwrap(parent.callee) === current) return true; // `Effect.forEach(f)(xs)`
   const index = parent.arguments.indexOf(current as ESTree.Argument);
   if (index === -1) return false;
@@ -386,120 +291,67 @@ function inspectOptions(argument: ESTree.Node | undefined, options: RuleOptions)
       continue;
     }
     if (propertyName(property) !== CONCURRENCY_KEY) continue;
-    const setting = unwrap(property.value);
-    const literal = staticString(setting);
-    if (literal !== null && UNBOUNDED_VALUES.has(literal)) {
-      return options.allowUnbounded ? OK : { kind: 'unbounded', value: literal };
-    }
-    return OK;
+    return inspectConcurrency(property.value, options.allowUnbounded);
   }
   if (sawSpread && !options.strictSpread) return UNKNOWN;
   return MISSING;
 }
 
-/** B1: every fan-out must state its concurrency policy — bounded, or deliberately `1`. */
-// Resolve lexical value bindings, not identifier spellings. Only immutable local aliases are
-// followed; arbitrary object mutation, re-export contents and dynamic keys need type/data-flow analysis.
-function lexicalVariable(context: Context, node: Extract<ESTree.Node, { type: 'Identifier' }>) {
-  let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
-  while (scope !== null) {
-    const variable = scope.set.get(node.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
+function inspectConcurrency(value: ESTree.Node, allowUnbounded: boolean): Verdict {
+  const literal = staticString(unwrap(value));
+  if (literal !== null && UNBOUNDED_VALUES.has(literal) && !allowUnbounded)
+    return { kind: 'unbounded', value: literal };
+  return OK;
 }
-function staticString(node: ESTree.Node): string | null {
-  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node.type === 'TemplateLiteral' && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? null;
-  return null;
+
+function memberShape(
+  namespace: string,
+  member: string,
+  options: RuleOptions,
+): MemberShape | undefined {
+  if (namespace === 'Effect') return EFFECT_MEMBERS.get(member);
+  if (namespace === 'Stream' && options.streamMembers.has(member)) return STREAM;
+  return undefined;
 }
-function identityUnwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (;;) {
-    if (current.type === 'SequenceExpression') {
-      const last = current.expressions.at(-1);
-      if (last === undefined) return current;
-      current = last;
-    } else if (
-      [
-        'ChainExpression',
-        'ParenthesizedExpression',
-        'TSAsExpression',
-        'TSTypeAssertion',
-        'TSNonNullExpression',
-        'TSSatisfiesExpression',
-        'TSInstantiationExpression',
-      ].includes(current.type)
-    ) {
-      current = (current as unknown as { expression: ESTree.Node }).expression;
-    } else return current;
-  }
+
+function hasDataLastArguments(args: readonly ESTree.Argument[], shape: MemberShape): boolean {
+  if (!shape.callbackSecond) return false;
+  if (args.length === 1) return true;
+  if (args[0] !== undefined && isFunctionLike(unwrap(args[0]))) return true;
+  return args.length === 2 && unwrap(args[1]!).type === 'ObjectExpression';
 }
-function bindingPath(
+
+function isSmallCollection(
+  args: readonly ESTree.Argument[],
+  shape: MemberShape,
+  dataLast: boolean,
+  minItems: number,
+): boolean {
+  if (dataLast || shape.collection === -1) return false;
+  const length = literalLength(args[shape.collection]);
+  return length !== null && length < minItems;
+}
+
+function reportVerdict(
   context: Context,
-  expression: ESTree.Node,
-  extraModules: readonly string[] = [],
-  seen = new Set<unknown>(),
-): readonly string[] | null {
-  const node = identityUnwrap(expression);
-  if (node.type === 'MemberExpression') {
-    const key =
-      !node.computed && node.property.type === 'Identifier'
-        ? node.property.name
-        : staticString(node.property);
-    const root = bindingPath(context, node.object, extraModules, seen);
-    return root !== null && key !== null ? [...root, key] : null;
+  node: ESTree.Node,
+  callee: { readonly namespace: string; readonly member: string },
+  verdict: Verdict,
+): void {
+  if (verdict.kind === 'ok' || verdict.kind === 'unknown') return;
+  if (verdict.kind === 'missing') {
+    context.report({
+      node,
+      messageId: 'missingConcurrency',
+      data: { namespace: callee.namespace, member: callee.member },
+    });
+    return;
   }
-  if (node.type !== 'Identifier') return null;
-  const variable = lexicalVariable(context, node);
-  if (variable === null || seen.has(variable)) return null;
-  seen.add(variable);
-  if (variable.defs.length !== 1) return null;
-  const definition = variable.defs[0];
-  if (definition === undefined) return null;
-  if (definition.type === 'ImportBinding') {
-    const specifier = definition.node as
-      | ESTree.ImportSpecifier
-      | ESTree.ImportNamespaceSpecifier
-      | ESTree.ImportDefaultSpecifier;
-    const declaration = definition.parent as ESTree.ImportDeclaration;
-    if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return null;
-    if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') return null;
-    const source = declaration.source.value;
-    if (source !== 'effect' && !source.startsWith('effect/') && !extraModules.includes(source))
-      return null;
-    const last = source.split('/').at(-1) ?? '';
-    const base = source.startsWith('effect/') && /^[A-Z]/u.test(last) ? [last] : [];
-    if (specifier.type === 'ImportNamespaceSpecifier') return base;
-    if (specifier.type !== 'ImportSpecifier') return null;
-    const imported =
-      specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
-    return [...base, imported];
-  }
-  if (definition.type !== 'Variable') return null;
-  const declaration = definition.node as ESTree.VariableDeclarator;
-  const parent = definition.parent as ESTree.VariableDeclaration;
-  if (parent?.kind !== 'const' || declaration.init === null) return null;
-  const base = bindingPath(context, declaration.init, extraModules, seen);
-  if (base === null) return null;
-  if (declaration.id.type === 'Identifier') return base;
-  if (declaration.id.type !== 'ObjectPattern') return null;
-  for (const property of declaration.id.properties) {
-    if (
-      property.type === 'RestElement' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== node.name
-    )
-      continue;
-    const key =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : staticString(property.key);
-    return key === null ? null : [...base, key];
-  }
-  return null;
+  context.report({
+    node,
+    messageId: 'unboundedConcurrency',
+    data: { namespace: callee.namespace, member: callee.member, value: verdict.value },
+  });
 }
 
 export const rule = defineRule({
@@ -569,14 +421,23 @@ export const rule = defineRule({
         const path = scopePath(context.filename);
         if (matchesGlobs(path, resolved.ignore)) return false;
         if (!resolved.includeTests && isTestFile(path)) return false;
-        const script = isScriptPath(path);
+        const script = isScriptFile(path);
         if (script && !resolved.includeScripts) return false;
         if (!script && !matchesGlobs(path, resolved.include)) return false;
 
         const program = context.sourceCode.ast;
         bindings = collectBindings(program, resolved.reexportModules);
-        rootNamespaces = collectRootNamespaces(program, resolved.reexportModules);
-        directMembers = collectDirectMemberImports(program);
+        rootNamespaces = collectRootNamespaces(
+          program,
+          (source) =>
+            source === EFFECT_ROOT_MODULE || matchesGlobs(source, resolved.reexportModules),
+        );
+        directMembers = collectDirectMemberImports(
+          program,
+          undefined,
+          {},
+          (source) => EFFECT_SUBMODULE.exec(source)?.[1] ?? null,
+        );
         return bindings.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0;
       },
       after() {
@@ -593,42 +454,17 @@ export const rule = defineRule({
         if (identity?.length !== 2) return;
         const callee = { namespace: identity[0], member: identity[1] };
 
-        let shape: MemberShape | undefined;
-        if (callee.namespace === 'Effect') shape = EFFECT_MEMBERS.get(callee.member);
-        else if (callee.namespace === 'Stream' && resolved.streamMembers.has(callee.member))
-          shape = STREAM;
+        const shape = memberShape(callee.namespace, callee.member, resolved);
         if (shape === undefined) return;
 
         const args = node.arguments;
-        const dataLast =
-          isDataLastPosition(node, context) ||
-          (shape.callbackSecond &&
-            (args.length === 1 ||
-              (args[0] !== undefined && isFunctionLike(unwrap(args[0]))) ||
-              (args.length === 2 && unwrap(args[1]!).type === 'ObjectExpression')));
+        const dataLast = isDataLastPosition(node, context) || hasDataLastArguments(args, shape);
         const optionsIndex = dataLast ? shape.dataLastOptions : shape.dataFirstOptions;
-
-        // A literal collection shorter than `minItems` is not a fan-out at all.
-        if (!dataLast && shape.collection !== -1) {
-          const length = literalLength(args[shape.collection]);
-          if (length !== null && length < resolved.minItems) return;
-        }
+        // A literal collection shorter than minItems is not a fan-out.
+        if (isSmallCollection(args, shape, dataLast, resolved.minItems)) return;
 
         const verdict = inspectOptions(args[optionsIndex], resolved);
-        if (verdict.kind === 'ok' || verdict.kind === 'unknown') return;
-        if (verdict.kind === 'missing') {
-          context.report({
-            node: node.callee,
-            messageId: 'missingConcurrency',
-            data: { namespace: callee.namespace, member: callee.member },
-          });
-          return;
-        }
-        context.report({
-          node: node.callee,
-          messageId: 'unboundedConcurrency',
-          data: { namespace: callee.namespace, member: callee.member, value: verdict.value },
-        });
+        reportVerdict(context, node.callee, callee, verdict);
       },
     };
   },

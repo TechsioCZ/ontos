@@ -43,7 +43,7 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 const BACKGROUND_ELIGIBLE_STATES = tenantStatesAllowingAccess('background');
-export interface OutboxMatchResult {
+interface OutboxMatchResult {
   readonly deliveriesCreated: number;
   readonly messagesMatched: number;
 }
@@ -64,7 +64,7 @@ export interface OutboxClaim {
   readonly topic: string;
   readonly workerKey: string;
 }
-export const OutboxFailureStatusSchema = Schema.Literals(['dead', 'pending']);
+const OutboxFailureStatusSchema = Schema.Literals(['dead', 'pending']);
 export type OutboxFailureStatus = typeof OutboxFailureStatusSchema.Type;
 export interface OutboxRepositoryService {
   readonly claimNext: (
@@ -104,6 +104,20 @@ const streamKeyFor = (producerModuleKey: string, topic: string): string =>
   `${producerModuleKey}:${topic}`;
 const addMilliseconds = (date: Date, milliseconds: number): Date =>
   DateTime.toDateUtc(DateTime.addDuration(DateTime.makeUnsafe(date), milliseconds));
+const loadClaimCorrelationId = Effect.fnUntraced(function* loadClaimCorrelationId(
+  transaction: CoreTransaction,
+  actionInvocationId: string | null,
+) {
+  if (actionInvocationId === null) {
+    return null;
+  }
+  const [invocation] = yield* transaction
+    .select({ correlationId: actionInvocations.correlationId })
+    .from(actionInvocations)
+    .where(eq(actionInvocations.actionInvocationId, actionInvocationId));
+  return invocation?.correlationId;
+});
+
 export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepositoryService => ({
   claimNext: (registrations, claimOwner, now) => {
     if (registrations.length === 0) {
@@ -230,14 +244,10 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
               reason: 'Attempt insert returned no row',
             });
           }
-          const [invocation] =
-            candidate.actionInvocationId === null
-              ? []
-              : yield* transaction
-                  .select({ correlationId: actionInvocations.correlationId })
-                  .from(actionInvocations)
-                  .where(eq(actionInvocations.actionInvocationId, candidate.actionInvocationId));
-          const correlationId = invocation?.correlationId;
+          const correlationId = yield* loadClaimCorrelationId(
+            transaction,
+            candidate.actionInvocationId,
+          );
           return Option.some(
             withOptionalProperty(
               {

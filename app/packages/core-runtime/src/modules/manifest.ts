@@ -339,6 +339,33 @@ export const validateOntosModuleExecutableReferences = <
   }
 };
 
+const validateSearchDescriptorReferences = (
+  descriptor: typeof OntosSearchDescriptorSchema.Type,
+  moduleId: string,
+  resourceSet: ReadonlySet<string>,
+): void => {
+  assertOwner(descriptor.owningModuleId, moduleId, 'search descriptor');
+  if (!resourceSet.has(descriptor.resourceType)) {
+    throw invalidManifest(
+      `search descriptor references undeclared resource type ${descriptor.resourceType}`,
+    );
+  }
+  if (
+    (descriptor.accessFiltering === 'tenant_scope') !==
+    (descriptor.tenantPermission !== undefined)
+  ) {
+    throw invalidManifest(
+      'tenant-scoped search requires exactly one explicit Tenant permission declaration',
+    );
+  }
+  if (
+    descriptor.requestFilters !== undefined &&
+    new Set(descriptor.requestFilters).size !== descriptor.requestFilters.length
+  ) {
+    throw invalidManifest('search request filter declarations must be unique');
+  }
+};
+
 /**
  * Defines the owner-authored contract. Executable values remain direct references in this
  * in-process value and are never part of the serializable deployment contract.
@@ -415,26 +442,7 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     'search descriptor key',
   );
   for (const descriptor of search) {
-    assertOwner(descriptor.owningModuleId, input.module.id, 'search descriptor');
-    if (!resourceSet.has(descriptor.resourceType)) {
-      throw invalidManifest(
-        `search descriptor references undeclared resource type ${descriptor.resourceType}`,
-      );
-    }
-    if (
-      (descriptor.accessFiltering === 'tenant_scope') !==
-      (descriptor.tenantPermission !== undefined)
-    ) {
-      throw invalidManifest(
-        'tenant-scoped search requires exactly one explicit Tenant permission declaration',
-      );
-    }
-    if (
-      descriptor.requestFilters !== undefined &&
-      new Set(descriptor.requestFilters).size !== descriptor.requestFilters.length
-    ) {
-      throw invalidManifest('search request filter declarations must be unique');
-    }
+    validateSearchDescriptorReferences(descriptor, input.module.id, resourceSet);
   }
 
   const reports = input.publicSurface.reports.map((descriptor) =>

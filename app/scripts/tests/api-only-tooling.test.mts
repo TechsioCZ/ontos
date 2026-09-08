@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { Predicate, Schema } from 'effect';
 import type { Effect as EffectType } from 'effect/Effect';
-import { transform } from 'esbuild';
+import { build as bundleSource, transform } from 'esbuild';
 import { format } from 'oxfmt';
 import { MicroVerticalReadinessSchema } from '../../packages/shared-contracts/src/microvertical-api-baseline.ts';
 import {
@@ -27,6 +27,7 @@ import { strictEffectRuntimeTopologyViolation } from '../ultramodern-api-boundar
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyId = 'party-registry';
+const partyDirectory = 'verticals/party-registry';
 const generatedFixtureId = 'inventory-stock';
 const generatedApiPrefix = '/inventory-stock-api';
 const generatedServiceModuleName = 'api/service';
@@ -935,7 +936,6 @@ const validAdversarialStrictRuntimeSources = [
   `,
 ] as const;
 
-// oxlint-disable-next-line complexity -- This table-driven contract test keeps each distinct validator failure observable.
 void test('static API validation proves the imported helper call topology', () => {
   const valid = `
     import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
@@ -1073,19 +1073,22 @@ void test('static API validation proves the imported helper call topology', () =
   for (const source of adversarialStrictRuntimeSources) {
     assert.notEqual(strictEffectRuntimeTopologyViolation(source), undefined);
   }
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+  for (const [label, source, expected] of [
+    [
+      'defineEffectBff with a typed layer annotation',
+      `
       import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer: Layer.Layer<never> = HttpApiBuilder.layer(fixtureApi).pipe(
         Layer.provide(fixtureHandlers),
       );
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'handlers composed only inside an unreachable function',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1096,11 +1099,12 @@ void test('static API validation proves the imported helper call topology', () =
       }
       const handlers = Layer.empty;
       export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `) ?? '',
-    /explicitly composed Layer/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'runtime assembled behind an unreachable branch',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1116,29 +1120,32 @@ void test('static API validation proves the imported helper call topology', () =
       };
       const apiRuntime = makeRuntime();
       export default apiRuntime;
-    `) ?? '',
-    /return or export the assembled strict Effect BFF runtime/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /return or export the assembled strict Effect BFF runtime/u,
+    ],
+    [
+      'defineEffectBff with an empty layer',
+      `
       import { defineEffectBff, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer = Layer.empty;
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'defineEffectBff layer piped to an empty layer',
+      `
       import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer = HttpApiBuilder.layer(fixtureApi).pipe(() => Layer.empty);
       defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'defineEffectBff layer piped past its provided handlers',
+      `
       import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixtureLayer = HttpApiBuilder.layer(fixtureApi).pipe(
@@ -1146,66 +1153,73 @@ void test('static API validation proves the imported helper call topology', () =
         () => Layer.empty,
       );
       defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'locally defined defineEffectBff',
+      `
       import { fixtureApi } from '../shared/api.ts';
       const defineEffectBff = () => undefined;
       defineEffectBff({ api: fixtureApi, layer: fakeLayer });
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'defineEffectBff call inside a string literal',
+      `
       import { fixtureApi } from '../shared/api.ts';
       const decoy = "defineEffectBff({ api: fixtureApi, layer: fakeLayer })";
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'locally defined assembleEffectBffRuntime',
+      `
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
       const assembleEffectBffRuntime = () => undefined;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: unrelated });
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'assembly of a foreign API binding',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
       assembleEffectBffRuntime({ api: otherApi, handlers: unrelated });
-    `) ?? '',
-    /API imported from \.\.\/shared\/api\.ts/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /API imported from \.\.\/shared\/api\.ts/u,
+    ],
+    [
+      'handlers aliased from an uncomposed binding',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
       const handlers = unrelated;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `) ?? '',
-    /explicitly composed Layer/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'handlers piped to an empty layer',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer).pipe(() => Layer.empty);
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `) ?? '',
-    /explicitly composed Layer/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'transport piped to an empty layer',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1217,21 +1231,23 @@ void test('static API validation proves the imported helper call topology', () =
       const handlers = Layer.mergeAll(groupLayer);
       const transport = Layer.mergeAll(transportLayer).pipe(() => Layer.empty);
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers, transport: transport });
-    `) ?? '',
-    /transport/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /transport/u,
+    ],
+    [
+      'handlers built by an unknown Layer member',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.thisDoesNotExist(groupLayer);
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `) ?? '',
-    /explicitly composed Layer/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /explicitly composed Layer/u,
+    ],
+    [
+      'assembly helper shadowed by a function parameter',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1239,11 +1255,12 @@ void test('static API validation proves the imported helper call topology', () =
       function fake(assembleEffectBffRuntime) {
         return assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `) ?? '',
-    /unshadowed/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'assembly helper shadowed by a block destructuring',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1252,11 +1269,12 @@ void test('static API validation proves the imported helper call topology', () =
         const handlers = Layer.mergeAll(groupLayer);
         assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `) ?? '',
-    /unshadowed/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'Layer shadowed by a catch binding',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1266,11 +1284,12 @@ void test('static API validation proves the imported helper call topology', () =
         const handlers = Layer.mergeAll(groupLayer);
         assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `) ?? '',
-    /unshadowed/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'Layer shadowed by an object method parameter',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1280,11 +1299,12 @@ void test('static API validation proves the imported helper call topology', () =
           return assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
         },
       };
-    `) ?? '',
-    /unshadowed/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'Layer shadowed by a function parameter',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
@@ -1292,11 +1312,12 @@ void test('static API validation proves the imported helper call topology', () =
         const handlers = Layer.mergeAll(groupLayer);
         return assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
       }
-    `) ?? '',
-    /unshadowed/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /unshadowed/u,
+    ],
+    [
+      'imports declared only inside a template literal',
+      `
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       const fakeImport = \`
         import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
@@ -1306,20 +1327,50 @@ void test('static API validation proves the imported helper call topology', () =
       const handlers = Layer.mergeAll(groupLayer);
       const assembleEffectBffRuntime = (input) => input;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
-    `) ?? '',
-    /server-only shared Effect BFF assembly helper/u,
-  );
-  assert.match(
-    strictEffectRuntimeTopologyViolation(`
+    `,
+      /server-only shared Effect BFF assembly helper/u,
+    ],
+    [
+      'handlers assigned from a string literal',
+      `
       import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
       import { Layer } from '@modern-js/plugin-bff/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fakeHandlers = "Layer.mergeAll(groupLayer)";
       assembleEffectBffRuntime({ api: fixtureApi, handlers: fakeHandlers });
-    `) ?? '',
-    /explicitly composed Layer/u,
-  );
+    `,
+      /explicitly composed Layer/u,
+    ],
+  ] as const) {
+    assert.match(strictEffectRuntimeTopologyViolation(source) ?? '', expected, label);
+  }
 });
+
+/** Every published rule format must report the same violations for the same candidate root. */
+const strictBoundaryReports = (
+  module: typeof StrictEffectApiBoundaryRuleModuleSchema.Type,
+  filename: string,
+  source: string,
+): readonly string[] => {
+  const messages: string[] = [];
+  module
+    .createStrictEffectApiBoundariesRule()
+    .create({
+      filename,
+      getSourceCode: () => ({ getText: () => source, text: source }),
+      report: ({ message }) => {
+        messages.push(message);
+      },
+    })
+    .Program({});
+  return messages;
+};
+const reportsAssemblyViolation = (messages: readonly string[]): boolean =>
+  messages.some((message) =>
+    /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
+      message,
+    ),
+  );
 
 void test('published lint validators reject comment, string, and local strict-root spoofs', async (context) => {
   const codeToolsRoot = await realpath(
@@ -1602,21 +1653,8 @@ void test('published lint validators reject comment, string, and local strict-ro
   );
   for (const { module, moduleFormat } of modules) {
     for (const source of invalidSources) {
-      const messages: string[] = [];
-      const listener = module.createStrictEffectApiBoundariesRule().create({
-        filename: fixtureApiEntryPath,
-        getSourceCode: () => ({ getText: () => source, text: source }),
-        report: ({ message }) => {
-          messages.push(message);
-        },
-      });
-      listener.Program({});
       assert.ok(
-        messages.some((message) =>
-          /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-            message,
-          ),
-        ),
+        reportsAssemblyViolation(strictBoundaryReports(module, fixtureApiEntryPath, source)),
         `${moduleFormat} accepted a fake strict runtime root`,
       );
     }
@@ -1628,57 +1666,26 @@ void test('published lint validators reject comment, string, and local strict-ro
       );
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
     `;
-    const legacyMessages: string[] = [];
-    module
-      .createStrictEffectApiBoundariesRule()
-      .create({
-        filename: fixtureApiEntryPath,
-        getSourceCode: () => ({ getText: () => legacySource, text: legacySource }),
-        report: ({ message }) => {
-          legacyMessages.push(message);
-        },
-      })
-      .Program({});
     assert.equal(
-      legacyMessages.some((message) =>
-        /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-          message,
-        ),
-      ),
+      reportsAssemblyViolation(strictBoundaryReports(module, fixtureApiEntryPath, legacySource)),
       true,
       `${moduleFormat} accepted a legacy runtime root without the shared assembly helper`,
     );
-    const generatedMessages: string[] = [];
-    module
-      .createStrictEffectApiBoundariesRule()
-      .create({
-        filename: path.join(generatedRoot, apiIndexFile),
-        getSourceCode: () => ({ getText: () => generatedSource, text: generatedSource }),
-        report: ({ message }) => {
-          generatedMessages.push(message);
-        },
-      })
-      .Program({});
+    const generatedMessages = strictBoundaryReports(
+      module,
+      path.join(generatedRoot, apiIndexFile),
+      generatedSource,
+    );
     assert.equal(
-      generatedMessages.some((message) =>
-        /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-          message,
-        ),
-      ),
+      reportsAssemblyViolation(generatedMessages),
       false,
       `${moduleFormat} rejected exact generated helper output: ${generatedMessages.join(' | ')}`,
     );
-    const generatedRpcMessages: string[] = [];
-    module
-      .createStrictEffectApiBoundariesRule()
-      .create({
-        filename: path.join(generatedRoot, apiIndexFile),
-        getSourceCode: () => ({ getText: () => generatedRpcSource, text: generatedRpcSource }),
-        report: ({ message }) => {
-          generatedRpcMessages.push(message);
-        },
-      })
-      .Program({});
+    const generatedRpcMessages = strictBoundaryReports(
+      module,
+      path.join(generatedRoot, apiIndexFile),
+      generatedRpcSource,
+    );
     assert.equal(
       generatedRpcMessages.some((message) =>
         /server-only shared Effect BFF assembly helper|explicitly composed handler Layer|\.\.\/shared\/api\.ts/u.test(
@@ -1689,23 +1696,9 @@ void test('published lint validators reject comment, string, and local strict-ro
       `${moduleFormat} rejected exact generated RPC output: ${generatedRpcMessages.join(' | ')}`,
     );
     for (const source of [...validAdversarialStrictRuntimeSources, governedLayerAliasFixture]) {
-      const messages: string[] = [];
-      module
-        .createStrictEffectApiBoundariesRule()
-        .create({
-          filename: fixtureApiEntryPath,
-          getSourceCode: () => ({ getText: () => source, text: source }),
-          report: ({ message }) => {
-            messages.push(message);
-          },
-        })
-        .Program({});
+      const messages = strictBoundaryReports(module, fixtureApiEntryPath, source);
       assert.equal(
-        messages.some((message) =>
-          /server-only shared Effect BFF assembly helper|explicitly composed handler Layer/u.test(
-            message,
-          ),
-        ),
+        reportsAssemblyViolation(messages),
         false,
         `${moduleFormat} rejected a valid strict runtime root: ${messages.join(' | ')}`,
       );
@@ -2008,8 +2001,10 @@ const evaluatePartyBuildGlobalVars = async (shellOrigin: string) => {
     await writeFile(
       harnessPath,
       `import * as effect from ${JSON.stringify(effectModuleUrl)};
+import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
 import { runInNewContext } from 'node:vm';
 const framework = {
+  ...sharedBuild,
   appTools: () => ({}),
   bffPlugin: () => ({}),
   createRequire: () => () => ({}),
@@ -2047,7 +2042,7 @@ void test('Party build configuration injects the exact nonlocal Shell origin int
 void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin without a runtime global', async () => {
   const shellOrigin = 'https://operations.example.test';
   const globalVars = await evaluatePartyBuildGlobalVars(shellOrigin);
-  const partyRoot = path.join(workspaceRoot, 'verticals/party-registry');
+  const partyRoot = path.join(workspaceRoot, partyDirectory);
   const source = await readFile(path.join(partyRoot, apiIndexFile), 'utf-8');
   const reader =
     /(?<reader>declare const ULTRAMODERN_SHELL_ORIGIN[\s\S]+?const shellOrigin = readShellOrigin\(\);)/u.exec(
@@ -2055,7 +2050,8 @@ void test('compiled Party CORS reader uses the nonlocal DefinePlugin origin with
     )?.groups?.reader;
   assert.notEqual(reader, undefined, 'compile the actual API origin-reader boundary');
   const appToolsPath = require.resolve('@modern-js/app-tools/config', { paths: [partyRoot] });
-  const rspackModule: unknown = require(require.resolve('@rspack/core', { paths: [appToolsPath] }));
+  const rsbuildPath = require.resolve('@rsbuild/core', { paths: [appToolsPath] });
+  const rspackModule: unknown = require(require.resolve('@rspack/core', { paths: [rsbuildPath] }));
   const rspackFixture = Schema.decodeUnknownSync(RspackModuleFixtureSchema)(rspackModule);
   const temporaryRoot = await mkdtemp(path.join(partyRoot, 'node_modules/.ontos-compiled-cors-'));
   try {
@@ -2122,7 +2118,110 @@ const normalizedGeneratedSource = async (fileName: string, source: string) => {
   return result.code.replaceAll(/^\s*\n/gmu, '');
 };
 
-void test('all published scaffold formats retain lint-safe Party infrastructure parity', async () => {
+const evaluatedInfrastructureSource = async (
+  fileName: string,
+  source: string,
+  cloudflare: boolean,
+): Promise<string> => {
+  const partyRoot = path.join(workspaceRoot, partyDirectory);
+  const result = await bundleSource({
+    bundle: true,
+    define: {
+      'import.meta.resolve': '__resolve',
+      'import.meta.url': JSON.stringify(pathToFileURL(path.join(partyRoot, fileName)).href),
+    },
+    external: ['./src/routes/ultramodern-route-metadata'],
+    format: 'cjs',
+    packages: 'external',
+    platform: 'node',
+    stdin: {
+      contents: source,
+      loader: 'ts',
+      resolveDir: path.dirname(path.join(partyRoot, fileName)),
+    },
+    write: false,
+  });
+  const code = result.outputFiles[0]?.text;
+  assert.ok(code);
+  const effectUrl = pathToFileURL(require.resolve('effect')).href;
+  const buildIdentityUrl = pathToFileURL(
+    createRequire(path.join(partyRoot, fileName)).resolve(
+      '@app/shared-contracts/ultramodern-build',
+    ),
+  ).href;
+  return runNode([
+    '--input-type=module',
+    '-e',
+    `
+import * as effect from ${JSON.stringify(effectUrl)};
+import * as buildIdentity from ${JSON.stringify(buildIdentityUrl)};
+import * as nodeModule from 'node:module';
+import * as nodePath from 'node:path';
+import * as nodeUrl from 'node:url';
+import { runInNewContext } from 'node:vm';
+const environment = {
+  MODERNJS_DEPLOY: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')},
+  ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
+  ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
+  ZE_CI_TOKEN: 'proof-token',
+};
+const plugin = name => options => ({ name, options });
+const framework = {
+  appTools: plugin('appTools'), bffPlugin: plugin('bff'), i18nPlugin: plugin('i18n'),
+  moduleFederationPlugin: plugin('moduleFederation'), pluginTailwindcss: plugin('tailwind'),
+  tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
+  defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
+  getBuildConfigEnvironment: name => environment[name],
+  withBuildConfigEnvironment: (_name, _value, configuration) => configuration,
+  ultramodernLocalisedUrls: {},
+};
+const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}), { resolve: name => '/dependencies/' + name }) };
+const module = { exports: {} };
+runInNewContext(${JSON.stringify(code)}, {
+  exports: module.exports, module, URL,
+  ULTRAMODERN_BUILD_MARKER: 'injected-build', ULTRAMODERN_SOURCE_REVISION: 'injected-revision',
+  __resolve: name => 'file:///dependencies/' + name,
+  require: name => ({ effect, '@app/shared-contracts/ultramodern-build': buildIdentity, 'node:module': moduleShim, 'node:path': nodePath, 'node:url': nodeUrl }[name] ?? framework),
+});
+const configuration = module.exports.default;
+const observations = {};
+if (configuration?.tools) {
+  const chainValues = [];
+  const output = { uniqueName: name => { chainValues.push(name); return output; }, chunkLoadingGlobal: name => { chainValues.push(name); return output; } };
+  configuration.tools.bundlerChain?.({ output });
+  observations.chain = chainValues;
+  observations.plugins = [];
+  for (const entry of configuration.plugins ?? []) entry.setup?.({ modifyRspackConfig: value => observations.plugins.push(value) });
+  const plugins = {
+    DefinePlugin: class { constructor(definitions) { this.definitions = definitions; } },
+    NormalModuleReplacementPlugin: class { constructor(pattern, replace) {
+      this.pattern = pattern;
+      this.results = ['./handler.ts', './handler.ts?loaderId=x&retain=false', './other.ts?modern-bff-runtime-source'].map(request => {
+        const resource = { context: ${JSON.stringify(path.join(partyRoot, 'api'))}, request }; replace(resource); return resource;
+      });
+    } },
+  };
+  observations.rspack = ['client', 'workerSSR'].map(name => {
+    const config = { resolve: {}, externals: [], plugins: [], node: {} };
+    configuration.tools.rspack?.(config, { environment: { name }, rspack: plugins });
+    const externalResults = [];
+    for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'unrelated']) {
+      external({ request, dependencyType: 'commonjs' }, (...args) => externalResults.push(args));
+    }
+    return { config, externalResults };
+  });
+}
+const normalize = (_key, value) => {
+  if (typeof value === 'function') return '[Function]';
+  if (Object.prototype.toString.call(value) === '[object RegExp]') return String(value);
+  return value;
+};
+process.stdout.write(JSON.stringify({ exported: module.exports, observations }, normalize));
+`,
+  ]);
+};
+
+void test('all published scaffold formats retain Party infrastructure behavior and source parity', async () => {
   await Promise.all(
     ['esm', 'esm-node', 'cjs'].map(async (moduleFormat) => {
       const extension = moduleFormat === 'cjs' ? 'cjs' : 'js';
@@ -2180,9 +2279,26 @@ void test('all published scaffold formats retain lint-safe Party infrastructure 
       await Promise.all(
         Object.entries(generated).map(async ([fileName, source]) => {
           const actual = await readFile(
-            path.join(workspaceRoot, 'verticals/party-registry', fileName),
+            path.join(workspaceRoot, partyDirectory, fileName),
             'utf-8',
           );
+          if (fileName === 'modern.config.ts' || fileName === 'shared/ultramodern-build.ts') {
+            await Promise.all(
+              [false, true].map(async (cloudflare) => {
+                const [expected, evaluated] = await Promise.all([
+                  evaluatedInfrastructureSource(fileName, source, cloudflare),
+                  evaluatedInfrastructureSource(fileName, actual, cloudflare),
+                ]);
+                const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
+                assert.deepEqual(
+                  decode(expected),
+                  decode(evaluated),
+                  `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
+                );
+              }),
+            );
+            return;
+          }
           assert.equal(
             await normalizedGeneratedSource(fileName, source),
             await normalizedGeneratedSource(fileName, actual),
@@ -2305,13 +2421,22 @@ void test('all published scaffold formats generate the shared MicroVertical API 
   );
 });
 
-void test('all published scaffold formats emit the executable AST baseline validator', async (context) => {
+/**
+ * Generator proofs compile real output, so each one gets its own scratch root inside the
+ * shared-contracts package and drops it when the owning test finishes.
+ */
+const makeProofRoot = async (context: TestContext, prefix: string): Promise<string> => {
   const scratchRoot = path.join(workspaceRoot, 'packages/shared-contracts/.scratch');
   await mkdir(scratchRoot, { recursive: true });
-  const proofRoot = await mkdtemp(path.join(scratchRoot, 'generated-baseline-validator-proof-'));
+  const proofRoot = await mkdtemp(path.join(scratchRoot, `${prefix}-`));
   context.after(async (): Promise<void> => {
     await rm(proofRoot, { force: true, recursive: true });
   });
+  return proofRoot;
+};
+
+void test('all published scaffold formats emit the executable AST baseline validator', async (context) => {
+  const proofRoot = await makeProofRoot(context, 'generated-baseline-validator-proof');
   const expectedHelper = await readFile(
     path.join(workspaceRoot, 'scripts/microvertical-api-baseline-boundary.mts'),
     'utf-8',
@@ -2337,6 +2462,11 @@ void test('all published scaffold formats emit the executable AST baseline valid
       const checker = artifacts.find(({ relativePath }) => relativePath === apiBoundaryCheckerPath);
       assert.ok(helper, `${moduleFormat} must emit the AST baseline helper`);
       assert.ok(checker, `${moduleFormat} must emit the API checker`);
+      assert.equal(
+        helper.content,
+        expectedHelper,
+        `${moduleFormat} must emit byte-exact baseline source`,
+      );
       assert.equal(
         await normalizedGeneratedSource('microvertical-api-baseline-boundary.mts', helper.content),
         await normalizedGeneratedSource('microvertical-api-baseline-boundary.mts', expectedHelper),
@@ -2433,6 +2563,25 @@ void test('all published scaffold formats emit the executable AST baseline valid
           },
         ],
       });
+      await writeText(
+        checkoutWorkspace,
+        'apps/shell-super-app/src/api/vertical-clients.ts',
+        'export const verticalClients = {};\n',
+      );
+      const invalidApiSource = `import { Schema } from 'effect';
+export const response = new Response('generated');
+export const responseSchema = Schema.Unknown;
+`;
+      await writeText(
+        checkoutWorkspace,
+        'verticals/shopping/dist-cloudflare/api/index.js',
+        invalidApiSource,
+      );
+      await writeText(
+        checkoutWorkspace,
+        'apps/shell-super-app/dist-cloudflare/api/index.js',
+        invalidApiSource,
+      );
       assert.match(
         runNode([path.join(formatRoot, checker.relativePath)], {
           env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
@@ -2440,6 +2589,28 @@ void test('all published scaffold formats emit the executable AST baseline valid
         /UltraModern API boundary check passed/u,
         `${moduleFormat} checkout workspace`,
       );
+      const authoredApiPath = 'verticals/shopping/api/invalid.ts';
+      await writeText(checkoutWorkspace, authoredApiPath, invalidApiSource);
+      const authoredResult = spawnSync(
+        process.execPath,
+        [path.join(formatRoot, checker.relativePath)],
+        {
+          encoding: 'utf-8',
+          env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
+        },
+      );
+      assert.equal(authoredResult.status, 1, moduleFormat);
+      assert.match(
+        authoredResult.stderr,
+        /verticals\/shopping\/api\/invalid\.ts: API modules must not hand-build Response objects/u,
+        moduleFormat,
+      );
+      assert.match(
+        authoredResult.stderr,
+        /verticals\/shopping\/api\/invalid\.ts: API modules must use concrete request, response and error schemas/u,
+        moduleFormat,
+      );
+      assert.doesNotMatch(authoredResult.stderr, /dist-cloudflare/u, moduleFormat);
     }),
   );
 });
@@ -2640,21 +2811,19 @@ void test('two generated MicroVertical root contracts execute invariant readines
     await Promise.all([...handlers.values()].map(async (handler) => await handler.dispose()));
   }
 
-  assert.notEqual(readinessValues[0]?.marker.appId, readinessValues[1]?.marker.appId);
-  assert.equal('kind' in (readinessValues[0]?.marker ?? {}), false);
-  assert.equal('schemaVersion' in (readinessValues[0]?.marker ?? {}), false);
-  assert.deepEqual(readinessValues[0]?.checks, readinessValues[1]?.checks);
-  assert.equal(readinessValues[0]?.status, readinessValues[1]?.status);
-  assert.equal(readinessValues[0]?.versionSkew, readinessValues[1]?.versionSkew);
+  const [firstReadiness, secondReadiness] = readinessValues;
+  assert.ok(firstReadiness !== undefined);
+  assert.ok(secondReadiness !== undefined);
+  assert.notEqual(firstReadiness.marker.appId, secondReadiness.marker.appId);
+  assert.equal('kind' in firstReadiness.marker, false);
+  assert.equal('schemaVersion' in firstReadiness.marker, false);
+  assert.deepEqual(firstReadiness.checks, secondReadiness.checks);
+  assert.equal(firstReadiness.status, secondReadiness.status);
+  assert.equal(firstReadiness.versionSkew, secondReadiness.versionSkew);
 });
 
 void test('generated shared-contracts baseline template is lint-clean and type-safe', async (context) => {
-  const scratchRoot = path.join(workspaceRoot, 'packages/shared-contracts/.scratch');
-  await mkdir(scratchRoot, { recursive: true });
-  const proofRoot = await mkdtemp(path.join(scratchRoot, 'generated-baseline-template-proof-'));
-  context.after(async (): Promise<void> => {
-    await rm(proofRoot, { force: true, recursive: true });
-  });
+  const proofRoot = await makeProofRoot(context, 'generated-baseline-template-proof');
   const templateSource = await readFile(
     path.join(generatorRoot, 'templates/packages/shared-contracts-index.ts'),
     'utf-8',
@@ -2802,37 +2971,12 @@ void test('repository checker respects custom readiness prefixes and diagnoses m
   }
 });
 
-// oxlint-disable-next-line complexity -- This table-driven adversarial test keeps every fail-closed mutation visible. expires: 2026-12-31.
 void test('static validation rejects a MicroVertical root contract without readiness baseline', async () => {
   const contract = await readFile(
     path.join(workspaceRoot, `verticals/${partyId}/shared/api.ts`),
     'utf-8',
   );
   assert.equal(microVerticalApiBaselineViolation(partyId, contract), undefined);
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
-      contract.replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'"),
-    ) ?? '',
-    /exact readiness endpoint/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
-      contract.replace('...MicroVerticalReadinessSchema.fields,', '...Schema.Unknown.fields,'),
-    ) ?? '',
-    /shared readiness schema/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
-      contract.replace(
-        'success: partyRegistryReadinessSchema',
-        'success: Schema.String /* success: partyRegistryReadinessSchema */',
-      ),
-    ) ?? '',
-    /exact readiness endpoint/u,
-  );
   const readinessEndpointDecoy =
     "HttpApiEndpoint.get('readiness', '/party-registry/readiness', { success: partyRegistryReadinessSchema })";
   const foundationComposition = '.addHttpApi(partyRegistryFoundationApi)';
@@ -2841,105 +2985,106 @@ void test('static validation rejects a MicroVertical root contract without readi
   MicroVerticalReadinessSchema,
   createMicroVerticalOperationContext,
 } from '@app/shared-contracts';`;
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+  for (const [label, mutated, expected] of [
+    [
+      'renamed readiness endpoint',
+      contract.replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'"),
+      /exact readiness endpoint/u,
+    ],
+    [
+      'foreign readiness schema fields',
+      contract.replace('...MicroVerticalReadinessSchema.fields,', '...Schema.Unknown.fields,'),
+      /shared readiness schema/u,
+    ],
+    [
+      'readiness success schema commented out',
+      contract.replace(
+        'success: partyRegistryReadinessSchema',
+        'success: Schema.String /* success: partyRegistryReadinessSchema */',
+      ),
+      /exact readiness endpoint/u,
+    ],
+    [
+      'baseline primitives imported from a copied package',
       contract.replace("from '@app/shared-contracts';", "from '@app/copied-contracts';"),
-    ) ?? '',
-    /import exact baseline primitives from the shared contracts package/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /import exact baseline primitives from the shared contracts package/u,
+    ],
+    [
+      'Effect API primitives imported from a foreign client',
       contract.replace(
         "from '@modern-js/plugin-bff/effect-client';",
         "from '@evil/fake-effect-client';",
       ),
-    ) ?? '',
-    /import exact Effect API primitives from the framework client package/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /import exact Effect API primitives from the framework client package/u,
+    ],
+    [
+      'baseline primitives redefined locally',
       contract.replace(
         sharedBaselineImport,
         `const MicroVerticalBuildMarkerSchema = Schema.Struct({ copied: Schema.String });
 const MicroVerticalReadinessSchema = Schema.Struct({ copied: Schema.String });
 const createMicroVerticalOperationContext = <Value>(value: Value): Value => value;`,
       ),
-    ) ?? '',
-    /import exact baseline primitives from the shared contracts package/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /import exact baseline primitives from the shared contracts package/u,
+    ],
+    [
+      'renamed readiness endpoint with a decoy API name',
       contract
         .replace("HttpApiEndpoint.get('readiness'", "HttpApiEndpoint.get('health'")
         .replace(
           "HttpApi.make('PartyRegistryFoundationApi')",
           `HttpApi.make("${readinessEndpointDecoy}")`,
         ),
-    ) ?? '',
-    /exact readiness endpoint/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(partyId, contract.replace(foundationComposition, '')) ?? '',
-    /explicitly compose its readiness foundation API/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /exact readiness endpoint/u,
+    ],
+    [
+      'missing foundation API composition',
+      contract.replace(foundationComposition, ''),
+      /explicitly compose its readiness foundation API/u,
+    ],
+    [
+      'foundation composition discarded by a pipe',
       contract.replace(
         foundationComposition,
         `${foundationComposition}
   .pipe(() => HttpApi.make('DiscardedPartyRegistryApi'))`,
       ),
-    ) ?? '',
-    /explicitly compose its readiness foundation API/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /explicitly compose its readiness foundation API/u,
+    ],
+    [
+      'foundation endpoint discarded by a pipe',
       contract.replace(
         `  ),
 );`,
         `  ),
 ).pipe(() => HttpApi.make('DiscardedPartyRegistryFoundationApi'));`,
       ),
-    ) ?? '',
-    /directly compose its exact readiness endpoint/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /directly compose its exact readiness endpoint/u,
+    ],
+    [
+      'missing foundation composition with a decoy API name',
       contract
         .replace(foundationComposition, '')
         .replace(
           "HttpApi.make('PartyRegistryApi')",
           "HttpApi.make('.addHttpApi(partyRegistryFoundationApi)')",
         ),
-    ) ?? '',
-    /explicitly compose its readiness foundation API/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /explicitly compose its readiness foundation API/u,
+    ],
+    [
+      'renamed foundation API without composition',
       contract
         .replaceAll('partyRegistryFoundationApi', 'renamedFoundationApi')
         .replace('.addHttpApi(renamedFoundationApi)', ''),
-    ) ?? '',
-    /directly compose its exact readiness endpoint/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /directly compose its exact readiness endpoint/u,
+    ],
+    [
+      'hand-forked build marker fields',
       contract.replace('...MicroVerticalBuildMarkerSchema.fields,', 'build: Schema.String,'),
-    ) ?? '',
-    /shared build marker schema/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /shared build marker schema/u,
+    ],
+    [
+      'readiness schema built by a sequence expression',
       contract.replace(
         `export const partyRegistryReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
@@ -2950,12 +3095,10 @@ const createMicroVerticalOperationContext = <Value>(value: Value): Value => valu
   Schema.Struct({ marker: partyRegistryMarkerSchema, status: Schema.String })
 );`,
       ),
-    ) ?? '',
-    /consume the shared readiness schema/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /consume the shared readiness schema/u,
+    ],
+    [
+      'readiness schema aliased to the shared schema',
       contract.replace(
         `export const partyRegistryReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
@@ -2963,12 +3106,10 @@ const createMicroVerticalOperationContext = <Value>(value: Value): Value => valu
 });`,
         'export const partyRegistryReadinessSchema = MicroVerticalReadinessSchema;',
       ),
-    ) ?? '',
-    /consume the shared readiness schema/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /consume the shared readiness schema/u,
+    ],
+    [
+      'foundation composed inside a pipe callback',
       contract.replace(
         `export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(partyRegistryFoundationApi)`,
@@ -2976,114 +3117,89 @@ const createMicroVerticalOperationContext = <Value>(value: Value): Value => valu
   (api) => (api.addHttpApi(partyRegistryFoundationApi), api),
 )`,
       ),
-    ) ?? '',
-    /explicitly compose its readiness foundation API/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /explicitly compose its readiness foundation API/u,
+    ],
+    [
+      'decoy API declaration shadowed by an uncomposed API',
       `${contract.replace(
         'export const partyRegistryApi =',
         'export const partyRegistryApiDecoy =',
       )}\nexport const partyRegistryApi = HttpApi.make('PartyRegistryApi');\n`,
-    ) ?? '',
-    /explicitly compose its readiness foundation API/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /explicitly compose its readiness foundation API/u,
+    ],
+    [
+      'decoy foundation API declaration without a readiness endpoint',
       `${contract.replace(
         'export const partyRegistryFoundationApi =',
         'export const partyRegistryFoundationApiDecoy =',
       )}\nexport const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationApi');\n`,
-    ) ?? '',
-    /exact readiness endpoint/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /exact readiness endpoint/u,
+    ],
+    [
+      'decoy contract declaration without path metadata',
       `${contract.replace(
         'export const partyRegistryApiContract =',
         'export const partyRegistryApiContractDecoy =',
       )}\nexport const partyRegistryApiContract = { ownerId: 'party-registry' };\n`,
-    ) ?? '',
-    /exact owner and API path metadata/u,
-  );
-
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /exact owner and API path metadata/u,
+    ],
+    [
+      'build marker overriding a shared field',
       contract.replace(
         '...MicroVerticalBuildMarkerSchema.fields,',
         '...MicroVerticalBuildMarkerSchema.fields,\n  build: Schema.Number,',
       ),
-    ) ?? '',
-    /without overriding shared fields/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /without overriding shared fields/u,
+    ],
+    [
+      'foreign AppId schema',
       contract.replace(
         "const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));",
         'const AppIdSchema = Schema.Number;',
       ),
-    ) ?? '',
-    /shared build marker schema/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /shared build marker schema/u,
+    ],
+    [
+      'readiness schema overriding a shared field',
       contract.replace(
         '...MicroVerticalReadinessSchema.fields,',
         '...MicroVerticalReadinessSchema.fields,\n  status: Schema.String,',
       ),
-    ) ?? '',
-    /without overriding shared fields/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /without overriding shared fields/u,
+    ],
+    [
+      'renamed foundation group',
       contract.replace("HttpApiGroup.make('foundation')", "HttpApiGroup.make('not-foundation')"),
-    ) ?? '',
-    /exact readiness endpoint and foundation identity/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /exact readiness endpoint and foundation identity/u,
+    ],
+    [
+      'renamed root API',
       contract.replace("HttpApi.make('PartyRegistryApi')", "HttpApi.make('WrongApi')"),
-    ) ?? '',
-    /explicitly compose its readiness foundation API/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /explicitly compose its readiness foundation API/u,
+    ],
+    [
+      'renamed operation contexts',
       contract.replace(
         'export const partyRegistryOperationContexts =',
         'export const renamedOperationContexts =',
       ),
-    ) ?? '',
-    /construct every operation with the shared context constructor/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /construct every operation with the shared context constructor/u,
+    ],
+    [
+      'foreign operation id',
       contract.replace(
         "operationId: 'PartyRegistryApi:/reads/ares-lookup'",
         "operationId: 'WrongApi:unrelated'",
       ),
-    ) ?? '',
-    /construct every operation with the shared context constructor/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /construct every operation with the shared context constructor/u,
+    ],
+    [
+      'foreign route path',
       contract.replace("routePath: '/reads/ares-lookup'", "routePath: '/not-an-endpoint'"),
-    ) ?? '',
-    /construct every operation with the shared context constructor/u,
-  );
-  assert.match(
-    microVerticalApiBaselineViolation(
-      partyId,
+      /construct every operation with the shared context constructor/u,
+    ],
+    [
+      'readiness context built without the shared constructor',
       `${contract.replace(
         `readiness: createMicroVerticalOperationContext({
     method: 'GET',
@@ -3102,20 +3218,27 @@ createMicroVerticalOperationContext({
   routePath: '/party-registry/readiness',
 });
 `,
-    ) ?? '',
-    /construct every operation with the shared context constructor/u,
-  );
-
-  for (const [label, mutated] of [
-    ['missing apiPrefix', contract.replace("  apiPrefix: '/party-registry-api',\n", '')],
+      /construct every operation with the shared context constructor/u,
+    ],
+    [
+      'missing apiPrefix',
+      contract.replace("  apiPrefix: '/party-registry-api',\n", ''),
+      /exact owner and API path metadata/u,
+    ],
     [
       'missing basePath',
       contract.replace("  basePath: '/party-registry-api/party-registry',\n", ''),
+      /exact owner and API path metadata/u,
     ],
-    ['missing ownerId', contract.replace("  ownerId: 'party-registry',\n", '')],
+    [
+      'missing ownerId',
+      contract.replace("  ownerId: 'party-registry',\n", ''),
+      /exact owner and API path metadata/u,
+    ],
     [
       'wrong apiPrefix',
       contract.replace("apiPrefix: '/party-registry-api'", "apiPrefix: '/evil-api'"),
+      /exact owner and API path metadata/u,
     ],
     [
       'wrong basePath',
@@ -3123,14 +3246,20 @@ createMicroVerticalOperationContext({
         "basePath: '/party-registry-api/party-registry'",
         "basePath: '/party-registry-api/evil'",
       ),
+      /exact owner and API path metadata/u,
     ],
-    ['wrong ownerId', contract.replace("ownerId: 'party-registry'", "ownerId: 'evil-owner'")],
+    [
+      'wrong ownerId',
+      contract.replace("ownerId: 'party-registry'", "ownerId: 'evil-owner'"),
+      /exact owner and API path metadata/u,
+    ],
     [
       'wrong readinessPath',
       contract.replace(
         "readinessPath: '/party-registry-api/party-registry/readiness'",
         "readinessPath: '/evil-prefix/party-registry/readiness'",
       ),
+      /exact owner and API path metadata/u,
     ],
     [
       'coordinated topology drift',
@@ -3144,6 +3273,7 @@ createMicroVerticalOperationContext({
           "readinessPath: '/party-registry-api/party-registry/readiness'",
           "readinessPath: '/evil-api/party-registry/readiness'",
         ),
+      /exact owner and API path metadata/u,
     ],
     [
       'forbidden credential metadata',
@@ -3151,6 +3281,7 @@ createMicroVerticalOperationContext({
         partyReadinessMetadataLine,
         `${partyReadinessMetadataLine}\n  credential: 'secret',`,
       ),
+      /exact owner and API path metadata/u,
     ],
     [
       'forbidden credential path metadata',
@@ -3158,6 +3289,7 @@ createMicroVerticalOperationContext({
         partyReadinessMetadataLine,
         `${partyReadinessMetadataLine}\n  credentialPath: '/party-registry-api/party-registry/secret',`,
       ),
+      /exact owner and API path metadata/u,
     ],
     [
       'unknown path metadata',
@@ -3165,6 +3297,7 @@ createMicroVerticalOperationContext({
         partyReadinessMetadataLine,
         `${partyReadinessMetadataLine}\n  unknownPath: '/party-registry-api/party-registry/unknown',`,
       ),
+      /exact owner and API path metadata/u,
     ],
     [
       'spread metadata',
@@ -3172,13 +3305,10 @@ createMicroVerticalOperationContext({
         'export const partyRegistryApiContract = {',
         'const copiedMetadata = {};\nexport const partyRegistryApiContract = {\n  ...copiedMetadata,',
       ),
+      /exact owner and API path metadata/u,
     ],
   ] as const) {
-    assert.match(
-      microVerticalApiBaselineViolation(partyId, mutated) ?? '',
-      /exact owner and API path metadata/u,
-      label,
-    );
+    assert.match(microVerticalApiBaselineViolation(partyId, mutated) ?? '', expected, label);
   }
 });
 

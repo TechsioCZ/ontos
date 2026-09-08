@@ -23,7 +23,7 @@ const checkpointFields = {
   reason,
   targetPrincipalId: PrincipalIdSchema,
 };
-export const RecordSupportImpersonationPayloadSchema = Schema.Union([
+const RecordSupportImpersonationPayloadSchema = Schema.Union([
   Schema.Struct({ ...checkpointFields, checkpoint: Schema.Literal('requested') }),
   Schema.Struct({
     ...checkpointFields,
@@ -34,13 +34,10 @@ export const RecordSupportImpersonationPayloadSchema = Schema.Union([
 export type RecordSupportImpersonationPayload = Schema.Schema.Type<
   typeof RecordSupportImpersonationPayloadSchema
 >;
-export const RecordSupportImpersonationResultSchema = Schema.Struct({
+const RecordSupportImpersonationResultSchema = Schema.Struct({
   checkpoint: Schema.Literals(['requested', 'started', 'stopped']),
   recorded: Schema.Literal(true),
 });
-export type RecordSupportImpersonationResult = Schema.Schema.Type<
-  typeof RecordSupportImpersonationResultSchema
->;
 type ValidateSupportImpersonation =
   PrincipalManagementRepositoryService['validateSupportImpersonation'];
 const handle = Effect.fn('RecordSupportImpersonationAction.handle')(

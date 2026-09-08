@@ -8,7 +8,7 @@ import {
   makeCoreSearchIngestion,
 } from '../../src/search/ingestion.ts';
 import {
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from '../../src/search/projection.ts';
 
@@ -66,7 +66,7 @@ void test('declares one immutable Core registration for every closed Party lifec
 effectTest('ingests duplicate and out-of-order post-commit observations idempotently', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
-  const runtime = makeCoreSearchQueryRuntime(store);
+  const runtime = createCoreSearchQueryRuntime(store);
 
   return Effect.gen(function* ingestObservationsIdempotently() {
     yield* ingestion.ingest(observation('2', 'Current title'));

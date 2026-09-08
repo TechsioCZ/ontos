@@ -23,4 +23,3 @@ export const CounterpartyRoleEndResultSchema = Schema.Struct({
   validFrom: CounterpartyIsoTimestampSchema,
   validTo: CounterpartyIsoTimestampSchema,
 });
-export type CounterpartyRoleEndResult = typeof CounterpartyRoleEndResultSchema.Type;

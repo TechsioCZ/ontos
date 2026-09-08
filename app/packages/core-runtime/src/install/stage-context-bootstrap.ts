@@ -1,3 +1,10 @@
+import {
+  bootstrapPrincipalRecord,
+  bootstrapRelationshipRequest,
+  selectBootstrapLegalEntities,
+  selectBootstrapPrincipals,
+  selectBootstrapAuthBindings,
+} from './context-bootstrap-shared.ts';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 import { Config, Effect, Option, Redacted, Schema } from 'effect';
@@ -239,28 +246,9 @@ const reconcilePostgresTransaction = Effect.fn(
       .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
 
-  const legalEntityCandidates = yield* transaction
-    .select({
-      legalEntityId: legalEntities.legalEntityId,
-      legalName: legalEntities.legalName,
-      registrationCountry: legalEntities.registrationCountry,
-      registrationNumber: legalEntities.registrationNumber,
-      status: legalEntities.status,
-      tenantId: legalEntities.tenantId,
-    })
-    .from(legalEntities)
-    .where(
-      or(
-        eq(legalEntities.legalEntityId, context.legalEntityId),
-        and(
-          eq(legalEntities.tenantId, context.tenantId),
-          eq(legalEntities.registrationCountry, context.registrationCountry),
-          eq(legalEntities.registrationNumber, context.registrationNumber),
-        ),
-      ),
-    )
-    .limit(2)
-    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  const legalEntityCandidates = yield* selectBootstrapLegalEntities(transaction, context).pipe(
+    Effect.mapError(bootstrapFailureFromCause),
+  );
   if (legalEntityCandidates.length > 1) {
     return yield* failure('The stage legal-entity identity conflicts');
   }
@@ -282,25 +270,10 @@ const reconcilePostgresTransaction = Effect.fn(
       .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
 
-  const expectedPrincipal = {
-    displayName: context.principalDisplayName,
-    kind: 'human',
-    principalId: context.principalId,
-    status: 'active',
-    tenantId: context.tenantId,
-  } as const;
-  const principalCandidates = yield* transaction
-    .select({
-      displayName: principals.displayName,
-      kind: principals.kind,
-      principalId: principals.principalId,
-      status: principals.status,
-      tenantId: principals.tenantId,
-    })
-    .from(principals)
-    .where(eq(principals.principalId, context.principalId))
-    .limit(1)
-    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  const expectedPrincipal = bootstrapPrincipalRecord(context);
+  const principalCandidates = yield* selectBootstrapPrincipals(transaction, context).pipe(
+    Effect.mapError(bootstrapFailureFromCause),
+  );
   if (
     (yield* classifyExactRecord('principal', principalCandidates[0], expectedPrincipal)) ===
     'create'
@@ -311,30 +284,11 @@ const reconcilePostgresTransaction = Effect.fn(
       .pipe(Effect.mapError(bootstrapFailureFromCause));
   }
 
-  const bindingCandidates = yield* transaction
-    .select({
-      principalAuthBindingId: principalAuthBindings.principalAuthBindingId,
-      principalId: principalAuthBindings.principalId,
-      provider: principalAuthBindings.provider,
-      providerSubjectId: principalAuthBindings.providerSubjectId,
-      status: principalAuthBindings.status,
-      subjectType: principalAuthBindings.subjectType,
-      tenantId: principalAuthBindings.tenantId,
-    })
-    .from(principalAuthBindings)
-    .where(
-      or(
-        eq(principalAuthBindings.principalAuthBindingId, context.authBindingId),
-        and(
-          eq(principalAuthBindings.tenantId, context.tenantId),
-          eq(principalAuthBindings.provider, 'better_auth'),
-          eq(principalAuthBindings.subjectType, 'user'),
-          eq(principalAuthBindings.providerSubjectId, authUserId),
-        ),
-      ),
-    )
-    .limit(2)
-    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  const bindingCandidates = yield* selectBootstrapAuthBindings(
+    transaction,
+    context,
+    authUserId,
+  ).pipe(Effect.mapError(bootstrapFailureFromCause));
   if (bindingCandidates.length > 1) {
     return yield* failure('The stage authentication binding conflicts');
   }
@@ -481,26 +435,7 @@ const touchRelationships = Effect.fn('StageContextBootstrap.touchRelationships')
     context: StageContext,
   ): Effect.fn.Return<void, StageContextBootstrapError> {
     const relationships = yield* buildRelationships(context);
-    const request = v1.WriteRelationshipsRequest.create({
-      updates: relationships.map((item) =>
-        v1.RelationshipUpdate.create({
-          operation: v1.RelationshipUpdate_Operation.TOUCH,
-          relationship: v1.Relationship.create({
-            relation: item.relation,
-            resource: v1.ObjectReference.create({
-              objectId: item.resourceId,
-              objectType: item.resourceType,
-            }),
-            subject: v1.SubjectReference.create({
-              object: v1.ObjectReference.create({
-                objectId: item.subjectId,
-                objectType: item.subjectType,
-              }),
-            }),
-          }),
-        }),
-      ),
-    });
+    const request = bootstrapRelationshipRequest(relationships);
     yield* Effect.acquireUseRelease(
       Effect.try({
         catch: bootstrapFailureFromCause,

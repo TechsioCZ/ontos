@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-throw-in-effect-callback
  *
@@ -86,17 +87,24 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isScriptFile, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import {
+  unwrapNode as unwrap,
+  parentOf,
+  nearestFunction as enclosingFunction,
+  FUNCTION_TYPES,
+} from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
+import { effectOrigin } from '../shared/effect-identity.ts';
+import {
+  collectRootNamespaces,
+  collectDirectMemberImports,
+  importDeclarations,
+} from '../shared/imports.ts';
 
 /** S1/A4 are application-architecture findings: `scripts/**` is excluded on purpose (see B3). */
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
@@ -137,12 +145,6 @@ const DEFAULT_EFFECT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
 const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SUBMODULE = /^effect\/(?:.*\/)?([A-Za-z0-9_$]+)$/u;
 
-const FUNCTION_TYPES = new Set([
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
-
 /** Node types that can sit between a callback and the call it is an argument of. */
 const ARGUMENT_WRAPPERS = new Set([
   'ConditionalExpression',
@@ -170,18 +172,8 @@ interface RuleOptions {
   readonly effectModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -193,135 +185,24 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Strip wrappers that never change what an expression denotes. */
-function unwrap(node: ESTree.Node): ESTree.Node {
-  let current: ESTree.Node = node;
-  for (;;) {
-    if (
-      current.type === 'ChainExpression' ||
-      current.type === 'ParenthesizedExpression' ||
-      current.type === 'TSNonNullExpression' ||
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSInstantiationExpression' ||
-      current.type === 'TSTypeAssertion'
-    ) {
-      current = current.expression as ESTree.Node;
-      continue;
-    }
-    return current;
-  }
-}
-
-/** Non-computed `.name`, or computed `["name"]`. */
-function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = unwrap(node.property);
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0) {
-    return property.quasis[0]?.value.cooked ?? null;
-  }
-  return null;
-}
-
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/**
- * `true` when the identifier still resolves to an `import` binding. Unresolved names fall back to
- * `true` because the module-level import declaration already proved the binding exists; only a local
- * shadow (parameter, `const`, catch clause, …) rejects the match.
- */
-function resolvesToImport(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-): boolean {
-  const variable = lookupVariable(context, identifier);
-  if (variable === null) return true;
-  if (variable.defs.length === 0) return true;
-  return variable.defs.some((definition) => definition.type === 'ImportBinding');
-}
-
-interface ModuleView {
-  /** local identifier → Effect namespace name (`Effect`, `Layer`, …). */
-  readonly namespaceLocals: ReadonlyMap<string, string>;
-  /** locals bound by `import * as X from "effect"` — `X.Effect.gen(…)`. */
-  readonly rootNamespaces: ReadonlySet<string>;
-  /** local identifier → owning namespace, for `import { gen } from "effect/Effect"`. */
-  readonly directMembers: ReadonlyMap<string, string>;
-  /** whether the file imports `effect` / `effect/*` / a configured barrel at all. */
-  readonly importsEffect: boolean;
-}
-
-function collectModuleView(program: ESTree.Program, options: RuleOptions): ModuleView {
+function collectModuleView(program: ESTree.Program, options: RuleOptions): boolean {
   const shared = collectEffectBindings(program);
-  const namespaceLocals = new Map<string, string>(shared.namespaces);
-  const rootNamespaces = new Set<string>();
-  const directMembers = new Map<string, string>();
-  let importsEffect = shared.importsEffect;
-
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source.value;
-    if (source === EFFECT_ROOT_MODULE) {
-      for (const specifier of statement.specifiers) {
-        if (specifier.type === 'ImportNamespaceSpecifier') rootNamespaces.add(specifier.local.name);
-      }
-      continue;
-    }
-    const submodule = EFFECT_SUBMODULE.exec(source)?.[1];
-    if (submodule !== undefined && options.namespaces.includes(submodule)) {
-      // `import { gen } from "effect/Effect"` — the member is reachable without a namespace.
-      for (const specifier of statement.specifiers) {
-        if (specifier.type !== 'ImportSpecifier') continue;
-        directMembers.set(specifier.local.name, submodule);
-      }
-      continue;
-    }
-    if (options.effectModules.includes(source)) {
-      importsEffect = true;
-      for (const specifier of statement.specifiers) {
-        if (specifier.type === 'ImportSpecifier') {
-          const imported =
-            specifier.imported.type === 'Identifier'
-              ? specifier.imported.name
-              : specifier.imported.value;
-          namespaceLocals.set(specifier.local.name, imported);
-        } else if (specifier.type === 'ImportNamespaceSpecifier') {
-          rootNamespaces.add(specifier.local.name);
-        }
-      }
-    }
-  }
-  return { namespaceLocals, rootNamespaces, directMembers, importsEffect };
+  const rootNamespaces = collectRootNamespaces(program);
+  const directMembers = collectDirectMemberImports(program, undefined, {}, (source) => {
+    const namespace = EFFECT_SUBMODULE.exec(source)?.[1];
+    return namespace !== undefined && options.namespaces.includes(namespace) ? namespace : null;
+  });
+  const barrels = importDeclarations(
+    program,
+    (source) => source !== EFFECT_ROOT_MODULE && options.effectModules.includes(source),
+  );
+  return (
+    shared.importsEffect || rootNamespaces.size > 0 || directMembers.size > 0 || barrels.length > 0
+  );
 }
 
 /** `Effect.gen` / `E.gen` / `Effect["gen"]` / `Eff.Effect.gen` / bare `gen` from `effect/Effect`. */
-function isEffectCallee(
-  context: Context,
-  callee: ESTree.Node,
-  view: ModuleView,
-  options: RuleOptions,
-): boolean {
+function isEffectCallee(context: Context, callee: ESTree.Node, options: RuleOptions): boolean {
   const target = unwrap(callee);
   if (target.type === 'CallExpression') {
     const origin = effectOrigin(context, target.callee, options.effectModules);
@@ -331,22 +212,6 @@ function isEffectCallee(
   if (origin?.length !== 2 || !options.namespaces.includes(origin[0]!)) return false;
   // These APIs take values/services, not callbacks; nested functions are deferred data.
   return !['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(origin[1]!);
-}
-
-function parentOf(node: ESTree.Node): ESTree.Node | null {
-  const parent = (node as { parent?: ESTree.Node | null }).parent;
-  return parent ?? null;
-}
-
-/** Nearest enclosing function, or `null` at `Program`. */
-function enclosingFunction(node: ESTree.Node): ESTree.Node | null {
-  let current = parentOf(node);
-  while (current !== null) {
-    if (FUNCTION_TYPES.has(current.type)) return current;
-    if (current.type === 'Program') return null;
-    current = parentOf(current);
-  }
-  return null;
 }
 
 /** The `CallExpression` this node is (possibly wrapped) an argument of, or `null`. */
@@ -368,6 +233,28 @@ function argumentCall(node: ESTree.Node): ESTree.CallExpression | null {
   return null;
 }
 
+function isAdapterCall(context: Context, call: ESTree.CallExpression): boolean {
+  const origin = effectOrigin(context, call.callee, [
+    'react',
+    '@tanstack/react-query',
+    '@tanstack/react-router',
+  ]);
+  return (
+    origin?.length === 1 &&
+    ['useCallback', 'useMutation', 'useQuery', 'queryOptions', 'mutationOptions'].includes(
+      origin[0]!,
+    )
+  );
+}
+
+function isDataCall(context: Context, call: ESTree.CallExpression, options: RuleOptions): boolean {
+  const origin = effectOrigin(context, call.callee, options.effectModules);
+  return (
+    origin?.length === 2 &&
+    ['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(origin[1]!)
+  );
+}
+
 /**
  * Transitively: is this node lexically inside a callback passed to an Effect combinator? Nested
  * non-Effect callbacks (`db.transaction(async (tx) => …)`) keep climbing to their outer function.
@@ -375,7 +262,6 @@ function argumentCall(node: ESTree.Node): ESTree.CallExpression | null {
 function isInsideEffectCallback(
   context: Context,
   node: ESTree.Node,
-  view: ModuleView,
   options: RuleOptions,
 ): boolean {
   let cursor: ESTree.Node = node;
@@ -384,25 +270,9 @@ function isInsideEffectCallback(
     if (fn === null) return false;
     const call = argumentCall(fn);
     if (call !== null) {
-      const adapter = effectOrigin(context, call.callee, [
-        'react',
-        '@tanstack/react-query',
-        '@tanstack/react-router',
-      ]);
-      if (
-        adapter?.length === 1 &&
-        ['useCallback', 'useMutation', 'useQuery', 'queryOptions', 'mutationOptions'].includes(
-          adapter[0]!,
-        )
-      )
-        return false;
-      if (isEffectCallee(context, call.callee, view, options)) return true;
-      const origin = effectOrigin(context, call.callee, options.effectModules);
-      if (
-        origin?.length === 2 &&
-        ['succeed', 'fail', 'die', 'fromNullable', 'fromIterable'].includes(origin[1]!)
-      )
-        return false;
+      if (isAdapterCall(context, call)) return false;
+      if (isEffectCallee(context, call.callee, options)) return true;
+      if (isDataCall(context, call, options)) return false;
     }
     cursor = fn;
   }
@@ -439,122 +309,16 @@ function sentinelName(
   const variable = lookupVariable(context, callee);
   if (variable === null || variable.defs.length === 0) return null;
 
-  for (const definition of variable.defs) {
-    if (definition.type === 'ClassName' || definition.type === 'FunctionName') return callee.name;
-    if (definition.type === 'Variable') return callee.name;
-    if (definition.type === 'ImportBinding') {
-      const source = importSourceOf(definition);
-      if (
-        source !== null &&
-        options.localImportPrefixes.some((prefix) => source.startsWith(prefix))
-      ) {
-        return callee.name;
-      }
-    }
-  }
-  return null;
+  return variable.defs.some((definition) => isLocalDefinition(definition, options))
+    ? callee.name
+    : null;
 }
 
-// Resolve runtime identity, not spelling. Only immutable same-file aliases are followed;
-// dynamic imports, mutable rebinding and arbitrary cross-module re-exports remain unknown.
-function effectOrigin(
-  context: Context,
-  input: ESTree.Node,
-  barrels: readonly string[],
-  depth = 0,
-): readonly string[] | null {
-  if (depth > 24) return null;
-  let node = input;
-  while (
-    [
-      'ParenthesizedExpression',
-      'ChainExpression',
-      'TSAsExpression',
-      'TSSatisfiesExpression',
-      'TSNonNullExpression',
-      'TSInstantiationExpression',
-      'TSTypeAssertion',
-    ].includes(node.type)
-  ) {
-    node = (node as { expression: ESTree.Node }).expression;
-  }
-  const keyOf = (key: ESTree.Node, computed: boolean): string | null => {
-    if (!computed && key.type === 'Identifier') return key.name;
-    if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-    if (key.type === 'TemplateLiteral' && key.expressions.length === 0)
-      return key.quasis[0]?.value.cooked ?? null;
-    return null;
-  };
-  if (node.type === 'MemberExpression') {
-    const key = keyOf(node.property, node.computed);
-    const base = effectOrigin(context, node.object, barrels, depth + 1);
-    return base && key !== null ? [...base, key] : null;
-  }
-  if (node.type !== 'Identifier') return null;
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-    context.sourceCode.getScope(node);
-  while (scope) {
-    const variable = scope.set.get(node.name);
-    const defs = variable?.defs.filter(
-      (def) =>
-        !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration', 'TSTypeParameter'].includes(
-          def.node.type,
-        ),
-    );
-    if (!variable || !defs?.length) {
-      scope = scope.upper;
-      continue;
-    }
-    if (defs.length !== 1) return null;
-    const def = defs[0]!;
-    if (def.type === 'ImportBinding') {
-      const spec = def.node;
-      const declaration = def.parent?.type === 'ImportDeclaration' ? def.parent : spec.parent;
-      if (
-        declaration?.type !== 'ImportDeclaration' ||
-        declaration.importKind === 'type' ||
-        (spec as { importKind?: string }).importKind === 'type'
-      )
-        return null;
-      const source = declaration.source.value;
-      const root = source === 'effect' || barrels.some((glob) => globToRegExp(glob).test(source));
-      if (!root && !source.startsWith('effect/')) return null;
-      const base = root ? [] : [source.split('/').at(-1)!];
-      if (spec.type === 'ImportNamespaceSpecifier' || spec.type === 'ImportDefaultSpecifier')
-        return base;
-      if (spec.type !== 'ImportSpecifier') return null;
-      return [
-        ...base,
-        spec.imported.type === 'Identifier' ? spec.imported.name : spec.imported.value,
-      ];
-    }
-    const declaration = def.node;
-    if (
-      declaration.type !== 'VariableDeclarator' ||
-      !declaration.init ||
-      declaration.parent?.type !== 'VariableDeclaration' ||
-      declaration.parent.kind !== 'const'
-    )
-      return null;
-    if (variable.references.some((reference) => reference.isWrite() && !reference.init))
-      return null;
-    const base = effectOrigin(context, declaration.init, barrels, depth + 1);
-    if (!base) return null;
-    if (declaration.id.type === 'Identifier') return base;
-    if (declaration.id.type !== 'ObjectPattern') return null;
-    for (const property of declaration.id.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.value.type !== 'Identifier' ||
-        property.value.name !== node.name
-      )
-        continue;
-      const key = keyOf(property.key, property.computed);
-      return key === null ? null : [...base, key];
-    }
-    return null;
-  }
-  return null;
+function isLocalDefinition(definition: Variable['defs'][number], options: RuleOptions): boolean {
+  if (['ClassName', 'FunctionName', 'Variable'].includes(definition.type)) return true;
+  if (definition.type !== 'ImportBinding') return false;
+  const source = importSourceOf(definition);
+  return source !== null && options.localImportPrefixes.some((prefix) => source.startsWith(prefix));
 }
 
 export const rule = defineRule({
@@ -620,9 +384,7 @@ export const rule = defineRule({
     if (isScriptFile(path)) return {};
     if (!options.includeTests && isTestFile(path)) return {};
 
-    const view = collectModuleView(context.sourceCode.ast, options);
-    if (!view.importsEffect && view.rootNamespaces.size === 0 && view.directMembers.size === 0)
-      return {};
+    if (!collectModuleView(context.sourceCode.ast, options)) return {};
 
     const fileMode = options.mode === 'effect-files';
 
@@ -635,7 +397,7 @@ export const rule = defineRule({
           if (parent.type === 'TryStatement' && parent.block === current && parent.handler) return;
           current = parent;
         }
-        const insideCallback = isInsideEffectCallback(context, node, view, options);
+        const insideCallback = isInsideEffectCallback(context, node, options);
         if (!insideCallback && !fileMode) return;
 
         const name = sentinelName(context, node.argument as ESTree.Node, options);

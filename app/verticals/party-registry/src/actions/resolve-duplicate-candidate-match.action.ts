@@ -6,7 +6,7 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { AddPartyOfficialIdentifierResultSchema } from '../../shared/actions/add-party-official-identifier.ts';
-import { createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
+import { publishAttachedOfficialIdentifiers } from './attached-official-identifier-events.ts';
 import {
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
@@ -26,14 +26,7 @@ import {
 } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 import type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 
-export {
-  ResolveDuplicateCandidateMatchPayloadSchema,
-  ResolveDuplicateCandidateMatchResultSchema,
-} from '../../shared/actions/resolve-duplicate-candidate-match.ts';
-export type {
-  ResolveDuplicateCandidateMatchPayload,
-  ResolveDuplicateCandidateMatchResult,
-} from '../../shared/actions/resolve-duplicate-candidate-match.ts';
+export type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
 const ErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
@@ -73,32 +66,10 @@ const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function
     targetResourceType: result.caseRef.resourceType,
   });
   if (result.partyRef !== null) {
-    const { partyRef } = result;
-    yield* Effect.forEach(
+    yield* publishAttachedOfficialIdentifiers(
+      context,
+      result.partyRef,
       addedOfficialIdentifierRefs,
-      (officialIdentifierRef) => {
-        const addedIdentifier = { officialIdentifierRef, partyRef };
-        return context
-          .addDomainEvent({
-            eventType: 'party.registry.official-identifier-added.v1',
-            payloadJson: addedIdentifier,
-            producerModuleKey: 'party.registry',
-            subjectModuleKey: 'party.registry',
-            subjectResourceId: officialIdentifierRef.resourceId,
-            subjectResourceType: officialIdentifierRef.resourceType,
-          })
-          .pipe(
-            Effect.flatMap((event) =>
-              context.addOutboxMessage(
-                event,
-                createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage(
-                  addedIdentifier,
-                ),
-              ),
-            ),
-          );
-      },
-      { concurrency: 1, discard: true },
     );
   }
   return result;

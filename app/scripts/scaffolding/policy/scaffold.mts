@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Match, Schema } from 'effect';
+import { Effect, FileSystem, Match, Schema, Predicate } from 'effect';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   CORE_POLICY_SLOT_END,
@@ -20,17 +20,16 @@ import type {
   ScaffoldPlan,
 } from '../shared.mts';
 
-export class PolicyScaffoldError extends Schema.TaggedError<PolicyScaffoldError>()(
-  'PolicyScaffoldError',
-  { reason: Schema.String },
-) {
+class PolicyScaffoldError extends Schema.TaggedError<PolicyScaffoldError>()('PolicyScaffoldError', {
+  reason: Schema.String,
+}) {
   override get message(): string {
     return this.reason;
   }
 }
 
 const planningFailure = (cause: unknown): PolicyScaffoldError =>
-  new PolicyScaffoldError({ reason: cause instanceof Error ? cause.message : String(cause) });
+  new PolicyScaffoldError({ reason: Predicate.isError(cause) ? cause.message : String(cause) });
 
 const fromLegacySync = <Value,>(
   operation: () => Value,
@@ -82,7 +81,7 @@ ${ownerLine}  policyKey: '${policyKey}',
 `;
 };
 
-export const planPolicyScaffold = Effect.fn('PolicyScaffold.planPolicyScaffold')(
+const planPolicyScaffold = Effect.fn('PolicyScaffold.planPolicyScaffold')(
   function* planPolicyScaffoldEffect(
     workspaceRoot: string,
     config: PolicyScaffoldConfig,

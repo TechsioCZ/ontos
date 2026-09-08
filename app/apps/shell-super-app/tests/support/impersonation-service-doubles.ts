@@ -1,4 +1,3 @@
-import type { SupportRecoveryPrincipalContextResolverService } from '@app/core-runtime';
 import { Effect } from 'effect';
 import type {
   SupportAuthProvider,
@@ -40,10 +39,6 @@ const storeDefaults: SupportImpersonationStore = {
   updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
 };
 
-const supportRecoveryDefaults: SupportRecoveryPrincipalContextResolverService = {
-  resolveStoppedImpersonation: () => unconfiguredEffect('resolveStoppedImpersonation'),
-};
-
 export const makeAuthenticationServiceDouble = (
   overrides: Partial<AuthenticationServiceContract> = {},
 ): AuthenticationServiceContract => ({ ...authenticationDefaults, ...overrides });
@@ -55,10 +50,3 @@ export const makeSupportAuthProviderDouble = (
 export const makeSupportImpersonationStoreDouble = (
   overrides: Partial<SupportImpersonationStore> = {},
 ): SupportImpersonationStore => ({ ...storeDefaults, ...overrides });
-
-export const makeSupportRecoveryPrincipalDouble = (
-  overrides: Partial<SupportRecoveryPrincipalContextResolverService> = {},
-): SupportRecoveryPrincipalContextResolverService => ({
-  ...supportRecoveryDefaults,
-  ...overrides,
-});

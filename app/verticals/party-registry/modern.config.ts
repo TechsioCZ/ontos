@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { builtinModules, createRequire } from 'node:module';
-import path from 'node:path';
+import {
+  createCloudflareWorkerSecurity,
+  createWorkerSsrPlugins,
+  createZephyrRspackPlugin,
+  resolveCloudflareExternal,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
@@ -50,53 +55,20 @@ const resolvePostgresProtocolCommonJsEntry = () =>
 const resolvePostgresPoolCommonJsEntry = () =>
   createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
 const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
-const nodeBuiltinRequests = new Set(
-  cloudflareDeployEnabled ? builtinModules.flatMap((name) => [name, `node:${name}`]) : [],
-);
 /* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 const cloudflareRuntimeExternal = (
-  { dependencyType, request }: { dependencyType?: string; request?: string },
+  request: { dependencyType?: string; request?: string },
   callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
 ) => {
-  const nativeModuleImport = (specifier: string) =>
-    dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
-  if (request === 'cloudflare:sockets') {
-    callback(undefined, nativeModuleImport(request), 'module-import');
-    return;
-  }
-  if (request !== undefined && nodeBuiltinRequests.has(request)) {
-    callback(
-      undefined,
-      nativeModuleImport(request.startsWith('node:') ? request : `node:${request}`),
-      'module-import',
-    );
-    return;
-  }
-  callback();
+  callback(...resolveCloudflareExternal(request, cloudflareDeployEnabled));
 };
 /* oxlint-enable promise/prefer-await-to-callbacks */
 
-const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
-  name: 'ultramodern-zephyr-rspack-plugin',
-  pre: ['@modern-js/plugin-module-federation-config'],
-  setup(api) {
-    // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
-    // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
-    // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
-    // application configuration. Zephyr therefore engages ONLY for such an
-    // authoritative deploy — a plain build never contacts Zephyr Cloud, needs
-    // no account, and is never blocked. This is the framework's "works with or
-    // without Zephyr" contract. The plugin stays registered unconditionally
-    // (this gate keys on Zephyr's native deploy token, not any UltraModern
-    // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
-    // hard build failure.
-    const zephyrCiDeploy = envValue('ZE_CI_TOKEN') !== undefined;
-    if (!zephyrCiDeploy) {
-      return;
-    }
-    api.modifyRspackConfig(withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()));
-  },
-});
+const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
+  createZephyrRspackPlugin({
+    readToken: () => getOptionalBuildConfig('ZE_CI_TOKEN'),
+    configure: () => withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()),
+  });
 
 const appId = 'party-registry';
 const cloudflareWorkerName = 'app-party-registry';
@@ -180,45 +152,7 @@ const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
     worker: {
       compatibilityDate: '2026-06-02',
       name: cloudflareWorkerName,
-      security: {
-        contentSecurityPolicy: {
-          directives: {
-            'base-uri': ["'self'"],
-            'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-            'default-src': ["'self'"],
-            'font-src': ["'self'", 'data:', 'https:', 'http:'],
-            'form-action': ["'self'"],
-            'frame-ancestors': ["'self'"],
-            'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-            'manifest-src': ["'self'", 'https:', 'http:'],
-            'object-src': ["'none'"],
-            'script-src': [
-              "'self'",
-              "'unsafe-inline'",
-              "'unsafe-eval'",
-              'https:',
-              'http:',
-              'blob:',
-            ],
-            'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
-            'worker-src': ["'self'", 'blob:'],
-          },
-          mode: 'report-only',
-          reason:
-            'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
-        },
-        enabled: true,
-        headers: {
-          contentTypeOptions: 'nosniff',
-          permissionsPolicy: 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-          referrerPolicy: 'strict-origin-when-cross-origin',
-        },
-        noindex: {
-          localhost: true,
-          previewHostnames: [],
-          workersDev: true,
-        },
-      },
+      security: createCloudflareWorkerSecurity(),
       ssr: true,
     },
   },
@@ -375,29 +309,7 @@ export default defineConfig(
               __dirname: false,
               __filename: false,
             });
-            config.plugins.push(
-              new rspack.DefinePlugin({
-                'globalThis.FinalizationRegistry': 'undefined',
-              }),
-              new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, (resource) => {
-                resource.request = resource.request.replace(
-                  /(?<separator>[?&])retain=[^&]*/u,
-                  '$<separator>retain=true',
-                );
-              }),
-              new rspack.NormalModuleReplacementPlugin(/^\.\.?[/\\]/u, (resource) => {
-                const [requestPath] = resource.request.split('?', 1);
-                if (
-                  requestPath !== undefined &&
-                  path
-                    .resolve(resource.context, requestPath)
-                    .startsWith(effectApiSourceDirectory) &&
-                  !resource.request.includes('modern-bff-runtime-source')
-                ) {
-                  resource.request = `${resource.request}?modern-bff-runtime-source`;
-                }
-              }),
-            );
+            config.plugins.push(...createWorkerSsrPlugins(rspack, effectApiSourceDirectory));
           }
         },
       },

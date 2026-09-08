@@ -1,5 +1,6 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off -- Existing compatibility boundary; expires: 2026-12-31.
 import assert from 'node:assert/strict';
+import { runEffectTestPromise } from '@app/core-runtime/testing/effect-runtime';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { ConfigProvider, Context, Effect, Layer, Logger, Schema } from 'effect';
@@ -336,6 +337,18 @@ const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
 const handle = (app: ReturnType<typeof mounted>, request: Request) =>
   app.handler(request, emptyRequestContext);
 
+const withMountedApp = (
+  app: ReturnType<typeof mounted>,
+  run: (app: ReturnType<typeof mounted>) => Promise<void>,
+): Promise<void> =>
+  runEffectTestPromise(
+    Effect.acquireUseRelease(
+      Effect.succeed(app),
+      (resource) => Effect.promise(() => run(resource)),
+      (resource) => Effect.promise(() => resource.dispose()),
+    ),
+  );
+
 const forEachSequential = <Item>(
   items: Iterable<Item>,
   run: (item: Item) => Promise<void>,
@@ -419,8 +432,7 @@ const engagementRequest = (path: string, payload: EngagementTestPayload, token: 
 test('every registered command is mounted and rejects missing structural input or authentication before the lifecycle', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     assert.equal(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).length, 24);
     assert.deepEqual(
       Object.keys(partyRegistryApi.groups.partyCommands.endpoints).toSorted(),
@@ -483,9 +495,7 @@ test('every registered command is mounted and rejects missing structural input o
       Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(malformedBody),
     );
     assert.equal(harness.snapshot().invocations.length, 0);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('missing, malformed, expired, tampered, wrong-audience, and wrong-issuer assertions are challenged without creating invocations', async () => {
@@ -511,8 +521,7 @@ test('missing, malformed, expired, tampered, wrong-audience, and wrong-issuer as
   ];
   await forEachSequential(cases, async ({ assertion, token }) => {
     const harness = makeActionTestHarness();
-    const app = mounted(harness, assertion.environment);
-    try {
+    await withMountedApp(mounted(harness, assertion.environment), async (app) => {
       const response = await handle(
         app,
         commandRequest('request-search-rebuild', {}, token, {
@@ -527,9 +536,7 @@ test('missing, malformed, expired, tampered, wrong-audience, and wrong-issuer as
       assert.equal(body.status, 401);
       assert.equal(JSON.stringify(body).includes(assertion.token), false);
       assert.equal(harness.snapshot().invocations.length, 0);
-    } finally {
-      await app.dispose();
-    }
+    });
   });
 });
 
@@ -543,8 +550,7 @@ test('missing and malformed verification configuration are retryable and never r
     ],
     async (environment) => {
       const harness = makeActionTestHarness();
-      const app = mounted(harness, environment);
-      try {
+      await withMountedApp(mounted(harness, environment), async (app) => {
         const response = await handle(
           app,
           commandRequest('request-search-rebuild', {}, assertion.token, {
@@ -558,9 +564,7 @@ test('missing and malformed verification configuration are retryable and never r
         assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandUnavailableProblem', {}))(body));
         assert.equal(body.retryable, true);
         assert.equal(harness.snapshot().invocations.length, 0);
-      } finally {
-        await app.dispose();
-      }
+      });
     },
   );
 });
@@ -651,8 +655,7 @@ test('generated governed reads authenticate through the shared adapter before st
         ),
       ),
   };
-  const app = mounted(harness, assertion.environment, readRuntime);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment, readRuntime), async (app) => {
     await forEachSequential([undefined, 'not-a-jwt'], async (token) => {
       const response = await handle(app, decisionRequest(randomUUID(), token));
       assert.equal(response.status, 401);
@@ -674,12 +677,9 @@ test('generated governed reads authenticate through the shared adapter before st
     assert.equal(valid.status, 404);
     assert.equal(reads, 1);
     assert.deepEqual(receivedPrincipals, [principal]);
-  } finally {
-    await app.dispose();
-  }
+  });
 
-  const unavailableApp = mounted(harness, {}, readRuntime);
-  try {
+  await withMountedApp(mounted(harness, {}, readRuntime), async (unavailableApp) => {
     const unavailable = await handle(
       unavailableApp,
       decisionRequest(randomUUID(), assertion.otherToken),
@@ -690,9 +690,7 @@ test('generated governed reads authenticate through the shared adapter before st
     assert.ok(Schema.is(Schema.TaggedStruct('PartyMatchDecisionUnavailableProblem', {}))(body));
     assert.equal(body.retryable, true);
     assert.equal(reads, 1);
-  } finally {
-    await unavailableApp.dispose();
-  }
+  });
 });
 
 test('the complete generated governed Read seam maps every Core failure to its declared HTTP problem', async () => {
@@ -808,29 +806,29 @@ test('the complete generated governed Read seam maps every Core failure to its d
       return Effect.fail(failure);
     },
   };
-  const app = mounted(makeActionTestHarness(), assertion.environment, readRuntime);
-  try {
-    await forEachSequential(cases, async ([nextFailure, expectedStatus, expectedTag]) => {
-      failure = nextFailure;
-      const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
-      assert.equal(response.status, expectedStatus, nextFailure._tag);
-      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-      assert.equal(
-        response.headers.get('www-authenticate'),
-        expectedStatus === 401 ? 'Bearer' : null,
-      );
-      const body = await response.json();
-      assert.ok(Schema.is(Schema.TaggedStruct(expectedTag, {}))(body), nextFailure._tag);
-      assert.equal(body.status, expectedStatus, nextFailure._tag);
-      assert.equal(JSON.stringify(body).includes(reason), false, nextFailure._tag);
-      if (expectedStatus === 503) {
-        assert.equal(body.retryable, true, nextFailure._tag);
-      }
-    });
-    assert.equal(reads, cases.length);
-  } finally {
-    await app.dispose();
-  }
+  await withMountedApp(
+    mounted(makeActionTestHarness(), assertion.environment, readRuntime),
+    async (app) => {
+      await forEachSequential(cases, async ([nextFailure, expectedStatus, expectedTag]) => {
+        failure = nextFailure;
+        const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
+        assert.equal(response.status, expectedStatus, nextFailure._tag);
+        assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+        assert.equal(
+          response.headers.get('www-authenticate'),
+          expectedStatus === 401 ? 'Bearer' : null,
+        );
+        const body = await response.json();
+        assert.ok(Schema.is(Schema.TaggedStruct(expectedTag, {}))(body), nextFailure._tag);
+        assert.equal(body.status, expectedStatus, nextFailure._tag);
+        assert.equal(JSON.stringify(body).includes(reason), false, nextFailure._tag);
+        if (expectedStatus === 503) {
+          assert.equal(body.retryable, true, nextFailure._tag);
+        }
+      });
+      assert.equal(reads, cases.length);
+    },
+  );
 });
 
 test('the generated governed Read seam sanitizes unexpected runtime defects', async () => {
@@ -838,18 +836,18 @@ test('the generated governed Read seam sanitizes unexpected runtime defects', as
   const readRuntime: ReadRuntimeService = {
     runRead: () => Effect.die('private governed Read defect'),
   };
-  const app = mounted(makeActionTestHarness(), assertion.environment, readRuntime);
-  try {
-    const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
-    assert.equal(response.status, 500);
-    assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
-    const body = await response.json();
-    assert.ok(Schema.is(Schema.TaggedStruct('PartyMatchDecisionInternalProblem', {}))(body));
-    assert.equal(body.status, 500);
-    assert.equal(JSON.stringify(body).includes('private'), false);
-  } finally {
-    await app.dispose();
-  }
+  await withMountedApp(
+    mounted(makeActionTestHarness(), assertion.environment, readRuntime),
+    async (app) => {
+      const response = await handle(app, decisionRequest(randomUUID(), assertion.token));
+      assert.equal(response.status, 500);
+      assert.match(response.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      const body = await response.json();
+      assert.ok(Schema.is(Schema.TaggedStruct('PartyMatchDecisionInternalProblem', {}))(body));
+      assert.equal(body.status, 500);
+      assert.equal(JSON.stringify(body).includes('private'), false);
+    },
+  );
 });
 
 test('replayed assertions are challenged before a second Action or generated Read lifecycle', async () => {
@@ -871,48 +869,48 @@ test('replayed assertions are challenged before a second Action or generated Rea
         ),
       ),
   };
-  const app = mounted(harness, assertion.environment, readRuntime, makeSingleUseRedemption());
-  try {
-    const firstAction = await handle(
-      app,
-      commandRequest('request-search-rebuild', {}, assertion.token, {
-        'idempotency-key': 'first-redemption',
-      }),
-    );
-    assert.notEqual(firstAction.status, 401);
-    assert.equal(harness.snapshot().invocations.length, 1);
+  await withMountedApp(
+    mounted(harness, assertion.environment, readRuntime, makeSingleUseRedemption()),
+    async (app) => {
+      const firstAction = await handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'first-redemption',
+        }),
+      );
+      assert.notEqual(firstAction.status, 401);
+      assert.equal(harness.snapshot().invocations.length, 1);
 
-    const replayedAction = await handle(
-      app,
-      commandRequest('request-search-rebuild', {}, assertion.token, {
-        'idempotency-key': 'second-redemption',
-      }),
-    );
-    assert.equal(replayedAction.status, 401);
-    assert.equal(replayedAction.headers.get('www-authenticate'), 'Bearer');
-    assert.match(replayedAction.headers.get('content-type') ?? '', /application\/problem\+json/u);
-    assert.equal(harness.snapshot().invocations.length, 1);
+      const replayedAction = await handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'second-redemption',
+        }),
+      );
+      assert.equal(replayedAction.status, 401);
+      assert.equal(replayedAction.headers.get('www-authenticate'), 'Bearer');
+      assert.match(replayedAction.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      assert.equal(harness.snapshot().invocations.length, 1);
 
-    const actionAssertionReadReplay = await handle(
-      app,
-      decisionRequest(randomUUID(), assertion.token),
-    );
-    assert.equal(actionAssertionReadReplay.status, 401);
-    assert.equal(actionAssertionReadReplay.headers.get('www-authenticate'), 'Bearer');
-    assert.equal(reads, 0);
+      const actionAssertionReadReplay = await handle(
+        app,
+        decisionRequest(randomUUID(), assertion.token),
+      );
+      assert.equal(actionAssertionReadReplay.status, 401);
+      assert.equal(actionAssertionReadReplay.headers.get('www-authenticate'), 'Bearer');
+      assert.equal(reads, 0);
 
-    const firstRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
-    assert.equal(firstRead.status, 404);
-    assert.equal(reads, 1);
+      const firstRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+      assert.equal(firstRead.status, 404);
+      assert.equal(reads, 1);
 
-    const replayedRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
-    assert.equal(replayedRead.status, 401);
-    assert.equal(replayedRead.headers.get('www-authenticate'), 'Bearer');
-    assert.match(replayedRead.headers.get('content-type') ?? '', /application\/problem\+json/u);
-    assert.equal(reads, 1);
-  } finally {
-    await app.dispose();
-  }
+      const replayedRead = await handle(app, decisionRequest(randomUUID(), assertion.otherToken));
+      assert.equal(replayedRead.status, 401);
+      assert.equal(replayedRead.headers.get('www-authenticate'), 'Bearer');
+      assert.match(replayedRead.headers.get('content-type') ?? '', /application\/problem\+json/u);
+      assert.equal(reads, 1);
+    },
+  );
 });
 
 test('correlation and idempotency are mandatory before the Core Action lifecycle', async () => {
@@ -926,55 +924,51 @@ test('correlation and idempotency are mandatory before the Core Action lifecycle
       return harness.runtime.runAction(input);
     },
   };
-  const app = mounted(
-    harness,
-    assertion.environment,
-    undefined,
-    nonPersistingRedemption,
-    observingRuntime,
+  await withMountedApp(
+    mounted(harness, assertion.environment, undefined, nonPersistingRedemption, observingRuntime),
+    async (app) => {
+      const missingKey = await handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token),
+      );
+      assert.equal(missingKey.status, 428);
+      const missingKeyBody = await missingKey.json();
+      assert.ok(
+        Schema.is(Schema.TaggedStruct('PartyCommandPreconditionRequiredProblem', {}))(
+          missingKeyBody,
+        ),
+      );
+      assert.equal(runtimeCalls, 1);
+      const missingCorrelation = await handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'correlation-test',
+          'x-correlation-id': '',
+        }),
+      );
+      assert.equal(missingCorrelation.status, 400);
+      const missingCorrelationBody = await missingCorrelation.json();
+      assert.ok(
+        Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(
+          missingCorrelationBody,
+        ),
+      );
+      assert.equal(runtimeCalls, 1);
+      const oversizedCorrelation = await handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'oversized-correlation-test',
+          'x-correlation-id': 'x'.repeat(201),
+        }),
+      );
+      assert.equal(oversizedCorrelation.status, 400);
+      Schema.decodeUnknownSync(PartyCommandInvalidRequestProblemSchema)(
+        await oversizedCorrelation.json(),
+      );
+      assert.equal(runtimeCalls, 1);
+      assert.equal(harness.snapshot().invocations.length, 0);
+    },
   );
-  try {
-    const missingKey = await handle(
-      app,
-      commandRequest('request-search-rebuild', {}, assertion.token),
-    );
-    assert.equal(missingKey.status, 428);
-    const missingKeyBody = await missingKey.json();
-    assert.ok(
-      Schema.is(Schema.TaggedStruct('PartyCommandPreconditionRequiredProblem', {}))(missingKeyBody),
-    );
-    assert.equal(runtimeCalls, 1);
-    const missingCorrelation = await handle(
-      app,
-      commandRequest('request-search-rebuild', {}, assertion.token, {
-        'idempotency-key': 'correlation-test',
-        'x-correlation-id': '',
-      }),
-    );
-    assert.equal(missingCorrelation.status, 400);
-    const missingCorrelationBody = await missingCorrelation.json();
-    assert.ok(
-      Schema.is(Schema.TaggedStruct('PartyCommandInvalidRequestProblem', {}))(
-        missingCorrelationBody,
-      ),
-    );
-    assert.equal(runtimeCalls, 1);
-    const oversizedCorrelation = await handle(
-      app,
-      commandRequest('request-search-rebuild', {}, assertion.token, {
-        'idempotency-key': 'oversized-correlation-test',
-        'x-correlation-id': 'x'.repeat(201),
-      }),
-    );
-    assert.equal(oversizedCorrelation.status, 400);
-    Schema.decodeUnknownSync(PartyCommandInvalidRequestProblemSchema)(
-      await oversizedCorrelation.json(),
-    );
-    assert.equal(runtimeCalls, 1);
-    assert.equal(harness.snapshot().invocations.length, 0);
-  } finally {
-    await app.dispose();
-  }
 });
 
 test('the governed runner passes safe transport metadata through one complete Action execution', async () => {
@@ -984,8 +978,7 @@ test('the governed runner passes safe transport metadata through one complete Ac
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const response = await handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
@@ -1006,9 +999,7 @@ test('the governed runner passes safe transport metadata through one complete Ac
     });
     assert.deepEqual(snapshot.committed[0]?.principal, principal);
     assert.equal(snapshot.committed[0]?.actionKey, 'party.registry.request-search-rebuild');
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('a decoded relationship timestamp reaches the Action runtime exactly once', async () => {
@@ -1026,27 +1017,21 @@ test('a decoded relationship timestamp reaches the Action runtime exactly once',
       return Effect.fail(failure);
     },
   };
-  const app = mounted(
-    harness,
-    assertion.environment,
-    undefined,
-    nonPersistingRedemption,
-    actionRuntime,
+  await withMountedApp(
+    mounted(harness, assertion.environment, undefined, nonPersistingRedemption, actionRuntime),
+    async (app) => {
+      const response = await handle(
+        app,
+        commandRequest('create-party-relationship', relationshipPayload, assertion.token, {
+          'idempotency-key': 'relationship-timestamp-test',
+        }),
+      );
+      assert.equal(response.status, 400);
+      const body = await response.json();
+      assert.equal(body._tag, 'PartyCommandInvalidRequestProblem');
+      assert.equal(runtimeCalls, 1);
+    },
   );
-  try {
-    const response = await handle(
-      app,
-      commandRequest('create-party-relationship', relationshipPayload, assertion.token, {
-        'idempotency-key': 'relationship-timestamp-test',
-      }),
-    );
-    assert.equal(response.status, 400);
-    const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandInvalidRequestProblem');
-    assert.equal(runtimeCalls, 1);
-  } finally {
-    await app.dispose();
-  }
 });
 
 test('an unexpected runtime defect is sanitized by the governed outer HTTP seam', async () => {
@@ -1057,39 +1042,39 @@ test('an unexpected runtime defect is sanitized by the governed outer HTTP seam'
     runAction: () => Effect.die('private governed runner defect'),
   };
   const observedLogs: string[] = [];
-  const app = mounted(
-    harness,
-    assertion.environment,
-    undefined,
-    nonPersistingRedemption,
-    defectiveRuntime,
-    observedLogs,
+  await withMountedApp(
+    mounted(
+      harness,
+      assertion.environment,
+      undefined,
+      nonPersistingRedemption,
+      defectiveRuntime,
+      observedLogs,
+    ),
+    async (app) => {
+      const response = await handle(
+        app,
+        commandRequest('request-search-rebuild', {}, assertion.token, {
+          'idempotency-key': 'runner-defect-test',
+        }),
+      );
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body._tag, 'PartyCommandInternalProblem');
+      assert.equal(body.status, 500);
+      assert.equal(JSON.stringify(body).includes('private governed runner defect'), false);
+      assert.equal(harness.snapshot().invocations.length, 0);
+      assert.equal(observedLogs.length, 1);
+      const [entry] = observedLogs;
+      assert.ok(entry);
+      assert.match(entry, /Unexpected governed Action HTTP defect/u);
+      assert.match(entry, /private governed runner defect/u);
+      assert.match(entry, /party\.registry\.request-search-rebuild/u);
+      assert.match(entry, /party-command-test/u);
+      assert.doesNotMatch(entry, new RegExp(assertion.token, 'u'));
+      assert.doesNotMatch(entry, /runner-defect-test/u);
+    },
   );
-  try {
-    const response = await handle(
-      app,
-      commandRequest('request-search-rebuild', {}, assertion.token, {
-        'idempotency-key': 'runner-defect-test',
-      }),
-    );
-    assert.equal(response.status, 500);
-    const body = await response.json();
-    assert.equal(body._tag, 'PartyCommandInternalProblem');
-    assert.equal(body.status, 500);
-    assert.equal(JSON.stringify(body).includes('private governed runner defect'), false);
-    assert.equal(harness.snapshot().invocations.length, 0);
-    assert.equal(observedLogs.length, 1);
-    const [entry] = observedLogs;
-    assert.ok(entry);
-    assert.match(entry, /Unexpected governed Action HTTP defect/u);
-    assert.match(entry, /private governed runner defect/u);
-    assert.match(entry, /party\.registry\.request-search-rebuild/u);
-    assert.match(entry, /party-command-test/u);
-    assert.doesNotMatch(entry, new RegExp(assertion.token, 'u'));
-    assert.doesNotMatch(entry, /runner-defect-test/u);
-  } finally {
-    await app.dispose();
-  }
 });
 
 test('the endpoint-owned mapper preserves representative Core failure semantics', async () => {
@@ -1200,26 +1185,20 @@ test('the endpoint-owned mapper preserves representative Core failure semantics'
       resolveActionCommit: harness.runtime.resolveActionCommit,
       runAction: () => Effect.fail(failure),
     };
-    const app = mounted(
-      harness,
-      assertion.environment,
-      undefined,
-      nonPersistingRedemption,
-      failingRuntime,
+    await withMountedApp(
+      mounted(harness, assertion.environment, undefined, nonPersistingRedemption, failingRuntime),
+      async (app) => {
+        const response = await handle(
+          app,
+          commandRequest('request-search-rebuild', {}, assertion.token, {
+            'idempotency-key': `mapping-${failure._tag}`,
+          }),
+        );
+        assert.equal(response.status, expectedStatus, failure._tag);
+        const body = await response.json();
+        assert.equal(body._tag, expectedTag, failure._tag);
+      },
     );
-    try {
-      const response = await handle(
-        app,
-        commandRequest('request-search-rebuild', {}, assertion.token, {
-          'idempotency-key': `mapping-${failure._tag}`,
-        }),
-      );
-      assert.equal(response.status, expectedStatus, failure._tag);
-      const body = await response.json();
-      assert.equal(body._tag, expectedTag, failure._tag);
-    } finally {
-      await app.dispose();
-    }
   });
 });
 
@@ -1271,8 +1250,7 @@ test('real Core permission denial is a durable 403 and does not execute the comm
     actionPermission: 'denied',
     tenantPermission: 'allowed',
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const response = await handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
@@ -1284,9 +1262,7 @@ test('real Core permission denial is a durable 403 and does not execute the comm
     assert.ok(Schema.is(Schema.TaggedStruct('PartyCommandForbiddenProblem', {}))(body));
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().permissionDenials.length, 1);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('the real handler translates domain conflicts and rolls back without successful evidence', async () => {
@@ -1300,8 +1276,7 @@ test('the real handler translates domain conflicts and rolls back without succes
       }),
     ],
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const response = await handle(
       app,
       commandRequest('archive-party', archivePayload, assertion.token, {
@@ -1314,9 +1289,7 @@ test('the real handler translates domain conflicts and rolls back without succes
     assert.equal(body.code, 'party_lifecycle_conflict');
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().committed.length, 0);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('alias conflicts preserve only safe canonical recovery metadata', async () => {
@@ -1339,8 +1312,7 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
       }),
     ],
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const response = await handle(
       app,
       commandRequest('archive-party', archivePayload, assertion.token, {
@@ -1354,9 +1326,7 @@ test('alias conflicts preserve only safe canonical recovery metadata', async () 
     assert.deepEqual(body.canonicalPartyRef, canonicalPartyRef);
     assert.equal(JSON.stringify(body).includes('Private diagnostic'), false);
     assert.equal(harness.snapshot().committed.length, 0);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('committed request replay stays a terminal 409 and does not execute or emit twice', async () => {
@@ -1365,8 +1335,7 @@ test('committed request replay stays a terminal 409 and does not execute or emit
     actionPermission: 'allowed',
     tenantPermission: 'allowed',
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const first = await handle(
       app,
       commandRequest('request-search-rebuild', {}, assertion.token, {
@@ -1393,9 +1362,7 @@ test('committed request replay stays a terminal 409 and does not execute or emit
     assert.equal(body.resolution, 'REFRESH_GOVERNED_READS');
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.deepEqual(harness.snapshot().committed, committed);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('declared not-found, capability-unavailable and unexpected defects retain safe distinct HTTP statuses', async () => {
@@ -1435,8 +1402,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
       tenantPermission: 'allowed',
       services: [item.service],
     });
-    const app = mounted(harness, assertion.environment);
-    try {
+    await withMountedApp(mounted(harness, assertion.environment), async (app) => {
       const response = await handle(
         app,
         commandRequest('archive-party', archivePayload, assertion.token, {
@@ -1453,9 +1419,7 @@ test('declared not-found, capability-unavailable and unexpected defects retain s
         assert.equal(body.retryable, true);
       }
       assert.equal(harness.snapshot().committed.length, 0);
-    } finally {
-      await app.dispose();
-    }
+    });
   });
 });
 
@@ -1476,8 +1440,7 @@ test('semantically insufficient Party evidence is a declared 422, not a server d
       }),
     ],
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const response = await handle(
       app,
       commandRequest('create-party', createPayload, assertion.token, {
@@ -1490,9 +1453,7 @@ test('semantically insufficient Party evidence is a declared 422, not a server d
     assert.equal(body.status, 422);
     assert.equal(JSON.stringify(body).includes('Private evidence'), false);
     assert.equal(harness.snapshot().committed.length, 0);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('the Core request hash rejects reuse of an idempotency key for a different command payload', async () => {
@@ -1518,8 +1479,7 @@ test('the Core request hash rejects reuse of an idempotency key for a different 
       }),
     ],
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const first = await handle(
       app,
       commandRequest('create-party', createPayload, assertion.token, {
@@ -1541,16 +1501,13 @@ test('the Core request hash rejects reuse of an idempotency key for a different 
     assert.equal(changedBody.code, 'action_request_hash_conflict');
     assert.equal(executions, 1);
     assert.equal(harness.snapshot().committed.length, 1);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('commit resolution requires authentication and a valid invocation without creating an Action', async () => {
   const assertion = await makeAssertion();
   const harness = makeActionTestHarness();
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const missingAuth = await handle(app, recoveryRequest(randomUUID()));
     assert.equal(missingAuth.status, 401);
     assert.equal(missingAuth.headers.get('www-authenticate'), 'Bearer');
@@ -1563,9 +1520,7 @@ test('commit resolution requires authentication and a valid invocation without c
     const absent = await handle(app, recoveryRequest(randomUUID(), assertion.token));
     assert.equal(absent.status, 404);
     assert.equal(harness.snapshot().invocations.length, 0);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('an open invocation resolves explicitly without authorizing automatic command retry', async () => {
@@ -1579,8 +1534,7 @@ test('an open invocation resolves explicitly without authorizing automatic comma
     ],
     tenantPermission: 'allowed',
   });
-  const app = mounted(harness, assertion.environment);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment), async (app) => {
     const failed = await handle(
       app,
       commandRequest('archive-party', archivePayload, assertion.token, {
@@ -1600,9 +1554,7 @@ test('an open invocation resolves explicitly without authorizing automatic comma
     });
     assert.equal(harness.snapshot().invocations.length, 1);
     assert.equal(harness.snapshot().committed.length, 0);
-  } finally {
-    await app.dispose();
-  }
+  });
 });
 
 test('actual Core commit acknowledgement loss resolves and the mounted governed Read returns the original decision without rerunning the Action', async () => {
@@ -1698,8 +1650,7 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
         );
       }),
   };
-  const app = mounted(harness, assertion.environment, reads);
-  try {
+  await withMountedApp(mounted(harness, assertion.environment, reads), async (app) => {
     const uncertain = await handle(
       app,
       commandRequest('create-party', createPayload, assertion.token, {
@@ -1749,7 +1700,5 @@ test('actual Core commit acknowledgement loss resolves and the mounted governed 
     assert.equal(executions, 1);
     assert.deepEqual(harness.snapshot().committed, committedSnapshot.committed);
     assert.equal(harness.snapshot().invocations.length, 1);
-  } finally {
-    await app.dispose();
-  }
+  });
 });

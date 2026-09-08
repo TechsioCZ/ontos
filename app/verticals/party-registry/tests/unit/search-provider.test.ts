@@ -77,3 +77,25 @@ test('Counterparty provider derives Legal Entity from trusted scope and never fr
       ]);
     }),
   ));
+
+test('Counterparty provider preserves typed normalization failures and omits an absent role', () =>
+  runEffectTestPromise(
+    Effect.gen(function* invalidCounterpartyInstant() {
+      const calls: unknown[] = [];
+      const gateway: PartySearchProjectionGatewayService = {
+        searchCounterparties: (input) => {
+          calls.push(input);
+          return Effect.succeed([]);
+        },
+        searchParties: () => Effect.succeed([]),
+      };
+      const error = yield* Effect.flip(
+        loadCounterpartySearch(gateway, { legalEntityId, tenantId }, { query: 'ACME' }, 'invalid'),
+      );
+      assert.equal(error.code, 'party_search_projection_unavailable');
+      assert.equal(error.reason, 'Counterparty Search effective time is invalid');
+      assert.deepEqual(calls, [
+        { effectiveAt: 'invalid', includeArchived: false, legalEntityId, query: 'ACME', tenantId },
+      ]);
+    }),
+  ));

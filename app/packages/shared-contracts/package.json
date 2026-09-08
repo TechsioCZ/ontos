@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./ultramodern-build": "./src/ultramodern-build.ts",
     "./problem-details": "./src/problem-details.ts",
     "./client-runtime": "./src/client-runtime.ts",
     "./server/effect-bff-runtime": "./src/effect-bff-runtime.ts"
@@ -21,7 +22,6 @@
     "effect": "4.0.0-beta.107"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.19.0",
     "@types/node": "20.19.43"
   }
 }

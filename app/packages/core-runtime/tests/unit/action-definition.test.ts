@@ -16,26 +16,32 @@ import {
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
 
+const counterActionDescriptor = () =>
+  ({
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+    actionKey: 'shell.counter.change',
+    auditProfile: 'standard',
+    domainErrorSchema: Schema.Never,
+    domainEvents: {},
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      entrypointKey: 'shell.counter.change',
+      moduleKey: 'core.shell',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'optional',
+    owningModuleKey: 'core.shell',
+    payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+    policies: [],
+    schemaVersion: '1',
+  }) as const;
+
 void test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
   const registration = defineAction(
     {
-      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
-      actionKey: 'shell.counter.change',
-      auditProfile: 'standard',
-      domainErrorSchema: Schema.Never,
-      domainEvents: {},
-      entrypoint: defineSystemModuleEntrypoint({
-        access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-        entrypointKey: 'shell.counter.change',
-        moduleKey: 'core.shell',
-        role: 'action',
-      }),
-      idempotency: 'required',
-      legalEntityScope: 'optional',
-      owningModuleKey: 'core.shell',
-      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
-      policies: [],
+      ...counterActionDescriptor(),
       resultSchema: Schema.Struct({ total: Schema.Finite }),
       schemaVersion: '1',
     },
@@ -143,23 +149,7 @@ test('uses Schema.Void for a no-payload Action', async () => {
 void test('keeps the private handler outside the public Action registration', () => {
   const registration = defineAction(
     {
-      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
-      actionKey: 'shell.counter.change',
-      auditProfile: 'standard',
-      domainErrorSchema: Schema.Never,
-      domainEvents: {},
-      entrypoint: defineSystemModuleEntrypoint({
-        access: 'write',
-        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
-        entrypointKey: 'shell.counter.change',
-        moduleKey: 'core.shell',
-        role: 'action',
-      }),
-      idempotency: 'required',
-      legalEntityScope: 'optional',
-      owningModuleKey: 'core.shell',
-      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
-      policies: [],
+      ...counterActionDescriptor(),
       resultSchema: Schema.Finite,
       schemaVersion: '1',
     },

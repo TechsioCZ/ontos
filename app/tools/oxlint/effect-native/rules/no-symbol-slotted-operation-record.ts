@@ -16,45 +16,14 @@ import { defineRule } from '@oxlint/plugins';
 
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
-import { isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
+import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
+import { booleanOption as boolean, stringList } from '../shared/options.ts';
+import { unwrapNode, unwrapType } from '../shared/ast.ts';
+import { spanOf } from '../shared/reporting.ts';
 
 type AnyNode = ESTree.Node;
 
-const WORKSPACE_MARKERS: readonly string[] = ['/apps/', '/verticals/', '/packages/', '/scripts/'];
-
-/**
- * Absolute filename → the workspace-relative path the scope globs are written against.
- *
- * The *last* workspace marker wins so real sources (`<root>/packages/core-runtime/src/x.ts`) and
- * this plugin's fixtures (`tools/.../fixtures/<rule>/invalid/packages/...`) classify identically.
- */
-function workspacePath(filename: string): string {
-  const unified = filename.replaceAll('\\', '/');
-  let best = -1;
-  for (const marker of WORKSPACE_MARKERS) best = Math.max(best, unified.lastIndexOf(marker));
-  return best === -1 ? normalisePath(unified) : unified.slice(best + 1);
-}
-
 const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
-
-/** `Symbol.iterator` and friends implement a language protocol, not a hand-rolled capability slot. */
-const WELL_KNOWN_SYMBOLS = new Set([
-  'asyncDispose',
-  'asyncIterator',
-  'dispose',
-  'hasInstance',
-  'isConcatSpreadable',
-  'iterator',
-  'match',
-  'matchAll',
-  'replace',
-  'search',
-  'species',
-  'split',
-  'toPrimitive',
-  'toStringTag',
-  'unscopables',
-]);
 
 interface RuleOptions {
   readonly allowBrandMarkers: boolean;
@@ -71,16 +40,6 @@ const DEFAULTS: RuleOptions = {
   includePaths: DEFAULT_INCLUDE_PATHS,
   includeTests: false,
 };
-
-function stringList(value: unknown, fallback: readonly string[]): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
 
 function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
@@ -99,13 +58,6 @@ interface Span {
   readonly start: number;
 }
 
-function spanOf(node: AnyNode | null | undefined): Span | null {
-  const span = node as unknown as { end?: number; start?: number } | null | undefined;
-  if (span === null || span === undefined) return null;
-  if (typeof span.start !== 'number' || typeof span.end !== 'number') return null;
-  return { end: span.end, start: span.start };
-}
-
 /**
  * `true` when a scope `Definition` node is (or textually wraps) one of the collected declarators.
  *
@@ -120,32 +72,17 @@ function definesSpan(definitionNode: AnyNode | null, declarators: readonly Span[
   );
 }
 
-/** `(x)` / `x as const` / `x satisfies T` / `<T>x` → `x`. */
-function unwrapValue(node: AnyNode): AnyNode {
-  let current = node;
-  for (let guard = 0; guard < 8; guard += 1) {
-    if (
-      current.type === 'ParenthesizedExpression' ||
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSNonNullExpression' ||
-      current.type === 'TSTypeAssertion' ||
-      current.type === 'TSInstantiationExpression'
-    ) {
-      current = (current as unknown as { expression: AnyNode }).expression;
-      continue;
-    }
-    return current;
-  }
-  return current;
-}
+const VALUE_WRAPPERS = new Set([
+  'ParenthesizedExpression',
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSNonNullExpression',
+  'TSTypeAssertion',
+  'TSInstantiationExpression',
+]);
 
-function unwrapType(node: AnyNode): AnyNode {
-  let current = node;
-  for (let guard = 0; guard < 8 && current.type === 'TSParenthesizedType'; guard += 1) {
-    current = (current as ESTree.TSParenthesizedType).typeAnnotation as AnyNode;
-  }
-  return current;
+function unwrapValue(node: AnyNode): AnyNode {
+  return unwrapNode(node, { wrappers: VALUE_WRAPPERS, maxDepth: 8 });
 }
 
 /** `Record` → `"Record"`, `A.B` → `"A.B"`. */
@@ -181,6 +118,10 @@ function isSymbolFactoryCall(node: AnyNode | null | undefined, symbolIsGlobal: b
   const callee = unwrapValue((call as ESTree.CallExpression).callee as AnyNode);
   if (callee.type === 'Identifier') return (callee as { name: string }).name === 'Symbol';
   if (callee.type !== 'MemberExpression') return false;
+  return isSymbolForMember(callee as ESTree.MemberExpression);
+}
+
+function isSymbolForMember(callee: ESTree.MemberExpression): boolean {
   const member = callee as unknown as { computed: boolean; object: AnyNode; property: AnyNode };
   if (
     member.computed ||
@@ -248,18 +189,79 @@ function programVariableDeclarations(
       statements.push(...statement.body.body);
     if (statement.type === 'ExportNamedDeclaration' && statement.declaration)
       statements.push(statement.declaration);
-    if (statement.type === 'VariableDeclaration') {
-      declarations.push(statement as unknown as ESTree.VariableDeclaration);
-      continue;
-    }
-    if (statement.type === 'ExportNamedDeclaration') {
-      const inner = (statement as unknown as { declaration: AnyNode | null }).declaration;
-      if (inner !== null && inner.type === 'VariableDeclaration') {
-        declarations.push(inner as unknown as ESTree.VariableDeclaration);
-      }
-    }
+    const declaration = statementVariableDeclaration(statement);
+    if (declaration) declarations.push(declaration);
   }
   return declarations;
+}
+
+function statementVariableDeclaration(statement: AnyNode): ESTree.VariableDeclaration | null {
+  if (statement.type === 'VariableDeclaration') return statement;
+  if (statement.type !== 'ExportNamedDeclaration') return null;
+  const inner = statement.declaration;
+  return inner?.type === 'VariableDeclaration' ? inner : null;
+}
+
+function hasSymbolImport(program: ESTree.Program): boolean {
+  return program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.specifiers.some((specifier) => specifier.local.name === 'Symbol'),
+  );
+}
+
+function symbolIsGlobal(
+  program: ESTree.Program,
+  declarations: readonly ESTree.VariableDeclaration[],
+): boolean {
+  return (
+    !hasSymbolImport(program) &&
+    !declarations.some((declaration) =>
+      declaration.declarations.some(
+        (declarator) => declarator.id.type === 'Identifier' && declarator.id.name === 'Symbol',
+      ),
+    )
+  );
+}
+
+function collectLocalSymbols(
+  declarations: readonly ESTree.VariableDeclaration[],
+  globalSymbol: boolean,
+): Map<string, Span[]> {
+  const symbols = new Map<string, Span[]>();
+  for (const declaration of declarations) {
+    for (const declarator of declaration.declarations) {
+      collectSymbolDeclarator(symbols, declarator, globalSymbol);
+    }
+  }
+  return symbols;
+}
+
+function collectSymbolDeclarator(
+  symbols: Map<string, Span[]>,
+  declarator: ESTree.VariableDeclarator,
+  globalSymbol: boolean,
+): void {
+  const id = declarator.id;
+  if (id.type !== 'Identifier') return;
+  const annotated = isSymbolTypeAnnotation(typeOfAnnotation(id));
+  if (!annotated && !isSymbolFactoryCall(declarator.init, globalSymbol)) return;
+  const span = spanOf(declarator);
+  if (!span) return;
+  const spans = symbols.get(id.name) ?? [];
+  spans.push(span);
+  symbols.set(id.name, spans);
+}
+
+function hasNamedOrDefaultImport(program: ESTree.Program): boolean {
+  return program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.specifiers.some(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' || specifier.type === 'ImportDefaultSpecifier',
+      ),
+  );
 }
 
 /** Effect-native rule: capabilities belong on a declared service surface, not in a symbol slot. */
@@ -333,57 +335,9 @@ export const rule = defineRule({
 
     const program = context.sourceCode.ast;
 
-    // `Symbol` must be the global one; a module-level `const Symbol = …` shadow disables the
-    // initialiser heuristic (the explicit `unique symbol` annotation still counts).
-    let symbolIsGlobal = true;
-    for (const declaration of programVariableDeclarations(program)) {
-      for (const declarator of declaration.declarations as readonly AnyNode[]) {
-        const id = (declarator as unknown as { id: AnyNode }).id;
-        if (id.type === 'Identifier' && (id as { name: string }).name === 'Symbol')
-          symbolIsGlobal = false;
-      }
-    }
-    for (const statement of program.body as readonly AnyNode[]) {
-      if (statement.type !== 'ImportDeclaration') continue;
-      for (const specifier of (statement as unknown as { specifiers: readonly AnyNode[] })
-        .specifiers) {
-        const local = (specifier as unknown as { local: { name: string } }).local;
-        if (local.name === 'Symbol') symbolIsGlobal = false;
-      }
-    }
-
-    /** Program-scope symbol bindings, by name, with the declarator spans that define them. */
-    const localSymbols = new Map<string, Span[]>();
-    for (const declaration of programVariableDeclarations(program)) {
-      for (const raw of declaration.declarations as readonly AnyNode[]) {
-        const declarator = raw as unknown as { id: AnyNode; init: AnyNode | null };
-        const id = declarator.id;
-        if (id.type !== 'Identifier') continue;
-        const annotated = isSymbolTypeAnnotation(
-          typeOfAnnotation(id as unknown as { typeAnnotation?: unknown }),
-        );
-        if (!annotated && !isSymbolFactoryCall(declarator.init, symbolIsGlobal)) continue;
-        const span = spanOf(raw);
-        if (span === null) continue;
-        const name = (id as { name: string }).name;
-        const spans = localSymbols.get(name) ?? [];
-        spans.push(span);
-        localSymbols.set(name, spans);
-      }
-    }
-
-    const importedBindings = new Set<string>();
-    for (const statement of program.body as readonly AnyNode[]) {
-      if (statement.type !== 'ImportDeclaration') continue;
-      for (const specifier of (statement as unknown as { specifiers: readonly AnyNode[] })
-        .specifiers) {
-        if (specifier.type !== 'ImportSpecifier' && specifier.type !== 'ImportDefaultSpecifier')
-          continue;
-        importedBindings.add((specifier as unknown as { local: { name: string } }).local.name);
-      }
-    }
-
-    if (localSymbols.size === 0 && importedBindings.size === 0) return {};
+    const declarations = programVariableDeclarations(program);
+    const localSymbols = collectLocalSymbols(declarations, symbolIsGlobal(program, declarations));
+    if (localSymbols.size === 0 && !hasNamedOrDefaultImport(program)) return {};
 
     /**
      * Classify a computed-key / computed-property identifier.

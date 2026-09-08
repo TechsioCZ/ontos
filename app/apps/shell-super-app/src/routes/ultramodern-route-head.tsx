@@ -98,6 +98,7 @@ const sanitiseJsonLd = (value: RouteJsonLd) =>
 export const UltramodernRouteHead = () => {
   const { language, t } = useModernI18n();
   const { alternates, canonical } = useLocalizedLocation();
+  const resolvedLanguage = language ?? fallbackLanguage;
   const route = resolveRouteMetadata(canonical);
   const title = route === undefined ? appName : t(route.titleKey);
   const description = route === undefined ? appName : t(route.descriptionKey);
@@ -106,7 +107,7 @@ export const UltramodernRouteHead = () => {
   const jsonLd = route?.jsonLd;
 
   return (
-    <Helmet htmlAttributes={{ lang: language ?? fallbackLanguage }}>
+    <Helmet htmlAttributes={{ lang: resolvedLanguage }}>
       <title>{title}</title>
       <meta content={description} name="description" />
       <meta content={indexable ? 'index, follow' : 'noindex, nofollow'} name="robots" />
@@ -121,16 +122,12 @@ export const UltramodernRouteHead = () => {
               rel="alternate"
             />
           ))}
-          <link
-            href={absoluteUrl(alternates[fallbackLanguage] ?? `/${fallbackLanguage}`)}
-            hrefLang="x-default"
-            rel="alternate"
-          />
+          <link href={canonicalUrl} hrefLang="x-default" rel="alternate" />
           <meta content={title} property="og:title" />
           <meta content={description} property="og:description" />
           <meta content={canonicalUrl} property="og:url" />
           <meta content="website" property="og:type" />
-          <meta content={language ?? fallbackLanguage} property="og:locale" />
+          <meta content={resolvedLanguage} property="og:locale" />
           <meta content="summary_large_image" name="twitter:card" />
           <meta content={title} name="twitter:title" />
           <meta content={description} name="twitter:description" />

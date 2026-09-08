@@ -18,7 +18,7 @@ export interface ActionAuthorizationProvisioningInput {
   readonly explicitActionAssertions?: readonly ActionAuthorizationExplicitAssertionSet[];
 }
 
-export interface ActionAuthorizationExplicitAssertionSet {
+interface ActionAuthorizationExplicitAssertionSet {
   readonly actionKey: string;
   readonly assertions: readonly {
     readonly expected: 'allowed' | 'denied';
@@ -70,15 +70,9 @@ const failure = (
 ): ActionAuthorizationProvisioningError =>
   new ActionAuthorizationProvisioningError({ code, reason });
 
-const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) => {
-  const actions = input.actions.toSorted((left, right) =>
-    left.actionKey.localeCompare(right.actionKey),
-  );
+const hasInvalidActions = (actions: readonly ActionAuthorizationProvisioningAction[]): boolean => {
   const actionKeys = actions.map(({ actionKey }) => actionKey);
-  const contexts = input.contexts.toSorted((left, right) =>
-    left.tenantId.localeCompare(right.tenantId),
-  );
-  if (
+  return (
     actions.length === 0 ||
     actionKeys.some((actionKey) => actionKey.length === 0 || actionKey.length > 256) ||
     new Set(actionKeys).size !== actionKeys.length ||
@@ -86,19 +80,53 @@ const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) =>
       ({ provisioning }) =>
         provisioning !== 'tenant_membership_default' && provisioning !== 'explicit',
     )
-  ) {
+  );
+};
+
+const hasInvalidContexts = (contexts: readonly ActionAuthorizationContext[]): boolean =>
+  contexts.length === 0 ||
+  contexts.some(({ principalId, tenantId }) => principalId.length === 0 || tenantId.length === 0) ||
+  new Set(contexts.map(({ tenantId }) => tenantId)).size !== contexts.length;
+
+const isInvalidExplicitAssertionSet = (
+  { actionKey, assertions }: ActionAuthorizationExplicitAssertionSet,
+  explicitActionKeys: ReadonlySet<string>,
+): boolean =>
+  !explicitActionKeys.has(actionKey) ||
+  assertions.length < 2 ||
+  new Set(assertions.map(({ principalId }) => principalId)).size !== assertions.length ||
+  assertions.some(
+    ({ expected, principalId }) =>
+      principalId.length === 0 || (expected !== 'allowed' && expected !== 'denied'),
+  ) ||
+  !assertions.some(({ expected }) => expected === 'allowed') ||
+  !assertions.some(({ expected }) => expected === 'denied');
+
+const hasInvalidExplicitAssertions = (
+  explicitActionAssertions: readonly ActionAuthorizationExplicitAssertionSet[],
+  explicitActionKeys: ReadonlySet<string>,
+): boolean =>
+  explicitActionAssertions.length !== explicitActionKeys.size ||
+  explicitActionAssertions.some((assertionSet) =>
+    isInvalidExplicitAssertionSet(assertionSet, explicitActionKeys),
+  ) ||
+  new Set(explicitActionAssertions.map(({ actionKey }) => actionKey)).size !==
+    explicitActionAssertions.length;
+
+const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) => {
+  const actions = input.actions.toSorted((left, right) =>
+    left.actionKey.localeCompare(right.actionKey),
+  );
+  const contexts = input.contexts.toSorted((left, right) =>
+    left.tenantId.localeCompare(right.tenantId),
+  );
+  if (hasInvalidActions(actions)) {
     throw failure(
       'action_authorization_input_invalid',
       'Current Action discovery must produce a non-empty unique set',
     );
   }
-  if (
-    contexts.length === 0 ||
-    contexts.some(
-      ({ principalId, tenantId }) => principalId.length === 0 || tenantId.length === 0,
-    ) ||
-    new Set(contexts.map(({ tenantId }) => tenantId)).size !== contexts.length
-  ) {
+  if (hasInvalidContexts(contexts)) {
     throw failure(
       'action_authorization_input_invalid',
       'Authorization provisioning requires unique fixed Tenant contexts',
@@ -123,23 +151,7 @@ const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) =>
   const explicitActionAssertions = (input.explicitActionAssertions ?? []).toSorted((left, right) =>
     left.actionKey.localeCompare(right.actionKey),
   );
-  if (
-    explicitActionAssertions.length !== explicitActionKeys.size ||
-    explicitActionAssertions.some(
-      ({ actionKey, assertions }) =>
-        !explicitActionKeys.has(actionKey) ||
-        assertions.length < 2 ||
-        new Set(assertions.map(({ principalId }) => principalId)).size !== assertions.length ||
-        assertions.some(
-          ({ expected, principalId }) =>
-            principalId.length === 0 || (expected !== 'allowed' && expected !== 'denied'),
-        ) ||
-        !assertions.some(({ expected }) => expected === 'allowed') ||
-        !assertions.some(({ expected }) => expected === 'denied'),
-    ) ||
-    new Set(explicitActionAssertions.map(({ actionKey }) => actionKey)).size !==
-      explicitActionAssertions.length
-  ) {
+  if (hasInvalidExplicitAssertions(explicitActionAssertions, explicitActionKeys)) {
     throw failure(
       'action_authorization_input_invalid',
       'Each explicit Action requires unique recorded allowed and denied verification assertions',

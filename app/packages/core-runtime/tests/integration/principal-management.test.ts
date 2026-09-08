@@ -5,7 +5,7 @@ import {
 
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { eq } from 'drizzle-orm';
-import { Effect, Exit as NativeExit, Scope as NativeScope } from 'effect';
+import { Effect, Exit as NativeExit, Predicate, Scope as NativeScope } from 'effect';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after as afterNativeDatabase } from 'node:test';
@@ -20,6 +20,7 @@ import {
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 import { runEffectTestSync as runNativeSync } from '../support/effect-runtime.ts';
 
 const nativeDatabaseScope = runNativeSync(NativeScope.make());
@@ -37,14 +38,14 @@ void test('persists managed key lifecycle without credential material and enforc
   );
   const cleanup = async () => {
     await runEffectTestPromise(
-      database
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
+      purgeFixtureRows([
+        database
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
+        database.delete(principals).where(eq(principals.tenantId, tenantId)),
+        database.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+      ]),
     );
-    await runEffectTestPromise(
-      database.delete(principals).where(eq(principals.tenantId, tenantId)),
-    );
-    await runEffectTestPromise(database.delete(tenants).where(eq(tenants.tenantId, tenantId)));
   };
 
   try {
@@ -118,7 +119,7 @@ void test('persists managed key lifecycle without credential material and enforc
         ),
       ),
     );
-    assert.equal(duplicate._tag, 'IdentityLifecycleConflictError');
+    assert.ok(Predicate.isTagged(duplicate, 'IdentityLifecycleConflictError'));
 
     const missingReason = await runEffectTestPromise(
       database.transaction((transaction) =>
@@ -139,7 +140,7 @@ void test('persists managed key lifecycle without credential material and enforc
         ),
       ),
     );
-    assert.equal(missingReason._tag, 'IdentityTargetInvalidError');
+    assert.ok(Predicate.isTagged(missingReason, 'IdentityTargetInvalidError'));
 
     await runEffectTestPromise(
       database.transaction((transaction) =>

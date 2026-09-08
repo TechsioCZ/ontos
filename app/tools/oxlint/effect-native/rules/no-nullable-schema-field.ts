@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A2** — "Make Schema the sole authority for contracts and domain models" and
  * **B5** — "Adopt Effect's ADTs and temporal model consistently"
@@ -76,22 +77,20 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { matchesGlobs } from '../shared/paths.ts';
+import { acceptsRuleFile, ruleFilePolicyProperties } from '../shared/rule-file-policy.ts';
+import { keyName, memberName as staticMemberName, unwrapNode } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { importDeclarations, importedName } from '../shared/imports.ts';
+import { stringArray } from '../shared/options.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 const EFFECT_ROOT_MODULE = 'effect';
 const SCHEMA_MODULE = 'effect/Schema';
 const EFFECT_SOURCE = /^effect(?:\/.*)?$/u;
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the production `include` defaults instead of forcing
- * the fixture config to loosen them (`run-on-repo.mts` reuses that config verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
@@ -164,18 +163,8 @@ interface RuleOptions {
   readonly reexportModules: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     ignoreTests: record.ignoreTests === true,
@@ -185,40 +174,17 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
-}
-
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current = node;
-  for (let guard = 0; guard < 16; guard += 1) {
-    if (!UNWRAPPABLE.has(current.type)) return current;
-    const inner = (current as { expression?: ESTree.Node }).expression;
-    if (inner === undefined) return current;
-    current = inner;
-  }
-  return current;
+  return unwrapNode(node, { wrappers: UNWRAPPABLE, maxDepth: 16 });
 }
 
-/** Non-computed `.NullOr`, computed `["NullOr"]`, and the no-substitution template `` [`NullOr`] ``. */
+/** Static computed keys allow cooked templates and the rule's exact wrapper policy. */
 function memberName(node: ESTree.MemberExpression): string | null {
   if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
-  const property = unwrap(node.property);
-  if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
-  if (property.type === 'TemplateLiteral' && property.expressions.length === 0) {
-    return property.quasis[0]?.value.cooked ?? null;
-  }
-  return null;
+  return staticMemberName(node, {
+    templates: true,
+    unwrap: { wrappers: UNWRAPPABLE, maxDepth: 16 },
+  });
 }
 
 /** A binding's declaration sites, recorded as source offsets of the declaring identifiers. */
@@ -275,41 +241,57 @@ function collectSchemaLocals(
   reexportModules: readonly string[],
 ): SchemaLocals {
   const locals = emptyLocals();
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    if (statement.importKind === 'type') continue;
+  const accepts = (source: string): boolean =>
+    EFFECT_SOURCE.test(source) || matchesGlobs(source, reexportModules);
+  for (const statement of importDeclarations(program, accepts, { valueOnly: true })) {
     const source = statement.source.value;
-    const isReexport = matchesGlobs(source, reexportModules);
-    if (!EFFECT_SOURCE.test(source) && !isReexport) continue;
+    const isBarrel = matchesGlobs(source, reexportModules) || source === EFFECT_ROOT_MODULE;
     for (const specifier of statement.specifiers) {
-      const local = specifier.local;
-      if (specifier.type === 'ImportNamespaceSpecifier') {
-        if (isReexport || source === EFFECT_ROOT_MODULE)
-          addDeclaration(locals.barrel, local.name, local.start);
-        else if (bindings.namespaces.get(local.name) === SCHEMA_NAMESPACE) {
-          addDeclaration(locals.schema, local.name, local.start);
-        }
-        continue;
-      }
-      if (specifier.type !== 'ImportSpecifier') continue;
-      if (specifier.importKind === 'type') continue;
-      const imported = importedName(specifier);
-      if (imported === SCHEMA_NAMESPACE) addDeclaration(locals.schema, local.name, local.start);
-      else if (source === SCHEMA_MODULE) addDirect(locals, local.name, imported, local.start);
+      collectSchemaSpecifier(locals, bindings, specifier, source, isBarrel);
     }
   }
   return locals;
 }
 
-function lookupVariable(context: Context, identifier: ESTree.Node, name: string): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
+function collectSchemaSpecifier(
+  locals: SchemaLocals,
+  bindings: EffectBindings,
+  specifier: ESTree.ImportDeclaration['specifiers'][number],
+  source: string,
+  isBarrel: boolean,
+): void {
+  const local = specifier.local;
+  if (specifier.type === 'ImportNamespaceSpecifier') {
+    if (isBarrel) addDeclaration(locals.barrel, local.name, local.start);
+    else if (bindings.namespaces.get(local.name) === SCHEMA_NAMESPACE)
+      addDeclaration(locals.schema, local.name, local.start);
+    return;
   }
-  return null;
+  if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return;
+  const imported = importedName(specifier);
+  if (imported === SCHEMA_NAMESPACE) addDeclaration(locals.schema, local.name, local.start);
+  else if (source === SCHEMA_MODULE) addDirect(locals, local.name, imported, local.start);
 }
+
+function soleDefinition(variable: Variable | null): Variable['defs'][number] | undefined {
+  return variable?.defs.length === 1 ? variable.defs[0] : undefined;
+}
+
+function isConstDeclaration(node: ESTree.VariableDeclarator): boolean {
+  return node.parent?.type === 'VariableDeclaration' && node.parent.kind === 'const';
+}
+
+const NON_VALUE_PARENTS = new Set([
+  'ExportSpecifier',
+  'ImportDefaultSpecifier',
+  'ImportNamespaceSpecifier',
+  'ImportSpecifier',
+  'LabeledStatement',
+  'MemberExpression',
+]);
+const OPTION_TARGETS = new Set(['Option', 'OptionFromSelf', ...OPTION_ABSENCE_CONSTRUCTORS]);
+const PIPE_PRESERVERS = new Set(['check', 'annotate', 'brand']);
+const METHOD_PRESERVERS = new Set(['check', 'annotate', 'annotateKey']);
 
 /** `const S = Schema` / `const { NullOr } = Schema`: resolved after the whole file is known. */
 interface AliasCandidate {
@@ -355,9 +337,7 @@ export const rule = defineRule({
       {
         additionalProperties: false,
         properties: {
-          ignore: { items: { type: 'string' }, type: 'array' },
-          ignoreTests: { type: 'boolean' },
-          include: { items: { type: 'string' }, type: 'array' },
+          ...ruleFilePolicyProperties,
           includeOptionalKeys: { type: 'boolean' },
           reexportModules: { items: { type: 'string' }, type: 'array' },
         },
@@ -368,10 +348,7 @@ export const rule = defineRule({
   },
   create(context) {
     const options = readOptions(context);
-    const path = scopePath(context.filename);
-    if (matchesGlobs(path, options.ignore)) return {};
-    if (!matchesGlobs(path, options.include)) return {};
-    if (options.ignoreTests && isTestFile(path)) return {};
+    if (!acceptsRuleFile(context.filename, options)) return {};
 
     let locals: SchemaLocals = emptyLocals();
     let tracking = false;
@@ -384,7 +361,7 @@ export const rule = defineRule({
       name: string,
       declarations: ReadonlySet<number>,
     ): boolean => {
-      const variable = lookupVariable(context, node, name);
+      const variable = resolveVariable(context, name, node);
       if (variable === null || variable.defs.length === 0) return true;
       if (variable.references.some((reference) => reference.isWrite() && !reference.init))
         return false;
@@ -499,18 +476,12 @@ export const rule = defineRule({
       const current = outermost(node);
       const parent = current.parent;
       if (parent === null || parent === undefined) return false;
-      if (parent.type.startsWith('TS') || parent.type.startsWith('JSX')) return false;
+      if (/^(?:TS|JSX)/u.test(parent.type)) return false;
+      if (NON_VALUE_PARENTS.has(parent.type)) return false;
       switch (parent.type) {
         case 'CallExpression':
         case 'NewExpression':
           return parent.callee !== current;
-        case 'ExportSpecifier':
-        case 'ImportDefaultSpecifier':
-        case 'ImportNamespaceSpecifier':
-        case 'ImportSpecifier':
-        case 'LabeledStatement':
-        case 'MemberExpression':
-          return false;
         case 'Property':
           return parent.parent?.type !== 'ObjectPattern';
         case 'VariableDeclarator':
@@ -534,103 +505,116 @@ export const rule = defineRule({
       if (depth > 12) return false;
       const expression = unwrap(node);
       const member = calledMember(expression);
-      if (
-        member === 'Option' ||
-        member === 'OptionFromSelf' ||
-        (member !== null && OPTION_ABSENCE_CONSTRUCTORS.has(member))
-      )
-        return true;
+      if (member !== null && OPTION_TARGETS.has(member)) return true;
       if (expression.type !== 'Identifier') return false;
-      const variable = lookupVariable(context, expression, expression.name);
-      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      const variable = resolveVariable(context, expression.name, expression);
+      const definition = soleDefinition(variable);
       if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator')
         return false;
       const declaration = definition.node;
-      if (
-        declaration.parent?.type !== 'VariableDeclaration' ||
-        declaration.parent.kind !== 'const' ||
-        declaration.init === null
-      )
-        return false;
+      if (!isConstDeclaration(declaration) || declaration.init === null) return false;
       return optionTarget(declaration.init, depth + 1);
     };
 
-    /** Only follow the source schema, never walk through Array/Struct payload boundaries. */
+    const decodeTargetIsOption = (call: ESTree.CallExpression): boolean => {
+      const target = firstArgument(call);
+      return target !== undefined && optionTarget(target);
+    };
+
+    const isImportedPipe = (callee: ESTree.Node): boolean => {
+      if (callee.type !== 'Identifier') return false;
+      const definition = soleDefinition(resolveVariable(context, callee.name, callee));
+      if (definition?.type !== 'ImportBinding') return false;
+      if (definition.node.type !== 'ImportSpecifier' || importedName(definition.node) !== 'pipe')
+        return false;
+      return (
+        definition.parent?.type === 'ImportDeclaration' &&
+        ['effect', 'effect/Function'].includes(definition.parent.source.value)
+      );
+    };
+
+    /** Undefined means all steps preserve the source, with no destination encountered. */
+    const encodedPipeline = (
+      steps: readonly ESTree.Node[],
+      unwrapSteps: boolean,
+    ): boolean | undefined => {
+      for (const argument of steps) {
+        const step = unwrapSteps ? unwrap(argument) : argument;
+        if (step.type !== 'CallExpression') return false;
+        const member = combinatorMember(step.callee);
+        if (member === 'decodeTo') return decodeTargetIsOption(step);
+        if (member === null || !PIPE_PRESERVERS.has(member)) return false;
+      }
+      return undefined;
+    };
+
+    const encodedCallArgument = (parent: ESTree.CallExpression, depth: number): boolean => {
+      const callee = unwrap(parent.callee);
+      if (callee.type === 'CallExpression' && combinatorMember(callee.callee) === 'decodeTo')
+        return decodeTargetIsOption(callee);
+      if (isImportedPipe(callee)) {
+        const result = encodedPipeline(parent.arguments.slice(1), false);
+        if (result !== undefined) return result;
+      }
+      const wrapper = combinatorMember(parent.callee);
+      // encodeTo's argument is the encoded side, not the decoded destination.
+      if (wrapper === 'encodeTo') return true;
+      return (
+        wrapper !== null && OPTIONAL_REPLACEMENTS.has(wrapper) && isEncodedSide(parent, depth + 1)
+      );
+    };
+
+    const encodedMethodReceiver = (parent: ESTree.MemberExpression, depth: number): boolean => {
+      const call = parent.parent;
+      if (call?.type !== 'CallExpression' || call.callee !== parent) return false;
+      const method = memberName(parent);
+      if (method === 'pipe')
+        return encodedPipeline(call.arguments, true) ?? isEncodedSide(call, depth + 1);
+      return method !== null && METHOD_PRESERVERS.has(method) && isEncodedSide(call, depth + 1);
+    };
+
+    const encodedAlias = (declaration: ESTree.VariableDeclarator, depth: number): boolean => {
+      if (declaration.id.type !== 'Identifier' || !isConstDeclaration(declaration)) return false;
+      if (declaration.parent?.parent?.type === 'ExportNamedDeclaration') return false;
+      const variable = resolveVariable(context, declaration.id.name, declaration.id);
+      const reads = variable?.references.filter((reference) => reference.isRead()) ?? [];
+      return (
+        reads.length > 0 &&
+        reads.every((reference) => isEncodedSide(reference.identifier, depth + 1))
+      );
+    };
+
+    /** Follow only source schemas, never Array/Struct payload boundaries. */
     const isEncodedSide = (node: ESTree.Node, depth = 0): boolean => {
       if (depth > 12) return false;
       const current = outermost(node);
       const parent = current.parent;
-      if (parent?.type === 'CallExpression' && parent.arguments[0] === current) {
-        const callee = unwrap(parent.callee);
-        if (callee.type === 'CallExpression' && combinatorMember(callee.callee) === 'decodeTo') {
-          const target = firstArgument(callee);
-          return target !== undefined && optionTarget(target);
-        }
-        if (callee.type === 'Identifier') {
-          const variable = lookupVariable(context, callee, callee.name);
-          const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
-          if (
-            definition?.type === 'ImportBinding' &&
-            definition.node.type === 'ImportSpecifier' &&
-            importedName(definition.node) === 'pipe' &&
-            definition.parent?.type === 'ImportDeclaration' &&
-            ['effect', 'effect/Function'].includes(definition.parent.source.value)
-          ) {
-            const steps = parent.arguments.slice(1);
-            for (const step of steps) {
-              if (step.type !== 'CallExpression') return false;
-              const member = combinatorMember(step.callee);
-              if (member === 'decodeTo') {
-                const target = firstArgument(step);
-                return target !== undefined && optionTarget(target);
-              }
-              if (member !== 'check' && member !== 'annotate' && member !== 'brand') return false;
-            }
-          }
-        }
-        const wrapper = combinatorMember(parent.callee);
-        // encodeTo's argument is the encoded side, NOT the decoded target (unlike decodeTo).
-        if (wrapper === 'encodeTo') return true;
-        if (wrapper !== null && OPTIONAL_REPLACEMENTS.has(wrapper))
-          return isEncodedSide(parent, depth + 1);
-      }
-      if (parent?.type === 'MemberExpression' && parent.object === current) {
-        const call = parent.parent;
-        if (call?.type !== 'CallExpression' || call.callee !== parent) return false;
-        const method = memberName(parent);
-        if (method === 'pipe') {
-          for (const argument of call.arguments) {
-            const step = unwrap(argument);
-            if (step.type !== 'CallExpression') return false;
-            const member = combinatorMember(step.callee);
-            if (member === 'decodeTo') {
-              const target = firstArgument(step);
-              return target !== undefined && optionTarget(target);
-            }
-            if (member !== 'check' && member !== 'annotate' && member !== 'brand') return false;
-          }
-          return isEncodedSide(call, depth + 1);
-        }
-        if (method === 'check' || method === 'annotate' || method === 'annotateKey')
-          return isEncodedSide(call, depth + 1);
-      }
-      // A shared nullable source is safe only when EVERY read is an encoded-side use.
-      if (
-        parent?.type === 'VariableDeclarator' &&
-        parent.init === current &&
-        parent.id.type === 'Identifier' &&
-        parent.parent?.type === 'VariableDeclaration' &&
-        parent.parent.kind === 'const' &&
-        parent.parent.parent?.type !== 'ExportNamedDeclaration'
-      ) {
-        const variable = lookupVariable(context, parent.id, parent.id.name);
-        const reads = variable?.references.filter((reference) => reference.isRead()) ?? [];
-        return (
-          reads.length > 0 &&
-          reads.every((reference) => isEncodedSide(reference.identifier, depth + 1))
-        );
-      }
+      if (!parent) return false;
+      if (parent.type === 'CallExpression' && parent.arguments[0] === current)
+        return encodedCallArgument(parent, depth);
+      if (parent.type === 'MemberExpression' && parent.object === current)
+        return encodedMethodReceiver(parent, depth);
+      if (parent.type === 'VariableDeclarator' && parent.init === current)
+        return encodedAlias(parent, depth);
       return false;
+    };
+
+    const skipOptionalCall = (node: ESTree.CallExpression): boolean => {
+      if (!options.includeOptionalKeys) return true;
+      const innerMember = calledMember(firstArgument(node));
+      // Presence flags and optional(nullable) report no separate optional diagnostic.
+      return (
+        innerMember === 'Literal' ||
+        (innerMember !== null && NULLABLE_REPLACEMENTS.has(innerMember))
+      );
+    };
+
+    const callReplacement = (node: ESTree.CallExpression, member: string): string => {
+      if (member === 'NullOr') {
+        const outer = wrappingConstructor(node);
+        if (outer !== null && OPTIONAL_REPLACEMENTS.has(outer)) return OPTIONAL_NULL_REPLACEMENT;
+      }
+      return NULLABLE_REPLACEMENTS.get(member) ?? OPTIONAL_REPLACEMENTS.get(member) ?? '';
     };
 
     const evaluateCall = (node: ESTree.CallExpression): void => {
@@ -638,26 +622,20 @@ export const rule = defineRule({
       if (member === null) return;
       const isOptional = OPTIONAL_REPLACEMENTS.has(member);
       if (!NULLABLE_REPLACEMENTS.has(member) && !isOptional) return;
-      if (isOptional && !options.includeOptionalKeys) return;
+      if (isOptional && skipOptionalCall(node)) return;
       if (isImmediateArgumentOfAllowedConstructor(node) || isEncodedSide(node)) return;
+      reportCombinator(node, member, callReplacement(node, member), 'nullableCall');
+    };
 
-      const inner = firstArgument(node);
-      if (isOptional) {
-        // `Schema.optionalKey(Schema.Literal(true))` is a presence flag, not an absent value.
-        if (calledMember(inner) === 'Literal') return;
-        // `Schema.optional(Schema.NullOr(X))` is reported once, on the inner nullable call.
-        const innerMember = calledMember(inner);
-        if (innerMember !== null && NULLABLE_REPLACEMENTS.has(innerMember)) return;
-      }
-
-      let replacement =
-        NULLABLE_REPLACEMENTS.get(member) ?? OPTIONAL_REPLACEMENTS.get(member) ?? '';
-      if (member === 'NullOr') {
-        const outer = wrappingConstructor(node);
-        if (outer !== null && OPTIONAL_REPLACEMENTS.has(outer))
-          replacement = OPTIONAL_NULL_REPLACEMENT;
-      }
-      reportCombinator(node, member, replacement, 'nullableCall');
+    const isMemberValuePosition = (node: ESTree.MemberExpression): boolean => {
+      const current = outermost(node);
+      const parent = current.parent;
+      if (parent === null || parent === undefined) return false;
+      if (parent.type === 'CallExpression' && parent.callee === current) return false;
+      if (parent.type !== 'MemberExpression') return isPointFreeValuePosition(node);
+      if (parent.object !== current) return true;
+      const method = memberName(parent);
+      return method !== null && FUNCTION_METHODS.has(method);
     };
 
     const evaluateMember = (node: ESTree.MemberExpression): void => {
@@ -665,16 +643,7 @@ export const rule = defineRule({
       if (member === null) return;
       const replacement = NULLABLE_REPLACEMENTS.get(member);
       if (replacement === undefined) return;
-      const current = outermost(node);
-      const parent = current.parent;
-      if (parent === null || parent === undefined) return;
-      // `Schema.NullOr(x)` is the CallExpression case; `Schema.NullOr.call(null, x)` is not.
-      if (parent.type === 'CallExpression' && parent.callee === current) return;
-      if (parent.type === 'MemberExpression' && parent.object === current) {
-        const method = memberName(parent);
-        if (method === null || !FUNCTION_METHODS.has(method)) return;
-      }
-      if (parent.type !== 'MemberExpression' && !isPointFreeValuePosition(node)) return;
+      if (!isMemberValuePosition(node)) return;
       if (isImmediateArgumentOfAllowedConstructor(node) || isEncodedSide(node)) return;
       reportCombinator(node, member, replacement, 'nullableReference');
     };
@@ -691,30 +660,37 @@ export const rule = defineRule({
       reportCombinator(node, binding.member, replacement, 'nullableReference');
     };
 
-    /** `const S = Schema` / `const { NullOr } = Schema`, run to a fixpoint so chains resolve. */
+    const resolveAlias = (alias: AliasCandidate): boolean => {
+      const source = unwrap(alias.source);
+      const { name, start } = alias.local;
+      if (alias.key === null) {
+        if (isSchemaNamespace(source)) return addDeclaration(locals.schema, name, start);
+        if (isBarrelIdentifier(source)) return addDeclaration(locals.barrel, name, start);
+        return false;
+      }
+      if (isSchemaNamespace(source)) return addDirect(locals, name, alias.key, start);
+      if (alias.key === SCHEMA_NAMESPACE && isBarrelIdentifier(source))
+        return addDeclaration(locals.schema, name, start);
+      return false;
+    };
+
+    /** Bounded fixpoint: every alias must be visited even after an earlier one changes. */
     const resolveAliases = (): void => {
       for (let pass = 0; pass < 4; pass += 1) {
         let changed = false;
-        for (const alias of aliases) {
-          const source = unwrap(alias.source);
-          if (alias.key === null) {
-            if (isSchemaNamespace(source)) {
-              changed =
-                addDeclaration(locals.schema, alias.local.name, alias.local.start) || changed;
-            } else if (isBarrelIdentifier(source)) {
-              changed =
-                addDeclaration(locals.barrel, alias.local.name, alias.local.start) || changed;
-            }
-            continue;
-          }
-          if (isSchemaNamespace(source)) {
-            changed = addDirect(locals, alias.local.name, alias.key, alias.local.start) || changed;
-          } else if (alias.key === SCHEMA_NAMESPACE && isBarrelIdentifier(source)) {
-            changed = addDeclaration(locals.schema, alias.local.name, alias.local.start) || changed;
-          }
-        }
+        for (const alias of aliases) changed = resolveAlias(alias) || changed;
         if (!changed) return;
       }
+    };
+
+    const collectPropertyAlias = (
+      property: ESTree.ObjectPattern['properties'][number],
+      source: ESTree.Node,
+    ): void => {
+      if (property.type !== 'Property' || property.computed) return;
+      if (property.value.type !== 'Identifier') return;
+      const key = keyName(property.key, false, { templates: false });
+      if (key !== null) aliases.push({ key, local: property.value, source });
     };
 
     return {
@@ -734,25 +710,14 @@ export const rule = defineRule({
       },
       VariableDeclarator(node) {
         if (!tracking || node.init === null) return;
-        if (node.parent?.type !== 'VariableDeclaration' || node.parent.kind !== 'const') return;
+        if (!isConstDeclaration(node)) return;
         const source = node.init;
         if (node.id.type === 'Identifier') {
           aliases.push({ key: null, local: node.id, source });
           return;
         }
         if (node.id.type !== 'ObjectPattern') return;
-        for (const property of node.id.properties) {
-          if (property.type !== 'Property' || property.computed) continue;
-          if (property.value.type !== 'Identifier') continue;
-          const key =
-            property.key.type === 'Identifier'
-              ? property.key.name
-              : property.key.type === 'Literal' && typeof property.key.value === 'string'
-                ? property.key.value
-                : null;
-          if (key === null) continue;
-          aliases.push({ key, local: property.value, source });
-        }
+        for (const property of node.id.properties) collectPropertyAlias(property, source);
       },
       CallExpression(node) {
         if (!tracking) return;

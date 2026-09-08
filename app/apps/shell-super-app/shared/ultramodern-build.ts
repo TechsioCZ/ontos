@@ -1,3 +1,4 @@
+import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
 import { Predicate } from 'effect';
 
 declare const ULTRAMODERN_BUILD_MARKER: string;
@@ -53,33 +54,10 @@ const ultramodernBuildMarker = Predicate.isString(ULTRAMODERN_BUILD_MARKER)
 const ultramodernSourceRevision = Predicate.isString(ULTRAMODERN_SOURCE_REVISION)
   ? ULTRAMODERN_SOURCE_REVISION
   : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
-const ultramodernBuildArtifact = {
-  ...ultramodernGeneratedBuildArtifact,
-  deliveryUnit: {
-    ...ultramodernGeneratedBuildArtifact.deliveryUnit,
-    build: ultramodernBuildMarker,
-    buildMarker: ultramodernBuildMarker,
-    sourceRevision: ultramodernSourceRevision,
-  },
-  surfaces: {
-    api: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.api,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-    ui: {
-      ...ultramodernGeneratedBuildArtifact.surfaces.ui,
-      build: ultramodernBuildMarker,
-      buildMarker: ultramodernBuildMarker,
-      sourceRevision: ultramodernSourceRevision,
-    },
-  },
-} as const;
-
-export { ultramodernBuildArtifact };
+const ultramodernBuildArtifact = withUltramodernBuildIdentity(
+  ultramodernGeneratedBuildArtifact,
+  ultramodernBuildMarker,
+  ultramodernSourceRevision,
+);
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;
-export const ultramodernVerticalIdentity = ultramodernDeliveryUnit;
-export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
-export const ultramodernApiMarker = ultramodernBuildArtifact.surfaces.api;

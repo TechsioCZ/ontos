@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit findings: **A8** — "Fix the generators before generating more code" — and **A3** — "Replace
  * ambient configuration with Config, ConfigProvider, and Redacted"
@@ -58,16 +59,13 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree } from '@oxlint/plugins';
+import type { Context } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses against the real repo).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { booleanOption, compilePatterns, stringArray } from '../shared/options.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { snippet } from '../shared/reporting.ts';
+import { driverText, emittedText, maskText, reportNode } from '../shared/scaffold-text.ts';
+import type { StringNode } from '../shared/scaffold-text.ts';
 
 /** Files whose template literals are emitted as source code for someone else's repository. */
 const DEFAULT_TEMPLATE_PATHS: readonly string[] = [
@@ -119,56 +117,14 @@ interface RuleOptions {
   readonly ignoreTestFiles: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
-function boolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     templatePaths: stringArray(record.templatePaths, DEFAULT_TEMPLATE_PATHS),
     patterns: stringArray(record.patterns, DEFAULT_PATTERNS),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
-    ignoreTestFiles: boolean(record.ignoreTestFiles, true),
+    ignoreTestFiles: booleanOption(record.ignoreTestFiles, true),
   };
-}
-
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Compile the option sources, silently dropping any that is not a valid regular expression. */
-function compilePatterns(sources: readonly string[]): readonly RegExp[] {
-  const compiled: RegExp[] = [];
-  for (const source of sources) {
-    try {
-      compiled.push(new RegExp(source, 'gu'));
-    } catch {
-      // A malformed user pattern must not take the whole lint run down; ignore it.
-    }
-  }
-  return compiled;
-}
-
-/** One-line, length-capped echo of the offending template text for the diagnostic message. */
-function snippet(text: string): string {
-  const collapsed = text.replaceAll(/\s+/gu, ' ').trim();
-  return collapsed.length > SNIPPET_LIMIT ? `${collapsed.slice(0, SNIPPET_LIMIT - 1)}…` : collapsed;
 }
 
 interface Match {
@@ -177,73 +133,48 @@ interface Match {
   readonly text: string;
 }
 
-/** Lexical template inspection, not a type checker or an evaluator of interpolations.
- * Mask comments and (optionally) strings without moving offsets. Dynamic generated fragments,
- * regex literals and arbitrary helper-returned source cannot be fully reconstructed here. */
-function maskText(text: string, strings = false): string {
-  return text.replace(
-    /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|'(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*"|`(?:\\[\s\S]|[^`\\])*`/gu,
-    (value) => (value.startsWith('/') || strings ? value.replace(/[^\r\n]/g, ' ') : value),
-  );
-}
-/** Log/prose/shell arguments belong to the generator driver, not the emitted module. */
-function driverText(node: ESTree.Node): boolean {
-  if (
-    node.parent?.type === 'ImportDeclaration' ||
-    node.parent?.type === 'ImportExpression' ||
-    node.parent?.type === 'ExportNamedDeclaration' ||
-    node.parent?.type === 'ExportAllDeclaration'
-  )
-    return true;
-  let current = node;
-  while (current.parent !== null && current.parent !== undefined) {
-    const parent = current.parent;
-    if (parent.type === 'CallExpression' || parent.type === 'NewExpression') {
-      const callee = parent.callee;
-      if (
-        callee.type === 'Identifier' &&
-        /^(?:Error|TypeError|exec|execSync|execFile|execFileSync|spawn|spawnSync)$/.test(
-          callee.name,
-        )
-      )
-        return true;
-      if (
-        callee.type === 'MemberExpression' &&
-        callee.object.type === 'Identifier' &&
-        callee.object.name === 'console'
-      )
-        return true;
-      return false;
-    }
-    if (
-      ['VariableDeclarator', 'ReturnStatement', 'TemplateLiteral', 'Program'].includes(parent.type)
-    )
-      return false;
-    current = parent;
-  }
-  return false;
+interface TemplateSource {
+  readonly code: string;
+  readonly syntax: string;
+  readonly config: boolean;
 }
 
-type StringNode = Extract<ESTree.Node, { type: 'TemplateLiteral' | 'Literal' }>;
-/** Interpolations are opaque identifier placeholders, not evaluated generator code. */
-function emittedText(node: StringNode): string {
-  return node.type === 'TemplateLiteral'
-    ? node.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join('_')
-    : typeof node.value === 'string'
-      ? node.value
-      : '';
+function templateSource(text: string): TemplateSource {
+  const syntax = maskText(text, true);
+  // Audit D preserves ordinary URL construction and recursive JSON normalization.
+  const config =
+    /\b(?:ONTOS_[A-Z_]+|process\s*\.\s*env|import\s*\.\s*meta\s*\.\s*env|\w*[Jj][Ww][Kk]\w*|\w*[Cc]onfig\w*|issuer|environment)\b/u.test(
+      syntax,
+    );
+  return { code: maskText(text), syntax, config };
 }
-/** Report the containing quasi (or whole literal across quasis), not a guessed raw offset.
- * Cooked text normalises CRLF and escapes, so its character offsets are not source offsets. */
-function reportNode(node: StringNode, start: number, end: number): ESTree.Node {
-  if (node.type !== 'TemplateLiteral') return node;
-  let offset = 0;
-  for (const quasi of node.quasis) {
-    const length = (quasi.value.cooked ?? quasi.value.raw).length;
-    if (start >= offset && end <= offset + length) return quasi;
-    offset += length + 1;
+
+function isConfigurationMatch(match: RegExpExecArray, source: TemplateSource): boolean {
+  const text = match[0];
+  // Matches starting inside emitted strings are data, not executable syntax.
+  if (source.syntax[match.index] === ' ') return false;
+  if (!source.config && /^(?:new\s+URL|Array\s*\.|typeof|as\s+Record)/u.test(text)) return false;
+  if (!/^new\s+URL/u.test(text)) return true;
+  return /^(?:issuer|endpoint|process\s*\.|environment\s*[.[])/iu.test(
+    source.code.slice(match.index + text.length).trimStart(),
+  );
+}
+
+function collectMatches(patterns: readonly RegExp[], source: TemplateSource): Match[] {
+  const found: Match[] = [];
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(source.code)) !== null) {
+      if (match[0].length === 0) {
+        pattern.lastIndex++;
+        continue;
+      }
+      if (isConfigurationMatch(match, source))
+        found.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
+    }
   }
-  return node;
+  return found.sort((a, b) => a.start - b.start || b.end - a.end);
 }
 
 export const rule = defineRule({
@@ -302,37 +233,7 @@ export const rule = defineRule({
       if (driverText(node)) return;
       const text = emittedText(node);
       if (text.length === 0) return;
-      const code = maskText(text);
-      const syntax = maskText(text, true);
-      // Ordinary URL construction and recursive JSON normalization are explicitly preserved
-      // by audit D / Existing patterns. Restrict these ambiguous shapes to config/JWK text.
-      const config =
-        /\b(?:ONTOS_[A-Z_]+|process\s*\.\s*env|import\s*\.\s*meta\s*\.\s*env|\w*[Jj][Ww][Kk]\w*|\w*[Cc]onfig\w*|issuer|environment)\b/u.test(
-          syntax,
-        );
-      const found: Match[] = [];
-      for (const pattern of patterns) {
-        pattern.lastIndex = 0;
-        let match: RegExpExecArray | null;
-        while ((match = pattern.exec(code)) !== null) {
-          if (match[0].length === 0) {
-            pattern.lastIndex++;
-            continue;
-          }
-          // Matches starting inside emitted strings are data, not executable syntax.
-          if (syntax[match.index] === ' ') continue;
-          if (!config && /^(?:new\s+URL|Array\s*\.|typeof|as\s+Record)/u.test(match[0])) continue;
-          if (
-            /^new\s+URL/u.test(match[0]) &&
-            !/^(?:issuer|endpoint|process\s*\.|environment\s*[.[])/iu.test(
-              code.slice(match.index + match[0].length).trimStart(),
-            )
-          )
-            continue;
-          found.push({ start: match.index, end: match.index + match[0].length, text: match[0] });
-        }
-      }
-      found.sort((a, b) => a.start - b.start || b.end - a.end);
+      const found = collectMatches(patterns, templateSource(text));
       let end = -1;
       for (const match of found) {
         if (match.start < end) continue;
@@ -340,7 +241,7 @@ export const rule = defineRule({
         context.report({
           node: reportNode(node, match.start, match.end),
           messageId: 'manualConfigInTemplate',
-          data: { snippet: snippet(match.text) },
+          data: { snippet: snippet(match.text, SNIPPET_LIMIT) },
         });
       }
     }

@@ -209,39 +209,31 @@ const actionTestHarness = (options: ActionTestHarnessOptions = {}) => {
       status: 'succeeded',
     });
   });
+  const recordRejection = <Input extends { readonly actionInvocationId: string }>(
+    input: Input,
+    denials: Input[],
+  ) =>
+    find(input.actionInvocationId).pipe(
+      Effect.flatMap((invocation) =>
+        Effect.sync(() => {
+          denials.push(input);
+          invocations.set(input.actionInvocationId, {
+            ...invocation,
+            completedAt: completionTime(),
+            status: 'rejected',
+          });
+        }),
+      ),
+    );
   const repository: ActionRepositoryService = {
     createOrResolveInvocation: (_executor, input) => Effect.suspend(() => prepare(input)),
-    finalizePolicyDenial: (_executor, input) =>
-      find(input.actionInvocationId).pipe(
-        Effect.flatMap((invocation) =>
-          Effect.sync(() => {
-            policyDenials.push(input);
-            invocations.set(input.actionInvocationId, {
-              ...invocation,
-              completedAt: completionTime(),
-              status: 'rejected',
-            });
-          }),
-        ),
-      ),
+    finalizePolicyDenial: (_executor, input) => recordRejection(input, policyDenials),
     flushSuccess: (_transaction, input) =>
       Effect.sync(() => {
         pendingCommit.push(commitSuccess(input));
       }),
     lockInvocation: (_transaction, id) => Effect.suspend(() => find(id)),
-    rejectPermissionDenied: (_executor, input) =>
-      find(input.actionInvocationId).pipe(
-        Effect.flatMap((invocation) =>
-          Effect.sync(() => {
-            permissionDenials.push(input);
-            invocations.set(input.actionInvocationId, {
-              ...invocation,
-              completedAt: completionTime(),
-              status: 'rejected',
-            });
-          }),
-        ),
-      ),
+    rejectPermissionDenied: (_executor, input) => recordRejection(input, permissionDenials),
     resolveInvocation: (_executor, input) =>
       Effect.suspend(() => {
         const invocation = invocations.get(input.invocationId);

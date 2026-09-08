@@ -21,12 +21,11 @@ const bindingMetadata = Schema.Struct({
   revokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
   status: BindingStatusSchema,
 });
-const SelfInput = Schema.Struct(paginationInput);
+const PaginationInput = Schema.Struct(paginationInput);
 const SelfResult = Schema.Struct({
   items: Schema.Array(bindingMetadata),
   nextOffset: Schema.OptionFromNullOr(Schema.Finite),
 });
-const ManagedInput = Schema.Struct(paginationInput);
 const ManagedItem = Schema.Struct({
   authBindingId: Schema.OptionFromNullOr(AuthBindingIdSchema),
   bindingCreatedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
@@ -201,7 +200,7 @@ const services = (
 });
 
 export const selfApiKeyBindingsRead = defineRead<
-  typeof SelfInput,
+  typeof PaginationInput,
   typeof SelfResult,
   'core.identity',
   IdentityReadServices,
@@ -221,7 +220,7 @@ export const selfApiKeyBindingsRead = defineRead<
       captureMode: 'metadata_only',
       policyKey: 'core.identity.self-api-key-bindings.access.v1',
     },
-    inputSchema: SelfInput,
+    inputSchema: PaginationInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
     permissionTarget: 'tenant',
@@ -239,7 +238,7 @@ export const selfApiKeyBindingsRead = defineRead<
 );
 
 export const managedPrincipalsRead = defineRead<
-  typeof ManagedInput,
+  typeof PaginationInput,
   typeof ManagedResult,
   'core.identity',
   IdentityReadServices,
@@ -259,7 +258,7 @@ export const managedPrincipalsRead = defineRead<
       captureMode: 'metadata_only',
       policyKey: 'core.identity.managed-principals.access.v1',
     },
-    inputSchema: ManagedInput,
+    inputSchema: PaginationInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
     permissionTarget: 'tenant',

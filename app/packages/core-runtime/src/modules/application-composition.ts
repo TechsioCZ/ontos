@@ -9,17 +9,16 @@ export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '1' as const;
 
 const sha256 = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
 const version = Schema.String.check(Schema.isPattern(/^[0-9]+(?:\.[0-9]+){0,2}$/u));
+const isLoopbackHostname = (hostname: string): boolean =>
+  ['localhost', '127.0.0.1', '[::1]'].includes(hostname) || hostname.endsWith('.localhost');
+
 const artifactUrl = Schema.String.check(
   Schema.makeFilter((value) => {
     const url = URL.parse(value);
     if (url === null) {
       return 'artifact URL must be absolute';
     }
-    const loopback =
-      url.hostname === 'localhost' ||
-      url.hostname === '127.0.0.1' ||
-      url.hostname === '[::1]' ||
-      url.hostname.endsWith('.localhost');
+    const loopback = isLoopbackHostname(url.hostname);
     return (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)) &&
       url.username === '' &&
       url.password === '' &&
@@ -280,15 +279,21 @@ const assertShellCompatibility = Effect.fnUntraced(function* checkCompatibility(
   return yield* Effect.void;
 });
 
+const matchesObservedArtifact = (
+  module: ApplicationCompositionModule,
+  contract: ObservedApplicationCompositionContract,
+): boolean =>
+  contract.contractUrl === module.contract.url &&
+  contract.sha256 === module.contract.sha256 &&
+  sameDeployment(contract.deployment, module.deployment);
+
 const assertObservedDeployment = Effect.fnUntraced(function* checkDeployment(
   module: ApplicationCompositionModule,
   contract: ObservedApplicationCompositionContract | undefined,
 ) {
   if (
     contract === undefined ||
-    contract.contractUrl !== module.contract.url ||
-    contract.sha256 !== module.contract.sha256 ||
-    !sameDeployment(contract.deployment, module.deployment) ||
+    !matchesObservedArtifact(module, contract) ||
     contract.moduleId !== module.moduleId ||
     contract.mfBoundaryId !== module.federation.remoteName ||
     !samePublicContract(contract.publicContract, module.publicContract) ||

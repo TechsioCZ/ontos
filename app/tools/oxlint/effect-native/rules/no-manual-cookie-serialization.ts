@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * Audit finding: **C1** — "Remove remaining hand-owned serialization"
  * (`docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md`). C1 names cookie construction explicitly and
@@ -50,17 +51,13 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope } from '@oxlint/plugins';
+import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (which `run-on-repo.mts` reuses).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import { unwrap as unwrapExpression, staticString, keyName } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
 
 const DEFAULT_PATHS = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -101,8 +98,6 @@ const COOKIE_ATTRIBUTE =
 /** `__Secure-` / `__Host-` cookie name prefixes carry an attribute contract in the name. */
 const COOKIE_NAME_PREFIX = /^__(?:Secure|Host)-/u;
 
-const STRING_ARRAY_TYPES = new Set(['Array', 'ReadonlyArray']);
-
 interface RuleOptions {
   readonly paths: readonly string[];
   readonly allowPaths: readonly string[];
@@ -113,18 +108,8 @@ interface RuleOptions {
   readonly contractNames: readonly string[];
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     paths: stringArray(record.paths, DEFAULT_PATHS),
     allowPaths: stringArray(record.allowPaths, []),
@@ -136,28 +121,9 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** See through parentheses, `as`/`satisfies` casts, `!` and optional-chain wrappers. */
+/** Preserve the rule's nullable, unlimited-depth expression unwrapping. */
 function unwrap(node: ESTree.Node | null | undefined): ESTree.Node | null {
-  let current: ESTree.Node | null = node ?? null;
-  for (;;) {
-    if (current === null) return null;
-    if (current.type === 'ParenthesizedExpression') current = current.expression;
-    else if (current.type === 'TSAsExpression') current = current.expression;
-    else if (current.type === 'TSSatisfiesExpression') current = current.expression;
-    else if (current.type === 'TSNonNullExpression') current = current.expression;
-    else if (current.type === 'TSTypeAssertion' || current.type === 'TSInstantiationExpression')
-      current = current.expression;
-    else if (current.type === 'ChainExpression') current = current.expression;
-    else return current;
-  }
+  return unwrapExpression(node);
 }
 
 /** Non-computed `.foo`, or computed `["foo"]`. */
@@ -168,13 +134,12 @@ function memberName(node: ESTree.MemberExpression): string | null {
 }
 
 function literalString(node: ESTree.Node | null | undefined): string | null {
-  const target = unwrap(node);
-  if (target === null) return null;
-  if (target.type === 'Literal' && typeof target.value === 'string') return target.value;
-  if (target.type === 'TemplateLiteral' && target.expressions.length === 0) {
-    return target.quasis[0]?.value.cooked ?? target.quasis[0]?.value.raw ?? null;
-  }
-  return null;
+  return staticString(node, {
+    unwrap: {},
+    templates: true,
+    rawTemplates: true,
+    singleQuasi: false,
+  });
 }
 
 function isCookieText(text: string): boolean {
@@ -243,28 +208,30 @@ function isCookieOwnedValue(
         isCookieNamespaceMember(context, target, bindings, namespaces) ||
         isCookieOwnedValue(context, target.object, bindings, namespaces, depth + 1)
       );
-    case 'LogicalExpression':
-      return (
-        isCookieOwnedValue(context, target.left, bindings, namespaces, depth + 1) &&
-        (literalString(target.right) === '' ||
-          isCookieOwnedValue(context, target.right, bindings, namespaces, depth + 1))
+    default:
+      return isOwnedComposite(target, (child) =>
+        isCookieOwnedValue(context, child, bindings, namespaces, depth + 1),
       );
+  }
+}
+
+function isOwnedComposite(
+  target: ESTree.Node,
+  owned: (node: ESTree.Node | null) => boolean,
+): boolean {
+  switch (target.type) {
+    case 'LogicalExpression':
+      return owned(target.left) && (literalString(target.right) === '' || owned(target.right));
     case 'AwaitExpression':
     case 'YieldExpression':
-      return isCookieOwnedValue(context, target.argument, bindings, namespaces, depth + 1);
+      return owned(target.argument);
     case 'ConditionalExpression':
-      return (
-        isCookieOwnedValue(context, target.consequent, bindings, namespaces, depth + 1) &&
-        isCookieOwnedValue(context, target.alternate, bindings, namespaces, depth + 1)
-      );
+      return owned(target.consequent) && owned(target.alternate);
     case 'ArrayExpression':
       return (
         target.elements.length > 0 &&
         target.elements.every(
-          (element) =>
-            element !== null &&
-            element.type !== 'SpreadElement' &&
-            isCookieOwnedValue(context, element, bindings, namespaces, depth + 1),
+          (element) => element !== null && element.type !== 'SpreadElement' && owned(element),
         )
       );
     default:
@@ -282,10 +249,7 @@ function isHandBuiltValue(node: ESTree.Node | null, depth = 0): boolean {
     case 'TemplateLiteral':
       return true;
     case 'BinaryExpression':
-      return (
-        target.operator === '+' &&
-        (isHandBuiltValue(target.left, depth + 1) || isHandBuiltValue(target.right, depth + 1))
-      );
+      return isHandBuiltConcatenation(target, depth);
     case 'ConditionalExpression':
       return (
         isHandBuiltValue(target.consequent, depth + 1) ||
@@ -303,6 +267,16 @@ function isHandBuiltValue(node: ESTree.Node | null, depth = 0): boolean {
   }
 }
 
+function isHandBuiltConcatenation(
+  target: ESTree.BinaryExpression | ESTree.PrivateInExpression,
+  depth: number,
+): boolean {
+  return (
+    target.operator === '+' &&
+    (isHandBuiltValue(target.left, depth + 1) || isHandBuiltValue(target.right, depth + 1))
+  );
+}
+
 function propertyKeyName(node: ESTree.Node): string | null {
   if (
     node.type !== 'Property' &&
@@ -310,14 +284,11 @@ function propertyKeyName(node: ESTree.Node): string | null {
     node.type !== 'PropertyDefinition'
   )
     return null;
-  if (node.computed) {
-    const key = unwrap(node.key);
-    return literalString(key);
-  }
-  const key = node.key;
-  if (key.type === 'Identifier') return key.name;
-  if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
-  return null;
+  return keyName(
+    node.key,
+    node.computed,
+    node.computed ? { unwrap: {}, templates: true, rawTemplates: true } : { templates: false },
+  );
 }
 
 /** The header name a header-writing call targets, plus the argument holding the written value. */
@@ -329,11 +300,18 @@ function headerWrite(
   if (callee === null || callee.type !== 'MemberExpression') return null;
   const method = memberName(callee);
   if (method === null || !HEADER_WRITERS.has(method)) return null;
-  for (const [index, argument] of node.arguments.entries()) {
+  return cookieHeaderArgument(context, node.arguments);
+}
+
+function cookieHeaderArgument(
+  context: Context,
+  args: ESTree.CallExpression['arguments'],
+): { name: string; value: ESTree.Node | null } | null {
+  for (const [index, argument] of args.entries()) {
     if (argument.type === 'SpreadElement') continue;
     const name = constantString(context, argument);
     if (name === null || name.toLowerCase() !== SET_COOKIE_HEADER) continue;
-    const next = node.arguments[index + 1];
+    const next = args[index + 1];
     if (next === undefined || next.type === 'SpreadElement') return null;
     return { name, value: next };
   }
@@ -347,21 +325,19 @@ function constantString(context: Context, input: ESTree.Node, depth = 0): string
   if (literal !== null) return literal;
   const node = unwrap(input);
   if (node?.type !== 'Identifier') return null;
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  while (scope) {
-    const variable = scope.set.get(node.name);
-    if (variable) {
-      for (const def of variable.defs) {
-        if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator' || !def.node.init)
-          continue;
-        if (def.node.parent?.type === 'VariableDeclaration' && def.node.parent.kind === 'const')
-          return constantString(context, def.node.init, depth + 1);
-      }
-      return null;
-    }
-    scope = scope.upper;
+  const variable = lookupVariable(context, node);
+  for (const def of variable?.defs ?? []) {
+    const initializer = constantInitializer(def);
+    if (initializer !== null) return constantString(context, initializer, depth + 1);
   }
   return null;
+}
+
+function constantInitializer(def: Variable['defs'][number]): ESTree.Node | null {
+  if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
+  if (def.node.parent?.type !== 'VariableDeclaration' || def.node.parent.kind !== 'const')
+    return null;
+  return def.node.init ?? null;
 }
 
 export const rule = defineRule({

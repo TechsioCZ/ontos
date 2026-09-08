@@ -13,7 +13,7 @@ export const isPartyTypeEnrichment = (current: PartyType, requested: PartyType):
 export const IsoTimestampSchema = Schema.DateTimeUtcFromString;
 export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PartyId'));
 export type PartyId = typeof PartyIdSchema.Type;
-export const PartySubjectKeySchema = Schema.Trim.check(
+const PartySubjectKeySchema = Schema.Trim.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(200),
 ).pipe(Schema.brand('PartySubjectKey'));
@@ -24,7 +24,7 @@ export const PartyDisplayNameSchema = Schema.Trim.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(300),
 );
-export const ProvenanceSchema = Schema.Struct({
+const ProvenanceSchema = Schema.Struct({
   externalEvidence: Schema.optionalKey(AresAppliedEvidenceSchema),
   method: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   source: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
@@ -137,54 +137,6 @@ const PartyLifecycleConflictSchema = Schema.TaggedStruct(
 export const PartyLifecycleConflict = Schema.TaggedError<
   typeof PartyLifecycleConflictSchema.Type
 >()('PartyLifecycleConflict', partyLifecycleConflictFields);
-export type PartyLifecycleConflictError = InstanceType<typeof PartyLifecycleConflict>;
-
-const partyUnarchiveIdentityConflictFields = {
-  code: Schema.Literal('party_unarchive_identity_conflict'),
-  conflictingPartyRef: PartyRefSchema,
-  reason: Schema.String,
-} as const;
-const PartyUnarchiveIdentityConflictSchema = Schema.TaggedStruct(
-  'PartyUnarchiveIdentityConflict',
-  partyUnarchiveIdentityConflictFields,
-);
-export const PartyUnarchiveIdentityConflict = Schema.TaggedError<
-  typeof PartyUnarchiveIdentityConflictSchema.Type
->()('PartyUnarchiveIdentityConflict', partyUnarchiveIdentityConflictFields);
-export type PartyUnarchiveIdentityConflictError = InstanceType<
-  typeof PartyUnarchiveIdentityConflict
->;
-
-const partyUnarchiveIdentityAmbiguousFields = {
-  candidatePartyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
-  code: Schema.Literal('party_unarchive_identity_ambiguous'),
-  reason: Schema.String,
-} as const;
-const PartyUnarchiveIdentityAmbiguousSchema = Schema.TaggedStruct(
-  'PartyUnarchiveIdentityAmbiguous',
-  partyUnarchiveIdentityAmbiguousFields,
-);
-export const PartyUnarchiveIdentityAmbiguous = Schema.TaggedError<
-  typeof PartyUnarchiveIdentityAmbiguousSchema.Type
->()('PartyUnarchiveIdentityAmbiguous', partyUnarchiveIdentityAmbiguousFields);
-export type PartyUnarchiveIdentityAmbiguousError = InstanceType<
-  typeof PartyUnarchiveIdentityAmbiguous
->;
-
-const partyUnarchiveReviewRequiredFields = {
-  caseRefs: Schema.Array(DuplicateCandidateCaseRefSchema),
-  code: Schema.Literal('party_unarchive_review_required'),
-  reason: Schema.String,
-  reasonCode: Schema.Literals(['OPEN_DUPLICATE_CASE', 'UNRESOLVED_IDENTITY']),
-} as const;
-const PartyUnarchiveReviewRequiredSchema = Schema.TaggedStruct(
-  'PartyUnarchiveReviewRequired',
-  partyUnarchiveReviewRequiredFields,
-);
-export const PartyUnarchiveReviewRequired = Schema.TaggedError<
-  typeof PartyUnarchiveReviewRequiredSchema.Type
->()('PartyUnarchiveReviewRequired', partyUnarchiveReviewRequiredFields);
-export type PartyUnarchiveReviewRequiredError = InstanceType<typeof PartyUnarchiveReviewRequired>;
 
 const partyEvidenceInsufficientFields = {
   code: Schema.Literal('party_evidence_insufficient'),

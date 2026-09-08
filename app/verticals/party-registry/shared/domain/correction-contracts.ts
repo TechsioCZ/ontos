@@ -33,7 +33,7 @@ export const TargetAssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe
 export const ReplacementAssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('ReplacementAssertionId'),
 );
-export const RetractedAssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+const RetractedAssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('RetractedAssertionId'),
 );
 export const AssertionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
@@ -54,7 +54,6 @@ export const PartyCorrectionReasonCodeSchema = Schema.Literals([
   'WRONG_PARTY_ASSIGNMENT',
   'WRONG_IDENTITY_VALUE',
 ]);
-export type PartyCorrectionReasonCode = typeof PartyCorrectionReasonCodeSchema.Type;
 
 export const PartyCorrectionEvidenceSourceSchema = Schema.Literals([
   'AUTHORITATIVE_REGISTRY',
@@ -62,7 +61,6 @@ export const PartyCorrectionEvidenceSourceSchema = Schema.Literals([
   'MANUAL_REVIEW',
   'SYSTEM_RECONCILIATION',
 ]);
-export type PartyCorrectionEvidenceSource = typeof PartyCorrectionEvidenceSourceSchema.Type;
 
 const correctionEvidenceFields = {
   evidenceRefs: EvidenceRefsSchema,
@@ -91,9 +89,6 @@ export const IdentityCorrectionCommandSchema = Schema.Struct({
 );
 export type IdentityCorrectionCommand = typeof IdentityCorrectionCommandSchema.Type;
 
-export const RelationshipCorrectionModeSchema = Schema.Literals(['SUPERSEDE', 'RETRACT']);
-export type RelationshipCorrectionMode = typeof RelationshipCorrectionModeSchema.Type;
-
 const relationshipCorrectionFields = {
   ...correctionEvidenceFields,
   expectedRevision: PositiveRevisionSchema,
@@ -116,12 +111,12 @@ export const SupersedeRelationshipCorrectionCommandSchema = Schema.Struct({
   ),
 );
 
-export const RetractRelationshipCorrectionCommandSchema = Schema.Struct({
+const RetractRelationshipCorrectionCommandSchema = Schema.Struct({
   ...relationshipCorrectionFields,
   correctionMode: Schema.Literal('RETRACT'),
 });
 
-export const RelationshipCorrectionCommandSchema = Schema.Union([
+const RelationshipCorrectionCommandSchema = Schema.Union([
   SupersedeRelationshipCorrectionCommandSchema,
   RetractRelationshipCorrectionCommandSchema,
 ]);
@@ -133,7 +128,7 @@ export const PartyCorrectionCommandSchema = Schema.Union([
 ]);
 export type PartyCorrectionCommand = typeof PartyCorrectionCommandSchema.Type;
 
-export const CorrectionRouteSchema = Schema.Literals([
+const CorrectionRouteSchema = Schema.Literals([
   'ENRICHMENT_REVIEW',
   'LIFECYCLE_REVIEW',
   'CLAIM_REASSIGNMENT_REVIEW',
@@ -213,7 +208,6 @@ export const PartyCorrectionAssertionValueSchema = Schema.Union([
     validFrom: Schema.OptionFromNullOr(RelationshipIsoTimestampSchema),
   }),
 ]);
-export type PartyCorrectionAssertionValue = typeof PartyCorrectionAssertionValueSchema.Type;
 
 export const PartyCorrectionGovernance = {
   classification: 'SENSITIVE_IDENTITY',
@@ -222,7 +216,7 @@ export const PartyCorrectionGovernance = {
   retention: 'PRESERVE_WITH_IDENTITY_HISTORY_NO_AUTOMATIC_DELETION',
   visibility: 'RESTRICTED_IDENTITY_HISTORY',
 } as const;
-export const PartyCorrectionGovernanceSchema = Schema.Struct({
+const PartyCorrectionGovernanceSchema = Schema.Struct({
   classification: Schema.Literal(PartyCorrectionGovernance.classification),
   legalHolds: Schema.Literal(PartyCorrectionGovernance.legalHolds),
   policyVersion: PolicyVersionSchema,

@@ -19,14 +19,7 @@ import {
 } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
 import type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
 
-export {
-  ResolveDuplicateCandidateCreatePayloadSchema,
-  ResolveDuplicateCandidateCreateResultSchema,
-} from '../../shared/actions/resolve-duplicate-candidate-create.ts';
-export type {
-  ResolveDuplicateCandidateCreatePayload,
-  ResolveDuplicateCandidateCreateResult,
-} from '../../shared/actions/resolve-duplicate-candidate-create.ts';
+export type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
 const ErrorSchema = Schema.Union([
   DuplicateCandidateConflict,
   PartyEvidenceInsufficient,

@@ -322,10 +322,9 @@ export {
   CoreSearchQuerySchema,
   CoreSearchResourceRefSchema,
   CoreSearchTemporalFacetSchema,
-  createCoreSearchQueryRuntime,
   decodeCoreSearchProjectionMutation,
   decodeCoreSearchProjectionReplacement,
-  makeCoreSearchQueryRuntime,
+  createCoreSearchQueryRuntime,
   makeInMemoryCoreSearchProjectionStore,
 } from './search/projection.ts';
 export type {
@@ -614,13 +613,11 @@ export type {
 export {
   OutboxClaimLostError,
   OutboxHandlerExecutionError,
-  OutboxModuleStateError,
   OutboxPayloadDecodeError,
   OutboxPollerConfigError,
   OutboxPersistenceError,
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
-export type { OutboxWorkerError } from './outbox/errors.ts';
 export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
 export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {

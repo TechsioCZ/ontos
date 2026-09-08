@@ -1,14 +1,5 @@
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Match,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
 
@@ -70,6 +61,19 @@ interface ReadDatabaseUrlOptions {
   readonly requiredReason: string;
 }
 
+const hasValidDatabaseFields = ({
+  database,
+  host,
+  port,
+  user,
+}: Omit<DatabaseConfigFields, 'connectionString'>): boolean =>
+  database.length > 0 &&
+  host.length > 0 &&
+  Number.isSafeInteger(port) &&
+  port >= 1 &&
+  port <= 65_535 &&
+  user.length > 0;
+
 const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(function* readDatabaseUrlEffect(
   options: ReadDatabaseUrlOptions,
 ) {
@@ -100,14 +104,7 @@ const readDatabaseUrl = Effect.fn('Config.readDatabaseUrl')(function* readDataba
   const user =
     queryUser === undefined || queryUser.length === 0 ? decoded.authorityUser : queryUser;
 
-  if (
-    decoded.database.length === 0 ||
-    host.length === 0 ||
-    !Number.isSafeInteger(port) ||
-    port < 1 ||
-    port > 65_535 ||
-    user.length === 0
-  ) {
+  if (!hasValidDatabaseFields({ database: decoded.database, host, port, user })) {
     return yield* configFailure(INVALID_DATABASE_URL_REASON);
   }
 
@@ -167,41 +164,6 @@ export const parseDatabaseConnectionPair = (
     ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
   );
 
-const nodeFileSystem = process.getBuiltinModule('node:fs');
-
-const loadDotEnvProvider = Effect.fn('Config.loadDotEnvProvider')(function* loadProvider(
-  envPath: string,
-) {
-  const result = yield* Effect.sync(() => {
-    try {
-      return {
-        contents: nodeFileSystem.readFileSync(envPath, 'utf-8'),
-        status: 'loaded',
-      } as const;
-    } catch (error) {
-      if (
-        Predicate.hasProperty(error, 'code') &&
-        (error.code === 'ENOENT' || error.code === 'NOT_FOUND_DOTENV_ENVIRONMENT')
-      ) {
-        return { status: 'missing' } as const;
-      }
-      return {
-        error: configFailure(`Unable to load the root environment from ${envPath}`, error),
-        status: 'failed',
-      } as const;
-    }
-  });
-
-  return yield* Match.value(result).pipe(
-    Match.discriminatorsExhaustive('status')({
-      failed: ({ error }) => Effect.fail(error),
-      loaded: ({ contents }) =>
-        Effect.succeed(ConfigProvider.fromDotEnvContents(contents, { preserveEmptyStrings: true })),
-      missing: () => Effect.succeed(ConfigProvider.fromUnknown({})),
-    }),
-  );
-});
-
 const loadWithProvider = <Value>(
   parse: (provider: ConfigProvider.ConfigProvider) => Effect.Effect<Value, DatabaseConfigError>,
   options: LoadDatabaseConfigOptions,
@@ -214,7 +176,8 @@ const loadWithProvider = <Value>(
         });
   const envPath = options.envPath ?? ROOT_ENV_PATH;
 
-  return loadDotEnvProvider(envPath).pipe(
+  return loadDotEnvProvider(envPath, configFailure).pipe(
+    Effect.withSpan('Config.loadDotEnvProvider'),
     Effect.flatMap((fileProvider) =>
       parse(ConfigProvider.orElse(environmentProvider, fileProvider)),
     ),

@@ -71,9 +71,13 @@
  */
 import { defineRule } from '@oxlint/plugins';
 
-import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
+import type { Context, ESTree } from '@oxlint/plugins';
 
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { staticString, unwrapNode as unwrap } from '../shared/ast.ts';
+import { resolveVariable } from '../shared/bindings.ts';
+import { importedName } from '../shared/imports.ts';
+import { stringList as stringArray } from '../shared/options.ts';
 
 /**
  * Any dotenv-family loader package, with or without a subpath (`dotenv/config` is the side-effect
@@ -102,24 +106,6 @@ const DEFAULT_SCOPE_PATHS: readonly string[] = [
  */
 const DEFAULT_ALLOW_PATHS: readonly string[] = ['scripts/initialize-local-development.mts'];
 
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets the fixtures exercise the real production defaults instead of forcing the
- * fixture config to pass loosened options (`run-on-repo.mts` reuses that same fixture config).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
-
-/** Wrappers that do not change which expression is actually the callee. */
-const TRANSPARENT = new Set([
-  'ParenthesizedExpression',
-  'TSAsExpression',
-  'TSSatisfiesExpression',
-  'TSNonNullExpression',
-  'TSInstantiationExpression',
-  'TSTypeAssertion',
-  'ChainExpression',
-]);
-
 interface RuleOptions {
   readonly allowPaths: readonly string[];
   readonly ignoreTestFiles: boolean;
@@ -134,13 +120,6 @@ const DEFAULTS: RuleOptions = {
 
 type AnyNode = ESTree.Node;
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  return value.every((entry) => typeof entry === 'string')
-    ? (value as readonly string[])
-    : fallback;
-}
-
 function readOptions(raw: unknown): RuleOptions {
   const given =
     typeof raw === 'object' && raw !== null && !Array.isArray(raw)
@@ -152,15 +131,6 @@ function readOptions(raw: unknown): RuleOptions {
       typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
     scopePaths: stringArray(given.scopePaths, DEFAULTS.scopePaths),
   };
-}
-
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
-
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
 }
 
 function isDotenvSpecifier(source: string): boolean {
@@ -175,54 +145,12 @@ function startOf(node: AnyNode | null | undefined): number | null {
 
 /** The static string value of an `import(...)` / `require(...)` argument, when there is one. */
 function staticStringValue(node: AnyNode | null | undefined): string | null {
-  if (node === null || node === undefined) return null;
-  node = unwrap(node);
-  if (node.type === 'Literal') {
-    const value = (node as { value?: unknown }).value;
-    return typeof value === 'string' ? value : null;
-  }
-  if (node.type === 'TemplateLiteral') {
-    const template = node as ESTree.TemplateLiteral;
-    if (template.expressions.length !== 0 || template.quasis.length !== 1) return null;
-    return template.quasis[0]?.value.cooked ?? null;
-  }
-  return null;
+  return staticString(node, { unwrap: {}, singleQuasi: true });
 }
 
-function unwrap(node: AnyNode): AnyNode {
-  let current = node;
-  while (TRANSPARENT.has(current.type)) {
-    const inner = (current as { expression?: AnyNode }).expression ?? null;
-    if (inner === null) break;
-    current = inner;
-  }
-  return current;
-}
-
-/** Like {@link unwrap}, but also sees through `await` — `const { config } = await import("dotenv")`. */
+/** Await is transparent when propagating module values, but not callees. */
 function unwrapValue(node: AnyNode): AnyNode {
-  let current = unwrap(node);
-  while (current.type === 'AwaitExpression') {
-    const argument = (current as ESTree.AwaitExpression).argument as AnyNode | undefined;
-    if (argument === undefined) break;
-    current = unwrap(argument);
-  }
-  return current;
-}
-
-function parentOf(node: AnyNode): AnyNode | null {
-  return (node as { parent?: AnyNode | null }).parent ?? null;
-}
-
-/** Climb through parentheses/type wrappers to the outermost equivalent node. */
-function skipWrappers(node: AnyNode): { readonly node: AnyNode; readonly parent: AnyNode | null } {
-  let current = node;
-  let parent = parentOf(current);
-  while (parent !== null && TRANSPARENT.has(parent.type)) {
-    current = parent;
-    parent = parentOf(current);
-  }
-  return { node: current, parent };
+  return unwrap(node, { await: true });
 }
 
 /** Non-computed `.config`, or computed `["config"]`. */
@@ -232,16 +160,6 @@ function staticMemberName(node: ESTree.MemberExpression): string | null {
     return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
   }
   return staticStringValue(node.property as AnyNode);
-}
-
-function lookupVariable(context: Context, node: AnyNode, name: string): Variable | null {
-  let scope: Scope | null = context.sourceCode.getScope(node);
-  while (scope !== null) {
-    const variable = scope.set.get(name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
 }
 
 /**
@@ -281,7 +199,7 @@ function createTracker(context: Context): Tracker {
     addImport: add,
     addDeclared: add,
     resolve(node, name) {
-      const variable = lookupVariable(context, node, name);
+      const variable = resolveVariable(context, name, node);
       if (!variable || variable.defs.length !== 1) return null;
       // Do not infer the current value after a reassignment.
       if (variable.references.some((reference) => reference.isWrite() && !reference.init))
@@ -379,7 +297,7 @@ export const rule = defineRule({
 
     /** `require` is a genuine ambient global here (not a local helper function or parameter). */
     const requireIsAmbient = (node: AnyNode): boolean => {
-      const variable = lookupVariable(context, node, 'require');
+      const variable = resolveVariable(context, 'require', node);
       return variable === null || variable.defs.length === 0;
     };
 
@@ -399,14 +317,15 @@ export const rule = defineRule({
           moduleNamespace.resolve(object, (object as ESTree.IdentifierReference).name) !== null
         );
       }
-      // `require("node:module").createRequire(...)`
+      return isAmbientModuleRequire(object);
+    };
+
+    /** Recognize only the ambient loader for the inline node:module factory shape. */
+    const isAmbientModuleRequire = (object: AnyNode): boolean => {
       if (object.type !== 'CallExpression') return false;
-      const inner = unwrap((object as ESTree.CallExpression).callee as AnyNode);
-      if (inner.type !== 'Identifier' || (inner as ESTree.IdentifierReference).name !== 'require')
-        return false;
-      const specifier = staticStringValue(
-        ((object as ESTree.CallExpression).arguments[0] as AnyNode) ?? null,
-      );
+      const inner = unwrap(object.callee);
+      if (inner.type !== 'Identifier' || inner.name !== 'require') return false;
+      const specifier = staticStringValue(object.arguments[0]);
       return requireIsAmbient(inner) && specifier !== null && NODE_MODULE_SPECIFIER.test(specifier);
     };
 
@@ -424,6 +343,38 @@ export const rule = defineRule({
       return callee.type === 'CallExpression' && isCreateRequireCall(callee);
     };
 
+    const loaderSpecifierOf = (value: AnyNode): string | null => {
+      if (value.type === 'ImportExpression') return staticStringValue(value.source);
+      if (value.type !== 'CallExpression') return null;
+      if (!isModuleLoaderCallee(unwrap(value.callee))) return null;
+      return staticStringValue(value.arguments[0]);
+    };
+
+    const bindModuleImport = (specifier: ESTree.ImportDeclaration['specifiers'][number]): void => {
+      if (specifier.type === 'ImportNamespaceSpecifier') {
+        moduleNamespace.addImport(specifier.local.name, 'node:module', specifier.local);
+        return;
+      }
+      if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return;
+      if (importedName(specifier) === 'createRequire') {
+        requireFactory.addImport(specifier.local.name, 'createRequire', specifier.local);
+      }
+    };
+
+    const bindModulePattern = (id: AnyNode, node: ESTree.VariableDeclarator): void => {
+      if (id.type === 'Identifier') {
+        moduleNamespace.addDeclared(id.name, 'node:module', id, node);
+        return;
+      }
+      if (id.type !== 'ObjectPattern') return;
+      for (const property of id.properties) {
+        if (property.type !== 'Property') continue;
+        const target = property.value;
+        if (target.type !== 'Identifier') continue;
+        requireFactory.addDeclared(target.name, 'createRequire', target, node);
+      }
+    };
+
     /**
      * The dotenv module an expression evaluates to, for binding propagation:
      * `require("dotenv")`, `import("dotenv")`, a tracked local, or the `esModuleInterop`
@@ -431,14 +382,8 @@ export const rule = defineRule({
      */
     const dotenvValueOf = (expression: AnyNode): string | null => {
       const value = unwrapValue(expression);
-      if (value.type === 'CallExpression') {
-        const call = value as ESTree.CallExpression;
-        if (!isModuleLoaderCallee(unwrap(call.callee as AnyNode))) return null;
-        const module = staticStringValue((call.arguments[0] as AnyNode) ?? null);
-        return module !== null && isDotenvSpecifier(module) ? module : null;
-      }
-      if (value.type === 'ImportExpression') {
-        const module = staticStringValue((value as ESTree.ImportExpression).source as AnyNode);
+      if (value.type === 'CallExpression' || value.type === 'ImportExpression') {
+        const module = loaderSpecifierOf(value);
         return module !== null && isDotenvSpecifier(module) ? module : null;
       }
       if (value.type === 'Identifier') {
@@ -492,20 +437,7 @@ export const rule = defineRule({
         const module = node.source.value;
 
         if (NODE_MODULE_SPECIFIER.test(module)) {
-          for (const specifier of node.specifiers) {
-            if (specifier.type === 'ImportNamespaceSpecifier') {
-              moduleNamespace.addImport(specifier.local.name, 'node:module', specifier.local);
-              continue;
-            }
-            if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
-            const imported =
-              specifier.imported.type === 'Identifier'
-                ? specifier.imported.name
-                : specifier.imported.value;
-            if (imported === 'createRequire') {
-              requireFactory.addImport(specifier.local.name, 'createRequire', specifier.local);
-            }
-          }
+          node.specifiers.forEach(bindModuleImport);
           return;
         }
 
@@ -568,34 +500,9 @@ export const rule = defineRule({
         const value = unwrapValue(init);
 
         // `const nodeModule = require("node:module")` / `const { createRequire } = await import("node:module")`
-        const loaderSpecifier =
-          value.type === 'CallExpression' &&
-          isModuleLoaderCallee(unwrap((value as ESTree.CallExpression).callee as AnyNode))
-            ? staticStringValue(((value as ESTree.CallExpression).arguments[0] as AnyNode) ?? null)
-            : value.type === 'ImportExpression'
-              ? staticStringValue((value as ESTree.ImportExpression).source as AnyNode)
-              : null;
+        const loaderSpecifier = loaderSpecifierOf(value);
         if (loaderSpecifier !== null && NODE_MODULE_SPECIFIER.test(loaderSpecifier)) {
-          if (id.type === 'Identifier') {
-            moduleNamespace.addDeclared(
-              (id as ESTree.BindingIdentifier).name,
-              'node:module',
-              id,
-              node,
-            );
-          } else if (id.type === 'ObjectPattern') {
-            for (const property of (id as ESTree.ObjectPattern).properties) {
-              if (property.type !== 'Property') continue;
-              const target = property.value as AnyNode;
-              if (target.type !== 'Identifier') continue;
-              requireFactory.addDeclared(
-                (target as ESTree.BindingIdentifier).name,
-                'createRequire',
-                target,
-                node,
-              );
-            }
-          }
+          bindModulePattern(id, node);
           return;
         }
 
@@ -634,6 +541,3 @@ export const rule = defineRule({
     };
   },
 });
-
-/** Kept for the CommonJS shapes that declare a binding through a wrapper expression. */
-void skipWrappers;

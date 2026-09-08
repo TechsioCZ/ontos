@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import path from 'node:path';
 
 import type { CallExpression, Expression, MemberExpression, VariableDeclarator } from 'oxc-parser';
@@ -130,6 +132,9 @@ interface PackageExportResolution {
   readonly targets: readonly string[];
 }
 
+const isRootPackageExport = (value: PackageExportValue): boolean =>
+  value === null || isPackageExportString(value) || isPackageExportArray(value);
+
 const packageExportResolution = (
   packageJson: string,
   exportKey: string,
@@ -139,11 +144,7 @@ const packageExportResolution = (
     return { governed: false, targets: [] };
   }
   const exportsField = parsed.success.exports;
-  if (
-    exportsField === null ||
-    isPackageExportString(exportsField) ||
-    isPackageExportArray(exportsField)
-  ) {
+  if (isRootPackageExport(exportsField)) {
     return { governed: true, targets: exportKey === '.' ? exportTargets(exportsField) : [] };
   }
   if (!isPackageExportRecord(exportsField)) {
@@ -155,6 +156,13 @@ const packageExportResolution = (
   if (Object.hasOwn(exportsField, exportKey)) {
     return { governed: true, targets: exportTargets(exportsField[exportKey] ?? null) };
   }
+  return wildcardExportResolution(exportsField, exportKey);
+};
+
+const wildcardExportResolution = (
+  exportsField: Readonly<Record<string, PackageExportValue>>,
+  exportKey: string,
+): PackageExportResolution => {
   const wildcardMatches = Object.entries(exportsField).flatMap(([key, value]) => {
     const wildcard = key.indexOf('*');
     if (wildcard === -1) {
@@ -268,9 +276,17 @@ const addExport = (
   exports.set(exportedName, existing);
 };
 
+const destructuredPropertyName = (
+  property: Extract<VariableDeclarator['id'], { type: 'ObjectPattern' }>['properties'][number],
+): string | undefined => {
+  if (property.type !== 'Property' || property.key.type === 'PrivateIdentifier') {
+    return undefined;
+  }
+  return property.key.type === 'Identifier' ? property.key.name : staticString(property.key);
+};
+
 const sourceModels = new WeakMap<ReadonlyMap<string, string>, Map<string, SourceModel>>();
 
-// eslint-disable-next-line complexity -- This is the single TypeScript-AST indexing pass for imports, exports, calls, declarations, and references.
 const parseSourceModel = (file: string, content: string): SourceModel => {
   const parsed = parseSync(file, content, {
     astType: 'ts',
@@ -375,7 +391,7 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
       const object = pattern as typeof pattern & {
         readonly properties: readonly ({ readonly type: string } & Span)[];
       };
-      for (const property of object.properties) {
+      const addObjectShadow = (property: (typeof object.properties)[number]): void => {
         if (property.type === 'Property') {
           const value = property as typeof property & {
             readonly value: { readonly type: string } & Span;
@@ -387,6 +403,9 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
           };
           addShadowPattern(rest.argument, scope);
         }
+      };
+      for (const property of object.properties) {
+        addObjectShadow(property);
       }
       return;
     }
@@ -394,10 +413,13 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
       const array = pattern as typeof pattern & {
         readonly elements: readonly (({ readonly type: string } & Span) | null)[];
       };
-      for (const element of array.elements) {
+      const addArrayShadow = (element: (typeof array.elements)[number]): void => {
         if (element !== null) {
           addShadowPattern(element, scope);
         }
+      };
+      for (const element of array.elements) {
+        addArrayShadow(element);
       }
     }
   };
@@ -410,7 +432,10 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
       }
     },
     AssignmentExpression: (node) => {
-      if (node.operator === '=' && node.left.type === 'Identifier') {
+      if (node.operator !== '=') {
+        return;
+      }
+      if (node.left.type === 'Identifier') {
         const owner = scopedBindingAt({ bindings }, node.left.name, node.start);
         addBinding(node.left.name, {
           at: node.start,
@@ -418,10 +443,13 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
           kind: 'expression',
           scope: owner?.scope ?? enclosingScope(node),
         });
-      } else if (node.operator === '=' && node.left.type === 'MemberExpression') {
+      } else if (node.left.type === 'MemberExpression') {
         const assignmentPath = memberPath(node.left);
-        const root = assignmentPath?.[0];
-        if (assignmentPath !== undefined && root !== undefined) {
+        if (assignmentPath === undefined) {
+          return;
+        }
+        const root = assignmentPath[0];
+        if (root !== undefined) {
           const owner = scopedBindingAt({ bindings }, root, node.start);
           memberAssignments.push({
             at: node.start,
@@ -500,13 +528,9 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
           }
         }
       } else if (node.id.type === 'ObjectPattern' && node.init !== null) {
-        for (const property of node.id.properties) {
-          const propertyName =
-            property.type === 'Property' && property.key.type === 'Identifier'
-              ? property.key.name
-              : property.type === 'Property' && property.key.type !== 'PrivateIdentifier'
-                ? staticString(property.key)
-                : undefined;
+        const source = node.init;
+        const addDestructuredProperty = (property: (typeof node.id.properties)[number]): void => {
+          const propertyName = destructuredPropertyName(property);
           if (
             property.type === 'Property' &&
             propertyName !== undefined &&
@@ -514,7 +538,7 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
           ) {
             const binding = {
               member: propertyName,
-              source: node.init,
+              source,
             };
             addBinding(property.value.name, { ...binding, kind: 'destructured', scope });
             if (scope === parsed.program) {
@@ -524,13 +548,16 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
             addBinding(property.argument.name, {
               kind: 'namespace-rest',
               scope,
-              source: node.init,
+              source,
             });
           } else if (property.type === 'Property') {
             addShadowPattern(property.value, scope);
           } else {
             addShadowPattern(property.argument, scope);
           }
+        };
+        for (const property of node.id.properties) {
+          addDestructuredProperty(property);
         }
       } else {
         addShadowPattern(node.id, scope);
@@ -538,57 +565,73 @@ const parseSourceModel = (file: string, content: string): SourceModel => {
     },
   }).visit(parsed.program);
 
-  const imports = new Map<string, ImportBinding>();
-  for (const declaration of parsed.module.staticImports) {
-    for (const entry of declaration.entries) {
-      const local = entry.localName.value;
-      let kind: ImportBinding['kind'] = 'named';
-      if (entry.importName.kind === ImportNameKind.NamespaceObject) {
-        kind = 'namespace';
-      } else if (entry.importName.kind === ImportNameKind.Default) {
-        kind = 'default';
+  const collectImports = () => {
+    const imports = new Map<string, ImportBinding>();
+    for (const declaration of parsed.module.staticImports) {
+      for (const entry of declaration.entries) {
+        const local = entry.localName.value;
+        let kind: ImportBinding['kind'] = 'named';
+        if (entry.importName.kind === ImportNameKind.NamespaceObject) {
+          kind = 'namespace';
+        } else if (entry.importName.kind === ImportNameKind.Default) {
+          kind = 'default';
+        }
+        imports.set(local, {
+          imported: entry.importName.name ?? (kind === 'default' ? 'default' : '*'),
+          kind,
+          specifier: declaration.moduleRequest.value,
+        });
       }
-      imports.set(local, {
-        imported: entry.importName.name ?? (kind === 'default' ? 'default' : '*'),
-        kind,
-        specifier: declaration.moduleRequest.value,
-      });
     }
-  }
 
-  const exports = new Map<string, ExportBinding[]>();
-  const starExports: ExportBinding[] = [];
-  for (const declaration of parsed.module.staticExports) {
-    for (const entry of declaration.entries) {
-      const exportedName =
-        entry.exportName.kind === ExportExportNameKind.Default
-          ? 'default'
-          : (entry.exportName.name ?? undefined);
-      const specifier = entry.moduleRequest?.value;
-      if (entry.importName.kind === ExportImportNameKind.AllButDefault && specifier !== undefined) {
-        starExports.push({ kind: 'star', specifier });
-      } else if (
-        exportedName !== undefined &&
-        entry.importName.kind === ExportImportNameKind.All &&
-        specifier !== undefined
-      ) {
-        addExport(exports, exportedName, { kind: 'namespace', specifier });
-      } else if (exportedName !== undefined && specifier !== undefined) {
-        addExport(exports, exportedName, {
-          imported: entry.importName.name ?? exportedName,
-          kind: 'reexport',
-          specifier,
-        });
-      } else if (exportedName !== undefined && entry.localName.name !== null) {
-        addExport(exports, exportedName, { kind: 'local', local: entry.localName.name });
-      } else if (exportedName !== undefined) {
-        addExport(exports, exportedName, {
-          kind: 'expression',
-          span: { end: entry.end, start: entry.start },
-        });
+    return imports;
+  };
+  const imports = collectImports();
+  const collectExports = () => {
+    const exports = new Map<string, ExportBinding[]>();
+    const starExports: ExportBinding[] = [];
+    for (const declaration of parsed.module.staticExports) {
+      const collectExportEntry = (entry: (typeof declaration.entries)[number]): void => {
+        const exportName = (): string | undefined =>
+          entry.exportName.kind === ExportExportNameKind.Default
+            ? 'default'
+            : (entry.exportName.name ?? undefined);
+        const exportedName = exportName();
+        const specifier = entry.moduleRequest?.value;
+        if (
+          entry.importName.kind === ExportImportNameKind.AllButDefault &&
+          specifier !== undefined
+        ) {
+          starExports.push({ kind: 'star', specifier });
+          return;
+        }
+        if (exportedName === undefined) {
+          return;
+        }
+        if (entry.importName.kind === ExportImportNameKind.All && specifier !== undefined) {
+          addExport(exports, exportedName, { kind: 'namespace', specifier });
+        } else if (specifier !== undefined) {
+          addExport(exports, exportedName, {
+            imported: entry.importName.name ?? exportedName,
+            kind: 'reexport',
+            specifier,
+          });
+        } else if (entry.localName.name === null) {
+          addExport(exports, exportedName, {
+            kind: 'expression',
+            span: { end: entry.end, start: entry.start },
+          });
+        } else {
+          addExport(exports, exportedName, { kind: 'local', local: entry.localName.name });
+        }
+      };
+      for (const entry of declaration.entries) {
+        collectExportEntry(entry);
       }
     }
-  }
+    return { exports, starExports };
+  };
+  const { exports, starExports } = collectExports();
   return {
     bindings,
     calls,
@@ -812,7 +855,6 @@ const within = (inner: Span, outer: Span): boolean =>
 const isForbiddenMember = (member: string, forbidRecord: boolean): boolean =>
   forbiddenSchemaMembers.has(member) || (forbidRecord && member === 'Record');
 
-// eslint-disable-next-line complexity -- Namespace provenance intentionally handles lexical aliases, destructuring, imports, and local shadows together.
 const schemaNamespacePath = (
   context: ApiContractSourceContext,
   file: string,
@@ -834,72 +876,88 @@ const schemaNamespacePath = (
     return false;
   }
   const scoped = scopedBindingAt(model, root, position);
-  if (scoped?.kind === 'expression') {
-    const declarationPath = memberPath(scoped.expression);
-    if (declarationPath !== undefined) {
-      return schemaNamespacePath(
-        context,
-        file,
-        [...declarationPath, ...rest],
-        scoped.expression.start,
-        visited,
-      );
+  const resolveScopedSchema = () => {
+    if (scoped === undefined) {
+      return null;
     }
-    const unwrapped = unwrapExpression(scoped.expression);
-    return (
-      rest.length === 0 &&
-      unwrapped.type === 'ObjectExpression' &&
-      unwrapped.properties.some(
-        (property) =>
-          property.type === 'SpreadElement' &&
-          memberPath(property.argument) !== undefined &&
-          schemaNamespacePath(
+    if (scoped.kind === 'expression') {
+      const resolveExpressionSchema = () => {
+        const declarationPath = memberPath(scoped.expression);
+        if (declarationPath !== undefined) {
+          return schemaNamespacePath(
             context,
             file,
-            memberPath(property.argument) ?? [],
-            property.argument.start,
+            [...declarationPath, ...rest],
+            scoped.expression.start,
             visited,
-          ),
-      )
-    );
+          );
+        }
+        const unwrapped = unwrapExpression(scoped.expression);
+        return (
+          rest.length === 0 &&
+          unwrapped.type === 'ObjectExpression' &&
+          unwrapped.properties.some(
+            (property) =>
+              property.type === 'SpreadElement' &&
+              memberPath(property.argument) !== undefined &&
+              schemaNamespacePath(
+                context,
+                file,
+                memberPath(property.argument) ?? [],
+                property.argument.start,
+                visited,
+              ),
+          )
+        );
+      };
+      return resolveExpressionSchema();
+    }
+    if (scoped.kind === 'destructured') {
+      const sourcePath = memberPath(scoped.source);
+      return (
+        sourcePath !== undefined &&
+        schemaNamespacePath(
+          context,
+          file,
+          [...sourcePath, scoped.member, ...rest],
+          scoped.source.start,
+          visited,
+        )
+      );
+    }
+    if (scoped.kind === 'namespace-rest') {
+      const sourcePath = memberPath(scoped.source);
+      return (
+        sourcePath !== undefined &&
+        schemaNamespacePath(context, file, [...sourcePath, ...rest], scoped.source.start, visited)
+      );
+    }
+    if (scoped.kind === 'shadow') {
+      return false;
+    }
+    return null;
+  };
+  const scopedResult = resolveScopedSchema();
+  if (scopedResult !== null) {
+    return scopedResult;
   }
-  if (scoped?.kind === 'destructured') {
-    const sourcePath = memberPath(scoped.source);
-    return (
-      sourcePath !== undefined &&
-      schemaNamespacePath(
-        context,
-        file,
-        [...sourcePath, scoped.member, ...rest],
-        scoped.source.start,
-        visited,
-      )
-    );
-  }
-  if (scoped?.kind === 'namespace-rest') {
-    const sourcePath = memberPath(scoped.source);
-    return (
-      sourcePath !== undefined &&
-      schemaNamespacePath(context, file, [...sourcePath, ...rest], scoped.source.start, visited)
-    );
-  }
-  if (scoped?.kind === 'shadow') {
-    return false;
-  }
-  const binding = model.imports.get(root);
-  if (binding === undefined) {
-    return root === 'Schema' && rest.length === 0;
-  }
-  if (!schemaProviderSpecifiers.has(binding.specifier)) {
-    return false;
-  }
-  if (binding.kind === 'named' && binding.imported === 'Schema') {
-    return rest.length === 0;
-  }
-  if (binding.kind === 'namespace' && binding.specifier === 'effect/Schema') {
-    return rest.length === 0;
-  }
-  return binding.kind === 'namespace' && rest.length === 1 && rest[0] === 'Schema';
+  const resolveImportedSchema = (): boolean => {
+    const binding = model.imports.get(root);
+    if (binding === undefined) {
+      return root === 'Schema' && rest.length === 0;
+    }
+    if (!schemaProviderSpecifiers.has(binding.specifier)) {
+      return false;
+    }
+    if (binding.kind === 'named' && binding.imported === 'Schema') {
+      return rest.length === 0;
+    }
+    if (binding.kind === 'namespace' && binding.specifier === 'effect/Schema') {
+      return rest.length === 0;
+    }
+    return binding.kind === 'namespace' && rest.length === 1 && rest[0] === 'Schema';
+  };
+  return resolveImportedSchema();
 };
 
 const moduleExportsName = (
@@ -1073,32 +1131,42 @@ function localNamespaceTargets(
     return [];
   }
   const scoped = scopedBindingAt(model, name, position);
-  if (scoped?.kind === 'expression') {
-    const pathParts = memberPath(scoped.expression);
-    return pathParts === undefined
-      ? []
-      : namespacePathTargets(context, file, pathParts, scoped.expression.start, visited);
-  }
-  if (scoped?.kind === 'destructured') {
-    const pathParts = memberPath(scoped.source);
-    return pathParts === undefined
-      ? []
-      : namespacePathTargets(
-          context,
-          file,
-          [...pathParts, scoped.member],
-          scoped.source.start,
-          visited,
-        );
-  }
-  if (scoped?.kind === 'namespace-rest') {
-    const pathParts = memberPath(scoped.source);
-    return pathParts === undefined
-      ? []
-      : namespacePathTargets(context, file, pathParts, scoped.source.start, visited);
-  }
-  if (scoped?.kind === 'shadow') {
-    return [];
+  const resolveScopedNamespace = () => {
+    if (scoped === undefined) {
+      return null;
+    }
+    if (scoped.kind === 'expression') {
+      const pathParts = memberPath(scoped.expression);
+      return pathParts === undefined
+        ? []
+        : namespacePathTargets(context, file, pathParts, scoped.expression.start, visited);
+    }
+    if (scoped.kind === 'destructured') {
+      const pathParts = memberPath(scoped.source);
+      return pathParts === undefined
+        ? []
+        : namespacePathTargets(
+            context,
+            file,
+            [...pathParts, scoped.member],
+            scoped.source.start,
+            visited,
+          );
+    }
+    if (scoped.kind === 'namespace-rest') {
+      const pathParts = memberPath(scoped.source);
+      return pathParts === undefined
+        ? []
+        : namespacePathTargets(context, file, pathParts, scoped.source.start, visited);
+    }
+    if (scoped.kind === 'shadow') {
+      return [];
+    }
+    return null;
+  };
+  const scopedTargets = resolveScopedNamespace();
+  if (scopedTargets !== null) {
+    return scopedTargets;
   }
   const binding = model.imports.get(name);
   if (binding === undefined) {
@@ -1156,7 +1224,7 @@ function exportedExpressionIsForbidden(
   }
   visited.add(key);
   const model = sourceModel(context, file);
-  for (const binding of model?.exports.get(exportedName) ?? []) {
+  const bindingMatches = (binding: ExportBinding): boolean => {
     if (
       binding.kind === 'expression' &&
       expressionIsForbidden(context, file, binding.span, forbidRecord, visited)
@@ -1185,6 +1253,10 @@ function exportedExpressionIsForbidden(
         return true;
       }
     }
+    return false;
+  };
+  if ((model?.exports.get(exportedName) ?? []).some(bindingMatches)) {
+    return true;
   }
   for (const target of unambiguousStarTargets(context, file, exportedName)) {
     if (exportedExpressionIsForbidden(context, target, exportedName, forbidRecord, visited)) {
@@ -1343,7 +1415,7 @@ function exportedBindingResolvesSymbol(
   }
   visited.add(key);
   const model = sourceModel(context, file);
-  for (const binding of model?.exports.get(exportedName) ?? []) {
+  const bindingMatches = (binding: ExportBinding): boolean => {
     if (
       binding.kind === 'local' &&
       localBindingResolvesSymbol(
@@ -1375,6 +1447,10 @@ function exportedBindingResolvesSymbol(
     ) {
       return true;
     }
+    return false;
+  };
+  if ((model?.exports.get(exportedName) ?? []).some(bindingMatches)) {
+    return true;
   }
   for (const target of unambiguousStarTargets(context, file, exportedName)) {
     if (exportedBindingResolvesSymbol(context, target, exportedName, symbols, visited)) {
@@ -1488,7 +1564,7 @@ const pathResolvesSymbol = (
     return false;
   }
   const model = sourceModel(context, file);
-  if (
+  const assignedPathResolvesSymbol = (): boolean =>
     model?.memberAssignments.some(
       (assignment) =>
         assignment.at <= position &&
@@ -1497,26 +1573,38 @@ const pathResolvesSymbol = (
         assignment.path.length === pathParts.length &&
         assignment.path.every((part, index) => part === pathParts[index]) &&
         expressionResolvesSymbol(context, file, assignment.expression, symbols, visited),
-    ) === true
-  ) {
+    ) === true;
+  if (assignedPathResolvesSymbol()) {
     return true;
   }
-  const scoped = model === undefined ? undefined : scopedBindingAt(model, root, position);
-  if (scoped?.kind === 'expression') {
-    const propertyValue = objectPathExpression(scoped.expression, pathParts.slice(1));
+  const localPathResolvesSymbol = (): boolean => {
+    const scoped = model === undefined ? undefined : scopedBindingAt(model, root, position);
+    const assignedObjectResolvesSymbol = (): boolean => {
+      if (scoped?.kind === 'expression') {
+        const propertyValue = objectPathExpression(scoped.expression, pathParts.slice(1));
+        if (
+          propertyValue !== undefined &&
+          expressionResolvesSymbol(context, file, propertyValue, symbols, visited)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
+    if (assignedObjectResolvesSymbol()) {
+      return true;
+    }
+    const directImport = scoped === undefined ? model?.imports.get(root) : undefined;
     if (
-      propertyValue !== undefined &&
-      expressionResolvesSymbol(context, file, propertyValue, symbols, visited)
+      pathParts.length === 2 &&
+      directImport?.kind === 'namespace' &&
+      specifierProvidesSymbol(directImport.specifier, symbol, symbols)
     ) {
       return true;
     }
-  }
-  const directImport = scoped === undefined ? model?.imports.get(root) : undefined;
-  if (
-    pathParts.length === 2 &&
-    directImport?.kind === 'namespace' &&
-    specifierProvidesSymbol(directImport.specifier, symbol, symbols)
-  ) {
+    return false;
+  };
+  if (localPathResolvesSymbol()) {
     return true;
   }
   return namespacePathTargets(context, file, pathParts.slice(0, -1), position, new Set()).some(
@@ -1609,7 +1697,7 @@ function exportedExpressionResolvesEndpointFactory(
   }
   visited.add(key);
   const model = sourceModel(context, file);
-  for (const binding of model?.exports.get(exportedName) ?? []) {
+  const bindingMatches = (binding: ExportBinding): boolean => {
     if (
       binding.kind === 'expression' &&
       expressionResolvesEndpointFactory(context, file, binding.span, isBuilder, visited)
@@ -1643,6 +1731,10 @@ function exportedExpressionResolvesEndpointFactory(
     ) {
       return true;
     }
+    return false;
+  };
+  if ((model?.exports.get(exportedName) ?? []).some(bindingMatches)) {
+    return true;
   }
   return unambiguousStarTargets(context, file, exportedName).some((target) =>
     exportedExpressionResolvesEndpointFactory(context, target, exportedName, isBuilder, visited),
@@ -1739,40 +1831,47 @@ function expressionResolvesEndpointFactory(
   const member = model?.members.find(
     (candidate) => candidate.start === expression.start && candidate.end === expression.end,
   );
-  if (member !== undefined) {
-    const method = memberNameAt(context, file, member);
-    if (
-      method !== undefined &&
-      (isBuilder ? method === 'make' : endpointMethods.has(method)) &&
-      expressionResolvesSymbol(
-        context,
-        file,
-        member.object,
-        new Set(['HttpApiEndpoint']),
-        new Set(),
-      )
-    ) {
-      return true;
-    }
-    const pathParts = memberPathAt(context, file, member, member.start);
-    const exportedName = pathParts?.at(-1);
-    if (pathParts !== undefined && exportedName !== undefined) {
-      return namespacePathTargets(
-        context,
-        file,
-        pathParts.slice(0, -1),
-        member.start,
-        new Set(),
-      ).some((target) =>
-        exportedExpressionResolvesEndpointFactory(
+  const resolveMemberFactory = () => {
+    if (member !== undefined) {
+      const method = memberNameAt(context, file, member);
+      if (
+        method !== undefined &&
+        (isBuilder ? method === 'make' : endpointMethods.has(method)) &&
+        expressionResolvesSymbol(
           context,
-          target,
-          exportedName,
-          isBuilder,
-          visited,
-        ),
-      );
+          file,
+          member.object,
+          new Set(['HttpApiEndpoint']),
+          new Set(),
+        )
+      ) {
+        return true;
+      }
+      const pathParts = memberPathAt(context, file, member, member.start);
+      const exportedName = pathParts?.at(-1);
+      if (pathParts !== undefined && exportedName !== undefined) {
+        return namespacePathTargets(
+          context,
+          file,
+          pathParts.slice(0, -1),
+          member.start,
+          new Set(),
+        ).some((target) =>
+          exportedExpressionResolvesEndpointFactory(
+            context,
+            target,
+            exportedName,
+            isBuilder,
+            visited,
+          ),
+        );
+      }
     }
+    return null;
+  };
+  const memberResult = resolveMemberFactory();
+  if (memberResult !== null) {
+    return memberResult;
   }
   const identifier = model?.identifiers.find(
     (candidate) => candidate.start === expression.start && candidate.end === expression.end,
@@ -1809,37 +1908,47 @@ const isEndpointCall = (
   if (expressionResolvesEndpointFactory(context, file, callee, false, new Set())) {
     return true;
   }
-  if (callee.type === 'Identifier') {
-    const model = sourceModel(context, file);
-    const scoped =
-      model === undefined ? undefined : scopedBindingAt(model, callee.name, callee.start);
-    if (scoped?.kind === 'destructured' && endpointMethods.has(scoped.member)) {
-      return expressionResolvesSymbol(
-        context,
-        file,
-        scoped.source,
-        new Set(['HttpApiEndpoint']),
-        new Set(),
-      );
-    }
-    if (scoped?.kind === 'expression') {
-      const aliased = unwrapExpression(scoped.expression);
-      if (aliased.type === 'MemberExpression') {
-        const method = memberNameAt(context, file, aliased);
-        return (
-          method !== undefined &&
-          endpointMethods.has(method) &&
-          expressionResolvesSymbol(
-            context,
-            file,
-            aliased.object,
-            new Set(['HttpApiEndpoint']),
-            new Set(),
-          )
+  const resolveIdentifierCall = () => {
+    if (callee.type === 'Identifier') {
+      const model = sourceModel(context, file);
+      const scoped =
+        model === undefined ? undefined : scopedBindingAt(model, callee.name, callee.start);
+      if (scoped?.kind === 'destructured' && endpointMethods.has(scoped.member)) {
+        return expressionResolvesSymbol(
+          context,
+          file,
+          scoped.source,
+          new Set(['HttpApiEndpoint']),
+          new Set(),
         );
       }
+      const resolveAliasedCall = (): boolean => {
+        if (scoped?.kind === 'expression') {
+          const aliased = unwrapExpression(scoped.expression);
+          if (aliased.type === 'MemberExpression') {
+            const method = memberNameAt(context, file, aliased);
+            return (
+              method !== undefined &&
+              endpointMethods.has(method) &&
+              expressionResolvesSymbol(
+                context,
+                file,
+                aliased.object,
+                new Set(['HttpApiEndpoint']),
+                new Set(),
+              )
+            );
+          }
+        }
+        return false;
+      };
+      return resolveAliasedCall();
     }
-    return false;
+    return null;
+  };
+  const identifierResult = resolveIdentifierCall();
+  if (identifierResult !== null) {
+    return identifierResult;
   }
   if (callee.type !== 'MemberExpression') {
     return false;

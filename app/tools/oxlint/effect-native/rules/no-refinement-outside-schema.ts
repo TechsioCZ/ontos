@@ -1,3 +1,4 @@
+import { optionRecord } from '../shared/options.ts';
 /**
  * effect-native/no-refinement-outside-schema
  *
@@ -89,14 +90,9 @@ import type { Context, ESTree } from '@oxlint/plugins';
 
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
-import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
-
-/**
- * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
- * Stripping that prefix lets fixtures exercise the real production `include` defaults instead of
- * forcing the fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
- */
-const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { stringArray } from '../shared/options.ts';
+import { parentOf, unwrapNode } from '../shared/ast.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -157,18 +153,8 @@ interface RuleOptions {
   readonly ignoreTests: boolean;
 }
 
-function stringArray(value: unknown, fallback: readonly string[]): readonly string[] {
-  if (!Array.isArray(value)) return fallback;
-  const entries = value.filter((entry): entry is string => typeof entry === 'string');
-  return entries.length === value.length ? entries : fallback;
-}
-
 function readOptions(context: Context): RuleOptions {
-  const raw = context.options?.[0];
-  const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const record = optionRecord(context.options?.[0]);
   return {
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -181,36 +167,17 @@ function readOptions(context: Context): RuleOptions {
   };
 }
 
-/** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
-function scopePath(filename: string): string {
-  return normalisePath(filename).replace(FIXTURE_PREFIX, '');
-}
+const REFINEMENT_WRAPPERS = new Set([
+  'ChainExpression',
+  'ParenthesizedExpression',
+  'TSNonNullExpression',
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSInstantiationExpression',
+]);
 
-function matchesGlobs(path: string, globs: readonly string[]): boolean {
-  return globs.some((glob) => globToRegExp(glob).test(path));
-}
-
-/** Strip the wrappers that never change what an expression denotes. */
 function unwrap(node: ESTree.Node): ESTree.Node {
-  let current: ESTree.Node = node;
-  for (;;) {
-    if (
-      current.type === 'ChainExpression' ||
-      current.type === 'ParenthesizedExpression' ||
-      current.type === 'TSNonNullExpression' ||
-      current.type === 'TSAsExpression' ||
-      current.type === 'TSSatisfiesExpression' ||
-      current.type === 'TSInstantiationExpression'
-    ) {
-      current = current.expression;
-      continue;
-    }
-    return current;
-  }
-}
-
-function parentOf(node: ESTree.Node): ESTree.Node | null {
-  return (node as { parent?: ESTree.Node | null }).parent ?? null;
+  return unwrapNode(node, { wrappers: REFINEMENT_WRAPPERS });
 }
 
 interface ImportBinding {
@@ -232,22 +199,30 @@ function collectValueImports(program: ESTree.Program): ReadonlyMap<string, Impor
     if ((statement as { importKind?: string }).importKind === 'type') continue;
     const module = statement.source.value;
     if (typeof module !== 'string') continue;
-    for (const specifier of statement.specifiers) {
-      if ((specifier as { importKind?: string }).importKind === 'type') continue;
-      if (specifier.type === 'ImportSpecifier') {
-        const imported =
-          specifier.imported.type === 'Identifier'
-            ? specifier.imported.name
-            : String(specifier.imported.value);
-        bindings.set(specifier.local.name, { module, imported, namespace: false });
-      } else if (specifier.type === 'ImportDefaultSpecifier') {
-        bindings.set(specifier.local.name, { module, imported: 'default', namespace: false });
-      } else if (specifier.type === 'ImportNamespaceSpecifier') {
-        bindings.set(specifier.local.name, { module, imported: '*', namespace: true });
-      }
-    }
+    collectStatementBindings(statement, module, bindings);
   }
   return bindings;
+}
+
+function collectStatementBindings(
+  statement: ESTree.ImportDeclaration,
+  module: string,
+  bindings: Map<string, ImportBinding>,
+): void {
+  for (const specifier of statement.specifiers) {
+    if ((specifier as { importKind?: string }).importKind === 'type') continue;
+    if (specifier.type === 'ImportSpecifier') {
+      const imported =
+        specifier.imported.type === 'Identifier'
+          ? specifier.imported.name
+          : String(specifier.imported.value);
+      bindings.set(specifier.local.name, { module, imported, namespace: false });
+    } else if (specifier.type === 'ImportDefaultSpecifier') {
+      bindings.set(specifier.local.name, { module, imported: 'default', namespace: false });
+    } else if (specifier.type === 'ImportNamespaceSpecifier') {
+      bindings.set(specifier.local.name, { module, imported: '*', namespace: true });
+    }
+  }
 }
 
 function localsFrom(
@@ -472,7 +447,14 @@ function delegatesToAuthority(
   const first = node.arguments[0];
   if (first === undefined || first.type === 'SpreadElement') return false;
   if (!isGuardedValue(first, parameterName)) return false;
-  const callee = unwrap(node.callee);
+  return isAuthorityCallee(unwrap(node.callee), authorities, options);
+}
+
+function isAuthorityCallee(
+  callee: ESTree.Node,
+  authorities: Authorities,
+  options: RuleOptions,
+): boolean {
   if (isNativeArray(callee, authorities)) return true;
   if (isPredicateAuthority(callee, authorities)) return true;
   if (isSchemaNarrowingApplication(callee, authorities)) return true;
@@ -526,10 +508,8 @@ function annotatedInitialiser(owner: ESTree.Node): ESTree.Node | null {
   if (owner.type !== 'TSFunctionType') return null;
   let current: ESTree.Node | null = parentOf(owner);
   for (let depth = 0; current !== null && depth < 6; depth += 1) {
-    if (current.type === 'TSAsExpression' || current.type === 'TSSatisfiesExpression')
-      return current.expression;
-    if (current.type === 'VariableDeclarator') return current.init ?? null;
-    if (current.type === 'PropertyDefinition') return current.value ?? null;
+    const initialiser = initialiserAt(current);
+    if (initialiser !== undefined) return initialiser;
     if (
       current.type === 'Identifier' ||
       current.type === 'TSTypeAnnotation' ||
@@ -541,6 +521,14 @@ function annotatedInitialiser(owner: ESTree.Node): ESTree.Node | null {
     return null;
   }
   return null;
+}
+
+function initialiserAt(node: ESTree.Node): ESTree.Node | null | undefined {
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression')
+    return node.expression;
+  if (node.type === 'VariableDeclarator') return node.init ?? null;
+  if (node.type === 'PropertyDefinition') return node.value ?? null;
+  return undefined;
 }
 
 /**
@@ -575,26 +563,42 @@ function isCallableCapabilityProbe(
   if (parameterName === null) return false;
   const pair = unwrap(expression);
   if (pair.type !== 'LogicalExpression' || pair.operator !== '&&') return false;
-  const presence = unwrap(pair.left);
-  const check = unwrap(pair.right);
-  if (presence.type !== 'BinaryExpression' || presence.operator !== 'in') return false;
-  if (!isGuardedValue(presence.right, parameterName)) return false;
+  const key = capabilityPresenceKey(pair.left, parameterName);
+  return key !== null && checksCallableProjection(pair.right, parameterName, key, authorities);
+}
+
+function capabilityPresenceKey(expression: ESTree.Node, parameterName: string): string | null {
+  const presence = unwrap(expression);
+  if (presence.type !== 'BinaryExpression' || presence.operator !== 'in') return null;
+  if (!isGuardedValue(presence.right, parameterName)) return null;
   const key = unwrap(presence.left);
-  if (key.type !== 'Literal' || typeof key.value !== 'string') return false;
-  if (check.type !== 'CallExpression' || check.arguments.length !== 1) return false;
-  const callee = unwrap(check.callee);
+  return key.type === 'Literal' && typeof key.value === 'string' ? key.value : null;
+}
+
+function isFunctionAuthority(callee: ESTree.Node, authorities: Authorities): boolean {
   if (!isPredicateAuthority(callee, authorities)) return false;
   const member =
     callee.type === 'Identifier'
       ? authorities.imports.get(callee.name)?.imported
       : resolveNamespaceMember(callee, authorities.bindings, authorities.barrelLocals)?.member;
-  if (member !== 'isFunction') return false;
+  return member === 'isFunction';
+}
+
+function checksCallableProjection(
+  expression: ESTree.Node,
+  parameterName: string,
+  key: string,
+  authorities: Authorities,
+): boolean {
+  const check = unwrap(expression);
+  if (check.type !== 'CallExpression' || check.arguments.length !== 1) return false;
+  if (!isFunctionAuthority(unwrap(check.callee), authorities)) return false;
   const argument = check.arguments[0];
   if (argument === undefined) return false;
   const projected = unwrap(argument);
   return (
     projected.type === 'MemberExpression' &&
-    staticPropertyName(projected) === key.value &&
+    staticPropertyName(projected) === key &&
     isGuardedValue(projected.object, parameterName)
   );
 }
@@ -630,16 +634,22 @@ function guardedParameterType(owner: ESTree.Node, parameterName: string | null):
   if (parameterName === null) return null;
   const params = (owner as { params?: readonly ESTree.Node[] }).params ?? [];
   for (const param of params) {
-    let target: ESTree.Node = param;
-    if (target.type === 'RestElement') target = target.argument;
-    if (target.type === 'AssignmentPattern') target = target.left;
-    const identifier = target.type === 'Identifier' ? target : null;
+    const identifier = parameterIdentifier(param);
     if (identifier === null || identifier.name !== parameterName) continue;
     const annotation =
       (identifier as { typeAnnotation?: ESTree.TSTypeAnnotation | null }).typeAnnotation ?? null;
     return annotation?.typeAnnotation.type ?? null;
   }
   return null;
+}
+
+function parameterIdentifier(
+  param: ESTree.Node,
+): Extract<ESTree.Node, { type: 'Identifier' }> | null {
+  let target = param;
+  if (target.type === 'RestElement') target = target.argument;
+  if (target.type === 'AssignmentPattern') target = target.left;
+  return target.type === 'Identifier' ? target : null;
 }
 
 const OWNER_TYPES = new Set([
@@ -686,45 +696,97 @@ const NAME_TRANSPARENT_PARENTS = new Set([
 ]);
 
 /** Best-effort declaration name for the diagnostic (`isNonEmptyString`, `#isReady`, `(anonymous)`). */
-function predicateName(owner: ESTree.Node | null): string {
-  if (owner === null) return '(anonymous)';
-  const own = (owner as { id?: ESTree.Node | null }).id ?? null;
-  const ownName = keyName(own);
-  if (ownName !== null) return ownName;
-  if (owner.type === 'TSMethodSignature' || owner.type === 'TSCallSignatureDeclaration') {
-    const key = keyName((owner as { key?: ESTree.Node | null }).key ?? null);
-    if (key !== null) return key;
-    return '(call signature)';
-  }
-  let current: ESTree.Node | null = parentOf(owner);
+const NAMED_PROPERTY_TYPES = new Set([
+  'Property',
+  'PropertyDefinition',
+  'MethodDefinition',
+  'TSPropertySignature',
+]);
+
+function assignmentName(left: ESTree.Node): string {
+  const node = unwrap(left);
+  if (node.type === 'Identifier') return node.name;
+  return node.type === 'MemberExpression'
+    ? (staticPropertyName(node) ?? '(anonymous)')
+    : '(anonymous)';
+}
+
+function declarationName(node: ESTree.Node): string | null {
+  if (node.type === 'VariableDeclarator' || node.type === 'TSTypeAliasDeclaration')
+    return keyName(node.id) ?? '(anonymous)';
+  if (NAMED_PROPERTY_TYPES.has(node.type))
+    return keyName((node as { key?: ESTree.Node }).key ?? null) ?? '(anonymous)';
+  if (node.type === 'AssignmentExpression') return assignmentName(node.left);
+  return null;
+}
+
+function parentDeclarationName(owner: ESTree.Node): string {
+  let current = parentOf(owner);
   for (let depth = 0; current !== null && depth < 8; depth += 1) {
-    if (current.type === 'VariableDeclarator') return keyName(current.id) ?? '(anonymous)';
-    if (
-      current.type === 'Property' ||
-      current.type === 'PropertyDefinition' ||
-      current.type === 'MethodDefinition'
-    ) {
-      return keyName((current as { key?: ESTree.Node | null }).key ?? null) ?? '(anonymous)';
-    }
-    if (current.type === 'TSPropertySignature') {
-      return keyName((current as { key?: ESTree.Node | null }).key ?? null) ?? '(anonymous)';
-    }
-    if (current.type === 'TSTypeAliasDeclaration') return keyName(current.id) ?? '(anonymous)';
-    if (current.type === 'AssignmentExpression') {
-      const left = unwrap(current.left);
-      if (left.type === 'Identifier') return left.name;
-      if (left.type === 'MemberExpression') return staticPropertyName(left) ?? '(anonymous)';
-      return '(anonymous)';
-    }
+    const name = declarationName(current);
+    if (name !== null) return name;
     if (!NAME_TRANSPARENT_PARENTS.has(current.type)) return '(anonymous)';
     current = parentOf(current);
   }
   return '(anonymous)';
 }
 
+/** Best-effort declaration name for the diagnostic. */
+function predicateName(owner: ESTree.Node | null): string {
+  if (owner === null) return '(anonymous)';
+  const ownName = keyName((owner as { id?: ESTree.Node }).id ?? null);
+  if (ownName !== null) return ownName;
+  if (owner.type === 'TSMethodSignature' || owner.type === 'TSCallSignatureDeclaration')
+    return keyName((owner as { key?: ESTree.Node }).key ?? null) ?? '(call signature)';
+  return parentDeclarationName(owner);
+}
+
 function condense(text: string, limit: number): string {
   const collapsed = text.replace(/\s+/gu, ' ').trim();
   return collapsed.length > limit ? `${collapsed.slice(0, limit - 1)}…` : collapsed;
+}
+
+function allowsStructuralBody(
+  owner: ESTree.Node,
+  body: ESTree.Node,
+  parameterName: string | null,
+): boolean {
+  const parameterType = guardedParameterType(owner, parameterName);
+  if (
+    parameterType !== null &&
+    OPAQUE_INPUT_TYPES.has(parameterType) &&
+    isStructuralNarrowingOnly(body)
+  )
+    return true;
+  return isInstanceofAnchored(body, parameterName);
+}
+
+function isAllowedPredicate(
+  node: ESTree.TSTypePredicate,
+  owner: ESTree.Node | null,
+  authorities: Authorities,
+  options: RuleOptions,
+): boolean {
+  if (owner === null) return false;
+  if (options.allowInlineCallbacks && isInlineArrayCallback(owner, authorities)) return true;
+  const body = soleReturnedExpression(owner);
+  if (body === null) {
+    const initialiser = annotatedInitialiser(owner);
+    return initialiser !== null && isAuthorityFunction(initialiser, authorities, options);
+  }
+  return isAllowedBody(owner, body, guardedParameterName(node), authorities, options);
+}
+
+function isAllowedBody(
+  owner: ESTree.Node,
+  body: ESTree.Node,
+  parameterName: string | null,
+  authorities: Authorities,
+  options: RuleOptions,
+): boolean {
+  if (delegatesToAuthority(body, parameterName, authorities, options)) return true;
+  if (isCallableCapabilityProbe(body, parameterName, authorities)) return true;
+  return options.allowInstanceofGuards && allowsStructuralBody(owner, body, parameterName);
 }
 
 /** Audit A2: refinements belong to the owning Schema, not to hand-written `x is T` predicates. */
@@ -797,36 +859,7 @@ export const rule = defineRule({
       TSTypePredicate(node) {
         const owner = ownerOf(node);
 
-        if (
-          options.allowInlineCallbacks &&
-          owner !== null &&
-          isInlineArrayCallback(owner, authorities)
-        )
-          return;
-
-        if (owner !== null) {
-          const parameterName = guardedParameterName(node);
-          const body = soleReturnedExpression(owner);
-          if (body !== null && delegatesToAuthority(body, parameterName, authorities, options))
-            return;
-          if (body !== null && isCallableCapabilityProbe(body, parameterName, authorities)) return;
-
-          const initialiser = body === null ? annotatedInitialiser(owner) : null;
-          if (initialiser !== null && isAuthorityFunction(initialiser, authorities, options))
-            return;
-
-          if (options.allowInstanceofGuards && body !== null) {
-            const parameterType = guardedParameterType(owner, parameterName);
-            if (
-              parameterType !== null &&
-              OPAQUE_INPUT_TYPES.has(parameterType) &&
-              isStructuralNarrowingOnly(body)
-            ) {
-              return;
-            }
-            if (isInstanceofAnchored(body, parameterName)) return;
-          }
-        }
+        if (isAllowedPredicate(node, owner, authorities, options)) return;
 
         const asserted = node.typeAnnotation;
         const type =

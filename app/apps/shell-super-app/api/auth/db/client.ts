@@ -32,12 +32,7 @@ const connectionFailure = (cause: unknown) =>
       reason: 'Unable to initialize the authentication PostgreSQL pool',
     }),
     'cause',
-    {
-      configurable: false,
-      enumerable: false,
-      value: cause,
-      writable: false,
-    },
+    { value: cause },
   );
 
 export const acquirePoolResource = <Resource extends PoolResource>(

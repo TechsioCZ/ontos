@@ -269,6 +269,24 @@ const readCounterparties = Effect.fn('PartySearchProjectionSourceService.readCou
   ).pipe(Effect.map((records) => records.flat()));
 });
 
+const wantedCanonicalIds = (
+  target: PartySearchProjectionTarget,
+  canonicalIds: ReadonlyMap<string, string>,
+): Set<string> => {
+  const wanted = new Set<string>();
+  if ('partyId' in target) {
+    const canonicalId = canonicalIds.get(target.partyId);
+    if (canonicalId !== undefined) {
+      wanted.add(canonicalId);
+    }
+  } else if ('rebuild' in target) {
+    for (const canonicalId of canonicalIds.values()) {
+      wanted.add(canonicalId);
+    }
+  }
+  return wanted;
+};
+
 const readCanonicalProjection = Effect.fn(
   'PartySearchProjectionSourceService.readCanonicalProjection',
 )(function* readCanonicalProjectionSnapshot(
@@ -303,17 +321,7 @@ const readCanonicalProjection = Effect.fn(
     { concurrency: 1 },
   );
   const canonicalIds = new Map<string, string>(canonicalIdEntries);
-  const wanted = new Set<string>();
-  if ('partyId' in target) {
-    const canonicalId = canonicalIds.get(target.partyId);
-    if (canonicalId !== undefined) {
-      wanted.add(canonicalId);
-    }
-  } else if ('rebuild' in target) {
-    for (const canonicalId of canonicalIds.values()) {
-      wanted.add(canonicalId);
-    }
-  }
+  const wanted = wantedCanonicalIds(target, canonicalIds);
   const initialFamily = records
     .filter((row) => wanted.has(canonicalIds.get(row.partyId) ?? ''))
     .map((row) => row.partyId);

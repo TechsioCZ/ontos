@@ -1,16 +1,5 @@
-import { NodeFileSystem } from '@effect/platform-node';
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Effect,
-  FileSystem,
-  Layer,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
-import { ROOT_ENV_PATH } from './config.ts';
+import { loadConfigurationProvider } from './configuration-provider.ts';
+import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
 
 const withOptionalProperty = <
   Base extends object,
@@ -34,7 +23,7 @@ const EnvironmentKeySchema = Schema.Literals(['ONTOS_GATEWAY_ISSUER', 'ONTOS_GAT
 type EnvironmentKey = typeof EnvironmentKeySchema.Type;
 type Environment = Readonly<Partial<Record<EnvironmentKey, string>>>;
 
-export interface Ed25519PrivateJwk {
+interface Ed25519PrivateJwk {
   readonly alg: 'EdDSA';
   readonly crv: 'Ed25519';
   readonly d: string;
@@ -117,48 +106,19 @@ const parseGatewayIssuerConfigFromProvider = Effect.fn(
   return { issuer: source.issuer, privateJwk };
 });
 
-const environmentProvider = (environment: Environment): ConfigProvider.ConfigProvider =>
-  ConfigProvider.fromEnvRecord({
-    ONTOS_GATEWAY_ISSUER: environment.ONTOS_GATEWAY_ISSUER,
-    ONTOS_GATEWAY_PRIVATE_JWK: environment.ONTOS_GATEWAY_PRIVATE_JWK,
-  });
-
 export const parseGatewayIssuerConfig = (
   environment: Environment,
 ): Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError> =>
-  parseGatewayIssuerConfigFromProvider(environmentProvider(environment));
+  parseGatewayIssuerConfigFromProvider(ConfigProvider.fromEnvRecord(environment));
 
 export interface LoadGatewayIssuerConfigOptions {
   readonly environment?: Environment;
   readonly envPath?: string;
 }
 
-const loadFileProvider = (
-  envPath: string,
-): Effect.Effect<ConfigProvider.ConfigProvider, GatewayIssuerConfigError> =>
-  Effect.scoped(
-    Layer.build(NodeFileSystem.layer).pipe(
-      Effect.map((services) => Context.get(services, FileSystem.FileSystem)),
-      Effect.flatMap((fileSystem) => fileSystem.readFileString(envPath)),
-      Effect.catchIf(
-        (error) => Predicate.isTagged(error.reason, 'NotFound'),
-        () => Effect.succeed(''),
-      ),
-      Effect.catchTag('PlatformError', () => Effect.fail(unableToLoadEnvironment())),
-      Effect.map((contents) => ConfigProvider.fromDotEnvContents(contents)),
-    ),
-  );
-
 export const loadGatewayIssuerConfig = (
   options: LoadGatewayIssuerConfigOptions = {},
 ): Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError> =>
-  loadFileProvider(options.envPath ?? ROOT_ENV_PATH).pipe(
-    Effect.flatMap((fileProvider) =>
-      parseGatewayIssuerConfigFromProvider(
-        (options.environment === undefined
-          ? ConfigProvider.fromEnv()
-          : environmentProvider(options.environment)
-        ).pipe(ConfigProvider.orElse(fileProvider)),
-      ),
-    ),
+  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(
+    Effect.flatMap(parseGatewayIssuerConfigFromProvider),
   );

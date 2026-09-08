@@ -333,35 +333,46 @@ const requireAuthorizationEvidence = (
   return { impact, negativeSmoke, readiness };
 };
 
-const authorizationEvidenceMatches = (
+type PromotionEvidence = Required<
+  Pick<AuthorizationPromotionGateInput, 'impact' | 'negativeSmoke' | 'readiness'>
+>;
+
+const evidenceHasInventoryIdentity = (
+  inventory: ProtectedEntrypointInventory,
+  evidence: {
+    readonly inventoryHash: string;
+    readonly schemaVersion: number;
+    readonly sourceRevision: string;
+  },
+): boolean =>
+  evidence.schemaVersion === 1 &&
+  evidence.sourceRevision === inventory.sourceRevision &&
+  evidence.inventoryHash === inventory.inventoryHash;
+
+const readinessMatchesPromotion = (
   input: AuthorizationPromotionGateInput,
-  evidence: Required<
-    Pick<AuthorizationPromotionGateInput, 'impact' | 'negativeSmoke' | 'readiness'>
-  >,
+  evidence: PromotionEvidence,
 ): boolean => {
-  const { inventory, rollout } = input;
   const { impact, negativeSmoke, readiness } = evidence;
-  const impactHash = hashAuthorizationEvidence(impact);
-  const negativeSmokeHash = hashAuthorizationEvidence(negativeSmoke);
   return (
-    impact.schemaVersion === 1 &&
-    impact.sourceRevision === inventory.sourceRevision &&
-    impact.inventoryHash === inventory.inventoryHash &&
-    impact.totalWouldDeny === 0 &&
-    negativeSmoke.schemaVersion === 1 &&
-    negativeSmoke.sourceRevision === inventory.sourceRevision &&
-    negativeSmoke.inventoryHash === inventory.inventoryHash &&
-    negativeSmoke.environment === input.environment &&
-    readiness.schemaVersion === 1 &&
     readiness.status === 'ready' &&
     readiness.environment === input.environment &&
-    readiness.sourceRevision === inventory.sourceRevision &&
-    readiness.inventoryHash === inventory.inventoryHash &&
-    readiness.impactReportHash === impactHash &&
-    readiness.negativeSmokeHash === negativeSmokeHash &&
-    readiness.approvalReference === rollout.decisionReference
+    readiness.impactReportHash === hashAuthorizationEvidence(impact) &&
+    readiness.negativeSmokeHash === hashAuthorizationEvidence(negativeSmoke) &&
+    readiness.approvalReference === input.rollout.decisionReference
   );
 };
+
+const authorizationEvidenceMatches = (
+  input: AuthorizationPromotionGateInput,
+  evidence: PromotionEvidence,
+): boolean =>
+  [evidence.impact, evidence.negativeSmoke, evidence.readiness].every((item) =>
+    evidenceHasInventoryIdentity(input.inventory, item),
+  ) &&
+  evidence.impact.totalWouldDeny === 0 &&
+  evidence.negativeSmoke.environment === input.environment &&
+  readinessMatchesPromotion(input, evidence);
 
 export const validateAuthorizationPromotionGate = (
   input: AuthorizationPromotionGateInput,
@@ -544,6 +555,25 @@ const validateDistinctTopologyIds = (
   }
 };
 
+const verticalDependencies = (
+  vertical: ReferenceVertical,
+  id: string,
+  verticalIds: ReadonlySet<string>,
+): readonly string[] => {
+  const dependencies = [
+    ...(vertical.moduleFederation?.verticalRefs ?? []),
+    ...(vertical.moduleFederation?.remotes ?? []).flatMap((remote) =>
+      remote.id === undefined ? [] : [remote.id],
+    ),
+  ];
+  for (const dependency of dependencies) {
+    if (!verticalIds.has(dependency)) {
+      fail(`topology delivery unit "${id}" references unknown provider "${dependency}"`);
+    }
+  }
+  return dependencies;
+};
+
 const buildVerticalUnits = (
   verticals: readonly ReferenceVertical[],
   verticalIds: ReadonlySet<string>,
@@ -566,17 +596,7 @@ const buildVerticalUnits = (
         `topology and ownership disagree for "${id}": expected package "${packageName}" at "${ownerPath}", found package "${String(owner.package)}" at "${String(owner.path)}"`,
       );
     }
-    const dependencies = [
-      ...(vertical.moduleFederation?.verticalRefs ?? []),
-      ...(vertical.moduleFederation?.remotes ?? []).flatMap((remote) =>
-        remote.id === undefined ? [] : [remote.id],
-      ),
-    ];
-    for (const dependency of dependencies) {
-      if (!verticalIds.has(dependency)) {
-        fail(`topology delivery unit "${id}" references unknown provider "${dependency}"`);
-      }
-    }
+    const dependencies = verticalDependencies(vertical, id, verticalIds);
     units.push({
       dependencies: EffectArray.sort([...new Set(dependencies)], Order.String),
       id,
@@ -782,18 +802,20 @@ const isAuthorizationRolloutChange = (changedPath: string): boolean =>
   changedPath === 'scripts/report-fail-closed-authorization-impact.mts' ||
   changedPath === 'topology/authorization-rollout.json';
 
+const CONSERVATIVE_FULL_DEPLOY_PATHS = new Set([
+  '.mise.toml',
+  'package.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  'scripts/install-zerops-node.sh',
+  'scripts/generate-outbox-worker-deployment.mjs',
+  'scripts/materialize-outbox-worker.mjs',
+  'scripts/materialize-zerops-runtime.mjs',
+  'scripts/outbox-worker-delivery.mjs',
+  'zerops.yaml',
+]);
 const isConservativeFullDeployChange = (changedPath: string): boolean =>
-  changedPath === '.mise.toml' ||
-  changedPath === 'package.json' ||
-  changedPath === 'pnpm-lock.yaml' ||
-  changedPath === 'pnpm-workspace.yaml' ||
-  changedPath === 'scripts/install-zerops-node.sh' ||
-  changedPath === 'scripts/generate-outbox-worker-deployment.mjs' ||
-  changedPath === 'scripts/materialize-outbox-worker.mjs' ||
-  changedPath === 'scripts/materialize-zerops-runtime.mjs' ||
-  changedPath === 'scripts/outbox-worker-delivery.mjs' ||
-  changedPath === 'zerops.yaml' ||
-  changedPath.startsWith('topology/');
+  CONSERVATIVE_FULL_DEPLOY_PATHS.has(changedPath) || changedPath.startsWith('topology/');
 
 const toPhase = (unit: TopologyUnit): DeploymentPhase => ({
   id: unit.id,
@@ -933,6 +955,41 @@ const deriveDeploymentImpact = (
   return state;
 };
 
+const deploymentComparison = (options: PlanDeploymentImpactOptions, rootDirectory: string) =>
+  Effect.gen(function* deploymentComparisonEffect() {
+    const headRevision = options.headRevision ?? 'HEAD';
+    const fallbackReason =
+      options.changedPaths === undefined
+        ? yield* invalidBaseReason(rootDirectory, options.baseRevision, headRevision)
+        : undefined;
+    const fullDeploy = fallbackReason !== undefined;
+    const comparedPaths =
+      options.changedPaths ??
+      (fullDeploy
+        ? []
+        : yield* changedPathsFromGit(
+            rootDirectory,
+            requireString(options.baseRevision, 'base revision'),
+            headRevision,
+          ));
+    const changedPaths = EffectArray.sort(
+      [...new Set(comparedPaths.map(normalizeChangedPath))],
+      Order.String,
+    );
+    return { changedPaths, fallbackReason, fullDeploy, headRevision };
+  });
+
+const validateWorkerStageSetups = (
+  workers: readonly { readonly stageSetup: string }[],
+  stageSetups: ReadonlySet<string>,
+): void => {
+  for (const delivery of workers) {
+    if (!stageSetups.has(delivery.stageSetup)) {
+      fail(`Missing generated worker setup ${delivery.stageSetup}`);
+    }
+  }
+};
+
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
   Effect.gen(function* planDeploymentImpactEffect() {
     const authorization =
@@ -965,34 +1022,15 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       ),
     );
     const workers = workerDeliveries.filter((delivery) => delivery !== undefined);
-    for (const delivery of workers) {
-      if (!stageSetups.has(delivery.stageSetup)) {
-        fail(`Missing generated worker setup ${delivery.stageSetup}`);
-      }
-    }
+    validateWorkerStageSetups(workers, stageSetups);
     const shell = orderedUnits.find((unit) => unit.kind === 'shell');
     if (shell === undefined) {
       return fail('reference topology has no Shell delivery unit');
     }
 
-    const headRevision = options.headRevision ?? 'HEAD';
-    const fallbackReason =
-      options.changedPaths === undefined
-        ? yield* invalidBaseReason(rootDirectory, options.baseRevision, headRevision)
-        : undefined;
-    const fullDeploy = fallbackReason !== undefined;
-    const comparedPaths =
-      options.changedPaths ??
-      (fullDeploy
-        ? []
-        : yield* changedPathsFromGit(
-            rootDirectory,
-            requireString(options.baseRevision, 'base revision'),
-            headRevision,
-          ));
-    const changedPaths = EffectArray.sort(
-      [...new Set(comparedPaths.map(normalizeChangedPath))],
-      Order.String,
+    const { changedPaths, fallbackReason, fullDeploy, headRevision } = yield* deploymentComparison(
+      options,
+      rootDirectory,
     );
 
     const { impacted, migrator, spicedb } = deriveDeploymentImpact(
