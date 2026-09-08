@@ -56,6 +56,41 @@ it.live.each([1, 2, 3])('live each %s', (n) =>
   ),
 );
 
+// Match @effect/vitest: each passes one intact row, including readonly tuples.
+const tupleCases = [[1, 2]] as const;
+const objectCases = [{ left: 1, right: 2 }] as const;
+
+it.effect.each(tupleCases)('effect each preserves a readonly tuple row', (row, ...extra) =>
+  Effect.sync(() => {
+    const tuple: readonly [1, 2] = row;
+    expect(tuple).toBe(tupleCases[0]);
+    expect(tuple).toEqual([1, 2]);
+    expect(extra).toEqual([]);
+  }),
+);
+it.live.each(tupleCases)('live each preserves a readonly tuple row', (row, ...extra) =>
+  Effect.sync(() => {
+    const tuple: readonly [1, 2] = row;
+    expect(tuple).toBe(tupleCases[0]);
+    expect(tuple).toEqual([1, 2]);
+    expect(extra).toEqual([]);
+  }),
+);
+it.effect.each(objectCases)('effect each preserves an object row', (row, ...extra) =>
+  Effect.sync(() => {
+    expect(row).toBe(objectCases[0]);
+    expect(row).toEqual({ left: 1, right: 2 });
+    expect(extra).toEqual([]);
+  }),
+);
+it.live.each(objectCases)('live each preserves an object row', (row, ...extra) =>
+  Effect.sync(() => {
+    expect(row).toBe(objectCases[0]);
+    expect(row).toEqual({ left: 1, right: 2 });
+    expect(extra).toEqual([]);
+  }),
+);
+
 // skip
 
 it.live.skip('live skipped', () => Effect.die('skipped anyway'));
