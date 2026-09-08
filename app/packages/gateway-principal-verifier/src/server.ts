@@ -303,7 +303,7 @@ const verifyAuthenticatedToken = Effect.fn(
   ActionPrincipalError,
   GatewayPrincipalVerifierConfiguration
 > {
-  const audience = yield* Schema.decodeUnknownEffect(GatewayAudienceSchema)(
+  const audience = yield* Schema.decodeEffect(GatewayAudienceSchema)(
     expectedAudience
   ).pipe(
     // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Schema diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
@@ -360,12 +360,9 @@ const verifyAuthenticatedToken = Effect.fn(
   ) {
     return yield* Effect.fail(invalidError());
   }
-  const principal = yield* Schema.decodeUnknownEffect(
-    TrustedPrincipalContextSchema,
-    {
-      onExcessProperty: 'error',
-    }
-  )(claims.principal).pipe(
+  const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema, {
+    onExcessProperty: 'error',
+  })(claims.principal).pipe(
     // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Principal decode diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
     Effect.mapError(() => invalidError())
   );

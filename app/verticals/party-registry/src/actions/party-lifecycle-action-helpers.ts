@@ -16,7 +16,7 @@ type PersistedParty = typeof PartySchema.Type | typeof PartySchema.Encoded;
 export const decodeParty = (party: PersistedParty) =>
   Schema.is(PartySchema)(party)
     ? Effect.succeed(party)
-    : Schema.decodeUnknownEffect(PartySchema)(party).pipe(
+    : Schema.decodeEffect(PartySchema)(party).pipe(
         Effect.mapError((cause) =>
           Object.defineProperty(
             new PartyPersistenceUnavailable({

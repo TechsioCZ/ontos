@@ -99,7 +99,7 @@ const parseGatewayIssuerConfigFromProvider = Effect.fn(
         Effect.fail(malformedConfiguration())
       )
     );
-  const parsed = yield* Schema.decodeUnknownEffect(
+  const parsed = yield* Schema.decodeEffect(
     Schema.fromJsonString(PrivateJwkInputSchema)
   )(Redacted.value(source.privateJwk).trim()).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration()))

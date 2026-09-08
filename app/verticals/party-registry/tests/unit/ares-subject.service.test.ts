@@ -159,16 +159,13 @@ it.effect('rejects malformed IČOs before provider I/O', () =>
       return Effect.succeed(jsonResponse(request, 200, rawSubject()));
     });
 
-    yield* Effect.all(
-      ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'].map(
-        (ico) =>
-          Effect.gen(function* aresSubjectServiceCase3() {
-            const error = yield* Effect.flip(lookup(client, ico));
-            expect(Predicate.isTagged(error, 'AresSubjectInvalidIco')).toBe(
-              true
-            );
-          })
-      ),
+    yield* Effect.forEach(
+      ['1234567', '123456789', '1234 5678', 'abcdefgh', '../48039101'],
+      (ico) =>
+        Effect.gen(function* aresSubjectServiceCase3() {
+          const error = yield* Effect.flip(lookup(client, ico));
+          expect(Predicate.isTagged(error, 'AresSubjectInvalidIco')).toBe(true);
+        }),
       { concurrency: 'unbounded' }
     );
     expect(requests).toBe(0);
@@ -370,8 +367,9 @@ it.effect(
           }),
       ];
 
-      yield* Effect.all(
-        responses.map((response) =>
+      yield* Effect.forEach(
+        responses,
+        (response) =>
           Effect.gen(function* aresSubjectServiceCase11() {
             let requests = 0;
             const client = clientFrom((request) => {
@@ -383,8 +381,7 @@ it.effect(
               Predicate.isTagged(error, 'AresSubjectResponseInvalid')
             ).toBe(true);
             expect(requests).toBe(1);
-          })
-        ),
+          }),
         { concurrency: 'unbounded' }
       );
     })

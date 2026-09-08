@@ -105,16 +105,13 @@ const transactionHarness = (
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const select = () => {
     const rows = selectQueue.shift() ?? [];
-    const chain = Object.assign(
-      Effect.sync(() => rows),
-      {
-        for: () => Effect.succeed(rows),
-        from: () => chain,
-        limit: () => chain,
-        orderBy: () => chain,
-        where: () => chain,
-      }
-    );
+    const chain = Object.assign(Effect.succeed(rows), {
+      for: () => Effect.succeed(rows),
+      from: () => chain,
+      limit: () => chain,
+      orderBy: () => chain,
+      where: () => chain,
+    });
     return chain;
   };
   const insert = () => {
@@ -392,8 +389,9 @@ it.layer(
   relationshipIt.effect(
     'non-active assertions never read as current even with an open effective interval',
     () =>
-      Effect.all(
-        ['RETRACTED', 'SUPERSEDED', 'DISPUTED'].map((assertionState) =>
+      Effect.forEach(
+        ['RETRACTED', 'SUPERSEDED', 'DISPUTED'],
+        (assertionState) =>
           Effect.gen(function* testProgram6() {
             const harness = transactionHarness([
               [relationshipRow({ assertionState })],
@@ -408,7 +406,6 @@ it.layer(
             expect(detail?.assertionState).toBe(assertionState);
             expect(detail?.state).toBe('HISTORICAL');
           })
-        )
       )
   );
 

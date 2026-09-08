@@ -373,9 +373,9 @@ const validateRequest = (request: AresApplyRequest) => {
     { concurrency: 1, discard: true }
   ).pipe(
     Effect.andThen(() =>
-      Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(
-        request.observation
-      ).pipe(Effect.mapError(invalidObservation))
+      Schema.decodeEffect(AresSubjectEvidenceSchema)(request.observation).pipe(
+        Effect.mapError(invalidObservation)
+      )
     )
   );
 };

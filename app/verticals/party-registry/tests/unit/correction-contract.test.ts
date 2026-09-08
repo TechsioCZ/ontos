@@ -49,7 +49,7 @@ const relationshipCommandEncoded = {
   replacementValidFrom: null,
   replacementValidTo: '2026-02-01T00:00:00.000Z',
 } as const;
-const relationshipCommand = decode(
+const relationshipCommand = Schema.decodeSync(
   SupersedeRelationshipCorrectionCommandSchema
 )(relationshipCommandEncoded);
 it('correction is closed to Party type, display name, and official identifier assertions', () => {
@@ -96,7 +96,7 @@ it('correction follow-up is typed and duplicate confirmation remains readiness-o
       'party.registry.party-merged.v1'
     )
   ).toBe(false);
-  const partyTypeCommand = decode(PartyCorrectionCommandSchema)({
+  const partyTypeCommand = Schema.decodeSync(PartyCorrectionCommandSchema)({
     ...evidence,
     factKind: 'PARTY_TYPE',
     partyId,
@@ -285,7 +285,7 @@ it.effect(
   'relationship retraction retains original effective validity and creates no replacement',
   () =>
     Effect.gen(function* correctionScenario2() {
-      const command = decode(PartyCorrectionCommandSchema)({
+      const command = yield* Schema.decodeEffect(PartyCorrectionCommandSchema)({
         ...evidence,
         correctionMode: 'RETRACT',
         expectedRevision: 1,
@@ -322,17 +322,18 @@ it.effect(
 it.effect(
   'stale revision and foreign-tenant relationship correction fail before business writes',
   () =>
-    Effect.all(
+    Effect.forEach(
       [
-        decode(SupersedeRelationshipCorrectionCommandSchema)({
+        Schema.decodeSync(SupersedeRelationshipCorrectionCommandSchema)({
           ...relationshipCommandEncoded,
           expectedRevision: 2,
         }),
-        decode(SupersedeRelationshipCorrectionCommandSchema)({
+        Schema.decodeSync(SupersedeRelationshipCorrectionCommandSchema)({
           ...relationshipCommandEncoded,
           relationshipRef: { ...relationshipRef, tenantId: organizationId },
         }),
-      ].map((command) =>
+      ],
+      (command) =>
         Effect.gen(function* correctionScenario4() {
           const h = transactionHarness([[], [relationshipRow()]]);
           const error = yield* Effect.flip(
@@ -346,8 +347,7 @@ it.effect(
           );
           expect(h.updateSets.length).toBe(0);
           expect(h.insertValues.length).toBe(0);
-        })
-      ),
+        }),
       { concurrency: 1 }
     )
 );
@@ -416,7 +416,7 @@ it.effect(
       );
       expect(
         yield* Schema.encodeEffect(PartyCorrectionDetailSchema)(
-          yield* Schema.decodeUnknownEffect(PartyCorrectionDetailSchema)(detail)
+          yield* Schema.decodeEffect(PartyCorrectionDetailSchema)(detail)
         )
       ).toEqual(detail);
       expect(detail.actingPrincipalId).toBe(principalId);
@@ -566,7 +566,9 @@ for (const scenario of [
         ],
         ...scenario.claimReads,
       ]);
-      const command = decode(PartyCorrectionCommandSchema)({
+      const command = yield* Schema.decodeUnknownEffect(
+        PartyCorrectionCommandSchema
+      )({
         ...evidence,
         factKind: 'PARTY_TYPE',
         partyId,
@@ -617,7 +619,7 @@ it.effect(
           },
         ],
       ]);
-      const command = decode(PartyCorrectionCommandSchema)({
+      const command = yield* Schema.decodeEffect(PartyCorrectionCommandSchema)({
         ...evidence,
         factKind: 'PARTY_TYPE',
         partyId,

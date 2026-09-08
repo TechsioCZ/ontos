@@ -141,7 +141,7 @@ export const loadModulePageModel = ({
       );
       return shellAuthenticationClientOptionsFromRequest(request).pipe(
         Effect.flatMap((options) =>
-          Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)(
+          Schema.decodeEffect(ResolveModuleTargetPayloadSchema)(
             withOptionalProperty(
               {},
               params.entrypointKey !== undefined,

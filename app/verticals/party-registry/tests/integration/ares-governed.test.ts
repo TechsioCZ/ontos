@@ -106,9 +106,7 @@ const rawSubject = {
   },
 };
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
-const lookupIco = Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)(
-  '27074358'
-);
+const lookupIco = Schema.decodeSync(AresSubjectLookupIcoSchema)('27074358');
 const endPool = (pool: Pool) => Effect.promise(() => pool.end());
 
 it.live(
@@ -584,7 +582,7 @@ it.live(
       );
       assert.isOk(assertion);
 
-      const correctionPayload = yield* Schema.decodeUnknownEffect(
+      const correctionPayload = yield* Schema.decodeEffect(
         IdentityCorrectionCommandSchema
       )({
         partyId: erroneousParty.resourceId,

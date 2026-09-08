@@ -49,7 +49,7 @@ it('normalizes EMAIL without provider-specific identity heuristics', () => {
     normalizeEmail('qatest+two@example.com').lookupValue
   );
   expect(() =>
-    Schema.decodeUnknownSync(EmailContactPointInputSchema)({
+    Schema.decodeSync(EmailContactPointInputSchema)({
       preferred: false,
       type: 'EMAIL',
       value: 'not-an-email',
@@ -71,7 +71,7 @@ it('normalizes PHONE only with explicit international or country context and pre
   });
   expect(() => normalizePhone('777 123 456')).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
+    Schema.decodeSync(PhoneContactPointInputSchema)({
       countryCode: 'CZ',
       preferred: false,
       type: 'PHONE',
@@ -79,7 +79,7 @@ it('normalizes PHONE only with explicit international or country context and pre
     })
   ).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
+    Schema.decodeSync(PhoneContactPointInputSchema)({
       extension: '1234567890123',
       preferred: false,
       type: 'PHONE',
@@ -90,7 +90,7 @@ it('normalizes PHONE only with explicit international or country context and pre
     normalizePhone('+420777123456', 'CZ', '123456789012')
   ).not.toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(PhoneContactPointInputSchema)({
+    Schema.decodeSync(PhoneContactPointInputSchema)({
       preferred: false,
       type: 'PHONE',
       value: '777 123 456',
@@ -98,7 +98,7 @@ it('normalizes PHONE only with explicit international or country context and pre
   ).toThrow();
 });
 it('keeps ADDRESS structured, multi-purpose, and preferred independently per purpose', () => {
-  const decoded = Schema.decodeUnknownSync(AddressContactPointInputSchema)({
+  const decoded = Schema.decodeSync(AddressContactPointInputSchema)({
     address: {
       addressLine1: '  Na Prikope 1  ',
       city: '  Praha  ',
@@ -197,7 +197,7 @@ it('declares tenant-authorized idempotent Actions and prevents value overwrite t
     expect(action.descriptor.tenantPermission).not.toBe(undefined);
   }
   expect(() =>
-    Schema.decodeUnknownSync(AddContactPointPayloadSchema)({
+    Schema.decodeSync(AddContactPointPayloadSchema)({
       contactPoint: {
         preferred: true,
         type: 'EMAIL',
@@ -362,8 +362,8 @@ it('projects independently auditable whole-contact and ADDRESS-purpose ends', ()
     reason: 'Correspondence moved to another address',
     recordedAt: '2026-09-03T10:00:00.000Z',
   } as const;
-  const end = Schema.decodeUnknownSync(ContactPointEndSchema)(encodedEnd);
-  const address = Schema.decodeUnknownSync(AddressContactPointValueSchema)({
+  const end = Schema.decodeSync(ContactPointEndSchema)(encodedEnd);
+  const address = Schema.decodeSync(AddressContactPointValueSchema)({
     address: {
       addressLine1: 'Na Prikope 1',
       addressLine2: null,

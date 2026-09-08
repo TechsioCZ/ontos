@@ -87,7 +87,7 @@ const authConfigSource = Config.all({
 const parseHttpOrigin = (
   value: string
 ): Effect.Effect<string, AuthConfigFailure> =>
-  Schema.decodeUnknownEffect(HttpUrlSchema)(value).pipe(
+  Schema.decodeEffect(HttpUrlSchema)(value).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
     Effect.map((url) => url.origin)
   );
@@ -103,7 +103,7 @@ const parseAuthConfigFromProvider = Effect.fn(
       )
     );
   const connectionString = Redacted.value(source.databaseUrl).trim();
-  yield* Schema.decodeUnknownEffect(PostgreSqlUrlSchema)(connectionString).pipe(
+  yield* Schema.decodeEffect(PostgreSqlUrlSchema)(connectionString).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration()))
   );
   const secret = Redacted.value(source.secret).trim();

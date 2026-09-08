@@ -6,7 +6,7 @@ import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
-import { admin } from 'better-auth/plugins';
+import { admin } from 'better-auth/plugins/admin';
 import { and, eq, or } from 'drizzle-orm';
 import {
   Config,

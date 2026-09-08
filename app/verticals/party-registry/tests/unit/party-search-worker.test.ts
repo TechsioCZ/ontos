@@ -74,7 +74,7 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
         const result = yield* handle(
           {
             resourceId:
-              yield* Schema.decodeUnknownEffect(TestResourceIdSchema)('target'),
+              yield* Schema.decodeEffect(TestResourceIdSchema)('target'),
           },
           context
         ).pipe(

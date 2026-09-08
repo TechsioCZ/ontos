@@ -15,7 +15,7 @@ import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
-import { admin } from 'better-auth/plugins';
+import { admin } from 'better-auth/plugins/admin';
 import {
   Context,
   Effect,
@@ -851,10 +851,9 @@ const assembleAuthenticationService = (
     ContextAccess
   > =>
     readResolvedSession(requestHeaders).pipe(
-      Effect.flatMap((resolved) =>
-        resolved.state === 'anonymous'
-          ? Effect.fail(new InvalidCredentialsError())
-          : Effect.succeed(resolved)
+      Effect.filterOrFail(
+        (resolved) => resolved.state !== 'anonymous',
+        () => new InvalidCredentialsError()
       )
     );
 

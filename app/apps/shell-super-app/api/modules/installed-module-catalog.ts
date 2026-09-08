@@ -210,9 +210,10 @@ const readBoundedContract = Effect.fn(
   const text = yield* Effect.acquireUseRelease(
     Effect.succeed(reader),
     (bodyReader) => collectResponseBody(bodyReader, maxBytes, timeout),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign stream Promise boundary.
     (bodyReader) =>
-      Effect.promise(() => bodyReader.cancel()).pipe(Effect.ignore)
+      Effect.promise(bodyReader.cancel.bind(bodyReader, undefined)).pipe(
+        Effect.ignore
+      )
   );
   return yield* decodeContractDocument(text).pipe(
     Effect.mapError((cause) => invalid(cause))
@@ -286,10 +287,10 @@ export const makeInstalledModuleCatalogLoader = (
   let loading:
     | Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>
     | undefined;
-  const loadCatalog = Effect.all(
-    allowlist.entries.map(({ appId, contractUrl }) =>
-      fetchContract(appId, contractUrl, fetchContractDocument, options)
-    ),
+  const loadCatalog = Effect.forEach(
+    allowlist.entries,
+    ({ appId, contractUrl }) =>
+      fetchContract(appId, contractUrl, fetchContractDocument, options),
     { concurrency: 8 }
   ).pipe(
     Effect.flatMap((contracts) =>

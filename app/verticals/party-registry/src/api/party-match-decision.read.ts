@@ -75,9 +75,7 @@ export const partyMatchDecisionRead = defineRead(
         Effect.flatMap((found) =>
           Match.value(found).pipe(
             Match.tag('found', ({ value }) =>
-              Schema.decodeUnknownEffect(PartyMatchDecisionResponseSchema)(
-                value
-              ).pipe(
+              Schema.decodeEffect(PartyMatchDecisionResponseSchema)(value).pipe(
                 Effect.map((result) => ({
                   evidence: { resultCount: 1 },
                   result,

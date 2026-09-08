@@ -34,7 +34,7 @@ export type EngagementAttachProblem = Exclude<
 export const engagementProblem = {
   authentication: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsAuthenticationProblemSchema)({
+      Schema.decodeResult(ContactsAuthenticationProblemSchema)({
         _tag: 'ContactsAuthenticationProblem',
         detail: 'A valid audience-scoped Bearer assertion is required.',
         status: 401,
@@ -49,7 +49,7 @@ export const engagementProblem = {
     >['code']
   ) =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsConflictProblemSchema)({
+      Schema.decodeResult(ContactsConflictProblemSchema)({
         _tag: 'ContactsConflictProblem',
         code,
         detail:
@@ -61,7 +61,7 @@ export const engagementProblem = {
     ),
   forbidden: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsForbiddenProblemSchema)({
+      Schema.decodeResult(ContactsForbiddenProblemSchema)({
         _tag: 'ContactsForbiddenProblem',
         detail:
           'The principal is not permitted to perform this Party Registry operation.',
@@ -72,7 +72,7 @@ export const engagementProblem = {
     ),
   internal: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsInternalProblemSchema)({
+      Schema.decodeResult(ContactsInternalProblemSchema)({
         _tag: 'ContactsInternalProblem',
         detail: 'The engagement profile operation could not be completed.',
         status: 500,
@@ -82,7 +82,7 @@ export const engagementProblem = {
     ),
   invalid: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsInvalidRequestProblemSchema)({
+      Schema.decodeResult(ContactsInvalidRequestProblemSchema)({
         _tag: 'ContactsInvalidRequestProblem',
         detail: 'The engagement profile operation request is invalid.',
         status: 400,
@@ -92,7 +92,7 @@ export const engagementProblem = {
     ),
   notFound: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsNotFoundProblemSchema)({
+      Schema.decodeResult(ContactsNotFoundProblemSchema)({
         _tag: 'ContactsNotFoundProblem',
         detail: 'The requested engagement profile was not found.',
         status: 404,
@@ -102,7 +102,7 @@ export const engagementProblem = {
     ),
   precondition: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsPreconditionRequiredProblemSchema)({
+      Schema.decodeResult(ContactsPreconditionRequiredProblemSchema)({
         _tag: 'ContactsPreconditionRequiredProblem',
         detail: 'An Idempotency-Key header is required.',
         status: 428,
@@ -112,7 +112,7 @@ export const engagementProblem = {
     ),
   unavailable: () =>
     Result.getOrThrow(
-      Schema.decodeUnknownResult(ContactsUnavailableProblemSchema)({
+      Schema.decodeResult(ContactsUnavailableProblemSchema)({
         _tag: 'ContactsUnavailableProblem',
         detail: 'The engagement profile operation is temporarily unavailable.',
         retryable: true,

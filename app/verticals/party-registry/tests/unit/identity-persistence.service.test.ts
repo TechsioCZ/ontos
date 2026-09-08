@@ -46,7 +46,7 @@ const officialIdentifierId = '55555555-5555-4555-8555-555555555555';
 const instantAsDate = (instant: string): Date =>
   DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 const appliedEvidence = Result.getOrThrow(
-  Schema.decodeUnknownResult(AresAppliedEvidenceSchema)({
+  Schema.decodeResult(AresAppliedEvidenceSchema)({
     authorityPolicyKey: 'party_registry.ares_enrichment',
     authorityPolicyVersion: '1',
     cacheAgeSeconds: 0,

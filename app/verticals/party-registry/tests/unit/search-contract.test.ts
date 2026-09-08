@@ -52,16 +52,16 @@ it.effect(
   () =>
     Effect.gen(function* testScenario() {
       expect(
-        yield* Schema.decodeUnknownEffect(PartiesProviderRequestSchema)({
+        yield* Schema.decodeEffect(PartiesProviderRequestSchema)({
           includeArchived: true,
           query: '  ACME  ',
         })
       ).toEqual({ includeArchived: true, query: 'ACME' });
       expect(() =>
-        Schema.decodeUnknownSync(PartiesProviderRequestSchema)({ query: '   ' })
+        Schema.decodeSync(PartiesProviderRequestSchema)({ query: '   ' })
       ).toThrow();
       expect(() =>
-        Schema.decodeUnknownSync(PartiesProviderRequestSchema)({
+        Schema.decodeSync(PartiesProviderRequestSchema)({
           query: 'a'.repeat(201),
         })
       ).toThrow();
@@ -73,7 +73,7 @@ it.effect(
   () =>
     Effect.gen(function* testScenario() {
       expect(
-        yield* Schema.decodeUnknownEffect(CounterpartiesProviderRequestSchema)({
+        yield* Schema.decodeEffect(CounterpartiesProviderRequestSchema)({
           includeArchived: false,
           query: 'ACME',
           role: 'CUSTOMER',
@@ -92,9 +92,7 @@ it.effect(
   'Party Search result is a minimal canonical projection without PII match evidence',
   () =>
     Effect.gen(function* testScenario() {
-      const result = yield* Schema.decodeUnknownEffect(
-        PartiesProviderResponseSchema
-      )([
+      const result = yield* Schema.decodeEffect(PartiesProviderResponseSchema)([
         {
           archived: false,
           matchedViaAlias: true,
@@ -125,7 +123,7 @@ it.effect(
   () =>
     Effect.gen(function* testScenario() {
       const tenantId = '10000000-0000-4000-8000-000000000001';
-      const result = yield* Schema.decodeUnknownEffect(
+      const result = yield* Schema.decodeEffect(
         CounterpartiesProviderResponseSchema
       )([
         {

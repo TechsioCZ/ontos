@@ -208,7 +208,7 @@ it.effect(
         validTo: '2026-01-02T00:00:00.000Z',
         verification: 'VERIFIED',
       } as const;
-      const decoded = yield* Schema.decodeUnknownEffect(
+      const decoded = yield* Schema.decodeEffect(
         UpdatePartyOfficialIdentifierResultSchema
       )(wire);
       expect(Option.isSome(decoded.validTo)).toBe(true);

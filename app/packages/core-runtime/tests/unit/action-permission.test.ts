@@ -93,7 +93,7 @@ it.effect(
           SPICEDB_INSECURE: 'false',
           SPICEDB_PRESHARED_KEY: 'test-key',
         });
-        const failures = yield* Effect.all(
+        const failures = yield* Effect.forEach(
           [
             {},
             {
@@ -126,7 +126,8 @@ it.effect(
               SPICEDB_INSECURE: 'true',
               SPICEDB_PRESHARED_KEY: '   ',
             },
-          ].map((environment) => Effect.flip(parseSpiceDbConfig(environment)))
+          ],
+          (environment) => Effect.flip(parseSpiceDbConfig(environment))
         );
 
         expect(validSecure).toEqual({
@@ -152,7 +153,7 @@ it.effect(
         SPICEDB_PRESHARED_KEY: 'test-key',
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
       });
-      const rejected = yield* Effect.all(
+      const rejected = yield* Effect.forEach(
         [
           {
             SPICEDB_ENDPOINT: 'spicedb:50051',
@@ -171,7 +172,8 @@ it.effect(
             SPICEDB_PRESHARED_KEY: 'test-key',
             ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
           },
-        ].map((environment) => Effect.flip(parseSpiceDbConfig(environment)))
+        ],
+        (environment) => Effect.flip(parseSpiceDbConfig(environment))
       );
 
       expect(stage).toEqual({
@@ -309,7 +311,7 @@ it.effect(
   () =>
     Effect.gen(
       function* failsClosedForConditionalUnspecifiedMalformedAndClient() {
-        const failures = yield* Effect.all(
+        const failures = yield* Effect.forEach(
           [
             makeClient([
               response(
@@ -329,11 +331,11 @@ it.effect(
                 )
               ),
             ]),
-          ].map((client) =>
+          ],
+          (client) =>
             Effect.flip(
               makeActionPermissionService(client).checkActionPermission(input)
             )
-          )
         );
 
         for (const failure of failures) {

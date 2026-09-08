@@ -7,7 +7,7 @@ import { executeAresLookupWithAuthorization } from '../../src/api/ares-lookup-cl
 import { loadPartiesClientWithAuthorization } from '../../src/api/parties-search-client.ts';
 import { executePartyDetailWithAuthorization } from '../../src/api/party-detail-client.ts';
 
-const ico = Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)('12345678');
+const ico = Schema.decodeSync(AresSubjectLookupIcoSchema)('12345678');
 
 it.effect(
   'targets the mounted owner BFF prefix and supports a separate owner deployment',

@@ -213,9 +213,7 @@ it('#246 durable evidence retains observation and authority metadata without raw
   expect(encoded.observedAt).toBe(evidence.observedAt);
   expect(encoded.providerChangedOn).toBe(evidence.providerChangedOn);
   expect(
-    Result.getOrThrow(
-      Schema.decodeUnknownResult(AresAppliedEvidenceSchema)(encoded)
-    )
+    Result.getOrThrow(Schema.decodeResult(AresAppliedEvidenceSchema)(encoded))
   ).toEqual(durable);
 });
 

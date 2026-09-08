@@ -34,7 +34,7 @@ export const SearchRouteSearchStandard =
 const searchFromRequest = (request: Request): typeof SearchRouteSearch.Type => {
   const query = UrlParams.getFirst(Url.urlParams(new URL(request.url)), 'q');
   return Option.getOrElse(
-    Schema.decodeUnknownOption(SearchRouteSearch)(
+    Schema.decodeOption(SearchRouteSearch)(
       Option.isSome(query) ? { q: query.value } : {}
     ),
     () => ({})

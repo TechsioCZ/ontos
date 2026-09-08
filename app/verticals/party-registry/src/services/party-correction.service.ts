@@ -164,7 +164,7 @@ export const encodeStoredCorrectionReason = (
   );
 
 const decodeStoredCorrectionReason = (stored: string) =>
-  Schema.decodeUnknownEffect(StoredCorrectionReasonCodec)(stored).pipe(
+  Schema.decodeEffect(StoredCorrectionReasonCodec)(stored).pipe(
     Effect.mapError(unavailable)
   );
 
@@ -705,7 +705,7 @@ export const correctPartyFactRecord = Effect.fn(
   if (correction === undefined) {
     return yield* unavailable();
   }
-  return yield* Schema.decodeUnknownEffect(PartyCorrectionResultSchema)({
+  return yield* Schema.decodeEffect(PartyCorrectionResultSchema)({
     correctionRef: makePartyCorrectionRef(tenantId, correction.correctionId),
     factKind: command.factKind,
     followUp: classifyCorrectionRoute(command.factKind),
@@ -916,27 +916,23 @@ export const findPartyCorrection = Effect.fn(
           replacementAssertionId
         );
   const actingPrincipalId = Result.getOrThrow(
-    Schema.decodeUnknownResult(ActingPrincipalIdSchema)(row.actingPrincipalId)
+    Schema.decodeResult(ActingPrincipalIdSchema)(row.actingPrincipalId)
   );
   const actionInvocationId = Result.getOrThrow(
-    Schema.decodeUnknownResult(ActionInvocationIdSchema)(row.actionInvocationId)
+    Schema.decodeResult(ActionInvocationIdSchema)(row.actionInvocationId)
   );
   const approvingPrincipalId = Option.map(
     Option.fromNullishOr(row.approvingPrincipalId),
     (id) =>
-      Result.getOrThrow(
-        Schema.decodeUnknownResult(ApprovingPrincipalIdSchema)(id)
-      )
+      Result.getOrThrow(Schema.decodeResult(ApprovingPrincipalIdSchema)(id))
   );
   const replacementAssertionRef = Option.map(
     Option.fromNullishOr(replacementAssertionId),
     (id) =>
-      Result.getOrThrow(
-        Schema.decodeUnknownResult(ReplacementAssertionIdSchema)(id)
-      )
+      Result.getOrThrow(Schema.decodeResult(ReplacementAssertionIdSchema)(id))
   );
   const targetAssertionRef = Result.getOrThrow(
-    Schema.decodeUnknownResult(TargetAssertionIdSchema)(targetAssertionId)
+    Schema.decodeResult(TargetAssertionIdSchema)(targetAssertionId)
   );
   return {
     _tag: 'found',

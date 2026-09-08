@@ -367,7 +367,7 @@ const resolveCreateDecision = (input: {
   PartyRelationshipOverlapConflict | PartyRelationshipPersistenceUnavailable
 > =>
   Match.value(input.decision).pipe(
-    Match.tag('create', () => Effect.succeed(Option.none())),
+    Match.tag('create', () => Effect.succeedNone),
     Match.tag('overlap', (decision) =>
       Effect.fail(
         new PartyRelationshipOverlapConflict({
@@ -387,12 +387,10 @@ const resolveCreateDecision = (input: {
       );
       return reused === undefined
         ? Effect.fail(unavailable())
-        : Effect.succeed(
-            Option.some({
-              outcome: 'REUSED_EXISTING' as const,
-              relationship: storedDetail(reused, input.now),
-            })
-          );
+        : Effect.succeedSome({
+            outcome: 'REUSED_EXISTING' as const,
+            relationship: storedDetail(reused, input.now),
+          });
     }),
     Match.exhaustive
   );

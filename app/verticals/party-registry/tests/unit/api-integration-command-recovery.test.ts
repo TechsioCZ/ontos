@@ -19,7 +19,7 @@ import {
 } from '../../src/api/party-command-client.ts';
 import { makeCommandAssertionFetch } from '../support/command-assertion-fetch.ts';
 
-const invocationId = Schema.decodeUnknownSync(ActionInvocationIdSchema)(
+const invocationId = Schema.decodeSync(ActionInvocationIdSchema)(
   '10000000-0000-4000-8000-000000000001'
 );
 
@@ -87,7 +87,7 @@ for (const { name, decode, is, problem } of recoveryProblems) {
 
 it('recovery rejects an invalid invocation handle', () => {
   expect(() =>
-    Schema.decodeUnknownSync(ResolvePartyCommandCommitPayloadSchema)({
+    Schema.decodeSync(ResolvePartyCommandCommitPayloadSchema)({
       invocationId: 'invalid',
     })
   ).toThrow();

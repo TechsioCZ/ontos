@@ -87,11 +87,12 @@ it.live(
         ],
         validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
       };
-      const results = yield* Effect.all(
+      const results = yield* Effect.forEach(
         [
           'bc300000-0000-4000-8000-000000000001',
           'bc300000-0000-4000-8000-000000000002',
-        ].map((actionInvocationId) =>
+        ],
+        (actionInvocationId) =>
           scoped((transaction) =>
             createOrMatchParty(transaction, {
               actionInvocationId,
@@ -99,8 +100,7 @@ it.live(
               principalId,
               tenantId,
             })
-          )
-        ),
+          ),
         { concurrency: 'unbounded' }
       );
       expect(results.map((result) => result.outcome).toSorted()).toEqual([

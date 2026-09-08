@@ -38,9 +38,7 @@ const actionValidFrom = DateTime.makeUnsafe('2026-09-03T09:59:00.000Z');
 const partyCreatedAt = DateTime.makeUnsafe('2026-09-01T10:00:00.000Z');
 const partyUpdatedAt = DateTime.makeUnsafe('2026-09-03T10:00:00.000Z');
 const currentAssertionId = Result.getOrThrow(
-  Schema.decodeUnknownResult(AssertionIdSchema)(
-    '30000000-0000-4000-8000-000000000001'
-  )
+  Schema.decodeResult(AssertionIdSchema)('30000000-0000-4000-8000-000000000001')
 );
 const application = {
   decidedAt: confirmedAt,
@@ -94,7 +92,7 @@ const application = {
   userConfirmed: true,
 };
 const decodedObservation = Result.getOrThrow(
-  Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(application.evidence)
+  Schema.decodeResult(AresSubjectEvidenceSchema)(application.evidence)
 );
 const request: AresApplyRequest = {
   correlationId: 'ares-test-correlation',
@@ -439,13 +437,13 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))(
                 userConfirmed: true,
               },
             ];
-            const results = yield* Effect.all(
-              invalidRequests.map((invalidRequest) =>
+            const results = yield* Effect.forEach(
+              invalidRequests,
+              (invalidRequest) =>
                 applyAresObservation(invalidRequest, makeInvoker(calls), {
                   gateway,
                   reads: makeReads(),
-                }).pipe(Effect.result)
-              ),
+                }).pipe(Effect.result),
               { concurrency: 'unbounded' }
             );
             for (const result of results) {
@@ -552,14 +550,14 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))(
         evidenceSource: 'MANUAL_REVIEW',
         factKind: 'DISPLAY_NAME',
         partyId: Result.getOrThrow(
-          Schema.decodeUnknownResult(PartyIdSchema)(partyRef.resourceId)
+          Schema.decodeResult(PartyIdSchema)(partyRef.resourceId)
         ),
         policyVersion: 'party-correction.v1',
         provenance: { method: 'REVIEW', source: 'ARES' },
         reasonCode: 'WRONG_IDENTITY_VALUE',
         replacementValue: 'Example s.r.o.',
         targetAssertionId: Result.getOrThrow(
-          Schema.decodeUnknownResult(TargetAssertionIdSchema)(
+          Schema.decodeResult(TargetAssertionIdSchema)(
             '30000000-0000-4000-8000-000000000001'
           )
         ),

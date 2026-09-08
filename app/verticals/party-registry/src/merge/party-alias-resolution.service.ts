@@ -142,19 +142,19 @@ export const makePartyAliasResolutionService = (
   return PartyAliasResolution.of({
     requireCanonicalWriteTarget: (tenantId, requestedPartyId) =>
       resolvePartyAlias(tenantId, requestedPartyId).pipe(
-        Effect.flatMap((resolution) =>
-          resolution.wasAlias
-            ? new PartyAliasWriteRejected({
-                aliasPartyRef: partyRef(tenantId, requestedPartyId),
-                canonicalPartyRef: partyRef(
-                  tenantId,
-                  resolution.canonicalPartyId
-                ),
-                code: 'party_alias_write_rejected',
-                reason:
-                  'New writes must explicitly target the canonical survivor Party',
-              })
-            : Effect.succeed(resolution)
+        Effect.filterOrFail(
+          (resolution) => !resolution.wasAlias,
+          (resolution) =>
+            new PartyAliasWriteRejected({
+              aliasPartyRef: partyRef(tenantId, requestedPartyId),
+              canonicalPartyRef: partyRef(
+                tenantId,
+                resolution.canonicalPartyId
+              ),
+              code: 'party_alias_write_rejected',
+              reason:
+                'New writes must explicitly target the canonical survivor Party',
+            })
         )
       ),
     resolvePartyAlias,

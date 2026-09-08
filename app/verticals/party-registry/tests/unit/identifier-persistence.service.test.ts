@@ -135,10 +135,9 @@ const harness = (
   const insert = (table: HarnessTable) => ({
     values: (values: Readonly<Record<string, unknown>>) => {
       inserts.push({ table, values });
-      return Object.assign(
-        Effect.sync(() => null),
-        { returning: () => Effect.succeed([{ ...current, ...values }]) }
-      );
+      return Object.assign(Effect.succeed(null), {
+        returning: () => Effect.succeed([{ ...current, ...values }]),
+      });
     },
   });
   // SAFETY: this harness implements precisely the Drizzle fluent operations used by the tested service.
@@ -209,7 +208,7 @@ it.effect(
         reasonCode: 'authoritative_ico',
         servedAt: '2026-01-01T00:00:00.000Z',
       } as const;
-      const externalEvidence = yield* Schema.decodeUnknownEffect(
+      const externalEvidence = yield* Schema.decodeEffect(
         AresAppliedEvidenceSchema
       )(externalEvidenceWire);
       yield* Effect.all(
@@ -417,11 +416,12 @@ it.effect(
 it.effect(
   'archived Party and stale verification updates are rejected before mutation',
   () =>
-    Effect.all(
+    Effect.forEach(
       [
         harness({ archived: true }),
         harness({ current: row({ verificationState: 'REJECTED' }) }),
-      ].map((db) =>
+      ],
+      (db) =>
         Effect.gen(function* verifyCase11() {
           const result = yield* updateOfficialIdentifierVerificationRecord(
             db.transaction,
@@ -432,6 +432,5 @@ it.effect(
           expect(Predicate.isTagged(result, 'conflict')).toBe(true);
           expect(db.updates.length).toBe(0);
         })
-      )
     )
 );

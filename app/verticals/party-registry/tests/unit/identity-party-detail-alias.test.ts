@@ -28,7 +28,7 @@ const canonicalPartyWire = {
   updatedAt: '2026-09-03T10:00:00.000Z',
 } as const;
 const canonicalParty: Party =
-  Schema.decodeUnknownSync(PartySchema)(canonicalPartyWire);
+  Schema.decodeSync(PartySchema)(canonicalPartyWire);
 const alias = (
   aliasPartyId: string,
   canonicalPartyId: string
@@ -114,7 +114,7 @@ it.effect(
   () =>
     Effect.gen(function* verifyPartyDetail2() {
       const archivedAt = '2026-09-02T10:00:00.000Z';
-      const archivedParty = yield* Schema.decodeUnknownEffect(PartySchema)({
+      const archivedParty = yield* Schema.decodeEffect(PartySchema)({
         ...canonicalPartyWire,
         archivedAt,
       });

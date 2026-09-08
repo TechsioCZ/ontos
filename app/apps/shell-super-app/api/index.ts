@@ -36,7 +36,6 @@ import type { GatewayContextProblem } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
 import {
   Cookies,
-  Effect,
   HttpApiBuilder,
   HttpEffect,
   HttpServerResponse,
@@ -48,6 +47,7 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import {
   Cause,
+  Effect,
   Exit,
   Logger,
   Match,
@@ -1590,8 +1590,9 @@ const identityGroupLive = HttpApiBuilder.group(
                   pipe(error, identityProblem, failIdentityProblem)
                 )
               );
-            const items = yield* Effect.all(
-              result.items.map((binding) =>
+            const items = yield* Effect.forEach(
+              result.items,
+              (binding) =>
                 resolver
                   .loadApiKeyBindingForAdministration({
                     authBindingId: binding.authBindingId,
@@ -1622,8 +1623,7 @@ const identityGroupLive = HttpApiBuilder.group(
                     Effect.catch((error) =>
                       pipe(error, identityProblem, failIdentityProblem)
                     )
-                  )
-              ),
+                  ),
               { concurrency: 1 }
             );
             return yield* decodeResponse(
@@ -1681,8 +1681,9 @@ const identityGroupLive = HttpApiBuilder.group(
                   pipe(error, identityProblem, failIdentityProblem)
                 )
               );
-            const items = yield* Effect.all(
-              result.items.map((item) => {
+            const items = yield* Effect.forEach(
+              result.items,
+              Effect.fn(function* loadManagedApiKey(item) {
                 const authBindingId = Option.getOrNull(item.authBindingId);
                 if (authBindingId === null) {
                   const withoutKey = {
@@ -1692,9 +1693,9 @@ const identityGroupLive = HttpApiBuilder.group(
                     principalId: item.principalId,
                     principalStatus: item.principalStatus,
                   };
-                  return Effect.succeed(withoutKey);
+                  return withoutKey;
                 }
-                return resolver
+                return yield* resolver
                   .loadApiKeyBindingForAdministration({
                     authBindingId,
                     principalId: item.principalId,

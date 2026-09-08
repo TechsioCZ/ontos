@@ -341,9 +341,11 @@ it.effect(
         registration,
       });
       const assertDecodedPayloadInput = () =>
-        // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
         handler({
-          payload: { query: 123 },
+          payload: {
+            // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
+            query: 123,
+          },
           request: { headers: Headers.empty },
         });
       void assertDecodedPayloadInput;

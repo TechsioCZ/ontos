@@ -131,7 +131,7 @@
     "jsonc-parser": "3.3.1",
     "fallow": "3.22.0",
     "@vercel/nft": "0.29.2",
-    "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12",
+    "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.2",
     "@modern-js/ultramodern-create": "npm:@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.2",
     "cross-env": "10.1.0",
     "@effect/opentelemetry": "4.0.0-rc.112",

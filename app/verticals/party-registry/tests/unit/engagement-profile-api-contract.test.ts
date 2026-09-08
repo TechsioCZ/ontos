@@ -51,14 +51,12 @@ it.effect('attach contracts accept only public Party Registry refs', () =>
   Effect.gen(function* decodeContracts() {
     const payload = { counterpartyRef, partyRef };
     expect(
-      yield* Schema.decodeUnknownEffect(
-        AttachOrganizationEngagementPayloadSchema
-      )(payload)
-    ).toEqual(payload);
-    expect(
-      yield* Schema.decodeUnknownEffect(AttachPersonEngagementPayloadSchema)(
+      yield* Schema.decodeEffect(AttachOrganizationEngagementPayloadSchema)(
         payload
       )
+    ).toEqual(payload);
+    expect(
+      yield* Schema.decodeEffect(AttachPersonEngagementPayloadSchema)(payload)
     ).toEqual(payload);
 
     for (const schema of [
@@ -66,7 +64,7 @@ it.effect('attach contracts accept only public Party Registry refs', () =>
       AttachPersonEngagementPayloadSchema,
     ] as const) {
       expect(
-        yield* Schema.decodeUnknownEffect(schema, {
+        yield* Schema.decodeEffect(schema, {
           onExcessProperty: 'error',
         })({ partyRef })
       ).toEqual({ partyRef });
@@ -160,9 +158,7 @@ it.effect(
           .operationId
       );
       expect(
-        yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(Schema.Unknown)
-        )(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
           mutationRequest?.headers.get('x-modernjs-bff-operation-context') ?? ''
         )
       ).toEqual(

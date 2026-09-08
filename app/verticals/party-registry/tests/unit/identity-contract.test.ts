@@ -25,7 +25,7 @@ it('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identity
   }
   expect(() => decode(PartyTypeSchema)('OTHER')).toThrow();
   expect(() =>
-    decode(PartyCandidateSchema)({
+    Schema.decodeSync(PartyCandidateSchema)({
       displayName: '   ',
       evidenceRefs: [],
       officialIdentifiers: [],
@@ -44,8 +44,10 @@ it('Party Type update is enrichment-only; cross-kind changes require Correction'
 });
 
 it('identity timestamps decode to canonical UTC values', () => {
-  expect(() => decode(IsoTimestampSchema)('not-a-timestamp')).toThrow();
-  const leapDay = decode(IsoTimestampSchema)('2024-02-29T00:00:00Z');
+  expect(() =>
+    Schema.decodeSync(IsoTimestampSchema)('not-a-timestamp')
+  ).toThrow();
+  const leapDay = Schema.decodeSync(IsoTimestampSchema)('2024-02-29T00:00:00Z');
   expect(DateTime.formatIso(leapDay)).toBe('2024-02-29T00:00:00.000Z');
 });
 
@@ -65,7 +67,7 @@ it.effect(
         revision: 1,
         updatedAt: '2026-01-01T00:00:00.000Z',
       };
-      const decoded = decode(PartySchema)(encoded);
+      const decoded = yield* Schema.decodeEffect(PartySchema)(encoded);
 
       expect(Option.isNone(decoded.archivedAt)).toBe(true);
       expect(Option.isNone(decoded.displayName)).toBe(true);
@@ -83,7 +85,7 @@ it.effect(
       };
       expect(
         yield* Schema.encodeEffect(PartySchema)(
-          decode(PartySchema)(presentEncoded)
+          yield* Schema.decodeEffect(PartySchema)(presentEncoded)
         )
       ).toEqual(presentEncoded);
     })
@@ -106,7 +108,8 @@ it.effect(
         provenance: { method: 'IMPORT', source: 'official-register' },
         validFrom: '2026-01-01T00:00:00.000Z',
       };
-      const candidate = decode(PartyCandidateSchema)(encoded);
+      const candidate =
+        yield* Schema.decodeUnknownEffect(PartyCandidateSchema)(encoded);
       expect(candidate.displayName).toBe(undefined);
       expect(candidate.officialIdentifiers.length).toBe(1);
       expect(

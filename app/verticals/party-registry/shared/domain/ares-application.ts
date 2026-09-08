@@ -185,7 +185,7 @@ export const aresRegisteredAddressMatches = (
   const address = Schema.is(AresRegisteredAddressSchema)(observed)
     ? observed
     : Result.getOrThrow(
-        Schema.decodeUnknownResult(AresRegisteredAddressSchema)(observed)
+        Schema.decodeResult(AresRegisteredAddressSchema)(observed)
       );
   const houseNumber = [
     Option.getOrNull(address.buildingNumber),
@@ -245,7 +245,7 @@ export const prefillPartyCandidateFromAres = (
   input: typeof AresSubjectEvidenceSchema.Encoded
 ): PartyCandidate => {
   const evidence = Result.getOrThrow(
-    Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(input)
+    Schema.decodeResult(AresSubjectEvidenceSchema)(input)
   );
   const candidate: PartyCandidate = {
     evidenceRefs: [
@@ -298,7 +298,7 @@ const acceptedEvidenceConflicts = (
     Schema.is(AresAppliedEvidenceSchema)(acceptedInput)
       ? acceptedInput
       : Result.getOrUndefined(
-          Schema.decodeUnknownResult(AresAppliedEvidenceSchema)(acceptedInput)
+          Schema.decodeResult(AresAppliedEvidenceSchema)(acceptedInput)
         );
   return (
     accepted !== null &&
@@ -489,13 +489,13 @@ export const deriveAresEvidenceApplication = (
   input: AresDecisionInput
 ): AresEvidenceApplication => {
   const evidence = Result.getOrThrow(
-    Schema.decodeUnknownResult(AresSubjectEvidenceSchema)(input.evidence)
+    Schema.decodeResult(AresSubjectEvidenceSchema)(input.evidence)
   );
   const decidedAt = Result.getOrThrow(
-    Schema.decodeUnknownResult(AresIsoTimestampSchema)(input.decidedAt)
+    Schema.decodeResult(AresIsoTimestampSchema)(input.decidedAt)
   );
   const selectedFacts = Result.getOrThrow(
-    Schema.decodeUnknownResult(
+    Schema.decodeResult(
       Schema.Array(AresSelectedFactSchema).check(
         Schema.isMinLength(1),
         Schema.isMaxLength(4),
@@ -558,7 +558,7 @@ export const deriveAresEvidenceApplication = (
       decisions.some((decision) => decision.outcome === candidate)
     ) ?? 'NO_CHANGE';
   return Result.getOrThrow(
-    Schema.decodeUnknownResult(Schema.toType(AresEvidenceApplicationSchema))({
+    Schema.decodeResult(Schema.toType(AresEvidenceApplicationSchema))({
       decidedAt,
       evidence,
       factDecisions: decisions,

@@ -238,7 +238,7 @@ const loadState = (
           return Effect.succeed(Option.none<TenantModuleState>());
         }
         return unexpected.length === 0 && record.moduleKey === moduleId
-          ? Effect.succeed(Option.some(record.state))
+          ? Effect.succeedSome(record.state)
           : Effect.fail(unavailable());
       })
     );

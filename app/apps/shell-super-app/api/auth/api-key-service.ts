@@ -231,7 +231,7 @@ const decodePendingBindingMarker = (
     return undefined;
   }
   return Option.getOrUndefined(
-    Schema.decodeUnknownOption(PendingBindingMarkerJson)(metadata)
+    Schema.decodeOption(PendingBindingMarkerJson)(metadata)
   );
 };
 export const classifyPendingApiKeyCleanup = (

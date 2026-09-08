@@ -115,7 +115,7 @@ const LoginPage = () => {
     }
 
     formData.set('login', loginValue.trim());
-    const credentials = Schema.decodeUnknownOption(SignInFormSchema)(formData);
+    const credentials = Schema.decodeOption(SignInFormSchema)(formData);
     if (Option.isNone(credentials)) {
       toaster.create({
         description: t(internalErrorMessageKey),

@@ -33,7 +33,7 @@ const wireFact = {
   validTo: null,
   value: 'Corrected name',
 } as const;
-const fact = Schema.decodeUnknownSync(PartyFactAssertionSchema)(wireFact);
+const fact = Schema.decodeSync(PartyFactAssertionSchema)(wireFact);
 
 it.effect(
   'Party fact assertion contract exposes usable correction identities without sensitive evidence',
@@ -43,7 +43,7 @@ it.effect(
         yield* Schema.encodeEffect(PartyFactAssertionSchema)(fact)
       ).toEqual(wireFact);
       expect(() =>
-        Schema.decodeUnknownSync(PartyFactAssertionSchema)({
+        Schema.decodeSync(PartyFactAssertionSchema)({
           ...wireFact,
           assertionId: 'not-a-uuid',
         })
@@ -172,7 +172,7 @@ it.effect(
           find: () =>
             Effect.succeed({
               _tag: 'found' as const,
-              value: Schema.decodeUnknownSync(PartySchema)({
+              value: Schema.decodeSync(PartySchema)({
                 archivedAt: null,
                 createdAt: '2026-09-01T10:00:00.000Z',
                 displayName: 'Corrected name',

@@ -17,7 +17,7 @@ import {
 const decode = Schema.decodeUnknownSync;
 
 it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
-  const ico = decode(OfficialIdentifierInputSchema)({
+  const ico = Schema.decodeSync(OfficialIdentifierInputSchema)({
     identifierType: 'ICO',
     value: '27074358',
     verification: 'VERIFIED',
@@ -25,7 +25,7 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
   expect(normalizeOfficialIdentifier(ico).normalizedValue).toBe('27074358');
   expect(normalizeOfficialIdentifier(ico).namespace).toBe('CZ:ICO');
 
-  const legacyShortIco = decode(OfficialIdentifierInputSchema)({
+  const legacyShortIco = Schema.decodeSync(OfficialIdentifierInputSchema)({
     identifierType: 'ICO',
     value: '1000004',
     verification: 'VERIFIED',
@@ -34,7 +34,7 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
     '01000004'
   );
 
-  const dic = decode(OfficialIdentifierInputSchema)({
+  const dic = Schema.decodeSync(OfficialIdentifierInputSchema)({
     identifierType: 'CZ_DIC',
     value: 'cz27074358',
     verification: 'VERIFIED',
@@ -52,7 +52,7 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
   ).toThrow();
 
   expect(() =>
-    decode(OfficialIdentifierInputSchema)({
+    Schema.decodeSync(OfficialIdentifierInputSchema)({
       identifierType: 'ICO',
       value: '270 74 358',
       verification: 'VERIFIED',
@@ -159,7 +159,7 @@ it('Identifier Update is a closed evidence-backed metadata or validity command, 
     decode(UpdatePartyOfficialIdentifierPayloadSchema)(command).change.type
   ).toBe('SET_VERIFICATION');
   expect(
-    decode(UpdatePartyOfficialIdentifierPayloadSchema)({
+    Schema.decodeSync(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       change: { type: 'END_VALIDITY', validTo: '2026-01-01T00:00:00.000Z' },
     }).change.type

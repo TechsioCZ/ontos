@@ -1593,7 +1593,7 @@ const testProgram11 = () =>
       expect(secondCompleted).toBe(false);
 
       yield* Deferred.succeed(firstCommitRelease, null);
-      yield* Effect.all([first, second].map(Fiber.join), {
+      yield* Effect.forEach([first, second], Fiber.join, {
         concurrency: 'unbounded',
       });
 

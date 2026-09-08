@@ -513,7 +513,7 @@ export const recoverPartyCreate = (
     if (resolution.state !== 'COMMITTED') {
       return { _tag: 'PartyCreateRecoveryPending' as const, resolution };
     }
-    const actionInvocationId = yield* Schema.decodeUnknownEffect(
+    const actionInvocationId = yield* Schema.decodeEffect(
       ActionInvocationIdSchema
     )(payload.invocationId);
     const decision = yield* invoke(options, (authorization) =>

@@ -115,7 +115,7 @@ const archivePayload = {
   reason: 'No longer active',
 };
 
-const archivedParty = Schema.decodeUnknownSync(PartySchema)({
+const archivedParty = Schema.decodeSync(PartySchema)({
   archivedAt: '2026-09-01T00:00:00.000Z',
   createdAt: '2026-09-01T00:00:00.000Z',
   displayName: 'Example organization',
@@ -2022,7 +2022,7 @@ it.live(
                   reason: 'No persisted decision',
                 });
               }
-              return yield* Schema.decodeUnknownEffect(
+              return yield* Schema.decodeEffect(
                 input.registration.descriptor.resultSchema
               )(decision).pipe(
                 Effect.mapError(

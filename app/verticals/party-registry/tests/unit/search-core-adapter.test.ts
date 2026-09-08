@@ -19,7 +19,7 @@ const counterpartyRef = (resourceId: string) => ({
   resourceType: 'party.registry.counterparty',
   tenantId,
 });
-const partyAliasHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
+const partyAliasHit = Schema.decodeSync(CoreSearchProjectionHitSchema)({
   archived: false,
   facets: [],
   matchedRef: partyRef('absorbed'),
@@ -27,34 +27,30 @@ const partyAliasHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)({
   ref: partyRef('survivor'),
   title: 'ACME',
 });
-const counterpartyHit = Schema.decodeUnknownSync(CoreSearchProjectionHitSchema)(
-  {
-    archived: false,
-    facets: [],
-    matchedSubjectRef: partyRef('absorbed'),
-    metadata: [],
-    ref: counterpartyRef('cp-1'),
-    selectedLegalEntityId: legalEntityId,
-    subjectRef: partyRef('survivor'),
-    temporalFacets: [
-      {
-        key: 'current-role',
-        validFrom: '2026-01-01T00:00:00.000Z',
-        validTo: '2027-01-01T00:00:00.000Z',
-        value: 'CUSTOMER',
-      },
-      {
-        key: 'ignored-business-facet',
-        validFrom: '2026-01-01T00:00:00.000Z',
-        value: 'IGNORED',
-      },
-    ],
-    title: 'ACME',
-  }
-);
-const wrongResourceHit = Schema.decodeUnknownSync(
-  CoreSearchProjectionHitSchema
-)({
+const counterpartyHit = Schema.decodeSync(CoreSearchProjectionHitSchema)({
+  archived: false,
+  facets: [],
+  matchedSubjectRef: partyRef('absorbed'),
+  metadata: [],
+  ref: counterpartyRef('cp-1'),
+  selectedLegalEntityId: legalEntityId,
+  subjectRef: partyRef('survivor'),
+  temporalFacets: [
+    {
+      key: 'current-role',
+      validFrom: '2026-01-01T00:00:00.000Z',
+      validTo: '2027-01-01T00:00:00.000Z',
+      value: 'CUSTOMER',
+    },
+    {
+      key: 'ignored-business-facet',
+      validFrom: '2026-01-01T00:00:00.000Z',
+      value: 'IGNORED',
+    },
+  ],
+  title: 'ACME',
+});
+const wrongResourceHit = Schema.decodeSync(CoreSearchProjectionHitSchema)({
   archived: false,
   facets: [],
   metadata: [],

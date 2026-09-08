@@ -125,7 +125,7 @@ const provenanceDto = Effect.fn(
   const externalEvidence =
     row.externalEvidence === null
       ? undefined
-      : yield* Schema.decodeUnknownEffect(AresAppliedEvidenceSchema)(
+      : yield* Schema.decodeEffect(AresAppliedEvidenceSchema)(
           row.externalEvidence
         ).pipe(Effect.mapError(unavailable));
   return {
@@ -675,12 +675,9 @@ export const addContactPointRecord = Effect.fn(
   command: AddContactPointCommand,
   aliases: AliasOperations = transactionAliasService(transaction)
 ) {
-  const contactPoint = yield* Schema.decodeUnknownEffect(
-    ContactPointInputSchema,
-    {
-      onExcessProperty: 'error',
-    }
-  )(command.contactPoint).pipe(
+  const contactPoint = yield* Schema.decodeEffect(ContactPointInputSchema, {
+    onExcessProperty: 'error',
+  })(command.contactPoint).pipe(
     Effect.mapError((cause) =>
       Object.assign(
         new PartyContactPointInvalid({

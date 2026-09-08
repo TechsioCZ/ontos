@@ -16,7 +16,7 @@ import { betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { parseCookies, SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
-import { admin } from 'better-auth/plugins';
+import { admin } from 'better-auth/plugins/admin';
 import { asc, eq } from 'drizzle-orm';
 import type { Duration } from 'effect';
 import {

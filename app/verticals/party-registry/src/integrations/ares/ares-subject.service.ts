@@ -305,9 +305,7 @@ const decodeSubject = (
           Object.values(mappedAddress).every((value) => value === null)
             ? null
             : mappedAddress;
-        const evidence = yield* Schema.decodeUnknownEffect(
-          AresSubjectEvidenceSchema
-        )({
+        const evidence = yield* Schema.decodeEffect(AresSubjectEvidenceSchema)({
           cacheAgeSeconds: 0,
           observedAt: observedAtIso,
           provider: 'ares',
@@ -376,7 +374,7 @@ const makeAresSubjectService = Effect.gen(
     });
     return {
       subject: (input) =>
-        Schema.decodeUnknownEffect(AresSubjectLookupIcoSchema)(input.ico).pipe(
+        Schema.decodeEffect(AresSubjectLookupIcoSchema)(input.ico).pipe(
           Effect.mapError(invalidIco),
           Effect.flatMap((ico) =>
             Cache.get(cache, ico).pipe(

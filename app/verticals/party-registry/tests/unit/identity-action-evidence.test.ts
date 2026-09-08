@@ -27,7 +27,7 @@ const scope = {
   principalId: '44444444-4444-4444-8444-444444444444',
   tenantId,
 };
-const party = Schema.decodeUnknownSync(PartySchema)({
+const party = Schema.decodeSync(PartySchema)({
   archivedAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   displayName: 'Example organization',

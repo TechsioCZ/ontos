@@ -51,20 +51,18 @@ it.effect(
       const cycle = makePartyAliasResolutionService(
         lookup({
           findAlias: (_requestedTenantId, aliasPartyId) =>
-            Effect.succeed(
-              Option.some(
-                aliasPartyId === 'party-a'
-                  ? {
-                      aliasPartyId: 'party-a',
-                      canonicalPartyId: 'party-b',
-                      tenantId,
-                    }
-                  : {
-                      aliasPartyId: 'party-b',
-                      canonicalPartyId: 'party-a',
-                      tenantId,
-                    }
-              )
+            Effect.succeedSome(
+              aliasPartyId === 'party-a'
+                ? {
+                    aliasPartyId: 'party-a',
+                    canonicalPartyId: 'party-b',
+                    tenantId,
+                  }
+                : {
+                    aliasPartyId: 'party-b',
+                    canonicalPartyId: 'party-a',
+                    tenantId,
+                  }
             ),
         })
       );
@@ -78,13 +76,11 @@ it.effect(
       const crossTenant = makePartyAliasResolutionService(
         lookup({
           findAlias: () =>
-            Effect.succeed(
-              Option.some({
-                aliasPartyId: 'party-b',
-                canonicalPartyId: 'party-a',
-                tenantId: '22222222-2222-4222-8222-222222222222',
-              })
-            ),
+            Effect.succeedSome({
+              aliasPartyId: 'party-b',
+              canonicalPartyId: 'party-a',
+              tenantId: '22222222-2222-4222-8222-222222222222',
+            }),
         })
       );
       const crossTenantError = yield* Effect.flip(
@@ -96,7 +92,7 @@ it.effect(
 
       const broken = makePartyAliasResolutionService(
         lookup({
-          findAlias: () => Effect.succeed(Option.none()),
+          findAlias: () => Effect.succeedNone,
           partyExists: () => Effect.succeed(false),
         })
       );

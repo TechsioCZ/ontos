@@ -313,9 +313,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(
                     })
                   );
                 }
-                return Schema.decodeUnknownEffect(
-                  GovernedResolvedModuleTargetSchema
-                )({
+                return Schema.decodeEffect(GovernedResolvedModuleTargetSchema)({
                   appId: resolution.appId,
                   componentKey: resolution.page.componentKey,
                   entrypointKey: resolution.page.entrypoint.entrypointKey,

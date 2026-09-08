@@ -165,7 +165,7 @@ it.effect(
         if (target === undefined) {
           throw new Error('Expected target to be defined');
         }
-        const correctionPayload = yield* Schema.decodeUnknownEffect(
+        const correctionPayload = yield* Schema.decodeEffect(
           CorrectPartyFactPayloadSchema
         )({
           evidenceRefs: ['document:reviewed-error'],

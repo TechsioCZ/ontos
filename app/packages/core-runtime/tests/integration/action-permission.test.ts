@@ -40,12 +40,13 @@ import {
   makeFaultInjectableCoreDatabase,
   TestQueryHook,
 } from '../support/database-faults.ts';
+import { TestWriteError } from '../support/permission-write-error.ts';
 
-class TestWriteError extends Schema.TaggedError<TestWriteError>()(
-  'TestWriteError',
-  {
-    reason: Schema.String,
-  }
+class PermissionAdmin extends Context.Service<
+  PermissionAdmin,
+  ReturnType<typeof v1.NewClient>
+>()(
+  '@app/core-runtime/tests/integration/action-permission.test/PermissionAdmin'
 ) {}
 
 const suiteId = randomUUID();
@@ -247,9 +248,6 @@ const registration = (
     (transaction) => Effect.succeed({ transaction })
   );
 
-const PermissionAdmin = Context.Service<ReturnType<typeof v1.NewClient>>(
-  '@app/core-runtime/tests/integration/action-permission.test/PermissionAdmin'
-);
 const PermissionFixture = Layer.effect(
   PermissionAdmin,
   Effect.gen(function* integrationProgram1() {

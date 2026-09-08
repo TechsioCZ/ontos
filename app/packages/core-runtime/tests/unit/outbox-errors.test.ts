@@ -40,7 +40,7 @@ const checkErrorContract = <Failure extends Cause.YieldableError>(
       Effect.gen(function* errorContract() {
         expect(Schema.is(schema)(failure)).toBeTruthy();
         expect(yield* Schema.encodeEffect(schema)(failure)).toEqual(encoded);
-        const decoded = yield* Schema.decodeUnknownEffect(schema)(encoded);
+        const decoded = yield* Schema.decodeEffect(schema)(encoded);
         expect(Schema.is(schema)(decoded)).toBeTruthy();
         expect(yield* Schema.encodeEffect(schema)(decoded)).toEqual(encoded);
         for (const otherSchema of errorSchemas) {
@@ -52,10 +52,10 @@ const checkErrorContract = <Failure extends Cause.YieldableError>(
           );
         }
         expect(() =>
-          Schema.decodeUnknownSync(schema)({ ...encoded, _tag: 'WrongError' })
+          Schema.decodeSync(schema)({ ...encoded, _tag: 'WrongError' })
         ).toThrow();
         expect(() =>
-          Schema.decodeUnknownSync(schema)({ ...encoded, code: 'wrong_code' })
+          Schema.decodeSync(schema)({ ...encoded, code: 'wrong_code' })
         ).toThrow();
         expect(() =>
           Schema.decodeUnknownSync(schema)({ ...encoded, reason: 42 })
@@ -178,7 +178,7 @@ it('persistence errors keep the original cause private and immutable', () => {
   });
   expect(
     Object.hasOwn(
-      Schema.decodeUnknownSync(OutboxPersistenceError)(encoded),
+      Schema.decodeSync(OutboxPersistenceError)(encoded),
       'ontosOutboxPersistenceCause'
     )
   ).toBe(false);

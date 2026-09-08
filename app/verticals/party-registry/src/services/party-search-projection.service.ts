@@ -165,7 +165,7 @@ export const buildPartySearchDocuments = Effect.fn(
       ) {
         return Effect.fail(unavailable());
       }
-      return Schema.decodeUnknownEffect(CoreSearchProjectionDocumentSchema)({
+      return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)({
         ...common,
         aliases: aliasEvidence(party, 'resource'),
         archived: party.archived,
@@ -197,7 +197,7 @@ export const buildPartySearchDocuments = Effect.fn(
       ) {
         return Effect.fail(unavailable());
       }
-      return Schema.decodeUnknownEffect(CoreSearchProjectionDocumentSchema)({
+      return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)({
         ...common,
         aliases: aliasEvidence(party, 'subject'),
         archived: party.archived,
@@ -288,7 +288,7 @@ export const makePartySearchProjector = (
       yield* Effect.forEach(
         snapshot.removedRefs,
         (ref) =>
-          Schema.decodeUnknownEffect(CoreSearchProjectionMutationSchema)({
+          Schema.decodeEffect(CoreSearchProjectionMutationSchema)({
             kind: 'delete',
             projectionVersion: snapshot.projectionVersion,
             ref,

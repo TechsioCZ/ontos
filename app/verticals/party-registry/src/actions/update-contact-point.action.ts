@@ -294,12 +294,12 @@ export const updateContactPointAction = defineAction(
     Effect.succeed({
       update: (command: UpdateContactPointCommand) =>
         updateContactPointRecord(transaction, scope, command).pipe(
-          Effect.flatMap((contactPoint) =>
-            Schema.is(PartyContactPointSchema)(contactPoint)
-              ? Effect.succeed(contactPoint)
-              : Schema.decodeUnknownEffect(PartyContactPointSchema)(
-                  contactPoint
-                ).pipe(Effect.mapError(persistenceUnavailable))
+          Effect.filterOrElse(
+            Schema.is(PartyContactPointSchema),
+            (contactPoint) =>
+              Schema.decodeUnknownEffect(PartyContactPointSchema)(
+                contactPoint
+              ).pipe(Effect.mapError(persistenceUnavailable))
           )
         ),
     })

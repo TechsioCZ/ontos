@@ -43,7 +43,7 @@ const presentInstant = (value: string) => Option.some(instant(value));
 it.effect('the production catalog contains only CONTACT_PERSON_OF', () =>
   Effect.gen(function* schemaContract1() {
     expect(
-      yield* Schema.decodeUnknownEffect(PartyRelationshipTypeSchema)(
+      yield* Schema.decodeEffect(PartyRelationshipTypeSchema)(
         'CONTACT_PERSON_OF'
       )
     ).toBe(ContactPersonOfRelationshipType);
@@ -67,21 +67,19 @@ it.effect(
         validFrom: '2026-09-01T10:00:00.000Z',
         validTo: null,
       } as const;
-      const decoded = yield* Schema.decodeUnknownEffect(
+      const decoded = yield* Schema.decodeEffect(
         CreatePartyRelationshipPayloadSchema
       )(payload);
       expect(decoded.relationshipType).toBe('CONTACT_PERSON_OF');
       expect(() =>
-        Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
+        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
           ...payload,
           toPartyRef: fromPartyRef,
         })
       ).toThrow();
       expect(
         Option.isNone(
-          (yield* Schema.decodeUnknownEffect(
-            CreatePartyRelationshipPayloadSchema
-          )({
+          (yield* Schema.decodeEffect(CreatePartyRelationshipPayloadSchema)({
             ...payload,
             validFrom: null,
           })).validFrom
@@ -91,19 +89,19 @@ it.effect(
         payload.validFrom
       );
       expect(() =>
-        Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
+        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
           ...payload,
           validTo: '2026-09-01T10:00:00.000Z',
         })
       ).toThrow();
       expect(() =>
-        Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
+        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
           ...payload,
           validFrom: '2026-02-30T10:00:00.000Z',
         })
       ).toThrow();
       expect(() =>
-        Schema.decodeUnknownSync(CreatePartyRelationshipPayloadSchema)({
+        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
           ...payload,
           validFrom: '2026-09-01T10:00:00Z',
         })
@@ -123,7 +121,7 @@ it.effect(
         validFrom: null,
         validTo: '2026-09-01T10:00:00.000Z',
       };
-      const decoded = yield* Schema.decodeUnknownEffect(
+      const decoded = yield* Schema.decodeEffect(
         CreatePartyRelationshipPayloadSchema
       )({
         ...wire,
@@ -137,7 +135,7 @@ it.effect(
         ...wire,
         validTo: null,
       });
-      const updated = yield* Schema.decodeUnknownEffect(
+      const updated = yield* Schema.decodeEffect(
         UpdatePartyRelationshipPayloadSchema
       )({
         changeReason: 'Clarified end',
@@ -167,7 +165,7 @@ it.effect(
   'update cannot accept endpoint or relationship type mutation fields',
   () =>
     Effect.gen(function* schemaContract4() {
-      const decoded = yield* Schema.decodeUnknownEffect(
+      const decoded = yield* Schema.decodeEffect(
         UpdatePartyRelationshipPayloadSchema,
         {
           onExcessProperty: 'error',
@@ -187,7 +185,7 @@ it.effect(
         'relationshipType',
       ]) {
         expect(() =>
-          Schema.decodeUnknownSync(UpdatePartyRelationshipPayloadSchema, {
+          Schema.decodeSync(UpdatePartyRelationshipPayloadSchema, {
             onExcessProperty: 'error',
           })({
             changeReason: 'The planned assignment was extended',
@@ -207,7 +205,7 @@ it.effect(
   'end requires effective time, provenance, and revision without inventing a generic reason',
   () =>
     Effect.gen(function* schemaContract5() {
-      const decoded = yield* Schema.decodeUnknownEffect(
+      const decoded = yield* Schema.decodeEffect(
         EndPartyRelationshipPayloadSchema
       )({
         effectiveAt: '2026-09-02T10:00:00.000Z',
@@ -218,7 +216,7 @@ it.effect(
       });
       expect(decoded.expectedRevision).toBe(3);
       expect(
-        (yield* Schema.decodeUnknownEffect(EndPartyRelationshipPayloadSchema)({
+        (yield* Schema.decodeEffect(EndPartyRelationshipPayloadSchema)({
           effectiveAt: '2026-09-02T10:00:00.000Z',
           expectedRevision: 3,
           provenance,

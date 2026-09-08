@@ -90,9 +90,7 @@ it('matching decision JSON keeps nullable and optional wire fields compatible', 
     outcome: 'NO_MATCH' as const,
     partyRef: null,
   };
-  const decoded = Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(
-    record
-  );
+  const decoded = Schema.decodeSync(PartyMatchDecisionRecordSchema)(record);
   const encoded = Schema.encodeUnknownSync(
     Schema.toCodecJson(PartyMatchDecisionRecordSchema)
   )(decoded);
@@ -109,7 +107,7 @@ it('matching decision JSON keeps nullable and optional wire fields compatible', 
   };
   const omittedEncoded = Schema.encodeUnknownSync(
     Schema.toCodecJson(PartyMatchDecisionRecordSchema)
-  )(Schema.decodeUnknownSync(PartyMatchDecisionRecordSchema)(omitted));
+  )(Schema.decodeSync(PartyMatchDecisionRecordSchema)(omitted));
   const omittedEncodedObject = Schema.decodeUnknownSync(
     Schema.Record(Schema.String, Schema.Json)
   )(omittedEncoded);

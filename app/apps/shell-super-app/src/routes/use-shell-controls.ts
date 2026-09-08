@@ -148,7 +148,7 @@ export const useShellControls = (
       return;
     }
     runSwitch(
-      Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({
+      Schema.decodeEffect(SwitchLegalEntityPayloadSchema)({
         legalEntityId,
       }).pipe(
         Effect.flatMap((payload) =>
@@ -171,7 +171,7 @@ export const useShellControls = (
       return;
     }
     runSwitch(
-      Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId }).pipe(
+      Schema.decodeEffect(SwitchTenantPayloadSchema)({ tenantId }).pipe(
         Effect.flatMap((payload) => switchTenant(payload, { locale: language }))
       ),
       tenantSwitchFailureState,

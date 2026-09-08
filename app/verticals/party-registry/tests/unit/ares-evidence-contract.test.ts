@@ -48,12 +48,10 @@ it.effect(
   () =>
     Effect.gen(function* validateContract1() {
       expect(
-        yield* Schema.decodeUnknownEffect(AresSubjectLookupIcoSchema)(
-          ' 01234567 '
-        )
+        yield* Schema.decodeEffect(AresSubjectLookupIcoSchema)(' 01234567 ')
       ).toBe('01234567');
       expect(
-        yield* Schema.decodeUnknownEffect(AresLookupRequestSchema)({
+        yield* Schema.decodeEffect(AresLookupRequestSchema)({
           ico: ' 01234567 ',
         })
       ).toEqual({
@@ -62,7 +60,7 @@ it.effect(
 
       for (const ico of ['1234567', '123456789', '1234 5678', 'abcdefgh', '']) {
         expect(() =>
-          Schema.decodeUnknownSync(AresSubjectLookupIcoSchema)(ico)
+          Schema.decodeSync(AresSubjectLookupIcoSchema)(ico)
         ).toThrow();
       }
     })
@@ -91,7 +89,7 @@ it.effect(
       expect(Object.hasOwn(decoded, 'rawResponse')).toBe(false);
       expect(Object.hasOwn(decoded.subject, 'czNace')).toBe(false);
       expect(
-        yield* Schema.decodeUnknownEffect(AresSubjectEvidenceSchema)(encoded)
+        yield* Schema.decodeEffect(AresSubjectEvidenceSchema)(encoded)
       ).toEqual(decoded);
     })
 );
@@ -101,14 +99,12 @@ it.effect(
   () =>
     Effect.gen(function* validateContract3() {
       expect(() =>
-        Schema.decodeUnknownSync(AresSubjectEvidenceSchema)({
+        Schema.decodeSync(AresSubjectEvidenceSchema)({
           ...evidence,
           observedAt: '2026-02-30T08:00:00.000Z',
         })
       ).toThrow();
-      const cached = yield* Schema.decodeUnknownEffect(
-        AresSubjectEvidenceSchema
-      )({
+      const cached = yield* Schema.decodeEffect(AresSubjectEvidenceSchema)({
         ...evidence,
         cacheAgeSeconds: 120,
         servedAt: '2026-09-03T08:02:00.000Z',
@@ -136,7 +132,7 @@ it.effect(
       ] as const;
       for (const route of routes) {
         expect(
-          yield* Schema.decodeUnknownEffect(AresCanonicalRouteSchema)(route)
+          yield* Schema.decodeEffect(AresCanonicalRouteSchema)(route)
         ).toBe(route);
       }
       for (const forbiddenRoute of [
@@ -150,7 +146,7 @@ it.effect(
         ).toThrow();
       }
 
-      const application = yield* Schema.decodeUnknownEffect(
+      const application = yield* Schema.decodeEffect(
         AresEvidenceApplicationSchema
       )({
         decidedAt: '2026-09-03T08:01:00.000Z',
@@ -194,7 +190,7 @@ it.effect(
   () =>
     Effect.gen(function* validateContract5() {
       expect(() =>
-        Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+        Schema.decodeSync(AresEvidenceApplicationSchema)({
           decidedAt: '2026-09-03T08:01:00.000Z',
           evidence,
           factDecisions: [
@@ -212,7 +208,7 @@ it.effect(
         })
       ).toThrow();
       expect(() =>
-        Schema.decodeUnknownSync(AresEvidenceApplicationSchema)({
+        Schema.decodeSync(AresEvidenceApplicationSchema)({
           decidedAt: '2026-09-03T08:01:00.000Z',
           evidence,
           factDecisions: [
@@ -230,7 +226,7 @@ it.effect(
         })
       ).toThrow();
 
-      const conflict = yield* Schema.decodeUnknownEffect(
+      const conflict = yield* Schema.decodeEffect(
         AresEvidenceApplicationSchema
       )({
         decidedAt: '2026-09-03T08:01:00.000Z',

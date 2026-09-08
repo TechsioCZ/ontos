@@ -42,9 +42,9 @@ it.effect(
       expect(descriptor.idempotency).toBe('required');
       expect(descriptor.legalEntityScope).toBe('optional');
       expect(descriptor.entrypoint.scope).toBe('tenant');
-      expect(
-        yield* Schema.decodeUnknownEffect(descriptor.payloadSchema)({})
-      ).toEqual({});
+      expect(yield* Schema.decodeEffect(descriptor.payloadSchema)({})).toEqual(
+        {}
+      );
       expect(Object.keys(descriptor.domainEvents)).toEqual([
         'party.registry.search-rebuild-requested.v1',
       ]);

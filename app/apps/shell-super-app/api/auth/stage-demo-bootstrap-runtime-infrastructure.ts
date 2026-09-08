@@ -1,7 +1,7 @@
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
-import { admin } from 'better-auth/plugins';
+import { admin } from 'better-auth/plugins/admin';
 import { and, eq } from 'drizzle-orm';
 import { Config, Effect, Option, Redacted } from 'effect';
 

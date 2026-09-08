@@ -82,19 +82,16 @@ const transactionHarness = (
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const select = () => {
     const rows = selectQueue.shift() ?? [];
-    const chain = Object.assign(
-      Effect.sync(() => rows),
-      {
-        for: () => Effect.succeed(rows),
-        from: (table: Table) => {
-          selectedTables.push(getTableName(table));
-          return chain;
-        },
-        limit: () => chain,
-        orderBy: () => chain,
-        where: () => chain,
-      }
-    );
+    const chain = Object.assign(Effect.succeed(rows), {
+      for: () => Effect.succeed(rows),
+      from: (table: Table) => {
+        selectedTables.push(getTableName(table));
+        return chain;
+      },
+      limit: () => chain,
+      orderBy: () => chain,
+      where: () => chain,
+    });
     return chain;
   };
   const update = () => {

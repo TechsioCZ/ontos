@@ -1,7 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
-import { Effect, Schema } from 'effect';
-// @effect-diagnostics nodeBuiltinImport:off -- Verifies package source files via the Node filesystem boundary; expires: 2026-12-31.
+import { NodeFileSystem } from '@effect/platform-node';
+import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -126,22 +126,25 @@ it('supports every governed access kind and rejects forged scope metadata', () =
     })
   ).toThrow();
 });
-it.effect(
-  'keeps low-level read runtime construction and Core schema out of package exports',
-  () =>
-    Effect.gen(function* migratedTest1() {
-      const [indexSource, packageSource] = yield* Effect.all(
-        [
-          Effect.promise(() =>
-            readFile(new URL('../../src/index.ts', import.meta.url), 'utf-8')
-          ),
-          Effect.promise(() =>
-            readFile(new URL('../../package.json', import.meta.url), 'utf-8')
-          ),
-        ],
-        { concurrency: 'unbounded' }
-      );
-      expect(indexSource).not.toMatch(/\bmakeReadRuntime,?$/mu);
-      expect(packageSource).not.toMatch(/"\.\/db\/schema"/u);
-    })
-);
+it.layer(NodeFileSystem.layer)('read package boundary', (suite) => {
+  suite.effect(
+    'keeps low-level read runtime construction and Core schema out of package exports',
+    () =>
+      Effect.gen(function* readPackageBoundary() {
+        const fs = yield* FileSystem.FileSystem;
+        const [indexSource, packageSource] = yield* Effect.all(
+          [
+            fs.readFileString(
+              fileURLToPath(new URL('../../src/index.ts', import.meta.url))
+            ),
+            fs.readFileString(
+              fileURLToPath(new URL('../../package.json', import.meta.url))
+            ),
+          ],
+          { concurrency: 'unbounded' }
+        );
+        expect(indexSource).not.toMatch(/\bmakeReadRuntime,?$/mu);
+        expect(packageSource).not.toMatch(/"\.\/db\/schema"/u);
+      })
+  );
+});

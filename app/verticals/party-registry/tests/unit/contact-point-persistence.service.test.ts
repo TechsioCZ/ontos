@@ -23,7 +23,7 @@ const principalId = '50000000-0000-4000-8000-000000000001';
 const instantAsDate = (instant: string): Date =>
   DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 const directAliases = makePartyAliasResolutionService({
-  findAlias: () => Effect.succeed(Option.none()),
+  findAlias: () => Effect.succeedNone,
   partyExists: () => Effect.succeed(true),
 });
 const addContactPointRecord = (
@@ -147,19 +147,16 @@ const transactionHarness = (
   const updateSets: Readonly<Record<string, unknown>>[] = [];
   const select = () => {
     const rows = selectQueue.shift() ?? [];
-    const chain = Object.assign(
-      Effect.sync(() => rows),
-      {
-        for: () => Effect.succeed(rows),
-        from: () => chain,
-        limit: () => chain,
-        orderBy: () => chain,
-        where: (condition: SQL) => {
-          selectWheres.push(condition);
-          return chain;
-        },
-      }
-    );
+    const chain = Object.assign(Effect.succeed(rows), {
+      for: () => Effect.succeed(rows),
+      from: () => chain,
+      limit: () => chain,
+      orderBy: () => chain,
+      where: (condition: SQL) => {
+        selectWheres.push(condition);
+        return chain;
+      },
+    });
     return chain;
   };
   const update = () => {
@@ -724,7 +721,7 @@ it.effect(
 it.effect(
   'rejects invalid E.164 and oversized extensions through the service typed-error path',
   () =>
-    Effect.all(
+    Effect.forEach(
       [
         { preferred: false, type: 'PHONE' as const, value: '+0123456789' },
         {
@@ -733,7 +730,8 @@ it.effect(
           type: 'PHONE' as const,
           value: '+420777123456',
         },
-      ].map((contactPoint) =>
+      ],
+      (contactPoint) =>
         Effect.gen(function* contactPointCase() {
           const harness = transactionHarness([]);
           const error = yield* Effect.flip(
@@ -763,7 +761,6 @@ it.effect(
           expect(harness.selectWheres.length).toBe(0);
           expect(harness.insertValues.length).toBe(0);
         })
-      )
     ).pipe(Effect.asVoid)
 );
 it.effect(
@@ -778,24 +775,20 @@ it.effect(
       const aliases = makePartyAliasResolutionService({
         findAlias: (requestedTenantId, requestedPartyId) => {
           if (requestedPartyId === partyId) {
-            return Effect.succeed(
-              Option.some({
-                aliasPartyId: partyId,
-                canonicalPartyId: intermediatePartyId,
-                tenantId: requestedTenantId,
-              })
-            );
+            return Effect.succeedSome({
+              aliasPartyId: partyId,
+              canonicalPartyId: intermediatePartyId,
+              tenantId: requestedTenantId,
+            });
           }
           if (requestedPartyId === intermediatePartyId) {
-            return Effect.succeed(
-              Option.some({
-                aliasPartyId: intermediatePartyId,
-                canonicalPartyId,
-                tenantId: requestedTenantId,
-              })
-            );
+            return Effect.succeedSome({
+              aliasPartyId: intermediatePartyId,
+              canonicalPartyId,
+              tenantId: requestedTenantId,
+            });
           }
-          return Effect.succeed(Option.none());
+          return Effect.succeedNone;
         },
         partyExists: () => Effect.succeed(true),
       });
@@ -933,7 +926,7 @@ it.effect(
       yield* TestClock.setTime(
         DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-03T12:00:00.000Z'))
       );
-      const externalEvidence = yield* Schema.decodeUnknownEffect(
+      const externalEvidence = yield* Schema.decodeEffect(
         AresAppliedEvidenceSchema
       )({
         authorityPolicyKey: 'party_registry.ares_enrichment',

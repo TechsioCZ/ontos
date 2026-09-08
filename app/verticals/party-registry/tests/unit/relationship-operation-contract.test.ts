@@ -69,9 +69,9 @@ it.effect(
       );
       expect(partyRelationshipDetailRead.descriptor.accessKind).toBe('detail');
       expect(
-        yield* Schema.decodeUnknownEffect(PartyRelationshipDetailRequestSchema)(
-          { relationshipRef }
-        )
+        yield* Schema.decodeEffect(PartyRelationshipDetailRequestSchema)({
+          relationshipRef,
+        })
       ).toEqual({ relationshipRef });
     })
 );
@@ -83,7 +83,7 @@ it.effect(
       const storedFrom = partyRef('22222222-2222-4222-8222-222222222222');
       const canonicalFrom = partyRef('55555555-5555-4555-8555-555555555555');
       const to = partyRef('33333333-3333-4333-8333-333333333333');
-      const detail = yield* Schema.decodeUnknownEffect(
+      const detail = yield* Schema.decodeEffect(
         PartyRelationshipDetailResponseSchema
       )({
         assertionState: 'ACTIVE',
@@ -159,7 +159,7 @@ it.effect(
         validFrom: '2026-09-01T10:00:00.000Z',
         validTo: null,
       } as const;
-      const decoded = yield* Schema.decodeUnknownEffect(
+      const decoded = yield* Schema.decodeEffect(
         RelationshipCreatedOutboxSchema
       )(payload);
       expect(

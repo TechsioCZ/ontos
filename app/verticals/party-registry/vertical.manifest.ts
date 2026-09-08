@@ -79,16 +79,12 @@ type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
 
 const navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(
-    Schema.decodeUnknownResult(ShellNavigationContributionSchema)(value)
+    Schema.decodeResult(ShellNavigationContributionSchema)(value)
   );
 const pageContribution = (value: PageContributionInput) =>
-  Result.getOrThrow(
-    Schema.decodeUnknownResult(ShellPageContributionSchema)(value)
-  );
+  Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 const searchContribution = (value: SearchContributionInput) =>
-  Result.getOrThrow(
-    Schema.decodeUnknownResult(ShellSearchContributionSchema)(value)
-  );
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 export const partyRegistryManifest = defineOntosModuleManifest({
   activation: {

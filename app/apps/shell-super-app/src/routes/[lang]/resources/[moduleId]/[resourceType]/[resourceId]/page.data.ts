@@ -52,7 +52,7 @@ export const loader = ({
         }
         return shellAuthenticationClientOptionsFromRequest(request).pipe(
           Effect.flatMap((options) =>
-            Schema.decodeUnknownEffect(ResourceRefSchema)(params).pipe(
+            Schema.decodeEffect(ResourceRefSchema)(params).pipe(
               Effect.flatMap((resourceRef) =>
                 resourceDetail(resourceRef, options)
               )

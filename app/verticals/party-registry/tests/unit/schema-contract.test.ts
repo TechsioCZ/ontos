@@ -1,9 +1,9 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
+import { NodeFileSystem } from '@effect/platform-node';
 import { getTableName, isTable } from 'drizzle-orm';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
-import { Effect } from 'effect';
-// @effect-diagnostics nodeBuiltinImport:off -- Filesystem migration contract verifies actual checked-in SQL files; expires: 2026-12-31.
+import { FileSystem, Effect } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import * as schemaExports from '../../src/db/schema.ts';
@@ -795,101 +795,120 @@ it('prepares append-only correction and non-executable merge records with safe a
   ).toBeTruthy();
 });
 
-it.effect(
-  'ships an independent Party migration with forced RLS and append-only correction evidence',
-  () =>
-    Effect.gen(function* testScenario() {
-      const drizzleConfig = yield* Effect.promise(() =>
-        readFile(new URL('../../drizzle.config.ts', import.meta.url), 'utf-8')
-      );
-      expect(drizzleConfig).toMatch(/__drizzle_migrations_party/u);
-      expect(drizzleConfig).toMatch(/\.\/src\/db\/schema\.ts/u);
+it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
+  suite.effect(
+    'ships an independent Party migration with forced RLS and append-only correction evidence',
+    () =>
+      Effect.gen(function* testScenario() {
+        const drizzleConfig = yield* FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(
+            fileURLToPath(new URL('../../drizzle.config.ts', import.meta.url))
+          )
+        );
+        expect(drizzleConfig).toMatch(/__drizzle_migrations_party/u);
+        expect(drizzleConfig).toMatch(/\.\/src\/db\/schema\.ts/u);
 
-      const migrationDirectory = new URL('../../drizzle/', import.meta.url);
-      const migrationDirectoryEntries = yield* Effect.promise(() =>
-        readdir(migrationDirectory, { withFileTypes: true })
-      );
-      const migrationFolders = migrationDirectoryEntries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .toSorted();
-      expect(migrationFolders.length >= 2).toBeTruthy();
-      const remediationFolder = migrationFolders.find((name) =>
-        name.endsWith('_nebulous_cardiac')
-      );
-      expect(remediationFolder).toBeTruthy();
-      if (remediationFolder === undefined) {
-        throw new Error('Expected value to be present');
-      }
-      const remediation = yield* Effect.promise(() =>
-        readFile(
-          new URL(`${remediationFolder}/migration.sql`, migrationDirectory),
-          'utf-8'
-        )
-      );
-      expect(remediation).toMatch(/party_match_decisions_create_result_ck/u);
-      expect(remediation).toMatch(/committed_create_outcome/u);
-      const migration = yield* Effect.promise(() =>
-        readFile(
-          new URL(
-            `${migrationFolders[0] ?? ''}/migration.sql`,
-            migrationDirectory
-          ),
-          'utf-8'
-        )
-      );
-      expect(
-        migration.match(
-          /ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu
-        )?.length
-      ).toBe(PARTY_TABLE_INVENTORY.length);
-      expect(
-        migration.match(
-          /ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu
-        )?.length
-      ).toBe(PARTY_TABLE_INVENTORY.length);
-      expect(migration).not.toMatch(/REFERENCES "(?:core|auth|contacts)"\./u);
-      expect(migration).toMatch(/party_reject_correction_mutation/u);
-      expect(migration).toMatch(
-        /before update or delete on "party"\."party_corrections"/iu
-      );
-      expect(migration).toMatch(/CREATE EXTENSION IF NOT EXISTS btree_gist/iu);
-      expect(migration).toMatch(
-        /party_relationships_no_overlap_excl[\s\S]*EXCLUDE USING gist[\s\S]*tstzrange[\s\S]*-infinity[\s\S]*assertion_state[\s\S]*ACTIVE/iu
-      );
-      expect(migration).toMatch(
-        /party_counterparty_role_periods_no_overlap_excl[\s\S]*EXCLUDE USING gist[\s\S]*tstzrange/iu
-      );
-    })
-);
+        const migrationDirectory = new URL('../../drizzle/', import.meta.url);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const migrationDirectoryEntries = yield* fileSystem.readDirectory(
+          fileURLToPath(migrationDirectory)
+        );
+        const migrationDirectories: string[] = [];
+        for (const entry of migrationDirectoryEntries) {
+          const info = yield* fileSystem.stat(
+            fileURLToPath(new URL(entry, migrationDirectory))
+          );
+          if (info.type === 'Directory') {
+            migrationDirectories.push(entry);
+          }
+        }
+        const migrationFolders = migrationDirectories.toSorted();
+        expect(migrationFolders.length >= 2).toBeTruthy();
+        const remediationFolder = migrationFolders.find((name) =>
+          name.endsWith('_nebulous_cardiac')
+        );
+        expect(remediationFolder).toBeTruthy();
+        if (remediationFolder === undefined) {
+          throw new Error('Expected value to be present');
+        }
+        const remediation = yield* FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(
+            fileURLToPath(
+              new URL(`${remediationFolder}/migration.sql`, migrationDirectory)
+            )
+          )
+        );
+        expect(remediation).toMatch(/party_match_decisions_create_result_ck/u);
+        expect(remediation).toMatch(/committed_create_outcome/u);
+        const migration = yield* FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(
+            fileURLToPath(
+              new URL(
+                `${migrationFolders[0] ?? ''}/migration.sql`,
+                migrationDirectory
+              )
+            )
+          )
+        );
+        expect(
+          migration.match(
+            /ALTER TABLE "party"\."[^"]+" ENABLE ROW LEVEL SECURITY;/gu
+          )?.length
+        ).toBe(PARTY_TABLE_INVENTORY.length);
+        expect(
+          migration.match(
+            /ALTER TABLE "party"\."[^"]+" FORCE ROW LEVEL SECURITY;/gu
+          )?.length
+        ).toBe(PARTY_TABLE_INVENTORY.length);
+        expect(migration).not.toMatch(/REFERENCES "(?:core|auth|contacts)"\./u);
+        expect(migration).toMatch(/party_reject_correction_mutation/u);
+        expect(migration).toMatch(
+          /before update or delete on "party"\."party_corrections"/iu
+        );
+        expect(migration).toMatch(
+          /CREATE EXTENSION IF NOT EXISTS btree_gist/iu
+        );
+        expect(migration).toMatch(
+          /party_relationships_no_overlap_excl[\s\S]*EXCLUDE USING gist[\s\S]*tstzrange[\s\S]*-infinity[\s\S]*assertion_state[\s\S]*ACTIVE/iu
+        );
+        expect(migration).toMatch(
+          /party_counterparty_role_periods_no_overlap_excl[\s\S]*EXCLUDE USING gist[\s\S]*tstzrange/iu
+        );
+      })
+  );
 
-it.effect(
-  'registers Party ownership in application database grants and exact verification',
-  () =>
-    Effect.gen(function* testScenario() {
-      const bootstrap = yield* Effect.promise(() =>
-        readFile(
-          new URL(
-            '../../../../scripts/postgres/bootstrap-runtime-role.mts',
-            import.meta.url
-          ),
-          'utf-8'
-        )
-      );
-      const verifier = yield* Effect.promise(() =>
-        readFile(
-          new URL(
-            '../../../../scripts/verify-application-db-schema.mts',
-            import.meta.url
-          ),
-          'utf-8'
-        )
-      );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party'\]/u);
-      expect(verifier).toMatch(/\['auth', 'contacts', 'core', 'party'\]/u);
-      expect(verifier).toMatch(/__drizzle_migrations_party/u);
-      expect(verifier).toMatch(
-        /verticals\/party-registry\/scripts\/verify-db-schema\.mts/u
-      );
-    })
-);
+  suite.effect(
+    'registers Party ownership in application database grants and exact verification',
+    () =>
+      Effect.gen(function* testScenario() {
+        const bootstrap = yield* FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(
+            fileURLToPath(
+              new URL(
+                '../../../../scripts/postgres/bootstrap-runtime-role.mts',
+                import.meta.url
+              )
+            )
+          )
+        );
+        const verifier = yield* FileSystem.FileSystem.use((fs) =>
+          fs.readFileString(
+            fileURLToPath(
+              new URL(
+                '../../../../scripts/verify-application-db-schema.mts',
+                import.meta.url
+              )
+            )
+          )
+        );
+        expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party'\]/u);
+        expect(verifier).toMatch(
+          /\[\s*'auth',\s*'contacts',\s*'core',\s*'party',?\s*\]/u
+        );
+        expect(verifier).toMatch(/__drizzle_migrations_party/u);
+        expect(verifier).toMatch(
+          /verticals\/party-registry\/scripts\/verify-db-schema\.mts/u
+        );
+      })
+  );
+});
