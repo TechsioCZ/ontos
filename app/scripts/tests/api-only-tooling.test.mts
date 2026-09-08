@@ -2563,6 +2563,25 @@ void test('all published scaffold formats emit the executable AST baseline valid
           },
         ],
       });
+      await writeText(
+        checkoutWorkspace,
+        'apps/shell-super-app/src/api/vertical-clients.ts',
+        'export const verticalClients = {};\n',
+      );
+      const invalidApiSource = `import { Schema } from 'effect';
+export const response = new Response('generated');
+export const responseSchema = Schema.Unknown;
+`;
+      await writeText(
+        checkoutWorkspace,
+        'verticals/shopping/dist-cloudflare/api/index.js',
+        invalidApiSource,
+      );
+      await writeText(
+        checkoutWorkspace,
+        'apps/shell-super-app/dist-cloudflare/api/index.js',
+        invalidApiSource,
+      );
       assert.match(
         runNode([path.join(formatRoot, checker.relativePath)], {
           env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
@@ -2570,6 +2589,28 @@ void test('all published scaffold formats emit the executable AST baseline valid
         /UltraModern API boundary check passed/u,
         `${moduleFormat} checkout workspace`,
       );
+      const authoredApiPath = 'verticals/shopping/api/invalid.ts';
+      await writeText(checkoutWorkspace, authoredApiPath, invalidApiSource);
+      const authoredResult = spawnSync(
+        process.execPath,
+        [path.join(formatRoot, checker.relativePath)],
+        {
+          encoding: 'utf-8',
+          env: { ULTRAMODERN_WORKSPACE_ROOT: checkoutWorkspace },
+        },
+      );
+      assert.equal(authoredResult.status, 1, moduleFormat);
+      assert.match(
+        authoredResult.stderr,
+        /verticals\/shopping\/api\/invalid\.ts: API modules must not hand-build Response objects/u,
+        moduleFormat,
+      );
+      assert.match(
+        authoredResult.stderr,
+        /verticals\/shopping\/api\/invalid\.ts: API modules must use concrete request, response and error schemas/u,
+        moduleFormat,
+      );
+      assert.doesNotMatch(authoredResult.stderr, /dist-cloudflare/u, moduleFormat);
     }),
   );
 });
