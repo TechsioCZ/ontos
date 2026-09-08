@@ -1,0 +1,16 @@
+import { expect } from 'effect-rstest';
+import { expect as changed } from '@rstest/core';
+import * as testing from 'vitest';
+import { expect as deleted } from '@jest/globals';
+declare const error: unknown;
+const fake = (value: unknown) => value;
+expect.not.objectContaining = fake;
+expect(error).toEqual(expect.not.objectContaining({ _tag: 'Missing' }));
+const negative = changed.not;
+negative.arrayContaining = fake;
+expect(error).toEqual(changed.not.arrayContaining([{ _tag: 'Missing' }]));
+const { not: alias } = testing.expect;
+alias.objectContaining = fake;
+expect(error).toEqual(testing.expect.not.objectContaining({ _tag: 'Missing' }));
+delete deleted.not;
+expect(error).toEqual(deleted.not.objectContaining({ _tag: 'Missing' }));

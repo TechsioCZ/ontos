@@ -304,8 +304,9 @@ function nodeAssertion(
 
 /** Static expect helpers are expected values, never subject-bearing assertions. */
 function staticAssertion(members: string[]): AssertionCall | null {
-  const method = members[1];
-  if (members.length !== 2 || method === undefined) return null;
+  const index = members[0] === 'expect' && members[1] === 'not' ? 2 : 1;
+  const method = members[index];
+  if (members.length !== index + 1 || method === undefined) return null;
   if (members[0] === 'assert') return { method, subject: null };
   return members[0] === 'expect' && EXPECTED_WRAPPERS.has(method)
     ? { method, subject: null, expectedWrapper: true }
