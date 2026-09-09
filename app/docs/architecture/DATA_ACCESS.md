@@ -4,7 +4,15 @@ This contract governs every public or business read and write. It complements th
 
 ## OperationalScope
 
-`OperationalScope` is immutable, server-only Core runtime state. Core constructs it from an authenticated Shell session or a verified audience-scoped gateway assertion. Browser payloads and identity headers never establish tenant, principal, auth-binding, or legal-entity identity. The scope contains only revalidated tenant, principal, optional auth binding, optional legal entity, authentication metadata, correlation ID, and optional trace ID; it is never persisted as generic JSON or exposed through browser-safe contracts.
+`OperationalScope` is immutable, server-only Core runtime state. Core constructs it from an
+authenticated Shell session or a verified audience-scoped gateway assertion. Browser payloads and
+identity headers never establish tenant, principal, auth-binding, legal-entity, or Storefront
+identity. The scope contains only revalidated tenant, principal, optional auth binding, optional
+legal entity, optional gateway-verified Storefront identity, authentication metadata, correlation
+ID, and optional trace ID; it is never persisted as generic JSON or exposed through browser-safe
+contracts. Storefront scope requires a selected legal entity and may be used only when it survives
+audience-bound assertion verification and single-use redemption; a business payload can name an
+authorization target but can never promote that target into trusted Storefront scope.
 
 Every descriptor declares both dimensions explicitly:
 

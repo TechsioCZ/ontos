@@ -93,6 +93,9 @@ it.effect('correction publishes the corrected stable ref while returning the val
         services: { update: () => Effect.succeed(replacement) },
       },
     );
+    if (!('contactPointRef' in result)) {
+      throw new Error('contact-point correction did not return its committed result');
+    }
     expect(result.contactPointRef).toEqual(replacement.contactPointRef);
     const snapshot = collector.snapshot();
     expect(snapshot.domainEvents.length).toBe(1);

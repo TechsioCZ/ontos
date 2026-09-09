@@ -385,6 +385,9 @@ it.layer(
             },
           },
         );
+        if (!('outcome' in result)) {
+          throw new Error('create-party matching did not return its committed result');
+        }
         expect(result.outcome).toBe('MATCHED_EXISTING');
         const durable = recordedRow(subject.inserts.find(({ table }) => table === partyMatchDecisions)?.values);
         expect(durable['operation']).toBe('CREATE');
@@ -448,6 +451,9 @@ it.layer(
           ]),
         );
         const { collector, result } = yield* invokeReviewedMatch(subject);
+        if (!('outcome' in result)) {
+          throw new Error('duplicate-candidate resolution did not return its committed result');
+        }
         expect(result.outcome).toBe('MATCH_EXISTING');
         expect('addedOfficialIdentifierRefs' in result).toBe(false);
         const evidence = collector.snapshot();
@@ -518,6 +524,9 @@ it.layer(
           },
         },
       );
+      if (!('outcome' in result)) {
+        throw new Error('create-party matching did not return its committed result');
+      }
       expect(result.outcome).toBe('MATCHED_EXISTING');
       expect(collector.snapshot().domainEvents).toEqual([]);
       expect(collector.snapshot().outboxMessages).toEqual([]);
@@ -602,6 +611,9 @@ it.layer(
         ]),
       );
       const { collector, result } = yield* invokeReviewedMatch(subject);
+      if (!('outcome' in result)) {
+        throw new Error('duplicate-candidate resolution did not return its committed result');
+      }
       expect(result.outcome).toBe('MATCH_EXISTING');
       expect(collector.snapshot().domainEvents).toEqual([]);
       expect(collector.snapshot().outboxMessages).toEqual([]);

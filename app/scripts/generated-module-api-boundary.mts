@@ -33,6 +33,8 @@ const MANIFEST_SHELL_SEARCH_SLOT = [
 
 export { toPascalCase } from './boundary-source-structure.mts';
 
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+
 export interface GovernedClientToken {
   readonly kind: SyntaxKind;
   readonly value: string;
@@ -804,6 +806,7 @@ const parametersBindIdentifier = (
       ({ kind, value }, offset) =>
         kind === SyntaxKind.Identifier &&
         names.has(value) &&
+        tokenKind(tokens, start + offset - 1) !== SyntaxKind.DotToken &&
         bindingFollowers.has(tokenKind(tokens, start + offset + 1) ?? SyntaxKind.Unknown),
     );
 };
@@ -1127,8 +1130,7 @@ const exportedOperationsUseClientHelperAndGateway = (
   const authorizedInvocationEnd = authorizedArrow + 1 + authorizedInvocation.length;
   const authorizedInvocationTail = matchingSequenceEnd(tokens, authorizedInvocationEnd, invocationPayloads);
   const authorizedUsesHelper =
-    matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
-    hasInvocationClosure(tokens, authorizedInvocationTail);
+    authorizedInvocationEnd !== undefined && hasInvocationClosure(tokens, authorizedInvocationTail);
   const gatewayInvocation = [
     [SyntaxKind.Identifier, 'operationGateway'],
     [SyntaxKind.DotToken],
@@ -1162,8 +1164,8 @@ const exportedOperationsUseClientHelperAndGateway = (
     operation,
     operationArrow,
   );
-  return (
-    hasExactGeneratedOperationParameters(
+  const operationChecks = {
+    parameters: hasExactGeneratedOperationParameters(
       tokens,
       helper,
       authorized,
@@ -1171,12 +1173,13 @@ const exportedOperationsUseClientHelperAndGateway = (
       operation,
       operationArrow,
       expectation,
-    ) &&
-    authorizedUsesHelper &&
-    operationUsesGateway &&
-    !helperShadowsImports &&
-    !shadowsBindings
-  );
+    ),
+    authorizedUsesHelper,
+    operationUsesGateway,
+    helperDoesNotShadowImports: !helperShadowsImports,
+    parametersDoNotShadowBindings: !shadowsBindings,
+  };
+  return Object.values(operationChecks).every(Boolean);
 };
 
 export const generatedApiGroup = (source: string, ownerApiValue: string): string | undefined => {
@@ -1568,6 +1571,39 @@ const objectHasExactStrings = (
 ): boolean =>
   Object.entries(expected).every(([property, value]) => objectHasExactString(tokens, open, close, property, value));
 
+const objectHasExactStringsOrConstAliases = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  expected: Readonly<Record<string, string>>,
+): boolean =>
+  Object.entries(expected).every(([property, value]) => {
+    if (directObjectPropertyOccurrences(tokens, open, close, property) !== 1) {
+      return false;
+    }
+    const valueStart = findObjectPropertyValue(tokens, open, close, property);
+    if (hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.StringLiteral, value]])) {
+      return true;
+    }
+    const alias = valueStart === undefined ? undefined : tokenValue(tokens, valueStart);
+    return (
+      alias !== undefined &&
+      tokenKind(tokens, valueStart) === SyntaxKind.Identifier &&
+      hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.Identifier, alias]]) &&
+      sequenceOccurrencesAtBraceDepth(
+        tokens,
+        [
+          [SyntaxKind.ConstKeyword],
+          [SyntaxKind.Identifier, alias],
+          [SyntaxKind.EqualsToken],
+          [SyntaxKind.StringLiteral, value],
+          [SyntaxKind.SemicolonToken],
+        ],
+        0,
+      ) === 1
+    );
+  });
+
 const objectReferencesEntrypoint = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -1778,7 +1814,28 @@ export const hasGeneratedModuleApiReadContract = (
   name: string,
   authorization?: GeneratedReadAuthorization,
 ): boolean => {
-  const tokens = tokenizeGovernedClient(source);
+  const aliases = [
+    ...source.matchAll(
+      new RegExp(
+        `^const\\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*(['"])${escapeRegExp(moduleId)}\\2(?:\\s+as\\s+const)?;\\s*$`,
+        'gmu',
+      ),
+    ),
+  ];
+  const alias = aliases.length === 1 ? aliases[0]?.groups?.name : undefined;
+  const normalizedSource =
+    alias === undefined
+      ? source
+      : source
+          .replaceAll(
+            new RegExp(
+              `(?<property>\\b(?:moduleKey|owningModuleKey))\\s*:\\s*${escapeRegExp(alias)}(?=\\s*[,}])`,
+              'gu',
+            ),
+            `$<property>: '${moduleId}'`,
+          )
+          .replaceAll(new RegExp(`\\b${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'), `moduleKey: '${moduleId}'`);
+  const tokens = tokenizeGovernedClient(normalizedSource);
   const camel = toCamelCase(name);
   const entrypointName = `${camel}Entrypoint`;
   const entrypoint = topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false);
@@ -1797,7 +1854,7 @@ export const hasGeneratedModuleApiReadContract = (
     ['read', 'historical_read'].some((value) =>
       hasExactObjectPropertyValue(tokens, access, [[SyntaxKind.StringLiteral, value]]),
     ) &&
-    objectHasExactStrings(tokens, entrypoint[0], entrypoint[1], {
+    objectHasExactStringsOrConstAliases(tokens, entrypoint[0], entrypoint[1], {
       entrypointKey: `${moduleId}.api.${name}`,
       moduleKey: moduleId,
       role: 'api',
@@ -1806,7 +1863,7 @@ export const hasGeneratedModuleApiReadContract = (
     ['legalEntityScope', 'permissionTarget', 'policies'].every(
       (property) => directObjectPropertyOccurrences(tokens, read[0], read[1], property) === 1,
     ) &&
-    objectHasExactStrings(tokens, read[0], read[1], {
+    objectHasExactStringsOrConstAliases(tokens, read[0], read[1], {
       owningModuleKey: moduleId,
       readKey: `${moduleId}.api.${name}`,
       schemaVersion: '1',

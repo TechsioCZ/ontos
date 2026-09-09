@@ -11,6 +11,7 @@ const SessionPrincipalContextSchema = Schema.Struct({
 });
 const systemProvenance = Object.freeze({ kind: 'system' });
 const supportRecoveryProvenance = Object.freeze({ kind: 'support_recovery' });
+const redeemedGatewayProvenance = Object.freeze({ kind: 'redeemed_gateway' });
 const provenanceAccessProperty = '__ontosCorePrincipalContextProvenanceAccess';
 
 const PrincipalContextProvenanceInvariant = Schema.TaggedError<Error>()('PrincipalContextProvenanceInvariant', {
@@ -22,7 +23,10 @@ export class TrustedPrincipalContextDecodeError extends Schema.TaggedError<Trust
   {},
 ) {}
 
-type PrincipalContextProvenanceToken = typeof supportRecoveryProvenance | typeof systemProvenance;
+type PrincipalContextProvenanceToken =
+  | typeof supportRecoveryProvenance
+  | typeof systemProvenance
+  | typeof redeemedGatewayProvenance;
 type PrincipalContextProvenanceAccess = (
   candidate: TrustedPrincipalContext,
   token: PrincipalContextProvenanceToken,
@@ -48,7 +52,7 @@ const attachPrincipalContextProvenance = <
     if (candidate !== carrier || token !== provenance) {
       return false;
     }
-    return provenance === systemProvenance ? true : (actionRegistration ?? false);
+    return provenance === supportRecoveryProvenance ? (actionRegistration ?? false) : true;
   };
   Object.defineProperty(carrier, provenanceAccessProperty, {
     value: accessProvenance,
@@ -82,6 +86,16 @@ const readSupportRecoveryAction = <Context>(context: Context): object | null => 
   return Predicate.isObjectKeyword(registration) && registration !== null ? registration : null;
 };
 
+const hasRedeemedGatewayProvenance = <Context>(context: Context): boolean => {
+  if (
+    !Schema.is(TrustedPrincipalContextSchema)(context) ||
+    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
+  ) {
+    return false;
+  }
+  return context[provenanceAccessProperty]?.(context, redeemedGatewayProvenance) === true;
+};
+
 const failProvenanceInvariant = (reason: string): never => {
   throw new PrincipalContextProvenanceInvariant({ reason });
 };
@@ -97,6 +111,14 @@ export const trustResolvedSystemPrincipalContext = <Context extends TrustedPrinc
 
 export const isTrustedSystemPrincipalContext = <Context>(context: Context): boolean =>
   hasSystemProvenance(context) && Schema.is(SystemPrincipalContextSchema)(context);
+
+/** Marks a context only after an audience-bound gateway assertion has been verified and redeemed. */
+export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrincipalContext>(
+  context: Context,
+): Context => attachPrincipalContextProvenance(context, redeemedGatewayProvenance);
+
+export const isVerifiedGatewayPrincipalContext = <Context>(context: Context): boolean =>
+  hasRedeemedGatewayProvenance(context);
 
 export const trustSupportRecoveryPrincipalContext = <
   Context extends TrustedPrincipalContext,
@@ -130,6 +152,9 @@ export const preserveSystemPrincipalContextTrust = <Source, Context extends Trus
   if (isTrustedSystemPrincipalContext(source)) {
     return trustResolvedSystemPrincipalContext(context);
   }
+  if (isVerifiedGatewayPrincipalContext(source)) {
+    return trustVerifiedGatewayPrincipalContext(context);
+  }
   const recoveryActionRegistration = readSupportRecoveryAction(source);
   if (recoveryActionRegistration !== null) {
     return trustSupportRecoveryPrincipalContext(context, recoveryActionRegistration);
@@ -141,6 +166,13 @@ export const decodeTrustedPrincipalContext = <Input>(
   input: Input,
 ): Effect.Effect<TrustedPrincipalContext, TrustedPrincipalContextDecodeError> => {
   if (Schema.is(SystemPrincipalContextSchema)(input) && !isTrustedSystemPrincipalContext(input)) {
+    return Effect.fail(new TrustedPrincipalContextDecodeError());
+  }
+  if (
+    Schema.is(TrustedPrincipalContextSchema)(input) &&
+    input.trustedStorefrontId !== undefined &&
+    !isVerifiedGatewayPrincipalContext(input)
+  ) {
     return Effect.fail(new TrustedPrincipalContextDecodeError());
   }
   return Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(input).pipe(

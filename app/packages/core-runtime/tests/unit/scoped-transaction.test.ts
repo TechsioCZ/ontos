@@ -9,10 +9,12 @@ import {
   tenantRlsPolicies,
 } from '../../src/db/scoped-transaction.ts';
 import type { OperationalScopeTransactionService } from '../../src/db/scoped-transaction.ts';
+import type { ScopedRoutineInvoker } from '../../src/db/scoped-routine.ts';
 
 const unusedOperation = (): never => {
   throw new Error('CRUD operations are not used by this test');
 };
+const unusedRoutineInvoker = (): ScopedRoutineInvoker => ({ invoke: unusedOperation });
 const transactionService = (
   install: OperationalScopeTransactionService['install'],
   verify: OperationalScopeTransactionService['verify'],
@@ -20,6 +22,7 @@ const transactionService = (
   delete: unusedOperation,
   insert: unusedOperation,
   install,
+  scopedRoutineInvoker: unusedRoutineInvoker,
   select: unusedOperation,
   update: unusedOperation,
   verify,
@@ -53,6 +56,7 @@ it.effect('installs and verifies transaction-local scope and exposes no transact
     expect('query' in capability).toBe(false);
     expect('rollback' in capability).toBe(false);
     expect('transaction' in capability).toBe(false);
+    expect('invoke' in capability).toBe(true);
   }),
 );
 it.effect('fails closed when transaction settings do not match', () =>

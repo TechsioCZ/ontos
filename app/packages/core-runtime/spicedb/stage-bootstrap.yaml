@@ -44,6 +44,22 @@ schema: |-
     permission write = writer & module->access
   }
 
+  // Each object ID encodes the stable permission code and exact tenant/legal-entity/business scope.
+  // Grants are positive and exact; tenant membership and Legal Entity access remain independent gates.
+  definition business_permission {
+    relation legal_entity: legal_entity
+    relation grantee: principal
+    permission use = grantee & legal_entity->access
+  }
+
+  // Named entrypoint permissions are exact to one Tenant, optional Legal Entity, and owning module.
+  // The object identity carries that scope; tenant membership remains an independent gate.
+  definition context_permission {
+    relation tenant: tenant
+    relation grantee: principal
+    permission access = grantee & tenant->access
+  }
+
   definition action {
     relation restriction: action
     relation executor: principal | tenant#member

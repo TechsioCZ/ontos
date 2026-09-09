@@ -94,6 +94,7 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
       'counterparty-read': () => import('./src/api/counterparty-read-client.ts'),
       'counterparty-role-history': () => import('./src/api/counterparty-role-history-client.ts'),
       'duplicate-candidate-detail': () => import('./src/api/duplicate-candidate-detail-client.ts'),
+      'guest-party-resolution': () => import('./src/api/guest-party-resolution-client.ts'),
       'organization-engagement-profile': () => import('./src/api/organization-engagement-profile-client.ts'),
       'party-contact-point-detail': () => import('./src/api/party-contact-point-detail-client.ts'),
       'party-contact-points': () => import('./src/api/party-contact-points-client.ts'),

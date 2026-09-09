@@ -20,6 +20,7 @@
     "./outbox/party-registry-party-archived-v1": "./shared/outbox/party-registry-party-archived-v1.ts",
     "./outbox/party-registry-party-created-v1": "./shared/outbox/party-registry-party-created-v1.ts",
     "./outbox/party-registry-party-fact-corrected-v1": "./shared/outbox/party-registry-party-fact-corrected-v1.ts",
+    "./outbox/party-registry-party-merged-v1": "./shared/outbox/party-registry-party-merged-v1.ts",
     "./outbox/party-registry-party-unarchived-v1": "./shared/outbox/party-registry-party-unarchived-v1.ts",
     "./outbox/party-registry-party-updated-v1": "./shared/outbox/party-registry-party-updated-v1.ts",
     "./outbox/party-registry-relationship-created-v1": "./shared/outbox/party-registry-relationship-created-v1.ts",
@@ -27,18 +28,9 @@
     "./outbox/party-registry-relationship-updated-v1": "./shared/outbox/party-registry-relationship-updated-v1.ts",
     "./outbox/party-registry-search-rebuild-requested-v1": "./shared/outbox/party-registry-search-rebuild-requested-v1.ts",
     "./resources/counterparty": "./shared/resources/counterparty.ts",
-    "./resources/counterparty-role-period": "./shared/resources/counterparty-role-period.ts",
-    "./resources/duplicate-candidate-case": "./shared/resources/duplicate-candidate-case.ts",
-    "./resources/organization-engagement-profile": "./shared/resources/organization-engagement-profile.ts",
     "./resources/party": "./shared/resources/party.ts",
-    "./resources/party-alias": "./shared/resources/party-alias.ts",
     "./resources/party-contact-point": "./shared/resources/party-contact-point.ts",
-    "./resources/party-correction": "./shared/resources/party-correction.ts",
-    "./resources/party-match-decision": "./shared/resources/party-match-decision.ts",
-    "./resources/party-merge": "./shared/resources/party-merge.ts",
-    "./resources/party-official-identifier": "./shared/resources/party-official-identifier.ts",
-    "./resources/party-relationship": "./shared/resources/party-relationship.ts",
-    "./resources/person-engagement-profile": "./shared/resources/person-engagement-profile.ts"
+    "./resources/party-official-identifier": "./shared/resources/party-official-identifier.ts"
   },
   "scripts": {
     "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && node ../../scripts/generate-public-surface-assets.mts --app party-registry --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",

@@ -1,4 +1,5 @@
 /// <reference types="node" />
+/* oxlint-disable sonarjs/no-duplicate-string -- The governed topology validator requires the literal Drizzle config name beside every ordered owner migration; expires: 2027-03-01. */
 
 import { createServer } from 'node:http';
 import path from 'node:path';
@@ -151,6 +152,9 @@ const main = Effect.scoped(
     yield* runAppScript('verticals/party-registry/scripts/prepare-contacts-migration.mts');
     yield* migrate('verticals/party-registry', 'drizzle.contacts.config.ts');
     yield* migrate('verticals/party-registry', 'drizzle.config.ts');
+    yield* migrate('verticals/payment-term-catalog', 'drizzle.config.ts');
+    yield* migrate('verticals/commerce-fx', 'drizzle.config.ts');
+    yield* migrate('verticals/commerce-customer-context', 'drizzle.config.ts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     yield* runAppScript('scripts/verify-application-db-schema.mts');
     yield* serveReadiness(yield* migratorPort);

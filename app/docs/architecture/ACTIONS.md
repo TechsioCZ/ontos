@@ -94,6 +94,13 @@ An Action handler may instantiate zero or more Domain Events. Adding a Domain Ev
 
 Cross-MicroVertical consumers use only the message producer's published schema-only contract and the post-commit lifecycle defined by [Outbox Worker Architecture](./OUTBOX_WORKERS.md). Worker execution never joins or extends the originating Action transaction.
 
+When a successful business transition requires an external authorization projection that cannot
+participate in the database transaction, the Action commits only a durable pending intent and an
+exact self-outbox request. It returns a pending or reconciliation-required result and emits no
+terminal business fact. The owner Worker then follows the restricted external-projection completion
+protocol in [Outbox Worker Architecture](./OUTBOX_WORKERS.md). An external success before the
+Action's database commit is forbidden because rollback would erase the only recovery anchor.
+
 ## Public Action Failures
 
 Authentication, permission, policy, and domain rejections remain typed Effect errors throughout the Action lifecycle. At the Backend for Frontend (BFF) endpoint, map them exhaustively to the declared public error schemas and status codes in [Effect Error and HTTP Contracts](./ERRORS.md). Do not let an Action error escape as an exception, an untyped rejected Promise, or an ad hoc HTTP response.

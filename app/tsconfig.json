@@ -8,6 +8,12 @@
       "path": "packages/gateway-principal-verifier"
     },
     {
+      "path": "packages/customer-payment-term-contracts"
+    },
+    {
+      "path": "packages/payment-term-catalog-contracts"
+    },
+    {
       "path": "packages/shared-contracts"
     },
     {
@@ -18,6 +24,15 @@
     },
     {
       "path": "verticals/party-registry"
+    },
+    {
+      "path": "verticals/commerce-customer-context"
+    },
+    {
+      "path": "verticals/payment-term-catalog"
+    },
+    {
+      "path": "verticals/commerce-fx"
     }
   ]
 }

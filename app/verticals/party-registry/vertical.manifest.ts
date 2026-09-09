@@ -57,6 +57,7 @@ import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
+import { GuestPartyResolutionApi } from './shared/apis/guest-party-resolution.ts';
 import { markDuplicateCandidateNeedsEvidenceAction } from './src/actions/mark-duplicate-candidate-needs-evidence.action.ts';
 import { matchPartyAction } from './src/actions/match-party.action.ts';
 import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
@@ -138,6 +139,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'counterparty-read': CounterpartyReadApi,
       'counterparty-role-history': CounterpartyRoleHistoryApi,
       'duplicate-candidate-detail': DuplicateCandidateDetailApi,
+      'guest-party-resolution': GuestPartyResolutionApi,
       'organization-engagement-profile': OrganizationEngagementProfileApi,
       'party-contact-point-detail': PartyContactPointDetailApi,
       'party-contact-points': PartyContactPointsApi,

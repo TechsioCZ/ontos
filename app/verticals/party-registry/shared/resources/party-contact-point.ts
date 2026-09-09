@@ -8,9 +8,9 @@ import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } fr
 
 export const PartyContactPointRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
-  resourceId: PartyRegistryResourceIdJsonSchema,
+  resourceId: ResourceIdSchema,
   resourceType: Schema.Literal('party.registry.party-contact-point'),
-  tenantId: PartyRegistryTenantIdJsonSchema,
+  tenantId: TenantIdSchema,
 });
 export type PartyContactPointRef = typeof PartyContactPointRefSchema.Type;
 

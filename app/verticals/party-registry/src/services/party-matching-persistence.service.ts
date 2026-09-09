@@ -26,8 +26,6 @@ import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure ResourceRef value constructor, not an Effect service constructor.
 import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
 import type { PartyOfficialIdentifierRef } from '../../shared/resources/party-official-identifier.ts';
-// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure ResourceRef value constructor, not an Effect service constructor.
-import { makePartyOfficialIdentifierRef } from '../../shared/resources/party-official-identifier.ts';
 import type { PartyCandidateSnapshot, PartyEvidenceExplanation } from '../db/schema.ts';
 import {
   duplicateCandidateCaseParties,
@@ -52,6 +50,8 @@ import {
   partyDto,
 } from './party-identity-persistence.service.ts';
 import { addOfficialIdentifierRecord } from './party-official-identifier-persistence.service.ts';
+// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure owner-private ResourceRef value constructor.
+import { makePartyOfficialIdentifierRef } from './party-official-identifier-reference.ts';
 
 const MATCH_RULE_VERSION = 'party-exact-claims.v1';
 const PartyNotFoundSchema = Schema.TaggedStruct('not_found', {});

@@ -1,0 +1,4 @@
+DROP INDEX "commerce_customer_context"."ccc_access_grants_current_uk";--> statement-breakpoint
+CREATE UNIQUE INDEX "ccc_access_grants_current_uk" ON "commerce_customer_context"."counterparty_commerce_access_grants" ("tenant_id","legal_entity_id","counterparty_purchasing_profile_id","principal_id","permission_code",coalesce("storefront_resource_id", '')) WHERE "lifecycle" in ('PENDING_GRANT', 'ACTIVE', 'PENDING_REVOKE', 'RECONCILIATION_REQUIRED');--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."counterparty_purchasing_profiles" DROP CONSTRAINT "ccc_counterparty_profiles_business_key_uk";--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."counterparty_purchasing_profiles" ADD CONSTRAINT "ccc_counterparty_profiles_business_key_uk" UNIQUE("tenant_id","legal_entity_id","counterparty_resource_id");

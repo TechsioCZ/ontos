@@ -1,4 +1,3 @@
-/* oxlint-disable sonarjs/no-inverted-boolean-check -- Existing compatibility boundary; expires: 2026-12-31. */
 /* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual flatMap API is intentional. expires: 2026-12-31. */
 // @effect-diagnostics effectFnOpportunity:off globalDateInEffect:off instanceOfSchema:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
@@ -149,14 +148,21 @@ const withOutcomeSpan = <Value, Error, Requirements>(
 const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
   attestOutboxWorkerHandlerContext(
     withOptionalProperty(
-      {
-        attemptNumber: claim.attemptNumber,
-        claimId: claim.claimId,
-      },
-      !(claim.correlationId === undefined),
+      withOptionalProperty(
+        {
+          attemptNumber: claim.attemptNumber,
+          claimId: claim.claimId,
+        },
+        claim.actorPrincipalId !== undefined,
+        'actorPrincipalId',
+        claim.actorPrincipalId,
+        {},
+      ),
+      claim.correlationId !== undefined,
       'correlationId',
       claim.correlationId,
       {
+        consumerModuleKey: claim.consumerModuleKey,
         deliveryId: claim.deliveryId,
         domainEventId: claim.domainEventId,
         messageId: claim.messageId,

@@ -1,0 +1,1007 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "277346ff-a24d-4b16-97b5-26d7eb9c7ffb",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "name": "commerce_fx",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "manual_rate_policy_heads",
+      "entityType": "tables",
+      "schema": "commerce_fx"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "manual_rate_policy_mutation_journal",
+      "entityType": "tables",
+      "schema": "commerce_fx"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "manual_rate_policy_revisions",
+      "entityType": "tables",
+      "schema": "commerce_fx"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "manual_rate_policy_head_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channel_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_currency_code",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_currency_code",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "current_revision",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "manual_rate_policy_mutation_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_payload",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "result_payload",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "manual_rate_policy_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "manual_rate_policy_head_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operation",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "arithmetic_version",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rate",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "direction",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rate_source_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_revision",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rate_observed_at",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "inverse_rate_permitted",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "maximum_rate_age_seconds",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rounding_increment",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rounding_mode",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rounding_rule_revision",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "target_minor_units",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "manual_rate_policy_head_id"
+      ],
+      "schemaTo": "commerce_fx",
+      "tableTo": "manual_rate_policy_heads",
+      "columnsTo": [
+        "tenant_id",
+        "legal_entity_id",
+        "manual_rate_policy_head_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "commerce_fx_manual_revisions_head_fk",
+      "entityType": "fks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "columns": [
+        "manual_rate_policy_head_id"
+      ],
+      "nameExplicit": false,
+      "name": "manual_rate_policy_heads_pkey",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "manual_rate_policy_mutation_id"
+      ],
+      "nameExplicit": false,
+      "name": "manual_rate_policy_mutation_journal_pkey",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "manual_rate_policy_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "manual_rate_policy_revisions_pkey",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "manual_rate_policy_head_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_fx_manual_heads_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "channel_id",
+        "market_id",
+        "storefront_id",
+        "purpose",
+        "source_currency_code",
+        "target_currency_code"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_fx_manual_heads_context_uk",
+      "entityType": "uniques",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "manual_rate_policy_mutation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_fx_manual_journal_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_fx_manual_journal_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "manual_rate_policy_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_fx_manual_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "manual_rate_policy_head_id",
+        "revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_fx_manual_revisions_number_uk",
+      "entityType": "uniques",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "manual_rate_policy_head_id",
+        "source_revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_fx_manual_revisions_source_uk",
+      "entityType": "uniques",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "value": "\"channel_id\" = btrim(\"channel_id\") and length(\"channel_id\") between 1 and 64 and \"channel_id\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'",
+      "name": "commerce_fx_manual_heads_channel_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "value": "\"market_id\" = btrim(\"market_id\") and length(\"market_id\") between 1 and 64 and \"market_id\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'",
+      "name": "commerce_fx_manual_heads_market_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "value": "\"storefront_id\" = btrim(\"storefront_id\") and length(\"storefront_id\") between 1 and 64 and \"storefront_id\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'",
+      "name": "commerce_fx_manual_heads_storefront_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "value": "\"purpose\" in ('PRICING', 'PURCHASE_LIMIT_COMPARISON', 'PAYMENT', 'DISPLAY')",
+      "name": "commerce_fx_manual_heads_purpose_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "value": "\"source_currency_code\" ~ '^[A-Z]{3}$' and \"target_currency_code\" ~ '^[A-Z]{3}$' and \"source_currency_code\" <> \"target_currency_code\"",
+      "name": "commerce_fx_manual_heads_pair_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "value": "\"current_revision\" >= 0",
+      "name": "commerce_fx_manual_heads_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "value": "\"revision\" > 0",
+      "name": "commerce_fx_manual_revisions_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "value": "\"operation\" in ('SET', 'WITHDRAW')",
+      "name": "commerce_fx_manual_revisions_operation_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "value": "\"rate_source_id\" = btrim(\"rate_source_id\") and length(\"rate_source_id\") between 1 and 64 and \"rate_source_id\" ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'",
+      "name": "commerce_fx_manual_revisions_source_id_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "value": "\"source_revision\" = btrim(\"source_revision\") and length(\"source_revision\") between 1 and 200 and \"source_revision\" ~ '^[A-Za-z0-9][A-Za-z0-9._:/+-]*$'",
+      "name": "commerce_fx_manual_revisions_source_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "commerce_fx_manual_revisions_reason_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "value": "(\"operation\" = 'SET' and \"arithmetic_version\" is not null and \"arithmetic_version\" = 'commercial-fx-arithmetic.v1' and \"rate\" is not null and \"rate\" ~ '^(?:0|[1-9][0-9]{0,37})(?:[.][0-9]{1,18})?$' and \"rate\" !~ '^0(?:[.]0+)?$' and \"direction\" is not null and \"direction\" in ('SOURCE_TO_TARGET', 'TARGET_TO_SOURCE') and \"rate_observed_at\" is not null and \"effective_to\" is not null and \"effective_to\" > \"effective_from\" and \"inverse_rate_permitted\" is not null and \"maximum_rate_age_seconds\" is not null and \"maximum_rate_age_seconds\" between 0 and 31536000 and \"rounding_increment\" is not null and \"rounding_increment\" ~ '^(?:0|[1-9][0-9]{0,37})(?:[.][0-9]{1,18})?$' and \"rounding_increment\" !~ '^0(?:[.]0+)?$' and \"rounding_increment\"::numeric = trunc(\"rounding_increment\"::numeric, \"target_minor_units\") and \"rounding_mode\" is not null and \"rounding_mode\" in ('ceil', 'floor', 'to-zero', 'from-zero', 'half-ceil', 'half-floor', 'half-to-zero', 'half-from-zero', 'half-even', 'half-odd') and \"rounding_rule_revision\" is not null and \"rounding_rule_revision\" = btrim(\"rounding_rule_revision\") and length(\"rounding_rule_revision\") between 1 and 200 and \"rounding_rule_revision\" ~ '^[A-Za-z0-9][A-Za-z0-9._:/+-]*$' and \"target_minor_units\" is not null and \"target_minor_units\" between 0 and 18 and (\"direction\" = 'SOURCE_TO_TARGET' or \"inverse_rate_permitted\")) or (\"operation\" = 'WITHDRAW' and \"arithmetic_version\" is null and \"rate\" is null and \"direction\" is null and \"rate_observed_at\" is null and \"effective_to\" is null and \"inverse_rate_permitted\" is null and \"maximum_rate_age_seconds\" is null and \"rounding_increment\" is null and \"rounding_mode\" is null and \"rounding_rule_revision\" is null and \"target_minor_units\" is null)",
+      "name": "commerce_fx_manual_revisions_set_shape_ck",
+      "entityType": "checks",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_fx_manual_heads_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_heads_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_heads_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_fx_manual_heads_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "ALL",
+      "roles": [
+        "public"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_heads_scope_owner_routine",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_fx_manual_journal_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_journal_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_journal_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_fx_manual_journal_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "ALL",
+      "roles": [
+        "public"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_mutation_journal\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_journal_scope_owner_routine",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_mutation_journal"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_fx_manual_revisions_scope_select",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_revisions_scope_insert",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_revisions_scope_update",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_fx_manual_revisions_scope_delete",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "ALL",
+      "roles": [
+        "public"
+      ],
+      "using": "\"commerce_fx\".\"manual_rate_policy_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"commerce_fx\".\"manual_rate_policy_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"commerce_fx\".\"manual_rate_policy_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "commerce_fx_manual_revisions_scope_owner_routine",
+      "entityType": "policies",
+      "schema": "commerce_fx",
+      "table": "manual_rate_policy_revisions"
+    }
+  ],
+  "renames": []
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "commerce_customer_context"."access_mutation_journal" DROP CONSTRAINT "ccc_access_journal_kind_ck", ADD CONSTRAINT "ccc_access_journal_kind_ck" CHECK ("mutation_kind" in ('BOOTSTRAP_ADMIN', 'GRANT', 'REVOKE', 'INVITE', 'RESEND_INVITE', 'CLAIM_INVITE', 'CLAIM_REJECTED', 'CLAIM_EXPIRED', 'REVOKE_INVITE'));

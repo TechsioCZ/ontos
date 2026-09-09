@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "payment-term-catalog",
+    "build": "3812f892cf5544cf",
+    "buildMarker": "3812f892cf5544cf",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/payment-term-catalog",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/payment-term-catalog",
+    "version": "0.1.0"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "payment-term-catalog",
+      "build": "3812f892cf5544cf",
+      "buildMarker": "3812f892cf5544cf",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/payment-term-catalog",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "surface": "api",
+      "unitId": "app/payment-term-catalog",
+      "version": "0.1.0"
+    },
+    "ui": {
+      "appId": "payment-term-catalog",
+      "build": "3812f892cf5544cf",
+      "buildMarker": "3812f892cf5544cf",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/payment-term-catalog",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "surface": "ui",
+      "unitId": "app/payment-term-catalog",
+      "version": "0.1.0"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+ALTER TABLE "commerce_customer_context"."approval_hierarchies" ADD COLUMN "idempotency_key" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."approval_routes" ADD COLUMN "idempotency_key" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."purchase_proposal_revisions" ADD COLUMN "idempotency_key" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."approval_hierarchies" ADD CONSTRAINT "ccc_approval_hierarchies_idempotency_uk" UNIQUE("tenant_id","legal_entity_id","idempotency_key");--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."approval_routes" ADD CONSTRAINT "ccc_approval_routes_idempotency_uk" UNIQUE("tenant_id","legal_entity_id","idempotency_key");--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."purchase_proposal_revisions" ADD CONSTRAINT "ccc_purchase_proposals_idempotency_uk" UNIQUE("tenant_id","legal_entity_id","idempotency_key");--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."approval_hierarchies" ADD CONSTRAINT "ccc_approval_hierarchies_idempotency_ck" CHECK ("idempotency_key" = btrim("idempotency_key") and length("idempotency_key") > 0);--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."approval_routes" ADD CONSTRAINT "ccc_approval_routes_idempotency_ck" CHECK ("idempotency_key" = btrim("idempotency_key") and length("idempotency_key") > 0);--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."purchase_proposal_revisions" ADD CONSTRAINT "ccc_purchase_proposals_idempotency_ck" CHECK ("idempotency_key" = btrim("idempotency_key") and length("idempotency_key") > 0);

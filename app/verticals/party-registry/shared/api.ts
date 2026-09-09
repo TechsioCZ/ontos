@@ -14,6 +14,7 @@ import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
 import { CounterpartyReadApi } from './apis/counterparty-read.ts';
 import { CounterpartyRoleHistoryApi } from './apis/counterparty-role-history.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
+import { GuestPartyResolutionApi } from './apis/guest-party-resolution.ts';
 import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
 import { PartiesSearchApi } from './apis/parties-search.ts';
 import { PartyContactPointDetailApi } from './apis/party-contact-point-detail.ts';
@@ -39,6 +40,7 @@ export * from './apis/counterparties-search.ts';
 export * from './apis/counterparty-read.ts';
 export * from './apis/counterparty-role-history.ts';
 export * from './apis/duplicate-candidate-detail.ts';
+export * from './apis/guest-party-resolution.ts';
 export * from './apis/parties-search.ts';
 export * from './apis/party-contact-point-detail.ts';
 export * from './apis/party-contact-points.ts';
@@ -99,6 +101,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(CounterpartyReadApi)
   .addHttpApi(CounterpartyRoleHistoryApi)
   .addHttpApi(DuplicateCandidateDetailApi)
+  .addHttpApi(GuestPartyResolutionApi)
   .addHttpApi(OrganizationEngagementProfileApi)
   .addHttpApi(PartiesSearchApi)
   .addHttpApi(PartyContactPointDetailApi)
@@ -140,6 +143,11 @@ export const partyRegistryOperationContexts = {
     method: 'POST',
     operationId: 'PartyRegistryApi:/reads/duplicate-candidate-detail',
     routePath: '/reads/duplicate-candidate-detail',
+  }),
+  guestPartyResolution: createMicroVerticalOperationContext({
+    method: 'POST',
+    operationId: 'PartyRegistryApi:/reads/guest-party-resolution',
+    routePath: '/reads/guest-party-resolution',
   }),
   partiesSearch: createMicroVerticalOperationContext({
     method: 'POST',

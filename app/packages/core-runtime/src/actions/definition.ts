@@ -1,26 +1,35 @@
 import { Effect, Schema, Predicate } from 'effect';
-
-import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
-import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
-import type { OperationalScope, LegalEntityScope } from '../operations/context.ts';
-import type { OperationContextUnavailable } from '../operations/errors.ts';
-import type { ResourceAccessTarget, TenantPermissionKey } from '../permissions/context-access.ts';
-import type { ActionHandlerContext } from './context.ts';
+import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
 import type { ActionCollectorError } from './errors.ts';
 import type { ActionAccessEvidencePolicy, DomainEventContractMap } from './events.ts';
 import { isActionPolicy } from './policy.ts';
 import type { ActionPolicy } from './policy.ts';
+import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
+import type { OperationalScope, LegalEntityScope } from '../operations/context.ts';
+import type { OperationContextUnavailable } from '../operations/errors.ts';
+import type {
+  BusinessPermissionAccessTarget,
+  ResourceAccessTarget,
+  TenantPermissionKey,
+} from '../permissions/context-access.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
-const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');
+const actionResourcePermissionDeclaration: unique symbol = Symbol(
+  '@app/core-runtime/actions/resource-permission',
+);
+const actionBusinessPermissionDeclaration: unique symbol = Symbol(
+  '@app/core-runtime/actions/business-permission',
+);
 
 class ActionPrivateStorage<Value> {
   declare readonly [actionRegistration]?: true;
   declare readonly [actionResourcePermissionDeclaration]?: true;
+  declare readonly [actionBusinessPermissionDeclaration]?: true;
   declare readonly descriptor?: unknown;
-  declare readonly kind?: 'resource';
+  declare readonly kind?: 'business_permission' | 'resource';
   readonly #value: Value;
 
   constructor(value: Value) {
@@ -57,6 +66,24 @@ export type ActionResourcePermissionTargetResolver<Payload> = (
   payload: Payload,
   scope: OperationalScope,
 ) => ActionResourcePermissionTarget;
+export type ActionDeniedAuditEvidenceJsonValue =
+  | boolean
+  | null
+  | number
+  | string
+  | readonly ActionDeniedAuditEvidenceJsonValue[]
+  | { readonly [key: string]: ActionDeniedAuditEvidenceJsonValue };
+export type ActionDeniedAuditEvidenceValue = Readonly<
+  Record<string, ActionDeniedAuditEvidenceJsonValue>
+>;
+export type ActionDeniedAuditEvidenceResolver<Payload> = (
+  payload: Payload,
+  scope: OperationalScope,
+) => ActionDeniedAuditEvidenceValue;
+export interface ActionDeniedAuditEvidenceDeclaration<Payload> {
+  readonly resolve: ActionDeniedAuditEvidenceResolver<Payload>;
+  readonly schema: Schema.ConstraintDecoder<unknown>;
+}
 export type ActionResourcePermissionDeclaration<Payload> = ActionPrivateStorage<
   ActionResourcePermissionTargetResolver<Payload>
 > & {
@@ -64,9 +91,25 @@ export type ActionResourcePermissionDeclaration<Payload> = ActionPrivateStorage<
   readonly kind: 'resource';
 };
 
-const ActionDefinitionInvariantError = Schema.TaggedError<Error>()('ActionDefinitionInvariantError', {
-  message: Schema.String,
-});
+export interface ActionBusinessPermissionTarget extends BusinessPermissionAccessTarget {
+  /** Required only for counterparty_storefront targets and obtained from trusted context. */
+  readonly trustedStorefrontId?: string;
+}
+export type ActionBusinessPermissionTargetResolver<Payload> = (
+  payload: Payload,
+  scope: OperationalScope,
+) => ActionBusinessPermissionTarget;
+export type ActionBusinessPermissionDeclaration<Payload> = ActionPrivateStorage<
+  ActionBusinessPermissionTargetResolver<Payload>
+> & {
+  readonly [actionBusinessPermissionDeclaration]: true;
+  readonly kind: 'business_permission';
+};
+
+const ActionDefinitionInvariantError = Schema.TaggedError<Error>()(
+  'ActionDefinitionInvariantError',
+  { message: Schema.String },
+);
 
 const failActionDefinition = (message: string): never => {
   throw new ActionDefinitionInvariantError({ message });
@@ -85,6 +128,19 @@ export const defineActionResourcePermission = <Payload>(
   });
 };
 
+/** Declares one exact profile/counterparty permission resolved before policy or handler code. */
+export const defineActionBusinessPermission = <Payload>(
+  resolver: ActionBusinessPermissionTargetResolver<Payload>,
+): ActionBusinessPermissionDeclaration<Payload> => {
+  if (!Predicate.isFunction(resolver)) {
+    return failActionDefinition('Action business permission resolver must be a function');
+  }
+  return ActionPrivateStorage.create(resolver, {
+    [actionBusinessPermissionDeclaration]: true as const,
+    kind: 'business_permission' as const,
+  });
+};
+
 const ActionResourcePermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
   Schema.makeFilter((declaration) =>
     declaration[actionResourcePermissionDeclaration] === true &&
@@ -92,6 +148,15 @@ const ActionResourcePermissionDeclarationSchema = Schema.instanceOf(ActionPrivat
     Object.isFrozen(declaration)
       ? undefined
       : 'Expected an immutable Action Resource permission declaration',
+  ),
+);
+const ActionBusinessPermissionDeclarationSchema = Schema.instanceOf(ActionPrivateStorage).check(
+  Schema.makeFilter((declaration) =>
+    declaration[actionBusinessPermissionDeclaration] === true &&
+    declaration.kind === 'business_permission' &&
+    Object.isFrozen(declaration)
+      ? undefined
+      : 'Expected an immutable Action business permission declaration',
   ),
 );
 
@@ -112,6 +177,10 @@ export interface ActionDescriptor<
   readonly actionKey: string;
   readonly auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>;
   readonly auditProfile: ActionAuditProfile;
+  /** Declares one exact business permission resolved from decoded input and trusted scope. */
+  readonly businessPermission?: ActionBusinessPermissionDeclaration<PayloadSchema['Type']>;
+  /** Resolves a schema-bounded, secret-safe evidence object before authorization/policy denial. */
+  readonly deniedAuditEvidence?: ActionDeniedAuditEvidenceDeclaration<PayloadSchema['Type']>;
   readonly domainErrorSchema: DomainErrorSchema;
   readonly domainEvents: DomainEvents;
   readonly entrypoint: ModuleEntrypointDescriptor<'action', 'write', Owner>;
@@ -143,7 +212,11 @@ export type ActionHandler<
 > = (
   payload: PayloadSchema['Type'],
   context: ActionHandlerContext<DomainEvents, Services>,
-) => Effect.Effect<ResultSchema['Type'], ActionCollectorError | DomainErrorSchema['Type'], Requirements>;
+) => Effect.Effect<
+  ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>,
+  ActionCollectorError | DomainErrorSchema['Type'],
+  Requirements
+>;
 
 export type ActionServiceFactory<Services, Requirements = never> = (
   transaction: ScopedTransactionExecutor,
@@ -230,6 +303,7 @@ export type ActionRequirements<Registration> =
     : never;
 
 export interface ActionDescriptorValidationInput<Policy> {
+  readonly businessPermission?: ActionBusinessPermissionDeclaration<never>;
   readonly entrypoint: ModuleEntrypointDescriptor;
   readonly legalEntityPermission?: unknown;
   readonly legalEntityScope: string;
@@ -267,6 +341,8 @@ const validateActionLegalEntityScope = <Policy>(descriptor: ActionDescriptorVali
 };
 const validateActionPermissions = <Policy>(descriptor: ActionDescriptorValidationInput<Policy>): void => {
   if (
+    (descriptor.businessPermission !== undefined &&
+      !Schema.is(ActionBusinessPermissionDeclarationSchema)(descriptor.businessPermission)) ||
     (descriptor.resourcePermission !== undefined &&
       !Schema.is(ActionResourcePermissionDeclarationSchema)(descriptor.resourcePermission)) ||
     (descriptor.tenantPermission !== undefined && !Predicate.isFunction(descriptor.tenantPermission))
@@ -479,7 +555,33 @@ export const getActionResourcePermissionTargetResolver = <
     ? undefined
     : ActionPrivateStorage.getValue(registration.descriptor.resourcePermission);
 
-const preserveFailureCause = <Failure extends object>(failure: Failure, cause: unknown): Failure => {
+export const getActionBusinessPermissionTargetResolver = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+): ActionBusinessPermissionTargetResolver<PayloadSchema['Type']> | undefined =>
+  registration.descriptor.businessPermission === undefined
+    ? undefined
+    : ActionPrivateStorage.getValue(registration.descriptor.businessPermission);
+
+const preserveFailureCause = <Failure extends object>(
+  failure: Failure,
+  cause: unknown,
+): Failure => {
   Object.defineProperty(failure, 'cause', {
     configurable: false,
     enumerable: false,

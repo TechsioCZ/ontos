@@ -1,16 +1,75 @@
-import { Cause, Effect, Match, Redacted } from 'effect';
-import type { Schema } from 'effect';
+/* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
+import { Cause, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
+import { isReadCoreError } from '../reads/errors.ts';
 import { ReadRuntime } from '../reads/runtime.ts';
 
 interface HttpProblem<Status extends number> {
   readonly status: Status;
 }
+
+export type GovernedReadDomainProblem =
+  | Readonly<{
+      readonly _tag: string;
+      readonly detail: string;
+      readonly instance?: string;
+      readonly reasonCode: string;
+      readonly status: 409 | 422;
+      readonly title: string;
+      readonly type: string;
+    }>
+  | Readonly<{
+      readonly _tag: string;
+      readonly detail: string;
+      readonly instance?: string;
+      readonly reasonCode: string;
+      readonly retryable: true;
+      readonly status: 503;
+      readonly title: string;
+      readonly type: string;
+    }>;
+
+const GovernedReadDomainProblemSchema = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.String,
+    detail: Schema.String,
+    instance: Schema.optionalKey(Schema.String),
+    reasonCode: Schema.String,
+    status: Schema.Union([Schema.Literal(409), Schema.Literal(422)]),
+    title: Schema.String,
+    type: Schema.String,
+  }),
+  Schema.Struct({
+    _tag: Schema.String,
+    detail: Schema.String,
+    instance: Schema.optionalKey(Schema.String),
+    reasonCode: Schema.String,
+    retryable: Schema.Literal(true),
+    status: Schema.Literal(503),
+    title: Schema.String,
+    type: Schema.String,
+  }),
+]);
+
+const governedReadDomainProblemFields = new Set([
+  '_tag',
+  'detail',
+  'instance',
+  'reasonCode',
+  'retryable',
+  'status',
+  'title',
+  'type',
+]);
+const domainProblemSchemaAccepts = Schema.is(GovernedReadDomainProblemSchema);
+const isGovernedReadDomainProblem = (value: unknown): boolean =>
+  domainProblemSchemaAccepts(value) &&
+  Object.keys(value).every((key) => governedReadDomainProblemFields.has(key));
 
 export const governedReadHttpStatus = {
   authentication: 401,
@@ -129,7 +188,65 @@ interface GovernedReadRequest<Payload> {
   readonly request: Pick<HttpServerRequest.HttpServerRequest, 'headers'>;
 }
 
-export const makeGovernedReadHttpHandler = <
+type GovernedReadHttpHandler<Payload, Result, Failure, Requirements> = (
+  request: GovernedReadRequest<Payload>,
+) => Effect.Effect<Result, Failure, Requirements>;
+
+type GovernedReadHttpFailures<
+  Authentication,
+  Forbidden,
+  Internal,
+  Invalid,
+  NotFound,
+  PolicyConflict,
+  PolicyIneligible,
+  Unavailable,
+> =
+  | Authentication
+  | Forbidden
+  | Internal
+  | Invalid
+  | NotFound
+  | PolicyConflict
+  | PolicyIneligible
+  | Unavailable;
+
+type GovernedReadHttpRequirements<VerifierRequirements> =
+  | HttpServerRequest.HttpServerRequest
+  | ReadRuntime
+  | VerifierRequirements;
+
+type GovernedReadAuthenticatorFailure<Authenticator> = Authenticator extends (
+  ...arguments_: never[]
+) => Effect.Effect<unknown, infer Failure, unknown>
+  ? Failure
+  : never;
+
+type GovernedReadAuthenticatorRequirements<Authenticator> = Authenticator extends (
+  ...arguments_: never[]
+) => Effect.Effect<unknown, unknown, infer Requirements>
+  ? Requirements
+  : never;
+
+type GovernedReadDomainMapperResult<Mapper> = Mapper extends (
+  ...arguments_: never[]
+) => infer Problem
+  ? Problem
+  : never;
+
+const invokeGovernedReadDomainMapper = <
+  DomainFailure,
+  Mapper extends (error: DomainFailure) => GovernedReadDomainProblem,
+>(
+  mapper: Mapper,
+  error: DomainFailure,
+): GovernedReadDomainMapperResult<Mapper> =>
+  // SAFETY: calling the exact mapper produces its declared ReturnType; TypeScript cannot
+  // retain that relationship for a still-generic function value.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Validated generic invocation; expires: 2027-03-31.
+  mapper(error) as GovernedReadDomainMapperResult<Mapper>;
+
+interface GovernedReadHttpOptions<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
@@ -145,7 +262,8 @@ export const makeGovernedReadHttpHandler = <
   PolicyConflict extends HttpProblem<409>,
   PolicyIneligible extends HttpProblem<422>,
   Unavailable extends HttpProblem<503>,
->(options: {
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+> {
   readonly authenticatePrincipal: GovernedReadPrincipalAuthentication<
     VerifierRequirements,
     Authentication,
@@ -161,9 +279,200 @@ export const makeGovernedReadHttpHandler = <
     PolicyIneligible,
     Unavailable
   >;
-  readonly registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, HandlerError, ReadRequirements>;
-}) =>
-  Effect.fn('GovernedReadHttp.handle')(function* handleGovernedRead({
+  readonly registration: ReadRegistration<
+    InputSchema,
+    ResultSchema,
+    Owner,
+    Services,
+    HandlerError,
+    ReadRequirements,
+    DomainErrorSchema
+  >;
+}
+
+export function makeGovernedReadHttpHandler<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  HandlerError,
+  ReadRequirements,
+  Authenticator,
+  Authentication extends HttpProblem<401>,
+  Forbidden extends HttpProblem<403>,
+  Internal extends HttpProblem<500>,
+  Invalid extends HttpProblem<400>,
+  NotFound extends HttpProblem<404>,
+  PolicyConflict extends HttpProblem<409>,
+  PolicyIneligible extends HttpProblem<422>,
+  Unavailable extends HttpProblem<503>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }> = typeof Schema.Never,
+>(
+  options: Omit<
+    GovernedReadHttpOptions<
+      InputSchema,
+      ResultSchema,
+      Owner,
+      Services,
+      HandlerError,
+      ReadRequirements,
+      GovernedReadAuthenticatorRequirements<Authenticator>,
+      Authentication,
+      Forbidden,
+      Internal,
+      Invalid,
+      NotFound,
+      PolicyConflict,
+      PolicyIneligible,
+      Unavailable,
+      DomainErrorSchema
+    >,
+    'authenticatePrincipal'
+  > &
+    Readonly<{
+      authenticatePrincipal: Authenticator &
+        GovernedReadPrincipalAuthentication<
+          GovernedReadAuthenticatorRequirements<Authenticator>,
+          Authentication,
+          Unavailable
+        >;
+      mapDomainError?: undefined;
+    }>,
+): GovernedReadHttpHandler<
+  Schema.Schema.Type<InputSchema>,
+  Schema.Schema.Type<ResultSchema>,
+  | GovernedReadHttpFailures<
+      Authentication,
+      Forbidden,
+      Internal,
+      Invalid,
+      NotFound,
+      PolicyConflict,
+      PolicyIneligible,
+      Unavailable
+    >
+  | GovernedReadAuthenticatorFailure<Authenticator>,
+  GovernedReadHttpRequirements<GovernedReadAuthenticatorRequirements<Authenticator>>
+>;
+export function makeGovernedReadHttpHandler<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  HandlerError,
+  ReadRequirements,
+  Authenticator,
+  Authentication extends HttpProblem<401>,
+  Forbidden extends HttpProblem<403>,
+  Internal extends HttpProblem<500>,
+  Invalid extends HttpProblem<400>,
+  NotFound extends HttpProblem<404>,
+  PolicyConflict extends HttpProblem<409>,
+  PolicyIneligible extends HttpProblem<422>,
+  Unavailable extends HttpProblem<503>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainErrorMapper extends (error: DomainErrorSchema['Type']) => GovernedReadDomainProblem,
+>(
+  options: Omit<
+    GovernedReadHttpOptions<
+      InputSchema,
+      ResultSchema,
+      Owner,
+      Services,
+      HandlerError,
+      ReadRequirements,
+      GovernedReadAuthenticatorRequirements<Authenticator>,
+      Authentication,
+      Forbidden,
+      Internal,
+      Invalid,
+      NotFound,
+      PolicyConflict,
+      PolicyIneligible,
+      Unavailable,
+      DomainErrorSchema
+    >,
+    'authenticatePrincipal'
+  > &
+    Readonly<{
+      authenticatePrincipal: Authenticator &
+        GovernedReadPrincipalAuthentication<
+          GovernedReadAuthenticatorRequirements<Authenticator>,
+          Authentication,
+          Unavailable
+        >;
+      mapDomainError: DomainErrorMapper;
+    }>,
+): GovernedReadHttpHandler<
+  Schema.Schema.Type<InputSchema>,
+  Schema.Schema.Type<ResultSchema>,
+  | GovernedReadHttpFailures<
+      Authentication,
+      Forbidden,
+      Internal,
+      Invalid,
+      NotFound,
+      PolicyConflict,
+      PolicyIneligible,
+      Unavailable
+    >
+  | GovernedReadDomainMapperResult<DomainErrorMapper>
+  | GovernedReadAuthenticatorFailure<Authenticator>,
+  GovernedReadHttpRequirements<GovernedReadAuthenticatorRequirements<Authenticator>>
+>;
+export function makeGovernedReadHttpHandler<
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  Owner extends string,
+  Services,
+  HandlerError,
+  ReadRequirements,
+  VerifierRequirements,
+  Authentication extends HttpProblem<401>,
+  Forbidden extends HttpProblem<403>,
+  Internal extends HttpProblem<500>,
+  Invalid extends HttpProblem<400>,
+  NotFound extends HttpProblem<404>,
+  PolicyConflict extends HttpProblem<409>,
+  PolicyIneligible extends HttpProblem<422>,
+  Unavailable extends HttpProblem<503>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{
+    readonly _tag: string;
+  }> = typeof Schema.Never,
+  DomainErrorMapper extends
+    | ((error: DomainErrorSchema['Type']) => GovernedReadDomainProblem)
+    | undefined = undefined,
+>(
+  options: {
+    readonly authenticatePrincipal: GovernedReadPrincipalAuthentication<
+      VerifierRequirements,
+      Authentication,
+      Unavailable
+    >;
+    readonly problems: GovernedReadHttpProblemSet<
+      Authentication,
+      Forbidden,
+      Internal,
+      Invalid,
+      NotFound,
+      PolicyConflict,
+      PolicyIneligible,
+      Unavailable
+    >;
+    readonly registration: ReadRegistration<
+      InputSchema,
+      ResultSchema,
+      Owner,
+      Services,
+      HandlerError,
+      ReadRequirements,
+      DomainErrorSchema
+    >;
+  } & Readonly<{ mapDomainError?: DomainErrorMapper }>,
+) {
+  return Effect.fn('GovernedReadHttp.handle')(function* handleGovernedRead({
     payload,
     request,
   }: GovernedReadRequest<Schema.Schema.Type<InputSchema>>) {
@@ -185,7 +494,49 @@ export const makeGovernedReadHttpHandler = <
           registration: options.registration,
           transport: { correlationId },
         })
-        .pipe(Effect.catch((error) => failProblem(classifyReadCoreError(error, options.problems))));
+        .pipe(
+          Effect.catch(
+            (
+              error,
+            ): Effect.Effect<
+              never,
+              | Authentication
+              | Forbidden
+              | GovernedReadDomainMapperResult<DomainErrorMapper>
+              | Internal
+              | Invalid
+              | NotFound
+              | PolicyConflict
+              | PolicyIneligible
+              | Unavailable,
+              HttpServerRequest.HttpServerRequest
+            > => {
+              if (isReadCoreError(error)) {
+                return failProblem(classifyReadCoreError(error, options.problems));
+              }
+              const { domainErrorSchema } = options.registration.descriptor;
+              if (domainErrorSchema === undefined || options.mapDomainError === undefined) {
+                return failProblem(options.problems.internal());
+              }
+              const decoded = Schema.decodeUnknownOption(domainErrorSchema)(error);
+              if (Option.isNone(decoded)) {
+                return failProblem(options.problems.internal());
+              }
+              const problem = invokeGovernedReadDomainMapper<
+                DomainErrorSchema['Type'],
+                Exclude<DomainErrorMapper, undefined>
+              >(
+                // SAFETY: the undefined branch returned above; this is the exact declared mapper.
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Narrowed generic optional mapper; expires: 2027-03-31.
+                options.mapDomainError as Exclude<DomainErrorMapper, undefined>,
+                decoded.value,
+              );
+              return isGovernedReadDomainProblem(problem)
+                ? Effect.fail(problem)
+                : failProblem(options.problems.internal());
+            },
+          ),
+        );
     });
 
     return yield* execute.pipe(
@@ -196,3 +547,4 @@ export const makeGovernedReadHttpHandler = <
       ),
     );
   });
+}

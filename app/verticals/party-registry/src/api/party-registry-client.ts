@@ -4,11 +4,40 @@ import type { HttpClientError, Schema } from '@modern-js/bff-effect/effect-clien
 
 import { partyRegistryOperationContexts } from '../../shared/api.ts';
 import type { PartyRegistryReadiness } from '../../shared/api.ts';
+
+// Public response and problem schemas travel with the generated client aggregate. Consumers must
+// use this published client subpath; the owner API barrel remains private to the deployment.
+export {
+  CounterpartyReadResponseSchema,
+  CounterpartyReadUnavailableProblemSchema,
+  GuestPartyResolutionAuthenticationProblemSchema,
+  GuestPartyResolutionForbiddenProblemSchema,
+  GuestPartyResolutionInternalProblemSchema,
+  GuestPartyResolutionInvalidProblemSchema,
+  GuestPartyResolutionNotFoundProblemSchema,
+  GuestPartyResolutionPolicyConflictProblemSchema,
+  GuestPartyResolutionPolicyProblemSchema,
+  GuestPartyResolutionResponseSchema,
+  GuestPartyResolutionUnavailableProblemSchema,
+  PartyContactPointDetailAuthenticationProblemSchema,
+  PartyContactPointDetailForbiddenProblemSchema,
+  PartyContactPointDetailInternalProblemSchema,
+  PartyContactPointDetailInvalidProblemSchema,
+  PartyContactPointDetailNotFoundProblemSchema,
+  PartyContactPointDetailPolicyConflictProblemSchema,
+  PartyContactPointDetailPolicyProblemSchema,
+  PartyContactPointDetailResponseSchema,
+  PartyContactPointDetailUnavailableProblemSchema,
+  PartyDetailResponseSchema,
+} from '../../shared/api.ts';
+export type { PartyDetailResponse } from '../../shared/api.ts';
+
 import { executeAresLookup } from './ares-lookup-client.ts';
 import { loadCounterpartiesClient } from './counterparties-search-client.ts';
 import { executeCounterpartyRead } from './counterparty-read-client.ts';
 import { executeCounterpartyRoleHistory } from './counterparty-role-history-client.ts';
 import { executeDuplicateCandidateDetail } from './duplicate-candidate-detail-client.ts';
+import { executeGuestPartyResolution } from './guest-party-resolution-client.ts';
 import { loadPartiesClient } from './parties-search-client.ts';
 import { executePartyContactPointDetail } from './party-contact-point-detail-client.ts';
 import { executePartyContactPoints } from './party-contact-points-client.ts';
@@ -28,7 +57,7 @@ export * from './counterparties-search-client.ts';
 export * from './counterparty-read-client.ts';
 export * from './counterparty-role-history-client.ts';
 export * from './duplicate-candidate-detail-client.ts';
-export * from './engagement-profile-client.ts';
+export * from './guest-party-resolution-client.ts';
 export * from './organization-engagement-profile-client.ts';
 export * from './person-engagement-profile-client.ts';
 export * from './parties-search-client.ts';
@@ -67,6 +96,7 @@ export interface PartyRegistryClient {
   readonly executeCounterpartyRead: typeof executeCounterpartyRead;
   readonly executeCounterpartyRoleHistory: typeof executeCounterpartyRoleHistory;
   readonly executeDuplicateCandidateDetail: typeof executeDuplicateCandidateDetail;
+  readonly executeGuestPartyResolution: typeof executeGuestPartyResolution;
   readonly loadPartiesClient: typeof loadPartiesClient;
   readonly executePartyContactPointDetail: typeof executePartyContactPointDetail;
   readonly executePartyContactPoints: typeof executePartyContactPoints;
@@ -100,6 +130,7 @@ export const partyRegistryClient = {
   executeCounterpartyRead,
   executeCounterpartyRoleHistory,
   executeDuplicateCandidateDetail,
+  executeGuestPartyResolution,
   executePartyContactPointDetail,
   executePartyContactPoints,
   executePartyCorrection,

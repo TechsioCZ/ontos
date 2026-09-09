@@ -131,8 +131,8 @@ const renderGatewayAssertionRedemptionAdapter = (
 import {
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
-} from '@app/core-runtime';
-import type { GatewayAssertionRedemption } from '@app/core-runtime';
+} from '@app/core-runtime/auth/gateway-assertion-redemption';
+import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { Effect, Layer } from 'effect';
 
 /**
@@ -174,7 +174,9 @@ export const bindActionHttpRunner = <AuthenticationProblem, UnavailableProblem>(
   });
 `;
 
-const renderClient = (vertical: VerticalMetadata): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
+export const renderActionGatewayClient = (
+  vertical: Pick<VerticalMetadata, 'appId'>,
+): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
 import {
@@ -231,10 +233,11 @@ export const planActionBoundaryScaffold = (
           'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
       },
     );
-    const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderClient(vertical), [
-      `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
-      'makeOperationGateway',
-    ]);
+    const clientMutation = yield* createOrAcceptOwnedMutation(
+      clientPath,
+      renderActionGatewayClient(vertical),
+      [`ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`, 'makeOperationGateway'],
+    );
     const redemptionMutation = yield* createOrAcceptOwnedMutation(
       redemptionPath,
       renderGatewayAssertionRedemptionAdapter(vertical),

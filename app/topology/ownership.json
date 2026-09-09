@@ -58,6 +58,42 @@
       }
     },
     {
+      "id": "customer-payment-term-contracts",
+      "package": "@app/customer-payment-term-contracts",
+      "path": "packages/customer-payment-term-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-customer-context.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
+          ]
+        }
+      }
+    },
+    {
+      "id": "payment-term-catalog-contracts",
+      "package": "@app/payment-term-catalog-contracts",
+      "path": "packages/payment-term-catalog-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/payment-term-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#payment-term-catalog",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"
+          ]
+        }
+      }
+    },
+    {
       "id": "shared-contracts",
       "package": "@app/shared-contracts",
       "path": "packages/shared-contracts",
@@ -107,6 +143,60 @@
           "tier": "tier-2-vertical",
           "references": [
             "docs/super-app-rfc-adr/blast-radius.md#party-registry"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commerce-customer-context",
+      "package": "@app/commerce-customer-context",
+      "path": "verticals/commerce-customer-context",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-customer-context.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
+          ]
+        }
+      }
+    },
+    {
+      "id": "payment-term-catalog",
+      "package": "@app/payment-term-catalog",
+      "path": "verticals/payment-term-catalog",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/payment-term-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#payment-term-catalog",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#payment-term-catalog"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commerce-fx",
+      "package": "@app/commerce-fx",
+      "path": "verticals/commerce-fx",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-fx.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-fx",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-fx"
           ]
         }
       }

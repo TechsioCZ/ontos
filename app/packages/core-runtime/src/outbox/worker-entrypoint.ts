@@ -12,9 +12,31 @@ export {
 } from '../search/projection.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from '../search/worker-snapshot.ts';
 export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './definition.ts';
+export {
+  defineOutboxWorkerCompletion,
+  OutboxWorkerCompletionPublicationError,
+} from './completion-publication.ts';
 export { OutboxWorkerInfrastructureLive, startOutboxWorkerProcess } from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';
+export {
+  makeOutboxWorkerLegalEntityScopeFanout,
+  OutboxWorkerLegalEntityScopeError,
+  OutboxWorkerLegalEntityScopeFanout,
+  OutboxWorkerLegalEntityScopeFanoutLive,
+} from './legal-entity-scope-fanout.ts';
 export type { AnyOutboxWorkerRegistration, OutboxWorkerHandlerContext } from './definition.ts';
+export type {
+  OutboxWorkerCompletionDefinition,
+  OutboxWorkerCompletionInput,
+  OutboxWorkerCompletionPublicationResult,
+  OutboxWorkerCompletionPublisher,
+} from './completion-publication.ts';
+export type {
+  OutboxWorkerLegalEntityScope,
+  OutboxWorkerLegalEntityScopeBackend,
+  OutboxWorkerLegalEntityScopeFanoutService,
+  OutboxWorkerLegalEntityScopeRecord,
+} from './legal-entity-scope-fanout.ts';
 export type { CoreSearchIngestionService } from '../search/ingestion.ts';
 export type {
   CoreSearchProjectionDocument,

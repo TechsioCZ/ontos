@@ -263,7 +263,7 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
     }),
   );
 
-  suite.effect('has no registered Party Merge Action, event, outbox consumer, or write endpoint', () =>
+  suite.effect('has no registered Party Merge Action, outbox consumer, or write endpoint', () =>
     Effect.map(
       Effect.all([
         FileSystem.FileSystem.use((fs) =>

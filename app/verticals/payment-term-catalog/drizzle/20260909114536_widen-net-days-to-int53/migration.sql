@@ -1,0 +1,1 @@
+ALTER TABLE "payment_term_catalog"."payment_term_revisions" ALTER COLUMN "net_days" SET DATA TYPE bigint USING "net_days"::bigint;

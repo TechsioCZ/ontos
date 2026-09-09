@@ -1,7 +1,7 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { Effect, Schema, SchemaAST, Struct } from 'effect';
+import { Effect, Redacted, Schema, SchemaAST, Struct } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
-
 import {
   ApiKeyGatewayHeadersSchema,
   GatewayContextApiGroup,
@@ -14,6 +14,7 @@ import {
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
 } from '../../src/gateway-context.ts';
+import { issueApiKeyGatewayContext } from '../../src/gateway-context-api-key.ts';
 
 const endpointStatuses = (
   endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints],
@@ -94,6 +95,22 @@ it.effect('rejects malformed audiences, invalid ordering, and subject mismatch',
         decodeGatewayContextClaims({
           ...claims,
           sub: '60000000-0000-4000-8000-000000000001',
+        }),
+      ),
+    ).toBeDefined();
+    expect(
+      yield* Effect.flip(
+        decodeGatewayContextClaims({
+          ...claims,
+          principal: { ...principal, trustedStorefrontId: 'payload-storefront' },
+        }),
+      ),
+    ).toBeDefined();
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(GatewayContextRequestSchema, { onExcessProperty: 'error' })({
+          audience: 'inventory-stock',
+          trustedStorefrontId: 'payload-storefront',
         }),
       ),
     ).toBeDefined();
@@ -197,3 +214,38 @@ it('preserves migrated gateway Problem Details shapes and ordered endpoint membe
     'GatewayInternalProblem',
   ]);
 });
+
+it.effect('issues API-key gateway context through the server-only credential boundary', () =>
+  Effect.gen(function* apiKeyGatewayContextClientTest() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      expect(request.url).toBe(
+        'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
+      );
+      return Promise.resolve(
+        Response.json({ expiresAt: claims.exp, token: 'fresh-signed-assertion' }),
+      );
+    };
+
+    const response = yield* issueApiKeyGatewayContext(
+      {
+        audience: 'payment-term-catalog',
+        legalEntityId: '20000000-0000-4000-8000-000000000001',
+      },
+      {
+        apiKey: Redacted.make('server-owned-api-key'),
+        baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
+        requestCorrelation: 'catalog-credential-correlation',
+      },
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+
+    expect(response).toEqual({ expiresAt: claims.exp, token: 'fresh-signed-assertion' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers.get('x-api-key')).toBe('server-owned-api-key');
+    expect(requests[0]?.headers.get('x-correlation-id')).toBe('catalog-credential-correlation');
+    expect(requests[0]?.headers.get('cookie')).toBeNull();
+    expect(requests[0]?.headers.get('authorization')).toBeNull();
+  }),
+);

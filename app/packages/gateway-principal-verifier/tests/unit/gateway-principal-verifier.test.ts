@@ -1,4 +1,9 @@
-import { GatewayAssertionRedemptionUnavailableError, GatewayAssertionReplayError } from '@app/core-runtime';
+import { expect, it } from 'effect-rstest';
+import {
+  GatewayAssertionRedemptionUnavailableError,
+  GatewayAssertionReplayError,
+  isVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -23,7 +28,7 @@ const principal = {
   tenantId: '50000000-0000-4000-8000-000000000001',
 };
 
-const makeFixture = (audience: string, version = 1) =>
+const makeFixture = (audience: string, version = 1, fixturePrincipal = principal) =>
   Effect.gen(function* createFixture() {
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
@@ -33,7 +38,7 @@ const makeFixture = (audience: string, version = 1) =>
       use: 'sig',
     };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: version })
+      new SignJWT({ principal: fixturePrincipal, ver: version })
         .setProtectedHeader({
           alg: 'EdDSA',
           kid: 'shared-verifier-test',
@@ -41,7 +46,7 @@ const makeFixture = (audience: string, version = 1) =>
         })
         .setIssuer(issuer)
         .setAudience(audience)
-        .setSubject(principal.principalId)
+        .setSubject(fixturePrincipal.principalId)
         .setIssuedAt(1_700_000_000)
         .setExpirationTime(1_700_000_300)
         .setJti('60000000-0000-4000-8000-000000000001')
@@ -58,6 +63,35 @@ const makeFixture = (audience: string, version = 1) =>
       token,
     };
   });
+
+it.effect('preserves signed Storefront scope with non-copyable verified provenance', () =>
+  Effect.gen(function* verifyStorefrontProvenance() {
+    const storefrontPrincipal = {
+      ...principal,
+      legalEntityId: '70000000-0000-4000-8000-000000000001',
+      trustedStorefrontId: 'storefront-akros-b2b',
+    };
+    const fixture = yield* makeFixture('commerce-customer-context', 1, storefrontPrincipal);
+    const verifier = bindGatewayPrincipalVerifier('commerce-customer-context');
+    const verificationOptions = {
+      currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+      environment: fixture.environment,
+    } as const;
+    const signatureOnly = yield* verifier.verify(
+      Redacted.make(`Bearer ${fixture.token}`),
+      verificationOptions,
+    );
+    expect(isVerifiedGatewayPrincipalContext(signatureOnly)).toBe(false);
+
+    const verified = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+      ...verificationOptions,
+      redemption: { consume: () => Effect.void },
+    });
+
+    expect(verified.trustedStorefrontId).toBe('storefront-akros-b2b');
+    expect(isVerifiedGatewayPrincipalContext(verified)).toBe(true);
+  }),
+);
 
 const isConfigurationError = Schema.is(ActionPrincipalConfigurationErrorSchema);
 const isInvalidError = Schema.is(ActionPrincipalInvalidErrorSchema);

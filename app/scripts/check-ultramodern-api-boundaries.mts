@@ -507,14 +507,10 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       yield* assertApiSurface(verticalPath);
       const sharedApi = `${verticalPath}/shared/api.ts`;
       const sharedApiContent = (yield* exists(sharedApi)) ? yield* readText(sharedApi) : '';
-      const verticalSources = new Map<string, string>();
-      for (const file of yield* listFiles(verticalPath)) {
-        verticalSources.set(file, yield* readText(file));
-      }
       if (
         /\bHttpApiEndpoint\./u.test(sharedApiContent) &&
         !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent) &&
-        !hasCompleteGeneratedModuleApiSeam(verticalSources, sharedApi)
+        !hasCompleteGeneratedModuleApiSeam(sourceByFile, sharedApi)
       ) {
         fail(
           `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,
