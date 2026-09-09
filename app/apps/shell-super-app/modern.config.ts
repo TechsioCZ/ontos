@@ -227,6 +227,7 @@ export default defineConfig(
           // Keep shell dev assets origin-relative so the shell works through
           // tunnels and local previews without rewriting its own chunks.
           assetPrefix: '/',
+          lazyCompilation: getBuildBoolean('CI') ? false : undefined,
           server: {
             headers: shellDevServerHeaders,
           },
