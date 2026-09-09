@@ -24,7 +24,7 @@ type DuplicateCandidateDetailOperationInvocation = readonly [
 const duplicateCandidateDetailClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: DuplicateCandidateDetailClientOptions
+  options: DuplicateCandidateDetailClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,44 +33,28 @@ const duplicateCandidateDetailClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executeDuplicateCandidateDetailWithAuthorization = (
   payload: DuplicateCandidateDetailRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: DuplicateCandidateDetailAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: DuplicateCandidateDetailAuthorizedInvocation
 ) =>
-  duplicateCandidateDetailClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  duplicateCandidateDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.duplicateCandidateDetail.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executeDuplicateCandidateDetail = (
   payload: DuplicateCandidateDetailRequest,
-  ...[
-    requestCorrelation,
-    options = {},
-  ]: DuplicateCandidateDetailOperationInvocation
+  ...[requestCorrelation, options = {}]: DuplicateCandidateDetailOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeDuplicateCandidateDetailWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executeDuplicateCandidateDetailWithAuthorization(payload, credential, requestCorrelation, options),
   );

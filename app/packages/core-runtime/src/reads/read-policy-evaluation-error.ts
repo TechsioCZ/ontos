@@ -5,5 +5,5 @@ export class ReadPolicyEvaluationError extends Schema.TaggedError<ReadPolicyEval
   {
     code: Schema.Literal('read_policy_evaluation_failed'),
     reason: Schema.String,
-  }
+  },
 ) {}

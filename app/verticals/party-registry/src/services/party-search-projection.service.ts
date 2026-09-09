@@ -73,15 +73,11 @@ export type PartySearchProjectionTarget =
 interface PartySearchProjectionSourcePort {
   readonly load: (
     context: OutboxWorkerHandlerContext,
-    target: PartySearchProjectionTarget
-  ) => Effect.Effect<
-    PartySearchSourceSnapshot,
-    PartySearchProjectionUnavailable
-  >;
+    target: PartySearchProjectionTarget,
+  ) => Effect.Effect<PartySearchSourceSnapshot, PartySearchProjectionUnavailable>;
 }
 
-export type PartySearchProjectionSourceService =
-  PartySearchProjectionSourcePort;
+export type PartySearchProjectionSourceService = PartySearchProjectionSourcePort;
 
 const unavailable = (cause?: unknown) => {
   const error = new PartySearchProjectionUnavailable({
@@ -94,10 +90,7 @@ const unavailable = (cause?: unknown) => {
   return error;
 };
 
-const hasNonEmptyPeriod = (period: {
-  readonly validFrom: string;
-  readonly validTo?: string;
-}) => {
+const hasNonEmptyPeriod = (period: { readonly validFrom: string; readonly validTo?: string }) => {
   if (period.validTo === undefined) {
     return true;
   }
@@ -106,40 +99,24 @@ const hasNonEmptyPeriod = (period: {
   return (
     Option.isNone(validFrom) ||
     Option.isNone(validTo) ||
-    DateTime.toEpochMillis(validFrom.value) !==
-      DateTime.toEpochMillis(validTo.value)
+    DateTime.toEpochMillis(validFrom.value) !== DateTime.toEpochMillis(validTo.value)
   );
 };
 
-const temporalValueKey = (value: {
-  readonly validFrom: string;
-  readonly validTo?: string;
-  readonly value: string;
-}) => `${value.validFrom}\u0000${value.validTo ?? ''}\u0000${value.value}`;
+const temporalValueKey = (value: { readonly validFrom: string; readonly validTo?: string; readonly value: string }) =>
+  `${value.validFrom}\u0000${value.validTo ?? ''}\u0000${value.value}`;
 
 const activeEvidence = (identity: PartySearchSourceIdentity) =>
-  [
-    ...identity.identifiers,
-    ...identity.contacts.filter((contact) => contact.privacy === 'PUBLIC'),
-  ]
+  [...identity.identifiers, ...identity.contacts.filter((contact) => contact.privacy === 'PUBLIC')]
     .filter((value) => value.state === 'ACTIVE' && hasNonEmptyPeriod(value))
     .map(({ value, validFrom, validTo }) =>
-      validTo === undefined
-        ? { validFrom, value }
-        : { validFrom, validTo, value }
+      validTo === undefined ? { validFrom, value } : { validFrom, validTo, value },
     )
-    .toSorted((left, right) =>
-      temporalValueKey(left).localeCompare(temporalValueKey(right))
-    );
+    .toSorted((left, right) => temporalValueKey(left).localeCompare(temporalValueKey(right)));
 
-const aliasEvidence = (
-  party: PartySearchSourceParty,
-  kind: 'resource' | 'subject'
-) =>
+const aliasEvidence = (party: PartySearchSourceParty, kind: 'resource' | 'subject') =>
   party.aliases
-    .toSorted((left, right) =>
-      left.ref.resourceId.localeCompare(right.ref.resourceId)
-    )
+    .toSorted((left, right) => left.ref.resourceId.localeCompare(right.ref.resourceId))
     .map((alias) => ({
       kind,
       ref: alias.ref,
@@ -148,83 +125,73 @@ const aliasEvidence = (
     }));
 
 /** Owner semantics only; Core owns physical documents, replay, ordering and tombstones. */
-export const buildPartySearchDocuments = Effect.fn(
-  'PartySearchProjectionService.buildPartySearchDocuments'
-)(function* buildDocuments(snapshot: PartySearchSourceSnapshot) {
-  const common = {
-    facets: [],
-    metadata: [],
-    projectionVersion: snapshot.projectionVersion,
-  };
-  const partyDocuments = yield* Effect.forEach(
-    snapshot.parties,
-    (party) => {
-      if (
-        party.ref.tenantId !== snapshot.tenantId ||
-        party.aliases.some((alias) => alias.ref.tenantId !== snapshot.tenantId)
-      ) {
-        return Effect.fail(unavailable());
-      }
-      return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)({
-        ...common,
-        aliases: aliasEvidence(party, 'resource'),
-        archived: party.archived,
-        ref: party.ref,
-        searchableText: party.displayName === null ? [] : [party.displayName],
-        temporalSearchableText: activeEvidence(party),
-        title: party.displayName ?? 'Unnamed Party',
-      }).pipe(Effect.mapError(unavailable));
-    },
-    { concurrency: 1 }
-  );
-  const counterpartyDocuments = yield* Effect.forEach(
-    snapshot.counterparties,
-    (
-      counterparty
-    ): Effect.Effect<
-      CoreSearchProjectionDocument,
-      PartySearchProjectionUnavailable
-    > => {
-      const party = snapshot.parties.find(
-        (candidate) =>
-          candidate.ref.resourceId === counterparty.partyRef.resourceId
-      );
-      if (
-        party === undefined ||
-        counterparty.ref.tenantId !== snapshot.tenantId ||
-        counterparty.partyRef.tenantId !== snapshot.tenantId ||
-        counterparty.storedPartyRef.tenantId !== snapshot.tenantId
-      ) {
-        return Effect.fail(unavailable());
-      }
-      return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)({
-        ...common,
-        aliases: aliasEvidence(party, 'subject'),
-        archived: party.archived,
-        ref: counterparty.ref,
-        searchableText: party.displayName === null ? [] : [party.displayName],
-        selectedLegalEntityId: counterparty.legalEntityId,
-        subjectRef: party.ref,
-        temporalFacets: counterparty.rolePeriods
-          .filter(
-            (period) => period.state === 'ACTIVE' && hasNonEmptyPeriod(period)
-          )
-          .map(({ role, validFrom, validTo }) =>
-            validTo === undefined
-              ? { key: 'current-role', validFrom, value: role }
-              : { key: 'current-role', validFrom, validTo, value: role }
-          )
-          .toSorted((left, right) =>
-            temporalValueKey(left).localeCompare(temporalValueKey(right))
-          ),
-        temporalSearchableText: activeEvidence(party),
-        title: party.displayName ?? 'Unnamed Party',
-      }).pipe(Effect.mapError(unavailable));
-    },
-    { concurrency: 1 }
-  );
-  return [...partyDocuments, ...counterpartyDocuments];
-});
+export const buildPartySearchDocuments = Effect.fn('PartySearchProjectionService.buildPartySearchDocuments')(
+  function* buildDocuments(snapshot: PartySearchSourceSnapshot) {
+    const common = {
+      facets: [],
+      metadata: [],
+      projectionVersion: snapshot.projectionVersion,
+    };
+    const partyDocuments = yield* Effect.forEach(
+      snapshot.parties,
+      (party) => {
+        if (
+          party.ref.tenantId !== snapshot.tenantId ||
+          party.aliases.some((alias) => alias.ref.tenantId !== snapshot.tenantId)
+        ) {
+          return Effect.fail(unavailable());
+        }
+        return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)({
+          ...common,
+          aliases: aliasEvidence(party, 'resource'),
+          archived: party.archived,
+          ref: party.ref,
+          searchableText: party.displayName === null ? [] : [party.displayName],
+          temporalSearchableText: activeEvidence(party),
+          title: party.displayName ?? 'Unnamed Party',
+        }).pipe(Effect.mapError(unavailable));
+      },
+      { concurrency: 1 },
+    );
+    const counterpartyDocuments = yield* Effect.forEach(
+      snapshot.counterparties,
+      (counterparty): Effect.Effect<CoreSearchProjectionDocument, PartySearchProjectionUnavailable> => {
+        const party = snapshot.parties.find(
+          (candidate) => candidate.ref.resourceId === counterparty.partyRef.resourceId,
+        );
+        if (
+          party === undefined ||
+          counterparty.ref.tenantId !== snapshot.tenantId ||
+          counterparty.partyRef.tenantId !== snapshot.tenantId ||
+          counterparty.storedPartyRef.tenantId !== snapshot.tenantId
+        ) {
+          return Effect.fail(unavailable());
+        }
+        return Schema.decodeEffect(CoreSearchProjectionDocumentSchema)({
+          ...common,
+          aliases: aliasEvidence(party, 'subject'),
+          archived: party.archived,
+          ref: counterparty.ref,
+          searchableText: party.displayName === null ? [] : [party.displayName],
+          selectedLegalEntityId: counterparty.legalEntityId,
+          subjectRef: party.ref,
+          temporalFacets: counterparty.rolePeriods
+            .filter((period) => period.state === 'ACTIVE' && hasNonEmptyPeriod(period))
+            .map(({ role, validFrom, validTo }) =>
+              validTo === undefined
+                ? { key: 'current-role', validFrom, value: role }
+                : { key: 'current-role', validFrom, validTo, value: role },
+            )
+            .toSorted((left, right) => temporalValueKey(left).localeCompare(temporalValueKey(right))),
+          temporalSearchableText: activeEvidence(party),
+          title: party.displayName ?? 'Unnamed Party',
+        }).pipe(Effect.mapError(unavailable));
+      },
+      { concurrency: 1 },
+    );
+    return [...partyDocuments, ...counterpartyDocuments];
+  },
+);
 
 export const makePartySearchProjector = (
   ...[source, ingestion, store]: readonly [
@@ -233,78 +200,65 @@ export const makePartySearchProjector = (
     CoreSearchProjectionStoreService,
   ]
 ) => ({
-  project: Effect.fn('makePartySearchProjector.project')(
-    function* projectSnapshot(
-      context: OutboxWorkerHandlerContext,
-      target: PartySearchProjectionTarget
-    ) {
-      const snapshot = yield* source.load(context, target);
-      if (
-        snapshot.tenantId !== context.tenantId ||
-        !/^[1-9][0-9]*$/u.test(snapshot.projectionVersion)
-      ) {
-        return yield* unavailable();
-      }
-      const documents = yield* buildPartySearchDocuments(snapshot);
-      if ('rebuild' in target) {
-        yield* Effect.forEach(
-          ['party.registry.party', 'party.registry.counterparty'],
-          (resourceType) =>
-            store
-              .replace({
-                documents: documents.filter(
-                  (document) => document.ref.resourceType === resourceType
-                ),
-                moduleId: 'party.registry',
-                rebuildVersion: snapshot.projectionVersion,
-                resourceType,
-                tenantId: snapshot.tenantId,
-              })
-              .pipe(Effect.mapError(unavailable)),
-          { concurrency: 1, discard: true }
-        );
-        return;
-      }
-      const observe = (mutation: CoreSearchProjectionMutation) =>
-        ingestion
-          .ingest({
-            consumerModuleKey: 'party.registry',
-            mutation,
-            producerModuleKey: context.producerModuleKey,
-            projectionVersion: snapshot.projectionVersion,
-            tenantId: context.tenantId,
-            topic: context.topic,
-            workerKey: context.workerKey,
-          })
-          .pipe(Effect.mapError(unavailable));
-      yield* Effect.forEach(
-        documents,
-        (document) => observe({ document, kind: 'upsert' }),
-        {
-          concurrency: 1,
-          discard: true,
-        }
-      );
-      yield* Effect.forEach(
-        snapshot.removedRefs,
-        (ref) =>
-          Schema.decodeEffect(CoreSearchProjectionMutationSchema)({
-            kind: 'delete',
-            projectionVersion: snapshot.projectionVersion,
-            ref,
-          }).pipe(Effect.mapError(unavailable), Effect.flatMap(observe)),
-        { concurrency: 1, discard: true }
-      );
+  project: Effect.fn('makePartySearchProjector.project')(function* projectSnapshot(
+    context: OutboxWorkerHandlerContext,
+    target: PartySearchProjectionTarget,
+  ) {
+    const snapshot = yield* source.load(context, target);
+    if (snapshot.tenantId !== context.tenantId || !/^[1-9][0-9]*$/u.test(snapshot.projectionVersion)) {
+      return yield* unavailable();
     }
-  ),
+    const documents = yield* buildPartySearchDocuments(snapshot);
+    if ('rebuild' in target) {
+      yield* Effect.forEach(
+        ['party.registry.party', 'party.registry.counterparty'],
+        (resourceType) =>
+          store
+            .replace({
+              documents: documents.filter((document) => document.ref.resourceType === resourceType),
+              moduleId: 'party.registry',
+              rebuildVersion: snapshot.projectionVersion,
+              resourceType,
+              tenantId: snapshot.tenantId,
+            })
+            .pipe(Effect.mapError(unavailable)),
+        { concurrency: 1, discard: true },
+      );
+      return;
+    }
+    const observe = (mutation: CoreSearchProjectionMutation) =>
+      ingestion
+        .ingest({
+          consumerModuleKey: 'party.registry',
+          mutation,
+          producerModuleKey: context.producerModuleKey,
+          projectionVersion: snapshot.projectionVersion,
+          tenantId: context.tenantId,
+          topic: context.topic,
+          workerKey: context.workerKey,
+        })
+        .pipe(Effect.mapError(unavailable));
+    yield* Effect.forEach(documents, (document) => observe({ document, kind: 'upsert' }), {
+      concurrency: 1,
+      discard: true,
+    });
+    yield* Effect.forEach(
+      snapshot.removedRefs,
+      (ref) =>
+        Schema.decodeEffect(CoreSearchProjectionMutationSchema)({
+          kind: 'delete',
+          projectionVersion: snapshot.projectionVersion,
+          ref,
+        }).pipe(Effect.mapError(unavailable), Effect.flatMap(observe)),
+      { concurrency: 1, discard: true },
+    );
+  }),
 });
 
 export class PartySearchProjector extends Context.Service<
   PartySearchProjector,
   ReturnType<typeof makePartySearchProjector>
->()(
-  '@app/party-registry/services/party-search-projection.service/PartySearchProjector'
-) {}
+>()('@app/party-registry/services/party-search-projection.service/PartySearchProjector') {}
 
 export const PartySearchProjectorLive = Layer.effect(
   PartySearchProjector,
@@ -312,7 +266,7 @@ export const PartySearchProjectorLive = Layer.effect(
     return makePartySearchProjector(
       yield* PartySearchProjectionSource,
       yield* CoreSearchIngestion,
-      yield* CoreSearchProjectionStore
+      yield* CoreSearchProjectionStore,
     );
-  })
+  }),
 );

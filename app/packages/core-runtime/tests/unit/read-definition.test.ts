@@ -5,13 +5,9 @@ import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import {
-  defineRead,
-  validateReadDescriptorInput,
-} from '../../src/reads/definition.ts';
+import { defineRead, validateReadDescriptorInput } from '../../src/reads/definition.ts';
 
-const modulePermissionTarget = () =>
-  ({ kind: 'module', moduleId: 'core.shell' }) as const;
+const modulePermissionTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;
 it('defines immutable read metadata while keeping handler and service factory private', () => {
   const registration = defineRead(
     {
@@ -41,7 +37,7 @@ it('defines immutable read metadata while keeping handler and service factory pr
     },
     () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
     () => Effect.succeed(Object.freeze({})),
-    modulePermissionTarget
+    modulePermissionTarget,
   );
   expect(Object.keys(registration)).toEqual(['descriptor']);
   expect(Object.isFrozen(registration.descriptor)).toBe(true);
@@ -62,18 +58,11 @@ it('requires an explicit valid owner-scoped read entrypoint', () => {
       }),
       legalEntityScope: 'forbidden',
       owningModuleKey: 'core.shell',
-    })
+    }),
   ).toThrow();
 });
 it('supports every governed access kind and rejects forged scope metadata', () => {
-  for (const accessKind of [
-    'detail',
-    'download',
-    'export',
-    'list',
-    'report',
-    'search',
-  ] as const) {
+  for (const accessKind of ['detail', 'download', 'export', 'list', 'report', 'search'] as const) {
     expect(() =>
       defineRead(
         {
@@ -101,12 +90,11 @@ it('supports every governed access kind and rejects forged scope metadata', () =
           resultSchema: Schema.Void,
           schemaVersion: '1',
         },
-        () =>
-          Effect.succeed({ evidence: { resultCount: 0 }, result: undefined }),
+        () => Effect.succeed({ evidence: { resultCount: 0 }, result: undefined }),
         () => Effect.succeed({}),
         modulePermissionTarget,
-        accessKind === 'search' ? () => [] : undefined
-      )
+        accessKind === 'search' ? () => [] : undefined,
+      ),
     ).not.toThrow();
   }
   expect(() =>
@@ -123,28 +111,22 @@ it('supports every governed access kind and rejects forged scope metadata', () =
       }),
       legalEntityScope: 'implicit',
       owningModuleKey: 'core.shell',
-    })
+    }),
   ).toThrow();
 });
 it.layer(NodeFileSystem.layer)('read package boundary', (suite) => {
-  suite.effect(
-    'keeps low-level read runtime construction and Core schema out of package exports',
-    () =>
-      Effect.gen(function* readPackageBoundary() {
-        const fs = yield* FileSystem.FileSystem;
-        const [indexSource, packageSource] = yield* Effect.all(
-          [
-            fs.readFileString(
-              fileURLToPath(new URL('../../src/index.ts', import.meta.url))
-            ),
-            fs.readFileString(
-              fileURLToPath(new URL('../../package.json', import.meta.url))
-            ),
-          ],
-          { concurrency: 'unbounded' }
-        );
-        expect(indexSource).not.toMatch(/\bmakeReadRuntime,?$/mu);
-        expect(packageSource).not.toMatch(/"\.\/db\/schema"/u);
-      })
+  suite.effect('keeps low-level read runtime construction and Core schema out of package exports', () =>
+    Effect.gen(function* readPackageBoundary() {
+      const fs = yield* FileSystem.FileSystem;
+      const [indexSource, packageSource] = yield* Effect.all(
+        [
+          fs.readFileString(fileURLToPath(new URL('../../src/index.ts', import.meta.url))),
+          fs.readFileString(fileURLToPath(new URL('../../package.json', import.meta.url))),
+        ],
+        { concurrency: 'unbounded' },
+      );
+      expect(indexSource).not.toMatch(/\bmakeReadRuntime,?$/mu);
+      expect(packageSource).not.toMatch(/"\.\/db\/schema"/u);
+    }),
   );
 });

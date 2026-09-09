@@ -12,9 +12,7 @@ for (const scope of ['apps', 'packages', 'verticals']) {
   const entries = readdirSync(scopeDirectory, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory()) {
-      dependencyDirectories.push(
-        path.join(scopeDirectory, entry.name, 'node_modules')
-      );
+      dependencyDirectories.push(path.join(scopeDirectory, entry.name, 'node_modules'));
     }
   }
 }
@@ -23,6 +21,4 @@ for (const directory of dependencyDirectories) {
   rmSync(directory, { force: true, recursive: true });
 }
 
-console.log(
-  `Removed ${dependencyDirectories.length} workspace dependency directories`
-);
+console.log(`Removed ${dependencyDirectories.length} workspace dependency directories`);

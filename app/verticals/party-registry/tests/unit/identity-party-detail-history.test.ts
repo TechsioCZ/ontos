@@ -4,10 +4,7 @@ import { expect, it } from 'effect-rstest';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { PartyFactAssertionSchema } from '../../shared/apis/party-detail.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
-import {
-  partyDetailPermissionTarget,
-  readPartyDetailFromServices,
-} from '../../src/api/party-detail.read.ts';
+import { partyDetailPermissionTarget, readPartyDetailFromServices } from '../../src/api/party-detail.read.ts';
 import { findPartyDetailAssertions } from '../../src/services/party-detail-persistence.service.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -35,46 +32,28 @@ const wireFact = {
 } as const;
 const fact = Schema.decodeSync(PartyFactAssertionSchema)(wireFact);
 
-it.effect(
-  'Party fact assertion contract exposes usable correction identities without sensitive evidence',
-  () =>
-    Effect.gen(function* verifySchema1() {
-      expect(
-        yield* Schema.encodeEffect(PartyFactAssertionSchema)(fact)
-      ).toEqual(wireFact);
-      expect(() =>
-        Schema.decodeSync(PartyFactAssertionSchema)({
-          ...wireFact,
-          assertionId: 'not-a-uuid',
-        })
-      ).toThrow();
-      const decodedWithSensitiveFields = yield* Schema.decodeUnknownEffect(
-        PartyFactAssertionSchema
-      )({
+it.effect('Party fact assertion contract exposes usable correction identities without sensitive evidence', () =>
+  Effect.gen(function* verifySchema1() {
+    expect(yield* Schema.encodeEffect(PartyFactAssertionSchema)(fact)).toEqual(wireFact);
+    expect(() =>
+      Schema.decodeSync(PartyFactAssertionSchema)({
         ...wireFact,
-        evidenceRefs: ['secret'],
-        provenance: { source: 'secret' },
-      });
-      expect(
-        yield* Schema.encodeEffect(PartyFactAssertionSchema)(
-          decodedWithSensitiveFields
-        )
-      ).toEqual(wireFact);
-    })
+        assertionId: 'not-a-uuid',
+      }),
+    ).toThrow();
+    const decodedWithSensitiveFields = yield* Schema.decodeUnknownEffect(PartyFactAssertionSchema)({
+      ...wireFact,
+      evidenceRefs: ['secret'],
+      provenance: { source: 'secret' },
+    });
+    expect(yield* Schema.encodeEffect(PartyFactAssertionSchema)(decodedWithSensitiveFields)).toEqual(wireFact);
+  }),
 );
 
 it('Party Detail history derives reviewer authority while current fact targets retain normal read authority', () => {
-  expect(partyDetailPermissionTarget({ partyRef }).permission).toBe(
-    'read_party_identity'
-  );
-  expect(
-    partyDetailPermissionTarget({ includeFactHistory: false, partyRef })
-      .permission
-  ).toBe('read_party_identity');
-  expect(
-    partyDetailPermissionTarget({ includeFactHistory: true, partyRef })
-      .permission
-  ).toBe('review_party_identity');
+  expect(partyDetailPermissionTarget({ partyRef }).permission).toBe('read_party_identity');
+  expect(partyDetailPermissionTarget({ includeFactHistory: false, partyRef }).permission).toBe('read_party_identity');
+  expect(partyDetailPermissionTarget({ includeFactHistory: true, partyRef }).permission).toBe('review_party_identity');
 });
 
 it.effect(
@@ -111,36 +90,21 @@ it.effect(
           'Corrected name',
         ],
       ];
-      const database = yield* makeTestDatabase(
-        (text: string, parameters: readonly unknown[]) =>
-          Effect.sync(() => {
-            queries.push(text);
-            values.push(parameters);
-            return rows.map((row) =>
-              Object.fromEntries(
-                row.map((value, index) => [String(index), value])
-              )
-            );
-          })
+      const database = yield* makeTestDatabase((text: string, parameters: readonly unknown[]) =>
+        Effect.sync(() => {
+          queries.push(text);
+          values.push(parameters);
+          return rows.map((row) => Object.fromEntries(row.map((value, index) => [String(index), value])));
+        }),
       );
 
-      const result = yield* findPartyDetailAssertions(
-        database,
-        tenantId,
-        partyId,
-        true
-      );
+      const result = yield* findPartyDetailAssertions(database, tenantId, partyId, true);
       expect(result.currentFactAssertions).toEqual([fact]);
       const history = Option.getOrThrow(result.factHistory);
       expect(history.length).toBe(2);
       expect(history[0]?.value).toBe('Original name');
       expect(history[0]?.state).toBe('SUPERSEDED');
-      const current = yield* findPartyDetailAssertions(
-        database,
-        tenantId,
-        partyId,
-        false
-      );
+      const current = yield* findPartyDetailAssertions(database, tenantId, partyId, false);
       expect(current).toEqual({
         currentFactAssertions: [fact],
         factHistory: Option.none(),
@@ -152,9 +116,7 @@ it.effect(
       const [historyQuery = '', currentQuery = ''] = queries;
       expect(historyQuery).toMatch(/"tenant_id" = \$1/u);
       expect(historyQuery).toMatch(/"party_id" = \$2/u);
-      expect(historyQuery).not.toMatch(
-        /provenance|principal|invocation|verification/u
-      );
+      expect(historyQuery).not.toMatch(/provenance|principal|invocation|verification/u);
       expect(currentQuery).not.toMatch(/external_evidence/u);
       expect(currentQuery).toMatch(/"state" = \$3/u);
       expect(currentQuery).toMatch(/"is_current" = \$4/u);
@@ -163,12 +125,7 @@ it.effect(
         tenantId,
         {
           facts: (canonicalPartyId, includeHistory) =>
-            findPartyDetailAssertions(
-              database,
-              tenantId,
-              canonicalPartyId,
-              includeHistory
-            ),
+            findPartyDetailAssertions(database, tenantId, canonicalPartyId, includeHistory),
           find: () =>
             Effect.succeed({
               _tag: 'found' as const,
@@ -190,11 +147,11 @@ it.effect(
               wasAlias: false,
             }),
         },
-        true
+        true,
       );
       expect(detail.currentFactAssertions[0]?.assertionId).toBe(assertionId);
       const detailHistory = Option.getOrThrow(detail.factHistory);
       expect(detailHistory[0]?.assertionId).toBe(previousId);
       expect(detailHistory[0]?.value).toBe('Original name');
-    })
+    }),
 );

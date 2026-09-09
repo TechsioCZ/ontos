@@ -9,11 +9,7 @@ export { OfficialIdentifierClaimConflict } from './identifier-errors/claim-confl
 export { OfficialIdentifierInvalid } from './identifier-errors/invalid.ts';
 
 const OfficialIdentifierTypeSchema = Schema.Literals(['ICO', 'CZ_DIC']);
-export const IdentifierVerificationSchema = Schema.Literals([
-  'UNVERIFIED',
-  'VERIFIED',
-  'REJECTED',
-]);
+export const IdentifierVerificationSchema = Schema.Literals(['UNVERIFIED', 'VERIFIED', 'REJECTED']);
 export type IdentifierVerification = typeof IdentifierVerificationSchema.Type;
 
 const isValidCzechIco = (value: string): boolean => {
@@ -21,10 +17,7 @@ const isValidCzechIco = (value: string): boolean => {
     return false;
   }
   const weights = [8, 7, 6, 5, 4, 3, 2] as const;
-  const sum = weights.reduce(
-    (total, weight, index) => total + Number(value[index]) * weight,
-    0
-  );
+  const sum = weights.reduce((total, weight, index) => total + Number(value[index]) * weight, 0);
   return Number(value[7]) === (11 - (sum % 11)) % 10;
 };
 
@@ -37,31 +30,23 @@ export const OfficialIdentifierInputSchema = Schema.Struct({
   Schema.makeFilter((input) => {
     const value = input.value.trim().toUpperCase();
     if (input.identifierType === 'ICO') {
-      return /^[0-9]{1,8}$/u.test(value) &&
-        isValidCzechIco(value.padStart(8, '0'))
+      return /^[0-9]{1,8}$/u.test(value) && isValidCzechIco(value.padStart(8, '0'))
         ? undefined
         : 'invalid ICO format or checksum';
     }
     return /^CZ[0-9]{8,10}$/u.test(value) ? undefined : 'invalid CZ_DIC format';
-  })
+  }),
 );
 export type OfficialIdentifierInput = typeof OfficialIdentifierInputSchema.Type;
 
-export interface NormalizedOfficialIdentifier extends Omit<
-  OfficialIdentifierInput,
-  'value' | 'namespace'
-> {
+export interface NormalizedOfficialIdentifier extends Omit<OfficialIdentifierInput, 'value' | 'namespace'> {
   readonly namespace: 'CZ:DIC' | 'CZ:ICO';
   readonly normalizedValue: string;
 }
 
-export const normalizeOfficialIdentifier = (
-  input: OfficialIdentifierInput
-): NormalizedOfficialIdentifier => {
+export const normalizeOfficialIdentifier = (input: OfficialIdentifierInput): NormalizedOfficialIdentifier => {
   const normalizedValue =
-    input.identifierType === 'ICO'
-      ? input.value.trim().padStart(8, '0')
-      : input.value.trim().toUpperCase();
+    input.identifierType === 'ICO' ? input.value.trim().padStart(8, '0') : input.value.trim().toUpperCase();
   return {
     identifierType: input.identifierType,
     namespace: input.identifierType === 'ICO' ? 'CZ:ICO' : 'CZ:DIC',
@@ -73,7 +58,7 @@ export const normalizeOfficialIdentifier = (
 export const qualifiesForExclusiveClaim = (
   identifier: NormalizedOfficialIdentifier,
   partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED',
-  matchRuleVersion: string
+  matchRuleVersion: string,
 ): boolean =>
   matchRuleVersion === 'party-exact-claims.v1' &&
   identifier.verification === 'VERIFIED' &&
@@ -82,15 +67,11 @@ export const qualifiesForExclusiveClaim = (
 export const qualifyingClaimKey = (
   input: OfficialIdentifierInput,
   partyType: 'ORGANIZATION' | 'PERSON' | 'UNRESOLVED',
-  matchRuleVersion: string
+  matchRuleVersion: string,
 ): string | undefined => {
   const normalized = normalizeOfficialIdentifier(input);
   return qualifiesForExclusiveClaim(normalized, partyType, matchRuleVersion)
-    ? [
-        normalized.identifierType,
-        normalized.namespace,
-        normalized.normalizedValue,
-      ].join('\u0000')
+    ? [normalized.identifierType, normalized.namespace, normalized.normalizedValue].join('\u0000')
     : undefined;
 };
 
@@ -103,9 +84,7 @@ export const OfficialIdentifierAssertionStateSchema = Schema.Literals([
 ]);
 
 export const OfficialIdentifierAssertionSchema = Schema.Struct({
-  externalEvidence: Schema.optionalKey(
-    Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema))
-  ),
+  externalEvidence: Schema.optionalKey(Schema.toEncoded(Schema.OptionFromNullOr(AresAppliedEvidenceSchema))),
   identifierType: OfficialIdentifierTypeSchema,
   namespace: Schema.String,
   normalizedValue: Schema.String,
@@ -114,10 +93,7 @@ export const OfficialIdentifierAssertionSchema = Schema.Struct({
   recordedAt: CanonicalUtcTimestampJsonSchema,
   state: OfficialIdentifierAssertionStateSchema,
   validFrom: CanonicalUtcTimestampJsonSchema,
-  validTo: Schema.toEncoded(
-    Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)
-  ),
+  validTo: Schema.toEncoded(Schema.OptionFromNullOr(CanonicalUtcTimestampJsonSchema)),
   verification: IdentifierVerificationSchema,
 });
-export type OfficialIdentifierAssertion =
-  typeof OfficialIdentifierAssertionSchema.Type;
+export type OfficialIdentifierAssertion = typeof OfficialIdentifierAssertionSchema.Type;

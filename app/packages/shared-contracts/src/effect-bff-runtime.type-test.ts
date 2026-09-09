@@ -16,21 +16,16 @@ import { Context, Data, Schema } from 'effect';
 
 import { assembleEffectBffRuntime } from './effect-bff-runtime.ts';
 
-class FixtureDependency extends Context.Service<
-  FixtureDependency,
-  { readonly value: string }
->()('@app/shared-contracts/effect-bff-runtime.type-test/FixtureDependency') {}
+class FixtureDependency extends Context.Service<FixtureDependency, { readonly value: string }>()(
+  '@app/shared-contracts/effect-bff-runtime.type-test/FixtureDependency',
+) {}
 
 const FixtureStartupError = Data.TaggedError('FixtureStartupError')<{
   readonly reason: string;
 }>;
 
 type IsExact<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends <
-    Value,
-  >() => Value extends Right ? 1 : 2
-    ? true
-    : false;
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false;
 
 type ExpectedRuntimeRequirements =
   | Exclude<
@@ -46,16 +41,11 @@ const fixtureApi = HttpApi.make('RuntimeAssemblyTypeFixture').add(
   HttpApiGroup.make('fixture').add(
     HttpApiEndpoint.get('read', '/fixture', {
       success: Schema.Struct({ value: Schema.String }),
-    })
-  )
+    }),
+  ),
 );
-const fixtureHandlers = HttpApiBuilder.group(
-  fixtureApi,
-  'fixture',
-  (handlers) =>
-    handlers.handle('read', () =>
-      FixtureDependency.pipe(Effect.map(({ value }) => ({ value })))
-    )
+const fixtureHandlers = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
+  handlers.handle('read', () => FixtureDependency.pipe(Effect.map(({ value }) => ({ value })))),
 ).pipe(Layer.provide(Layer.succeed(FixtureDependency, { value: 'fixture' })));
 
 const fixtureRuntime = assembleEffectBffRuntime({
@@ -63,12 +53,8 @@ const fixtureRuntime = assembleEffectBffRuntime({
   handlers: fixtureHandlers,
 });
 
-const concreteRuntime: EffectBffDefinition<typeof fixtureApi> &
-  EffectBffRuntime<typeof fixtureApi> = fixtureRuntime;
-const inferredApiIsExact: IsExact<
-  typeof fixtureRuntime.api,
-  typeof fixtureApi
-> = true;
+const concreteRuntime: EffectBffDefinition<typeof fixtureApi> & EffectBffRuntime<typeof fixtureApi> = fixtureRuntime;
+const inferredApiIsExact: IsExact<typeof fixtureRuntime.api, typeof fixtureApi> = true;
 const inferredRequirementsAreExact: IsExact<
   Layer.Services<typeof fixtureRuntime.layer>,
   ExpectedRuntimeRequirements
@@ -78,11 +64,8 @@ void concreteRuntime;
 void inferredApiIsExact;
 void inferredRequirementsAreExact;
 
-const failingFixtureHandlers = HttpApiBuilder.group(
-  fixtureApi,
-  'fixture',
-  (handlers) =>
-    handlers.handle('read', () => Effect.succeed({ value: 'unreachable' }))
+const failingFixtureHandlers = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
+  handlers.handle('read', () => Effect.succeed({ value: 'unreachable' })),
 ).pipe(
   Layer.provide(
     Layer.effect(
@@ -90,10 +73,10 @@ const failingFixtureHandlers = HttpApiBuilder.group(
       Effect.fail(
         new FixtureStartupError({
           reason: 'must be resolved at the runtime root',
-        })
-      )
-    )
-  )
+        }),
+      ),
+    ),
+  ),
 );
 
 assembleEffectBffRuntime({
@@ -106,8 +89,8 @@ const otherApi = HttpApi.make('OtherRuntimeAssemblyTypeFixture').add(
   HttpApiGroup.make('other').add(
     HttpApiEndpoint.get('readOther', '/other', {
       success: Schema.Struct({ value: Schema.String }),
-    })
-  )
+    }),
+  ),
 );
 
 assembleEffectBffRuntime({

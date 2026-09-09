@@ -36,9 +36,10 @@ const ContactPointMetadataChangeSchema = Schema.Union([
     type: Schema.Literal('ADD_PROVENANCE'),
   }),
   Schema.Struct({
-    evidenceReferences: Schema.Array(
-      Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))
-    ).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+    evidenceReferences: Schema.Array(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(20),
+    ),
     reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
     replacement: Schema.optionalKey(
       Schema.Struct({
@@ -47,7 +48,7 @@ const ContactPointMetadataChangeSchema = Schema.Union([
         provenance: ContactPointProvenanceSchema,
         validFrom: ContactPointTimestampSchema,
         verification: ContactPointVerificationSchema,
-      })
+      }),
     ),
     type: Schema.Literal('CORRECT_CONTACT_POINT'),
   }),
@@ -56,13 +57,9 @@ const ContactPointMetadataChangeSchema = Schema.Union([
 export const UpdateContactPointPayloadSchema = Schema.Struct({
   change: ContactPointMetadataChangeSchema,
   contactPointRef: PartyContactPointRefSchema,
-  expectedRevision: Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isGreaterThanOrEqualTo(1)
-  ),
+  expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   provenance: ContactPointProvenanceSchema,
 });
-export type UpdateContactPointPayload =
-  typeof UpdateContactPointPayloadSchema.Type;
+export type UpdateContactPointPayload = typeof UpdateContactPointPayloadSchema.Type;
 
 export { PartyContactPointSchema as UpdateContactPointResultSchema } from '../domain/contact-point.ts';

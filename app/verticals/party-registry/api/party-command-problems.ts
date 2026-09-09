@@ -25,10 +25,7 @@ import type { partyCommandRegistrations } from './party-command-registrations.ts
 export type PartyActionError =
   | ActionCoreError
   | (typeof partyCommandRegistrations)[keyof typeof partyCommandRegistrations]['descriptor']['domainErrorSchema']['Type'];
-type ProblemOf<Tag extends PartyCommandProblem['_tag']> = Extract<
-  PartyCommandProblem,
-  { readonly _tag: Tag }
->;
+type ProblemOf<Tag extends PartyCommandProblem['_tag']> = Extract<PartyCommandProblem, { readonly _tag: Tag }>;
 
 const problemStatus = {
   authentication: 401,
@@ -59,8 +56,7 @@ export const partyCommandProblem = {
     }),
   forbidden: (): ProblemOf<'PartyCommandForbiddenProblem'> =>
     PartyCommandForbiddenProblemSchema.make({
-      detail:
-        'The principal is not permitted to perform this Party Registry command.',
+      detail: 'The principal is not permitted to perform this Party Registry command.',
       status: problemStatus.forbidden,
       title: 'Party Registry command forbidden',
       type: 'https://ontos.dev/problems/party-command-forbidden',
@@ -72,19 +68,16 @@ export const partyCommandProblem = {
       title: 'Party Registry resource not found',
       type: 'https://ontos.dev/problems/party-command-not-found',
     }),
-  conflict: (
-    code: ProblemOf<'PartyCommandConflictProblem'>['code']
-  ): ProblemOf<'PartyCommandConflictProblem'> =>
+  conflict: (code: ProblemOf<'PartyCommandConflictProblem'>['code']): ProblemOf<'PartyCommandConflictProblem'> =>
     PartyCommandConflictProblemSchema.make({
       code,
-      detail:
-        'The command conflicts with the current state. Review the resource before trying again.',
+      detail: 'The command conflicts with the current state. Review the resource before trying again.',
       status: problemStatus.conflict,
       title: 'Party Registry command conflict',
       type: 'https://ontos.dev/problems/party-command-conflict',
     }),
   ineligible: (
-    code: ProblemOf<'PartyCommandUnprocessableProblem'>['code']
+    code: ProblemOf<'PartyCommandUnprocessableProblem'>['code'],
   ): ProblemOf<'PartyCommandUnprocessableProblem'> =>
     PartyCommandUnprocessableProblemSchema.make({
       code,
@@ -102,19 +95,15 @@ export const partyCommandProblem = {
     }),
   unavailable: (): ProblemOf<'PartyCommandUnavailableProblem'> =>
     PartyCommandUnavailableProblemSchema.make({
-      detail:
-        'The Party Registry command capability is temporarily unavailable.',
+      detail: 'The Party Registry command capability is temporarily unavailable.',
       retryable: true,
       status: problemStatus.unavailable,
       title: 'Party Registry unavailable',
       type: 'https://ontos.dev/problems/party-command-unavailable',
     }),
-  indeterminate: (
-    invocationId: string
-  ): ProblemOf<'PartyCommandCommitIndeterminateProblem'> =>
+  indeterminate: (invocationId: string): ProblemOf<'PartyCommandCommitIndeterminateProblem'> =>
     PartyCommandCommitIndeterminateProblemSchema.make({
-      detail:
-        'The command commit is uncertain. Resolve this invocation before considering any further command.',
+      detail: 'The command commit is uncertain. Resolve this invocation before considering any further command.',
       invocationId: ActionInvocationIdSchema.make(invocationId),
       resolution: 'RESOLVE_COMMIT',
       retryCommand: false,
@@ -131,29 +120,22 @@ export const partyCommandProblem = {
     }),
 };
 
-export const isPartyCommandAuthenticationProblem = Schema.is(
-  PartyCommandAuthenticationProblemSchema
+export const isPartyCommandAuthenticationProblem = Schema.is(PartyCommandAuthenticationProblemSchema);
+export const failPartyCommandProblem = <Problem extends PartyCommandProblem>(mapped: Problem) =>
+  failAuthenticatedProblem(mapped, isPartyCommandAuthenticationProblem);
+
+export const partyCommandSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
+  PartyCommandSchemaErrorMiddleware,
+  () => Effect.fail(partyCommandProblem.invalid()),
 );
-export const failPartyCommandProblem = <Problem extends PartyCommandProblem>(
-  mapped: Problem
-) => failAuthenticatedProblem(mapped, isPartyCommandAuthenticationProblem);
 
-export const partyCommandSchemaErrorLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(
-    PartyCommandSchemaErrorMiddleware,
-    () => Effect.fail(partyCommandProblem.invalid())
-  );
-
-export const mapPartyActionProblem = (
-  error: PartyActionError
-): PartyCommandProblem =>
+export const mapPartyActionProblem = (error: PartyActionError): PartyCommandProblem =>
   Match.value(error).pipe(
     Match.tags({
       ActionAlreadyCommitted: (failure) =>
         PartyCommandAlreadyCommittedProblemSchema.make({
           code: failure.code,
-          detail:
-            'This command is already committed. Refresh governed reads to retrieve its outcome.',
+          detail: 'This command is already committed. Refresh governed reads to retrieve its outcome.',
           invocationId: ActionInvocationIdSchema.make(failure.invocationId),
           resolution: 'REFRESH_GOVERNED_READS',
           retryCommand: false,
@@ -162,50 +144,37 @@ export const mapPartyActionProblem = (
           type: 'https://ontos.dev/problems/party-command-already-committed',
         }),
       ActionCollectorError: partyCommandProblem.internal,
-      ActionCommitIndeterminate: (failure) =>
-        partyCommandProblem.indeterminate(failure.invocationId),
+      ActionCommitIndeterminate: (failure) => partyCommandProblem.indeterminate(failure.invocationId),
       ActionHandlerExecutionError: partyCommandProblem.internal,
       ActionIdempotencyKeyRequired: partyCommandProblem.precondition,
       ActionInvocationNotFound: partyCommandProblem.notFound,
       ActionInvocationPersistenceError: partyCommandProblem.unavailable,
-      ActionInvocationStateError: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      ActionInvocationStateError: (failure) => partyCommandProblem.conflict(failure.code),
       ActionPayloadValidationError: partyCommandProblem.invalid,
       ActionPermissionCheckError: partyCommandProblem.unavailable,
       ActionPermissionDenied: partyCommandProblem.forbidden,
-      ActionPolicyDenied: () =>
-        partyCommandProblem.ineligible('action_policy_denied'),
+      ActionPolicyDenied: () => partyCommandProblem.ineligible('action_policy_denied'),
       ActionPolicyEvaluationError: partyCommandProblem.unavailable,
-      ActionRequestHashConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      ActionRequestHashConflict: (failure) => partyCommandProblem.conflict(failure.code),
       ActionResultValidationError: partyCommandProblem.internal,
       ActionTransactionError: partyCommandProblem.unavailable,
       ActionTrustedContextValidationError: partyCommandProblem.authentication,
-      ClaimOwnedByDifferentParty: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      CounterpartyEvidenceInsufficient: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
+      ClaimOwnedByDifferentParty: (failure) => partyCommandProblem.conflict(failure.code),
+      CounterpartyEvidenceInsufficient: (failure) => partyCommandProblem.ineligible(failure.code),
       CounterpartyNotFound: partyCommandProblem.notFound,
-      CounterpartyPartyArchived: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      CounterpartyPartyArchived: (failure) => partyCommandProblem.conflict(failure.code),
       CounterpartyPartyNotFound: partyCommandProblem.notFound,
       CounterpartyPersistenceUnavailable: partyCommandProblem.unavailable,
-      CounterpartyRoleAlreadyEnded: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      CounterpartyRoleOverlap: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      CounterpartyRoleAlreadyEnded: (failure) => partyCommandProblem.conflict(failure.code),
+      CounterpartyRoleOverlap: (failure) => partyCommandProblem.conflict(failure.code),
       CounterpartyRolePeriodNotFound: partyCommandProblem.notFound,
       CounterpartyScopeMismatch: partyCommandProblem.forbidden,
-      CounterpartyTemporalConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      DuplicateCandidateConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      CounterpartyTemporalConflict: (failure) => partyCommandProblem.conflict(failure.code),
+      DuplicateCandidateConflict: (failure) => partyCommandProblem.conflict(failure.code),
       ModuleStateCheckUnavailableError: partyCommandProblem.unavailable,
       ModuleStateDeniedError: partyCommandProblem.forbidden,
-      OfficialIdentifierClaimConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      OfficialIdentifierInvalid: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
+      OfficialIdentifierClaimConflict: (failure) => partyCommandProblem.conflict(failure.code),
+      OfficialIdentifierInvalid: (failure) => partyCommandProblem.ineligible(failure.code),
       OperationAuthenticationRequired: partyCommandProblem.authentication,
       OperationContextDenied: partyCommandProblem.forbidden,
       OperationContextInvalid: partyCommandProblem.forbidden,
@@ -219,51 +188,35 @@ export const mapPartyActionProblem = (
           aliasPartyRef: failure.aliasPartyRef,
           canonicalPartyRef: failure.canonicalPartyRef,
           code: failure.code,
-          detail:
-            'This Party is an alias. Review the canonical Party before issuing a new command.',
+          detail: 'This Party is an alias. Review the canonical Party before issuing a new command.',
           status: problemStatus.conflict,
           title: 'Alias write rejected',
           type: 'https://ontos.dev/problems/party-alias-write-rejected',
         }),
-      PartyContactPointAlreadyExists: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      PartyContactPointCorrectionRequired: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      PartyContactPointInvalid: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
-      PartyContactPointLifecycleConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      PartyContactPointAlreadyExists: (failure) => partyCommandProblem.conflict(failure.code),
+      PartyContactPointCorrectionRequired: (failure) => partyCommandProblem.conflict(failure.code),
+      PartyContactPointInvalid: (failure) => partyCommandProblem.ineligible(failure.code),
+      PartyContactPointLifecycleConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyContactPointNotFound: partyCommandProblem.notFound,
       PartyContactPointPartyNotFound: partyCommandProblem.notFound,
       PartyContactPointPersistenceUnavailable: partyCommandProblem.unavailable,
-      PartyContactPointRevisionConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      PartyCorrectionConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      PartyEvidenceInsufficient: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
-      PartyLifecycleConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      PartyContactPointRevisionConflict: (failure) => partyCommandProblem.conflict(failure.code),
+      PartyCorrectionConflict: (failure) => partyCommandProblem.conflict(failure.code),
+      PartyEvidenceInsufficient: (failure) => partyCommandProblem.ineligible(failure.code),
+      PartyLifecycleConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyNotFound: partyCommandProblem.notFound,
       PartyOfficialIdentifierNotFound: partyCommandProblem.notFound,
-      PartyOfficialIdentifierUpdateConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      PartyOfficialIdentifierUpdateConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyPersistenceUnavailable: partyCommandProblem.unavailable,
-      PartyRelationshipCorrectionRequired: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      PartyRelationshipCorrectionRequired: (failure) => partyCommandProblem.conflict(failure.code),
       PartyRelationshipEndpointNotFound: partyCommandProblem.notFound,
-      PartyRelationshipEndpointTypeMismatch: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
-      PartyRelationshipInvalidInterval: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
+      PartyRelationshipEndpointTypeMismatch: (failure) => partyCommandProblem.ineligible(failure.code),
+      PartyRelationshipInvalidInterval: (failure) => partyCommandProblem.ineligible(failure.code),
       PartyRelationshipNotFound: partyCommandProblem.notFound,
-      PartyRelationshipOverlapConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
+      PartyRelationshipOverlapConflict: (failure) => partyCommandProblem.conflict(failure.code),
       PartyRelationshipPersistenceUnavailable: partyCommandProblem.unavailable,
-      PartyRelationshipRevisionConflict: (failure) =>
-        partyCommandProblem.conflict(failure.code),
-      PartyRelationshipTypeUnsupported: (failure) =>
-        partyCommandProblem.ineligible(failure.code),
+      PartyRelationshipRevisionConflict: (failure) => partyCommandProblem.conflict(failure.code),
+      PartyRelationshipTypeUnsupported: (failure) => partyCommandProblem.ineligible(failure.code),
     }),
-    Match.exhaustive
+    Match.exhaustive,
   );

@@ -1,16 +1,8 @@
 /** Server-only assembly for the invariant tail of a strict Effect BFF runtime factory. */
 /* oxlint-disable effect-native/no-dependency-parameters -- The approved BFF assembly seam intentionally accepts caller-composed Layers; expires: 2027-09-07. */
 import { governedReadHttpStatus } from '@app/core-runtime/http/governed-read';
-import {
-  defineEffectBff,
-  HttpApiBuilder,
-  Layer,
-} from '@modern-js/plugin-bff/effect-edge';
-import type {
-  EffectRuntimeRequirements,
-  HttpApi,
-  HttpApiGroup,
-} from '@modern-js/plugin-bff/effect-edge';
+import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import type { EffectRuntimeRequirements, HttpApi, HttpApiGroup } from '@modern-js/plugin-bff/effect-edge';
 
 export interface EffectBffRuntimeAssembly<
   ApiId extends string,
@@ -19,11 +11,7 @@ export interface EffectBffRuntimeAssembly<
   TransportRequirements extends EffectRuntimeRequirements = never,
 > {
   readonly api: HttpApi.HttpApi<ApiId, Groups>;
-  readonly handlers: Layer.Layer<
-    HttpApiGroup.ToService<ApiId, Groups>,
-    never,
-    HandlerRequirements
-  >;
+  readonly handlers: Layer.Layer<HttpApiGroup.ToService<ApiId, Groups>, never, HandlerRequirements>;
   readonly transport?: Layer.Layer<never, never, TransportRequirements>;
 }
 
@@ -36,15 +24,9 @@ export const assembleEffectBffRuntime = <
   api,
   handlers,
   transport,
-}: EffectBffRuntimeAssembly<
-  ApiId,
-  Groups,
-  HandlerRequirements,
-  TransportRequirements
->) => {
+}: EffectBffRuntimeAssembly<ApiId, Groups, HandlerRequirements, TransportRequirements>) => {
   const apiLayer = HttpApiBuilder.layer(api).pipe(Layer.provide(handlers));
-  const layer =
-    transport === undefined ? apiLayer : apiLayer.pipe(Layer.merge(transport));
+  const layer = transport === undefined ? apiLayer : apiLayer.pipe(Layer.merge(transport));
 
   return defineEffectBff({ api, layer });
 };
@@ -79,9 +61,7 @@ export const makeGovernedReadProblems = <
   readonly policyConflict: GovernedProblemConstructor<409, PolicyConflict>;
   readonly policyIneligible: GovernedProblemConstructor<422, PolicyIneligible>;
   readonly unavailable: {
-    readonly make: (
-      fields: GovernedProblemFields<503> & { readonly retryable: true }
-    ) => Unavailable;
+    readonly make: (fields: GovernedProblemFields<503> & { readonly retryable: true }) => Unavailable;
   };
 }) => ({
   authentication: () =>

@@ -1,7 +1,4 @@
-import {
-  defineOutboxWorker,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import {
   OutboxPayloadSchema,
@@ -17,15 +14,12 @@ import { Effect } from 'effect';
 
 import { PartySearchProjector } from '../services/party-search-projection.service.ts';
 
-export const handleRebuildSearch = Effect.fn(
-  'RebuildSearchWorker.handleRebuildSearch'
-)(function* rebuildCommittedSearch(
-  _payload: typeof OutboxPayloadSchema.Type,
-  context: OutboxWorkerHandlerContext
-) {
-  const projector = yield* PartySearchProjector;
-  yield* projector.project(context, { rebuild: true });
-});
+export const handleRebuildSearch = Effect.fn('RebuildSearchWorker.handleRebuildSearch')(
+  function* rebuildCommittedSearch(_payload: typeof OutboxPayloadSchema.Type, context: OutboxWorkerHandlerContext) {
+    const projector = yield* PartySearchProjector;
+    yield* projector.project(context, { rebuild: true });
+  },
+);
 
 export const rebuildSearchWorker = defineOutboxWorker(
   {
@@ -49,5 +43,5 @@ export const rebuildSearchWorker = defineOutboxWorker(
     topic: outboxTopic,
     workerKey: 'party.registry.rebuild-search',
   },
-  handleRebuildSearch
+  handleRebuildSearch,
 );

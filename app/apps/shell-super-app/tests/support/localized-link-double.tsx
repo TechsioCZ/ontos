@@ -29,14 +29,11 @@ export interface LocalizedLinkRecording {
 
 const localisedUrlPatterns = new Map<string, Readonly<Record<string, string>>>(
   Object.entries(ultramodernLocalisedUrls).map(
-    ([canonicalPattern, localisedPatterns]): readonly [
-      string,
-      Readonly<Record<string, string>>,
-    ] => [
+    ([canonicalPattern, localisedPatterns]): readonly [string, Readonly<Record<string, string>>] => [
       canonicalPattern,
       { cs: localisedPatterns.cs, en: localisedPatterns.en },
-    ]
-  )
+    ],
+  ),
 );
 
 /**
@@ -47,19 +44,14 @@ const localisedUrlPatterns = new Map<string, Readonly<Record<string, string>>>(
 const resolveLocalizedHref = (
   to: string,
   params: Readonly<Record<string, string>> | undefined,
-  language: string
+  language: string,
 ): string => {
   const canonicalPattern = to.replaceAll('$', ':');
-  const localisedPattern =
-    localisedUrlPatterns.get(canonicalPattern)?.[language] ?? canonicalPattern;
+  const localisedPattern = localisedUrlPatterns.get(canonicalPattern)?.[language] ?? canonicalPattern;
   const segments = localisedPattern
     .split('/')
     .filter(Boolean)
-    .map((segment) =>
-      segment.startsWith(':')
-        ? encodeURIComponent(params?.[segment.slice(1)] ?? '')
-        : segment
-    );
+    .map((segment) => (segment.startsWith(':') ? encodeURIComponent(params?.[segment.slice(1)] ?? '') : segment));
   return `/${[language, ...segments].join('/')}`;
 };
 
@@ -70,14 +62,11 @@ const resolveLocalizedHref = (
  */
 export const renderLocalizedLinkDouble = (
   { children, href, params, to, ...anchorProps }: LocalizedLinkDoubleProps,
-  recording: LocalizedLinkRecording
+  recording: LocalizedLinkRecording,
 ): ReactElement => {
   recording.calls.push({ href, params, to });
   return (
-    <a
-      href={resolveLocalizedHref(to, params, recording.language.current)}
-      {...anchorProps}
-    >
+    <a href={resolveLocalizedHref(to, params, recording.language.current)} {...anchorProps}>
       {children}
     </a>
   );

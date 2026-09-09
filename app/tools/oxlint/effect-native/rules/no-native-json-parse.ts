@@ -71,14 +71,7 @@
 import { defineRule } from '@oxlint/plugins';
 import type { ESTree } from '@oxlint/plugins';
 
-import {
-  EXPRESSION_WRAPPERS,
-  keyName,
-  memberName,
-  parentOf,
-  skipWrappers,
-  unwrapNode,
-} from '../shared/ast.ts';
+import { EXPRESSION_WRAPPERS, keyName, memberName, parentOf, skipWrappers, unwrapNode } from '../shared/ast.ts';
 import { isJsonHost, jsonExpressionSnippet } from '../shared/json-globals.ts';
 import { booleanOption, stringList } from '../shared/options.ts';
 import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
@@ -86,20 +79,9 @@ import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
 type AnyNode = ESTree.Node;
 
 /** Globals that expose the ambient `JSON` object as a property (`globalThis.JSON.parse`). */
-const CONTAINER_GLOBALS = new Set([
-  'globalThis',
-  'global',
-  'window',
-  'self',
-  'frames',
-]);
+const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self', 'frames']);
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -118,12 +100,8 @@ function readOptions(raw: unknown): RuleOptions {
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
-    ignoreTestFiles: booleanOption(
-      given.ignoreTestFiles,
-      DEFAULTS.ignoreTestFiles
-    ),
-    includePaths:
-      includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
+    ignoreTestFiles: booleanOption(given.ignoreTestFiles, DEFAULTS.ignoreTestFiles),
+    includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
   };
 }
 
@@ -144,16 +122,14 @@ function unwrap(node: AnyNode): AnyNode {
 }
 
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed && unwrap(node.property).type !== 'Identifier')
-    return null;
+  if (!node.computed && unwrap(node.property).type !== 'Identifier') return null;
   return memberName(node, STRING_OPTIONS);
 }
 
 /** A single-input call whose callee is the supplied expression, through transparent wrappers. */
 function singleInputCall(node: AnyNode): ESTree.CallExpression | null {
   const { node: callee, parent } = skipWrappers(node, EXPRESSION_WRAPPERS);
-  if (parent?.type !== 'CallExpression' || parent.callee !== callee)
-    return null;
+  if (parent?.type !== 'CallExpression' || parent.callee !== callee) return null;
   return parent.arguments.length === 1 ? parent : null;
 }
 
@@ -180,8 +156,7 @@ export const rule = defineRule({
           allowPaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs of files allowed to call `JSON.parse` — a ratified carve-out only (default: none).',
+            description: 'Globs of files allowed to call `JSON.parse` — a ratified carve-out only (default: none).',
           },
           ignoreTestFiles: {
             type: 'boolean',
@@ -191,8 +166,7 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
         },
       },
@@ -233,8 +207,7 @@ export const rule = defineRule({
       const call = singleInputCall(node);
       if (call === null) return false;
       const input = unwrap(call.arguments[0] as AnyNode);
-      if (input.type !== 'CallExpression' || input.arguments.length !== 1)
-        return false;
+      if (input.type !== 'CallExpression' || input.arguments.length !== 1) return false;
       const encoder = unwrap(input.callee as AnyNode);
       return (
         encoder.type === 'MemberExpression' &&
@@ -267,8 +240,7 @@ export const rule = defineRule({
         if (source === null || !isJsonGlobal(source)) return;
         for (const property of node.properties) {
           if (property.type !== 'Property') continue;
-          if (keyName(property.key, false, STRING_OPTIONS) !== 'parse')
-            continue;
+          if (keyName(property.key, false, STRING_OPTIONS) !== 'parse') continue;
           report(property as unknown as AnyNode, 'nativeJsonParseBinding');
         }
       },

@@ -18,15 +18,11 @@ it('process termination cleans workspaces and preserves caller-owned roots', () 
       ["process.emit('SIGTERM')", 143],
     ] as const) {
       const script = `import { withTemporaryWorkspace } from ${JSON.stringify(helper)}; withTemporaryWorkspace(() => { ${termination}; });`;
-      const result = spawnSync(
-        process.execPath,
-        ['--input-type=module', '-e', script],
-        {
-          encoding: 'utf-8',
-          env: { ...process.env, EFFECT_NATIVE_TEST_TMPDIR: root },
-          timeout: 5000,
-        }
-      );
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+        encoding: 'utf-8',
+        env: { ...process.env, EFFECT_NATIVE_TEST_TMPDIR: root },
+        timeout: 5000,
+      });
       expect(result.error).toBe(undefined);
       expect(result.status, result.stderr).toBe(status);
       expect(result.stderr).toBe('');
@@ -41,7 +37,7 @@ it('temporary workspace is removed after success', () => {
     withTemporaryWorkspace((directory) => {
       created = directory;
       return 42;
-    })
+    }),
   ).toBe(42);
   expect(existsSync(created)).toBe(false);
 });
@@ -58,7 +54,7 @@ it('early and partially initialized failures retain their cause and clean owned 
             writeFileSync(nodePath.join(directory, 'partial', 'file'), 'data');
           }
           throw failure;
-        }, root)
+        }, root),
       ).toThrow({ asymmetricMatch: (error: Error) => error === failure });
       expect(readdirSync(root)).toEqual([callerOwned]);
     }

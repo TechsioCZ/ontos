@@ -1,17 +1,13 @@
 import { AUTH_SCHEMA_NAME, AUTH_TABLE_INVENTORY } from './schema.ts';
 
-export const expectedAuthTableCatalog = AUTH_TABLE_INVENTORY.map(
-  (tableName) => `${AUTH_SCHEMA_NAME}.${tableName}`
-);
+export const expectedAuthTableCatalog = AUTH_TABLE_INVENTORY.map((tableName) => `${AUTH_SCHEMA_NAME}.${tableName}`);
 
 interface AuthCatalogDifference {
   readonly missing: string[];
   readonly unexpected: string[];
 }
 
-export const compareAuthCatalog = (
-  qualifiedTableNames: readonly string[]
-): AuthCatalogDifference => {
+export const compareAuthCatalog = (qualifiedTableNames: readonly string[]): AuthCatalogDifference => {
   const actual = new Set(qualifiedTableNames);
   const expected = new Set(expectedAuthTableCatalog);
 

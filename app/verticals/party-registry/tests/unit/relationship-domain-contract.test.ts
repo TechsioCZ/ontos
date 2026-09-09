@@ -42,218 +42,175 @@ const presentInstant = (value: string) => Option.some(instant(value));
 
 it.effect('the production catalog contains only CONTACT_PERSON_OF', () =>
   Effect.gen(function* schemaContract1() {
-    expect(
-      yield* Schema.decodeEffect(PartyRelationshipTypeSchema)(
-        'CONTACT_PERSON_OF'
-      )
-    ).toBe(ContactPersonOfRelationshipType);
+    expect(yield* Schema.decodeEffect(PartyRelationshipTypeSchema)('CONTACT_PERSON_OF')).toBe(
+      ContactPersonOfRelationshipType,
+    );
     for (const deferred of ['EMPLOYEE_OF', 'BRANCH_OF', 'OTHER']) {
+      expect(() => Schema.decodeUnknownSync(PartyRelationshipTypeSchema)(deferred)).toThrow();
+    }
+  }),
+);
+
+it.effect('create accepts one provenance-backed PERSON to ORGANIZATION period shape', () =>
+  Effect.gen(function* schemaContract2() {
+    const payload = {
+      fromPartyRef,
+      provenance,
+      relationshipType: 'CONTACT_PERSON_OF',
+      toPartyRef,
+      validFrom: '2026-09-01T10:00:00.000Z',
+      validTo: null,
+    } as const;
+    const decoded = yield* Schema.decodeEffect(CreatePartyRelationshipPayloadSchema)(payload);
+    expect(decoded.relationshipType).toBe('CONTACT_PERSON_OF');
+    expect(() =>
+      Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
+        ...payload,
+        toPartyRef: fromPartyRef,
+      }),
+    ).toThrow();
+    expect(
+      Option.isNone(
+        (yield* Schema.decodeEffect(CreatePartyRelationshipPayloadSchema)({
+          ...payload,
+          validFrom: null,
+        })).validFrom,
+      ),
+    ).toBe(true);
+    expect(DateTime.formatIso(Option.getOrThrow(decoded.validFrom))).toBe(payload.validFrom);
+    expect(() =>
+      Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
+        ...payload,
+        validTo: '2026-09-01T10:00:00.000Z',
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
+        ...payload,
+        validFrom: '2026-02-30T10:00:00.000Z',
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
+        ...payload,
+        validFrom: '2026-09-01T10:00:00Z',
+      }),
+    ).toThrow();
+  }),
+);
+
+it.effect('relationship timestamps and nullable periods preserve their JSON encoding', () =>
+  Effect.gen(function* schemaContract3() {
+    const wire = {
+      fromPartyRef,
+      provenance,
+      relationshipType: 'CONTACT_PERSON_OF' as const,
+      toPartyRef,
+      validFrom: null,
+      validTo: '2026-09-01T10:00:00.000Z',
+    };
+    const decoded = yield* Schema.decodeEffect(CreatePartyRelationshipPayloadSchema)({
+      ...wire,
+      validTo: null,
+    });
+    expect(yield* Schema.encodeEffect(CreatePartyRelationshipPayloadSchema)(decoded)).toEqual({
+      ...wire,
+      validTo: null,
+    });
+    const updated = yield* Schema.decodeEffect(UpdatePartyRelationshipPayloadSchema)({
+      changeReason: 'Clarified end',
+      expectedRevision: 1,
+      provenance,
+      relationshipRef,
+      validTo: null,
+    });
+    expect(updated.validTo !== undefined && Option.isNone(updated.validTo)).toBe(true);
+    expect(yield* Schema.encodeEffect(UpdatePartyRelationshipPayloadSchema)(updated)).toEqual({
+      changeReason: 'Clarified end',
+      expectedRevision: 1,
+      provenance,
+      relationshipRef,
+      validTo: null,
+    });
+  }),
+);
+
+it.effect('update cannot accept endpoint or relationship type mutation fields', () =>
+  Effect.gen(function* schemaContract4() {
+    const decoded = yield* Schema.decodeEffect(UpdatePartyRelationshipPayloadSchema, {
+      onExcessProperty: 'error',
+    })({
+      changeReason: 'The planned assignment was extended',
+      expectedRevision: 2,
+      provenance,
+      relationshipRef,
+      validFrom: '2026-10-01T10:00:00.000Z',
+      validTo: '2026-12-01T10:00:00.000Z',
+    });
+    expect(decoded.expectedRevision).toBe(2);
+    for (const forbiddenField of ['fromPartyRef', 'toPartyRef', 'relationshipType']) {
       expect(() =>
-        Schema.decodeUnknownSync(PartyRelationshipTypeSchema)(deferred)
+        Schema.decodeSync(UpdatePartyRelationshipPayloadSchema, {
+          onExcessProperty: 'error',
+        })({
+          changeReason: 'The planned assignment was extended',
+          expectedRevision: 2,
+          provenance,
+          relationshipRef,
+          validFrom: '2026-10-01T10:00:00.000Z',
+          validTo: '2026-12-01T10:00:00.000Z',
+          [forbiddenField]: fromPartyRef,
+        }),
       ).toThrow();
     }
-  })
+  }),
 );
 
-it.effect(
-  'create accepts one provenance-backed PERSON to ORGANIZATION period shape',
-  () =>
-    Effect.gen(function* schemaContract2() {
-      const payload = {
-        fromPartyRef,
-        provenance,
-        relationshipType: 'CONTACT_PERSON_OF',
-        toPartyRef,
-        validFrom: '2026-09-01T10:00:00.000Z',
-        validTo: null,
-      } as const;
-      const decoded = yield* Schema.decodeEffect(
-        CreatePartyRelationshipPayloadSchema
-      )(payload);
-      expect(decoded.relationshipType).toBe('CONTACT_PERSON_OF');
-      expect(() =>
-        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
-          ...payload,
-          toPartyRef: fromPartyRef,
-        })
-      ).toThrow();
-      expect(
-        Option.isNone(
-          (yield* Schema.decodeEffect(CreatePartyRelationshipPayloadSchema)({
-            ...payload,
-            validFrom: null,
-          })).validFrom
-        )
-      ).toBe(true);
-      expect(DateTime.formatIso(Option.getOrThrow(decoded.validFrom))).toBe(
-        payload.validFrom
-      );
-      expect(() =>
-        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
-          ...payload,
-          validTo: '2026-09-01T10:00:00.000Z',
-        })
-      ).toThrow();
-      expect(() =>
-        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
-          ...payload,
-          validFrom: '2026-02-30T10:00:00.000Z',
-        })
-      ).toThrow();
-      expect(() =>
-        Schema.decodeSync(CreatePartyRelationshipPayloadSchema)({
-          ...payload,
-          validFrom: '2026-09-01T10:00:00Z',
-        })
-      ).toThrow();
-    })
-);
-
-it.effect(
-  'relationship timestamps and nullable periods preserve their JSON encoding',
-  () =>
-    Effect.gen(function* schemaContract3() {
-      const wire = {
-        fromPartyRef,
-        provenance,
-        relationshipType: 'CONTACT_PERSON_OF' as const,
-        toPartyRef,
-        validFrom: null,
-        validTo: '2026-09-01T10:00:00.000Z',
-      };
-      const decoded = yield* Schema.decodeEffect(
-        CreatePartyRelationshipPayloadSchema
-      )({
-        ...wire,
-        validTo: null,
-      });
-      expect(
-        yield* Schema.encodeEffect(CreatePartyRelationshipPayloadSchema)(
-          decoded
-        )
-      ).toEqual({
-        ...wire,
-        validTo: null,
-      });
-      const updated = yield* Schema.decodeEffect(
-        UpdatePartyRelationshipPayloadSchema
-      )({
-        changeReason: 'Clarified end',
-        expectedRevision: 1,
-        provenance,
-        relationshipRef,
-        validTo: null,
-      });
-      expect(
-        updated.validTo !== undefined && Option.isNone(updated.validTo)
-      ).toBe(true);
-      expect(
-        yield* Schema.encodeEffect(UpdatePartyRelationshipPayloadSchema)(
-          updated
-        )
-      ).toEqual({
-        changeReason: 'Clarified end',
-        expectedRevision: 1,
-        provenance,
-        relationshipRef,
-        validTo: null,
-      });
-    })
-);
-
-it.effect(
-  'update cannot accept endpoint or relationship type mutation fields',
-  () =>
-    Effect.gen(function* schemaContract4() {
-      const decoded = yield* Schema.decodeEffect(
-        UpdatePartyRelationshipPayloadSchema,
-        {
-          onExcessProperty: 'error',
-        }
-      )({
-        changeReason: 'The planned assignment was extended',
-        expectedRevision: 2,
-        provenance,
-        relationshipRef,
-        validFrom: '2026-10-01T10:00:00.000Z',
-        validTo: '2026-12-01T10:00:00.000Z',
-      });
-      expect(decoded.expectedRevision).toBe(2);
-      for (const forbiddenField of [
-        'fromPartyRef',
-        'toPartyRef',
-        'relationshipType',
-      ]) {
-        expect(() =>
-          Schema.decodeSync(UpdatePartyRelationshipPayloadSchema, {
-            onExcessProperty: 'error',
-          })({
-            changeReason: 'The planned assignment was extended',
-            expectedRevision: 2,
-            provenance,
-            relationshipRef,
-            validFrom: '2026-10-01T10:00:00.000Z',
-            validTo: '2026-12-01T10:00:00.000Z',
-            [forbiddenField]: fromPartyRef,
-          })
-        ).toThrow();
-      }
-    })
-);
-
-it.effect(
-  'end requires effective time, provenance, and revision without inventing a generic reason',
-  () =>
-    Effect.gen(function* schemaContract5() {
-      const decoded = yield* Schema.decodeEffect(
-        EndPartyRelationshipPayloadSchema
-      )({
+it.effect('end requires effective time, provenance, and revision without inventing a generic reason', () =>
+  Effect.gen(function* schemaContract5() {
+    const decoded = yield* Schema.decodeEffect(EndPartyRelationshipPayloadSchema)({
+      effectiveAt: '2026-09-02T10:00:00.000Z',
+      expectedRevision: 3,
+      provenance,
+      reason: 'The person is no longer a contact',
+      relationshipRef,
+    });
+    expect(decoded.expectedRevision).toBe(3);
+    expect(
+      (yield* Schema.decodeEffect(EndPartyRelationshipPayloadSchema)({
         effectiveAt: '2026-09-02T10:00:00.000Z',
         expectedRevision: 3,
         provenance,
-        reason: 'The person is no longer a contact',
         relationshipRef,
-      });
-      expect(decoded.expectedRevision).toBe(3);
-      expect(
-        (yield* Schema.decodeEffect(EndPartyRelationshipPayloadSchema)({
-          effectiveAt: '2026-09-02T10:00:00.000Z',
-          expectedRevision: 3,
-          provenance,
-          relationshipRef,
-        })).reason
-      ).toBe(undefined);
-    })
+      })).reason,
+    ).toBe(undefined);
+  }),
 );
 
 it('validity uses an exclusive end boundary', () => {
-  expect(
-    classifyRelationshipValidity(
-      absentInstant,
-      absentInstant,
-      instant('2026-09-01T09:59:59.999Z')
-    )
-  ).toBe('CURRENT');
+  expect(classifyRelationshipValidity(absentInstant, absentInstant, instant('2026-09-01T09:59:59.999Z'))).toBe(
+    'CURRENT',
+  );
   expect(
     classifyRelationshipValidity(
       presentInstant('2026-09-01T10:00:00.000Z'),
       absentInstant,
-      instant('2026-09-01T09:59:59.999Z')
-    )
+      instant('2026-09-01T09:59:59.999Z'),
+    ),
   ).toBe('SCHEDULED');
   expect(
     classifyRelationshipValidity(
       presentInstant('2026-09-01T10:00:00.000Z'),
       presentInstant('2026-09-02T10:00:00.000Z'),
-      instant('2026-09-02T09:59:59.999Z')
-    )
+      instant('2026-09-02T09:59:59.999Z'),
+    ),
   ).toBe('CURRENT');
   expect(
     classifyRelationshipValidity(
       presentInstant('2026-09-01T10:00:00.000Z'),
       presentInstant('2026-09-02T10:00:00.000Z'),
-      instant('2026-09-02T10:00:00.000Z')
-    )
+      instant('2026-09-02T10:00:00.000Z'),
+    ),
   ).toBe('HISTORICAL');
 });
 
@@ -300,7 +257,7 @@ it('only a still-future validity plan is ordinarily updateable', () => {
       validFrom: undefined,
       validTo: presentInstant('2027-01-01T00:00:00.000Z'),
     },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
   expect(Predicate.isTagged(futureEndUpdate, 'update')).toBe(true);
   expect(Struct.omit(futureEndUpdate, ['_tag'])).toEqual({});
@@ -315,11 +272,9 @@ it('only a still-future validity plan is ordinarily updateable', () => {
       validFrom: undefined,
       validTo: presentInstant('2027-01-01T00:00:00.000Z'),
     },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
-  expect(Predicate.isTagged(historicalEndUpdate, 'correction_required')).toBe(
-    true
-  );
+  expect(Predicate.isTagged(historicalEndUpdate, 'correction_required')).toBe(true);
   expect(Struct.omit(historicalEndUpdate, ['_tag'])).toEqual({
     fact: 'validTo',
   });
@@ -333,7 +288,7 @@ it('only a still-future validity plan is ordinarily updateable', () => {
       expectedRevision: 2,
       validTo: presentInstant('2026-08-01T00:00:00.000Z'),
     },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
   expect(Predicate.isTagged(pastEndUpdate, 'end_required')).toBe(true);
   expect(Struct.omit(pastEndUpdate, ['_tag'])).toEqual({});
@@ -344,11 +299,9 @@ it('only a still-future validity plan is ordinarily updateable', () => {
       validTo: absentInstant,
     },
     { expectedRevision: 1, validFrom: undefined, validTo: absentInstant },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
-  expect(Predicate.isTagged(staleRevisionUpdate, 'revision_conflict')).toBe(
-    true
-  );
+  expect(Predicate.isTagged(staleRevisionUpdate, 'revision_conflict')).toBe(true);
   expect(Struct.omit(staleRevisionUpdate, ['_tag'])).toEqual({
     actualRevision: 2,
   });
@@ -359,7 +312,7 @@ it('only a still-future validity plan is ordinarily updateable', () => {
       validFrom: instant('2025-01-01T00:00:00.000Z'),
       validTo: undefined,
     },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
   expect(Predicate.isTagged(unknownStartUpdate, 'update')).toBe(true);
   expect(Struct.omit(unknownStartUpdate, ['_tag'])).toEqual({});
@@ -374,7 +327,7 @@ it('only a still-future validity plan is ordinarily updateable', () => {
       validFrom: instant('2027-02-01T00:00:00.000Z'),
       validTo: undefined,
     },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
   expect(Predicate.isTagged(futureStartUpdate, 'update')).toBe(true);
   expect(Struct.omit(futureStartUpdate, ['_tag'])).toEqual({});
@@ -389,11 +342,9 @@ it('only a still-future validity plan is ordinarily updateable', () => {
       validFrom: instant('2026-02-01T00:00:00.000Z'),
       validTo: undefined,
     },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
-  expect(Predicate.isTagged(historicalStartUpdate, 'correction_required')).toBe(
-    true
-  );
+  expect(Predicate.isTagged(historicalStartUpdate, 'correction_required')).toBe(true);
   expect(Struct.omit(historicalStartUpdate, ['_tag'])).toEqual({
     fact: 'validFrom',
   });
@@ -414,17 +365,13 @@ it('end retry is exact and changed historical evidence requires correction', () 
     provenance: { method: 'MANUAL_CONFIRMATION', source: 'ENGAGEMENT_REVIEW' },
     reason: 'No longer a contact',
   } as const;
-  const exactEndRetry = decideRelationshipEnd(
-    current,
-    exact,
-    instant('2026-09-03T00:00:00.000Z')
-  );
+  const exactEndRetry = decideRelationshipEnd(current, exact, instant('2026-09-03T00:00:00.000Z'));
   expect(Predicate.isTagged(exactEndRetry, 'unchanged')).toBe(true);
   expect(Struct.omit(exactEndRetry, ['_tag'])).toEqual({});
   const changedEndRetry = decideRelationshipEnd(
     current,
     { ...exact, reason: 'A different historical explanation' },
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
   expect(Predicate.isTagged(changedEndRetry, 'correction_required')).toBe(true);
   expect(Struct.omit(changedEndRetry, ['_tag'])).toEqual({ fact: 'validTo' });
@@ -436,10 +383,8 @@ it('end retry is exact and changed historical evidence requires correction', () 
       endReason: null,
     },
     exact,
-    instant('2026-09-03T00:00:00.000Z')
+    instant('2026-09-03T00:00:00.000Z'),
   );
-  expect(Predicate.isTagged(missingEndEvidence, 'attach_end_evidence')).toBe(
-    true
-  );
+  expect(Predicate.isTagged(missingEndEvidence, 'attach_end_evidence')).toBe(true);
   expect(Struct.omit(missingEndEvidence, ['_tag'])).toEqual({});
 });

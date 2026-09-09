@@ -5,5 +5,5 @@ export class OperationAuthenticationRequired extends Schema.TaggedError<Operatio
   {
     code: Schema.Literal('operation_authentication_required'),
     reason: Schema.String,
-  }
+  },
 ) {}

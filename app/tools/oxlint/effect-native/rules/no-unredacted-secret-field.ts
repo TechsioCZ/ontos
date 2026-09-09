@@ -89,28 +89,16 @@ import { defineRule } from '@oxlint/plugins';
 import type { ESTree } from '@oxlint/plugins';
 
 import { parentOf, unwrapNode } from '../shared/ast.ts';
-import {
-  resolveVariable,
-  resolvesToImport as importedReference,
-} from '../shared/bindings.ts';
+import { resolveVariable, resolvesToImport as importedReference } from '../shared/bindings.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import {
-  collectRootNamespaces,
-  collectNamedImports,
-  importedName,
-} from '../shared/imports.ts';
+import { collectRootNamespaces, collectNamedImports, importedName } from '../shared/imports.ts';
 import { compile, stringList } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
 type IdentifierNode = Extract<AnyNode, { type: 'Identifier' }>;
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_ALLOW_PATHS: readonly string[] = [];
 
 /**
@@ -179,13 +167,7 @@ const SCHEMA_WRAPPERS = new Set([
 ]);
 
 /** Fluent methods that refine/annotate a schema in place. */
-const SCHEMA_CHAIN_METHODS = new Set([
-  'annotate',
-  'annotateKey',
-  'brand',
-  'check',
-  'pipe',
-]);
+const SCHEMA_CHAIN_METHODS = new Set(['annotate', 'annotateKey', 'brand', 'check', 'pipe']);
 
 /** `Config` readers that hand back a plain, loggable string. */
 const PLAIN_CONFIG_READERS = new Set(['nonEmptyString', 'string', 'url']);
@@ -205,11 +187,7 @@ const PARAMETER_OWNERS = new Set([
 ]);
 
 /** Wrappers between a parameter `Identifier` and the function that owns it. */
-const PARAMETER_WRAPPERS = new Set([
-  'AssignmentPattern',
-  'RestElement',
-  'TSParameterProperty',
-]);
+const PARAMETER_WRAPPERS = new Set(['AssignmentPattern', 'RestElement', 'TSParameterProperty']);
 
 /** Expression wrappers that never change what an expression *is*. */
 const UNWRAPPABLE = new Set([
@@ -236,19 +214,10 @@ function readOptions(raw: unknown): RuleOptions {
   const includePaths = stringList(given.includePaths, DEFAULT_INCLUDE_PATHS);
   return {
     allowPaths: stringList(given.allowPaths, DEFAULT_ALLOW_PATHS),
-    ignoreTestFiles:
-      typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : true,
-    includePaths:
-      includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
-    reexportModules: stringList(
-      given.reexportModules,
-      DEFAULT_REEXPORT_MODULES
-    ),
-    secretConfigKeys: compile(
-      given.secretConfigKeys,
-      DEFAULT_SECRET_CONFIG_KEYS,
-      'u'
-    ),
+    ignoreTestFiles: typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : true,
+    includePaths: includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
+    reexportModules: stringList(given.reexportModules, DEFAULT_REEXPORT_MODULES),
+    secretConfigKeys: compile(given.secretConfigKeys, DEFAULT_SECRET_CONFIG_KEYS, 'u'),
     secretNames: compile(given.secretNames, DEFAULT_SECRET_NAMES, 'iu'),
   };
 }
@@ -260,10 +229,8 @@ function unwrap(node: AnyNode): AnyNode {
 /** `.String` or `["String"]` → `"String"`; a dynamic key → `null`. */
 function staticString(node: AnyNode): string | null {
   const value = unwrap(node);
-  if (value.type === 'Literal' && typeof value.value === 'string')
-    return value.value;
-  if (value.type === 'TemplateLiteral' && value.expressions.length === 0)
-    return value.quasis[0]?.value.cooked ?? null;
+  if (value.type === 'Literal' && typeof value.value === 'string') return value.value;
+  if (value.type === 'TemplateLiteral' && value.expressions.length === 0) return value.quasis[0]?.value.cooked ?? null;
   return null;
 }
 function memberName(node: ESTree.MemberExpression): string | null {
@@ -271,11 +238,7 @@ function memberName(node: ESTree.MemberExpression): string | null {
 }
 /** Literal computed keys and private identifiers have the same credential-name semantics. */
 function keyName(key: AnyNode, computed: boolean): string | null {
-  if (
-    !computed &&
-    (key.type === 'Identifier' || key.type === 'PrivateIdentifier')
-  )
-    return key.name;
+  if (!computed && (key.type === 'Identifier' || key.type === 'PrivateIdentifier')) return key.name;
   return staticString(key);
 }
 
@@ -284,9 +247,7 @@ function typeNameOf(node: AnyNode): string | null {
   if (node.type === 'Identifier') return (node as { name: string }).name;
   if (node.type === 'TSQualifiedName') {
     const right = (node as { right?: AnyNode }).right;
-    return right !== undefined && right.type === 'Identifier'
-      ? (right as { name: string }).name
-      : null;
+    return right !== undefined && right.type === 'Identifier' ? (right as { name: string }).name : null;
   }
   return null;
 }
@@ -298,10 +259,7 @@ function unwrapType(node: AnyNode): AnyNode {
       current = (current as { typeAnnotation: AnyNode }).typeAnnotation;
       continue;
     }
-    if (
-      current.type === 'TSTypeOperator' &&
-      (current as { operator?: string }).operator === 'readonly'
-    ) {
+    if (current.type === 'TSTypeOperator' && (current as { operator?: string }).operator === 'readonly') {
       current = (current as { typeAnnotation: AnyNode }).typeAnnotation;
       continue;
     }
@@ -312,13 +270,8 @@ function unwrapType(node: AnyNode): AnyNode {
 
 /** Nullable and literal alternatives do not themselves establish a raw string payload. */
 function isNeutralStringAlternative(type: AnyNode): boolean {
-  if (type.type === 'TSNullKeyword' || type.type === 'TSUndefinedKeyword')
-    return true;
-  return (
-    type.type === 'TSLiteralType' &&
-    type.literal.type === 'Literal' &&
-    typeof type.literal.value === 'string'
-  );
+  if (type.type === 'TSNullKeyword' || type.type === 'TSUndefinedKeyword') return true;
+  return type.type === 'TSLiteralType' && type.literal.type === 'Literal' && typeof type.literal.value === 'string';
 }
 
 function isStringUnion(types: readonly AnyNode[], depth: number): boolean {
@@ -332,18 +285,11 @@ function isStringUnion(types: readonly AnyNode[], depth: number): boolean {
   return sawString;
 }
 
-function isStringContainer(
-  type: ESTree.TSTypeReference,
-  depth: number
-): boolean {
+function isStringContainer(type: ESTree.TSTypeReference, depth: number): boolean {
   const name = typeNameOf(type.typeName);
   if (name === null || !STRING_CONTAINERS.has(name)) return false;
   const args = type.typeArguments?.params ?? [];
-  return (
-    args.length === 1 &&
-    args[0] !== undefined &&
-    isStringShaped(args[0], depth + 1)
-  );
+  return args.length === 1 && args[0] !== undefined && isStringShaped(args[0], depth + 1);
 }
 
 /** Raw strings, nullable alternatives and ordered collections, never redacted types. */
@@ -354,10 +300,7 @@ function isStringShaped(node: AnyNode, depth: number): boolean {
     case 'TSStringKeyword':
       return true;
     case 'TSLiteralType':
-      return (
-        type.literal.type === 'TemplateLiteral' &&
-        type.literal.expressions.length > 0
-      );
+      return type.literal.type === 'TemplateLiteral' && type.literal.expressions.length > 0;
     case 'TSTemplateLiteralType':
     case 'TSIntersectionType':
       return type.types.some((member) => isStringShaped(member, depth + 1));
@@ -409,24 +352,20 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
           reexportModules: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Modules that re-export Effect namespaces verbatim (Modern.js BFF barrels).',
+            description: 'Modules that re-export Effect namespaces verbatim (Modern.js BFF barrels).',
           },
           secretConfigKeys: {
             type: 'string',
-            description:
-              "Regex (case-sensitive) matched against `Config.string('KEY')` literals.",
+            description: "Regex (case-sensitive) matched against `Config.string('KEY')` literals.",
           },
           secretNames: {
             type: 'string',
-            description:
-              'Regex (case-insensitive) matched against field/parameter/Schema-field names.',
+            description: 'Regex (case-insensitive) matched against field/parameter/Schema-field names.',
           },
         },
       },
@@ -454,14 +393,11 @@ export const rule = defineRule({
     /** locals bound to the whole `effect` barrel (`import * as Effect from "effect"`). */
     let barrels = new Set<string>();
 
-    const isSecretName = (name: string): boolean =>
-      options.secretNames.test(name);
+    const isSecretName = (name: string): boolean => options.secretNames.test(name);
 
-    const lookupVariable = (identifier: AnyNode, name: string) =>
-      resolveVariable(context, name, identifier);
+    const lookupVariable = (identifier: AnyNode, name: string) => resolveVariable(context, name, identifier);
 
-    const resolvesToImport = (node: AnyNode): boolean =>
-      importedReference(context, node);
+    const resolvesToImport = (node: AnyNode): boolean => importedReference(context, node);
 
     const singleDefinition = (node: IdentifierNode) => {
       const variable = lookupVariable(node, node.name);
@@ -472,10 +408,8 @@ export const rule = defineRule({
       const definition = singleDefinition(node);
       if (definition?.type !== 'Variable') return null;
       const declaration = definition.node as ESTree.VariableDeclarator;
-      if (declaration.id.type !== 'Identifier' || !declaration.init)
-        return null;
-      return (parentOf(declaration) as ESTree.VariableDeclaration)?.kind ===
-        'const'
+      if (declaration.id.type !== 'Identifier' || !declaration.init) return null;
+      return (parentOf(declaration) as ESTree.VariableDeclaration)?.kind === 'const'
         ? (declaration.init as AnyNode)
         : null;
     };
@@ -494,46 +428,30 @@ export const rule = defineRule({
       return { specifier, declaration };
     };
 
-    const directMember = (
-      node: IdentifierNode,
-      depth: number
-    ): { namespace: string; member: string } | null => {
+    const directMember = (node: IdentifierNode, depth: number): { namespace: string; member: string } | null => {
       const initializer = constantInitializer(node);
       if (initializer) return resolveMember(initializer, depth + 1);
       const binding = valueImport(node);
       if (!binding || binding.specifier.type !== 'ImportSpecifier') return null;
       const namespace = DIRECT_NAMESPACES.get(binding.declaration.source.value);
-      return namespace
-        ? { namespace, member: importedName(binding.specifier) }
-        : null;
+      return namespace ? { namespace, member: importedName(binding.specifier) } : null;
     };
 
     const namespaceMember = (object: IdentifierNode, member: string) => {
       if (!valueImport(object)) return null;
       const namespace = namespaces.get(object.name);
-      return namespace === 'Schema' || namespace === 'Config'
-        ? { namespace, member }
-        : null;
+      return namespace === 'Schema' || namespace === 'Config' ? { namespace, member } : null;
     };
 
     const barrelMember = (object: ESTree.MemberExpression, member: string) => {
       const namespace = memberName(object);
       const root = unwrap(object.object as AnyNode);
-      if (
-        !namespace ||
-        root.type !== 'Identifier' ||
-        !barrels.has(root.name) ||
-        !resolvesToImport(root)
-      )
-        return null;
+      if (!namespace || root.type !== 'Identifier' || !barrels.has(root.name) || !resolvesToImport(root)) return null;
       return { namespace, member };
     };
 
     /** Exact imports and bounded const aliases, without broadening namespace alias support. */
-    const resolveMember = (
-      input: AnyNode,
-      depth = 0
-    ): { namespace: string; member: string } | null => {
+    const resolveMember = (input: AnyNode, depth = 0): { namespace: string; member: string } | null => {
       if (depth > 12) return null;
       const node = unwrap(input);
       if (node.type === 'Identifier') return directMember(node, depth);
@@ -542,9 +460,7 @@ export const rule = defineRule({
       if (!member) return null;
       const object = unwrap(node.object as AnyNode);
       if (object.type === 'Identifier') return namespaceMember(object, member);
-      return object.type === 'MemberExpression'
-        ? barrelMember(object, member)
-        : null;
+      return object.type === 'MemberExpression' ? barrelMember(object, member) : null;
     };
 
     const configKey = (node: AnyNode, depth = 0): string | null => {
@@ -558,15 +474,8 @@ export const rule = defineRule({
     };
     const isRedaction = (node: AnyNode): boolean => {
       const expression = unwrap(node);
-      const member = resolveMember(
-        expression.type === 'CallExpression'
-          ? (expression.callee as AnyNode)
-          : expression
-      );
-      return (
-        member?.namespace === 'Schema' &&
-        (member.member === 'Redacted' || member.member === 'RedactedFromSelf')
-      );
+      const member = resolveMember(expression.type === 'CallExpression' ? (expression.callee as AnyNode) : expression);
+      return member?.namespace === 'Schema' && (member.member === 'Redacted' || member.member === 'RedactedFromSelf');
     };
 
     const isPipeIdentifier = (node: AnyNode): boolean => {
@@ -575,42 +484,24 @@ export const rule = defineRule({
       return namespaces.get(name) === PIPE_EXPORT && resolvesToImport(node);
     };
 
-    const isSchemaMember = (
-      node: AnyNode,
-      members: ReadonlySet<string>
-    ): boolean => {
+    const isSchemaMember = (node: AnyNode, members: ReadonlySet<string>): boolean => {
       const resolved = resolveMember(node);
-      return (
-        resolved !== null &&
-        resolved.namespace === SCHEMA_NAMESPACE &&
-        members.has(resolved.member)
-      );
+      return resolved !== null && resolved.namespace === SCHEMA_NAMESPACE && members.has(resolved.member);
     };
 
-    const stringSchemaArgument = (
-      call: ESTree.CallExpression,
-      depth: number
-    ): boolean => {
+    const stringSchemaArgument = (call: ESTree.CallExpression, depth: number): boolean => {
       const argument = call.arguments[0];
-      return (
-        argument !== undefined &&
-        argument.type !== 'SpreadElement' &&
-        isStringSchema(argument, depth + 1)
-      );
+      return argument !== undefined && argument.type !== 'SpreadElement' && isStringSchema(argument, depth + 1);
     };
 
     const isStringSchemaChain = (
       call: ESTree.CallExpression,
       callee: ESTree.MemberExpression,
-      depth: number
+      depth: number,
     ): boolean | null => {
       const method = memberName(callee);
       if (method === null || !SCHEMA_CHAIN_METHODS.has(method)) return null;
-      if (
-        method === 'pipe' &&
-        call.arguments.some((argument) => isRedaction(argument as AnyNode))
-      )
-        return false;
+      if (method === 'pipe' && call.arguments.some((argument) => isRedaction(argument as AnyNode))) return false;
       return isStringSchema(callee.object as AnyNode, depth + 1);
     };
 
@@ -621,26 +512,19 @@ export const rule = defineRule({
       if (isSchemaMember(expression, STRING_SCHEMAS)) return true;
       if (expression.type !== 'CallExpression') return false;
       const callee = unwrap(expression.callee as AnyNode);
-      if (isSchemaMember(callee, SCHEMA_WRAPPERS))
-        return stringSchemaArgument(expression, depth);
+      if (isSchemaMember(callee, SCHEMA_WRAPPERS)) return stringSchemaArgument(expression, depth);
       if (callee.type === 'MemberExpression') {
         const chain = isStringSchemaChain(expression, callee, depth);
         if (chain !== null) return chain;
       }
       return (
         isPipeIdentifier(callee) &&
-        !expression.arguments
-          .slice(1)
-          .some((argument) => isRedaction(argument as AnyNode)) &&
+        !expression.arguments.slice(1).some((argument) => isRedaction(argument as AnyNode)) &&
         stringSchemaArgument(expression, depth)
       );
     };
 
-    const report = (
-      node: AnyNode,
-      messageId: string,
-      data: Record<string, string>
-    ): void => {
+    const report = (node: AnyNode, messageId: string, data: Record<string, string>): void => {
       context.report({ data, messageId, node });
     };
 
@@ -684,29 +568,20 @@ export const rule = defineRule({
       if (owner === null) return;
       const setter = accessor(owner, 'set');
       const setterName = setter ? keyName(setter.key, setter.computed) : null;
-      const name =
-        setterName && isSecretName(setterName) ? setterName : identifier.name;
+      const name = setterName && isSecretName(setterName) ? setterName : identifier.name;
       if (isSecretName(name)) report(identifier, 'secretParameter', { name });
     };
 
     return {
       Program(node) {
         namespaces = new Map(collectEffectBindings(node).namespaces);
-        const isReexport = (source: string) =>
-          matchesGlobs(source, options.reexportModules);
-        barrels = collectRootNamespaces(
-          node,
-          (source) => source === EFFECT_ROOT_MODULE || isReexport(source),
-          { valueOnly: true }
-        );
-        for (const [local, imported] of collectNamedImports(
-          node,
-          isReexport,
-          undefined,
-          {
-            valueOnly: true,
-          }
-        )) {
+        const isReexport = (source: string) => matchesGlobs(source, options.reexportModules);
+        barrels = collectRootNamespaces(node, (source) => source === EFFECT_ROOT_MODULE || isReexport(source), {
+          valueOnly: true,
+        });
+        for (const [local, imported] of collectNamedImports(node, isReexport, undefined, {
+          valueOnly: true,
+        })) {
           namespaces.set(local, imported);
         }
       },
@@ -714,8 +589,7 @@ export const rule = defineRule({
       // Cases 1 + 2: a string-shaped type annotation on a credential-shaped name.
       TSTypeAnnotation(node) {
         const annotated = parentOf(node);
-        if (annotated === null || !isStringShaped(node.typeAnnotation, 0))
-          return;
+        if (annotated === null || !isStringShaped(node.typeAnnotation, 0)) return;
         if (
           [
             'TSPropertySignature',
@@ -725,16 +599,13 @@ export const rule = defineRule({
             'TSAbstractAccessorProperty',
           ].includes(annotated.type)
         ) {
-          reportField(
-            annotated as unknown as { key: AnyNode; computed: boolean }
-          );
+          reportField(annotated as unknown as { key: AnyNode; computed: boolean });
           return;
         }
         const getter = accessor(annotated, 'get');
         if (getter) {
           const name = keyName(getter.key, getter.computed);
-          if (name && isSecretName(name))
-            report(getter.key, 'secretField', { name });
+          if (name && isSecretName(name)) report(getter.key, 'secretField', { name });
           return;
         }
         if (annotated.type === 'Identifier') reportParameter(annotated);
@@ -762,8 +633,7 @@ export const rule = defineRule({
         const argument = node.arguments[0] as AnyNode | undefined;
         if (argument === undefined) return;
         const key = configKey(argument);
-        if (typeof key !== 'string' || !options.secretConfigKeys.test(key))
-          return;
+        if (typeof key !== 'string' || !options.secretConfigKeys.test(key)) return;
         report(node as unknown as AnyNode, 'secretConfigKey', {
           member: called.member,
           name: key,

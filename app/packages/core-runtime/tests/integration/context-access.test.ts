@@ -3,10 +3,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Crypto, Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  SPICEDB_CHECK_TIMEOUT_MS,
-  createSpiceDbPermissionClient,
-} from '../../src/permissions/client.ts';
+import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import {
   makeContextAccess,
@@ -15,15 +12,14 @@ import {
   toResourceAccessObjectId,
 } from '../../src/permissions/context-access.ts';
 
-const spiceDbEffect = <Value>(operation: PromiseLike<Value>) =>
-  Effect.tryPromise(() => operation);
+const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 
 const relationship = (
   resourceType: string,
   resourceId: string,
   relation: string,
   subjectType: string,
-  subjectId: string
+  subjectId: string,
 ) =>
   v1.Relationship.create({
     relation,
@@ -43,14 +39,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const configuration = yield* loadSpiceDbConfig();
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  const [
-    tenantId,
-    otherTenantId,
-    legalEntityId,
-    otherLegalEntityId,
-    principalId,
-    resourceId,
-  ] = yield* Effect.all(
+  const [tenantId, otherTenantId, legalEntityId, otherLegalEntityId, principalId, resourceId] = yield* Effect.all(
     [
       crypto.randomUUIDv4,
       crypto.randomUUIDv4,
@@ -59,38 +48,22 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
       crypto.randomUUIDv4,
       crypto.randomUUIDv4,
     ],
-    { concurrency: 'unbounded' }
+    { concurrency: 'unbounded' },
   );
   const moduleId = 'property.registry';
   const resource = { moduleId, resourceId, resourceType: 'property.unit' };
   const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
-  const moduleObjectId = toModuleAccessObjectId(
-    tenantId,
-    legalEntityId,
-    moduleId
-  );
-  const resourceObjectId = toResourceAccessObjectId(
-    tenantId,
-    legalEntityId,
-    resource
-  );
-  if (
-    legalObjectId === undefined ||
-    moduleObjectId === undefined ||
-    resourceObjectId === undefined
-  ) {
+  const moduleObjectId = toModuleAccessObjectId(tenantId, legalEntityId, moduleId);
+  const resourceObjectId = toResourceAccessObjectId(tenantId, legalEntityId, resource);
+  if (legalObjectId === undefined || moduleObjectId === undefined || resourceObjectId === undefined) {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
   const client = v1.NewClient(
     configuration.preSharedKey,
     configuration.endpoint,
-    configuration.insecureLocal
-      ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-      : v1.ClientSecurity.SECURE
+    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
   );
-  const bootstrap = yield* fileSystem.readFileString(
-    new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname
-  );
+  const bootstrap = yield* fileSystem.readFileString(new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname);
   const bootstrapLines = bootstrap.split('\n');
   const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;
   const schemaEnd = bootstrapLines.indexOf('relationships: |-');
@@ -103,104 +76,26 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     client.promises.writeSchema(
       v1.WriteSchemaRequest.create({
         schema: schemaBlock,
-      })
-    )
+      }),
+    ),
   );
   const relationships = [
     relationship('tenant', tenantId, 'member', 'principal', principalId),
-    relationship(
-      'tenant',
-      tenantId,
-      'identity_admin',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'tenant',
-      tenantId,
-      'party_identity_manager',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'tenant',
-      tenantId,
-      'party_identity_merger',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'tenant',
-      tenantId,
-      'party_identity_reader',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'tenant',
-      tenantId,
-      'party_identity_reviewer',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'tenant',
-      tenantId,
-      'party_relationship_manager',
-      'principal',
-      principalId
-    ),
+    relationship('tenant', tenantId, 'identity_admin', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_manager', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_merger', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_reader', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_reviewer', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_relationship_manager', 'principal', principalId),
     relationship('tenant', tenantId, 'support', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'tenant', 'tenant', tenantId),
-    relationship(
-      'legal_entity',
-      legalObjectId,
-      'member',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'legal_entity',
-      legalObjectId,
-      'counterparty_manager',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'legal_entity',
-      legalObjectId,
-      'counterparty_reader',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'module_access',
-      moduleObjectId,
-      'legal_entity',
-      'legal_entity',
-      legalObjectId
-    ),
-    relationship(
-      'module_access',
-      moduleObjectId,
-      'accessor',
-      'principal',
-      principalId
-    ),
-    relationship(
-      'resource',
-      resourceObjectId,
-      'module',
-      'module_access',
-      moduleObjectId
-    ),
-    relationship(
-      'resource',
-      resourceObjectId,
-      'reader',
-      'principal',
-      principalId
-    ),
+    relationship('legal_entity', legalObjectId, 'member', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'counterparty_manager', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'counterparty_reader', 'principal', principalId),
+    relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalObjectId),
+    relationship('module_access', moduleObjectId, 'accessor', 'principal', principalId),
+    relationship('resource', resourceObjectId, 'module', 'module_access', moduleObjectId),
+    relationship('resource', resourceObjectId, 'reader', 'principal', principalId),
   ];
 
   yield* Effect.gen(function* exerciseContextAccess() {
@@ -211,15 +106,12 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
             v1.RelationshipUpdate.create({
               operation: v1.RelationshipUpdate_Operation.TOUCH,
               relationship: item,
-            })
+            }),
           ),
-        })
-      )
+        }),
+      ),
     );
-    const permissionClient = createSpiceDbPermissionClient(
-      configuration,
-      SPICEDB_CHECK_TIMEOUT_MS
-    );
+    const permissionClient = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
     yield* Effect.gen(function* checkContextAccess() {
       const access = makeContextAccess(permissionClient);
       const tenantDecisions = yield* Effect.forEach(
@@ -238,7 +130,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
             principalId,
             tenantIds: [tenantId, otherTenantId],
           }),
-        { concurrency: 'unbounded' }
+        { concurrency: 'unbounded' },
       );
       for (const decisions of tenantDecisions) {
         expect(decisions).toEqual([
@@ -255,7 +147,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
             principalId,
             tenantId,
           }),
-        { concurrency: 'unbounded' }
+        { concurrency: 'unbounded' },
       );
       for (const decisions of legalEntityDecisions) {
         expect(decisions).toEqual([
@@ -269,7 +161,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           moduleIds: [moduleId],
           principalId,
           tenantId,
-        })
+        }),
       ).toEqual([{ decision: 'allowed', key: moduleId }]);
       expect(
         yield* access.modules({
@@ -277,7 +169,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           moduleIds: [moduleId],
           principalId,
           tenantId: otherTenantId,
-        })
+        }),
       ).toEqual([{ decision: 'denied', key: moduleId }]);
       expect(
         yield* access.resources({
@@ -285,7 +177,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
           principalId,
           resources: [resource],
           tenantId,
-        })
+        }),
       ).toEqual([
         {
           decision: 'allowed',
@@ -310,21 +202,18 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
                   optionalResourceId: cleanupResourceId,
                   resourceType,
                 }),
-              })
-            )
+              }),
+            ),
           ),
-        { concurrency: 'unbounded', discard: true }
-      ).pipe(Effect.ensuring(Effect.sync(() => client.close())), Effect.orDie)
-    )
+        { concurrency: 'unbounded', discard: true },
+      ).pipe(Effect.ensuring(Effect.sync(() => client.close())), Effect.orDie),
+    ),
   );
 });
 
-it.layer(NodeServices.layer, { excludeTestServices: true })(
-  'context-access',
-  (suite) => {
-    suite.effect(
-      'isolates live legal-entity, module, and resource batches by tenant and entity',
-      () => contextAccessProgram
-    );
-  }
-);
+it.layer(NodeServices.layer, { excludeTestServices: true })('context-access', (suite) => {
+  suite.effect(
+    'isolates live legal-entity, module, and resource batches by tenant and entity',
+    () => contextAccessProgram,
+  );
+});

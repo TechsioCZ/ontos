@@ -8,12 +8,12 @@ This document defines the Core-owned invariant for loading or dispatching OntOS 
 
 Every entrypoint is an immutable Effect Schema-backed value containing a stable entrypoint key, owning module key, role, access class, and explicit scope.
 
-| Role | Permitted access |
-| --- | --- |
-| `action` | `write` |
-| `worker` | `background` |
-| `page`, `public_component`, `search` | `read` or an explicit `historical_read` |
-| `api`, `report` | an explicitly selected `read`, `historical_read`, or `write` |
+| Role                                 | Permitted access                                             |
+| ------------------------------------ | ------------------------------------------------------------ |
+| `action`                             | `write`                                                      |
+| `worker`                             | `background`                                                 |
+| `page`, `public_component`, `search` | `read` or an explicit `historical_read`                      |
+| `api`, `report`                      | an explicitly selected `read`, `historical_read`, or `write` |
 
 Tenant entrypoints are created only with the tenant constructor. Core capabilities use the system constructor explicitly; a `core.*` prefix does not imply a bypass. A system entrypoint bypasses tenant module-state acquisition only and still passes every applicable authentication, permission, Policy, transaction, and evidence control.
 
@@ -40,14 +40,14 @@ Missing state is a definite denial. An unavailable database read, malformed pers
 
 At a trusted Shell, SSR, route, or BFF boundary, collect every descriptor the request may use, deduplicate and sort its tenant module keys, read them in one indexed query, decode each state once, and create an immutable request snapshot covering the exact key set. Every later decision is pure in-memory evaluation. Undeclared keys fail closed without an implicit lookup. Empty and system-only compositions perform no state query.
 
-| Runtime composition | Module-state database work |
-| --- | --- |
-| One Shell/SSR/page composition with any number of declared entrypoints | At most one batch query for all distinct tenant module keys |
-| Repeated decisions from one request snapshot | Zero additional queries |
-| Explicit Core system entrypoints | Zero tenant-module-state queries |
-| One independently deployed BFF request | At most one batch query for that request composition |
-| One business Action attempt | One early indexed read plus one transaction-aware recheck |
-| One Outbox Worker claim cycle | Zero additional queries beyond the existing claim query/join |
+| Runtime composition                                                    | Module-state database work                                   |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------ |
+| One Shell/SSR/page composition with any number of declared entrypoints | At most one batch query for all distinct tenant module keys  |
+| Repeated decisions from one request snapshot                           | Zero additional queries                                      |
+| Explicit Core system entrypoints                                       | Zero tenant-module-state queries                             |
+| One independently deployed BFF request                                 | At most one batch query for that request composition         |
+| One business Action attempt                                            | One early indexed read plus one transaction-aware recheck    |
+| One Outbox Worker claim cycle                                          | Zero additional queries beyond the existing claim query/join |
 
 Snapshots are request-scoped, never process-global, browser-authoritative, TTL-based, or distributed caches. The next independent request observes state again. A Shell decision does not replace the independent BFF or Action check at the next trust boundary. Telemetry may contain batch size, acquisition duration, snapshot reuse, scope, access, and outcome, but not payloads, credentials, raw persistence causes, or private implementation identifiers.
 

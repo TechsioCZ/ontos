@@ -22,11 +22,7 @@ import { spanOf } from '../shared/reporting.ts';
 
 type AnyNode = ESTree.Node;
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 
 interface RuleOptions {
   readonly allowBrandMarkers: boolean;
@@ -48,17 +44,10 @@ function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
   return {
-    allowBrandMarkers: boolean(
-      given.allowBrandMarkers,
-      DEFAULTS.allowBrandMarkers
-    ),
-    allowSameFileAccessors: boolean(
-      given.allowSameFileAccessors,
-      DEFAULTS.allowSameFileAccessors
-    ),
+    allowBrandMarkers: boolean(given.allowBrandMarkers, DEFAULTS.allowBrandMarkers),
+    allowSameFileAccessors: boolean(given.allowSameFileAccessors, DEFAULTS.allowSameFileAccessors),
     ignore: stringList(given.ignore, DEFAULTS.ignore),
-    includePaths:
-      includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
+    includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
     includeTests: boolean(given.includeTests, DEFAULTS.includeTests),
   };
 }
@@ -74,15 +63,10 @@ interface Span {
  * Containment rather than equality keeps the check working whether the scope analyser reports the
  * `VariableDeclarator` or the enclosing `VariableDeclaration` as the definition node.
  */
-function definesSpan(
-  definitionNode: AnyNode | null,
-  declarators: readonly Span[]
-): boolean {
+function definesSpan(definitionNode: AnyNode | null, declarators: readonly Span[]): boolean {
   const span = spanOf(definitionNode);
   if (span === null) return false;
-  return declarators.some(
-    (declarator) => span.start <= declarator.start && span.end >= declarator.end
-  );
+  return declarators.some((declarator) => span.start <= declarator.start && span.end >= declarator.end);
 }
 
 const VALUE_WRAPPERS = new Set([
@@ -111,31 +95,22 @@ function dottedTypeName(node: AnyNode | null): string | null {
 }
 
 /** `const x: unique symbol` / `const x: symbol`. */
-function isSymbolTypeAnnotation(
-  annotation: AnyNode | null | undefined
-): boolean {
+function isSymbolTypeAnnotation(annotation: AnyNode | null | undefined): boolean {
   if (annotation === null || annotation === undefined) return false;
   const inner = unwrapType(annotation);
   if (inner.type === 'TSSymbolKeyword') return true;
   if (inner.type !== 'TSTypeOperator') return false;
   const operator = inner as ESTree.TSTypeOperator;
-  return (
-    operator.operator === 'unique' &&
-    unwrapType(operator.typeAnnotation as AnyNode).type === 'TSSymbolKeyword'
-  );
+  return operator.operator === 'unique' && unwrapType(operator.typeAnnotation as AnyNode).type === 'TSSymbolKeyword';
 }
 
 /** `Symbol('…')` / `Symbol.for('…')` — the callee must be the *global* `Symbol`. */
-function isSymbolFactoryCall(
-  node: AnyNode | null | undefined,
-  symbolIsGlobal: boolean
-): boolean {
+function isSymbolFactoryCall(node: AnyNode | null | undefined, symbolIsGlobal: boolean): boolean {
   if (node === null || node === undefined || !symbolIsGlobal) return false;
   const call = unwrapValue(node);
   if (call.type !== 'CallExpression') return false;
   const callee = unwrapValue((call as ESTree.CallExpression).callee as AnyNode);
-  if (callee.type === 'Identifier')
-    return (callee as { name: string }).name === 'Symbol';
+  if (callee.type === 'Identifier') return (callee as { name: string }).name === 'Symbol';
   if (callee.type !== 'MemberExpression') return false;
   return isSymbolForMember(callee as ESTree.MemberExpression);
 }
@@ -146,23 +121,12 @@ function isSymbolForMember(callee: ESTree.MemberExpression): boolean {
     object: AnyNode;
     property: AnyNode;
   };
-  if (
-    member.computed ||
-    member.object.type !== 'Identifier' ||
-    member.property.type !== 'Identifier'
-  )
-    return false;
-  return (
-    (member.object as { name: string }).name === 'Symbol' &&
-    (member.property as { name: string }).name === 'for'
-  );
+  if (member.computed || member.object.type !== 'Identifier' || member.property.type !== 'Identifier') return false;
+  return (member.object as { name: string }).name === 'Symbol' && (member.property as { name: string }).name === 'for';
 }
 
 /** A type that carries no capability: `true`, `'tag'`, `typeof X`, `symbol`, or `X` named like the key. */
-function isMarkerType(
-  annotation: AnyNode | null | undefined,
-  keyName: string
-): boolean {
+function isMarkerType(annotation: AnyNode | null | undefined, keyName: string): boolean {
   if (annotation === null || annotation === undefined) return true; // `readonly [brand];` — no capability.
   const type = unwrapType(annotation);
   if (
@@ -176,70 +140,48 @@ function isMarkerType(
     ].includes(type.type)
   )
     return true;
-  if (type.type === 'TSUnionType')
-    return type.types.every((member) => isMarkerType(member, keyName));
+  if (type.type === 'TSUnionType') return type.types.every((member) => isMarkerType(member, keyName));
   if (type.type === 'TSTypeQuery') return true;
   if (type.type === 'TSSymbolKeyword') return true;
   if (type.type === 'TSTypeOperator') return isSymbolTypeAnnotation(type);
   if (type.type === 'TSTypeReference') {
     // Effect's `readonly [TypeId]: TypeId` idiom — the slot re-states its own key, nothing else.
-    return (
-      dottedTypeName((type as ESTree.TSTypeReference).typeName as AnyNode) ===
-      keyName
-    );
+    return dottedTypeName((type as ESTree.TSTypeReference).typeName as AnyNode) === keyName;
   }
   return false;
 }
 
 /** A value that carries no capability: a literal (optionally `as const`) or the key symbol itself. */
-function isMarkerValue(
-  value: AnyNode | null | undefined,
-  keyName: string
-): boolean {
+function isMarkerValue(value: AnyNode | null | undefined, keyName: string): boolean {
   if (value === null || value === undefined) return true;
   const inner = unwrapValue(value);
   if (inner.type === 'Literal' || inner.type === 'TemplateLiteral') return true;
-  return (
-    inner.type === 'Identifier' && (inner as { name: string }).name === keyName
-  );
+  return inner.type === 'Identifier' && (inner as { name: string }).name === keyName;
 }
 
-function typeOfAnnotation(
-  holder: { typeAnnotation?: unknown } | null | undefined
-): AnyNode | null {
-  const annotation = holder?.typeAnnotation as
-    | { typeAnnotation?: AnyNode }
-    | null
-    | undefined;
+function typeOfAnnotation(holder: { typeAnnotation?: unknown } | null | undefined): AnyNode | null {
+  const annotation = holder?.typeAnnotation as { typeAnnotation?: AnyNode } | null | undefined;
   return (annotation?.typeAnnotation as AnyNode | undefined) ?? null;
 }
 
 type SymbolKind = 'local' | 'import';
 
 /** Statements that can hold the program-scope `const x: unique symbol = Symbol(…)` declarations. */
-function programVariableDeclarations(
-  program: ESTree.Program
-): readonly ESTree.VariableDeclaration[] {
+function programVariableDeclarations(program: ESTree.Program): readonly ESTree.VariableDeclaration[] {
   const declarations: ESTree.VariableDeclaration[] = [];
   const statements = [...program.body] as AnyNode[];
   for (let index = 0; index < statements.length; index++) {
     const statement = statements[index]!;
-    if (
-      statement.type === 'TSModuleDeclaration' &&
-      statement.body?.type === 'TSModuleBlock'
-    )
+    if (statement.type === 'TSModuleDeclaration' && statement.body?.type === 'TSModuleBlock')
       statements.push(...statement.body.body);
-    if (statement.type === 'ExportNamedDeclaration' && statement.declaration)
-      statements.push(statement.declaration);
+    if (statement.type === 'ExportNamedDeclaration' && statement.declaration) statements.push(statement.declaration);
     const declaration = statementVariableDeclaration(statement);
     if (declaration) declarations.push(declaration);
   }
   return declarations;
 }
 
-function statementVariableDeclaration(
-  statement: AnyNode
-): ESTree.VariableDeclaration | null {
+function statementVariableDeclaration(statement: AnyNode): ESTree.VariableDeclaration | null {
   if (statement.type === 'VariableDeclaration') return statement;
   if (statement.type !== 'ExportNamedDeclaration') return null;
   const inner = statement.declaration;
@@ -250,30 +192,24 @@ function hasSymbolImport(program: ESTree.Program): boolean {
   return program.body.some(
     (statement) =>
       statement.type === 'ImportDeclaration' &&
-      statement.specifiers.some(
-        (specifier) => specifier.local.name === 'Symbol'
-      )
+      statement.specifiers.some((specifier) => specifier.local.name === 'Symbol'),
   );
 }
 
-function symbolIsGlobal(
-  program: ESTree.Program,
-  declarations: readonly ESTree.VariableDeclaration[]
-): boolean {
+function symbolIsGlobal(program: ESTree.Program, declarations: readonly ESTree.VariableDeclaration[]): boolean {
   return (
     !hasSymbolImport(program) &&
     !declarations.some((declaration) =>
       declaration.declarations.some(
-        (declarator) =>
-          declarator.id.type === 'Identifier' && declarator.id.name === 'Symbol'
-      )
+        (declarator) => declarator.id.type === 'Identifier' && declarator.id.name === 'Symbol',
+      ),
     )
   );
 }
 
 function collectLocalSymbols(
   declarations: readonly ESTree.VariableDeclaration[],
-  globalSymbol: boolean
+  globalSymbol: boolean,
 ): Map<string, Span[]> {
   const symbols = new Map<string, Span[]>();
   for (const declaration of declarations) {
@@ -287,7 +223,7 @@ function collectLocalSymbols(
 function collectSymbolDeclarator(
   symbols: Map<string, Span[]>,
   declarator: ESTree.VariableDeclarator,
-  globalSymbol: boolean
+  globalSymbol: boolean,
 ): void {
   const id = declarator.id;
   if (id.type !== 'Identifier') return;
@@ -305,10 +241,8 @@ function hasNamedOrDefaultImport(program: ESTree.Program): boolean {
     (statement) =>
       statement.type === 'ImportDeclaration' &&
       statement.specifiers.some(
-        (specifier) =>
-          specifier.type === 'ImportSpecifier' ||
-          specifier.type === 'ImportDefaultSpecifier'
-      )
+        (specifier) => specifier.type === 'ImportSpecifier' || specifier.type === 'ImportDefaultSpecifier',
+      ),
   );
 }
 
@@ -349,14 +283,12 @@ export const rule = defineRule({
           ignore: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs exempted from the rule (default: none — no carve-out has been ratified).',
+            description: 'Globs exempted from the rule (default: none — no carve-out has been ratified).',
           },
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**).',
           },
           includeTests: {
             type: 'boolean',
@@ -385,10 +317,7 @@ export const rule = defineRule({
     const program = context.sourceCode.ast;
 
     const declarations = programVariableDeclarations(program);
-    const localSymbols = collectLocalSymbols(
-      declarations,
-      symbolIsGlobal(program, declarations)
-    );
+    const localSymbols = collectLocalSymbols(declarations, symbolIsGlobal(program, declarations));
     if (localSymbols.size === 0 && !hasNamedOrDefaultImport(program)) return {};
 
     /**
@@ -410,20 +339,12 @@ export const rule = defineRule({
       while (scope !== null) {
         const variable = scope.set.get(name);
         if (variable !== undefined) {
-          if (
-            variable.defs.some(
-              (definition) => definition.type === 'ImportBinding'
-            )
-          ) {
+          if (variable.defs.some((definition) => definition.type === 'ImportBinding')) {
             return null; // Imported strings and symbols are indistinguishable without cross-file types.
           }
           const spans = localSymbols.get(name);
           if (spans === undefined) return null;
-          return variable.defs.some((definition) =>
-            definesSpan(definition.node as AnyNode, spans)
-          )
-            ? 'local'
-            : null;
+          return variable.defs.some((definition) => definesSpan(definition.node as AnyNode, spans)) ? 'local' : null;
         }
         scope = scope.upper;
       }
@@ -434,9 +355,7 @@ export const rule = defineRule({
     const keyName = (key: AnyNode, computed: boolean): string | null => {
       if (!computed) return null;
       const inner = unwrapValue(key);
-      return inner.type === 'Identifier'
-        ? (inner as { name: string }).name
-        : null;
+      return inner.type === 'Identifier' ? (inner as { name: string }).name : null;
     };
 
     interface Pending {
@@ -455,12 +374,7 @@ export const rule = defineRule({
       readonly slot: string;
     }[] = [];
 
-    const recordSlot = (
-      node: AnyNode,
-      name: string,
-      kind: SymbolKind,
-      isTypeMember: boolean
-    ): void => {
+    const recordSlot = (node: AnyNode, name: string, kind: SymbolKind, isTypeMember: boolean): void => {
       if (kind === 'import' && isTypeMember) importedSlotKeys.add(name);
       pending.push({
         kind,
@@ -475,28 +389,18 @@ export const rule = defineRule({
       const name = keyName(keyType.exprName, true);
       if (!name) return;
       const kind = classify(keyType, name);
-      if (!kind || (options.allowBrandMarkers && isMarkerType(valueType, name)))
-        return;
+      if (!kind || (options.allowBrandMarkers && isMarkerType(valueType, name))) return;
       recordSlot(node, name, kind, true);
     };
 
     return {
       TSMappedType(node: any) {
-        inspectKeyType(
-          node,
-          node.typeParameter?.constraint ?? node.constraint,
-          node.typeAnnotation
-        );
+        inspectKeyType(node, node.typeParameter?.constraint ?? node.constraint, node.typeAnnotation);
       },
       TSTypeReference(node: any) {
-        if (
-          node.typeName.type !== 'Identifier' ||
-          node.typeName.name !== 'Record'
-        )
-          return;
+        if (node.typeName.type !== 'Identifier' || node.typeName.name !== 'Record') return;
         for (
-          let scope: import('@oxlint/plugins').Scope | null =
-            context.sourceCode.getScope(node);
+          let scope: import('@oxlint/plugins').Scope | null = context.sourceCode.getScope(node);
           scope;
           scope = scope.upper
         ) {
@@ -516,11 +420,7 @@ export const rule = defineRule({
         if (name === null) return;
         const kind = classify(node as unknown as AnyNode, name);
         if (kind === null) return;
-        if (
-          options.allowBrandMarkers &&
-          isMarkerType(typeOfAnnotation(signature), name)
-        )
-          return;
+        if (options.allowBrandMarkers && isMarkerType(typeOfAnnotation(signature), name)) return;
         recordSlot(node as unknown as AnyNode, name, kind, true);
       },
 
@@ -557,8 +457,7 @@ export const rule = defineRule({
             });
           return;
         }
-        if (options.allowBrandMarkers && isMarkerValue(property.value, name))
-          return;
+        if (options.allowBrandMarkers && isMarkerValue(property.value, name)) return;
         recordSlot(node as unknown as AnyNode, name, kind, false);
       },
 
@@ -576,12 +475,7 @@ export const rule = defineRule({
         if (kind === null) return;
         if (options.allowBrandMarkers) {
           const annotation = typeOfAnnotation(property);
-          if (
-            annotation !== null
-              ? isMarkerType(annotation, name)
-              : isMarkerValue(property.value, name)
-          )
-            return;
+          if (annotation !== null ? isMarkerType(annotation, name) : isMarkerValue(property.value, name)) return;
         }
         recordSlot(node as unknown as AnyNode, name, kind, false);
       },
@@ -600,18 +494,11 @@ export const rule = defineRule({
       TSIndexSignature(node) {
         const parameter = (node.parameters as readonly AnyNode[])[0];
         if (parameter === undefined) return;
-        const keyType = typeOfAnnotation(
-          parameter as unknown as { typeAnnotation?: unknown }
-        );
-        if (keyType === null || unwrapType(keyType).type !== 'TSSymbolKeyword')
-          return;
-        const valueType = typeOfAnnotation(
-          node as unknown as { typeAnnotation?: unknown }
-        );
-        const parameterName =
-          (parameter as unknown as { name?: string }).name ?? 'key';
-        if (options.allowBrandMarkers && isMarkerType(valueType, parameterName))
-          return;
+        const keyType = typeOfAnnotation(parameter as unknown as { typeAnnotation?: unknown });
+        if (keyType === null || unwrapType(keyType).type !== 'TSSymbolKeyword') return;
+        const valueType = typeOfAnnotation(node as unknown as { typeAnnotation?: unknown });
+        const parameterName = (parameter as unknown as { name?: string }).name ?? 'key';
+        if (options.allowBrandMarkers && isMarkerType(valueType, parameterName)) return;
         context.report({
           node: node as unknown as AnyNode,
           messageId: 'symbolIndexSignature',

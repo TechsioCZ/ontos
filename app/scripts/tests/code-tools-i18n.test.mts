@@ -22,8 +22,7 @@ const cases = [
   {
     diagnostic: null,
     name: 'clean locale branch',
-    source:
-      'export const select = locale => locale === "cs" ? "page" : "undefined";',
+    source: 'export const select = locale => locale === "cs" ? "page" : "undefined";',
   },
   {
     diagnostic: /no-literal-visible-jsx-attributes/u,
@@ -33,8 +32,7 @@ const cases = [
   {
     diagnostic: /no-manual-locale-copy-branching/u,
     name: 'locale copy branch',
-    source:
-      'export const select = locale => locale === "cs" ? "Český text" : "English copy";',
+    source: 'export const select = locale => locale === "cs" ? "Český text" : "English copy";',
   },
   {
     diagnostic: /deliberate-i18n-plugin-failure/u,
@@ -48,9 +46,7 @@ for (const format of ['cjs', 'esm', 'esm-node']) {
     const testEffect = Effect.gen(function* verifyI18nAdapter() {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const oxlintRoot = path.dirname(
-        packageRequire.resolve('oxlint/package.json')
-      );
+      const oxlintRoot = path.dirname(packageRequire.resolve('oxlint/package.json'));
       const root = yield* fs.makeTempDirectoryScoped({
         prefix: 'ontos-code-tools-i18n-',
       });
@@ -60,42 +56,32 @@ for (const format of ['cjs', 'esm', 'esm-node']) {
       yield* fs.copy(path.join(packageRoot, 'dist', format), dist);
       yield* fs.writeFileString(
         path.join(root, 'package.json'),
-        encodeJson({ name: codeToolsPackage, type: 'module' })
+        encodeJson({ name: codeToolsPackage, type: 'module' }),
       );
       yield* fs.makeDirectory(path.join(root, 'node_modules'));
       yield* fs.symlink(oxlintRoot, path.join(root, 'node_modules', 'oxlint'));
       yield* fs.makeDirectory(path.join(root, 'node_modules', '@babel'));
       for (const dependency of ['parser', 'traverse', 'types']) {
         yield* fs.symlink(
-          path.dirname(
-            packageRequire.resolve(`@babel/${dependency}/package.json`)
-          ),
-          path.join(root, 'node_modules', '@babel', dependency)
+          path.dirname(packageRequire.resolve(`@babel/${dependency}/package.json`)),
+          path.join(root, 'node_modules', '@babel', dependency),
         );
       }
       yield* fs.makeDirectory(path.join(root, 'src'));
-      yield* fs.writeFileString(
-        path.join(root, 'src', 'fixture.tsx'),
-        fixture.source
-      );
+      yield* fs.writeFileString(path.join(root, 'src', 'fixture.tsx'), fixture.source);
       if (fixture.name === malformedPluginCase) {
         // A deliberately broken, isolated plugin exercises Oxlint's actual crash reporter.
         const plugin =
           '{ meta: { name: "ultramodern" }, rules: { "no-manual-locale-copy-branching": { meta: { schema: [] }, create() { return { Program() { throw new Error("deliberate-i18n-plugin-failure"); } }; } } } }';
-        yield* fs.writeFileString(
-          path.join(root, 'src', 'oxlint-plugin.ts'),
-          `export default ${plugin};`
-        );
+        yield* fs.writeFileString(path.join(root, 'src', 'oxlint-plugin.ts'), `export default ${plugin};`);
       } else if (format === 'cjs') {
         // Oxlint expects the plugin value, not the CJS module's named-export namespace.
         yield* fs.writeFileString(
           path.join(root, 'src', 'oxlint-plugin.ts'),
-          'import plugin from "../dist/cjs/oxlint-plugin.cjs"; export default plugin.default;'
+          'import plugin from "../dist/cjs/oxlint-plugin.cjs"; export default plugin.default;',
         );
       }
-      const adapter = pathToFileURL(
-        path.join(dist, 'cli', `oxlint.${extension}`)
-      ).href;
+      const adapter = pathToFileURL(path.join(dist, 'cli', `oxlint.${extension}`)).href;
       const rules =
         fixture.name === malformedPluginCase
           ? { 'ultramodern/no-manual-locale-copy-branching': 'error' }
@@ -108,18 +94,14 @@ const result = runOxlintRules({ cwd: ${encodeJson(root)}, targets: ['src'], rule
 printOxlintOutput(result); process.exitCode = result.exitCode;`;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make(
-          process.execPath,
-          ['--input-type=module', '--eval', script],
-          {
-            cwd: root,
-            env: { TMPDIR: root },
-            extendEnv: true,
-            stderr: 'pipe',
-            stdin: 'ignore',
-            stdout: 'pipe',
-          }
-        )
+        ChildProcess.make(process.execPath, ['--input-type=module', '--eval', script], {
+          cwd: root,
+          env: { TMPDIR: root },
+          extendEnv: true,
+          stderr: 'pipe',
+          stdin: 'ignore',
+          stdout: 'pipe',
+        }),
       );
       const result = yield* Effect.all(
         {
@@ -127,7 +109,7 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
           stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
           stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
         },
-        { concurrency: 'unbounded' }
+        { concurrency: 'unbounded' },
       );
       const output = stripVTControlCharacters(result.stdout + result.stderr);
       if (fixture.diagnostic === null) {
@@ -146,15 +128,12 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
         }
       }
     });
-    it.live(`code-tools ${format}: ${fixture.name}`, () =>
-      testEffect.pipe(Effect.provide(NodeServices.layer))
-    );
+    it.live(`code-tools ${format}: ${fixture.name}`, () => testEffect.pipe(Effect.provide(NodeServices.layer)));
   }
 }
 
 it('clean i18n output accepts only silence or a zero-diagnostic summary', () => {
-  const summary =
-    'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
+  const summary = 'Found 0 warnings and 0 errors.\nFinished in 423ms on 2 files with 98 rules using 4 threads.\n';
   expect('').toMatch(cleanOutput);
   expect(summary).toMatch(cleanOutput);
   for (const output of [

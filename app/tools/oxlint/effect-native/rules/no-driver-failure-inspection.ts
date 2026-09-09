@@ -56,22 +56,12 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  isNode,
-  EXPRESSION_WRAPPERS,
-  staticString as readStaticString,
-  keyName,
-} from '../shared/ast.ts';
+import { isNode, EXPRESSION_WRAPPERS, staticString as readStaticString, keyName } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
 import { optionRecord } from '../shared/options.ts';
 import { compile, stringArray } from '../shared/options.ts';
-import {
-  isScriptFile,
-  isTestFile,
-  scopePath,
-  matchesGlobs,
-} from '../shared/paths.ts';
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import { snippet } from '../shared/reporting.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
@@ -105,13 +95,7 @@ const DEFAULT_NARROWED_KEYS = [
  * Driver keys that also name ordinary DOM/ORM/domain fields (`event.detail`, Drizzle `schema`/`table`/
  * `column`). They only report when the narrowed subject itself looks like a failure.
  */
-const DEFAULT_AMBIGUOUS_KEYS = [
-  'detail',
-  'routine',
-  'schema',
-  'table',
-  'column',
-];
+const DEFAULT_AMBIGUOUS_KEYS = ['detail', 'routine', 'schema', 'table', 'column'];
 
 const DEFAULT_FAILURE_OPERAND_PATTERN =
   'error|failure|cause|defect|problem|exception|reason|rejection|current|value|row|record|result|body';
@@ -142,8 +126,7 @@ const DEFAULT_CAUSE_SINKS = [
   'Effect.annotateLogs',
 ];
 
-const DEFAULT_SQLSTATE_PATTERN =
-  '^(?:[0-9]{2}|0[A-Z]|2[BDF]|3[BDFZ]|F0|HV|P0|XX)[0-9A-Z]{3}$';
+const DEFAULT_SQLSTATE_PATTERN = '^(?:[0-9]{2}|0[A-Z]|2[BDF]|3[BDFZ]|F0|HV|P0|XX)[0-9A-Z]{3}$';
 
 const DEFAULT_EXIT_NAME_PATTERN = 'exit$';
 
@@ -151,26 +134,14 @@ const DEFAULT_EXIT_NAME_PATTERN = 'exit$';
 const DEFAULT_PREFIX_METHODS = ['startsWith', 'endsWith'];
 
 /** Membership probes that make a bare literal a driver-code comparison. */
-const MEMBERSHIP_METHODS = new Set([
-  'startsWith',
-  'endsWith',
-  'includes',
-  'has',
-  'indexOf',
-  'match',
-  'test',
-]);
+const MEMBERSHIP_METHODS = new Set(['startsWith', 'endsWith', 'includes', 'has', 'indexOf', 'match', 'test']);
 
 const EQUALITY_OPERATORS = new Set(['===', '!==', '==', '!=']);
 
 const CAUSE_KEY = 'cause';
 
 /** `/^(?:08|40|53)/u` and `/^08$/u` — SQLSTATE class prefix matchers. */
-const SQLSTATE_REGEX_PATTERNS = [
-  /^\^\((?:\?:)?[0-9]{2}(?:\|[0-9]{2})*\)/u,
-  /^\^[0-9]{2}\$?$/u,
-  /^\^[0-9]\[[0-9-]+\]/u,
-];
+const SQLSTATE_REGEX_PATTERNS = [/^\^\((?:\?:)?[0-9]{2}(?:\|[0-9]{2})*\)/u, /^\^[0-9]{2}\$?$/u, /^\^[0-9]\[[0-9-]+\]/u];
 
 const TWO_DIGIT = /^[0-9]{2}$/u;
 
@@ -200,35 +171,15 @@ function readOptions(context: Context): RuleOptions {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     includeTests: record.includeTests === true,
     decoderPaths: stringArray(record.decoderPaths, []),
-    narrowedKeys: new Set(
-      stringArray(record.narrowedKeys, DEFAULT_NARROWED_KEYS)
-    ),
-    ambiguousKeys: new Set(
-      stringArray(record.ambiguousKeys, DEFAULT_AMBIGUOUS_KEYS)
-    ),
-    failureOperandPattern: compile(
-      record.failureOperandPattern,
-      DEFAULT_FAILURE_OPERAND_PATTERN,
-      'iu'
-    ),
-    networkCodes: new Set(
-      stringArray(record.networkCodes, DEFAULT_NETWORK_CODES)
-    ),
+    narrowedKeys: new Set(stringArray(record.narrowedKeys, DEFAULT_NARROWED_KEYS)),
+    ambiguousKeys: new Set(stringArray(record.ambiguousKeys, DEFAULT_AMBIGUOUS_KEYS)),
+    failureOperandPattern: compile(record.failureOperandPattern, DEFAULT_FAILURE_OPERAND_PATTERN, 'iu'),
+    networkCodes: new Set(stringArray(record.networkCodes, DEFAULT_NETWORK_CODES)),
     causeSinks: stringArray(record.causeSinks, DEFAULT_CAUSE_SINKS),
-    sqlStatePattern: compile(
-      record.sqlStatePattern,
-      DEFAULT_SQLSTATE_PATTERN,
-      'u'
-    ),
+    sqlStatePattern: compile(record.sqlStatePattern, DEFAULT_SQLSTATE_PATTERN, 'u'),
     sqlStateAnywhere: record.sqlStateAnywhere !== false,
-    exitNamePattern: compile(
-      record.exitNamePattern,
-      DEFAULT_EXIT_NAME_PATTERN,
-      'iu'
-    ),
-    prefixMethods: new Set(
-      stringArray(record.prefixMethods, DEFAULT_PREFIX_METHODS)
-    ),
+    exitNamePattern: compile(record.exitNamePattern, DEFAULT_EXIT_NAME_PATTERN, 'iu'),
+    prefixMethods: new Set(stringArray(record.prefixMethods, DEFAULT_PREFIX_METHODS)),
     detectCauseWalk: record.detectCauseWalk !== false,
   };
 }
@@ -264,8 +215,7 @@ function causeMemberKey(node: AnyNode, key: string): boolean {
 function objectLooksLikeExit(object: unknown, pattern: RegExp): boolean {
   const target = unwrap(object);
   if (target === null) return false;
-  if (target.type === 'Identifier')
-    return typeof target.name === 'string' && pattern.test(target.name);
+  if (target.type === 'Identifier') return typeof target.name === 'string' && pattern.test(target.name);
   if (target.type === 'MemberExpression') {
     const name = memberPropertyName(target);
     return name !== null && pattern.test(name);
@@ -274,16 +224,10 @@ function objectLooksLikeExit(object: unknown, pattern: RegExp): boolean {
 }
 
 /** `Cause.*`, `Exit.*`, `Effect.failCause` — a sink that legitimately consumes an Effect `Cause`. */
-function isCauseSink(
-  context: Context,
-  callee: unknown,
-  sinks: readonly string[]
-): boolean {
+function isCauseSink(context: Context, callee: unknown, sinks: readonly string[]): boolean {
   const target = unwrap(callee);
   if (target === null) return false;
-  const origin = effectOrigin(context, target as unknown as ESTree.Node, [
-    '@modern-js/plugin-bff/effect-edge',
-  ]);
+  const origin = effectOrigin(context, target as unknown as ESTree.Node, ['@modern-js/plugin-bff/effect-edge']);
   if (origin?.length !== 2) return false;
   const resolved = { namespace: origin[0], member: origin[1] };
   return sinks.some((sink) => {
@@ -294,11 +238,7 @@ function isCauseSink(
 }
 
 /** Walk parents: is `node` (transitively) an argument of a `Cause.*`/`Exit.*`/`Effect.failCause` call? */
-function insideCauseSink(
-  context: Context,
-  node: AnyNode,
-  sinks: readonly string[]
-): boolean {
+function insideCauseSink(context: Context, node: AnyNode, sinks: readonly string[]): boolean {
   let current: AnyNode = node;
   let parent = isNode(current.parent) ? current.parent : null;
   let depth = 0;
@@ -314,18 +254,10 @@ function insideCauseSink(
   return false;
 }
 
-function callConsumesCause(
-  context: Context,
-  call: AnyNode,
-  value: AnyNode,
-  sinks: readonly string[]
-): boolean {
+function callConsumesCause(context: Context, call: AnyNode, value: AnyNode, sinks: readonly string[]): boolean {
   const args = Array.isArray(call.arguments) ? call.arguments : [];
-  if (args.includes(value) && isCauseSink(context, call.callee, sinks))
-    return true;
-  const origin = isNode(call.callee)
-    ? effectOrigin(context, call.callee, [])
-    : null;
+  if (args.includes(value) && isCauseSink(context, call.callee, sinks)) return true;
+  const origin = isNode(call.callee) ? effectOrigin(context, call.callee, []) : null;
   return (
     args[0] === value &&
     ['pipe', 'Function.pipe'].includes(origin?.join('.') ?? '') &&
@@ -359,12 +291,7 @@ const NON_EXPRESSION_PARENTS = new Set([
   'Directive',
   'ExpressionStatement',
 ]);
-const PROPERTY_PARENTS = new Set([
-  'Property',
-  'PropertyDefinition',
-  'MethodDefinition',
-  'AccessorProperty',
-]);
+const PROPERTY_PARENTS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 
 /** Positions where a string literal is real runtime data rather than a key, type or module specifier. */
 function isExpressionContext(node: AnyNode): boolean {
@@ -373,9 +300,7 @@ function isExpressionContext(node: AnyNode): boolean {
   if (NON_EXPRESSION_PARENTS.has(parent.type)) return false;
   if (PROPERTY_PARENTS.has(parent.type)) {
     return (
-      (parent.type === 'Property' &&
-        isNode(parent.parent) &&
-        parent.parent.type === 'ObjectExpression') ||
+      (parent.type === 'Property' && isNode(parent.parent) && parent.parent.type === 'ObjectExpression') ||
       (parent as AnyNode).key !== node
     );
   }
@@ -390,15 +315,11 @@ function isCodeComparisonPosition(node: AnyNode): boolean {
   const parent = isNode(node.parent) ? node.parent : null;
   if (parent === null) return false;
   if (parent.type === 'BinaryExpression') {
-    return (
-      typeof parent.operator === 'string' &&
-      EQUALITY_OPERATORS.has(parent.operator)
-    );
+    return typeof parent.operator === 'string' && EQUALITY_OPERATORS.has(parent.operator);
   }
   if (parent.type === 'SwitchCase' && parent.test === node) return true;
   if (parent.type === 'ArrayExpression') return true;
-  if (parent.type === 'CallExpression')
-    return isMembershipArgument(parent, node);
+  if (parent.type === 'CallExpression') return isMembershipArgument(parent, node);
   return false;
 }
 
@@ -417,8 +338,7 @@ function isMembershipArgument(parent: AnyNode, node: AnyNode): boolean {
 function operandLooksLikeFailure(node: unknown, pattern: RegExp): boolean {
   const target = unwrap(node);
   if (target === null) return false;
-  if (target.type === 'Identifier')
-    return typeof target.name === 'string' && pattern.test(target.name);
+  if (target.type === 'Identifier') return typeof target.name === 'string' && pattern.test(target.name);
   if (target.type === 'MemberExpression') {
     const property = memberPropertyName(target);
     if (property !== null && pattern.test(property)) return true;
@@ -435,25 +355,17 @@ function staticString(input: unknown): string | null {
   return readStaticString(unwrap(input));
 }
 
-function unshadowedGlobal(
-  context: Context,
-  input: unknown,
-  name: string
-): boolean {
+function unshadowedGlobal(context: Context, input: unknown, name: string): boolean {
   const node = unwrap(input);
   if (node?.type !== 'Identifier' || node.name !== name) return false;
-  let scope: ReturnType<Context['sourceCode']['getScope']> | null =
-    context.sourceCode.getScope(node as unknown as ESTree.Node);
+  let scope: ReturnType<Context['sourceCode']['getScope']> | null = context.sourceCode.getScope(
+    node as unknown as ESTree.Node,
+  );
   while (scope) {
     if (
       scope.set
         .get(name)
-        ?.defs.some(
-          (def) =>
-            !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration'].includes(
-              def.node.type
-            )
-        )
+        ?.defs.some((def) => !['TSInterfaceDeclaration', 'TSTypeAliasDeclaration'].includes(def.node.type))
     )
       return false;
     scope = scope.upper;
@@ -461,40 +373,20 @@ function unshadowedGlobal(
   return true;
 }
 
-function isReassignment(reference: {
-  isWrite(): boolean;
-  init?: boolean;
-}): boolean {
+function isReassignment(reference: { isWrite(): boolean; init?: boolean }): boolean {
   return reference.isWrite() && !reference.init;
 }
-function isConstantDeclaration(
-  node: ESTree.Node | undefined
-): node is ESTree.VariableDeclarator {
+function isConstantDeclaration(node: ESTree.Node | undefined): node is ESTree.VariableDeclarator {
   return (
-    node?.type === 'VariableDeclarator' &&
-    node.parent?.type === 'VariableDeclaration' &&
-    node.parent.kind === 'const'
+    node?.type === 'VariableDeclarator' && node.parent?.type === 'VariableDeclaration' && node.parent.kind === 'const'
   );
 }
 
-function constValue(
-  context: Context,
-  input: unknown,
-  depth = 0
-): AnyNode | null {
+function constValue(context: Context, input: unknown, depth = 0): AnyNode | null {
   const node = unwrap(input);
   if (!node || node.type !== 'Identifier' || depth > 24) return node;
-  const variable = resolveVariable(
-    context,
-    String(node.name),
-    node as unknown as ESTree.Node
-  );
-  if (
-    !variable ||
-    variable.defs.length !== 1 ||
-    variable.references.some(isReassignment)
-  )
-    return node;
+  const variable = resolveVariable(context, String(node.name), node as unknown as ESTree.Node);
+  if (!variable || variable.defs.length !== 1 || variable.references.some(isReassignment)) return node;
   const declaration = variable.defs[0]?.node;
   if (!isConstantDeclaration(declaration)) return node;
   return constValue(context, declaration.init, depth + 1);
@@ -502,37 +394,21 @@ function constValue(
 
 // Two-digit strings are also months/hours. Require a code-shaped receiver (including
 // immutable local aliases), rather than treating native string/array operations as driver proof.
-function codePrefixSubject(
-  context: Context,
-  input: unknown,
-  depth = 0
-): boolean {
+function codePrefixSubject(context: Context, input: unknown, depth = 0): boolean {
   if (depth > 24) return false;
   const node = constValue(context, input);
   if (!node) return false;
-  if (node.type === 'Identifier')
-    return /(?:code|sqlstate)$/iu.test(String(node.name));
-  if (node.type === 'MemberExpression')
-    return /(?:code|sqlstate)$/iu.test(memberPropertyName(node) ?? '');
-  if (
-    node.type === 'CallExpression' &&
-    unshadowedGlobal(context, node.callee, 'String')
-  ) {
-    return codePrefixSubject(
-      context,
-      (node.arguments as unknown[])[0],
-      depth + 1
-    );
+  if (node.type === 'Identifier') return /(?:code|sqlstate)$/iu.test(String(node.name));
+  if (node.type === 'MemberExpression') return /(?:code|sqlstate)$/iu.test(memberPropertyName(node) ?? '');
+  if (node.type === 'CallExpression' && unshadowedGlobal(context, node.callee, 'String')) {
+    return codePrefixSubject(context, (node.arguments as unknown[])[0], depth + 1);
   }
   const branches = prefixBranches(node);
-  return branches.some((branch) =>
-    codePrefixSubject(context, branch, depth + 1)
-  );
+  return branches.some((branch) => codePrefixSubject(context, branch, depth + 1));
 }
 
 function prefixBranches(node: AnyNode): unknown[] {
-  if (node.type === 'ConditionalExpression')
-    return [node.consequent, node.alternate];
+  if (node.type === 'ConditionalExpression') return [node.consequent, node.alternate];
   if (node.type === 'LogicalExpression') return [node.left, node.right];
   return [];
 }
@@ -543,34 +419,17 @@ function hasDriverEvidence(input: AnyNode, options: RuleOptions): boolean {
   let region = input;
   while (
     isNode(region.parent) &&
-    ![
-      'FunctionDeclaration',
-      'FunctionExpression',
-      'ArrowFunctionExpression',
-      'Program',
-    ].includes(region.type)
+    !['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'Program'].includes(region.type)
   )
     region = region.parent;
   const walk = (node: AnyNode): boolean => {
-    if (
-      node !== region &&
-      [
-        'FunctionDeclaration',
-        'FunctionExpression',
-        'ArrowFunctionExpression',
-      ].includes(node.type)
-    )
+    if (node !== region && ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type))
       return false;
     if (isDriverEvidence(node, options)) return true;
     for (const [key, value] of Object.entries(node)) {
-      if (['parent', 'loc', 'range', 'tokens', 'comments'].includes(key))
-        continue;
+      if (['parent', 'loc', 'range', 'tokens', 'comments'].includes(key)) continue;
       if (isNode(value) && walk(value)) return true;
-      if (
-        Array.isArray(value) &&
-        value.some((entry) => isNode(entry) && walk(entry))
-      )
-        return true;
+      if (Array.isArray(value) && value.some((entry) => isNode(entry) && walk(entry))) return true;
     }
     return false;
   };
@@ -588,9 +447,7 @@ function isDriverEvidence(node: AnyNode, options: RuleOptions): boolean {
     return true;
   if (
     node.type === 'MemberExpression' &&
-    ['cause', 'constraint', 'sqlState', 'errno', 'syscall'].includes(
-      memberPropertyName(node) ?? ''
-    )
+    ['cause', 'constraint', 'sqlState', 'errno', 'syscall'].includes(memberPropertyName(node) ?? '')
   )
     return true;
   return hasSqlStateRegex(node);
@@ -598,56 +455,32 @@ function isDriverEvidence(node: AnyNode, options: RuleOptions): boolean {
 
 function hasSqlStateRegex(node: AnyNode): boolean {
   const regex = node.regex as { pattern?: string } | undefined;
-  return Boolean(
-    regex?.pattern &&
-    SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(regex.pattern!))
-  );
+  return Boolean(regex?.pattern && SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(regex.pattern!)));
 }
 
-function isPrefixComparison(
-  context: Context,
-  value: unknown,
-  other: unknown
-): boolean {
+function isPrefixComparison(context: Context, value: unknown, other: unknown): boolean {
   const text = staticString(value);
   const call = unwrap(other);
-  if (text === null || !TWO_DIGIT.test(text) || call?.type !== 'CallExpression')
-    return false;
+  if (text === null || !TWO_DIGIT.test(text) || call?.type !== 'CallExpression') return false;
   const callee = unwrap(call.callee);
-  if (
-    callee?.type !== 'MemberExpression' ||
-    !codePrefixSubject(context, callee.object)
-  )
-    return false;
+  if (callee?.type !== 'MemberExpression' || !codePrefixSubject(context, callee.object)) return false;
   return isPrefixSlice(callee, call.arguments as unknown[]);
 }
 function isPrefixSlice(callee: AnyNode, args: unknown[]): boolean {
   return (
-    ['slice', 'substring', 'substr'].includes(
-      memberPropertyName(callee) ?? ''
-    ) &&
+    ['slice', 'substring', 'substr'].includes(memberPropertyName(callee) ?? '') &&
     unwrap(args[0])?.value === 0 &&
     unwrap(args[1])?.value === 2
   );
 }
-function isOwnKeyProbe(
-  context: Context,
-  callee: AnyNode,
-  method: string | null
-): boolean {
-  if (method === 'hasOwn')
-    return unshadowedGlobal(context, callee.object, 'Object');
-  if (method === 'has')
-    return unshadowedGlobal(context, callee.object, 'Reflect');
+function isOwnKeyProbe(context: Context, callee: AnyNode, method: string | null): boolean {
+  if (method === 'hasOwn') return unshadowedGlobal(context, callee.object, 'Object');
+  if (method === 'has') return unshadowedGlobal(context, callee.object, 'Reflect');
   return method === 'call' && isPrototypeOwnProbe(context, callee.object);
 }
 function isPrototypeOwnProbe(context: Context, input: unknown): boolean {
   const own = unwrap(input);
-  if (
-    own?.type !== 'MemberExpression' ||
-    memberPropertyName(own) !== 'hasOwnProperty'
-  )
-    return false;
+  if (own?.type !== 'MemberExpression' || memberPropertyName(own) !== 'hasOwnProperty') return false;
   const prototype = unwrap(own.object);
   return (
     prototype?.type === 'MemberExpression' &&
@@ -658,37 +491,24 @@ function isPrototypeOwnProbe(context: Context, input: unknown): boolean {
 function isClassArrayParameter(context: Context, input: unknown): boolean {
   const first = unwrap(input);
   if (first?.type !== 'Identifier') return false;
-  const variable = resolveVariable(
-    context,
-    String(first.name),
-    first as unknown as ESTree.Node
-  );
+  const variable = resolveVariable(context, String(first.name), first as unknown as ESTree.Node);
   if (!variable || variable.references.some(isReassignment)) return false;
   const def = variable.defs[0];
   if (def?.type !== 'Parameter') return false;
   return callbackUsesClassArray(context, def.node, String(first.name));
 }
-function callbackUsesClassArray(
-  context: Context,
-  fn: ESTree.Node,
-  name: string
-): boolean {
-  if (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression')
-    return false;
-  if (fn.params[0]?.type !== 'Identifier' || fn.params[0].name !== name)
-    return false;
+function callbackUsesClassArray(context: Context, fn: ESTree.Node, name: string): boolean {
+  if (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression') return false;
+  if (fn.params[0]?.type !== 'Identifier' || fn.params[0].name !== name) return false;
   const parent = fn.parent;
-  if (parent?.type !== 'CallExpression' || parent.arguments[0] !== fn)
-    return false;
+  if (parent?.type !== 'CallExpression' || parent.arguments[0] !== fn) return false;
   return isClassArrayIteration(context, parent.callee);
 }
 function isClassArrayIteration(context: Context, input: unknown): boolean {
   const owner = unwrap(input);
   if (
     owner?.type !== 'MemberExpression' ||
-    !['some', 'every', 'find', 'filter'].includes(
-      memberPropertyName(owner) ?? ''
-    )
+    !['some', 'every', 'find', 'filter'].includes(memberPropertyName(owner) ?? '')
   )
     return false;
   const list = constValue(context, owner.object);
@@ -801,11 +621,7 @@ export const rule = defineRule({
     if (!options.includeTests && isTestFile(path)) return {};
     if (isScriptFile(path)) return {};
 
-    const reportNode = (
-      node: ESTree.Node,
-      messageId: string,
-      data: Record<string, string>
-    ): void => {
+    const reportNode = (node: ESTree.Node, messageId: string, data: Record<string, string>): void => {
       context.report({
         node,
         messageId,
@@ -813,30 +629,17 @@ export const rule = defineRule({
       });
     };
 
-    const narrowing = (
-      node: ESTree.Node,
-      subject: unknown,
-      key: string | null
-    ): void => {
+    const narrowing = (node: ESTree.Node, subject: unknown, key: string | null): void => {
       if (key === null || !options.narrowedKeys.has(key)) return;
-      if (
-        key === 'code' &&
-        !hasDriverEvidence(node as unknown as AnyNode, options)
-      )
-        return;
-      if (
-        options.ambiguousKeys.has(key) &&
-        !operandLooksLikeFailure(subject, options.failureOperandPattern)
-      )
-        return;
+      if (key === 'code' && !hasDriverEvidence(node as unknown as AnyNode, options)) return;
+      if (options.ambiguousKeys.has(key) && !operandLooksLikeFailure(subject, options.failureOperandPattern)) return;
       reportNode(node, 'inNarrowing', { key });
     };
     const literal = (node: ESTree.Node): void => {
       const raw = node as unknown as AnyNode;
       const regex = raw.regex as { pattern?: string } | undefined;
       if (regex?.pattern) {
-        if (SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(regex.pattern!)))
-          reportNode(node, 'sqlStateRegex', {});
+        if (SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(regex.pattern!))) reportNode(node, 'sqlStateRegex', {});
         return;
       }
       const text = staticString(raw);
@@ -845,21 +648,13 @@ export const rule = defineRule({
         reportNode(node, 'networkCode', {});
         return;
       }
-      if (
-        options.sqlStatePattern.test(text) &&
-        (options.sqlStateAnywhere || isCodeComparisonPosition(raw))
-      )
+      if (options.sqlStatePattern.test(text) && (options.sqlStateAnywhere || isCodeComparisonPosition(raw)))
         reportNode(node, 'sqlStateLiteral', {});
     };
-    const runtimeRegex = (
-      node: ESTree.CallExpression | ESTree.NewExpression
-    ): void => {
+    const runtimeRegex = (node: ESTree.CallExpression | ESTree.NewExpression): void => {
       if (!unshadowedGlobal(context, node.callee, 'RegExp')) return;
       const text = staticString(node.arguments[0]);
-      if (
-        text !== null &&
-        SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(text))
-      )
+      if (text !== null && SQLSTATE_REGEX_PATTERNS.some((probe) => probe.test(text)))
         reportNode(node, 'sqlStateRegex', {});
     };
     return {
@@ -884,13 +679,7 @@ export const rule = defineRule({
         const raw = node as unknown as AnyNode;
         if (!causeMemberKey(raw, CAUSE_KEY)) return;
         const object = unwrap(raw.object);
-        if (
-          !object ||
-          object.type === 'ThisExpression' ||
-          object.type === 'Super' ||
-          isAssignmentTarget(raw)
-        )
-          return;
+        if (!object || object.type === 'ThisExpression' || object.type === 'Super' || isAssignmentTarget(raw)) return;
         if (
           objectLooksLikeExit(raw.object, options.exitNamePattern) ||
           insideCauseSink(context, raw, options.causeSinks)
@@ -926,21 +715,14 @@ export const rule = defineRule({
         if (callee?.type !== 'MemberExpression') return;
         const method = memberPropertyName(callee);
         const args = node.arguments;
-        if (isOwnKeyProbe(context, callee, method))
-          narrowing(node, args[0], staticString(args[1]));
-        if (
-          !method ||
-          !options.prefixMethods.has(method) ||
-          !codePrefixSubject(context, callee.object)
-        )
-          return;
+        if (isOwnKeyProbe(context, callee, method)) narrowing(node, args[0], staticString(args[1]));
+        if (!method || !options.prefixMethods.has(method) || !codePrefixSubject(context, callee.object)) return;
         const text = staticString(args[0]);
         if (text !== null && TWO_DIGIT.test(text)) {
           reportNode(node, 'codePrefix', {});
           return;
         }
-        if (isClassArrayParameter(context, args[0]))
-          reportNode(node, 'codePrefix', {});
+        if (isClassArrayParameter(context, args[0])) reportNode(node, 'codePrefix', {});
       },
     };
   },

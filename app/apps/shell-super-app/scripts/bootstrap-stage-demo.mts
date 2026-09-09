@@ -22,9 +22,9 @@ const program = Effect.gen(function* bootstrapStageDemoProgram() {
             secureCookies: true,
             supportUserIds: [],
             trustedOrigins: [configuration.authBaseUrl],
-          })
-        )
-      )
+          }),
+        ),
+      ),
     ),
     Effect.catchTag(
       'AuthDatabaseConnectionError',
@@ -32,24 +32,20 @@ const program = Effect.gen(function* bootstrapStageDemoProgram() {
         new StageDemoBootstrapError({
           code: 'stage_demo_persistence_failed',
           reason: 'The stage authentication database could not be opened',
-        })
-    )
+        }),
+    ),
   );
   yield* Effect.forEach(
     result.accounts,
     (account) =>
       Console.log(
-        `Stage demo bootstrap complete (${account.authUser} auth user): tenant=${account.tenantId} legalEntity=${account.legalEntityId} principal=${account.principalId} email=${account.email}`
+        `Stage demo bootstrap complete (${account.authUser} auth user): tenant=${account.tenantId} legalEntity=${account.legalEntityId} principal=${account.principalId} email=${account.email}`,
       ),
-    { discard: true }
+    { discard: true },
   );
 }).pipe(
-  Effect.tapError((failure) =>
-    Console.error(`Stage demo bootstrap failed: ${failure.reason}`)
-  ),
-  Effect.tapDefect(() =>
-    Console.error('Stage demo bootstrap failed unexpectedly')
-  )
+  Effect.tapError((failure) => Console.error(`Stage demo bootstrap failed: ${failure.reason}`)),
+  Effect.tapDefect(() => Console.error('Stage demo bootstrap failed unexpectedly')),
 );
 
 const exit = await Effect.runPromiseExit(program);

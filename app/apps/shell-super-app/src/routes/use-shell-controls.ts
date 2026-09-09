@@ -3,83 +3,55 @@ import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Match, Schema } from 'effect';
 import { useState } from 'react';
 
-import {
-  SwitchLegalEntityPayloadSchema,
-  SwitchTenantPayloadSchema,
-} from '../../shared/api.ts';
-import {
-  signOut,
-  switchLegalEntity,
-  switchTenant,
-} from '../api/auth-client.ts';
-import type {
-  SwitchLegalEntityClientError,
-  SwitchTenantClientError,
-} from '../api/auth-client.ts';
+import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/api.ts';
+import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts';
+import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/page.data.ts';
 
-const SwitchFailureStateSchema = Schema.Literals([
-  'authentication-required',
-  'failed',
-]);
+const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
 type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
 
-const tenantSwitchFailureState = (
-  error: SwitchTenantClientError
-): SwitchFailureState =>
+const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailureState =>
   Match.value(error).pipe(
-    Match.tag(
-      'TenantAuthenticationRequiredProblem',
-      () => 'authentication-required' as const
-    ),
+    Match.tag('TenantAuthenticationRequiredProblem', () => 'authentication-required' as const),
     Match.tag(
       'HttpClientError',
       'SchemaError',
       'TenantAccessForbiddenProblem',
       'TenantCapabilityUnavailableProblem',
       'TenantInternalProblem',
-      () => 'failed' as const
+      () => 'failed' as const,
     ),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
-const legalEntitySwitchFailureState = (
-  error: SwitchLegalEntityClientError
-): SwitchFailureState =>
+const legalEntitySwitchFailureState = (error: SwitchLegalEntityClientError): SwitchFailureState =>
   Match.value(error).pipe(
-    Match.tag(
-      'TenantAuthenticationRequiredProblem',
-      () => 'authentication-required' as const
-    ),
+    Match.tag('TenantAuthenticationRequiredProblem', () => 'authentication-required' as const),
     Match.tag(
       'HttpClientError',
       'LegalEntityAccessForbiddenProblem',
       'SchemaError',
       'TenantCapabilityUnavailableProblem',
       'TenantInternalProblem',
-      () => 'failed' as const
+      () => 'failed' as const,
     ),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
-export const useShellControls = (
-  model: AuthenticatedHomePageModel | undefined
-) => {
+export const useShellControls = (model: AuthenticatedHomePageModel | undefined) => {
   const { language } = useModernI18n();
   const navigate = useNavigate();
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
   const [tenantSwitchPending, setTenantSwitchPending] = useState(false);
   const [tenantSwitchFailed, setTenantSwitchFailed] = useState(false);
-  const [legalEntitySwitchPending, setLegalEntitySwitchPending] =
-    useState(false);
+  const [legalEntitySwitchPending, setLegalEntitySwitchPending] = useState(false);
   const [legalEntitySwitchFailed, setLegalEntitySwitchFailed] = useState(false);
 
   const reload = () =>
-    Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(
-      Effect.timeout('10 seconds')
-    );
+    Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(Effect.timeout('10 seconds'));
 
   const handleLogout = () => {
     if (logoutPending) {
@@ -90,9 +62,9 @@ export const useShellControls = (
     void browserRuntime.runPromise(
       signOut({ locale: language }).pipe(
         Effect.andThen(
-          Effect.tryPromise(() =>
-            navigate({ reloadDocument: true, to: `/${language}/login` })
-          ).pipe(Effect.timeout('10 seconds'))
+          Effect.tryPromise(() => navigate({ reloadDocument: true, to: `/${language}/login` })).pipe(
+            Effect.timeout('10 seconds'),
+          ),
         ),
         Effect.matchEffect({
           onFailure: (error) =>
@@ -102,8 +74,8 @@ export const useShellControls = (
             }),
           onSuccess: Effect.succeed,
         }),
-        Effect.ensuring(Effect.sync(() => setLogoutPending(false)))
-      )
+        Effect.ensuring(Effect.sync(() => setLogoutPending(false))),
+      ),
     );
   };
 
@@ -111,7 +83,7 @@ export const useShellControls = (
     switching: Effect.Effect<unknown, E>,
     switchFailureState: (error: NoInfer<E>) => SwitchFailureState,
     setPending: (pending: boolean) => void,
-    setFailed: (failed: boolean) => void
+    setFailed: (failed: boolean) => void,
   ) => {
     setPending(true);
     setFailed(false);
@@ -124,7 +96,7 @@ export const useShellControls = (
         Effect.flatMap((outcome) =>
           outcome === 'authentication-required' || outcome === 'switched'
             ? reload()
-            : Effect.sync(() => setFailed(true))
+            : Effect.sync(() => setFailed(true)),
         ),
         Effect.matchEffect({
           onFailure: (error) =>
@@ -134,49 +106,36 @@ export const useShellControls = (
             }),
           onSuccess: Effect.succeed,
         }),
-        Effect.ensuring(Effect.sync(() => setPending(false)))
-      )
+        Effect.ensuring(Effect.sync(() => setPending(false))),
+      ),
     );
   };
 
   const handleLegalEntityChange = (legalEntityId: string) => {
-    if (
-      model === undefined ||
-      legalEntitySwitchPending ||
-      legalEntityId === model.selectedLegalEntityId
-    ) {
+    if (model === undefined || legalEntitySwitchPending || legalEntityId === model.selectedLegalEntityId) {
       return;
     }
     runSwitch(
       Schema.decodeEffect(SwitchLegalEntityPayloadSchema)({
         legalEntityId,
-      }).pipe(
-        Effect.flatMap((payload) =>
-          switchLegalEntity(payload, { locale: language })
-        )
-      ),
+      }).pipe(Effect.flatMap((payload) => switchLegalEntity(payload, { locale: language }))),
       legalEntitySwitchFailureState,
       setLegalEntitySwitchPending,
-      setLegalEntitySwitchFailed
+      setLegalEntitySwitchFailed,
     );
   };
 
   const handleTenantChange = (tenantId: string) => {
-    if (
-      model === undefined ||
-      tenantSwitchPending ||
-      tenantId.length === 0 ||
-      tenantId === model.identity.tenantId
-    ) {
+    if (model === undefined || tenantSwitchPending || tenantId.length === 0 || tenantId === model.identity.tenantId) {
       return;
     }
     runSwitch(
       Schema.decodeEffect(SwitchTenantPayloadSchema)({ tenantId }).pipe(
-        Effect.flatMap((payload) => switchTenant(payload, { locale: language }))
+        Effect.flatMap((payload) => switchTenant(payload, { locale: language })),
       ),
       tenantSwitchFailureState,
       setTenantSwitchPending,
-      setTenantSwitchFailed
+      setTenantSwitchFailed,
     );
   };
 

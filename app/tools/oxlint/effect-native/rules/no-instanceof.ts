@@ -5,8 +5,7 @@ export const rule = defineRule({
   meta: {
     type: 'problem',
     docs: {
-      description:
-        'Forbid every instanceof operator, including Error and Exception classes.',
+      description: 'Forbid every instanceof operator, including Error and Exception classes.',
     },
     schema: [],
     messages: {
@@ -17,8 +16,7 @@ export const rule = defineRule({
   create(context) {
     return {
       BinaryExpression(node) {
-        if (node.operator === 'instanceof')
-          context.report({ node, messageId: 'forbidden' });
+        if (node.operator === 'instanceof') context.report({ node, messageId: 'forbidden' });
       },
     };
   },

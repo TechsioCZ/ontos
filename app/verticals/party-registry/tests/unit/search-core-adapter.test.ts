@@ -58,116 +58,108 @@ const wrongResourceHit = Schema.decodeSync(CoreSearchProjectionHitSchema)({
   title: 'Wrong',
 });
 
-it.effect(
-  'Party adapter queries only the Core-owned Party projection and maps alias context',
-  () =>
-    Effect.gen(function* partyAdapterQuery() {
-      const calls: unknown[] = [];
-      const core: CoreSearchQueryRuntimeService = {
-        search: (input) => {
-          calls.push(input);
-          return Effect.succeed([partyAliasHit]);
-        },
-      };
+it.effect('Party adapter queries only the Core-owned Party projection and maps alias context', () =>
+  Effect.gen(function* partyAdapterQuery() {
+    const calls: unknown[] = [];
+    const core: CoreSearchQueryRuntimeService = {
+      search: (input) => {
+        calls.push(input);
+        return Effect.succeed([partyAliasHit]);
+      },
+    };
 
-      const gateway = makePartySearchProjectionGateway(core);
-      const hits = yield* gateway.searchParties({
+    const gateway = makePartySearchProjectionGateway(core);
+    const hits = yield* gateway.searchParties({
+      includeArchived: true,
+      query: 'ACME',
+      tenantId,
+    });
+
+    expect(calls).toEqual([
+      {
         includeArchived: true,
+        moduleId: 'party.registry',
         query: 'ACME',
+        resourceType: 'party.registry.party',
         tenantId,
-      });
-
-      expect(calls).toEqual([
-        {
-          includeArchived: true,
-          moduleId: 'party.registry',
-          query: 'ACME',
-          resourceType: 'party.registry.party',
-          tenantId,
-        },
-      ]);
-      expect(hits).toEqual([
-        {
-          archived: false,
-          canonicalPartyRef: partyRef('survivor'),
-          matchedPartyRef: partyRef('absorbed'),
-          title: 'ACME',
-        },
-      ]);
-    })
+      },
+    ]);
+    expect(hits).toEqual([
+      {
+        archived: false,
+        canonicalPartyRef: partyRef('survivor'),
+        matchedPartyRef: partyRef('absorbed'),
+        title: 'ACME',
+      },
+    ]);
+  }),
 );
 
-it.effect(
-  'Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods',
-  () =>
-    Effect.gen(function* counterpartyAdapterQuery() {
-      const calls: unknown[] = [];
-      const core: CoreSearchQueryRuntimeService = {
-        search: (input) => {
-          calls.push(input);
-          return Effect.succeed([counterpartyHit]);
-        },
-      };
-      const effectiveAt = '2026-09-03T12:00:00.000Z';
+it.effect('Counterparty adapter uses trusted Legal Entity, effective time, role facet and safe periods', () =>
+  Effect.gen(function* counterpartyAdapterQuery() {
+    const calls: unknown[] = [];
+    const core: CoreSearchQueryRuntimeService = {
+      search: (input) => {
+        calls.push(input);
+        return Effect.succeed([counterpartyHit]);
+      },
+    };
+    const effectiveAt = '2026-09-03T12:00:00.000Z';
 
-      const hits = yield* makePartySearchProjectionGateway(
-        core
-      ).searchCounterparties({
+    const hits = yield* makePartySearchProjectionGateway(core).searchCounterparties({
+      effectiveAt,
+      includeArchived: false,
+      legalEntityId,
+      query: 'ACME',
+      role: 'CUSTOMER',
+      tenantId,
+    });
+
+    expect(calls).toEqual([
+      {
         effectiveAt,
+        facets: [{ key: 'current-role', values: ['CUSTOMER'] }],
         includeArchived: false,
-        legalEntityId,
+        moduleId: 'party.registry',
         query: 'ACME',
-        role: 'CUSTOMER',
+        resourceType: 'party.registry.counterparty',
+        selectedLegalEntityId: legalEntityId,
         tenantId,
-      });
-
-      expect(calls).toEqual([
-        {
-          effectiveAt,
-          facets: [{ key: 'current-role', values: ['CUSTOMER'] }],
-          includeArchived: false,
-          moduleId: 'party.registry',
-          query: 'ACME',
-          resourceType: 'party.registry.counterparty',
-          selectedLegalEntityId: legalEntityId,
-          tenantId,
-        },
-      ]);
-      expect(hits).toEqual([
-        {
-          canonicalPartyRef: partyRef('survivor'),
-          counterpartyRef: counterpartyRef('cp-1'),
-          legalEntity: { legalEntityId, tenantId },
-          matchedPartyRef: partyRef('absorbed'),
-          partyArchived: false,
-          partyTitle: 'ACME',
-          rolePeriods: [
-            {
-              role: 'CUSTOMER',
-              validFrom: '2026-01-01T00:00:00.000Z',
-              validTo: '2027-01-01T00:00:00.000Z',
-            },
-          ],
-        },
-      ]);
-    })
+      },
+    ]);
+    expect(hits).toEqual([
+      {
+        canonicalPartyRef: partyRef('survivor'),
+        counterpartyRef: counterpartyRef('cp-1'),
+        legalEntity: { legalEntityId, tenantId },
+        matchedPartyRef: partyRef('absorbed'),
+        partyArchived: false,
+        partyTitle: 'ACME',
+        rolePeriods: [
+          {
+            role: 'CUSTOMER',
+            validFrom: '2026-01-01T00:00:00.000Z',
+            validTo: '2027-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+    ]);
+  }),
 );
 
-it.effect(
-  'Party adapter fails closed when a generic projection returns the wrong resource contract',
-  () =>
-    Effect.gen(function* invalidProjectionContract() {
-      const core: CoreSearchQueryRuntimeService = {
-        search: () => Effect.succeed([wrongResourceHit]),
-      };
+it.effect('Party adapter fails closed when a generic projection returns the wrong resource contract', () =>
+  Effect.gen(function* invalidProjectionContract() {
+    const core: CoreSearchQueryRuntimeService = {
+      search: () => Effect.succeed([wrongResourceHit]),
+    };
 
-      const failure = yield* Effect.exit(
-        makePartySearchProjectionGateway(core).searchParties({
-          includeArchived: false,
-          query: 'Wrong',
-          tenantId,
-        })
-      );
-      expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();
-    })
+    const failure = yield* Effect.exit(
+      makePartySearchProjectionGateway(core).searchParties({
+        includeArchived: false,
+        query: 'Wrong',
+        tenantId,
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();
+  }),
 );

@@ -9,5 +9,5 @@ export class PartyContactPointAlreadyExists extends Schema.TaggedError<PartyCont
     code: Schema.Literal('party_contact_point_already_exists'),
     existingContactPointRef: PartyContactPointRefSchema,
     reason: ContactPointErrorReasonSchema,
-  }
+  },
 ) {}

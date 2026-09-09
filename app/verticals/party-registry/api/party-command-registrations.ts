@@ -40,8 +40,7 @@ export const partyCommandRegistrations = {
   endContactPoint: endContactPointAction,
   endPartyOfficialIdentifier: endPartyOfficialIdentifierAction,
   endPartyRelationship: endPartyRelationshipAction,
-  markDuplicateCandidateNeedsEvidence:
-    markDuplicateCandidateNeedsEvidenceAction,
+  markDuplicateCandidateNeedsEvidence: markDuplicateCandidateNeedsEvidenceAction,
   matchParty: matchPartyAction,
   requestSearchRebuild: requestSearchRebuildAction,
   resolveDuplicateCandidateCreate: resolveDuplicateCandidateCreateAction,

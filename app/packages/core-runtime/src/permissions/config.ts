@@ -1,11 +1,4 @@
-import {
-  Config,
-  ConfigProvider,
-  Effect,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Effect, Option, Redacted, Schema } from 'effect';
 
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
@@ -31,7 +24,7 @@ const makeSpiceDbConfigValue = (settings: {
     : Object.freeze(
         Object.assign(base, {
           deploymentEnvironment: settings.deploymentEnvironment,
-        })
+        }),
       );
 };
 
@@ -41,10 +34,7 @@ export type SpiceDbConfigValue = ReturnType<typeof makeSpiceDbConfigValue> &
 export type SpiceDbEnvironment = Readonly<
   Partial<
     Record<
-      | 'SPICEDB_ENDPOINT'
-      | 'SPICEDB_INSECURE'
-      | 'SPICEDB_PRESHARED_KEY'
-      | 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+      'SPICEDB_ENDPOINT' | 'SPICEDB_INSECURE' | 'SPICEDB_PRESHARED_KEY' | 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
       string
     >
   >
@@ -79,23 +69,15 @@ const isLocalhostEndpoint = (endpoint: string): boolean => {
   }
 };
 
-const isStagePrivateEndpoint = (
-  endpoint: string,
-  deploymentEnvironment?: string
-): boolean => deploymentEnvironment === 'stage' && endpoint === 'spicedb:50051';
+const isStagePrivateEndpoint = (endpoint: string, deploymentEnvironment?: string): boolean =>
+  deploymentEnvironment === 'stage' && endpoint === 'spicedb:50051';
 
 export const allowsInsecureSpiceDbTransport = (
-  configuration: Pick<
-    SpiceDbConfigValue,
-    'deploymentEnvironment' | 'endpoint' | 'insecureLocal'
-  >
+  configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
 ): boolean =>
   !configuration.insecureLocal ||
   isLocalhostEndpoint(configuration.endpoint) ||
-  isStagePrivateEndpoint(
-    configuration.endpoint,
-    configuration.deploymentEnvironment
-  );
+  isStagePrivateEndpoint(configuration.endpoint, configuration.deploymentEnvironment);
 
 const isValidEndpoint = (endpoint: string): boolean => {
   try {
@@ -113,101 +95,72 @@ const isValidEndpoint = (endpoint: string): boolean => {
   }
 };
 
-const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(
-  function* parseConfig(provider: ConfigProvider.ConfigProvider) {
-    const { deploymentEnvironment, endpoint, insecureFlag, preSharedKey } =
-      yield* Effect.all(
-        {
-          deploymentEnvironment: Config.schema(
-            Schema.Trim,
-            'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'
-          )
-            .pipe(Config.option, Config.map(Option.getOrUndefined))
-            .parse(provider)
-            .pipe(
-              Effect.mapError((error) =>
-                configFailureWithCause(
-                  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT must be a string',
-                  error
-                )
-              )
-            ),
-          endpoint: Config.schema(Schema.Trim, 'SPICEDB_ENDPOINT')
-            .parse(provider)
-            .pipe(
-              Effect.mapError((error) =>
-                configFailureWithCause('SPICEDB_ENDPOINT is required', error)
-              )
-            ),
-          insecureFlag: Config.schema(Schema.Trim, 'SPICEDB_INSECURE')
-            .pipe(Config.map((value) => value.toLowerCase()))
-            .parse(provider)
-            .pipe(
-              Effect.mapError((error) =>
-                configFailureWithCause(
-                  'SPICEDB_INSECURE must be explicitly true or false',
-                  error
-                )
-              )
-            ),
-          preSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY')
-            .pipe(
-              Config.map((value) => Redacted.make(Redacted.value(value).trim()))
-            )
-            .parse(provider)
-            .pipe(
-              Effect.mapError((error) =>
-                configFailureWithCause(
-                  'SPICEDB_PRESHARED_KEY is required',
-                  error
-                )
-              )
-            ),
-        },
-        { concurrency: 4 }
-      );
-
-    if (endpoint.length === 0) {
-      return yield* configFailure('SPICEDB_ENDPOINT is required');
-    }
-    if (!isValidEndpoint(endpoint)) {
-      return yield* configFailure(
-        'SPICEDB_ENDPOINT must be a valid host and optional port'
-      );
-    }
-    if (Redacted.value(preSharedKey).length === 0) {
-      return yield* configFailure('SPICEDB_PRESHARED_KEY is required');
-    }
-    if (insecureFlag !== 'true' && insecureFlag !== 'false') {
-      return yield* configFailure(
-        'SPICEDB_INSECURE must be explicitly true or false'
-      );
-    }
-    const configuration = makeSpiceDbConfigValue({
-      deploymentEnvironment,
-      endpoint,
-      insecureLocal: insecureFlag === 'true',
-      preSharedKey,
-    });
-    if (!allowsInsecureSpiceDbTransport(configuration)) {
-      return yield* configFailure(
-        'Insecure SpiceDB transport is allowed only for an explicit localhost port or the stage private endpoint'
-      );
-    }
-
-    return configuration;
-  }
-);
-
-export const parseSpiceDbConfig = (
-  environment: SpiceDbEnvironment
-): Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> =>
-  parseSpiceDbConfigWith(
-    ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true })
+const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(function* parseConfig(
+  provider: ConfigProvider.ConfigProvider,
+) {
+  const { deploymentEnvironment, endpoint, insecureFlag, preSharedKey } = yield* Effect.all(
+    {
+      deploymentEnvironment: Config.schema(Schema.Trim, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')
+        .pipe(Config.option, Config.map(Option.getOrUndefined))
+        .parse(provider)
+        .pipe(
+          Effect.mapError((error) =>
+            configFailureWithCause('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT must be a string', error),
+          ),
+        ),
+      endpoint: Config.schema(Schema.Trim, 'SPICEDB_ENDPOINT')
+        .parse(provider)
+        .pipe(Effect.mapError((error) => configFailureWithCause('SPICEDB_ENDPOINT is required', error))),
+      insecureFlag: Config.schema(Schema.Trim, 'SPICEDB_INSECURE')
+        .pipe(Config.map((value) => value.toLowerCase()))
+        .parse(provider)
+        .pipe(
+          Effect.mapError((error) =>
+            configFailureWithCause('SPICEDB_INSECURE must be explicitly true or false', error),
+          ),
+        ),
+      preSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY')
+        .pipe(Config.map((value) => Redacted.make(Redacted.value(value).trim())))
+        .parse(provider)
+        .pipe(Effect.mapError((error) => configFailureWithCause('SPICEDB_PRESHARED_KEY is required', error))),
+    },
+    { concurrency: 4 },
   );
 
+  if (endpoint.length === 0) {
+    return yield* configFailure('SPICEDB_ENDPOINT is required');
+  }
+  if (!isValidEndpoint(endpoint)) {
+    return yield* configFailure('SPICEDB_ENDPOINT must be a valid host and optional port');
+  }
+  if (Redacted.value(preSharedKey).length === 0) {
+    return yield* configFailure('SPICEDB_PRESHARED_KEY is required');
+  }
+  if (insecureFlag !== 'true' && insecureFlag !== 'false') {
+    return yield* configFailure('SPICEDB_INSECURE must be explicitly true or false');
+  }
+  const configuration = makeSpiceDbConfigValue({
+    deploymentEnvironment,
+    endpoint,
+    insecureLocal: insecureFlag === 'true',
+    preSharedKey,
+  });
+  if (!allowsInsecureSpiceDbTransport(configuration)) {
+    return yield* configFailure(
+      'Insecure SpiceDB transport is allowed only for an explicit localhost port or the stage private endpoint',
+    );
+  }
+
+  return configuration;
+});
+
+export const parseSpiceDbConfig = (
+  environment: SpiceDbEnvironment,
+): Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> =>
+  parseSpiceDbConfigWith(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }));
+
 export const loadSpiceDbConfig = (
-  options: LoadSpiceDbConfigOptions = {}
+  options: LoadSpiceDbConfigOptions = {},
 ): Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> => {
   const environmentProvider =
     options.environment === undefined
@@ -219,10 +172,6 @@ export const loadSpiceDbConfig = (
 
   return loadDotEnvProvider(envPath, configFailureWithCause).pipe(
     Effect.withSpan('Config.loadFileConfigProvider'),
-    Effect.flatMap((fileProvider) =>
-      parseSpiceDbConfigWith(
-        ConfigProvider.orElse(environmentProvider, fileProvider)
-      )
-    )
+    Effect.flatMap((fileProvider) => parseSpiceDbConfigWith(ConfigProvider.orElse(environmentProvider, fileProvider))),
   );
 };

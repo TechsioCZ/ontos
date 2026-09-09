@@ -2,24 +2,17 @@ import { Cause, Schema } from 'effect';
 
 import { actionErrorSchema } from './error-schema.ts';
 
-const ActionTransactionErrorValue = actionErrorSchema(
-  'ActionTransactionError',
-  {
-    code: Schema.Literal('action_transaction_failed'),
-    reason: Schema.String,
-  }
-);
-export type ActionTransactionError = InstanceType<
-  typeof ActionTransactionErrorValue
->;
+const ActionTransactionErrorValue = actionErrorSchema('ActionTransactionError', {
+  code: Schema.Literal('action_transaction_failed'),
+  reason: Schema.String,
+});
+export type ActionTransactionError = InstanceType<typeof ActionTransactionErrorValue>;
 const ActionTransactionErrorInternals = (() => {
   let createWithCause: (
     props: ConstructorParameters<typeof ActionTransactionErrorValue>[0],
-    cause?: unknown
+    cause?: unknown,
   ) => ActionTransactionError;
-  let readCause: (
-    failure: ActionTransactionError
-  ) => Cause.Cause<never> | undefined;
+  let readCause: (failure: ActionTransactionError) => Cause.Cause<never> | undefined;
 
   class RetainedError extends ActionTransactionErrorValue {
     #cause: Cause.Cause<never> | undefined;
@@ -41,7 +34,5 @@ const ActionTransactionErrorInternals = (() => {
 const ActionTransactionErrorClass = ActionTransactionErrorInternals.ErrorClass;
 export { ActionTransactionErrorClass as ActionTransactionError };
 // Core-only accessors: deliberately excluded from the package root exports.
-export const createActionTransactionErrorWithCause =
-  ActionTransactionErrorInternals.createWithCause;
-export const getActionTransactionErrorCause =
-  ActionTransactionErrorInternals.readCause;
+export const createActionTransactionErrorWithCause = ActionTransactionErrorInternals.createWithCause;
+export const getActionTransactionErrorCause = ActionTransactionErrorInternals.readCause;

@@ -24,7 +24,7 @@ type PartyOfficialIdentifierHistoryOperationInvocation = readonly [
 const partyOfficialIdentifierHistoryClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartyOfficialIdentifierHistoryClientOptions
+  options: PartyOfficialIdentifierHistoryClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,44 +33,28 @@ const partyOfficialIdentifierHistoryClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executePartyOfficialIdentifierHistoryWithAuthorization = (
   payload: PartyOfficialIdentifierHistoryRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartyOfficialIdentifierHistoryAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartyOfficialIdentifierHistoryAuthorizedInvocation
 ) =>
-  partyOfficialIdentifierHistoryClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  partyOfficialIdentifierHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.partyOfficialIdentifierHistory.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executePartyOfficialIdentifierHistory = (
   payload: PartyOfficialIdentifierHistoryRequest,
-  ...[
-    requestCorrelation,
-    options = {},
-  ]: PartyOfficialIdentifierHistoryOperationInvocation
+  ...[requestCorrelation, options = {}]: PartyOfficialIdentifierHistoryOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePartyOfficialIdentifierHistoryWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executePartyOfficialIdentifierHistoryWithAuthorization(payload, credential, requestCorrelation, options),
   );

@@ -16,15 +16,12 @@ type PartyCorrectionAuthorizedInvocation = readonly [
   options?: PartyCorrectionClientOptions,
 ];
 
-type PartyCorrectionOperationInvocation = readonly [
-  requestCorrelation: string,
-  options?: PartyCorrectionClientOptions,
-];
+type PartyCorrectionOperationInvocation = readonly [requestCorrelation: string, options?: PartyCorrectionClientOptions];
 
 const partyCorrectionClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartyCorrectionClientOptions
+  options: PartyCorrectionClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,30 +30,22 @@ const partyCorrectionClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executePartyCorrectionWithAuthorization = (
   payload: PartyCorrectionRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartyCorrectionAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartyCorrectionAuthorizedInvocation
 ) =>
-  partyCorrectionClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  partyCorrectionClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.partyCorrection.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executePartyCorrection = (
@@ -64,10 +53,5 @@ export const executePartyCorrection = (
   ...[requestCorrelation, options = {}]: PartyCorrectionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePartyCorrectionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executePartyCorrectionWithAuthorization(payload, credential, requestCorrelation, options),
   );

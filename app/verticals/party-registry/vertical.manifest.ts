@@ -72,15 +72,12 @@ import { updatePartyAction } from './src/actions/update-party.action.ts';
 import ContactsPage from './src/routes/[lang]/contacts/page.tsx';
 // </generated-module-manifest-imports>
 
-type NavigationContributionInput =
-  typeof ShellNavigationContributionSchema.Encoded;
+type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
 
 const navigationContribution = (value: NavigationContributionInput) =>
-  Result.getOrThrow(
-    Schema.decodeResult(ShellNavigationContributionSchema)(value)
-  );
+  Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 const searchContribution = (value: SearchContributionInput) =>
@@ -91,15 +88,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
     defaultState: 'inactive',
     preservesHistoryWhenInactive: true,
     scope: 'tenant',
-    supportedStates: [
-      'inactive',
-      'active',
-      'read_only',
-      'suspended',
-      'quarantined',
-      'deprecated',
-      'archived',
-    ],
+    supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
   module: {
     description: 'Party Registry business capability.',

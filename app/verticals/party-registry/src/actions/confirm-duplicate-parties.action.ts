@@ -43,12 +43,7 @@ export const confirmDuplicatePartiesAction = defineAction(
     tenantPermission: () => 'review_party_identity',
   },
   handleDuplicateCaseResolution,
-  (transaction, scope) =>
-    duplicateCaseResolutionService(
-      transaction,
-      scope.tenantId,
-      'CONFIRMED_DUPLICATE_PARTIES'
-    )
+  (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'CONFIRMED_DUPLICATE_PARTIES'),
 );
 // Production merge remains deliberately absent: this Action records reviewed readiness only.
 // <generated-outbox-message-exports>

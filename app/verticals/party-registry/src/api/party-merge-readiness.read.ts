@@ -45,5 +45,5 @@ export const partyMergeReadinessRead = defineRead(
       result: evaluateDisabledMergeReadiness(input.partyRefs),
     }),
   () => Effect.succeed({}),
-  () => ({ kind: 'tenant', permission: 'merge_party_identity' })
+  () => ({ kind: 'tenant', permission: 'merge_party_identity' }),
 );

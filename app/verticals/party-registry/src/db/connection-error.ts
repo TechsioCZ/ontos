@@ -4,5 +4,5 @@ export class PartyDatabaseConnectionError extends Schema.TaggedError<PartyDataba
   'PartyDatabaseConnectionError',
   {
     reason: Schema.String,
-  }
+  },
 ) {}

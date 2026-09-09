@@ -24,43 +24,35 @@ const input = {
   surface: 'action' as const,
 };
 
-it.effect(
-  'active, baselined report-only compatibility preserves only missing-policy behavior',
-  () =>
-    Effect.gen(function* authorizationRollout() {
-      const events: AuthorizationWouldDenyEvent[] = [];
-      expect(
-        decideAuthorizationRollout(input, {
-          contract,
-          emit: (event) => {
-            events.push(event);
-          },
-        })
-      ).toBe('allowed');
-      expect(events).toEqual([
-        {
-          denialReason: 'missing_policy',
-          entrypointKey: 'contacts.create-contact',
-          inventoryHash: 'inventory-hash',
-          policyClass: 'action_execution',
-          schemaVersion: 1,
-          sourceRevision: 'source-revision',
-          surface: 'action',
-          timestamp: '2026-09-10T00:00:00.000Z',
-          type: 'authorization.would_deny',
+it.effect('active, baselined report-only compatibility preserves only missing-policy behavior', () =>
+  Effect.gen(function* authorizationRollout() {
+    const events: AuthorizationWouldDenyEvent[] = [];
+    expect(
+      decideAuthorizationRollout(input, {
+        contract,
+        emit: (event) => {
+          events.push(event);
         },
-      ]);
-      expect(
-        (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-          events
-        )).includes('principal')
-      ).toBe(false);
-      expect(
-        (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-          events
-        )).includes('tenant')
-      ).toBe(false);
-    })
+      }),
+    ).toBe('allowed');
+    expect(events).toEqual([
+      {
+        denialReason: 'missing_policy',
+        entrypointKey: 'contacts.create-contact',
+        inventoryHash: 'inventory-hash',
+        policyClass: 'action_execution',
+        schemaVersion: 1,
+        sourceRevision: 'source-revision',
+        surface: 'action',
+        timestamp: '2026-09-10T00:00:00.000Z',
+        type: 'authorization.would_deny',
+      },
+    ]);
+    expect((yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(events)).includes('principal')).toBe(
+      false,
+    );
+    expect((yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(events)).includes('tenant')).toBe(false);
+  }),
 );
 
 it('enforced, expired, and unbaselined entrypoints deny without evidence', () => {
@@ -76,7 +68,7 @@ it('enforced, expired, and unbaselined entrypoints deny without evidence', () =>
         emit: (event) => {
           events.push(event);
         },
-      })
+      }),
     ).toBe('denied');
     expect(events).toEqual([]);
   }
@@ -91,18 +83,13 @@ it('a candidate allow never broadens a denial from the current authorization pat
         emit: () => {
           expect.unreachable();
         },
-      }
-    )
+      },
+    ),
   ).toBe('denied');
 });
 
 it('all protected surfaces keep credential, tenancy, module, replay, and infrastructure failures non-bypassable', () => {
-  for (const surface of [
-    'action',
-    'capability_issuance',
-    'route',
-    'worker',
-  ] as const) {
+  for (const surface of ['action', 'capability_issuance', 'route', 'worker'] as const) {
     for (const denialReason of [
       'cross_tenant',
       'expired_credential',
@@ -120,8 +107,8 @@ it('all protected surfaces keep credential, tenancy, module, replay, and infrast
             emit: () => {
               expect.unreachable();
             },
-          }
-        )
+          },
+        ),
       ).toBe('denied');
     }
   }

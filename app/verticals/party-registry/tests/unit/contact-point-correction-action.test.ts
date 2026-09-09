@@ -48,67 +48,63 @@ const replacement: PartyContactPoint = {
   },
   verification: { state: 'UNVERIFIED' },
 };
-it.effect(
-  'correction publishes the corrected stable ref while returning the validated replacement',
-  () =>
-    Effect.gen(function* correctionScenario() {
-      const collector = createActionCollector(
-        updateContactPointAction.descriptor.domainEvents,
-        'party.registry',
-        updateContactPointAction.descriptor.accessEvidencePolicy
-      );
-      const handler = getActionHandler(updateContactPointAction);
-      const result = yield* handler(
-        {
-          change: {
-            evidenceReferences: ['evidence:party-confirmation:42'],
-            reason: 'Original mailbox never belonged to this Party',
-            replacement: {
-              contactPoint: {
-                preferred: true,
-                type: 'EMAIL',
-                value: 'correct@example.test',
-              },
-              privacyClassification: 'PERSONAL',
-              provenance: replacement.provenance,
-              validFrom: replacement.validFrom,
-              verification: replacement.verification,
+it.effect('correction publishes the corrected stable ref while returning the validated replacement', () =>
+  Effect.gen(function* correctionScenario() {
+    const collector = createActionCollector(
+      updateContactPointAction.descriptor.domainEvents,
+      'party.registry',
+      updateContactPointAction.descriptor.accessEvidencePolicy,
+    );
+    const handler = getActionHandler(updateContactPointAction);
+    const result = yield* handler(
+      {
+        change: {
+          evidenceReferences: ['evidence:party-confirmation:42'],
+          reason: 'Original mailbox never belonged to this Party',
+          replacement: {
+            contactPoint: {
+              preferred: true,
+              type: 'EMAIL',
+              value: 'correct@example.test',
             },
-            type: 'CORRECT_CONTACT_POINT',
+            privacyClassification: 'PERSONAL',
+            provenance: replacement.provenance,
+            validFrom: replacement.validFrom,
+            verification: replacement.verification,
           },
-          contactPointRef: originalContactPointRef,
-          expectedRevision: 2,
-          provenance: replacement.provenance,
+          type: 'CORRECT_CONTACT_POINT',
         },
-        {
-          actionInvocationId: '40000000-0000-4000-8000-000000000001',
-          addDomainEvent: collector.addDomainEvent,
-          addOutboxMessage: collector.addOutboxMessage,
-          recordAuditEvidence: collector.recordAuditEvidence,
-          recordDataAccess: collector.recordDataAccess,
-          scope: {
-            authMethod: 'system',
-            correlationId: 'correction-test',
-            principalId: '50000000-0000-4000-8000-000000000001',
-            tenantId,
-          },
-          services: { update: () => Effect.succeed(replacement) },
-        }
-      );
-      expect(result.contactPointRef).toEqual(replacement.contactPointRef);
-      const snapshot = collector.snapshot();
-      expect(snapshot.domainEvents.length).toBe(1);
-      expect(snapshot.domainEvents[0]?.subjectResourceId).toBe(
-        originalContactPointRef.resourceId
-      );
-      expect(snapshot.domainEvents[0]?.payloadJson).toEqual({
         contactPointRef: originalContactPointRef,
-        partyRef,
-        revision: 3,
-      });
-      expect(snapshot.outboxMessages[0]?.message.payloadJson).toEqual({
-        contactPointRef: originalContactPointRef,
-        partyRef,
-      });
-    })
+        expectedRevision: 2,
+        provenance: replacement.provenance,
+      },
+      {
+        actionInvocationId: '40000000-0000-4000-8000-000000000001',
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope: {
+          authMethod: 'system',
+          correlationId: 'correction-test',
+          principalId: '50000000-0000-4000-8000-000000000001',
+          tenantId,
+        },
+        services: { update: () => Effect.succeed(replacement) },
+      },
+    );
+    expect(result.contactPointRef).toEqual(replacement.contactPointRef);
+    const snapshot = collector.snapshot();
+    expect(snapshot.domainEvents.length).toBe(1);
+    expect(snapshot.domainEvents[0]?.subjectResourceId).toBe(originalContactPointRef.resourceId);
+    expect(snapshot.domainEvents[0]?.payloadJson).toEqual({
+      contactPointRef: originalContactPointRef,
+      partyRef,
+      revision: 3,
+    });
+    expect(snapshot.outboxMessages[0]?.message.payloadJson).toEqual({
+      contactPointRef: originalContactPointRef,
+      partyRef,
+    });
+  }),
 );

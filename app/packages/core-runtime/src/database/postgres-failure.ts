@@ -10,22 +10,13 @@ export type PostgresFailureMetadata = Readonly<{
   readonly constraint?: string;
 }>;
 type PostgresFailureInput = Schema.Schema.Type<typeof Schema.Unknown>;
-type PostgresFailurePredicate = (
-  metadata: Readonly<PostgresFailureMetadata>
-) => boolean;
+type PostgresFailurePredicate = (metadata: Readonly<PostgresFailureMetadata>) => boolean;
 
-const decodePostgresFailureCode = Schema.decodeUnknownOption(
-  PostgresFailureCodeSchema
-);
-const decodePostgresFailureConstraint = Schema.decodeUnknownOption(
-  PostgresFailureConstraintSchema
-);
+const decodePostgresFailureCode = Schema.decodeUnknownOption(PostgresFailureCodeSchema);
+const decodePostgresFailureConstraint = Schema.decodeUnknownOption(PostgresFailureConstraintSchema);
 const decodeCauseWrapper = Schema.decodeUnknownOption(CauseWrapperSchema);
 
-const enqueueFailureReasons = (
-  cause: Cause.Cause<unknown>,
-  pending: unknown[]
-): void => {
+const enqueueFailureReasons = (cause: Cause.Cause<unknown>, pending: unknown[]): void => {
   for (const reason of cause.reasons.toReversed()) {
     if (Cause.isFailReason(reason)) {
       pending.push(reason.error);
@@ -35,9 +26,7 @@ const enqueueFailureReasons = (
   }
 };
 
-const decodeFailureMetadata = (
-  current: PostgresFailureInput
-): Option.Option<Readonly<PostgresFailureMetadata>> =>
+const decodeFailureMetadata = (current: PostgresFailureInput): Option.Option<Readonly<PostgresFailureMetadata>> =>
   Option.map(decodePostgresFailureCode(current), ({ code }) => {
     const constraint = decodePostgresFailureConstraint(current);
     const metadata: PostgresFailureMetadata = Option.isSome(constraint)
@@ -52,18 +41,14 @@ const decodeFailureMetadata = (
  */
 export const findPostgresFailure = (
   input: PostgresFailureInput,
-  predicate: PostgresFailurePredicate = () => true
+  predicate: PostgresFailurePredicate = () => true,
 ): Option.Option<Readonly<PostgresFailureMetadata>> => {
   const pending: unknown[] = [input];
   const visited = new Set<object>();
 
   while (pending.length > 0) {
     const current = pending.pop();
-    if (
-      !Predicate.isObjectKeyword(current) ||
-      current === null ||
-      visited.has(current)
-    ) {
+    if (!Predicate.isObjectKeyword(current) || current === null || visited.has(current)) {
       continue;
     }
     visited.add(current);

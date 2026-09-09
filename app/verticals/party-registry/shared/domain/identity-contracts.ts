@@ -7,34 +7,20 @@ import type { PartyRef } from '../resources/party.ts';
 import { AresAppliedEvidenceSchema } from './ares-application.ts';
 import { OfficialIdentifierInputSchema } from './identifier-contracts.ts';
 
-export const PartyTypeSchema = Schema.Literals([
-  'PERSON',
-  'ORGANIZATION',
-  'UNRESOLVED',
-]);
+export const PartyTypeSchema = Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']);
 export type PartyType = typeof PartyTypeSchema.Type;
-export const isPartyTypeEnrichment = (
-  current: PartyType,
-  requested: PartyType
-): boolean =>
-  current === requested ||
-  (current === 'UNRESOLVED' && requested !== 'UNRESOLVED');
+export const isPartyTypeEnrichment = (current: PartyType, requested: PartyType): boolean =>
+  current === requested || (current === 'UNRESOLVED' && requested !== 'UNRESOLVED');
 export const IsoTimestampSchema = Schema.DateTimeUtcFromString;
-export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('PartyId')
-);
+export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PartyId'));
 export type PartyId = typeof PartyIdSchema.Type;
-const PartySubjectKeySchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(200)
-).pipe(Schema.brand('PartySubjectKey'));
+const PartySubjectKeySchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.brand('PartySubjectKey'),
+);
 export type PartySubjectKey = typeof PartySubjectKeySchema.Type;
 export const partyIdFromString = Brand.nominal<PartyId>();
 export const partySubjectKeyFromString = Brand.nominal<PartySubjectKey>();
-export const PartyDisplayNameSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300)
-);
+export const PartyDisplayNameSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const ProvenanceSchema = Schema.Struct({
   externalEvidence: Schema.optionalKey(AresAppliedEvidenceSchema),
   method: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
@@ -46,10 +32,7 @@ const ProvenanceSchema = Schema.Struct({
  * Provider-only and managed Legal Entity inputs are not supported attestation sources. */
 export const PartySubjectEvidenceSchema = Schema.Struct({
   basis: Schema.Literals(['DIRECT_INTERACTION', 'REVIEWED_DOCUMENT']),
-  evidenceRef: Schema.Trim.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(500)
-  ),
+  evidenceRef: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   kind: Schema.Literal('ACTOR_ATTESTATION'),
   observedSubject: Schema.Literals([
     'PERSON',
@@ -62,18 +45,12 @@ export const PartySubjectEvidenceSchema = Schema.Struct({
   subjectKey: PartySubjectKeySchema,
 });
 export type PartySubjectEvidence = typeof PartySubjectEvidenceSchema.Type;
-export const PartySubjectEvidenceListSchema = Schema.Array(
-  PartySubjectEvidenceSchema
-).check(Schema.isMaxLength(32));
-export const PartySubjectEligibilityVersion =
-  'party-concrete-subject.v1' as const;
+export const PartySubjectEvidenceListSchema = Schema.Array(PartySubjectEvidenceSchema).check(Schema.isMaxLength(32));
+export const PartySubjectEligibilityVersion = 'party-concrete-subject.v1' as const;
 export const PartyTypeRuleVersion = 'party-subject-type.v1' as const;
 export const PartyEvidenceEvaluationSchema = Schema.Struct({
   evidence: PartySubjectEvidenceListSchema,
-  reasonCode: Schema.String.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(100)
-  ),
+  reasonCode: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   subjectEligibilityVersion: Schema.String,
   subjectEligible: Schema.Boolean,
   typeRuleVersion: Schema.String,
@@ -83,12 +60,10 @@ export type PartyEvidenceEvaluation = typeof PartyEvidenceEvaluationSchema.Type;
 
 export const PartyCandidateSchema = Schema.Struct({
   displayName: Schema.optionalKey(PartyDisplayNameSchema),
-  evidenceRefs: Schema.Array(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))
-  ).check(Schema.isMaxLength(100)),
-  officialIdentifiers: Schema.Array(OfficialIdentifierInputSchema).check(
-    Schema.isMaxLength(20)
+  evidenceRefs: Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
+    Schema.isMaxLength(100),
   ),
+  officialIdentifiers: Schema.Array(OfficialIdentifierInputSchema).check(Schema.isMaxLength(20)),
   partyType: PartyTypeSchema,
   provenance: ProvenanceSchema,
   subjectEvidence: Schema.optionalKey(PartySubjectEvidenceListSchema),
@@ -138,13 +113,11 @@ const partyNotFoundFields = {
   partyId: PartyIdSchema,
   reason: Schema.String,
 } as const;
-const PartyNotFoundSchema = Schema.TaggedStruct(
+const PartyNotFoundSchema = Schema.TaggedStruct('PartyNotFound', partyNotFoundFields);
+export const PartyNotFound = Schema.TaggedError<typeof PartyNotFoundSchema.Type>()(
   'PartyNotFound',
-  partyNotFoundFields
+  partyNotFoundFields,
 );
-export const PartyNotFound = Schema.TaggedError<
-  typeof PartyNotFoundSchema.Type
->()('PartyNotFound', partyNotFoundFields);
 export type PartyNotFoundError = InstanceType<typeof PartyNotFound>;
 
 const partyLifecycleConflictFields = {
@@ -152,13 +125,11 @@ const partyLifecycleConflictFields = {
   reason: Schema.String,
   requestedState: Schema.Literals(['ACTIVE', 'ARCHIVED']),
 } as const;
-const PartyLifecycleConflictSchema = Schema.TaggedStruct(
+const PartyLifecycleConflictSchema = Schema.TaggedStruct('PartyLifecycleConflict', partyLifecycleConflictFields);
+export const PartyLifecycleConflict = Schema.TaggedError<typeof PartyLifecycleConflictSchema.Type>()(
   'PartyLifecycleConflict',
-  partyLifecycleConflictFields
+  partyLifecycleConflictFields,
 );
-export const PartyLifecycleConflict = Schema.TaggedError<
-  typeof PartyLifecycleConflictSchema.Type
->()('PartyLifecycleConflict', partyLifecycleConflictFields);
 
 const partyEvidenceInsufficientFields = {
   code: Schema.Literal('party_evidence_insufficient'),
@@ -166,14 +137,13 @@ const partyEvidenceInsufficientFields = {
 } as const;
 const PartyEvidenceInsufficientSchema = Schema.TaggedStruct(
   'PartyEvidenceInsufficient',
-  partyEvidenceInsufficientFields
+  partyEvidenceInsufficientFields,
 );
-export const PartyEvidenceInsufficient = Schema.TaggedError<
-  typeof PartyEvidenceInsufficientSchema.Type
->()('PartyEvidenceInsufficient', partyEvidenceInsufficientFields);
-export type PartyEvidenceInsufficientError = InstanceType<
-  typeof PartyEvidenceInsufficient
->;
+export const PartyEvidenceInsufficient = Schema.TaggedError<typeof PartyEvidenceInsufficientSchema.Type>()(
+  'PartyEvidenceInsufficient',
+  partyEvidenceInsufficientFields,
+);
+export type PartyEvidenceInsufficientError = InstanceType<typeof PartyEvidenceInsufficient>;
 
 const partyPersistenceUnavailableFields = {
   code: Schema.Literal('party_persistence_unavailable'),
@@ -181,11 +151,10 @@ const partyPersistenceUnavailableFields = {
 } as const;
 const PartyPersistenceUnavailableSchema = Schema.TaggedStruct(
   'PartyPersistenceUnavailable',
-  partyPersistenceUnavailableFields
+  partyPersistenceUnavailableFields,
 );
-export const PartyPersistenceUnavailable = Schema.TaggedError<
-  typeof PartyPersistenceUnavailableSchema.Type
->()('PartyPersistenceUnavailable', partyPersistenceUnavailableFields);
-export type PartyPersistenceUnavailableError = InstanceType<
-  typeof PartyPersistenceUnavailable
->;
+export const PartyPersistenceUnavailable = Schema.TaggedError<typeof PartyPersistenceUnavailableSchema.Type>()(
+  'PartyPersistenceUnavailable',
+  partyPersistenceUnavailableFields,
+);
+export type PartyPersistenceUnavailableError = InstanceType<typeof PartyPersistenceUnavailable>;

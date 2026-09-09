@@ -5,5 +5,5 @@ export class PartySearchProjectionUnavailable extends Schema.TaggedError<PartySe
   {
     code: Schema.Literal('party_search_projection_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

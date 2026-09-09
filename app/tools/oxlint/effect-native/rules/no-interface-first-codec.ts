@@ -59,16 +59,9 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  memberName,
-  typeNameSegments,
-  unwrapNode as unwrapExpression,
-} from '../shared/ast.ts';
+import { memberName, typeNameSegments, unwrapNode as unwrapExpression } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
-import {
-  collectEffectBindings,
-  effectMember,
-} from '../shared/effect-imports.ts';
+import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import { collectSchemaLocals } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { booleanOption as boolean, stringArray } from '../shared/options.ts';
@@ -77,12 +70,7 @@ import { isNonReferencePosition } from '../shared/reference-positions.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 
-const DEFAULT_INCLUDE = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const DEFAULT_IGNORE: readonly string[] = [];
 
@@ -114,20 +102,14 @@ function readOptions(context: Context) {
     ignoreTests: boolean(record.ignoreTests, false),
     allowSuspend: boolean(record.allowSuspend, true),
     codecTypes: stringArray(record.codecTypes, DEFAULT_CODEC_TYPES),
-    ignoreTypeArguments: stringArray(
-      record.ignoreTypeArguments,
-      DEFAULT_IGNORE_TYPE_ARGUMENTS
-    ),
+    ignoreTypeArguments: stringArray(record.ignoreTypeArguments, DEFAULT_IGNORE_TYPE_ARGUMENTS),
     requireTypeArguments: boolean(record.requireTypeArguments, true),
     allowDerivedTypeArguments: boolean(record.allowDerivedTypeArguments, true),
     requireSchemaInitializer: boolean(record.requireSchemaInitializer, false),
     checkSatisfies: boolean(record.checkSatisfies, true),
     checkAsExpressions: boolean(record.checkAsExpressions, true),
     checkClassProperties: boolean(record.checkClassProperties, true),
-    reexportModules: stringArray(
-      record.reexportModules,
-      DEFAULT_REEXPORT_MODULES
-    ),
+    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
   };
 }
 
@@ -217,27 +199,14 @@ export const rule = defineRule({
 
     const program = context.sourceCode.ast;
     const bindings = collectEffectBindings(program);
-    const locals = collectSchemaLocals(
-      program,
-      bindings,
-      options.reexportModules
-    );
-    if (
-      locals.schema.size === 0 &&
-      locals.barrel.size === 0 &&
-      locals.direct.size === 0
-    )
-      return {};
+    const locals = collectSchemaLocals(program, bindings, options.reexportModules);
+    if (locals.schema.size === 0 && locals.barrel.size === 0 && locals.direct.size === 0) return {};
 
     const codecTypeLocals = new Set(
-      [...locals.direct]
-        .filter(([, imported]) => options.codecTypes.includes(imported))
-        .map(([local]) => local)
+      [...locals.direct].filter(([, imported]) => options.codecTypes.includes(imported)).map(([local]) => local),
     );
     const suspendLocals = new Set(
-      [...locals.direct]
-        .filter(([, imported]) => imported === SUSPEND_MEMBER)
-        .map(([local]) => local)
+      [...locals.direct].filter(([, imported]) => imported === SUSPEND_MEMBER).map(([local]) => local),
     );
 
     const candidates: Candidate[] = [];
@@ -248,8 +217,7 @@ export const rule = defineRule({
     /** Strip type-level parentheses so `(Schema.Codec<Foo>)` behaves like the bare reference. */
     const unwrapType = (type: ESTree.TSType): ESTree.TSType => {
       let current = type;
-      while (current.type === 'TSParenthesizedType')
-        current = current.typeAnnotation;
+      while (current.type === 'TSParenthesizedType') current = current.typeAnnotation;
       return current;
     };
 
@@ -257,11 +225,7 @@ export const rule = defineRule({
     const schemaMemberName = (node: ESTree.MemberExpression): string | null => {
       const viaShared = effectMember(node, bindings);
       if (viaShared !== null && viaShared.namespace === SCHEMA_NAMESPACE) {
-        if (
-          node.object.type === 'Identifier' &&
-          !resolvesToImport(context, node.object)
-        )
-          return null;
+        if (node.object.type === 'Identifier' && !resolvesToImport(context, node.object)) return null;
         return viaShared.member;
       }
       const member = memberName(node);
@@ -274,10 +238,7 @@ export const rule = defineRule({
       return barrelMemberName(object, member);
     };
 
-    const barrelMemberName = (
-      object: ESTree.Node,
-      member: string
-    ): string | null => {
+    const barrelMemberName = (object: ESTree.Node, member: string): string | null => {
       if (object.type !== 'MemberExpression') return null;
       if (memberName(object) !== SCHEMA_NAMESPACE) return null;
       if (object.object.type !== 'Identifier') return null;
@@ -294,10 +255,7 @@ export const rule = defineRule({
     const isPipeCallee = (callee: ESTree.Node): boolean => {
       if (callee.type === 'Identifier') {
         if (!resolvesToImport(context, callee)) return false;
-        return (
-          bindings.namespaces.get(callee.name) === PIPE_MEMBER ||
-          callee.name === PIPE_MEMBER
-        );
+        return bindings.namespaces.get(callee.name) === PIPE_MEMBER || callee.name === PIPE_MEMBER;
       }
       if (callee.type !== 'MemberExpression') return false;
       if (memberName(callee) !== PIPE_MEMBER) return false;
@@ -312,42 +270,26 @@ export const rule = defineRule({
      * `schema.pipe(Schema.optional)` method chains, point-free `pipe(schema, ...)` and bare
      * `Struct({...})` from `import { Struct } from "effect/Schema"`.
      */
-    const isSchemaExpression = (
-      expression: ESTree.Node,
-      depth: number
-    ): boolean => {
+    const isSchemaExpression = (expression: ESTree.Node, depth: number): boolean => {
       if (depth > 12) return false;
       const current = unwrapExpression(expression);
       if (current.type === 'Identifier') {
-        return (
-          locals.direct.has(current.name) && resolvesToImport(context, current)
-        );
+        return locals.direct.has(current.name) && resolvesToImport(context, current);
       }
-      if (current.type === 'MemberExpression')
-        return schemaMemberName(current) !== null;
-      if (current.type !== 'CallExpression' && current.type !== 'NewExpression')
-        return false;
+      if (current.type === 'MemberExpression') return schemaMemberName(current) !== null;
+      if (current.type !== 'CallExpression' && current.type !== 'NewExpression') return false;
       return isSchemaCall(current, depth);
     };
 
-    const isSchemaCall = (
-      current: ESTree.CallExpression | ESTree.NewExpression,
-      depth: number
-    ): boolean => {
+    const isSchemaCall = (current: ESTree.CallExpression | ESTree.NewExpression, depth: number): boolean => {
       const callee = unwrapExpression(current.callee);
       // ANY instance-method chain, not just `.pipe`: Effect v4 Schemas carry `.annotate(...)`,
       // `.check(...)`, `.pipe(...)` and friends, so the receiver — never the method name — decides.
-      if (
-        callee.type === 'MemberExpression' &&
-        isSchemaExpression(callee.object, depth + 1)
-      )
-        return true;
+      if (callee.type === 'MemberExpression' && isSchemaExpression(callee.object, depth + 1)) return true;
       if (isSchemaExpression(callee, depth + 1)) return true;
       if (isPipeCallee(callee)) {
         return current.arguments.some(
-          (argument) =>
-            argument.type !== 'SpreadElement' &&
-            isSchemaExpression(argument, depth + 1)
+          (argument) => argument.type !== 'SpreadElement' && isSchemaExpression(argument, depth + 1),
         );
       }
       return false;
@@ -355,49 +297,34 @@ export const rule = defineRule({
 
     /** Printed annotation, collapsed to one line and clipped so diagnostics stay readable. */
     const printed = (node: ESTree.Node): string => {
-      const text = context.sourceCode
-        .getText(node)
-        .replace(/\s+/gu, ' ')
-        .trim();
+      const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
       return text.length > 80 ? `${text.slice(0, 77)}...` : text;
     };
 
     /** Follow same-file type aliases by scope, never by a file-wide name table. */
-    const derivedOrGeneric = (
-      type: ESTree.TSType,
-      seen = new Set<ESTree.Node>()
-    ): boolean => {
+    const derivedOrGeneric = (type: ESTree.TSType, seen = new Set<ESTree.Node>()): boolean => {
       const current = unwrapType(type);
       if (seen.has(current) || seen.size > 24) return false;
       seen.add(current);
-      if (options.allowDerivedTypeArguments && current.type === 'TSTypeQuery')
-        return true;
+      if (options.allowDerivedTypeArguments && current.type === 'TSTypeQuery') return true;
       if (current.type !== 'TSTypeReference') return false;
       const named = namedDerivation(current, seen);
       if (named !== null) return named;
       return derivedArguments(current, seen);
     };
 
-    const derivedArguments = (
-      current: ESTree.TSTypeReference,
-      seen: Set<ESTree.Node>
-    ): boolean => {
+    const derivedArguments = (current: ESTree.TSTypeReference, seen: Set<ESTree.Node>): boolean => {
       // Schema.Type<typeof S>, ReturnType<typeof factory>, etc. remain derived rather than
       // introducing a shape of their own. Mixed handwritten arguments are not waived.
       const arguments_ = current.typeArguments?.params ?? [];
       return (
         options.allowDerivedTypeArguments &&
         arguments_.length > 0 &&
-        arguments_.every((argument) =>
-          derivedOrGeneric(argument, new Set(seen))
-        )
+        arguments_.every((argument) => derivedOrGeneric(argument, new Set(seen)))
       );
     };
 
-    const enclosingParameter = (
-      current: ESTree.Node,
-      name: string
-    ): boolean => {
+    const enclosingParameter = (current: ESTree.Node, name: string): boolean => {
       let ancestor = current.parent;
       while (ancestor != null) {
         const parameters = (
@@ -405,31 +332,21 @@ export const rule = defineRule({
             typeParameters?: ESTree.TSTypeParameterDeclaration | null;
           }
         ).typeParameters;
-        if (
-          parameters?.params.some((parameter) => parameter.name.name === name)
-        )
-          return true;
+        if (parameters?.params.some((parameter) => parameter.name.name === name)) return true;
         ancestor = ancestor.parent;
       }
       return false;
     };
 
-    const namedDerivation = (
-      current: ESTree.TSTypeReference,
-      seen: Set<ESTree.Node>
-    ): boolean | null => {
+    const namedDerivation = (current: ESTree.TSTypeReference, seen: Set<ESTree.Node>): boolean | null => {
       if (current.typeName.type !== 'Identifier') return null;
       const variable = lookupVariable(context, current.typeName);
-      if (variable === null)
-        return enclosingParameter(current, current.typeName.name) ? true : null;
+      if (variable === null) return enclosingParameter(current, current.typeName.name) ? true : null;
       for (const definition of variable.defs) {
         const declaration = definition.node as ESTree.Node;
         if (declaration.type === 'TSTypeParameter') return true;
         if (declaration.type === 'TSTypeAliasDeclaration') {
-          return (
-            options.allowDerivedTypeArguments &&
-            derivedOrGeneric(declaration.typeAnnotation, seen)
-          );
+          return options.allowDerivedTypeArguments && derivedOrGeneric(declaration.typeAnnotation, seen);
         }
       }
       if (variable.defs.length > 0) return null;
@@ -442,20 +359,14 @@ export const rule = defineRule({
       const member = segments.at(-1) ?? '';
       if (!options.codecTypes.includes(member)) return false;
       if (segments.length === 2) return locals.schema.has(root);
-      return (
-        segments.length === 3 &&
-        locals.barrel.has(root) &&
-        segments[1] === SCHEMA_NAMESPACE
-      );
+      return segments.length === 3 && locals.barrel.has(root) && segments[1] === SCHEMA_NAMESPACE;
     };
 
     /**
      * When the annotation is an Effect Schema codec type applied to a prior type, return its
      * printed form and the printed first type argument. `null` means "not an authority conflict".
      */
-    const codecAnnotation = (
-      type: ESTree.TSType
-    ): { annotation: string; type: string } | null => {
+    const codecAnnotation = (type: ESTree.TSType): { annotation: string; type: string } | null => {
       const reference = unwrapType(type);
       if (reference.type !== 'TSTypeReference') return null;
       const segments = typeNameSegments(reference.typeName);
@@ -468,14 +379,12 @@ export const rule = defineRule({
 
     const codecArguments = (
       reference: ESTree.TSTypeReference,
-      member: string
+      member: string,
     ): { annotation: string; type: string } | null => {
       const parameters = reference.typeArguments?.params ?? [];
       const first = parameters[0];
       if (first === undefined)
-        return options.requireTypeArguments
-          ? null
-          : { annotation: printed(reference), type: member };
+        return options.requireTypeArguments ? null : { annotation: printed(reference), type: member };
       const argument = context.sourceCode.getText(first).trim();
       if (options.ignoreTypeArguments.includes(argument)) return null;
       if (derivedOrGeneric(first)) return null;
@@ -483,15 +392,9 @@ export const rule = defineRule({
     };
 
     /** Nearest enclosing declarator/property name, for the diagnostic message. */
-    const ownerOf = (
-      node: ESTree.Node
-    ): { name: string; start: number; end: number } => {
+    const ownerOf = (node: ESTree.Node): { name: string; start: number; end: number } => {
       let current: ESTree.Node | null | undefined = node;
-      for (
-        let depth = 0;
-        current !== null && current !== undefined && depth < 8;
-        depth += 1
-      ) {
+      for (let depth = 0; current !== null && current !== undefined && depth < 8; depth += 1) {
         if (current.type === 'VariableDeclarator') {
           const id = current.id;
           return {
@@ -500,10 +403,7 @@ export const rule = defineRule({
             end: current.end,
           };
         }
-        if (
-          current.type === 'PropertyDefinition' ||
-          current.type === 'Property'
-        ) {
+        if (current.type === 'PropertyDefinition' || current.type === 'Property') {
           const key = current.key;
           return {
             name: key.type === 'Identifier' ? key.name : 'this schema',
@@ -517,11 +417,8 @@ export const rule = defineRule({
     };
 
     const collectExpressionCandidate = (
-      node:
-        | ESTree.TSSatisfiesExpression
-        | ESTree.TSAsExpression
-        | ESTree.TSTypeAssertion,
-      messageId: 'satisfies' | 'cast'
+      node: ESTree.TSSatisfiesExpression | ESTree.TSAsExpression | ESTree.TSTypeAssertion,
+      messageId: 'satisfies' | 'cast',
     ): void => {
       const match = codecAnnotation(node.typeAnnotation);
       if (match === null || !isSchemaExpression(node.expression, 0)) return;
@@ -547,11 +444,7 @@ export const rule = defineRule({
         if (annotation === null || annotation === undefined) return;
         const match = codecAnnotation(annotation.typeAnnotation);
         if (match === null) return;
-        if (
-          options.requireSchemaInitializer &&
-          !isSchemaExpression(node.init, 0)
-        )
-          return;
+        if (options.requireSchemaInitializer && !isSchemaExpression(node.init, 0)) return;
         annotatedOwners.add(node.start);
         candidates.push({
           node: annotation.typeAnnotation,
@@ -564,16 +457,13 @@ export const rule = defineRule({
         });
       },
       TSSatisfiesExpression(node) {
-        if (options.checkSatisfies)
-          collectExpressionCandidate(node, 'satisfies');
+        if (options.checkSatisfies) collectExpressionCandidate(node, 'satisfies');
       },
       TSAsExpression(node) {
-        if (options.checkAsExpressions)
-          collectExpressionCandidate(node, 'cast');
+        if (options.checkAsExpressions) collectExpressionCandidate(node, 'cast');
       },
       TSTypeAssertion(node) {
-        if (options.checkAsExpressions)
-          collectExpressionCandidate(node, 'cast');
+        if (options.checkAsExpressions) collectExpressionCandidate(node, 'cast');
       },
       /**
        * `class Repo { private readonly rows: Schema.Codec<Row> = Schema.Struct({...}) }`. The Schema
@@ -591,11 +481,7 @@ export const rule = defineRule({
         if (match === null) return;
         const key = node.key;
         const name =
-          key.type === 'Identifier'
-            ? key.name
-            : key.type === 'PrivateIdentifier'
-              ? `#${key.name}`
-              : 'this schema';
+          key.type === 'Identifier' ? key.name : key.type === 'PrivateIdentifier' ? `#${key.name}` : 'this schema';
         annotatedOwners.add(node.start);
         candidates.push({
           node: annotation.typeAnnotation,
@@ -622,9 +508,7 @@ export const rule = defineRule({
       'Program:exit'() {
         for (const candidate of candidates) {
           const recursive = suspendSpans.some(
-            (span) =>
-              span.start >= candidate.ownerStart &&
-              span.end <= candidate.ownerEnd
+            (span) => span.start >= candidate.ownerStart && span.end <= candidate.ownerEnd,
           );
           if (recursive) continue;
           context.report({

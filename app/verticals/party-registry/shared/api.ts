@@ -5,12 +5,7 @@ import {
 } from '@app/shared-contracts';
 import type { MicroVerticalOperationContext } from '@app/shared-contracts';
 /* eslint-disable oxc/no-barrel-file -- The published Effect API entrypoint composes and exports all governed owner contracts. expires: 2026-12-31. */
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
 import { Brand, identity } from 'effect';
 
 // <generated-governed-http-api-imports>
@@ -33,14 +28,8 @@ import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identif
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 // </generated-governed-http-api-imports>
-import {
-  partyRegistryCommandRecoveryApi,
-  partyRegistryCommandsApi,
-} from './command-api.ts';
-import {
-  organizationEngagementMutationApi,
-  personEngagementMutationApi,
-} from './engagement-profile-api.ts';
+import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
+import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
 
 export * from './command-api.ts';
 export * from './engagement-profile-api.ts';
@@ -89,14 +78,12 @@ export type PartyRegistryReadiness = typeof partyRegistryReadinessSchema.Type;
 
 export type OperationContext = MicroVerticalOperationContext;
 
-export const partyRegistryFoundationApi = HttpApi.make(
-  'PartyRegistryFoundationApi'
-).add(
+export const partyRegistryFoundationApi = HttpApi.make('PartyRegistryFoundationApi').add(
   HttpApiGroup.make('foundation').add(
     HttpApiEndpoint.get('readiness', '/party-registry/readiness', {
       success: partyRegistryReadinessSchema,
-    })
-  )
+    }),
+  ),
 );
 
 // PartyMatch remains a read-only UX preview; durable matching is the explicit matchParty command.

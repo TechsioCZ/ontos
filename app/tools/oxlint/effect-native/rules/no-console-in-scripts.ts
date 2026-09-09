@@ -24,12 +24,7 @@ type AnyNode = ESTree.Node;
 
 const CONSOLE_MODULES = new Set(['console', 'node:console']);
 const DEFAULT_METHODS: readonly string[] = ['error', 'warn', 'debug', 'trace'];
-const FUNCTION_LIKE = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'StaticBlock',
-]);
+const FUNCTION_LIKE = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression', 'StaticBlock']);
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -55,32 +50,19 @@ function readOptions(raw: unknown): RuleOptions {
     methods: methods.length > 0 ? methods : DEFAULTS.methods,
     includeStdio: booleanOption(given.includeStdio, DEFAULTS.includeStdio),
     allowAtEntry: booleanOption(given.allowAtEntry, DEFAULTS.allowAtEntry),
-    reportReferences: booleanOption(
-      given.reportReferences,
-      DEFAULTS.reportReferences
-    ),
+    reportReferences: booleanOption(given.reportReferences, DEFAULTS.reportReferences),
   };
 }
 
 /** Assignment targets and non-emitting unary observations do not use the sink. */
 function observesSink(parent: AnyNode, outer: AnyNode): boolean {
   if (parent.type === 'AssignmentExpression') return parent.left === outer;
-  return (
-    parent.type === 'UnaryExpression' &&
-    ['void', 'typeof'].includes(parent.operator)
-  );
+  return parent.type === 'UnaryExpression' && ['void', 'typeof'].includes(parent.operator);
 }
 
-function restoresSink(
-  context: Context,
-  parent: AnyNode,
-  outer: AnyNode,
-  identity: string
-): boolean {
+function restoresSink(context: Context, parent: AnyNode, outer: AnyNode, identity: string): boolean {
   return (
-    parent.type === 'AssignmentExpression' &&
-    parent.right === outer &&
-    provenance(context, parent.left) === identity
+    parent.type === 'AssignmentExpression' && parent.right === outer && provenance(context, parent.left) === identity
   );
 }
 
@@ -153,34 +135,19 @@ export const rule = defineRule({
   create(context) {
     const options = readOptions(context.options[0]);
     const path = scriptScope(context.filename);
-    if (
-      !inScriptScope(path) ||
-      options.allowPaths.some((glob) => globToRegExp(glob).test(path))
-    )
-      return {};
+    if (!inScriptScope(path) || options.allowPaths.some((glob) => globToRegExp(glob).test(path))) return {};
     const methods = new Set(options.methods);
-    const report = (
-      node: AnyNode,
-      id: string,
-      data: Record<string, string>
-    ) => {
+    const report = (node: AnyNode, id: string, data: Record<string, string>) => {
       if (options.allowAtEntry && isEntryPosition(context, node)) return;
       context.report({ node, messageId: id, data });
     };
-    const inspectConsole = (
-      node: AnyNode,
-      outer: AnyNode,
-      parent: AnyNode,
-      identity: string
-    ) => {
+    const inspectConsole = (node: AnyNode, outer: AnyNode, parent: AnyNode, identity: string) => {
       const method = identity.slice(8);
       if (!methods.has(method)) return;
       if (isRestoredCapture(context, node)) return;
       if (restoresSink(context, parent, outer, identity)) return;
-      const called =
-        parent.type === 'CallExpression' && parent.callee === outer;
-      if (called || options.reportReferences)
-        report(node, called ? 'consoleCall' : 'consoleReference', { method });
+      const called = parent.type === 'CallExpression' && parent.callee === outer;
+      if (called || options.reportReferences) report(node, called ? 'consoleCall' : 'consoleReference', { method });
     };
     const inspect = (node: AnyNode) => {
       const identity = provenance(context, node);
@@ -190,8 +157,7 @@ export const rule = defineRule({
         report(node, 'stdioWrite', { stream: 'stderr' });
         return;
       }
-      if (identity?.startsWith('console.'))
-        inspectConsole(node, outer, parent, identity);
+      if (identity?.startsWith('console.')) inspectConsole(node, outer, parent, identity);
       // Bare sinks and dynamic methods do not prove diagnostic output.
     };
     return {
@@ -202,18 +168,11 @@ export const rule = defineRule({
         if (valueReference(context, node)) inspect(node as AnyNode);
       },
       ExportNamedDeclaration(node) {
-        if (
-          !node.source ||
-          !CONSOLE_MODULES.has(node.source.value) ||
-          node.exportKind === 'type'
-        )
-          return;
+        if (!node.source || !CONSOLE_MODULES.has(node.source.value) || node.exportKind === 'type') return;
         for (const s of node.specifiers) {
           if (s.exportKind === 'type') continue;
-          const name =
-            s.local.type === 'Identifier' ? s.local.name : s.local.value;
-          if (methods.has(name))
-            report(s, 'consoleReference', { method: name });
+          const name = s.local.type === 'Identifier' ? s.local.name : s.local.value;
+          if (methods.has(name)) report(s, 'consoleReference', { method: name });
         }
       },
     };
@@ -225,13 +184,7 @@ export const rule = defineRule({
 function isRestoredCapture(context: Context, node: AnyNode): boolean {
   const n = syntax(node),
     p = n?.parent;
-  if (
-    !n ||
-    p?.type !== 'VariableDeclarator' ||
-    p.init !== n ||
-    p.id.type !== 'Identifier'
-  )
-    return false;
+  if (!n || p?.type !== 'VariableDeclarator' || p.init !== n || p.id.type !== 'Identifier') return false;
   const variable = lexicalVariable(context, p.id);
   if (!variable) return false;
   const reads = variable.references.filter((r) => r.isRead());
@@ -249,8 +202,7 @@ function isRestoredCapture(context: Context, node: AnyNode): boolean {
       let child = assignment,
         parent = child.parent;
       while (parent && !FUNCTION_LIKE.has(parent.type)) {
-        if (parent.type === 'TryStatement' && parent.finalizer === child)
-          return true;
+        if (parent.type === 'TryStatement' && parent.finalizer === child) return true;
         child = parent;
         parent = child.parent;
       }

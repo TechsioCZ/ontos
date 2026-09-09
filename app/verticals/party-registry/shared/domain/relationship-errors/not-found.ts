@@ -7,5 +7,5 @@ export class PartyRelationshipNotFound extends Schema.TaggedError<PartyRelations
   {
     ...RelationshipErrorBase,
     code: Schema.Literal('party_relationship_not_found'),
-  }
+  },
 ) {}

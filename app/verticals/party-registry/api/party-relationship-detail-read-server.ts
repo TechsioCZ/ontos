@@ -38,6 +38,6 @@ export const partyRelationshipDetailReadApiLive = HttpApiBuilder.group(
         authenticatePrincipal: authenticateOperationPrincipal,
         problems,
         registration: partyRelationshipDetailRead,
-      })
-    )
+      }),
+    ),
 );

@@ -11,72 +11,53 @@ const payload = {
 for (const state of ['active', 'archived'] as const) {
   const handle = handleEngagementLifecycle<typeof payload, string>(state);
 
-  it.effect(
-    `engagement transition to ${state} forwards the reference and returns the persisted value`,
-    () =>
-      Effect.gen(function* verifyTransition() {
-        const value = yield* handle(payload, {
-          services: {
-            transition: (profileId) => {
-              assert.equal(profileId, payload.profileRef.resourceId);
-              return Effect.succeed({
-                _tag: 'found',
-                value: 'persisted-profile',
-              });
-            },
+  it.effect(`engagement transition to ${state} forwards the reference and returns the persisted value`, () =>
+    Effect.gen(function* verifyTransition() {
+      const value = yield* handle(payload, {
+        services: {
+          transition: (profileId) => {
+            assert.equal(profileId, payload.profileRef.resourceId);
+            return Effect.succeed({
+              _tag: 'found',
+              value: 'persisted-profile',
+            });
           },
-        });
-        assert.equal(value, 'persisted-profile');
-      })
+        },
+      });
+      assert.equal(value, 'persisted-profile');
+    }),
   );
 
   it.effect(`engagement conflict reports the requested ${state} state`, () =>
     Effect.gen(function* verifyConflict() {
       const reason = yield* handle(payload, {
         services: {
-          transition: () =>
-            Effect.succeed({ _tag: 'conflict', value: 'existing-profile' }),
+          transition: () => Effect.succeed({ _tag: 'conflict', value: 'existing-profile' }),
         },
-      }).pipe(
-        Effect.catchTag('EngagementProfileConflict', (error) =>
-          Effect.succeed(error.reason)
-        )
-      );
+      }).pipe(Effect.catchTag('EngagementProfileConflict', (error) => Effect.succeed(error.reason)));
       assert.equal(reason, `The engagement profile is already ${state}`);
-    })
+    }),
   );
 
-  it.effect(
-    `engagement transition to ${state} retains the missing profile identity`,
-    () =>
-      Effect.gen(function* verifyMissing() {
-        const profileId = yield* handle(payload, {
-          services: { transition: () => Effect.succeed({ _tag: 'not_found' }) },
-        }).pipe(
-          Effect.catchTag('EngagementProfileNotFound', (error) =>
-            Effect.succeed(error.profileId)
-          )
-        );
-        assert.equal(profileId, payload.profileRef.resourceId);
-      })
+  it.effect(`engagement transition to ${state} retains the missing profile identity`, () =>
+    Effect.gen(function* verifyMissing() {
+      const profileId = yield* handle(payload, {
+        services: { transition: () => Effect.succeed({ _tag: 'not_found' }) },
+      }).pipe(Effect.catchTag('EngagementProfileNotFound', (error) => Effect.succeed(error.profileId)));
+      assert.equal(profileId, payload.profileRef.resourceId);
+    }),
   );
 
-  it.effect(
-    `engagement transition to ${state} preserves the typed persistence failure`,
-    () =>
-      Effect.gen(function* verifyPersistenceFailure() {
-        const failure = new EngagementProfilePersistenceUnavailable({
-          code: 'contacts_engagement_profile_persistence_unavailable',
-          reason: 'Storage unavailable',
-        });
-        const result = yield* handle(payload, {
-          services: { transition: () => Effect.fail(failure) },
-        }).pipe(
-          Effect.catchTag('EngagementProfilePersistenceUnavailable', (error) =>
-            Effect.succeed(error)
-          )
-        );
-        assert.equal(result, failure);
-      })
+  it.effect(`engagement transition to ${state} preserves the typed persistence failure`, () =>
+    Effect.gen(function* verifyPersistenceFailure() {
+      const failure = new EngagementProfilePersistenceUnavailable({
+        code: 'contacts_engagement_profile_persistence_unavailable',
+        reason: 'Storage unavailable',
+      });
+      const result = yield* handle(payload, {
+        services: { transition: () => Effect.fail(failure) },
+      }).pipe(Effect.catchTag('EngagementProfilePersistenceUnavailable', (error) => Effect.succeed(error)));
+      assert.equal(result, failure);
+    }),
   );
 }

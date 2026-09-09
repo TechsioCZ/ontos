@@ -28,10 +28,7 @@ import {
 import { OutboxPayloadSchema as CounterpartyRoleEndedEventSchema } from '../../shared/outbox/party-registry-counterparty-role-ended-v1.ts';
 import { endCounterpartyRoleRecord } from '../services/counterparty-persistence.service.ts';
 import type { EndCounterpartyRoleResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
-import {
-  counterpartyRoleWritePermission,
-  failCounterpartyNotFound,
-} from './counterparty-role-action-support.ts';
+import { counterpartyRoleWritePermission, failCounterpartyNotFound } from './counterparty-role-action-support.ts';
 import { createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage } from './counterparty-role-end.party-registry-counterparty-role-ended-v1.outbox-message.ts';
 
 export {
@@ -57,119 +54,110 @@ type CounterpartyRoleEndDomainEvents = Readonly<{
 export interface CounterpartyRoleEndServices {
   readonly end: (
     payload: CounterpartyRoleEndPayload,
-    context: ActionHandlerContext<
-      CounterpartyRoleEndDomainEvents,
-      CounterpartyRoleEndServices
-    >
+    context: ActionHandlerContext<CounterpartyRoleEndDomainEvents, CounterpartyRoleEndServices>,
   ) => Effect.Effect<PersistenceResult, CounterpartyPersistenceUnavailable>;
 }
 
-const handleCounterpartyRoleEnd = Effect.fn(
-  'CounterpartyRoleEndAction.handleCounterpartyRoleEnd'
-)(function* endCounterpartyRole(
-  payload: CounterpartyRoleEndPayload,
-  context: ActionHandlerContext<
-    CounterpartyRoleEndDomainEvents,
-    CounterpartyRoleEndServices
-  >
-) {
-  if (
-    payload.counterpartyRef.tenantId !== context.scope.tenantId ||
-    payload.rolePeriodRef.tenantId !== context.scope.tenantId
+const handleCounterpartyRoleEnd = Effect.fn('CounterpartyRoleEndAction.handleCounterpartyRoleEnd')(
+  function* endCounterpartyRole(
+    payload: CounterpartyRoleEndPayload,
+    context: ActionHandlerContext<CounterpartyRoleEndDomainEvents, CounterpartyRoleEndServices>,
   ) {
-    return yield* new CounterpartyScopeMismatch({
-      code: 'counterparty_scope_mismatch',
-      reason: 'Counterparty Role references must belong to the trusted Tenant',
-    });
-  }
-  const persistenceResult = yield* context.services.end(payload, context);
-  const result = yield* Match.value(persistenceResult).pipe(
-    Match.tag('counterparty_not_found', failCounterpartyNotFound),
-    Match.tag('evidence_insufficient', ({ method, roleType }) =>
-      Effect.fail(
-        new CounterpartyEvidenceInsufficient({
-          code: 'counterparty_evidence_insufficient',
-          method,
-          reason: `The evidence does not establish the end of the ${roleType} relationship`,
-        })
-      )
-    ),
-    Match.tag('role_not_found', ({ rolePeriodId }) =>
-      Effect.fail(
-        new CounterpartyRolePeriodNotFound({
-          code: 'counterparty_role_period_not_found',
-          reason: 'The Counterparty Role period does not exist in this context',
-          rolePeriodId,
-        })
-      )
-    ),
-    Match.tag('already_ended', ({ rolePeriodId }) =>
-      Effect.fail(
-        new CounterpartyRoleAlreadyEnded({
-          code: 'counterparty_role_already_ended',
-          reason:
-            'A different request cannot overwrite an ended Role period; use correction',
-          rolePeriodId,
-        })
-      )
-    ),
-    Match.tag('temporal_conflict', () =>
-      Effect.fail(
-        new CounterpartyTemporalConflict({
-          code: 'counterparty_temporal_conflict',
-          reason: 'The effective end cannot precede the Role period start',
-        })
-      )
-    ),
-    Match.tag('found', (found) => Effect.succeed(found)),
-    Match.exhaustive
-  );
-  yield* context.recordAuditEvidence({
-    evidenceReference: payload.provenance.evidenceReference ?? null,
-    provenanceMethod: payload.provenance.method,
-    provenanceReason: payload.provenance.reason ?? payload.provenance.method,
-    provenanceSource: payload.provenance.source,
-  });
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `counterparty-role-period:${payload.rolePeriodRef.resourceId}`,
-    resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
-    targetResourceId: payload.counterpartyRef.resourceId,
-    targetResourceType: 'party.registry.counterparty',
-  });
-  if (result.value.validTo === null) {
-    return yield* new CounterpartyTemporalConflict({
-      code: 'counterparty_temporal_conflict',
-      reason: 'The ended Role period did not retain its effective end',
-    });
-  }
-  const actionResult = {
-    counterpartyRef: payload.counterpartyRef,
-    rolePeriodRef: result.value.rolePeriodRef,
-    roleType: result.value.roleType,
-    validFrom: result.value.validFrom,
-    validTo: result.value.validTo,
-  } as const;
-  if (result.changed) {
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.counterparty-role-ended.v1',
-      payloadJson: actionResult,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: payload.counterpartyRef.resourceId,
-      subjectResourceType: 'party.registry.counterparty',
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage(
-        actionResult
-      )
+    if (
+      payload.counterpartyRef.tenantId !== context.scope.tenantId ||
+      payload.rolePeriodRef.tenantId !== context.scope.tenantId
+    ) {
+      return yield* new CounterpartyScopeMismatch({
+        code: 'counterparty_scope_mismatch',
+        reason: 'Counterparty Role references must belong to the trusted Tenant',
+      });
+    }
+    const persistenceResult = yield* context.services.end(payload, context);
+    const result = yield* Match.value(persistenceResult).pipe(
+      Match.tag('counterparty_not_found', failCounterpartyNotFound),
+      Match.tag('evidence_insufficient', ({ method, roleType }) =>
+        Effect.fail(
+          new CounterpartyEvidenceInsufficient({
+            code: 'counterparty_evidence_insufficient',
+            method,
+            reason: `The evidence does not establish the end of the ${roleType} relationship`,
+          }),
+        ),
+      ),
+      Match.tag('role_not_found', ({ rolePeriodId }) =>
+        Effect.fail(
+          new CounterpartyRolePeriodNotFound({
+            code: 'counterparty_role_period_not_found',
+            reason: 'The Counterparty Role period does not exist in this context',
+            rolePeriodId,
+          }),
+        ),
+      ),
+      Match.tag('already_ended', ({ rolePeriodId }) =>
+        Effect.fail(
+          new CounterpartyRoleAlreadyEnded({
+            code: 'counterparty_role_already_ended',
+            reason: 'A different request cannot overwrite an ended Role period; use correction',
+            rolePeriodId,
+          }),
+        ),
+      ),
+      Match.tag('temporal_conflict', () =>
+        Effect.fail(
+          new CounterpartyTemporalConflict({
+            code: 'counterparty_temporal_conflict',
+            reason: 'The effective end cannot precede the Role period start',
+          }),
+        ),
+      ),
+      Match.tag('found', (found) => Effect.succeed(found)),
+      Match.exhaustive,
     );
-  }
-  return actionResult;
-});
+    yield* context.recordAuditEvidence({
+      evidenceReference: payload.provenance.evidenceReference ?? null,
+      provenanceMethod: payload.provenance.method,
+      provenanceReason: payload.provenance.reason ?? payload.provenance.method,
+      provenanceSource: payload.provenance.source,
+    });
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `counterparty-role-period:${payload.rolePeriodRef.resourceId}`,
+      resultCount: 1,
+      servingModuleKey: 'party.registry',
+      targetModuleKey: 'party.registry',
+      targetResourceId: payload.counterpartyRef.resourceId,
+      targetResourceType: 'party.registry.counterparty',
+    });
+    if (result.value.validTo === null) {
+      return yield* new CounterpartyTemporalConflict({
+        code: 'counterparty_temporal_conflict',
+        reason: 'The ended Role period did not retain its effective end',
+      });
+    }
+    const actionResult = {
+      counterpartyRef: payload.counterpartyRef,
+      rolePeriodRef: result.value.rolePeriodRef,
+      roleType: result.value.roleType,
+      validFrom: result.value.validFrom,
+      validTo: result.value.validTo,
+    } as const;
+    if (result.changed) {
+      const event = yield* context.addDomainEvent({
+        eventType: 'party.registry.counterparty-role-ended.v1',
+        payloadJson: actionResult,
+        producerModuleKey: 'party.registry',
+        subjectModuleKey: 'party.registry',
+        subjectResourceId: payload.counterpartyRef.resourceId,
+        subjectResourceType: 'party.registry.counterparty',
+      });
+      yield* context.addOutboxMessage(
+        event,
+        createCounterpartyRoleEndPartyRegistryCounterpartyRoleEndedV1OutboxMessage(actionResult),
+      );
+    }
+    return actionResult;
+  },
+);
 
 export const counterpartyRoleEndAction = defineAction(
   {
@@ -182,8 +170,7 @@ export const counterpartyRoleEndAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: CounterpartyRoleEndError,
     domainEvents: {
-      'party.registry.counterparty-role-ended.v1':
-        CounterpartyRoleEndedEventSchema,
+      'party.registry.counterparty-role-ended.v1': CounterpartyRoleEndedEventSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -200,10 +187,7 @@ export const counterpartyRoleEndAction = defineAction(
     owningModuleKey: 'party.registry',
     payloadSchema: CounterpartyRoleEndPayloadSchema,
     policies: [],
-    resourcePermission:
-      defineActionResourcePermission<CounterpartyRoleEndPayload>(
-        counterpartyRoleWritePermission
-      ),
+    resourcePermission: defineActionResourcePermission<CounterpartyRoleEndPayload>(counterpartyRoleWritePermission),
     resultSchema: CounterpartyRoleEndResultSchema,
     schemaVersion: '1',
   },
@@ -214,17 +198,14 @@ export const counterpartyRoleEndAction = defineAction(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
           reason: 'Counterparty Role End requires a trusted Legal Entity scope',
-        })
+        }),
       );
     }
     const { legalEntityId } = scope;
     return Effect.succeed({
       end: (
         payload: CounterpartyRoleEndPayload,
-        context: ActionHandlerContext<
-          CounterpartyRoleEndDomainEvents,
-          CounterpartyRoleEndServices
-        >
+        context: ActionHandlerContext<CounterpartyRoleEndDomainEvents, CounterpartyRoleEndServices>,
       ) =>
         endCounterpartyRoleRecord(transaction, {
           actionInvocationId: context.actionInvocationId,
@@ -238,5 +219,5 @@ export const counterpartyRoleEndAction = defineAction(
           validTo: payload.validTo,
         }),
     });
-  }
+  },
 );

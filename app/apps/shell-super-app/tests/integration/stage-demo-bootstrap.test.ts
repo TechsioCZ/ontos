@@ -42,34 +42,23 @@ describe('stage-demo-bootstrap', () => {
           databaseAdminUrl: baseConfiguration.connectionString,
         } as const;
         const cleanup = Effect.gen(function* cleanupPasswordFixture() {
-          const users = yield* database
-            .select({ id: user.id })
-            .from(user)
-            .where(eq(user.email, email));
+          const users = yield* database.select({ id: user.id }).from(user).where(eq(user.email, email));
           for (const existingUser of users) {
-            yield* database
-              .delete(session)
-              .where(eq(session.userId, existingUser.id));
-            yield* database
-              .delete(account)
-              .where(eq(account.userId, existingUser.id));
+            yield* database.delete(session).where(eq(session.userId, existingUser.id));
+            yield* database.delete(account).where(eq(account.userId, existingUser.id));
             yield* database.delete(user).where(eq(user.id, existingUser.id));
           }
         }).pipe(Effect.orDie);
         yield* cleanup;
         yield* Effect.addFinalizer(() => cleanup);
-        const created = yield* ensureStageDemoAuthUser(
-          configuration,
-          configuration.accounts[0]
-        ).pipe(Effect.provideService(AuthDatabase, persistence));
-        yield* database
-          .update(account)
-          .set({ password: randomUUID() })
-          .where(eq(account.userId, created.userId));
+        const created = yield* ensureStageDemoAuthUser(configuration, configuration.accounts[0]).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        yield* database.update(account).set({ password: randomUUID() }).where(eq(account.userId, created.userId));
         const sessionCreatedAt = yield* DateTime.nowAsDate;
         const sessionExpiresAt = DateTime.makeUnsafe(sessionCreatedAt).pipe(
           DateTime.add({ minutes: 1 }),
-          DateTime.toDateUtc
+          DateTime.toDateUtc,
         );
         yield* database.insert(session).values({
           createdAt: sessionCreatedAt,
@@ -96,13 +85,13 @@ describe('stage-demo-bootstrap', () => {
           verifyPassword({
             hash: credential?.password ?? '',
             password: replacementPassword,
-          })
+          }),
         );
         const initialMatches = yield* Effect.promise(() =>
           verifyPassword({
             hash: credential?.password ?? '',
             password: initialPassword,
-          })
+          }),
         );
         expect(replacementMatches).toBe(true);
         expect(initialMatches).toBe(false);
@@ -111,8 +100,8 @@ describe('stage-demo-bootstrap', () => {
           .from(session)
           .where(eq(session.userId, created.userId));
         expect(remainingSessions).toHaveLength(0);
-      })
-    )
+      }),
+    ),
   );
 
   it.live(
@@ -130,7 +119,7 @@ describe('stage-demo-bootstrap', () => {
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
                 databaseClosed = true;
-              })
+              }),
             );
             const database = yield* makeAuthDatabase(configuration);
             return yield* bootstrapStageDemo({
@@ -154,48 +143,36 @@ describe('stage-demo-bootstrap', () => {
                 adapter: (options) => {
                   const adapter = sdkAdapter(options);
                   const create = adapter.create.bind(adapter);
-                  rstest
-                    .spyOn(adapter, 'create')
-                    .mockImplementation(
-                      (input: Parameters<typeof create>[0]) => {
-                        if (input.model === 'user') {
-                          Deferred.doneUnsafe(sdkStarted, Effect.succeed(null));
-                          // oxlint-disable-next-line sonarjs/no-nested-functions -- SDK settlement continuation stays inside its adapter mock.
-                          return sdkSettlement.promise.then(() =>
-                            create(input)
-                          );
-                        }
-                        return create(input);
-                      }
-                    );
+                  rstest.spyOn(adapter, 'create').mockImplementation((input: Parameters<typeof create>[0]) => {
+                    if (input.model === 'user') {
+                      Deferred.doneUnsafe(sdkStarted, Effect.succeed(null));
+                      // oxlint-disable-next-line sonarjs/no-nested-functions -- SDK settlement continuation stays inside its adapter mock.
+                      return sdkSettlement.promise.then(() => create(input));
+                    }
+                    return create(input);
+                  });
                   return adapter;
                 },
                 executor: database.executor,
-              })
+              }),
             );
-          })
+          }),
         );
-        const outcome = yield* Effect.gen(
-          function* interruptPendingBootstrap() {
-            const bootstrap = yield* program.pipe(Effect.forkChild);
-            yield* Deferred.await(sdkStarted).pipe(
-              Effect.raceFirst(Fiber.join(bootstrap))
-            );
-            const interruption = yield* Fiber.interrupt(bootstrap).pipe(
-              Effect.forkChild
-            );
-            yield* Effect.yieldNow;
-            const pending = bootstrap.pollUnsafe() === undefined;
-            const closedBeforeSettlement = databaseClosed;
-            sdkSettlement.resolve(null);
-            yield* Fiber.join(interruption);
-            return {
-              closedBeforeSettlement,
-              exit: yield* Fiber.await(bootstrap),
-              pending,
-            };
-          }
-        ).pipe(Effect.ensuring(Effect.sync(() => sdkSettlement.resolve(null))));
+        const outcome = yield* Effect.gen(function* interruptPendingBootstrap() {
+          const bootstrap = yield* program.pipe(Effect.forkChild);
+          yield* Deferred.await(sdkStarted).pipe(Effect.raceFirst(Fiber.join(bootstrap)));
+          const interruption = yield* Fiber.interrupt(bootstrap).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          const pending = bootstrap.pollUnsafe() === undefined;
+          const closedBeforeSettlement = databaseClosed;
+          sdkSettlement.resolve(null);
+          yield* Fiber.join(interruption);
+          return {
+            closedBeforeSettlement,
+            exit: yield* Fiber.await(bootstrap),
+            pending,
+          };
+        }).pipe(Effect.ensuring(Effect.sync(() => sdkSettlement.resolve(null))));
         expect(outcome.pending).toBe(true);
         expect(outcome.closedBeforeSettlement).toBe(false);
         expect(Exit.isFailure(outcome.exit)).toBe(true);
@@ -206,6 +183,6 @@ describe('stage-demo-bootstrap', () => {
         expect(store.user).toHaveLength(1);
         expect(store.account).toHaveLength(1);
       }),
-    10_000
+    10_000,
   );
 });

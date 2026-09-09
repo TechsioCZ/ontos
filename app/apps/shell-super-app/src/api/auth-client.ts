@@ -1,7 +1,4 @@
-import {
-  Effect,
-  makeEffectHttpApiClient,
-} from '@modern-js/plugin-bff/effect-client';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import type {
   HttpApi,
   HttpApiClient,
@@ -12,10 +9,7 @@ import type {
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
-import {
-  ShellAuthenticationApi,
-  shellAuthenticationApiContract,
-} from '../../shared/api.ts';
+import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
 import type {
   AvailableLegalEntitiesResponse,
   AvailableTenantsResponse,
@@ -78,12 +72,7 @@ export type {
 } from '@app/shared-contracts';
 
 type ShellAuthenticationApiGroups =
-  typeof ShellAuthenticationApi extends HttpApi.HttpApi<
-    infer _ApiId,
-    infer Groups
-  >
-    ? Groups
-    : never;
+  typeof ShellAuthenticationApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
 export type ShellAuthenticationClient = HttpApiClient.Client<
   Extract<ShellAuthenticationApiGroups, HttpApiGroup.Constraint>
@@ -103,10 +92,7 @@ export type ShellAuthenticationClientError =
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 
-export type ShellAuthenticationClientEffect<Success> = Effect.Effect<
-  Success,
-  ShellAuthenticationClientError
->;
+export type ShellAuthenticationClientEffect<Success> = Effect.Effect<Success, ShellAuthenticationClientError>;
 
 export type AvailableTenantsClientError =
   | TenantAuthenticationRequiredProblem
@@ -115,33 +101,20 @@ export type AvailableTenantsClientError =
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 
-export type SwitchTenantClientError =
-  | AvailableTenantsClientError
-  | TenantAccessForbiddenProblem;
+export type SwitchTenantClientError = AvailableTenantsClientError | TenantAccessForbiddenProblem;
 
-export type AvailableTenantsClientEffect = Effect.Effect<
-  AvailableTenantsResponse,
-  AvailableTenantsClientError
->;
+export type AvailableTenantsClientEffect = Effect.Effect<AvailableTenantsResponse, AvailableTenantsClientError>;
 
-export type SwitchTenantClientEffect = Effect.Effect<
-  SwitchTenantResponse,
-  SwitchTenantClientError
->;
+export type SwitchTenantClientEffect = Effect.Effect<SwitchTenantResponse, SwitchTenantClientError>;
 
 export type AvailableLegalEntitiesClientEffect = Effect.Effect<
   AvailableLegalEntitiesResponse,
   AvailableTenantsClientError
 >;
 
-export type SwitchLegalEntityClientError =
-  | AvailableTenantsClientError
-  | LegalEntityAccessForbiddenProblem;
+export type SwitchLegalEntityClientError = AvailableTenantsClientError | LegalEntityAccessForbiddenProblem;
 
-export type SwitchLegalEntityClientEffect = Effect.Effect<
-  SwitchLegalEntityResponse,
-  SwitchLegalEntityClientError
->;
+export type SwitchLegalEntityClientEffect = Effect.Effect<SwitchLegalEntityResponse, SwitchLegalEntityClientError>;
 
 export type ShellCompositionClientError =
   | HttpClientError.HttpClientError
@@ -157,15 +130,10 @@ export type ShellTargetClientError =
   | ShellTargetForbiddenProblem
   | ShellTargetNotFoundProblem;
 
-export type ShellSearchClientError =
-  | ShellCompositionClientError
-  | ShellSelectionRequiredProblem;
+export type ShellSearchClientError = ShellCompositionClientError | ShellSelectionRequiredProblem;
 export type ShellResourceClientError = ShellTargetClientError;
 
-export type IdentityClientError =
-  | IdentityProblem
-  | HttpClientError.HttpClientError
-  | Schema.SchemaError;
+export type IdentityClientError = IdentityProblem | HttpClientError.HttpClientError | Schema.SchemaError;
 
 export interface IdentityClientOptions extends ShellAuthenticationClientOptions {
   readonly idempotencyKey: string;
@@ -175,164 +143,119 @@ const identityHeaders = (options: IdentityClientOptions) => ({
   'idempotency-key': options.idempotencyKey,
 });
 
-const ShellAuthenticationRequestOptions =
-  Context.Reference<ShellAuthenticationClientOptions>(
-    'ShellAuthenticationRequestOptions',
-    { defaultValue: () => ({}) }
-  );
-
-const shellAuthenticationClient = makeEffectHttpApiClient(
-  ShellAuthenticationApi,
-  {
-    transformClient: HttpClient.mapRequestEffect((request) =>
-      ShellAuthenticationRequestOptions.pipe(
-        Effect.map((options) => {
-          let nextRequest = HttpClientRequest.prependUrl(
-            request,
-            (
-              options.baseUrl ?? shellAuthenticationApiContract.apiPrefix
-            ).toString()
-          );
-          if (
-            options.locale !== undefined &&
-            nextRequest.headers['accept-language'] === undefined
-          ) {
-            nextRequest = HttpClientRequest.setHeader(
-              nextRequest,
-              'accept-language',
-              options.locale
-            );
-          }
-          if (options.cookie !== undefined) {
-            nextRequest = HttpClientRequest.setHeader(
-              nextRequest,
-              'cookie',
-              options.cookie
-            );
-          }
-          return nextRequest;
-        })
-      )
-    ),
-  }
+const ShellAuthenticationRequestOptions = Context.Reference<ShellAuthenticationClientOptions>(
+  'ShellAuthenticationRequestOptions',
+  { defaultValue: () => ({}) },
 );
+
+const shellAuthenticationClient = makeEffectHttpApiClient(ShellAuthenticationApi, {
+  transformClient: HttpClient.mapRequestEffect((request) =>
+    ShellAuthenticationRequestOptions.pipe(
+      Effect.map((options) => {
+        let nextRequest = HttpClientRequest.prependUrl(
+          request,
+          (options.baseUrl ?? shellAuthenticationApiContract.apiPrefix).toString(),
+        );
+        if (options.locale !== undefined && nextRequest.headers['accept-language'] === undefined) {
+          nextRequest = HttpClientRequest.setHeader(nextRequest, 'accept-language', options.locale);
+        }
+        if (options.cookie !== undefined) {
+          nextRequest = HttpClientRequest.setHeader(nextRequest, 'cookie', options.cookie);
+        }
+        return nextRequest;
+      }),
+    ),
+  ),
+});
 
 const invokeShellAuthenticationClient = <Success, Failure>(
   options: ShellAuthenticationClientOptions,
-  operation: (
-    client: ShellAuthenticationClient
-  ) => Effect.Effect<Success, Failure>
+  operation: (client: ShellAuthenticationClient) => Effect.Effect<Success, Failure>,
 ): Effect.Effect<Success, Failure> =>
   shellAuthenticationClient.pipe(
     Effect.flatMap(operation),
-    Effect.provideService(ShellAuthenticationRequestOptions, options)
+    Effect.provideService(ShellAuthenticationRequestOptions, options),
   );
 
 export const signIn = (
   payload: SignInPayload,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): ShellAuthenticationClientEffect<SignInResponse> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.authentication.signIn({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.authentication.signIn({ payload }));
 
 export const currentSession = (
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): ShellAuthenticationClientEffect<CurrentSession> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.authentication.currentSession({})
-  );
+  invokeShellAuthenticationClient(options, (client) => client.authentication.currentSession({}));
 
-export const availableTenants = (
-  options: ShellAuthenticationClientOptions = {}
-): AvailableTenantsClientEffect =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.tenants.availableTenants({})
-  );
+export const availableTenants = (options: ShellAuthenticationClientOptions = {}): AvailableTenantsClientEffect =>
+  invokeShellAuthenticationClient(options, (client) => client.tenants.availableTenants({}));
 
 export const switchTenant = (
   payload: SwitchTenantPayload,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): SwitchTenantClientEffect =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.tenants.switchTenant({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.tenants.switchTenant({ payload }));
 
 export const availableLegalEntities = (
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): AvailableLegalEntitiesClientEffect =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.legalEntities.availableLegalEntities({})
-  );
+  invokeShellAuthenticationClient(options, (client) => client.legalEntities.availableLegalEntities({}));
 
 export const switchLegalEntity = (
   payload: SwitchLegalEntityPayload,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): SwitchLegalEntityClientEffect =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.legalEntities.switchLegalEntity({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.legalEntities.switchLegalEntity({ payload }));
 
 export const shellComposition = (
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellComposition, ShellCompositionClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.composition.shellComposition({})
-  );
+  invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({}));
 
 export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.composition.resolveModuleTarget({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTarget({ payload }));
 
 export const searchResources = (
   payload: ShellSearchPayload,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellSearchResponse, ShellSearchClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.resources.search({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.resources.search({ payload }));
 
 export const resourceDetail = (
   payload: ResourceRef,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellResourceResponse, ShellResourceClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.resources.resourceDetail({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.resources.resourceDetail({ payload }));
 
 export const attachResourceMedia = (
   payload: ResourceRef,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<MediaAttachmentResponse, ShellResourceClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.resources.attachMedia({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.resources.attachMedia({ payload }));
 
 export const signOut = (
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): ShellAuthenticationClientEffect<SignOutResponse> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.authentication.signOut({})
-  );
+  invokeShellAuthenticationClient(options, (client) => client.authentication.signOut({}));
 
 export const createNonHumanPrincipal = (
   payload: CreateNonHumanPrincipalPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<PrincipalMutationResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.createNonHumanPrincipal({
       headers: identityHeaders(options),
       payload,
-    })
+    }),
   );
 
 export const changePrincipalStatus = (
   payload: ChangePrincipalStatusPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<PrincipalMutationResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     payload.newStatus === 'active'
@@ -343,50 +266,46 @@ export const changePrincipalStatus = (
       : client.identity.changePrincipalStatus({
           headers: identityHeaders(options),
           payload,
-        })
+        }),
   );
 
 export const issueSelfApiKey = (
   payload: IssueApiKeyPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.issueSelfApiKey({
       headers: identityHeaders(options),
       payload,
-    })
+    }),
   );
 
 export const listSelfApiKeys = (
   payload: IdentityListPayload,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<SelfApiKeyListResponse, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.identity.listSelfApiKeys({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.identity.listSelfApiKeys({ payload }));
 
 export const issueManagedApiKey = (
   payload: IssueManagedApiKeyPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.issueManagedApiKey({
       headers: identityHeaders(options),
       payload,
-    })
+    }),
   );
 
 export const listManagedApiKeys = (
   payload: IdentityListPayload,
-  options: ShellAuthenticationClientOptions = {}
+  options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ManagedApiKeyListResponse, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) =>
-    client.identity.listManagedApiKeys({ payload })
-  );
+  invokeShellAuthenticationClient(options, (client) => client.identity.listManagedApiKeys({ payload }));
 
 export const setSelfApiKeyStatus = (
   payload: SetApiKeyStatusPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<ApiKeyLifecycleResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     payload.newStatus === 'revoked'
@@ -397,12 +316,12 @@ export const setSelfApiKeyStatus = (
       : client.identity.setSelfApiKeyStatus({
           headers: identityHeaders(options),
           payload,
-        })
+        }),
   );
 
 export const setManagedApiKeyStatus = (
   payload: SetManagedApiKeyStatusPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<ApiKeyLifecycleResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     payload.newStatus === 'revoked'
@@ -413,49 +332,49 @@ export const setManagedApiKeyStatus = (
       : client.identity.setManagedApiKeyStatus({
           headers: identityHeaders(options),
           payload,
-        })
+        }),
   );
 
 export const rotateSelfApiKey = (
   payload: RotateApiKeyPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.rotateSelfApiKey({
       headers: identityHeaders(options),
       payload,
-    })
+    }),
   );
 
 export const rotateManagedApiKey = (
   payload: RotateManagedApiKeyPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.rotateManagedApiKey({
       headers: identityHeaders(options),
       payload,
-    })
+    }),
   );
 
 export const startSupportImpersonation = (
   payload: StartSupportImpersonationPayload,
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<SupportImpersonationResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.startSupportImpersonation({
       headers: identityHeaders(options),
       payload,
-    })
+    }),
   );
 
 export const stopSupportImpersonation = (
-  options: IdentityClientOptions
+  options: IdentityClientOptions,
 ): Effect.Effect<SupportImpersonationResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) =>
     client.identity.stopSupportImpersonation({
       headers: identityHeaders(options),
-    })
+    }),
   );
 
 export { Effect } from '@modern-js/plugin-bff/effect-client';

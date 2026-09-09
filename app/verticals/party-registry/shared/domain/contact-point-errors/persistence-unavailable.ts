@@ -7,5 +7,5 @@ export class PartyContactPointPersistenceUnavailable extends Schema.TaggedError<
   {
     code: Schema.Literal('party_contact_point_persistence_unavailable'),
     reason: ContactPointErrorReasonSchema,
-  }
+  },
 ) {}

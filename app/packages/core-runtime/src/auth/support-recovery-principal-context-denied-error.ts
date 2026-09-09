@@ -5,5 +5,5 @@ export class SupportRecoveryPrincipalContextDeniedError extends Schema.TaggedErr
   {
     code: Schema.Literal('support_recovery_context_denied'),
     reason: Schema.String,
-  }
+  },
 ) {}

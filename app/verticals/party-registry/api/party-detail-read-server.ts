@@ -28,16 +28,13 @@ const problems = makeGovernedReadProblems({
   unavailable: PartyDetailUnavailableProblemSchema,
 });
 
-export const partyDetailReadApiLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'partyDetail',
-  (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: partyDetailRead,
-      })
-    )
+export const partyDetailReadApiLive = HttpApiBuilder.group(partyRegistryApi, 'partyDetail', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: partyDetailRead,
+    }),
+  ),
 );

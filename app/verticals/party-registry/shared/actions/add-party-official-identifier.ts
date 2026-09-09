@@ -15,11 +15,9 @@ export const AddPartyOfficialIdentifierPayloadSchema = Schema.Struct({
   provenanceSource: Schema.String,
   validFrom: IsoTimestampSchema,
 });
-export type AddPartyOfficialIdentifierPayload =
-  typeof AddPartyOfficialIdentifierPayloadSchema.Type;
+export type AddPartyOfficialIdentifierPayload = typeof AddPartyOfficialIdentifierPayloadSchema.Type;
 export const AddPartyOfficialIdentifierResultSchema = Schema.Struct({
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
 });
-export type AddPartyOfficialIdentifierResult =
-  typeof AddPartyOfficialIdentifierResultSchema.Type;
+export type AddPartyOfficialIdentifierResult = typeof AddPartyOfficialIdentifierResultSchema.Type;

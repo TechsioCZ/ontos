@@ -92,20 +92,13 @@ const DOTENV_MODULE =
 const NODE_MODULE_SPECIFIER = /^(?:node:module|module)$/u;
 
 /** Audit scope: application, vertical, package and script sources. Tests included by default. */
-const DEFAULT_SCOPE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_SCOPE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 /**
  * The local bootstrap composition root loads dotenv into a local record (processEnv), not the
  * ambient bag, and exposes injectable environmentEffect. It is not the D-tier .env rewriter.
  */
-const DEFAULT_ALLOW_PATHS: readonly string[] = [
-  'scripts/initialize-local-development.mts',
-];
+const DEFAULT_ALLOW_PATHS: readonly string[] = ['scripts/initialize-local-development.mts'];
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -122,16 +115,10 @@ const DEFAULTS: RuleOptions = {
 type AnyNode = ESTree.Node;
 
 function readOptions(raw: unknown): RuleOptions {
-  const given =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+  const given = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     allowPaths: stringArray(given.allowPaths, DEFAULTS.allowPaths),
-    ignoreTestFiles:
-      typeof given.ignoreTestFiles === 'boolean'
-        ? given.ignoreTestFiles
-        : DEFAULTS.ignoreTestFiles,
+    ignoreTestFiles: typeof given.ignoreTestFiles === 'boolean' ? given.ignoreTestFiles : DEFAULTS.ignoreTestFiles,
     scopePaths: stringArray(given.scopePaths, DEFAULTS.scopePaths),
   };
 }
@@ -160,9 +147,7 @@ function unwrapValue(node: AnyNode): AnyNode {
 function staticMemberName(node: ESTree.MemberExpression): string | null {
   if (!node.computed) {
     const property = node.property as AnyNode;
-    return property.type === 'Identifier'
-      ? (property as ESTree.IdentifierName).name
-      : null;
+    return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
   }
   return staticStringValue(node.property as AnyNode);
 }
@@ -174,27 +159,15 @@ function staticMemberName(node: ESTree.MemberExpression): string | null {
  */
 interface Tracker {
   /** Record a binding introduced by an `import` declaration (def type `ImportBinding`). */
-  readonly addImport: (
-    name: string,
-    value: string,
-    ...anchors: readonly (AnyNode | null | undefined)[]
-  ) => void;
+  readonly addImport: (name: string, value: string, ...anchors: readonly (AnyNode | null | undefined)[]) => void;
   /** Record a binding introduced by a declarator / declaration, anchored on the given nodes. */
-  readonly addDeclared: (
-    name: string,
-    value: string,
-    ...anchors: readonly (AnyNode | null | undefined)[]
-  ) => void;
+  readonly addDeclared: (name: string, value: string, ...anchors: readonly (AnyNode | null | undefined)[]) => void;
   readonly resolve: (node: AnyNode, name: string) => string | null;
 }
 
 function createTracker(context: Context): Tracker {
   const anchored = new Map<number, string>();
-  const add = (
-    _name: string,
-    value: string,
-    ...anchors: readonly (AnyNode | null | undefined)[]
-  ): void => {
+  const add = (_name: string, value: string, ...anchors: readonly (AnyNode | null | undefined)[]): void => {
     for (const node of anchors) {
       const start = startOf(node);
       if (start !== null) anchored.set(start, value);
@@ -207,12 +180,7 @@ function createTracker(context: Context): Tracker {
       const variable = resolveVariable(context, name, node);
       if (!variable || variable.defs.length !== 1) return null;
       // Do not infer the current value after a reassignment.
-      if (
-        variable.references.some(
-          (reference) => reference.isWrite() && !reference.init
-        )
-      )
-        return null;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
       const definition = variable.defs[0];
       return (
         anchored.get(startOf(definition.name as AnyNode) ?? -1) ??
@@ -316,28 +284,13 @@ export const rule = defineRule({
       if (call.type !== 'CallExpression') return false;
       const callee = unwrap((call as ESTree.CallExpression).callee as AnyNode);
       if (callee.type === 'Identifier') {
-        return (
-          requireFactory.resolve(
-            callee,
-            (callee as ESTree.IdentifierReference).name
-          ) !== null
-        );
+        return requireFactory.resolve(callee, (callee as ESTree.IdentifierReference).name) !== null;
       }
       if (callee.type !== 'MemberExpression') return false;
-      if (
-        staticMemberName(callee as ESTree.MemberExpression) !== 'createRequire'
-      )
-        return false;
-      const object = unwrap(
-        (callee as ESTree.MemberExpression).object as AnyNode
-      );
+      if (staticMemberName(callee as ESTree.MemberExpression) !== 'createRequire') return false;
+      const object = unwrap((callee as ESTree.MemberExpression).object as AnyNode);
       if (object.type === 'Identifier') {
-        return (
-          moduleNamespace.resolve(
-            object,
-            (object as ESTree.IdentifierReference).name
-          ) !== null
-        );
+        return moduleNamespace.resolve(object, (object as ESTree.IdentifierReference).name) !== null;
       }
       return isAmbientModuleRequire(object);
     };
@@ -348,11 +301,7 @@ export const rule = defineRule({
       const inner = unwrap(object.callee);
       if (inner.type !== 'Identifier' || inner.name !== 'require') return false;
       const specifier = staticStringValue(object.arguments[0]);
-      return (
-        requireIsAmbient(inner) &&
-        specifier !== null &&
-        NODE_MODULE_SPECIFIER.test(specifier)
-      );
+      return requireIsAmbient(inner) && specifier !== null && NODE_MODULE_SPECIFIER.test(specifier);
     };
 
     /**
@@ -370,42 +319,24 @@ export const rule = defineRule({
     };
 
     const loaderSpecifierOf = (value: AnyNode): string | null => {
-      if (value.type === 'ImportExpression')
-        return staticStringValue(value.source);
+      if (value.type === 'ImportExpression') return staticStringValue(value.source);
       if (value.type !== 'CallExpression') return null;
       if (!isModuleLoaderCallee(unwrap(value.callee))) return null;
       return staticStringValue(value.arguments[0]);
     };
 
-    const bindModuleImport = (
-      specifier: ESTree.ImportDeclaration['specifiers'][number]
-    ): void => {
+    const bindModuleImport = (specifier: ESTree.ImportDeclaration['specifiers'][number]): void => {
       if (specifier.type === 'ImportNamespaceSpecifier') {
-        moduleNamespace.addImport(
-          specifier.local.name,
-          'node:module',
-          specifier.local
-        );
+        moduleNamespace.addImport(specifier.local.name, 'node:module', specifier.local);
         return;
       }
-      if (
-        specifier.type !== 'ImportSpecifier' ||
-        specifier.importKind === 'type'
-      )
-        return;
+      if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return;
       if (importedName(specifier) === 'createRequire') {
-        requireFactory.addImport(
-          specifier.local.name,
-          'createRequire',
-          specifier.local
-        );
+        requireFactory.addImport(specifier.local.name, 'createRequire', specifier.local);
       }
     };
 
-    const bindModulePattern = (
-      id: AnyNode,
-      node: ESTree.VariableDeclarator
-    ): void => {
+    const bindModulePattern = (id: AnyNode, node: ESTree.VariableDeclarator): void => {
       if (id.type === 'Identifier') {
         moduleNamespace.addDeclared(id.name, 'node:module', id, node);
         return;
@@ -426,51 +357,29 @@ export const rule = defineRule({
      */
     const dotenvValueOf = (expression: AnyNode): string | null => {
       const value = unwrapValue(expression);
-      if (
-        value.type === 'CallExpression' ||
-        value.type === 'ImportExpression'
-      ) {
+      if (value.type === 'CallExpression' || value.type === 'ImportExpression') {
         const module = loaderSpecifierOf(value);
         return module !== null && isDotenvSpecifier(module) ? module : null;
       }
       if (value.type === 'Identifier') {
-        return dotenv.resolve(
-          value,
-          (value as ESTree.IdentifierReference).name
-        );
+        return dotenv.resolve(value, (value as ESTree.IdentifierReference).name);
       }
       if (value.type === 'MemberExpression') {
         // `dotenvNamespace.default` under esModuleInterop is still the dotenv module object.
-        if (staticMemberName(value as ESTree.MemberExpression) !== 'default')
-          return null;
-        return dotenvValueOf(
-          (value as ESTree.MemberExpression).object as AnyNode
-        );
+        if (staticMemberName(value as ESTree.MemberExpression) !== 'default') return null;
+        return dotenvValueOf((value as ESTree.MemberExpression).object as AnyNode);
       }
       return null;
     };
 
     /** Bind every name introduced by a destructuring/identifier pattern to the dotenv module. */
-    const bindPattern = (
-      pattern: AnyNode,
-      module: string,
-      declarator: AnyNode
-    ): void => {
+    const bindPattern = (pattern: AnyNode, module: string, declarator: AnyNode): void => {
       if (pattern.type === 'Identifier') {
-        dotenv.addDeclared(
-          (pattern as ESTree.BindingIdentifier).name,
-          module,
-          pattern,
-          declarator
-        );
+        dotenv.addDeclared((pattern as ESTree.BindingIdentifier).name, module, pattern, declarator);
         return;
       }
       if (pattern.type === 'AssignmentPattern') {
-        bindPattern(
-          (pattern as ESTree.AssignmentPattern).left as AnyNode,
-          module,
-          declarator
-        );
+        bindPattern((pattern as ESTree.AssignmentPattern).left as AnyNode, module, declarator);
         return;
       }
       if (pattern.type !== 'ObjectPattern') return;
@@ -481,9 +390,7 @@ export const rule = defineRule({
     };
 
     /** The dotenv module a member chain's root object resolves to, plus a readable label. */
-    const resolveDotenvObject = (
-      expression: AnyNode
-    ): { readonly module: string; readonly label: string } | null => {
+    const resolveDotenvObject = (expression: AnyNode): { readonly module: string; readonly label: string } | null => {
       const target = unwrap(expression);
       if (target.type === 'Identifier') {
         const name = (target as ESTree.IdentifierReference).name;
@@ -491,14 +398,9 @@ export const rule = defineRule({
         return module === null ? null : { module, label: name };
       }
       if (target.type !== 'MemberExpression') return null;
-      if (staticMemberName(target as ESTree.MemberExpression) !== 'default')
-        return null;
-      const inner = resolveDotenvObject(
-        (target as ESTree.MemberExpression).object as AnyNode
-      );
-      return inner === null
-        ? null
-        : { module: inner.module, label: `${inner.label}.default` };
+      if (staticMemberName(target as ESTree.MemberExpression) !== 'default') return null;
+      const inner = resolveDotenvObject((target as ESTree.MemberExpression).object as AnyNode);
+      return inner === null ? null : { module: inner.module, label: `${inner.label}.default` };
     };
 
     return {
@@ -515,11 +417,7 @@ export const rule = defineRule({
         if (!isDotenvSpecifier(module)) return;
         for (const specifier of node.specifiers) {
           // An inline `type` specifier binds a type, not a value — but the *declaration* still loads.
-          if (
-            specifier.type === 'ImportSpecifier' &&
-            specifier.importKind === 'type'
-          )
-            continue;
+          if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue;
           dotenv.addImport(specifier.local.name, module, specifier.local);
         }
         // Under `verbatimModuleSyntax` (tsconfig.base.json) an all-inline-type or empty specifier
@@ -558,9 +456,7 @@ export const rule = defineRule({
         if (node.importKind === 'type') return;
         const reference = node.moduleReference as AnyNode;
         if (reference.type !== 'TSExternalModuleReference') return;
-        const module = staticStringValue(
-          (reference as ESTree.TSExternalModuleReference).expression as AnyNode
-        );
+        const module = staticStringValue((reference as ESTree.TSExternalModuleReference).expression as AnyNode);
         if (module === null) return;
         if (NODE_MODULE_SPECIFIER.test(module)) {
           moduleNamespace.addImport(node.id.name, 'node:module', node.id, node);
@@ -580,12 +476,7 @@ export const rule = defineRule({
 
         // `const require = createRequire(import.meta.url)` — the ESM way to build a real `require`.
         if (id.type === 'Identifier' && isCreateRequireCall(init)) {
-          requireLike.addDeclared(
-            (id as ESTree.BindingIdentifier).name,
-            'require',
-            id,
-            node
-          );
+          requireLike.addDeclared((id as ESTree.BindingIdentifier).name, 'require', id, node);
           return;
         }
 
@@ -593,10 +484,7 @@ export const rule = defineRule({
 
         // `const nodeModule = require("node:module")` / `const { createRequire } = await import("node:module")`
         const loaderSpecifier = loaderSpecifierOf(value);
-        if (
-          loaderSpecifier !== null &&
-          NODE_MODULE_SPECIFIER.test(loaderSpecifier)
-        ) {
+        if (loaderSpecifier !== null && NODE_MODULE_SPECIFIER.test(loaderSpecifier)) {
           bindModulePattern(id, node);
           return;
         }
@@ -610,9 +498,7 @@ export const rule = defineRule({
 
         // `require("dotenv")`, `createRequire(import.meta.url)("dotenv")`, `req("dotenv/config")`
         if (isModuleLoaderCallee(callee)) {
-          const module = staticStringValue(
-            (node.arguments[0] as AnyNode | undefined) ?? null
-          );
+          const module = staticStringValue((node.arguments[0] as AnyNode | undefined) ?? null);
           if (module === null || !isDotenvSpecifier(module)) return;
           context.report({
             node,
@@ -637,15 +523,10 @@ export const rule = defineRule({
 
         // `dotenv.config()`, `dotenv["config"]()`, `dotenvNamespace.default.config()`.
         if (callee.type !== 'MemberExpression') return;
-        const object = resolveDotenvObject(
-          (callee as ESTree.MemberExpression).object as AnyNode
-        );
+        const object = resolveDotenvObject((callee as ESTree.MemberExpression).object as AnyNode);
         if (object === null) return;
         const member = staticMemberName(callee as ESTree.MemberExpression);
-        const call =
-          member === null
-            ? `${object.label}[…]()`
-            : `${object.label}.${member}()`;
+        const call = member === null ? `${object.label}[…]()` : `${object.label}.${member}()`;
         context.report({
           node,
           messageId: 'dotenvCall',

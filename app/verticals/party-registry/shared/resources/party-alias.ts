@@ -7,10 +7,7 @@ import { Schema } from 'effect';
 import { IsoTimestampSchema } from '../domain/identity-contracts.ts';
 import { PartyMergeRefSchema } from './party-merge.ts';
 import { PartyRefSchema } from './party.ts';
-import {
-  PartyRegistryResourceIdJsonSchema,
-  PartyRegistryTenantIdJsonSchema,
-} from './resource-ref-identifiers.ts';
+import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
 
 export const PartyAliasRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
@@ -29,13 +26,9 @@ export const PartyAliasSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(({ aliasPartyRef, mergeRef, survivorPartyRef }) => {
     const issues: Schema.FilterIssue[] = [];
-    if (
-      aliasPartyRef.tenantId !== survivorPartyRef.tenantId ||
-      aliasPartyRef.tenantId !== mergeRef.tenantId
-    ) {
+    if (aliasPartyRef.tenantId !== survivorPartyRef.tenantId || aliasPartyRef.tenantId !== mergeRef.tenantId) {
       issues.push({
-        issue:
-          'Party Alias, survivor, and merge Resource must share one tenant',
+        issue: 'Party Alias, survivor, and merge Resource must share one tenant',
         path: ['survivorPartyRef'],
       });
     }
@@ -46,7 +39,7 @@ export const PartyAliasSchema = Schema.Struct({
       });
     }
     return issues;
-  })
+  }),
 );
 export type PartyAlias = typeof PartyAliasSchema.Type;
 
@@ -58,8 +51,7 @@ export const partyAliasResourceDescriptor = {
     searchable: false,
     timelineVisible: false,
   },
-  description:
-    'Permanent absorbed Party identity mapping to a canonical survivor.',
+  description: 'Permanent absorbed Party identity mapping to a canonical survivor.',
   key: 'party.registry.party-alias',
   label: 'Party Alias',
   owningModuleId: 'party.registry',

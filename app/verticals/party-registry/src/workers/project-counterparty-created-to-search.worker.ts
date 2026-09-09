@@ -12,24 +12,23 @@ import {
 
 import { definePartySearchWorker } from './party-search-worker.ts';
 
-export const { worker: projectCounterpartyCreatedToSearchWorker } =
-  definePartySearchWorker(
-    {
-      entrypoint: defineTenantModuleEntrypoint({
-        access: 'background',
-        authorization: { kind: 'owner_local_background' },
-        entrypointKey: 'party.registry.project-counterparty-created-to-search',
-        moduleKey: 'party.registry',
-        role: 'worker',
-      }),
-      payloadSchema: OutboxPayloadSchema,
-      producerModuleKey: outboxProducerModuleKey,
-      topic: outboxTopic,
-    },
-    {
-      spanName: 'handleProjectCounterpartyCreatedToSearch',
-      target: (payload) => ({
-        counterpartyId: payload.counterpartyRef.resourceId,
-      }),
-    }
-  );
+export const { worker: projectCounterpartyCreatedToSearchWorker } = definePartySearchWorker(
+  {
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'background',
+      authorization: { kind: 'owner_local_background' },
+      entrypointKey: 'party.registry.project-counterparty-created-to-search',
+      moduleKey: 'party.registry',
+      role: 'worker',
+    }),
+    payloadSchema: OutboxPayloadSchema,
+    producerModuleKey: outboxProducerModuleKey,
+    topic: outboxTopic,
+  },
+  {
+    spanName: 'handleProjectCounterpartyCreatedToSearch',
+    target: (payload) => ({
+      counterpartyId: payload.counterpartyRef.resourceId,
+    }),
+  },
+);

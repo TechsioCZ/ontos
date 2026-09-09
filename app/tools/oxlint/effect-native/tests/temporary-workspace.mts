@@ -24,7 +24,7 @@ process.once('SIGTERM', () => process.exit(143));
 /** Own only this fresh child directory; never remove a caller's temporary root. */
 export function withTemporaryWorkspace<T>(
   run: (directory: string) => T,
-  root = process.env.EFFECT_NATIVE_TEST_TMPDIR ?? tmpdir()
+  root = process.env.EFFECT_NATIVE_TEST_TMPDIR ?? tmpdir(),
 ): T {
   // macOS tmpdir() is a symlink; Oxlint canonicalizes file paths before matching override globs.
   const directory = mkdtempSync(join(realpathSync(root), 'effect-policy-'));
@@ -36,11 +36,9 @@ export function withTemporaryWorkspace<T>(
     try {
       release(directory);
     } catch (cleanupError) {
-      throw new AggregateError(
-        [error, cleanupError],
-        `Fixture run failed and workspace remains: ${directory}`,
-        { cause: error }
-      );
+      throw new AggregateError([error, cleanupError], `Fixture run failed and workspace remains: ${directory}`, {
+        cause: error,
+      });
     }
     throw error;
   }

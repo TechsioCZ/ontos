@@ -1,11 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import {
-  appendFileSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,8 +13,7 @@ const metadataFilename = 'metadata.mts';
 const compilerRelativePath = 'node_modules/.bin/tsc';
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
-const countDiagnostics = (diagnostics: string, pattern: RegExp): number =>
-  [...diagnostics.matchAll(pattern)].length;
+const countDiagnostics = (diagnostics: string, pattern: RegExp): number => [...diagnostics.matchAll(pattern)].length;
 
 const verifyDrizzleRuntimeFormats = (fixture: string): void => {
   for (const extension of ['mjs', 'cjs']) {
@@ -43,7 +36,7 @@ assert.equal(role.createDb, undefined); assert.equal(role.createRole, undefined)
   }
 }
 assert.equal(pgRole('undefined', { inherit: undefined }).inherit, undefined);
-`
+`,
     );
     const result = spawnSync(process.execPath, [filename], {
       encoding: 'utf-8',
@@ -54,15 +47,9 @@ assert.equal(pgRole('undefined', { inherit: undefined }).inherit, undefined);
 };
 
 it('published dependency declarations retain strict positive and negative contracts', () => {
-  const fixture = mkdtempSync(
-    path.join(tmpdir(), 'ontos-declaration-contract-')
-  );
+  const fixture = mkdtempSync(path.join(tmpdir(), 'ontos-declaration-contract-'));
   try {
-    symlinkSync(
-      path.join(workspaceRoot, 'node_modules'),
-      path.join(fixture, 'node_modules'),
-      'dir'
-    );
+    symlinkSync(path.join(workspaceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
     const imports = `import { pgPolicy, pgRole, type PgPolicyConfig, type PgRoleConfig } from 'drizzle-orm/pg-core';
 import { cockroachPolicy, cockroachRole, type CockroachPolicyConfig, type CockroachRoleConfig } from 'drizzle-orm/cockroach-core';
 import { sql } from 'drizzle-orm';\n`;
@@ -113,24 +100,18 @@ cockroachRole('invalid', { createRole: 1 });
               types: ['node'],
             },
             files: [filename],
-          })
+          }),
         );
         const result = spawnSync(
           path.join(workspaceRoot, compilerRelativePath),
           ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-          { encoding: 'utf-8' }
+          { encoding: 'utf-8' },
         );
         expect(result.error).toBeUndefined();
         const diagnostics = result.stdout + result.stderr;
         expect(result.status, diagnostics).toBe(errors === 0 ? 0 : 1);
-        expect(
-          countDiagnostics(diagnostics, /error TS2322:/gu),
-          diagnostics
-        ).toBe(errors);
-        expect(
-          countDiagnostics(diagnostics, /error TS\d+:/gu),
-          diagnostics
-        ).toBe(errors);
+        expect(countDiagnostics(diagnostics, /error TS2322:/gu), diagnostics).toBe(errors);
+        expect(countDiagnostics(diagnostics, /error TS\d+:/gu), diagnostics).toBe(errors);
       }
     }
     verifyDrizzleRuntimeFormats(fixture);
@@ -141,7 +122,7 @@ import { Param } from 'effect/unstable/cli';
 const metadata = Param.getParamMetadata(Param.string(Param.flagKind, 'name'));
 const expected: { readonly isOptional: boolean; readonly isVariadic: boolean; readonly variadicMin: Option.Option<number>; readonly variadicMax: Option.Option<number> } = metadata;
 const reverse: typeof metadata = expected;
-`
+`,
     );
     writeFileSync(
       path.join(fixture, configFilename),
@@ -156,12 +137,12 @@ const reverse: typeof metadata = expected;
           types: ['node'],
         },
         files: [metadataFilename],
-      })
+      }),
     );
     const result = spawnSync(
       path.join(workspaceRoot, compilerRelativePath),
       ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8' },
     );
     expect(result.error).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
@@ -173,28 +154,20 @@ const wrongVariadic: number = metadata.isVariadic;
 const wrongMin: Option.Option<string> = metadata.variadicMin;
 const wrongMax: Option.Option<string> = metadata.variadicMax;
 metadata.isOptional = true;
-`
+`,
     );
     const invalidMetadata = spawnSync(
       path.join(workspaceRoot, compilerRelativePath),
       ['-p', path.join(fixture, configFilename), '--pretty', 'false'],
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8' },
     );
     expect(invalidMetadata.error).toBeUndefined();
     const diagnostics = invalidMetadata.stdout + invalidMetadata.stderr;
     expect(invalidMetadata.status, diagnostics).toBe(1);
-    expect(countDiagnostics(diagnostics, /error TS2322:/gu), diagnostics).toBe(
-      2
-    );
-    expect(countDiagnostics(diagnostics, /error TS2375:/gu), diagnostics).toBe(
-      2
-    );
-    expect(countDiagnostics(diagnostics, /error TS2540:/gu), diagnostics).toBe(
-      1
-    );
-    expect(countDiagnostics(diagnostics, /error TS\d+:/gu), diagnostics).toBe(
-      5
-    );
+    expect(countDiagnostics(diagnostics, /error TS2322:/gu), diagnostics).toBe(2);
+    expect(countDiagnostics(diagnostics, /error TS2375:/gu), diagnostics).toBe(2);
+    expect(countDiagnostics(diagnostics, /error TS2540:/gu), diagnostics).toBe(1);
+    expect(countDiagnostics(diagnostics, /error TS\d+:/gu), diagnostics).toBe(5);
   } finally {
     rmSync(fixture, { force: true, recursive: true });
   }

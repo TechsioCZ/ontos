@@ -1,9 +1,6 @@
 import { expect, it } from 'effect-rstest';
 
-import {
-  computeActionRequestHash,
-  computeCanonicalValueHash,
-} from '../../src/actions/repository.ts';
+import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import type { ResolvedReadPermissionTarget } from '../../src/index.ts';
 import * as publicSurface from '../../src/index.ts';
 
@@ -50,7 +47,7 @@ it('computes deterministic hashes independent of object key ordering', () => {
     computeCanonicalValueHash({
       nested: { alpha: 1, beta: 3 },
       values: ['first', 'second'],
-    })
+    }),
   );
 });
 
@@ -66,17 +63,13 @@ it('rejects cyclic values instead of producing an unstable request hash', () => 
       principal,
       schemaVersion: '1',
       target: {},
-    })
+    }),
   ).toThrow();
 });
 
 it('canonical hashing distinguishes literal objects from internal value types', () => {
-  expect(computeCanonicalValueHash()).not.toBe(
-    computeCanonicalValueHash({ $undefined: true })
-  );
-  expect(computeCanonicalValueHash(Number.NaN)).not.toBe(
-    computeCanonicalValueHash({ $number: 'NaN' })
-  );
+  expect(computeCanonicalValueHash()).not.toBe(computeCanonicalValueHash({ $undefined: true }));
+  expect(computeCanonicalValueHash(Number.NaN)).not.toBe(computeCanonicalValueHash({ $number: 'NaN' }));
   expect(computeCanonicalValueHash(-0)).not.toBe(computeCanonicalValueHash(0));
 });
 

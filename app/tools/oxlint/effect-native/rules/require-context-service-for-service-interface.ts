@@ -18,12 +18,7 @@ import type { Context, ESTree } from '@oxlint/plugins';
 import { typeNameSegments } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
 import { optionRecord } from '../shared/options.ts';
-import {
-  booleanOption as boolean,
-  stringArray,
-  stringOption,
-  safeRegExp,
-} from '../shared/options.ts';
+import { booleanOption as boolean, stringArray, stringOption, safeRegExp } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
@@ -39,22 +34,13 @@ const DEFAULT_IGNORE = [
   '**/scripts/**',
 ];
 
-const DEFAULT_SERVICE_NAME_PATTERN =
-  '(Service|Repository|Gateway|Resolver|Access|Store|Port|Contract)$';
-const DEFAULT_DATA_TYPE_PATTERN =
-  '(Input|Output|Options|Config|Record|Row|Payload|Result|Error|Problem)$';
+const DEFAULT_SERVICE_NAME_PATTERN = '(Service|Repository|Gateway|Resolver|Access|Store|Port|Contract)$';
+const DEFAULT_DATA_TYPE_PATTERN = '(Input|Output|Options|Config|Record|Row|Payload|Result|Error|Problem)$';
 const DEFAULT_EFFECT_TYPES = ['Effect'];
 const DEFAULT_PROMISE_TYPES = ['Promise', 'PromiseLike'];
 const DEFAULT_TAG_MEMBERS = ['Service', 'Reference', 'Tag', 'GenericTag'];
 const DEFAULT_TAG_NAMESPACES = ['Context', 'Effect'];
-const DEFAULT_LAYER_MEMBERS = [
-  'effect',
-  'succeed',
-  'sync',
-  'scoped',
-  'scopedDiscard',
-  'effectDiscard',
-];
+const DEFAULT_LAYER_MEMBERS = ['effect', 'succeed', 'sync', 'scoped', 'scopedDiscard', 'effectDiscard'];
 
 const TSX_FILE = /\.[cm]?[jt]sx$/u;
 /** Depth cap for the generic type-subtree walk; deep enough for nested generics, cheap enough to run per member. */
@@ -74,16 +60,8 @@ function readOptions(context: Context) {
     includePromiseMembers: boolean(record.includePromiseMembers, true),
     allowLayerConstruction: boolean(record.allowLayerConstruction, true),
     requireTagPerContract: boolean(record.requireTagPerContract, true),
-    serviceNamePattern: stringOption(
-      record.serviceNamePattern,
-      DEFAULT_SERVICE_NAME_PATTERN,
-      false
-    ),
-    dataTypePattern: stringOption(
-      record.dataTypePattern,
-      DEFAULT_DATA_TYPE_PATTERN,
-      false
-    ),
+    serviceNamePattern: stringOption(record.serviceNamePattern, DEFAULT_SERVICE_NAME_PATTERN, false),
+    dataTypePattern: stringOption(record.dataTypePattern, DEFAULT_DATA_TYPE_PATTERN, false),
     effectTypes: stringArray(record.effectTypes, DEFAULT_EFFECT_TYPES),
     promiseTypes: stringArray(record.promiseTypes, DEFAULT_PROMISE_TYPES),
     tagMembers: stringArray(record.tagMembers, DEFAULT_TAG_MEMBERS),
@@ -95,8 +73,7 @@ function readOptions(context: Context) {
 
 function unwrapType(type: ESTree.TSType): ESTree.TSType {
   let current = type;
-  while (current.type === 'TSParenthesizedType')
-    current = current.typeAnnotation;
+  while (current.type === 'TSParenthesizedType') current = current.typeAnnotation;
   return current;
 }
 
@@ -116,8 +93,7 @@ function tagConstructionArguments(callee: AnyNode): readonly unknown[] {
   let current: AnyNode = callee;
   for (let hop = 0; hop < 2; hop += 1) {
     const parent = current.parent;
-    if (!parent || !['CallExpression', 'NewExpression'].includes(parent.type))
-      break;
+    if (!parent || !['CallExpression', 'NewExpression'].includes(parent.type)) break;
     const args = (parent as { readonly typeArguments?: unknown }).typeArguments;
     if (args != null) typeArgs.push(args);
     current = parent;
@@ -125,10 +101,7 @@ function tagConstructionArguments(callee: AnyNode): readonly unknown[] {
   return typeArgs;
 }
 
-function firstResult<T>(
-  values: readonly T[],
-  visit: (value: T) => string | null
-): string | null {
+function firstResult<T>(values: readonly T[], visit: (value: T) => string | null): string | null {
   for (const value of values) {
     const found = visit(value);
     if (found !== null) return found;
@@ -140,9 +113,7 @@ function immutableVariable(def: any, variable: any): boolean {
   return (
     def.type === 'Variable' &&
     def.parent?.kind === 'const' &&
-    !variable.references.some(
-      (reference: any) => reference.isWrite() && !reference.init
-    )
+    !variable.references.some((reference: any) => reference.isWrite() && !reference.init)
   );
 }
 
@@ -158,8 +129,7 @@ function importedMemberKey(node: any): unknown {
   const property = node.property ?? node.right;
   if (!node.computed) return property.name;
   if (property.type === 'Literal') return property.value;
-  if (property.type === 'TemplateLiteral' && !property.expressions.length)
-    return property.quasis[0]?.value.cooked;
+  if (property.type === 'TemplateLiteral' && !property.expressions.length) return property.quasis[0]?.value.cooked;
   return null;
 }
 
@@ -232,13 +202,11 @@ export const rule = defineRule({
     if (!options.includeTsx && TSX_FILE.test(path)) return {};
 
     const program = context.sourceCode.ast;
-    const variableFor = (node: any, name: string): any =>
-      resolveVariable(context, name, node);
+    const variableFor = (node: any, name: string): any => resolveVariable(context, name, node);
     const localAlias = (node: any): any =>
       node?.type === 'Identifier'
-        ? variableFor(node, node.name)?.defs.find(
-            (d: any) => d.node.type === 'TSTypeAliasDeclaration'
-          )?.node.typeAnnotation
+        ? variableFor(node, node.name)?.defs.find((d: any) => d.node.type === 'TSTypeAliasDeclaration')?.node
+            .typeAnnotation
         : null;
     const imported = (node: any, seen = new Set<any>()): string | null => {
       if (!node || seen.has(node)) return null;
@@ -268,8 +236,7 @@ export const rule = defineRule({
       const variable = variableFor(node, node.name);
       for (const def of variable?.defs ?? []) {
         if (def.type === 'ImportBinding') return importDefinitionPath(def);
-        if (immutableVariable(def, variable))
-          return imported(def.node.init, seen);
+        if (immutableVariable(def, variable)) return imported(def.node.init, seen);
       }
       return null;
     };
@@ -278,19 +245,12 @@ export const rule = defineRule({
       for (const statement of program.body)
         if (statement.type === 'ExportNamedDeclaration' && !statement.source) {
           for (const spec of statement.specifiers)
-            if (spec.local.type === 'Identifier')
-              separateExports.add(variableFor(spec.local, spec.local.name));
+            if (spec.local.type === 'Identifier') separateExports.add(variableFor(spec.local, spec.local.name));
         }
     };
     collectSeparateExports();
-    const servicePattern = safeRegExp(
-      options.serviceNamePattern,
-      DEFAULT_SERVICE_NAME_PATTERN
-    );
-    const dataPattern = safeRegExp(
-      options.dataTypePattern,
-      DEFAULT_DATA_TYPE_PATTERN
-    );
+    const servicePattern = safeRegExp(options.serviceNamePattern, DEFAULT_SERVICE_NAME_PATTERN);
+    const dataPattern = safeRegExp(options.dataTypePattern, DEFAULT_DATA_TYPE_PATTERN);
     const promiseTypes = new Set(options.promiseTypes);
     const tagMembers = new Set(options.tagMembers);
     const tagNamespaces = new Set(options.tagNamespaces);
@@ -303,9 +263,7 @@ export const rule = defineRule({
     const taggedDeclarations = new Set<any>();
     const taggedFactories = new Set<any>();
     const declarationsFor = (id: any): any[] =>
-      id?.type === 'Identifier'
-        ? (variableFor(id, id.name)?.defs ?? []).map((def: any) => def.node)
-        : [];
+      id?.type === 'Identifier' ? (variableFor(id, id.name)?.defs ?? []).map((def: any) => def.node) : [];
     const collectContracts = (value: any, depth = 0): void => {
       if (!value || typeof value !== 'object' || depth > MAX_TYPE_DEPTH) return;
       if (Array.isArray(value)) {
@@ -313,57 +271,40 @@ export const rule = defineRule({
         return;
       }
       collectContractReferences(value);
-      for (const [key, child] of Object.entries(value))
-        if (key !== 'parent') collectContracts(child, depth + 1);
+      for (const [key, child] of Object.entries(value)) if (key !== 'parent') collectContracts(child, depth + 1);
     };
     const collectContractReferences = (value: any): void => {
       if (value.type === 'TSTypeReference')
-        for (const declaration of declarationsFor(value.typeName))
-          taggedDeclarations.add(declaration);
+        for (const declaration of declarationsFor(value.typeName)) taggedDeclarations.add(declaration);
       if (value.type === 'TSTypeQuery')
-        for (const declaration of declarationsFor(value.exprName))
-          taggedFactories.add(declaration);
+        for (const declaration of declarationsFor(value.exprName)) taggedFactories.add(declaration);
     };
 
     // ------------------------------------------------------------------ effect / promise types
 
     /** `Effect.Effect<…>`, `Eff.Effect<…>`, `E.Effect.Effect<…>` or a bare `Effect<…>` type import. */
-    const isEffectTypeReference = (
-      reference: ESTree.TSTypeReference
-    ): boolean => {
+    const isEffectTypeReference = (reference: ESTree.TSTypeReference): boolean => {
       const path = imported(reference.typeName);
       return path !== null && /^(?:root\.)?Effect(?:\.Effect)?$/u.test(path);
     };
 
     /** A global `Promise<…>` / `PromiseLike<…>`, unless the module declares its own type of that name. */
-    const isPromiseTypeReference = (
-      reference: ESTree.TSTypeReference
-    ): boolean => {
+    const isPromiseTypeReference = (reference: ESTree.TSTypeReference): boolean => {
       if (!options.includePromiseMembers) return false;
       const segments = typeNameSegments(reference.typeName);
-      if (!segments || segments.length !== 1 || !promiseTypes.has(segments[0]!))
-        return false;
+      if (!segments || segments.length !== 1 || !promiseTypes.has(segments[0]!)) return false;
       return !variableFor(reference.typeName, segments[0]!)?.defs.length;
     };
-    const effectfulReference = (
-      reference: ESTree.TSTypeReference
-    ): string | null => {
+    const effectfulReference = (reference: ESTree.TSTypeReference): string | null => {
       if (isEffectTypeReference(reference)) return 'Effect';
       if (isPromiseTypeReference(reference)) return 'Promise';
       return null;
     };
 
     /** Any effectful type reference anywhere inside a *return type* subtree (unions, arrays, generics). */
-    const returnTypeIsEffectful = (
-      node: unknown,
-      depth: number
-    ): string | null => {
-      if (depth > MAX_TYPE_DEPTH || node === null || typeof node !== 'object')
-        return null;
-      if (Array.isArray(node))
-        return firstResult(node, (entry) =>
-          returnTypeIsEffectful(entry, depth + 1)
-        );
+    const returnTypeIsEffectful = (node: unknown, depth: number): string | null => {
+      if (depth > MAX_TYPE_DEPTH || node === null || typeof node !== 'object') return null;
+      if (Array.isArray(node)) return firstResult(node, (entry) => returnTypeIsEffectful(entry, depth + 1));
       const record = node as Record<string, unknown>;
       if (typeof record.type !== 'string') return null;
       if (['TSFunctionType', 'TSConstructorType'].includes(record.type))
@@ -376,40 +317,21 @@ export const rule = defineRule({
       }
       return returnChildrenAreEffectful(record, depth);
     };
-    const returnChildrenAreEffectful = (
-      record: Record<string, unknown>,
-      depth: number
-    ): string | null =>
+    const returnChildrenAreEffectful = (record: Record<string, unknown>, depth: number): string | null =>
       firstResult(Object.entries(record), ([key, value]) => {
-        if (
-          key === 'parent' ||
-          key === 'type' ||
-          value === null ||
-          typeof value !== 'object'
-        )
-          return null;
+        if (key === 'parent' || key === 'type' || value === null || typeof value !== 'object') return null;
         return returnTypeIsEffectful(value, depth + 1);
       });
 
     /** Effectfulness of a *member annotation*: function types are judged by their return type only. */
-    const annotationIsEffectful = (
-      type: ESTree.TSType,
-      depth: number
-    ): string | null => {
+    const annotationIsEffectful = (type: ESTree.TSType, depth: number): string | null => {
       if (depth > MAX_TYPE_DEPTH) return null;
       const current = unwrapType(type);
-      if (['TSFunctionType', 'TSConstructorType'].includes(current.type))
-        return signatureEffect(current);
-      if (
-        current.type === 'TSUnionType' ||
-        current.type === 'TSIntersectionType'
-      ) {
-        return firstResult(current.types, (member) =>
-          annotationIsEffectful(member, depth + 1)
-        );
+      if (['TSFunctionType', 'TSConstructorType'].includes(current.type)) return signatureEffect(current);
+      if (current.type === 'TSUnionType' || current.type === 'TSIntersectionType') {
+        return firstResult(current.types, (member) => annotationIsEffectful(member, depth + 1));
       }
-      if (current.type === 'TSTypeLiteral')
-        return firstEffectfulMember(current.members, depth + 1);
+      if (current.type === 'TSTypeLiteral') return firstEffectfulMember(current.members, depth + 1);
       if (current.type === 'TSTypeReference') {
         const direct = effectfulReference(current);
         if (direct) return direct;
@@ -419,66 +341,37 @@ export const rule = defineRule({
       return null;
     };
 
-    const memberKeyName = (member: {
-      readonly key?: ESTree.Node | null;
-    }): string => {
+    const memberKeyName = (member: { readonly key?: ESTree.Node | null }): string => {
       const key = member.key ?? null;
       if (key === null) return 'a member';
       if (key.type === 'Identifier') return key.name;
-      if (key.type === 'Literal' && typeof key.value === 'string')
-        return key.value;
+      if (key.type === 'Literal' && typeof key.value === 'string') return key.value;
       return 'a member';
     };
 
     /** The first effectful member of an interface body / type literal, described for the message. */
-    const firstEffectfulMember = (
-      members: readonly ESTree.Node[],
-      depth = 0
-    ): string | null => {
+    const firstEffectfulMember = (members: readonly ESTree.Node[], depth = 0): string | null => {
       if (depth > MAX_TYPE_DEPTH) return null;
       return firstResult(members, (member) => effectfulMember(member, depth));
     };
     const signatureEffect = (member: any): string | null => {
       const annotation = member.returnType;
-      return annotation == null
-        ? null
-        : returnTypeIsEffectful(annotation.typeAnnotation, 0);
+      return annotation == null ? null : returnTypeIsEffectful(annotation.typeAnnotation, 0);
     };
-    const effectfulMember = (
-      member: ESTree.Node,
-      depth: number
-    ): string | null => {
+    const effectfulMember = (member: ESTree.Node, depth: number): string | null => {
       if (member.type === 'TSMethodSignature') {
         const wrapper = signatureEffect(member);
-        return wrapper === null
-          ? null
-          : `${memberKeyName(member as never)}(): ${wrapper}`;
+        return wrapper === null ? null : `${memberKeyName(member as never)}(): ${wrapper}`;
       }
-      if (
-        member.type === 'TSPropertySignature' ||
-        member.type === 'TSIndexSignature'
-      ) {
-        const annotation = (member as ESTree.TSPropertySignature)
-          .typeAnnotation;
+      if (member.type === 'TSPropertySignature' || member.type === 'TSIndexSignature') {
+        const annotation = (member as ESTree.TSPropertySignature).typeAnnotation;
         if (annotation == null) return null;
-        const wrapper = annotationIsEffectful(
-          annotation.typeAnnotation,
-          depth + 1
-        );
-        return wrapper === null
-          ? null
-          : `${memberKeyName(member as never)}: ${wrapper}`;
+        const wrapper = annotationIsEffectful(annotation.typeAnnotation, depth + 1);
+        return wrapper === null ? null : `${memberKeyName(member as never)}: ${wrapper}`;
       }
-      if (
-        [
-          'TSCallSignatureDeclaration',
-          'TSConstructSignatureDeclaration',
-        ].includes(member.type)
-      ) {
+      if (['TSCallSignatureDeclaration', 'TSConstructSignatureDeclaration'].includes(member.type)) {
         const wrapper = signatureEffect(member);
-        return wrapper === null
-          ? null
-          : `the call signature returning ${wrapper}`;
+        return wrapper === null ? null : `the call signature returning ${wrapper}`;
       }
       return null;
     };
@@ -487,13 +380,9 @@ export const rule = defineRule({
 
     const isExported = (node: AnyNode): boolean => {
       const parent = (node.parent as AnyNode | null | undefined) ?? null;
-      if (separateExports.has(variableFor(node, (node as any).id?.name)))
-        return true;
+      if (separateExports.has(variableFor(node, (node as any).id?.name))) return true;
       if (parent === null) return false;
-      return (
-        parent.type === 'ExportNamedDeclaration' ||
-        parent.type === 'ExportDefaultDeclaration'
-      );
+      return parent.type === 'ExportNamedDeclaration' || parent.type === 'ExportDefaultDeclaration';
     };
 
     const isServiceName = (name: string): boolean => {
@@ -503,9 +392,7 @@ export const rule = defineRule({
     };
 
     const tagNameFor = (name: string): string =>
-      name.endsWith('Service') && name.length > 'Service'.length
-        ? name.slice(0, -'Service'.length)
-        : `${name}Tag`;
+      name.endsWith('Service') && name.length > 'Service'.length ? name.slice(0, -'Service'.length) : `${name}Tag`;
 
     const isUtilityReference = (name: ESTree.TSTypeName): boolean =>
       name.type === 'Identifier' &&
@@ -523,9 +410,7 @@ export const rule = defineRule({
     };
 
     /** `ReturnType<typeof makeX>` — a factory-derived service contract. */
-    const returnTypeAlias = (
-      type: ESTree.TSType
-    ): { label: string; factory: ESTree.Node | null } | null => {
+    const returnTypeAlias = (type: ESTree.TSType): { label: string; factory: ESTree.Node | null } | null => {
       const current = unwrapType(type);
       if (current.type !== 'TSTypeReference') return null;
       if (isUtilityReference(current.typeName)) {
@@ -538,23 +423,19 @@ export const rule = defineRule({
       const inner = unwrapType(argument);
       if (inner.type !== 'TSTypeQuery') return null;
       const name = inner.exprName;
-      if (name.type === 'Identifier')
-        return { label: `ReturnType<typeof ${name.name}>`, factory: name };
+      if (name.type === 'Identifier') return { label: `ReturnType<typeof ${name.name}>`, factory: name };
       return { label: 'ReturnType<typeof …>', factory: null };
     };
 
     /** Only tag type arguments and explicitly supplied values identify a contract. */
     const recordTagConstruction = (callee: AnyNode): void => {
-      for (const args of tagConstructionArguments(callee))
-        collectContracts(args);
+      for (const args of tagConstructionArguments(callee)) collectContracts(args);
     };
     const collectDeclarationContract = (declaration: any): void => {
-      if (declaration.type === 'TSTypeAliasDeclaration')
-        collectContracts(declaration.typeAnnotation);
+      if (declaration.type === 'TSTypeAliasDeclaration') collectContracts(declaration.typeAnnotation);
     };
     const collectFactoryContract = (declaration: any): void => {
-      if (declaration.type === 'FunctionDeclaration')
-        collectContracts(declaration.returnType);
+      if (declaration.type === 'FunctionDeclaration') collectContracts(declaration.returnType);
       if (declaration.type !== 'VariableDeclarator') return;
       const type = declaration.id.typeAnnotation?.typeAnnotation;
       if (type?.type === 'TSFunctionType') collectContracts(type.returnType);
@@ -563,52 +444,32 @@ export const rule = defineRule({
     const resolveFactoryReturnContracts = (): void => {
       for (let round = 0; round < MAX_TYPE_DEPTH; round++) {
         const before = taggedDeclarations.size + taggedFactories.size;
-        for (const declaration of taggedDeclarations)
-          collectDeclarationContract(declaration);
-        for (const declaration of taggedFactories)
-          collectFactoryContract(declaration);
+        for (const declaration of taggedDeclarations) collectDeclarationContract(declaration);
+        for (const declaration of taggedFactories) collectFactoryContract(declaration);
         if (before === taggedDeclarations.size + taggedFactories.size) break;
       }
     };
     const isWired = (candidate: Candidate): boolean =>
-      declarationsFor(candidate.node).some((declaration) =>
-        taggedDeclarations.has(declaration)
-      ) ||
-      declarationsFor(candidate.factory).some((declaration) =>
-        taggedFactories.has(declaration)
-      );
+      declarationsFor(candidate.node).some((declaration) => taggedDeclarations.has(declaration)) ||
+      declarationsFor(candidate.factory).some((declaration) => taggedFactories.has(declaration));
 
     // Follow the provided value, not arbitrary nested assertions in construction arguments.
     const providedContract = (value: any, seen = new Set<any>()): void => {
       if (!value || seen.has(value)) return;
       seen.add(value);
-      if (
-        ['TSSatisfiesExpression', 'TSAsExpression', 'TSTypeAssertion'].includes(
-          value.type
-        )
-      ) {
+      if (['TSSatisfiesExpression', 'TSAsExpression', 'TSTypeAssertion'].includes(value.type)) {
         collectContracts(value.typeAnnotation);
         providedContract(value.expression, seen);
-      } else if (
-        [
-          'TSNonNullExpression',
-          'TSInstantiationExpression',
-          'ChainExpression',
-        ].includes(value.type)
-      ) {
+      } else if (['TSNonNullExpression', 'TSInstantiationExpression', 'ChainExpression'].includes(value.type)) {
         providedContract(value.expression, seen);
       } else if (value.type === 'Identifier') {
         providedIdentifierContract(value, seen);
       } else if (
         value.type === 'CallExpression' &&
-        /^(?:root\.)?Effect\.(?:succeed|sync)$/u.test(
-          imported(value.callee) ?? ''
-        )
+        /^(?:root\.)?Effect\.(?:succeed|sync)$/u.test(imported(value.callee) ?? '')
       ) {
         providedContract(value.arguments[0], seen);
-      } else if (
-        ['ArrowFunctionExpression', 'FunctionExpression'].includes(value.type)
-      ) {
+      } else if (['ArrowFunctionExpression', 'FunctionExpression'].includes(value.type)) {
         providedFunctionContract(value, seen);
       }
     };
@@ -627,29 +488,18 @@ export const rule = defineRule({
         return;
       }
       for (const statement of value.body.body)
-        if (statement.type === 'ReturnStatement')
-          providedContract(statement.argument, seen);
+        if (statement.type === 'ReturnStatement') providedContract(statement.argument, seen);
     };
     const providedConfiguration = (config: any): void => {
       if (config?.type !== 'ObjectExpression') return;
       for (const property of config.properties) {
-        const key = property.computed
-          ? property.key?.value
-          : property.key?.name;
-        if (
-          property.type === 'Property' &&
-          ['effect', 'defaultValue'].includes(key)
-        )
-          providedContract(property.value);
+        const key = property.computed ? property.key?.value : property.key?.name;
+        if (property.type === 'Property' && ['effect', 'defaultValue'].includes(key)) providedContract(property.value);
       }
     };
     const outerCall = (node: any): any => {
       let outer = node;
-      while (
-        outer.parent?.type === 'CallExpression' &&
-        outer.parent.callee === outer
-      )
-        outer = outer.parent;
+      while (outer.parent?.type === 'CallExpression' && outer.parent.callee === outer) outer = outer.parent;
       return outer;
     };
 
@@ -658,14 +508,8 @@ export const rule = defineRule({
         const path = imported(node.callee);
         if (!path) return;
         const segments = path.replace(/^root\./u, '').split('.');
-        const isTag =
-          segments.length === 2 &&
-          tagNamespaces.has(segments[0]!) &&
-          tagMembers.has(segments[1]!);
-        const isLayer =
-          options.allowLayerConstruction &&
-          segments[0] === 'Layer' &&
-          layerMembers.has(segments[1]!);
+        const isTag = segments.length === 2 && tagNamespaces.has(segments[0]!) && tagMembers.has(segments[1]!);
+        const isLayer = options.allowLayerConstruction && segments[0] === 'Layer' && layerMembers.has(segments[1]!);
         if (!isTag && !isLayer) return;
         moduleHasTag = true;
         if (isTag) recordTagConstruction(node.callee as AnyNode);
@@ -676,11 +520,8 @@ export const rule = defineRule({
       TSInterfaceDeclaration(node) {
         const name = node.id.name;
         if (!isServiceName(name)) return;
-        if (options.exportedOnly && !isExported(node as unknown as AnyNode))
-          return;
-        const member = firstEffectfulMember(
-          node.body.body as unknown as readonly ESTree.Node[]
-        );
+        if (options.exportedOnly && !isExported(node as unknown as AnyNode)) return;
+        const member = firstEffectfulMember(node.body.body as unknown as readonly ESTree.Node[]);
         if (member === null) return;
         candidates.push({
           node: node.id as unknown as ESTree.Node,
@@ -694,13 +535,10 @@ export const rule = defineRule({
       TSTypeAliasDeclaration(node) {
         const name = node.id.name;
         if (!isServiceName(name)) return;
-        if (options.exportedOnly && !isExported(node as unknown as AnyNode))
-          return;
+        if (options.exportedOnly && !isExported(node as unknown as AnyNode)) return;
         const annotation = unwrapType(node.typeAnnotation);
         if (annotation.type === 'TSTypeLiteral') {
-          const member = firstEffectfulMember(
-            annotation.members as unknown as readonly ESTree.Node[]
-          );
+          const member = firstEffectfulMember(annotation.members as unknown as readonly ESTree.Node[]);
           if (member === null) return;
           candidates.push({
             node: node.id as unknown as ESTree.Node,

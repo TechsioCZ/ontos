@@ -12,13 +12,7 @@ import {
   stringArray,
   stringList,
 } from '../shared/options.ts';
-import {
-  globToRegExp,
-  inScriptScope,
-  scopePath,
-  scriptScope,
-  workspacePath,
-} from '../shared/paths.ts';
+import { globToRegExp, inScriptScope, scopePath, scriptScope, workspacePath } from '../shared/paths.ts';
 import { runOxlint, testsDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
@@ -41,8 +35,7 @@ it('shared option parsers preserve rejection, sparse arrays and regex flags', ()
 
 it('shared path policies distinguish earliest and latest markers and script scope', () => {
   const nestedScript = 'packages/p/scripts/apps/demo.ts';
-  const fixture =
-    '/repo/tools/oxlint/effect-native/tests/fixtures/x/invalid/packages/p/scripts/apps/demo.ts';
+  const fixture = '/repo/tools/oxlint/effect-native/tests/fixtures/x/invalid/packages/p/scripts/apps/demo.ts';
   expect(scopePath(fixture)).toBe(nestedScript);
   expect(scriptScope(fixture)).toBe(nestedScript);
   expect(workspacePath(fixture)).toBe('apps/demo.ts');
@@ -126,15 +119,13 @@ const cases = [
     expected: ['process.stderr.write', null],
     name: 'script provenance accepts unwritten let aliases',
     probe: 'provenance',
-    source:
-      'import * as p from "node:process"; let { stderr: sink } = p; sink.write;',
+    source: 'import * as p from "node:process"; let { stderr: sink } = p; sink.write;',
   },
   {
     expected: [null, null],
     name: 'script provenance rejects later writes',
     probe: 'provenance',
-    source:
-      'import * as p from "node:process"; let { stderr: sink } = p; sink = p.stdout; sink.write;',
+    source: 'import * as p from "node:process"; let { stderr: sink } = p; sink = p.stdout; sink.write;',
   },
   {
     expected: ['process', null],
@@ -164,8 +155,7 @@ const cases = [
     expected: ['decodeUnknownSync'],
     name: 'Schema identity follows aliases',
     probe: 'schema',
-    source:
-      'import * as E from "effect"; const S = E.Schema; const { decodeUnknownSync: decode } = S; decode;',
+    source: 'import * as E from "effect"; const S = E.Schema; const { decodeUnknownSync: decode } = S; decode;',
   },
   {
     expected: [null],
@@ -183,8 +173,7 @@ const cases = [
     expected: [true, false],
     name: 'entry detection includes top-level IIFEs only',
     probe: 'entry',
-    source:
-      '(() => { console.warn("x"); })(); function nested() { console.warn("y"); }',
+    source: '(() => { console.warn("x"); })(); function nested() { console.warn("y"); }',
   },
   {
     expected: [false, true, [false, true], [false, true]],
@@ -196,8 +185,7 @@ const cases = [
     expected: ['Json', null, null],
     name: 'Schema identity preserves expression wrapper limits',
     probe: 'schema-wrappers',
-    source:
-      'import { Schema } from "effect"; const S = Schema as unknown; S.Json;',
+    source: 'import { Schema } from "effect"; const S = Schema as unknown; S.Json;',
   },
   ...['`decodeUnknownSync`', '("decodeUnknownSync" as const)'].map((key) => ({
     expected: [null, 'decodeUnknownSync'],
@@ -223,14 +211,12 @@ for (const { expected, name, probe, source } of cases) {
             },
           ],
           rules: { 'shared-helpers-probe/inspect': ['error', probe] },
-        })
+        }),
       );
       const run = runOxlint(config, ['probe.ts'], directory);
       expect(run.exitCode).toBe(1);
       expect(run.numberOfFiles).toBe(1);
-      expect(
-        run.diagnostics.map(({ code, message }) => ({ code, message }))
-      ).toStrictEqual([
+      expect(run.diagnostics.map(({ code, message }) => ({ code, message }))).toStrictEqual([
         {
           code: 'shared-helpers-probe(inspect)',
           message: JSON.stringify(expected),

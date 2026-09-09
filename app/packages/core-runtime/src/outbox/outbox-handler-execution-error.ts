@@ -5,5 +5,5 @@ export class OutboxHandlerExecutionError extends Schema.TaggedError<OutboxHandle
   {
     code: Schema.Literal('outbox_handler_execution_failed'),
     reason: Schema.String,
-  }
+  },
 ) {}

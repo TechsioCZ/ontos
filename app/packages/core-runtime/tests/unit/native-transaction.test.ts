@@ -6,8 +6,7 @@ import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import { makeTestDatabase } from '../support/database.ts';
 
 const harness = Effect.fn(function* makeHarness(
-  settle: (statement: string) => Effect.Effect<void, SqlError> = () =>
-    Effect.void
+  settle: (statement: string) => Effect.Effect<void, SqlError> = () => Effect.void,
 ) {
   const events: string[] = [];
   const executor = yield* makeTestDatabase((statement) =>
@@ -15,32 +14,29 @@ const harness = Effect.fn(function* makeHarness(
       events.push(statement);
       yield* settle(statement);
       return [];
-    })
+    }),
   );
   return { events, executor };
 });
 
-it.effect(
-  'native transactions preserve caller services and execute the body once',
-  () =>
-    Effect.gen(function* preserveCallerServices() {
-      class Service extends Context.Service<
-        Service,
-        { readonly value: object }
-      >()('@app/core-runtime/tests/unit/native-transaction.test/Service') {}
-      const service = { value: {} };
-      const h = yield* harness();
-      let calls = 0;
-      const value = yield* h.executor
-        .transaction(() => {
-          calls += 1;
-          return Service.pipe(Effect.map((current) => current.value));
-        })
-        .pipe(Effect.provideService(Service, service));
-      expect(value).toBe(service.value);
-      expect(calls).toBe(1);
-      expect(h.events).toEqual(['BEGIN', 'COMMIT']);
-    })
+it.effect('native transactions preserve caller services and execute the body once', () =>
+  Effect.gen(function* preserveCallerServices() {
+    class Service extends Context.Service<Service, { readonly value: object }>()(
+      '@app/core-runtime/tests/unit/native-transaction.test/Service',
+    ) {}
+    const service = { value: {} };
+    const h = yield* harness();
+    let calls = 0;
+    const value = yield* h.executor
+      .transaction(() => {
+        calls += 1;
+        return Service.pipe(Effect.map((current) => current.value));
+      })
+      .pipe(Effect.provideService(Service, service));
+    expect(value).toBe(service.value);
+    expect(calls).toBe(1);
+    expect(h.events).toEqual(['BEGIN', 'COMMIT']);
+  }),
 );
 
 it.effect('native isolation configuration precedes transaction queries', () =>
@@ -53,7 +49,7 @@ it.effect('native isolation configuration precedes transaction queries', () =>
           isolationLevel: 'repeatable read',
         });
         yield* transaction.execute(sql`select 1`, 'objects');
-      })
+      }),
     );
     expect(h.events).toEqual([
       'BEGIN',
@@ -61,7 +57,7 @@ it.effect('native isolation configuration precedes transaction queries', () =>
       'select 1',
       'COMMIT',
     ]);
-  })
+  }),
 );
 
 for (const [name, cause] of [
@@ -71,16 +67,14 @@ for (const [name, cause] of [
   it.effect(`native ${name} rolls back with the original cause`, () =>
     Effect.gen(function* rollbackOriginalCause() {
       const h = yield* harness();
-      const exit = yield* Effect.exit(
-        h.executor.transaction(() => Effect.failCause(cause))
-      );
+      const exit = yield* Effect.exit(h.executor.transaction(() => Effect.failCause(cause)));
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) {
         throw new Error('Expected assertion to hold');
       }
       expect(exit.cause).toEqual(cause);
       expect(h.events).toEqual(['BEGIN', 'ROLLBACK']);
-    })
+    }),
   );
 }
 
@@ -91,7 +85,7 @@ it.effect('a synchronous body construction throw rolls back', () =>
     const exit = yield* Effect.exit(
       h.executor.transaction((): Effect.Effect<never> => {
         throw defect;
-      })
+      }),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     if (!Exit.isFailure(exit)) {
@@ -99,7 +93,7 @@ it.effect('a synchronous body construction throw rolls back', () =>
     }
     expect(exit.cause).toEqual(Cause.die(defect));
     expect(h.events).toEqual(['BEGIN', 'ROLLBACK']);
-  })
+  }),
 );
 
 for (const phase of ['COMMIT', 'ROLLBACK']) {
@@ -108,25 +102,17 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
       const failure = new SqlError({
         reason: new ConnectionError({ cause: new Error(`${phase} failed`) }),
       });
-      const h = yield* harness((statement) =>
-        statement === phase ? Effect.fail(failure) : Effect.void
-      );
+      const h = yield* harness((statement) => (statement === phase ? Effect.fail(failure) : Effect.void));
       const exit = yield* Effect.exit(
-        h.executor.transaction(() =>
-          phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('body failure')
-        )
+        h.executor.transaction(() => (phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('body failure'))),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) {
         throw new Error('Expected assertion to hold');
       }
-      expect(
-        exit.cause.reasons.some(
-          (reason) => Cause.isDieReason(reason) && reason.defect === failure
-        )
-      ).toBe(true);
+      expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure)).toBe(true);
       expect(h.events).toEqual(['BEGIN', phase]);
-    })
+    }),
   );
 }
 
@@ -141,21 +127,15 @@ it.effect(
       const releaseRollback = yield* Deferred.make<null>();
       const h = yield* harness((statement) =>
         statement === 'ROLLBACK'
-          ? Deferred.succeed(rollingBack, null).pipe(
-              Effect.andThen(Deferred.await(releaseRollback))
-            )
-          : Effect.void
+          ? Deferred.succeed(rollingBack, null).pipe(Effect.andThen(Deferred.await(releaseRollback)))
+          : Effect.void,
       );
       const fiber = yield* h.executor
         .transaction(() =>
           Deferred.succeed(started, null).pipe(
             Effect.andThen(Effect.never),
-            Effect.ensuring(
-              Deferred.succeed(finalizing, null).pipe(
-                Effect.andThen(Deferred.await(releaseFinalizer))
-              )
-            )
-          )
+            Effect.ensuring(Deferred.succeed(finalizing, null).pipe(Effect.andThen(Deferred.await(releaseFinalizer)))),
+          ),
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(started);
@@ -176,7 +156,7 @@ it.effect(
       expect(Cause.hasInterrupts(result.exit.cause)).toBe(true);
       expect(result.events).toEqual(['BEGIN', 'ROLLBACK']);
     }),
-  2000
+  2000,
 );
 
 for (const phase of ['COMMIT', 'ROLLBACK']) {
@@ -195,16 +175,12 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
           statement === phase
             ? Deferred.succeed(started, null).pipe(
                 Effect.andThen(Deferred.await(release)),
-                Effect.andThen(Effect.fail(failure))
+                Effect.andThen(Effect.fail(failure)),
               )
-            : Effect.void
+            : Effect.void,
         );
         const fiber = yield* h.executor
-          .transaction(() =>
-            phase === 'COMMIT'
-              ? Effect.succeed(42)
-              : Effect.fail('domain failure')
-          )
+          .transaction(() => (phase === 'COMMIT' ? Effect.succeed(42) : Effect.fail('domain failure')))
           .pipe(Effect.forkChild);
         yield* Deferred.await(started);
         const interrupt = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
@@ -218,12 +194,8 @@ for (const phase of ['COMMIT', 'ROLLBACK']) {
           throw new Error('Expected assertion to hold');
         }
         // Native settlement defects take precedence over pending interruption.
-        expect(
-          exit.cause.reasons.some(
-            (reason) => Cause.isDieReason(reason) && reason.defect === failure
-          )
-        ).toBe(true);
+        expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === failure)).toBe(true);
       }),
-    2000
+    2000,
   );
 }

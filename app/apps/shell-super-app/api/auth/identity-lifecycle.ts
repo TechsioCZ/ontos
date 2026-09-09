@@ -27,19 +27,13 @@ import type {
   SafeApiKeyMetadata,
 } from './api-key-service.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing
-) =>
-  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const identityLifecycleOperationErrorFields = {
   code: Schema.Literal('identity_lifecycle_operation_failed'),
@@ -48,7 +42,7 @@ const identityLifecycleOperationErrorFields = {
 };
 const IdentityLifecycleOperationErrorSchema = Schema.TaggedStruct(
   'IdentityLifecycleOperationError',
-  identityLifecycleOperationErrorFields
+  identityLifecycleOperationErrorFields,
 );
 const IdentityLifecycleOperationError = Schema.TaggedError<
   Schema.Schema.Type<typeof IdentityLifecycleOperationErrorSchema>
@@ -63,16 +57,11 @@ export interface ApiKeyLifecycleResult extends SafeApiKeyMetadata {
   readonly authBindingId: string;
   readonly cleanupPending: boolean;
 }
-export type ApiKeyIssueResult = ApiKeyLifecycleResult &
-  Readonly<Record<'secret', string>>;
+export type ApiKeyIssueResult = ApiKeyLifecycleResult & Readonly<Record<'secret', string>>;
 
-type RequestIdentity = Readonly<
-  Record<'correlationId' | 'idempotencyKey', string>
->;
+type RequestIdentity = Readonly<Record<'correlationId' | 'idempotencyKey', string>>;
 
-const lifecycleFailure = (
-  cause: unknown = 'identity lifecycle reconciliation remained pending'
-) =>
+const lifecycleFailure = (cause: unknown = 'identity lifecycle reconciliation remained pending') =>
   new IdentityLifecycleOperationError({
     code: 'identity_lifecycle_operation_failed',
     failureCause: cause,
@@ -91,52 +80,39 @@ const publicMetadata = ({
 > => metadata;
 
 export const makeIdentityLifecycleService = (
-  ...dependencies: readonly [
-    ActionRuntimeService,
-    ApiKeyServiceContract,
-    PrincipalResolverService,
-  ]
+  ...dependencies: readonly [ActionRuntimeService, ApiKeyServiceContract, PrincipalResolverService]
 ) => {
   const [actionRuntime, keys, resolver] = dependencies;
-  const reconcileProviderKey = (
-    providerKeyId: string
-  ): Effect.Effect<void, IdentityLifecycleError> =>
+  const reconcileProviderKey = (providerKeyId: string): Effect.Effect<void, IdentityLifecycleError> =>
     resolver.resolveBetterAuthApiKey(providerKeyId).pipe(
       Effect.match({
         onFailure: (error) =>
           Match.value(error).pipe(
-            Match.tag(
-              'PrincipalResolverUnavailableError',
-              () => 'unavailable' as const
-            ),
-            Match.orElse(() => 'orphan' as const)
+            Match.tag('PrincipalResolverUnavailableError', () => 'unavailable' as const),
+            Match.orElse(() => 'orphan' as const),
           ),
         onSuccess: () => 'bound' as const,
       }),
-      Effect.flatMap(
-        (classification): Effect.Effect<void, IdentityLifecycleError> => {
-          if (classification === 'unavailable') {
-            return Effect.fail(lifecycleFailure());
-          }
-          if (classification === 'bound') {
-            return keys.clearPendingCleanup(providerKeyId);
-          }
-          return keys
-            .setEnabled(providerKeyId, false)
-            .pipe(
-              Effect.flatMap(() => keys.clearPendingCleanup(providerKeyId))
-            );
+      Effect.flatMap((classification): Effect.Effect<void, IdentityLifecycleError> => {
+        if (classification === 'unavailable') {
+          return Effect.fail(lifecycleFailure());
         }
-      )
+        if (classification === 'bound') {
+          return keys.clearPendingCleanup(providerKeyId);
+        }
+        return keys
+          .setEnabled(providerKeyId, false)
+          .pipe(Effect.flatMap(() => keys.clearPendingCleanup(providerKeyId)));
+      }),
     );
-  const reconcileProviderKeys = Effect.fn(
-    'makeIdentityLifecycleService.reconcileProviderKeys'
-  )(function* reconcileProviderKeySequence(providerKeyIds: readonly string[]) {
-    yield* Effect.forEach(providerKeyIds, reconcileProviderKey, {
-      concurrency: 1,
-      discard: true,
-    });
-  });
+  const reconcileProviderKeys = Effect.fn('makeIdentityLifecycleService.reconcileProviderKeys')(
+    function* reconcileProviderKeySequence(providerKeyIds: readonly string[]) {
+      yield* Effect.forEach(providerKeyIds, reconcileProviderKey, {
+        concurrency: 1,
+        discard: true,
+      });
+    },
+  );
   const reconcilePendingCleanup = (input: {
     readonly lifecycleOperationId: string;
     readonly principal: TrustedPrincipalContext;
@@ -150,19 +126,17 @@ export const makeIdentityLifecycleService = (
       .pipe(
         Effect.flatMap((batch) =>
           reconcileProviderKeys(batch.providerKeyIds).pipe(
-            Effect.flatMap(() =>
-              batch.hasMore ? Effect.fail(lifecycleFailure()) : Effect.void
-            )
-          )
+            Effect.flatMap(() => (batch.hasMore ? Effect.fail(lifecycleFailure()) : Effect.void)),
+          ),
         ),
-        Effect.mapError(lifecycleFailure)
+        Effect.mapError(lifecycleFailure),
       );
   const bindIssued = (
     input: RequestIdentity & {
       readonly issued: IssuedApiKey;
       readonly managedPrincipalId?: string;
       readonly principal: TrustedPrincipalContext;
-    }
+    },
   ): Effect.Effect<ApiKeyIssueResult, IdentityLifecycleError> => {
     const bindingEffect =
       input.managedPrincipalId === undefined
@@ -191,20 +165,18 @@ export const makeIdentityLifecycleService = (
         });
         return keys.clearPendingCleanup(input.issued.providerKeyId).pipe(
           Effect.as(result(false)),
-          Effect.orElseSucceed(() => result(true))
+          Effect.orElseSucceed(() => result(true)),
         );
       }),
       Effect.matchEffect({
         onFailure: (bindingError) =>
           keys.setEnabled(input.issued.providerKeyId, false).pipe(
-            Effect.flatMap(() =>
-              keys.clearPendingCleanup(input.issued.providerKeyId)
-            ),
+            Effect.flatMap(() => keys.clearPendingCleanup(input.issued.providerKeyId)),
             Effect.ignore,
-            Effect.andThen(Effect.fail(bindingError))
+            Effect.andThen(Effect.fail(bindingError)),
           ),
         onSuccess: Effect.succeed,
-      })
+      }),
     );
   };
   const issue = (
@@ -213,7 +185,7 @@ export const makeIdentityLifecycleService = (
       readonly name?: string;
       readonly principal: TrustedPrincipalContext;
       readonly requestHeaders: Headers;
-    }
+    },
   ) =>
     reconcilePendingCleanup({
       lifecycleOperationId: input.idempotencyKey,
@@ -231,9 +203,9 @@ export const makeIdentityLifecycleService = (
             input.name !== undefined,
             'name',
             input.name,
-            {}
-          )
-        )
+            {},
+          ),
+        ),
       ),
       Effect.flatMap((issued) =>
         bindIssued(
@@ -248,10 +220,10 @@ export const makeIdentityLifecycleService = (
             input.managedPrincipalId,
             {
               principal: input.principal,
-            }
-          )
-        )
-      )
+            },
+          ),
+        ),
+      ),
     );
   const setStatus = (
     input: RequestIdentity & {
@@ -261,10 +233,9 @@ export const makeIdentityLifecycleService = (
       readonly newStatus: 'active' | 'disabled' | 'revoked';
       readonly principal: TrustedPrincipalContext;
       readonly reason?: string;
-    }
+    },
   ): Effect.Effect<ApiKeyLifecycleResult, IdentityLifecycleError> => {
-    const bindingPrincipalId =
-      input.managedPrincipalId ?? input.principal.principalId;
+    const bindingPrincipalId = input.managedPrincipalId ?? input.principal.principalId;
     return resolver
       .loadApiKeyBindingForAdministration({
         authBindingId: input.authBindingId,
@@ -272,97 +243,78 @@ export const makeIdentityLifecycleService = (
         tenantId: input.principal.tenantId,
       })
       .pipe(
-        Effect.flatMap(
-          ({ providerSubjectId: keyId, status: currentStatus }) => {
-            const core = () =>
-              input.managedPrincipalId === undefined
-                ? actionRuntime.runAction({
-                    payload: withOptionalProperty(
-                      {
-                        authBindingId: input.authBindingId,
-                        expectedStatus: input.expectedStatus,
-                        newStatus: input.newStatus,
-                      },
-                      input.reason !== undefined,
-                      'reason',
-                      input.reason,
-                      {}
-                    ),
-                    principal: input.principal,
-                    registration: setSelfApiKeyBindingStatusAction,
-                    transport: transport(input),
-                  })
-                : actionRuntime.runAction({
-                    payload: withOptionalProperty(
-                      {
-                        authBindingId: input.authBindingId,
-                        expectedStatus: input.expectedStatus,
-                        newStatus: input.newStatus,
-                        principalId: input.managedPrincipalId,
-                      },
-                      input.reason !== undefined,
-                      'reason',
-                      input.reason,
-                      {}
-                    ),
-                    principal: input.principal,
-                    registration: setManagedApiKeyBindingStatusAction,
-                    transport: transport(input),
-                  });
-            const result = (
-              metadata: SafeApiKeyMetadata & { readonly providerKeyId: string }
-            ) => ({
-              ...publicMetadata(metadata),
-              authBindingId: input.authBindingId,
-              cleanupPending:
-                metadata.enabled !== (input.newStatus === 'active'),
-            });
-            if (
-              currentStatus !== input.expectedStatus &&
-              currentStatus !== input.newStatus
-            ) {
-              return Effect.fail(
-                new IdentityLifecycleConflictError({
-                  code: 'identity_lifecycle_conflict',
-                  reason:
-                    'The API key binding changed before this lifecycle operation',
+        Effect.flatMap(({ providerSubjectId: keyId, status: currentStatus }) => {
+          const core = () =>
+            input.managedPrincipalId === undefined
+              ? actionRuntime.runAction({
+                  payload: withOptionalProperty(
+                    {
+                      authBindingId: input.authBindingId,
+                      expectedStatus: input.expectedStatus,
+                      newStatus: input.newStatus,
+                    },
+                    input.reason !== undefined,
+                    'reason',
+                    input.reason,
+                    {},
+                  ),
+                  principal: input.principal,
+                  registration: setSelfApiKeyBindingStatusAction,
+                  transport: transport(input),
                 })
-              );
-            }
-            const transition =
-              currentStatus === input.newStatus
-                ? Effect.void
-                : core().pipe(Effect.asVoid);
-            if (input.newStatus === 'active') {
-              return keys.setEnabled(keyId, true).pipe(
-                Effect.flatMap(() => transition),
-                Effect.flatMap(() => keys.metadata(keyId)),
-                Effect.map(result)
-              );
-            }
-            return transition.pipe(
-              Effect.flatMap(() =>
-                keys.setEnabled(keyId, false).pipe(
-                  Effect.map(result),
-                  Effect.matchEffect({
-                    onFailure: (providerError) =>
-                      Effect.annotateLogs(
-                        Effect.logWarning(
-                          'API key disable requires reconciliation'
-                        ),
-                        { failureTag: providerError._tag }
-                      ).pipe(
-                        Effect.andThen(
-                          keys.metadata(keyId).pipe(Effect.map(result))
-                        )
-                      ),
-                    onSuccess: Effect.succeed,
-                  })
-                )
-              )
+              : actionRuntime.runAction({
+                  payload: withOptionalProperty(
+                    {
+                      authBindingId: input.authBindingId,
+                      expectedStatus: input.expectedStatus,
+                      newStatus: input.newStatus,
+                      principalId: input.managedPrincipalId,
+                    },
+                    input.reason !== undefined,
+                    'reason',
+                    input.reason,
+                    {},
+                  ),
+                  principal: input.principal,
+                  registration: setManagedApiKeyBindingStatusAction,
+                  transport: transport(input),
+                });
+          const result = (metadata: SafeApiKeyMetadata & { readonly providerKeyId: string }) => ({
+            ...publicMetadata(metadata),
+            authBindingId: input.authBindingId,
+            cleanupPending: metadata.enabled !== (input.newStatus === 'active'),
+          });
+          if (currentStatus !== input.expectedStatus && currentStatus !== input.newStatus) {
+            return Effect.fail(
+              new IdentityLifecycleConflictError({
+                code: 'identity_lifecycle_conflict',
+                reason: 'The API key binding changed before this lifecycle operation',
+              }),
             );
           }
-        )
+          const transition = currentStatus === input.newStatus ? Effect.void : core().pipe(Effect.asVoid);
+          if (input.newStatus === 'active') {
+            return keys.setEnabled(keyId, true).pipe(
+              Effect.flatMap(() => transition),
+              Effect.flatMap(() => keys.metadata(keyId)),
+              Effect.map(result),
+            );
+          }
+          return transition.pipe(
+            Effect.flatMap(() =>
+              keys.setEnabled(keyId, false).pipe(
+                Effect.map(result),
+                Effect.matchEffect({
+                  onFailure: (providerError) =>
+                    Effect.annotateLogs(Effect.logWarning('API key disable requires reconciliation'), {
+                      failureTag: providerError._tag,
+                    }).pipe(Effect.andThen(keys.metadata(keyId).pipe(Effect.map(result)))),
+                  onSuccess: Effect.succeed,
+                }),
+              ),
+            ),
+          );
+        }),
       );
   };
   return Object.freeze({
@@ -370,7 +322,7 @@ export const makeIdentityLifecycleService = (
       input: RequestIdentity & {
         readonly payload: unknown;
         readonly principal: TrustedPrincipalContext;
-      }
+      },
     ) =>
       actionRuntime.runAction({
         payload: input.payload,
@@ -382,7 +334,7 @@ export const makeIdentityLifecycleService = (
       input: RequestIdentity & {
         readonly payload: unknown;
         readonly principal: TrustedPrincipalContext;
-      }
+      },
     ) =>
       actionRuntime.runAction({
         payload: input.payload,
@@ -396,7 +348,7 @@ export const makeIdentityLifecycleService = (
         readonly oldAuthBindingId: string;
         readonly oldManagedPrincipalId?: string;
         readonly reason: string;
-      }
+      },
     ) =>
       issue(input).pipe(
         Effect.flatMap((replacement) =>
@@ -415,30 +367,23 @@ export const makeIdentityLifecycleService = (
                 newStatus: 'revoked' as const,
                 principal: input.principal,
                 reason: input.reason,
-              }
-            )
+              },
+            ),
           ).pipe(
             Effect.matchEffect({
               onFailure: (oldError) =>
                 resolver
                   .loadApiKeyBindingForAdministration({
                     authBindingId: input.oldAuthBindingId,
-                    principalId:
-                      input.oldManagedPrincipalId ??
-                      input.principal.principalId,
+                    principalId: input.oldManagedPrincipalId ?? input.principal.principalId,
                     tenantId: input.principal.tenantId,
                   })
                   .pipe(
                     Effect.matchEffect({
                       onFailure: (oldLookupError) =>
-                        Effect.annotateLogs(
-                          Effect.logWarning(
-                            'Old API key binding reconciliation is pending'
-                          ),
-                          { failureTag: oldLookupError._tag }
-                        ).pipe(
-                          Effect.as({ ...replacement, cleanupPending: true })
-                        ),
+                        Effect.annotateLogs(Effect.logWarning('Old API key binding reconciliation is pending'), {
+                          failureTag: oldLookupError._tag,
+                        }).pipe(Effect.as({ ...replacement, cleanupPending: true })),
                       onSuccess: (oldBinding) =>
                         oldBinding.status === 'revoked'
                           ? Effect.succeed({
@@ -460,86 +405,71 @@ export const makeIdentityLifecycleService = (
                                   {
                                     newStatus: 'revoked' as const,
                                     principal: input.principal,
-                                    reason:
-                                      'Replacement rollback after old binding closure failed',
-                                  }
-                                )
+                                    reason: 'Replacement rollback after old binding closure failed',
+                                  },
+                                ),
                               ),
                               {
                                 onFailure: (rollbackError) =>
                                   Effect.annotateLogs(
-                                    Effect.logWarning(
-                                      'Replacement API key rollback requires proof'
-                                    ),
-                                    { failureTag: rollbackError._tag }
+                                    Effect.logWarning('Replacement API key rollback requires proof'),
+                                    { failureTag: rollbackError._tag },
                                   ).pipe(
                                     Effect.andThen(
                                       resolver
                                         .loadApiKeyBindingForAdministration({
-                                          authBindingId:
-                                            replacement.authBindingId,
-                                          principalId:
-                                            input.managedPrincipalId ??
-                                            input.principal.principalId,
+                                          authBindingId: replacement.authBindingId,
+                                          principalId: input.managedPrincipalId ?? input.principal.principalId,
                                           tenantId: input.principal.tenantId,
                                         })
                                         .pipe(
                                           Effect.matchEffect({
-                                            onFailure: (
-                                              replacementLookupError
-                                            ) =>
+                                            onFailure: (replacementLookupError) =>
                                               Effect.annotateLogs(
-                                                Effect.logWarning(
-                                                  'Replacement API key reconciliation is pending'
-                                                ),
+                                                Effect.logWarning('Replacement API key reconciliation is pending'),
                                                 {
-                                                  failureTag:
-                                                    replacementLookupError._tag,
-                                                }
+                                                  failureTag: replacementLookupError._tag,
+                                                },
                                               ).pipe(
                                                 Effect.as({
                                                   ...replacement,
                                                   cleanupPending: true,
-                                                })
+                                                }),
                                               ),
                                             onSuccess: (replacementBinding) =>
-                                              replacementBinding.status ===
-                                              'active'
+                                              replacementBinding.status === 'active'
                                                 ? Effect.succeed({
                                                     ...replacement,
                                                     cleanupPending: true,
                                                   })
                                                 : Effect.fail(oldError),
-                                          })
-                                        )
-                                    )
+                                          }),
+                                        ),
+                                    ),
                                   ),
                                 onSuccess: () => Effect.fail(oldError),
-                              }
+                              },
                             ),
-                    })
+                    }),
                   ),
               onSuccess: (old) =>
                 Effect.succeed({
                   ...replacement,
                   cleanupPending: old.cleanupPending,
                 }),
-            })
-          )
-        )
+            }),
+          ),
+        ),
       ),
     setStatus,
   });
 };
 
-export type IdentityLifecycleService = ReturnType<
-  typeof makeIdentityLifecycleService
->;
+export type IdentityLifecycleService = ReturnType<typeof makeIdentityLifecycleService>;
 
-export class IdentityLifecycle extends Context.Service<
-  IdentityLifecycle,
-  IdentityLifecycleService
->()('@app/shell-super-app/api/auth/identity-lifecycle/IdentityLifecycle') {}
+export class IdentityLifecycle extends Context.Service<IdentityLifecycle, IdentityLifecycleService>()(
+  '@app/shell-super-app/api/auth/identity-lifecycle/IdentityLifecycle',
+) {}
 
 export const IdentityLifecycleLive = Layer.effect(
   IdentityLifecycle,
@@ -547,10 +477,6 @@ export const IdentityLifecycleLive = Layer.effect(
     const actionRuntime = yield* ActionRuntime;
     const apiKeys = yield* ApiKeyService;
     const principalResolver = yield* PrincipalResolver;
-    return makeIdentityLifecycleService(
-      actionRuntime,
-      apiKeys,
-      principalResolver
-    );
-  })
+    return makeIdentityLifecycleService(actionRuntime, apiKeys, principalResolver);
+  }),
 );

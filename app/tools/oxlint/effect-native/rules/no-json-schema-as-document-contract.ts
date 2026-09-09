@@ -74,16 +74,9 @@ import { unwrapNode } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
 import { collectSchemaLocals, importedName } from '../shared/imports.ts';
-import {
-  booleanOption as boolean,
-  optionRecord,
-  stringArray,
-} from '../shared/options.ts';
+import { booleanOption as boolean, optionRecord, stringArray } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
-import {
-  constSchemaAlias as constantInitializer,
-  schemaIdentity,
-} from '../shared/schema-identity.ts';
+import { constSchemaAlias as constantInitializer, schemaIdentity } from '../shared/schema-identity.ts';
 
 const SCHEMA_NAMESPACE = 'Schema';
 
@@ -143,12 +136,7 @@ const TRANSPARENT_WRAPPERS = new Set([
 ]);
 
 /** `Schema.Array(Schema.Json)` and friends: the element schema is the contract. */
-const ARRAY_COMBINATORS = new Set([
-  'Array',
-  'ArrayEnsure',
-  'NonEmptyArray',
-  'ReadonlyArray',
-]);
+const ARRAY_COMBINATORS = new Set(['Array', 'ArrayEnsure', 'NonEmptyArray', 'ReadonlyArray']);
 
 /** Node types that end module scope. */
 const SCOPE_BREAKERS = new Set([
@@ -198,9 +186,7 @@ function unwrapExpression(node: ESTree.Node): ESTree.Node {
   });
 }
 
-function recordValue(
-  args: ESTree.CallExpression['arguments']
-): ESTree.Node | null {
+function recordValue(args: ESTree.CallExpression['arguments']): ESTree.Node | null {
   if (args.length >= 2) {
     const second = args[1];
     return second && second.type !== 'SpreadElement' ? second : null;
@@ -213,8 +199,7 @@ function recordObjectValue(first: ESTree.Node | undefined): ESTree.Node | null {
   let value: ESTree.Node | null = null;
   for (const property of first.properties) {
     if (property.type !== 'Property' || property.computed) continue;
-    if (property.key.type === 'Identifier' && property.key.name === 'value')
-      value = property.value;
+    if (property.key.type === 'Identifier' && property.key.name === 'value') value = property.value;
   }
   return value;
 }
@@ -316,18 +301,13 @@ export const rule = defineRule({
      * Describe `node` when it is a shape-free JSON *document* schema, resolving module-scope
      * aliases and unwrapping transparent combinators. Returns the shape to quote in the message.
      */
-    const jsonDocumentShape = (
-      node: ESTree.Node,
-      depth: number,
-      seen: Set<string>
-    ): string | null => {
+    const jsonDocumentShape = (node: ESTree.Node, depth: number, seen: Set<string>): string | null => {
       if (depth > MAX_RESOLUTION_DEPTH) return null;
       const current = unwrapExpression(node);
 
       if (isBareJson(current)) return `${SCHEMA_NAMESPACE}.Json`;
 
-      if (current.type === 'Identifier')
-        return aliasDocumentShape(current, depth, seen);
+      if (current.type === 'Identifier') return aliasDocumentShape(current, depth, seen);
 
       if (current.type !== 'CallExpression') return null;
       return combinatorDocumentShape(current, depth, seen);
@@ -336,14 +316,13 @@ export const rule = defineRule({
     const combinatorDocumentShape = (
       current: ESTree.CallExpression,
       depth: number,
-      seen: Set<string>
+      seen: Set<string>,
     ): string | null => {
       const combinator = schemaReference(unwrapExpression(current.callee));
       if (combinator === null) return null;
       const args = current.arguments;
 
-      if (TRANSPARENT_WRAPPERS.has(combinator))
-        return argumentDocumentShape(args[0], depth, seen);
+      if (TRANSPARENT_WRAPPERS.has(combinator)) return argumentDocumentShape(args[0], depth, seen);
       if (ARRAY_COMBINATORS.has(combinator)) {
         return argumentDocumentShape(args[0], depth, seen) === null
           ? null
@@ -364,22 +343,20 @@ export const rule = defineRule({
     const argumentDocumentShape = (
       argument: ESTree.Node | undefined,
       depth: number,
-      seen: Set<string>
+      seen: Set<string>,
     ): string | null => {
-      if (argument === undefined || argument.type === 'SpreadElement')
-        return null;
+      if (argument === undefined || argument.type === 'SpreadElement') return null;
       return jsonDocumentShape(argument, depth + 1, seen);
     };
 
     const aliasDocumentShape = (
       current: Extract<ESTree.Node, { type: 'Identifier' }>,
       depth: number,
-      seen: Set<string>
+      seen: Set<string>,
     ): string | null => {
       if (seen.has(current.name)) return null;
       const definition = lookupVariable(context, current)?.defs.find(
-        (def) =>
-          def.type === 'Variable' && def.node.type === 'VariableDeclarator'
+        (def) => def.type === 'Variable' && def.node.type === 'VariableDeclarator',
       );
       const declarator = definition && constantInitializer(definition);
       if (!declarator?.init) return null;
@@ -387,8 +364,7 @@ export const rule = defineRule({
       return jsonDocumentShape(declarator.init, depth + 1, seen);
     };
 
-    const describe = (node: ESTree.Node): string | null =>
-      jsonDocumentShape(node, 0, new Set<string>());
+    const describe = (node: ESTree.Node): string | null => jsonDocumentShape(node, 0, new Set<string>());
 
     /**
      * The `Schema` member a call ultimately targets, unwrapping the curried forms
@@ -415,11 +391,7 @@ export const rule = defineRule({
       let current: ESTree.Node | null = node.parent ?? null;
       for (let step = 0; step < 64 && current !== null; step += 1) {
         if (current.type === 'Program') return false;
-        if (
-          current.type === 'CallExpression' &&
-          calledSchemaMember(current) !== null
-        )
-          return true;
+        if (current.type === 'CallExpression' && calledSchemaMember(current) !== null) return true;
         current = current.parent ?? null;
       }
       return false;
@@ -440,8 +412,7 @@ export const rule = defineRule({
       let current: ESTree.Node | null = node.parent ?? null;
       for (let step = 0; step < 64 && current !== null; step += 1) {
         if (current.type === 'TSTypeAliasDeclaration') return true;
-        if (current.type === 'VariableDeclaration')
-          return current.declare === true;
+        if (current.type === 'VariableDeclaration') return current.declare === true;
         if (current.type === 'Program') return false;
         current = current.parent ?? null;
       }
@@ -460,7 +431,7 @@ export const rule = defineRule({
             def.node.importKind !== 'type' &&
             def.parent?.type === 'ImportDeclaration' &&
             def.parent.importKind !== 'type' &&
-            ['effect', 'effect/Function'].includes(def.parent.source.value)
+            ['effect', 'effect/Function'].includes(def.parent.source.value),
         ) ?? false
       );
     };
@@ -469,8 +440,7 @@ export const rule = defineRule({
       // Only actual Effect pipe, with the codec immediately following the schema.
       if (node.arguments.length < 2 || !isEffectPipe(node.callee)) return;
       const [subject, next] = node.arguments;
-      if (subject.type === 'SpreadElement' || next.type === 'SpreadElement')
-        return;
+      if (subject.type === 'SpreadElement' || next.type === 'SpreadElement') return;
       const codec = schemaReference(next);
       const shape = describe(subject);
       if (codec && codecMembers.has(codec) && shape)
@@ -481,17 +451,12 @@ export const rule = defineRule({
         });
     };
 
-    const typeQueryReference = (
-      expression: ESTree.TSTypeQuery['exprName']
-    ): string | null => {
+    const typeQueryReference = (expression: ESTree.TSTypeQuery['exprName']): string | null => {
       if (expression.type === 'TSQualifiedName') {
         const left = expression.left;
         if (left.type !== 'Identifier') return null;
-        if (!locals.schema.has(left.name) || !resolvesToImport(context, left))
-          return null;
-        return jsonMembers.has(expression.right.name)
-          ? `${left.name}.${expression.right.name}`
-          : null;
+        if (!locals.schema.has(left.name) || !resolvesToImport(context, left)) return null;
+        return jsonMembers.has(expression.right.name) ? `${left.name}.${expression.right.name}` : null;
       }
       if (expression.type !== 'Identifier') return null;
       const imported = locals.direct.get(expression.name);
@@ -510,8 +475,7 @@ export const rule = defineRule({
         if (shape === null) return;
         const callee = unwrapExpression(node.callee);
         const namespace =
-          callee.type === 'MemberExpression' &&
-          callee.object.type === 'Identifier'
+          callee.type === 'MemberExpression' && callee.object.type === 'Identifier'
             ? callee.object.name
             : SCHEMA_NAMESPACE;
         context.report({
@@ -535,13 +499,7 @@ export const rule = defineRule({
       },
 
       PropertyDefinition(node) {
-        if (
-          !node.static ||
-          !node.readonly ||
-          node.value === null ||
-          insideSchemaCall(node)
-        )
-          return;
+        if (!node.static || !node.readonly || node.value === null || insideSchemaCall(node)) return;
         const shape = describe(node.value);
         if (shape !== null)
           context.report({

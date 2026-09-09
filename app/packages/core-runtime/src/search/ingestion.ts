@@ -8,14 +8,9 @@ import {
 import type { CoreSearchProjectionStoreService } from './projection.ts';
 
 const PARTY_REGISTRY_MODULE_KEY = 'party.registry' as const;
-const tenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('TenantId')
-);
+const tenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
 type UnparsedCoreSearchIngestionObservation = typeof Schema.Unknown.Type;
-type CoreSearchProjectionMutationSink = Pick<
-  CoreSearchProjectionStoreService,
-  'apply'
->;
+type CoreSearchProjectionMutationSink = Pick<CoreSearchProjectionStoreService, 'apply'>;
 
 export const CORE_SEARCH_PARTY_LIFECYCLE_TOPICS = [
   'party.registry.party-created.v1',
@@ -34,8 +29,7 @@ export const CORE_SEARCH_PARTY_LIFECYCLE_TOPICS = [
   'party.registry.counterparty-role-ended.v1',
   'party.registry.search-rebuild-requested.v1',
 ] as const;
-export type CoreSearchPartyLifecycleTopic =
-  (typeof CORE_SEARCH_PARTY_LIFECYCLE_TOPICS)[number];
+export type CoreSearchPartyLifecycleTopic = (typeof CORE_SEARCH_PARTY_LIFECYCLE_TOPICS)[number];
 
 export const CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS = [
   'party.registry.project-party-created-to-search',
@@ -54,13 +48,10 @@ export const CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS = [
   'party.registry.project-counterparty-role-ended-to-search',
   'party.registry.rebuild-search',
 ] as const;
-export type CoreSearchPartyProjectorWorkerKey =
-  (typeof CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS)[number];
+export type CoreSearchPartyProjectorWorkerKey = (typeof CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS)[number];
 
 const topicSchema = Schema.Literals(CORE_SEARCH_PARTY_LIFECYCLE_TOPICS);
-const workerKeySchema = Schema.Literals(
-  CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS
-);
+const workerKeySchema = Schema.Literals(CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS);
 const versionSchema = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u));
 
 export const CoreSearchIngestionObservationSchema = Schema.Struct({
@@ -72,8 +63,7 @@ export const CoreSearchIngestionObservationSchema = Schema.Struct({
   topic: topicSchema,
   workerKey: workerKeySchema,
 });
-export type CoreSearchIngestionObservation =
-  typeof CoreSearchIngestionObservationSchema.Type;
+export type CoreSearchIngestionObservation = typeof CoreSearchIngestionObservationSchema.Type;
 
 export interface CoreSearchIngestionRegistration {
   readonly consumerModuleKey: typeof PARTY_REGISTRY_MODULE_KEY;
@@ -82,27 +72,23 @@ export interface CoreSearchIngestionRegistration {
   readonly workerKey: CoreSearchPartyProjectorWorkerKey;
 }
 
-export const CORE_SEARCH_INGESTION_REGISTRATIONS: readonly CoreSearchIngestionRegistration[] =
-  Object.freeze(
-    CORE_SEARCH_PARTY_LIFECYCLE_TOPICS.flatMap((topic, index) => {
-      const workerKey = CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS[index];
-      return workerKey === undefined
-        ? []
-        : [
-            Object.freeze({
-              consumerModuleKey: PARTY_REGISTRY_MODULE_KEY,
-              producerModuleKey: PARTY_REGISTRY_MODULE_KEY,
-              topic,
-              workerKey,
-            }),
-          ];
-    })
-  );
+export const CORE_SEARCH_INGESTION_REGISTRATIONS: readonly CoreSearchIngestionRegistration[] = Object.freeze(
+  CORE_SEARCH_PARTY_LIFECYCLE_TOPICS.flatMap((topic, index) => {
+    const workerKey = CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS[index];
+    return workerKey === undefined
+      ? []
+      : [
+          Object.freeze({
+            consumerModuleKey: PARTY_REGISTRY_MODULE_KEY,
+            producerModuleKey: PARTY_REGISTRY_MODULE_KEY,
+            topic,
+            workerKey,
+          }),
+        ];
+  }),
+);
 
-const invalid = (
-  reason: string,
-  cause?: unknown
-): CoreSearchProjectionInvalid => {
+const invalid = (reason: string, cause?: unknown): CoreSearchProjectionInvalid => {
   if (cause === undefined) {
     return new CoreSearchProjectionInvalid({
       code: 'core_search_projection_invalid',
@@ -118,33 +104,26 @@ const invalid = (
 
 export interface CoreSearchIngestionService {
   readonly ingest: (
-    input: UnparsedCoreSearchIngestionObservation
+    input: UnparsedCoreSearchIngestionObservation,
   ) => ReturnType<CoreSearchProjectionStoreService['apply']>;
 }
 
 /** Core-owned consumer seam for post-commit Party lifecycle observations. */
-export class CoreSearchIngestion extends Context.Service<
-  CoreSearchIngestion,
-  CoreSearchIngestionService
->()('@app/core-runtime/search/ingestion/CoreSearchIngestion') {}
+export class CoreSearchIngestion extends Context.Service<CoreSearchIngestion, CoreSearchIngestionService>()(
+  '@app/core-runtime/search/ingestion/CoreSearchIngestion',
+) {}
 
-export const makeCoreSearchIngestion = (
-  store: CoreSearchProjectionMutationSink
-): CoreSearchIngestionService => ({
+export const makeCoreSearchIngestion = (store: CoreSearchProjectionMutationSink): CoreSearchIngestionService => ({
   ingest: (input) =>
-    Schema.decodeUnknownEffect(CoreSearchIngestionObservationSchema)(
-      input
-    ).pipe(
-      Effect.mapError((cause) =>
-        invalid('Core Search ingestion observation is invalid', cause)
-      ),
+    Schema.decodeUnknownEffect(CoreSearchIngestionObservationSchema)(input).pipe(
+      Effect.mapError((cause) => invalid('Core Search ingestion observation is invalid', cause)),
       Effect.flatMap((observation) => {
         const registered = CORE_SEARCH_INGESTION_REGISTRATIONS.some(
           (registration) =>
             registration.consumerModuleKey === observation.consumerModuleKey &&
             registration.producerModuleKey === observation.producerModuleKey &&
             registration.topic === observation.topic &&
-            registration.workerKey === observation.workerKey
+            registration.workerKey === observation.workerKey,
         );
         const mutationTenantId =
           observation.mutation.kind === 'upsert'
@@ -164,14 +143,10 @@ export const makeCoreSearchIngestion = (
           mutationModuleId !== observation.producerModuleKey ||
           mutationVersion !== observation.projectionVersion
         ) {
-          return Effect.fail(
-            invalid(
-              'Core Search ingestion identity does not match its post-commit observation'
-            )
-          );
+          return Effect.fail(invalid('Core Search ingestion identity does not match its post-commit observation'));
         }
         return store.apply(observation.mutation);
-      })
+      }),
     ),
 });
 
@@ -180,5 +155,5 @@ export const CoreSearchIngestionLive = Layer.effect(
   Effect.gen(function* makeCoreSearchIngestionLive() {
     const store = yield* CoreSearchProjectionStore;
     return makeCoreSearchIngestion(store);
-  })
+  }),
 );

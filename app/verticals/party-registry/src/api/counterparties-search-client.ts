@@ -25,7 +25,7 @@ type CounterpartiesSearchOperationInvocation = readonly [
 const counterpartiesClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: CounterpartiesSearchClientOptions
+  options: CounterpartiesSearchClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -34,23 +34,15 @@ const counterpartiesClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const loadCounterpartiesClientWithAuthorization = (
   payload: CounterpartiesProviderRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartiesSearchAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartiesSearchAuthorizedInvocation
 ) =>
-  counterpartiesClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
-    Effect.flatMap((client) => client.counterpartiesSearch.execute({ payload }))
+  counterpartiesClient(Redacted.make(credential), requestCorrelation, options).pipe(
+    Effect.flatMap((client) => client.counterpartiesSearch.execute({ payload })),
   );
 
 export const loadCounterpartiesClient = (
@@ -58,10 +50,5 @@ export const loadCounterpartiesClient = (
   ...[requestCorrelation, options = {}]: CounterpartiesSearchOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    loadCounterpartiesClientWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    loadCounterpartiesClientWithAuthorization(payload, credential, requestCorrelation, options),
   );

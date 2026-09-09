@@ -20,30 +20,17 @@ import { fileURLToPath } from 'node:url';
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import {
-  unwrapNode as unwrap,
-  staticString,
-  memberName as staticMemberName,
-} from '../shared/ast.ts';
+import { unwrapNode as unwrap, staticString, memberName as staticMemberName } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import {
-  splitMembers,
-  collectNamespaceLocals,
-  collectDirectMemberImports,
-} from '../shared/imports.ts';
+import { splitMembers, collectNamespaceLocals, collectDirectMemberImports } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, rootedScopePath } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 
-const DEFAULT_IGNORE = [
-  '**/dist/**',
-  '**/build/**',
-  '**/node_modules/**',
-  '**/*.d.ts',
-];
+const DEFAULT_IGNORE = ['**/dist/**', '**/build/**', '**/node_modules/**', '**/*.d.ts'];
 
 /**
  * The single outer HTTP instrumentation seam A6 asks for. Nothing in the repository matches today;
@@ -105,15 +92,9 @@ function readOptions(context: Context) {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     seamFiles: stringArray(record.seamFiles, DEFAULT_SEAM_FILES),
     identityKeys: stringArray(record.identityKeys, DEFAULT_IDENTITY_KEYS),
-    annotationMembers: stringArray(
-      record.annotationMembers,
-      DEFAULT_ANNOTATION_MEMBERS
-    ),
+    annotationMembers: stringArray(record.annotationMembers, DEFAULT_ANNOTATION_MEMBERS),
     spanMembers: stringArray(record.spanMembers, DEFAULT_SPAN_MEMBERS),
-    reexportModules: stringArray(
-      record.reexportModules,
-      DEFAULT_REEXPORT_MODULES
-    ),
+    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
     flagSpreadHelpers: record.flagSpreadHelpers === true,
     includeTests: record.includeTests === true,
     includeScripts: record.includeScripts === true,
@@ -122,10 +103,7 @@ function readOptions(context: Context) {
 
 /** Repo-relative path with the fixture prefix removed, so fixtures behave like real source paths. */
 function scopePath(filename: string): string {
-  return rootedScopePath(
-    filename,
-    fileURLToPath(new URL('../../../../', import.meta.url))
-  );
+  return rootedScopePath(filename, fileURLToPath(new URL('../../../../', import.meta.url)));
 }
 
 /** `x-correlation-id`, `correlation_id` and `correlationId` all collapse to `correlationid`. */
@@ -136,16 +114,12 @@ function normaliseKey(key: string): string {
 /** Header-style spellings prefix the identity; `x-correlation-id` and `http.request.id` are the same id. */
 const HEADER_PREFIXES = ['x', 'http', 'otel', 'ontos'];
 
-function identityKeyFor(
-  key: string,
-  identities: ReadonlyMap<string, string>
-): string | null {
+function identityKeyFor(key: string, identities: ReadonlyMap<string, string>): string | null {
   const normalised = normaliseKey(key);
   const direct = identities.get(normalised);
   if (direct !== undefined) return direct;
   for (const prefix of HEADER_PREFIXES) {
-    if (!normalised.startsWith(prefix) || normalised.length === prefix.length)
-      continue;
+    if (!normalised.startsWith(prefix) || normalised.length === prefix.length) continue;
     const stripped = identities.get(normalised.slice(prefix.length));
     if (stripped !== undefined) return stripped;
   }
@@ -164,52 +138,31 @@ function literalString(node: ESTree.Node | null | undefined): string | null {
 
 function excludedPath(path: string, options: RuleOptions): boolean {
   if (/\.d\.[cm]?ts$/u.test(path)) return true;
-  if (/(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path))
-    return true;
-  if (
-    matchesGlobs(path, options.ignore) ||
-    matchesGlobs(path, options.seamFiles)
-  )
-    return true;
+  if (/(?:^|\/)(?:dist(?:-[^/]+)?|build|\.output|node_modules)\//u.test(path)) return true;
+  if (matchesGlobs(path, options.ignore) || matchesGlobs(path, options.seamFiles)) return true;
   if (!matchesGlobs(path, options.include)) return true;
   if (!options.includeTests && isTestFile(path)) return true;
   return !options.includeScripts && /(?:^|\/)scripts\//u.test(path);
 }
 
-function qualifiedMember(
-  base: string | null,
-  key: string | null
-): string | null {
+function qualifiedMember(base: string | null, key: string | null): string | null {
   if (base === null || key === null) return null;
   return base === '$root' ? key : `${base}.${key}`;
 }
 
-function destructuredMember(
-  pattern: ESTree.Node,
-  name: string,
-  base: string | null
-): string | null {
+function destructuredMember(pattern: ESTree.Node, name: string, base: string | null): string | null {
   if (pattern.type === 'Identifier') return base;
   if (pattern.type !== 'ObjectPattern' || base === null) return null;
   for (const property of pattern.properties) {
-    if (
-      property.type !== 'Property' ||
-      property.value.type !== 'Identifier' ||
-      property.value.name !== name
-    )
-      continue;
+    if (property.type !== 'Property' || property.value.type !== 'Identifier' || property.value.name !== name) continue;
     const key =
-      !property.computed && property.key.type === 'Identifier'
-        ? property.key.name
-        : literalString(property.key);
+      !property.computed && property.key.type === 'Identifier' ? property.key.name : literalString(property.key);
     return qualifiedMember(base, key);
   }
   return null;
 }
 
-function objectArgument(
-  args: ESTree.CallExpression['arguments']
-): ESTree.ObjectExpression | undefined {
+function objectArgument(args: ESTree.CallExpression['arguments']): ESTree.ObjectExpression | undefined {
   for (const raw of args) {
     const argument = unwrap(raw);
     if (argument.type === 'ObjectExpression') return argument;
@@ -217,17 +170,13 @@ function objectArgument(
   return undefined;
 }
 
-function annotationKeyArgument(
-  args: ESTree.CallExpression['arguments']
-): ESTree.Node | undefined {
+function annotationKeyArgument(args: ESTree.CallExpression['arguments']): ESTree.Node | undefined {
   if (args.length === 2) return args[0];
   if (args.length === 3) return args[1];
   return undefined;
 }
 
-function opaqueArgument(
-  args: ESTree.CallExpression['arguments']
-): ESTree.Node | undefined {
+function opaqueArgument(args: ESTree.CallExpression['arguments']): ESTree.Node | undefined {
   if (args.length === 1) return args[0];
   if (args.length === 2) return args[1];
   return undefined;
@@ -294,85 +243,51 @@ export const rule = defineRule({
     const path = scopePath(context.filename);
     if (excludedPath(path, options)) return {};
 
-    const annotationByNamespace = splitMembers(
-      options.annotationMembers
-    ).byNamespace;
+    const annotationByNamespace = splitMembers(options.annotationMembers).byNamespace;
     const spanByNamespace = splitMembers(options.spanMembers).byNamespace;
-    const allByNamespace = splitMembers([
-      ...options.annotationMembers,
-      ...options.spanMembers,
-    ]).byNamespace;
+    const allByNamespace = splitMembers([...options.annotationMembers, ...options.spanMembers]).byNamespace;
     if (allByNamespace.size === 0) return {};
 
     const identities = new Map<string, string>();
-    for (const key of options.identityKeys)
-      identities.set(normaliseKey(key), key);
+    for (const key of options.identityKeys) identities.set(normaliseKey(key), key);
     if (identities.size === 0) return {};
 
     const program = context.sourceCode.ast;
     const bindings = collectEffectBindings(program);
     const watched = new Set(allByNamespace.keys());
-    const { namespaced, barrel } = collectNamespaceLocals(
-      program,
-      bindings,
-      watched,
-      options.reexportModules
-    );
+    const { namespaced, barrel } = collectNamespaceLocals(program, bindings, watched, options.reexportModules);
     const directMembers = new Map(
-      [...collectDirectMemberImports(program, allByNamespace)].map(
-        ([local, { namespace, member }]) => [local, `${namespace}.${member}`]
-      )
+      [...collectDirectMemberImports(program, allByNamespace)].map(([local, { namespace, member }]) => [
+        local,
+        `${namespace}.${member}`,
+      ]),
     );
-    if (namespaced.size === 0 && barrel.size === 0 && directMembers.size === 0)
-      return {};
+    if (namespaced.size === 0 && barrel.size === 0 && directMembers.size === 0) return {};
 
-    const resolveAlias = (
-      variable: Variable,
-      name: string,
-      seen: Set<Variable>
-    ): string | null => {
-      if (
-        seen.has(variable) ||
-        variable.references.some(
-          (reference) => reference.isWrite() && !reference.init
-        )
-      )
+    const resolveAlias = (variable: Variable, name: string, seen: Set<Variable>): string | null => {
+      if (seen.has(variable) || variable.references.some((reference) => reference.isWrite() && !reference.init))
         return null;
       seen.add(variable);
       const definition = variable.defs[0];
-      if (
-        definition?.type !== 'Variable' ||
-        definition.node.type !== 'VariableDeclarator' ||
-        !definition.node.init
-      )
+      if (definition?.type !== 'Variable' || definition.node.type !== 'VariableDeclarator' || !definition.node.init)
         return null;
       const declaration = definition.node;
-      return destructuredMember(
-        declaration.id,
-        name,
-        resolveCallee(declaration.init!, seen)
-      );
+      return destructuredMember(declaration.id, name, resolveCallee(declaration.init!, seen));
     };
 
     const resolveIdentifier = (
       callee: Extract<ESTree.Node, { type: 'Identifier' }>,
-      seen: Set<Variable>
+      seen: Set<Variable>,
     ): string | null => {
       const variable = lookupVariable(context, callee);
-      if (variable && !resolvesToImport(context, callee, true))
-        return resolveAlias(variable, callee.name, seen);
+      if (variable && !resolvesToImport(context, callee, true)) return resolveAlias(variable, callee.name, seen);
       return (
-        directMembers.get(callee.name) ??
-        namespaced.get(callee.name) ??
-        (barrel.has(callee.name) ? '$root' : null)
+        directMembers.get(callee.name) ?? namespaced.get(callee.name) ?? (barrel.has(callee.name) ? '$root' : null)
       );
     };
 
     /** Resolve immutable aliases by their lexical definitions, never by a global name table. */
-    const resolveCallee = (
-      input: ESTree.Node,
-      seen = new Set<Variable>()
-    ): string | null => {
+    const resolveCallee = (input: ESTree.Node, seen = new Set<Variable>()): string | null => {
       const callee = unwrap(input);
       if (callee.type === 'Identifier') return resolveIdentifier(callee, seen);
       if (callee.type !== 'MemberExpression') return null;
@@ -381,11 +296,7 @@ export const rule = defineRule({
       return qualifiedMember(base, member);
     };
 
-    const reportIdentity = (
-      node: ESTree.Node,
-      key: string,
-      member: string
-    ): void => {
+    const reportIdentity = (node: ESTree.Node, key: string, member: string): void => {
       context.report({
         node,
         messageId: 'manualIdentity',
@@ -403,19 +314,14 @@ export const rule = defineRule({
     };
 
     /** Report every identity-named property of a flat annotation/attributes record. */
-    const inspectRecord = (
-      record: ESTree.ObjectExpression,
-      member: string
-    ): void => {
+    const inspectRecord = (record: ESTree.ObjectExpression, member: string): void => {
       for (const property of record.properties) {
         if (property.type === 'SpreadElement') {
           reportOpaque(property, member);
           continue;
         }
         const key =
-          property.computed || property.key.type !== 'Identifier'
-            ? literalString(property.key)
-            : property.key.name;
+          property.computed || property.key.type !== 'Identifier' ? literalString(property.key) : property.key.name;
         if (key === null) continue;
         const identity = identityKeyFor(key, identities);
         if (identity !== null) reportIdentity(property, identity, member);
@@ -426,10 +332,7 @@ export const rule = defineRule({
      * `annotateLogs` shapes: `({...})`, `(effect, {...})`, `("key", value)`, `(effect, "key", value)`.
      * A non-object annotation argument is a helper (`claimAnnotations(claim)`, `annotations`).
      */
-    const inspectAnnotationCall = (
-      node: ESTree.CallExpression,
-      member: string
-    ): void => {
+    const inspectAnnotationCall = (node: ESTree.CallExpression, member: string): void => {
       const args = node.arguments;
       const record = objectArgument(args.slice(0, 2));
       if (record !== undefined) {
@@ -446,23 +349,17 @@ export const rule = defineRule({
       }
       // No literal record and no literal key: a helper produced the annotations.
       const opaque = opaqueArgument(args);
-      if (opaque !== undefined && opaque.type !== 'ObjectExpression')
-        reportOpaque(opaque, member);
+      if (opaque !== undefined && opaque.type !== 'ObjectExpression') reportOpaque(opaque, member);
     };
 
     /** `withSpan(name, { attributes })` / `withSpan(effect, name, { attributes })`. */
-    const inspectSpanCall = (
-      node: ESTree.CallExpression,
-      member: string
-    ): void => {
+    const inspectSpanCall = (node: ESTree.CallExpression, member: string): void => {
       const argument = objectArgument(node.arguments);
       if (argument === undefined) return;
       for (const property of argument.properties) {
         if (property.type === 'SpreadElement') continue;
         const key =
-          property.computed || property.key.type !== 'Identifier'
-            ? literalString(property.key)
-            : property.key.name;
+          property.computed || property.key.type !== 'Identifier' ? literalString(property.key) : property.key.name;
         if (key !== 'attributes') continue;
         const value = unwrap(property.value);
         if (value.type === 'ObjectExpression') inspectRecord(value, member);
@@ -477,10 +374,8 @@ export const rule = defineRule({
         const dot = qualified.indexOf('.');
         const namespace = qualified.slice(0, dot);
         const member = qualified.slice(dot + 1);
-        if (annotationByNamespace.get(namespace)?.has(member))
-          inspectAnnotationCall(node, qualified);
-        else if (spanByNamespace.get(namespace)?.has(member))
-          inspectSpanCall(node, qualified);
+        if (annotationByNamespace.get(namespace)?.has(member)) inspectAnnotationCall(node, qualified);
+        else if (spanByNamespace.get(namespace)?.has(member)) inspectSpanCall(node, qualified);
       },
     };
   },

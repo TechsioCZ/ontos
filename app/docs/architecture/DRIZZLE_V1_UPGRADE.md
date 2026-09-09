@@ -21,14 +21,14 @@ The initial upgrade adopted tagged `rc.4`. The native Effect migration in [PR #4
 
 ### Initial rc.4 dependencies
 
-| Package | Before | After | Owners |
-| --- | --- | --- | --- |
-| `drizzle-orm` | 0.45.2 | 1.0.0-rc.4 | root, `core-runtime`, Shell, `contacts` |
-| `drizzle-kit` | 0.31.10 | 1.0.0-rc.4 | `core-runtime`, Shell, `contacts` |
-| `better-auth` | 1.6.23 | 1.7.2 | root, Shell |
-| `@better-auth/api-key` | 1.6.23 | 1.7.2 | Shell |
+| Package                        | Before   | After        | Owners                                   |
+| ------------------------------ | -------- | ------------ | ---------------------------------------- |
+| `drizzle-orm`                  | 0.45.2   | 1.0.0-rc.4   | root, `core-runtime`, Shell, `contacts`  |
+| `drizzle-kit`                  | 0.31.10  | 1.0.0-rc.4   | `core-runtime`, Shell, `contacts`        |
+| `better-auth`                  | 1.6.23   | 1.7.2        | root, Shell                              |
+| `@better-auth/api-key`         | 1.6.23   | 1.7.2        | Shell                                    |
 | `@better-auth/drizzle-adapter` | indirect | 1.7.2 direct | root, Shell (`/relations-v2` entrypoint) |
-| `auth` (Better Auth CLI) | 1.6.23 | 1.7.2 | Shell |
+| `auth` (Better Auth CLI)       | 1.6.23   | 1.7.2        | Shell                                    |
 
 This table records the original upgrade, when Party was named Contacts. The current cohort above supersedes its Drizzle versions. Every owner pins the identical Drizzle pair.
 
@@ -81,10 +81,7 @@ for (const root of roots) {
       const qualifier = `"${entity.schema}"."${entity.table}".`;
       const strip = (text) => text.split(qualifier).join('');
       for (const field of fields[entity.entityType] ?? []) {
-        if (
-          typeof entity[field] === 'string' &&
-          entity[field].includes(qualifier)
-        ) {
+        if (typeof entity[field] === 'string' && entity[field].includes(qualifier)) {
           entity[field] = strip(entity[field]);
           fragments++;
           touched = true;
@@ -149,18 +146,18 @@ The v1 migrator applies every migration folder missing from the table, not only 
 
 Environment: Darwin arm64, Node `26.5.0` and pnpm `11.25.0` through `mise exec --`, PostgreSQL 17 in the local Compose container on port 5433.
 
-| Proof | Result |
-| --- | --- |
-| `drizzle-kit up` for Core, Auth, Contacts | 9 + 6 + 4 folders; every `migration.sql` byte-identical to its predecessor |
-| Auth `add-account-issuer` on the populated copy | exit 0, one credential row backfilled to `local:credential`, unique index present |
-| `db:generate` for each owner after normalization | `No schema changes, nothing to migrate` for all three |
-| `db:check` for each owner | `Everything's fine` |
+| Proof                                                    | Result                                                                             |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `drizzle-kit up` for Core, Auth, Contacts                | 9 + 6 + 4 folders; every `migration.sql` byte-identical to its predecessor         |
+| Auth `add-account-issuer` on the populated copy          | exit 0, one credential row backfilled to `local:credential`, unique index present  |
+| `db:generate` for each owner after normalization         | `No schema changes, nothing to migrate` for all three                              |
+| `db:check` for each owner                                | `Everything's fine`                                                                |
 | `db:migrate` on a `TEMPLATE ontos` copy with v0 journals | exit 0, 9/7/4 rows, `name` backfilled, catalog column hash identical after a rerun |
-| `db:migrate` on an empty database | exit 0, 9/7/4 rows, schemas `core`/`auth`/`contacts`/`drizzle` present |
-| `db:verify` on both databases | exact schemas, journals, and 18/6/3 typed tables verified |
-| `pnpm typecheck`, `pnpm lint` | clean |
-| `pnpm action:test:unit`, `pnpm outbox:test` | 64/64 and all outbox tests passing |
-| `pnpm db:test` (Core, Auth integration, Contacts) | see the pull request for the final run |
+| `db:migrate` on an empty database                        | exit 0, 9/7/4 rows, schemas `core`/`auth`/`contacts`/`drizzle` present             |
+| `db:verify` on both databases                            | exact schemas, journals, and 18/6/3 typed tables verified                          |
+| `pnpm typecheck`, `pnpm lint`                            | clean                                                                              |
+| `pnpm action:test:unit`, `pnpm outbox:test`              | 64/64 and all outbox tests passing                                                 |
+| `pnpm db:test` (Core, Auth integration, Contacts)        | see the pull request for the final run                                             |
 
 ## Re-proof checklist
 

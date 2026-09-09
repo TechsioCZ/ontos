@@ -75,33 +75,14 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  parentOf,
-  skipWrappers,
-  syntax,
-  propertyText,
-  unwrapNode as skipTransparent,
-} from '../shared/ast.ts';
-import {
-  stringList,
-  positiveInteger,
-  booleanOption,
-} from '../shared/options.ts';
+import { parentOf, skipWrappers, syntax, propertyText, unwrapNode as skipTransparent } from '../shared/ast.ts';
+import { stringList, positiveInteger, booleanOption } from '../shared/options.ts';
 import { scriptScope, inScriptScope, matchesGlobs } from '../shared/paths.ts';
 import { provenance, valueReference } from '../shared/provenance.ts';
-import {
-  isEntryPosition as isBasicEntryPosition,
-  nearestFunction,
-} from '../shared/script-entry.ts';
+import { isEntryPosition as isBasicEntryPosition, nearestFunction } from '../shared/script-entry.ts';
 
 /** Emitter registration methods whose callback argument is a signal/exit handler. */
-const LISTENER_METHODS = new Set([
-  'on',
-  'once',
-  'addListener',
-  'prependListener',
-  'prependOnceListener',
-]);
+const LISTENER_METHODS = new Set(['on', 'once', 'addListener', 'prependListener', 'prependOnceListener']);
 
 type AnyNode = ESTree.Node;
 
@@ -122,35 +103,26 @@ function readOptions(raw: unknown): RuleOptions {
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
     maxExitSites: positiveInteger(given.maxExitSites, DEFAULTS.maxExitSites, 0),
-    includeExitCode: booleanOption(
-      given.includeExitCode,
-      DEFAULTS.includeExitCode
-    ),
+    includeExitCode: booleanOption(given.includeExitCode, DEFAULTS.includeExitCode),
   };
 }
 
 /** Effect-run continuations retain the executable position of their originating call. */
-function entryContinuation(
-  context: Context,
-  fn: AnyNode
-): ESTree.CallExpression | null {
+function entryContinuation(context: Context, fn: AnyNode): ESTree.CallExpression | null {
   const outer = skipWrappers(fn);
   if (outer.parent?.type !== 'CallExpression') return null;
   const call = outer.parent;
   const callee = syntax(call.callee);
   if (!call.arguments.includes(outer.node as never)) return null;
   if (callee?.type !== 'MemberExpression') return null;
-  if (!['then', 'catch', 'finally'].includes(propertyText(callee) ?? ''))
-    return null;
+  if (!['then', 'catch', 'finally'].includes(propertyText(callee) ?? '')) return null;
   return isEffectRunChain(context, callee.object) ? call : null;
 }
 
 function isEntryPosition(context: Context, site: AnyNode): boolean {
   const fn = nearestFunction(site);
   const continuation = fn === null ? null : entryContinuation(context, fn);
-  return continuation === null
-    ? isBasicEntryPosition(context, site)
-    : isEntryPosition(context, continuation);
+  return continuation === null ? isBasicEntryPosition(context, site) : isEntryPosition(context, continuation);
 }
 
 function processObjectText(context: Context, node: AnyNode): string | null {
@@ -173,15 +145,11 @@ function writeOperator(node: AnyNode): string | null {
   if (parent === null) return null;
   if (parent.type === 'AssignmentExpression') {
     const assignment = parent as ESTree.AssignmentExpression;
-    return (assignment.left as unknown as AnyNode) === target
-      ? assignment.operator
-      : null;
+    return (assignment.left as unknown as AnyNode) === target ? assignment.operator : null;
   }
   if (parent.type === 'UpdateExpression') {
     const update = parent as ESTree.UpdateExpression;
-    return (update.argument as unknown as AnyNode) === target
-      ? update.operator
-      : null;
+    return (update.argument as unknown as AnyNode) === target ? update.operator : null;
   }
   return null;
 }
@@ -194,10 +162,7 @@ function isSelfKill(call: ESTree.CallExpression, context: Context): boolean {
   if (argument.type !== 'MemberExpression') return false;
   const member = argument as ESTree.MemberExpression;
   if (propertyText(member) !== 'pid') return false;
-  return (
-    processObjectText(context, skipTransparent(member.object as AnyNode)) !==
-    null
-  );
+  return processObjectText(context, skipTransparent(member.object as AnyNode)) !== null;
 }
 
 function listenerEvent(context: Context, call: ESTree.CallExpression) {
@@ -205,13 +170,9 @@ function listenerEvent(context: Context, call: ESTree.CallExpression) {
   if (callee.type !== 'MemberExpression') return null;
   const method = propertyText(callee);
   if (method === null || !LISTENER_METHODS.has(method)) return null;
-  if (processObjectText(context, skipTransparent(callee.object)) === null)
-    return null;
+  if (processObjectText(context, skipTransparent(callee.object)) === null) return null;
   const first = call.arguments[0];
-  const event =
-    first?.type === 'Literal' && typeof first.value === 'string'
-      ? first.value
-      : 'signal';
+  const event = first?.type === 'Literal' && typeof first.value === 'string' ? first.value : 'signal';
   return { method, event };
 }
 
@@ -220,10 +181,7 @@ function signalHandlerEvent(context: Context, site: AnyNode) {
   let child = site;
   let parent = parentOf(child);
   while (parent !== null) {
-    if (
-      parent.type === 'CallExpression' &&
-      parent.arguments.includes(child as never)
-    ) {
+    if (parent.type === 'CallExpression' && parent.arguments.includes(child as never)) {
       const event = listenerEvent(context, parent);
       if (event !== null) return event;
     }
@@ -277,9 +235,7 @@ export const rule = defineRule({
         },
       },
     ],
-    defaultOptions: [
-      { allowPaths: [], maxExitSites: 1, includeExitCode: true },
-    ],
+    defaultOptions: [{ allowPaths: [], maxExitSites: 1, includeExitCode: true }],
   },
   create(context) {
     const options = readOptions(context.options[0]);
@@ -293,12 +249,8 @@ export const rule = defineRule({
       sites.push({ node, kind, site, start: node.start, end: node.end });
     };
 
-    const collectSelfKill = (
-      call: ESTree.CallExpression,
-      objectText: string
-    ): void => {
-      if (isSelfKill(call, context))
-        push(call, 'kill', `${objectText}.kill(${objectText}.pid, …)`);
+    const collectSelfKill = (call: ESTree.CallExpression, objectText: string): void => {
+      if (isSelfKill(call, context)) push(call, 'kill', `${objectText}.kill(${objectText}.pid, …)`);
     };
     const collectExitCode = (self: AnyNode, objectText: string): void => {
       if (!options.includeExitCode) return;
@@ -320,9 +272,7 @@ export const rule = defineRule({
           name = (node as ESTree.IdentifierReference).name;
         if (identity === 'process.exit') {
           const { node: reference, parent: outer } = skipWrappers(self);
-          const isCallee =
-            outer?.type === 'CallExpression' &&
-            (outer as ESTree.CallExpression).callee === reference;
+          const isCallee = outer?.type === 'CallExpression' && (outer as ESTree.CallExpression).callee === reference;
           push(isCallee ? outer : self, 'exit', isCallee ? `${name}(…)` : name);
         }
         // Destructured exitCode is a copied value, not a write to process.exitCode.
@@ -331,45 +281,28 @@ export const rule = defineRule({
         const member = node as ESTree.MemberExpression;
         const property = propertyText(member);
         if (!EXIT_PROPERTIES.has(property)) return;
-        const objectText = processObjectText(
-          context,
-          skipTransparent(member.object as AnyNode)
-        );
+        const objectText = processObjectText(context, skipTransparent(member.object as AnyNode));
         if (objectText === null) return;
         const self = node as unknown as AnyNode;
         const { node: reference, parent } = skipWrappers(self);
         const isCallee =
-          parent !== null &&
-          parent.type === 'CallExpression' &&
-          (parent as ESTree.CallExpression).callee === reference;
+          parent !== null && parent.type === 'CallExpression' && (parent as ESTree.CallExpression).callee === reference;
 
         if (property === 'exit') {
-          push(
-            isCallee ? parent : self,
-            'exit',
-            isCallee ? `${objectText}.exit(…)` : `${objectText}.exit`
-          );
+          push(isCallee ? parent : self, 'exit', isCallee ? `${objectText}.exit(…)` : `${objectText}.exit`);
         } else if (property === 'kill') {
-          if (isCallee)
-            collectSelfKill(parent as ESTree.CallExpression, objectText);
+          if (isCallee) collectSelfKill(parent as ESTree.CallExpression, objectText);
         } else {
           collectExitCode(self, objectText);
         }
       },
       'Program:exit'() {
         if (sites.length === 0) return;
-        const ordered = [...sites].sort(
-          (left, right) => right.start - left.start
-        );
+        const ordered = [...sites].sort((left, right) => right.start - left.start);
         // Drop sites nested inside another site's expression (`process.exitCode = exit(1)`).
         const outer = ordered.filter(
           (site) =>
-            !ordered.some(
-              (other) =>
-                other.node !== site.node &&
-                other.start <= site.start &&
-                site.end <= other.end
-            )
+            !ordered.some((other) => other.node !== site.node && other.start <= site.start && site.end <= other.end),
         );
         let allowance = options.maxExitSites;
         for (const site of outer) {
@@ -389,10 +322,7 @@ export const rule = defineRule({
           if (!isEntryPosition(context, site.node)) {
             context.report({
               node: site.node,
-              messageId:
-                site.kind === 'exitCode'
-                  ? 'exitCodeInsideFunction'
-                  : 'exitInsideFunction',
+              messageId: site.kind === 'exitCode' ? 'exitCodeInsideFunction' : 'exitInsideFunction',
               data: { site: site.site },
             });
             continue;
@@ -417,12 +347,7 @@ function isEffectRunChain(context: Context, node: unknown): boolean {
   if (n?.type !== 'CallExpression') return false;
   const c = syntax(n.callee),
     id = provenance(context, c);
-  if (
-    /^(?:Effect|Runtime)\.run(?:Promise|PromiseExit|Sync|SyncExit)$/u.test(
-      id ?? ''
-    )
-  )
-    return true;
+  if (/^(?:Effect|Runtime)\.run(?:Promise|PromiseExit|Sync|SyncExit)$/u.test(id ?? '')) return true;
   return (
     c?.type === 'MemberExpression' &&
     ['then', 'catch', 'finally'].includes(propertyText(c) ?? '') &&

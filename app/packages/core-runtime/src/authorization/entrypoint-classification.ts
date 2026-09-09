@@ -1,21 +1,14 @@
 import { Result, Schema } from 'effect';
 
-export const ACTION_PROVISIONING_INTENTS = [
-  'tenant_membership_default',
-  'explicit',
-] as const;
+export const ACTION_PROVISIONING_INTENTS = ['tenant_membership_default', 'explicit'] as const;
 
-export const ActionProvisioningIntentSchema = Schema.Literals(
-  ACTION_PROVISIONING_INTENTS
-);
-export type ActionProvisioningIntent = Schema.Schema.Type<
-  typeof ActionProvisioningIntentSchema
->;
+export const ActionProvisioningIntentSchema = Schema.Literals(ACTION_PROVISIONING_INTENTS);
+export type ActionProvisioningIntent = Schema.Schema.Type<typeof ActionProvisioningIntentSchema>;
 
 const stablePermissionSchema = Schema.String.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u)
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u),
 );
 
 export const IntentionalPublicAuthorizationSchema = Schema.Struct({
@@ -54,20 +47,14 @@ export const EntrypointAuthorizationSchema = Schema.Union([
   CapabilityIssuanceAuthorizationSchema,
 ]);
 
-export type EntrypointAuthorization = Schema.Schema.Type<
-  typeof EntrypointAuthorizationSchema
->;
-export type ActionExecutionAuthorization = Schema.Schema.Type<
-  typeof ActionExecutionAuthorizationSchema
->;
+export type EntrypointAuthorization = Schema.Schema.Type<typeof EntrypointAuthorizationSchema>;
+export type ActionExecutionAuthorization = Schema.Schema.Type<typeof ActionExecutionAuthorizationSchema>;
 
-export const decodeEntrypointAuthorization = <Input>(
-  input: Input
-): EntrypointAuthorization =>
+export const decodeEntrypointAuthorization = <Input>(input: Input): EntrypointAuthorization =>
   Object.freeze(
     Result.getOrThrow(
       Schema.decodeUnknownResult(EntrypointAuthorizationSchema, {
         onExcessProperty: 'error',
-      })(input)
-    )
+      })(input),
+    ),
   );

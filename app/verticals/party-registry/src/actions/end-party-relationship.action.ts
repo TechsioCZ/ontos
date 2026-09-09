@@ -26,66 +26,56 @@ interface Services {
   readonly end: (
     payload: Payload,
     principalId: string,
-    actionInvocationId: string
+    actionInvocationId: string,
   ) => Effect.Effect<RelationshipChangeResult, RelationshipMutationError>;
 }
 
-const handleEndPartyRelationship = Effect.fn(
-  'EndPartyRelationshipAction.handleEndPartyRelationship'
-)(function* handleEndRelationship(
-  payload: Payload,
-  context: ActionHandlerContext<
-    Readonly<{
-      'party.registry.relationship-ended.v1': typeof PartyRelationshipLifecycleEventPayloadJsonSchema;
-    }>,
-    Services
-  >
-) {
-  const result = yield* context.services.end(
-    payload,
-    context.scope.principalId,
-    context.actionInvocationId
-  );
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `party-relationship-end:${payload.relationshipRef.resourceId}:${payload.expectedRevision}`,
-    resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
-    targetResourceId: payload.relationshipRef.resourceId,
-    targetResourceType: payload.relationshipRef.resourceType,
-  });
-  if (result.outcome === 'CHANGED') {
-    const auditEvidence = yield* Schema.encodeEffect(
-      EndRelationshipAuditEvidenceSchema
-    )({
-      effectiveAt: payload.effectiveAt,
-      newProvenance: payload.provenance,
-      previousValidTo: result.previous.validTo,
-      reason: Option.fromNullishOr(payload.reason),
-      relationshipRef: payload.relationshipRef,
-    }).pipe(Effect.orDie);
-    yield* context.recordAuditEvidence(auditEvidence);
-    const payloadJson = yield* encodeRelationshipEventPayload(
-      result.relationship
-    );
-    const domainEvent = yield* context.addDomainEvent({
-      eventType: 'party.registry.relationship-ended.v1',
-      payloadJson,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.relationship.relationshipRef.resourceId,
-      subjectResourceType: result.relationship.relationshipRef.resourceType,
+const handleEndPartyRelationship = Effect.fn('EndPartyRelationshipAction.handleEndPartyRelationship')(
+  function* handleEndRelationship(
+    payload: Payload,
+    context: ActionHandlerContext<
+      Readonly<{
+        'party.registry.relationship-ended.v1': typeof PartyRelationshipLifecycleEventPayloadJsonSchema;
+      }>,
+      Services
+    >,
+  ) {
+    const result = yield* context.services.end(payload, context.scope.principalId, context.actionInvocationId);
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `party-relationship-end:${payload.relationshipRef.resourceId}:${payload.expectedRevision}`,
+      resultCount: 1,
+      servingModuleKey: 'party.registry',
+      targetModuleKey: 'party.registry',
+      targetResourceId: payload.relationshipRef.resourceId,
+      targetResourceType: payload.relationshipRef.resourceType,
     });
-    yield* context.addOutboxMessage(
-      domainEvent,
-      createEndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxMessage(
-        payloadJson
-      )
-    );
-  }
-  return { outcome: result.outcome, relationship: result.relationship };
-});
+    if (result.outcome === 'CHANGED') {
+      const auditEvidence = yield* Schema.encodeEffect(EndRelationshipAuditEvidenceSchema)({
+        effectiveAt: payload.effectiveAt,
+        newProvenance: payload.provenance,
+        previousValidTo: result.previous.validTo,
+        reason: Option.fromNullishOr(payload.reason),
+        relationshipRef: payload.relationshipRef,
+      }).pipe(Effect.orDie);
+      yield* context.recordAuditEvidence(auditEvidence);
+      const payloadJson = yield* encodeRelationshipEventPayload(result.relationship);
+      const domainEvent = yield* context.addDomainEvent({
+        eventType: 'party.registry.relationship-ended.v1',
+        payloadJson,
+        producerModuleKey: 'party.registry',
+        subjectModuleKey: 'party.registry',
+        subjectResourceId: result.relationship.relationshipRef.resourceId,
+        subjectResourceType: result.relationship.relationshipRef.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        domainEvent,
+        createEndPartyRelationshipPartyRegistryRelationshipEndedV1OutboxMessage(payloadJson),
+      );
+    }
+    return { outcome: result.outcome, relationship: result.relationship };
+  },
+);
 
 export const endPartyRelationshipAction = defineAction(
   {
@@ -98,8 +88,7 @@ export const endPartyRelationshipAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: PartyRelationshipMutationErrorSchema,
     domainEvents: {
-      'party.registry.relationship-ended.v1':
-        PartyRelationshipLifecycleEventPayloadJsonSchema,
+      'party.registry.relationship-ended.v1': PartyRelationshipLifecycleEventPayloadJsonSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -124,12 +113,6 @@ export const endPartyRelationshipAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({
       end: (payload, principalId, actionInvocationId) =>
-        endPartyRelationshipRecord(
-          transaction,
-          scope.tenantId,
-          principalId,
-          actionInvocationId,
-          payload
-        ),
-    })
+        endPartyRelationshipRecord(transaction, scope.tenantId, principalId, actionInvocationId, payload),
+    }),
 );

@@ -9,5 +9,5 @@ export class PartyAliasResolutionCycle extends Schema.TaggedError<PartyAliasReso
     partyId: PartyIdJsonSchema,
     reason: Schema.String,
     tenantId: TenantIdJsonSchema,
-  }
+  },
 ) {}

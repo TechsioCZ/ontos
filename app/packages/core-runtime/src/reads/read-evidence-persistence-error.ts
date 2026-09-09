@@ -5,5 +5,5 @@ export class ReadEvidencePersistenceError extends Schema.TaggedError<ReadEvidenc
   {
     code: Schema.Literal('read_evidence_persistence_failed'),
     reason: Schema.String,
-  }
+  },
 ) {}

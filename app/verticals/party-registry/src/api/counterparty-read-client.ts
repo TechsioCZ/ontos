@@ -24,7 +24,7 @@ type CounterpartyReadOperationInvocation = readonly [
 const counterpartyReadClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: CounterpartyReadClientOptions
+  options: CounterpartyReadClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,30 +33,22 @@ const counterpartyReadClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executeCounterpartyReadWithAuthorization = (
   payload: CounterpartyReadRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyReadAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartyReadAuthorizedInvocation
 ) =>
-  counterpartyReadClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  counterpartyReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.counterpartyRead.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executeCounterpartyRead = (
@@ -64,10 +56,5 @@ export const executeCounterpartyRead = (
   ...[requestCorrelation, options = {}]: CounterpartyReadOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyReadWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executeCounterpartyReadWithAuthorization(payload, credential, requestCorrelation, options),
   );

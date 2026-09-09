@@ -5,29 +5,19 @@ export function isSchemaConstructorArgument(
   node: ESTree.Node,
   resolveMember: (node: ESTree.Node) => string | null,
   constructors: ReadonlySet<string>,
-  unwrap: (node: ESTree.Node) => ESTree.Node
+  unwrap: (node: ESTree.Node) => ESTree.Node,
 ): boolean {
   const parent = node.parent;
-  if (
-    parent === null ||
-    parent === undefined ||
-    parent.type !== 'CallExpression'
-  )
-    return false;
+  if (parent === null || parent === undefined || parent.type !== 'CallExpression') return false;
   if (!parent.arguments.some((argument) => argument === node)) return false;
-  return isConstructorCallee(
-    parent.callee,
-    resolveMember,
-    constructors,
-    unwrap
-  );
+  return isConstructorCallee(parent.callee, resolveMember, constructors, unwrap);
 }
 
 function isConstructorCallee(
   node: ESTree.Node,
   resolveMember: (node: ESTree.Node) => string | null,
   constructors: ReadonlySet<string>,
-  unwrap: (node: ESTree.Node) => ESTree.Node
+  unwrap: (node: ESTree.Node) => ESTree.Node,
 ): boolean {
   let callee = unwrap(node);
   for (let depth = 0; depth < 8; depth += 1) {

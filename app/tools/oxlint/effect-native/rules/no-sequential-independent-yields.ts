@@ -74,45 +74,15 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  asNode as sharedAsNode,
-  childrenOf,
-  memberName as sharedMemberName,
-} from '../shared/ast.ts';
-import {
-  bindingPath,
-  isGenCallee as sharedIsGenCallee,
-} from '../shared/effect-identity.ts';
-import {
-  bindingsWithExtraModules,
-  collectRootNamespaces,
-  collectNamedImports,
-} from '../shared/imports.ts';
+import { asNode as sharedAsNode, childrenOf, memberName as sharedMemberName } from '../shared/ast.ts';
+import { bindingPath, isGenCallee as sharedIsGenCallee } from '../shared/effect-identity.ts';
+import { bindingsWithExtraModules, collectRootNamespaces, collectNamedImports } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
-import {
-  booleanOption as boolean,
-  stringArray,
-  safeRegExp,
-} from '../shared/options.ts';
-import {
-  isScriptFile,
-  isTestFile,
-  scopePath,
-  matchesGlobs,
-} from '../shared/paths.ts';
+import { booleanOption as boolean, stringArray, safeRegExp } from '../shared/options.ts';
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
-const DEFAULT_INCLUDE: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-];
-const DEFAULT_IGNORE: readonly string[] = [
-  '**/dist/**',
-  '**/build/**',
-  '**/node_modules/**',
-  'tools/**',
-  '**/*.d.ts',
-];
+const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
+const DEFAULT_IGNORE: readonly string[] = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tools/**', '**/*.d.ts'];
 const DEFAULT_SCRIPT_GLOBS: readonly string[] = ['scripts/**', '**/scripts/**'];
 const DEFAULT_GEN_MEMBERS: readonly string[] = ['gen', 'fn', 'fnUntraced'];
 /** Barrels that re-export `Effect` verbatim, so `Effect.gen` there is the same generator. */
@@ -158,9 +128,7 @@ function readOptions(context: Context) {
     includeScripts: boolean(record.includeScripts, false),
     includeFunctionCallees: boolean(record.includeFunctionCallees, true),
     orderingCalleePattern:
-      typeof record.orderingCalleePattern === 'string'
-        ? record.orderingCalleePattern
-        : DEFAULT_ORDERING_PATTERN,
+      typeof record.orderingCalleePattern === 'string' ? record.orderingCalleePattern : DEFAULT_ORDERING_PATTERN,
     genMembers: stringArray(record.genMembers, DEFAULT_GEN_MEMBERS),
     effectModules: stringArray(record.effectModules, DEFAULT_EFFECT_MODULES),
   };
@@ -193,8 +161,7 @@ function unwrap(value: unknown): AnyNode | null {
 function memberName(node: AnyNode): string | null {
   const property = asNode(node.property);
   if (property === null) return null;
-  if (node.computed !== true)
-    return property.type === 'Identifier' ? (property.name as string) : null;
+  if (node.computed !== true) return property.type === 'Identifier' ? (property.name as string) : null;
   return sharedMemberName(node, { templates: true, babelStrings: true });
 }
 
@@ -205,24 +172,15 @@ interface GeneratorMatcher {
 }
 
 /** `Effect.gen` / `E.gen` / `X.Effect.gen` / bare `gen` (direct member import), incl. computed + optional. */
-function isGenCallee(
-  callee: AnyNode | null,
-  matcher: GeneratorMatcher
-): boolean {
-  return sharedIsGenCallee(
-    matcher.context,
-    callee as ESTree.Node | null,
-    matcher.genMembers,
-    matcher.effectModules
-  );
+function isGenCallee(callee: AnyNode | null, matcher: GeneratorMatcher): boolean {
+  return sharedIsGenCallee(matcher.context, callee as ESTree.Node | null, matcher.genMembers, matcher.effectModules);
 }
 
 /** `true` when `fn` is a generator function handed to `Effect.gen` / `Effect.fn` / `Effect.fnUntraced`. */
 function isEffectGenerator(fn: AnyNode, matcher: GeneratorMatcher): boolean {
   if (fn.generator !== true) return false;
   let outer = fn;
-  while (parentOf(outer) !== null && WRAPPER_TYPES.has(parentOf(outer)!.type))
-    outer = parentOf(outer)!;
+  while (parentOf(outer) !== null && WRAPPER_TYPES.has(parentOf(outer)!.type)) outer = parentOf(outer)!;
   const call = parentOf(outer);
   if (call === null || call.type !== 'CallExpression') return false;
   const args = call.arguments;
@@ -238,20 +196,12 @@ function isEffectGenerator(fn: AnyNode, matcher: GeneratorMatcher): boolean {
 type Walker = (node: AnyNode) => boolean;
 
 /** Preserve the generator traversal budget while sharing child enumeration and ordering. */
-function walk(
-  node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>,
-  visit: Walker
-): void {
+function walk(node: AnyNode, visitorKeys: Readonly<Record<string, readonly string[]>>, visit: Walker): void {
   const stack = [node];
   for (let visited = 0; stack.length > 0 && visited < 200_000; visited += 1) {
     const current = stack.pop()!;
     if (!visit(current)) continue;
-    const children = childrenOf(
-      current as unknown as ESTree.Node,
-      visitorKeys,
-      true
-    );
+    const children = childrenOf(current as unknown as ESTree.Node, visitorKeys, true);
     for (let index = children.length - 1; index >= 0; index -= 1) {
       stack.push(children[index] as AnyNode);
     }
@@ -259,31 +209,17 @@ function walk(
 }
 
 /** Peel method and imported pipe calls down to their subject. */
-function pipeSubject(
-  current: AnyNode,
-  context: Context,
-  modules: readonly string[]
-): AnyNode | null {
+function pipeSubject(current: AnyNode, context: Context, modules: readonly string[]): AnyNode | null {
   if (current.type !== 'CallExpression') return current;
   const callee = unwrap(current.callee);
   if (callee === null) return current;
-  if (MEMBER_TYPES.has(callee.type) && memberName(callee) === 'pipe')
-    return unwrap(callee.object);
-  const path =
-    bindingPath(context, callee as unknown as ESTree.Node, modules)?.join(
-      '.'
-    ) ?? '';
+  if (MEMBER_TYPES.has(callee.type) && memberName(callee) === 'pipe') return unwrap(callee.object);
+  const path = bindingPath(context, callee as unknown as ESTree.Node, modules)?.join('.') ?? '';
   if (!['pipe', 'Function.pipe'].includes(path)) return current;
-  const first = Array.isArray(current.arguments)
-    ? unwrap(current.arguments[0])
-    : null;
+  const first = Array.isArray(current.arguments) ? unwrap(current.arguments[0]) : null;
   return first ?? current;
 }
-function unwrapPipe(
-  value: unknown,
-  context: Context,
-  modules: readonly string[]
-): AnyNode | null {
+function unwrapPipe(value: unknown, context: Context, modules: readonly string[]): AnyNode | null {
   let current = unwrap(value);
   for (let guard = 0; current !== null && guard < 32; guard += 1) {
     const next = pipeSubject(current, context, modules);
@@ -296,7 +232,7 @@ function unwrapPipe(
 /** Binding names introduced by a declarator pattern (object/array patterns included). */
 function collectPatternNames(
   pattern: AnyNode | null,
-  visitorKeys: Readonly<Record<string, readonly string[]>>
+  visitorKeys: Readonly<Record<string, readonly string[]>>,
 ): Set<string> {
   const names = new Set<string>();
   if (pattern === null) return names;
@@ -305,11 +241,7 @@ function collectPatternNames(
       names.add(node.name as string);
       return false;
     }
-    if (
-      node.type === 'Property' ||
-      node.type === 'ObjectProperty' ||
-      node.type === 'PropertyDefinition'
-    ) {
+    if (node.type === 'Property' || node.type === 'ObjectProperty' || node.type === 'PropertyDefinition') {
       // `{ key: local }` binds `local`; `{ key }` is shorthand and binds `key` via the same node.
       if (node.computed === true) {
         const key = asNode(node.key);
@@ -340,14 +272,9 @@ function collectPatternNames(
 }
 
 /** Identifiers *read* by an expression: member property names and literal object keys are not reads. */
-function collectReferencedNames(
-  node: AnyNode,
-  visitorKeys: Readonly<Record<string, readonly string[]>>
-): Set<string> {
+function collectReferencedNames(node: AnyNode, visitorKeys: Readonly<Record<string, readonly string[]>>): Set<string> {
   const names = new Set<string>();
-  walk(node, visitorKeys, (current) =>
-    collectInto(current, names, visitorKeys)
-  );
+  walk(node, visitorKeys, (current) => collectInto(current, names, visitorKeys));
   return names;
 }
 
@@ -355,7 +282,7 @@ function collectReferencedNames(
 function collectInto(
   current: AnyNode,
   names: Set<string>,
-  visitorKeys: Readonly<Record<string, readonly string[]>>
+  visitorKeys: Readonly<Record<string, readonly string[]>>,
 ): boolean {
   if (current.type === 'Identifier') {
     names.add(current.name as string);
@@ -363,22 +290,13 @@ function collectInto(
   }
   if (MEMBER_TYPES.has(current.type) && current.computed !== true) {
     const object = asNode(current.object);
-    if (object !== null)
-      walk(object, visitorKeys, (inner) =>
-        collectInto(inner, names, visitorKeys)
-      );
+    if (object !== null) walk(object, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
     return false;
   }
-  if (
-    (current.type === 'Property' || current.type === 'ObjectProperty') &&
-    current.computed !== true
-  ) {
+  if ((current.type === 'Property' || current.type === 'ObjectProperty') && current.computed !== true) {
     if (current.shorthand === true) return true;
     const value = asNode(current.value);
-    if (value !== null)
-      walk(value, visitorKeys, (inner) =>
-        collectInto(inner, names, visitorKeys)
-      );
+    if (value !== null) walk(value, visitorKeys, (inner) => collectInto(inner, names, visitorKeys));
     return false;
   }
   return true;
@@ -399,53 +317,22 @@ function inScope(filename: string, options: RuleOptions): boolean {
   if (matchesGlobs(path, options.ignore)) return false;
   const script = isScriptFile(path) || matchesGlobs(path, DEFAULT_SCRIPT_GLOBS);
   if (script && !options.includeScripts) return false;
-  if (
-    !matchesGlobs(path, options.include) &&
-    !(options.includeScripts && script)
-  )
-    return false;
+  if (!matchesGlobs(path, options.include) && !(options.includeScripts && script)) return false;
   return options.includeTests || !isTestFile(path);
 }
 function singleDeclarator(statement: AnyNode): AnyNode | null {
   if (statement.type !== 'VariableDeclaration') return null;
   const declarations = statement.declarations;
-  return Array.isArray(declarations) && declarations.length === 1
-    ? asNode(declarations[0])
-    : null;
+  return Array.isArray(declarations) && declarations.length === 1 ? asNode(declarations[0]) : null;
 }
-const TRANSPARENT_MEMBERS = new Set([
-  'withSpan',
-  'annotateLogs',
-  'timeout',
-  'timeoutOption',
-  'retry',
-]);
-function transparentArguments(
-  subject: AnyNode,
-  context: Context,
-  modules: readonly string[]
-): unknown[] | null {
-  const path = bindingPath(
-    context,
-    subject.callee as unknown as ESTree.Node,
-    modules
-  );
-  if (
-    path?.length !== 2 ||
-    path[0] !== 'Effect' ||
-    !TRANSPARENT_MEMBERS.has(path[1] ?? '')
-  )
-    return null;
-  return Array.isArray(subject.arguments) && subject.arguments.length >= 2
-    ? subject.arguments
-    : null;
+const TRANSPARENT_MEMBERS = new Set(['withSpan', 'annotateLogs', 'timeout', 'timeoutOption', 'retry']);
+function transparentArguments(subject: AnyNode, context: Context, modules: readonly string[]): unknown[] | null {
+  const path = bindingPath(context, subject.callee as unknown as ESTree.Node, modules);
+  if (path?.length !== 2 || path[0] !== 'Effect' || !TRANSPARENT_MEMBERS.has(path[1] ?? '')) return null;
+  return Array.isArray(subject.arguments) && subject.arguments.length >= 2 ? subject.arguments : null;
 }
 /** Only known data-first wrappers preserve the effect; constructors and callbacks remain opaque. */
-function readSubject(
-  value: unknown,
-  context: Context,
-  modules: readonly string[]
-): AnyNode | null {
+function readSubject(value: unknown, context: Context, modules: readonly string[]): AnyNode | null {
   let subject = unwrapPipe(value, context, modules);
   while (subject?.type === 'CallExpression') {
     const args = transparentArguments(subject, context, modules);
@@ -454,10 +341,7 @@ function readSubject(
   }
   return subject;
 }
-function readCallee(
-  subject: AnyNode | null,
-  includeFunctions: boolean
-): AnyNode | null {
+function readCallee(subject: AnyNode | null, includeFunctions: boolean): AnyNode | null {
   if (subject?.type !== 'CallExpression') return null;
   const callee = unwrap(subject.callee);
   if (callee === null) return null;
@@ -519,15 +403,10 @@ export const rule = defineRule({
     const directMembers = collectNamedImports(
       program,
       (source) => /^effect\/(?:.*\/)?Effect$/u.test(source),
-      new Set(options.genMembers)
+      new Set(options.genMembers),
     );
     const bindings = bindingsWithExtraModules(program, options.effectModules);
-    if (
-      !bindings.importsEffect &&
-      rootNamespaces.size === 0 &&
-      directMembers.size === 0
-    )
-      return {};
+    if (!bindings.importsEffect && rootNamespaces.size === 0 && directMembers.size === 0) return {};
 
     const matcher: GeneratorMatcher = {
       context,
@@ -535,10 +414,7 @@ export const rule = defineRule({
       genMembers: options.genMembers,
     };
     const visitorKeys = context.sourceCode.visitorKeys;
-    const ordering = safeRegExp(
-      options.orderingCalleePattern,
-      DEFAULT_ORDERING_PATTERN
-    );
+    const ordering = safeRegExp(options.orderingCalleePattern, DEFAULT_ORDERING_PATTERN);
     const analysed = new Set<number>();
 
     /** A single-declarator `const x = yield* <non-effect member call>` statement, or `null`. */
@@ -546,32 +422,13 @@ export const rule = defineRule({
       const declarator = singleDeclarator(statement);
       if (declarator === null) return null;
       const init = unwrap(declarator.init);
-      if (
-        init === null ||
-        init.type !== 'YieldExpression' ||
-        init.delegate !== true
-      )
-        return null;
-      const subject = readSubject(
-        init.argument,
-        context,
-        options.effectModules
-      );
+      if (init === null || init.type !== 'YieldExpression' || init.delegate !== true) return null;
+      const subject = readSubject(init.argument, context, options.effectModules);
       const calleeNode = readCallee(subject, options.includeFunctionCallees);
       if (calleeNode === null) return null;
       // `Effect.all(...)`, `Schema.decodeUnknown(...)`, … are the target shape, never the anti-pattern.
-      if (
-        bindingPath(
-          context,
-          calleeNode as unknown as ESTree.Node,
-          options.effectModules
-        ) !== null
-      )
-        return null;
-      const calleeName =
-        calleeNode.type === 'Identifier'
-          ? (calleeNode.name as string)
-          : memberName(calleeNode);
+      if (bindingPath(context, calleeNode as unknown as ESTree.Node, options.effectModules) !== null) return null;
+      const calleeName = calleeNode.type === 'Identifier' ? (calleeNode.name as string) : memberName(calleeNode);
       if (calleeName === null) return null;
 
       return {
@@ -588,8 +445,7 @@ export const rule = defineRule({
       let seen = new Set<string>();
       const entries = statements.flatMap((entry) => {
         const statement = asNode(entry);
-        return statement?.type === 'VariableDeclaration' &&
-          Array.isArray(statement.declarations)
+        return statement?.type === 'VariableDeclaration' && Array.isArray(statement.declarations)
           ? statement.declarations.map((declaration) => ({
               ...statement,
               declarations: [declaration],
@@ -615,9 +471,7 @@ export const rule = defineRule({
           seen = new Set(candidate.bound);
           continue;
         }
-        const dependent = [...candidate.referenced].some((name) =>
-          seen.has(name)
-        );
+        const dependent = [...candidate.referenced].some((name) => seen.has(name));
         if (dependent) {
           head = candidate;
           seen = new Set(candidate.bound);
@@ -640,10 +494,8 @@ export const rule = defineRule({
       if (body === null) return;
       walk(body, visitorKeys, (node) => {
         if (node !== body && FUNCTION_TYPES.has(node.type)) return false;
-        if (node.type === 'BlockStatement' && Array.isArray(node.body))
-          analyseStatements(node.body);
-        else if (node.type === 'SwitchCase' && Array.isArray(node.consequent))
-          analyseStatements(node.consequent);
+        if (node.type === 'BlockStatement' && Array.isArray(node.body)) analyseStatements(node.body);
+        else if (node.type === 'SwitchCase' && Array.isArray(node.consequent)) analyseStatements(node.consequent);
         return true;
       });
     };

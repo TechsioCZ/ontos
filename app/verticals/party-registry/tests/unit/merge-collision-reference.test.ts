@@ -41,9 +41,7 @@ it('blocks authoritative non-strong identifier conflicts without unrelated relat
     })),
     survivorPartyRef: party('party-a'),
   });
-  expect(collisions.map(({ code }) => code)).toEqual([
-    'STRONG_IDENTIFIER_CONFLICT',
-  ]);
+  expect(collisions.map(({ code }) => code)).toEqual(['STRONG_IDENTIFIER_CONFLICT']);
 });
 
 it('requires reconciliation for Counterparty and consumer uniqueness collisions', () => {
@@ -98,11 +96,7 @@ it('requires reconciliation for Counterparty and consumer uniqueness collisions'
     { code: 'CONSUMER_PROFILE_COLLISION', ownerKey: 'engagement' },
     { code: 'CONNECTOR_CORRELATION_COLLISION', ownerKey: 'erp' },
   ]);
-  expect(
-    collisions.every(
-      ({ resolution }) => resolution === 'RECONCILIATION_REQUIRED'
-    )
-  ).toBe(true);
+  expect(collisions.every(({ resolution }) => resolution === 'RECONCILIATION_REQUIRED')).toBe(true);
 });
 
 it('blocks strong identifier conflicts and flags forbidden relationship and role overlaps', () => {
@@ -165,9 +159,7 @@ it('blocks strong identifier conflicts and flags forbidden relationship and role
     survivorPartyRef: party('party-a'),
   });
 
-  expect(
-    collisions.map(({ code, resolution }) => ({ code, resolution }))
-  ).toEqual([
+  expect(collisions.map(({ code, resolution }) => ({ code, resolution }))).toEqual([
     { code: 'STRONG_IDENTIFIER_CONFLICT', resolution: 'CORRECTION_REQUIRED' },
     {
       code: 'RELATIONSHIP_SELF_REFERENCE',
@@ -199,20 +191,15 @@ it('plans canonical resolution for supported refs without rewriting historical s
         survivorPartyRef: party('party-a'),
       },
     ],
-    consumerReconciliation: [
-      'core',
-      'events',
-      'engagement',
-      'commerce',
-      'connector.registry',
-      'invoicing',
-    ].map((consumerKey) => ({
-      collisionBehaviorTested: true,
-      consumerKey,
-      evidenceRefs: [`test:${consumerKey}`],
-      idempotent: true,
-      partialRetrySupported: true,
-    })),
+    consumerReconciliation: ['core', 'events', 'engagement', 'commerce', 'connector.registry', 'invoicing'].map(
+      (consumerKey) => ({
+        collisionBehaviorTested: true,
+        consumerKey,
+        evidenceRefs: [`test:${consumerKey}`],
+        idempotent: true,
+        partialRetrySupported: true,
+      }),
+    ),
     references: [
       {
         class: 'DIRECT_RESOURCE_REF',
@@ -257,18 +244,12 @@ it('plans canonical resolution for supported refs without rewriting historical s
     Match.tag('ReferencePreservationPlanned', (value) => value),
     Match.tag('ReferencePreservationBlocked', ({ blockers }) =>
       (() => {
-        throw new Error(
-          `Expected a reference plan, but planning was blocked: ${String(blockers)}`
-        );
-      })()
+        throw new Error(`Expected a reference plan, but planning was blocked: ${String(blockers)}`);
+      })(),
     ),
-    Match.exhaustive
+    Match.exhaustive,
   );
-  expect(
-    planned.references.every(
-      ({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a'
-    )
-  ).toBe(true);
+  expect(planned.references.every(({ canonicalPartyRef }) => canonicalPartyRef.resourceId === 'party-a')).toBe(true);
   expect(planned.references.at(-1)?.historicalSnapshot).toEqual(snapshot);
   expect(planned.requiresPhysicalRewrite).toBe(false);
 });
@@ -380,8 +361,6 @@ it('blocks every external reference owner without reconciliation evidence', () =
 
   expect(Predicate.isTagged(result, 'ReferencePreservationBlocked')).toBe(true);
   expect(Struct.omit(result, ['_tag'])).toEqual({
-    blockers: [
-      { code: 'CONSUMER_RECONCILIATION_UNPROVEN', ownerKey: 'commerce' },
-    ],
+    blockers: [{ code: 'CONSUMER_RECONCILIATION_UNPROVEN', ownerKey: 'commerce' }],
   });
 });

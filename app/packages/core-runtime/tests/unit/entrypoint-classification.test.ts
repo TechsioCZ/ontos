@@ -5,10 +5,7 @@ import {
   EntrypointAuthorizationSchema,
   decodeEntrypointAuthorization,
 } from '../../src/authorization/entrypoint-classification.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 it('decodes every closed authorization classification', () => {
   const classifications = [
@@ -23,9 +20,7 @@ it('decodes every closed authorization classification', () => {
   ] as const;
 
   for (const classification of classifications) {
-    expect(decodeEntrypointAuthorization(classification)).toEqual(
-      classification
-    );
+    expect(decodeEntrypointAuthorization(classification)).toEqual(classification);
   }
 });
 
@@ -44,7 +39,7 @@ it('rejects omitted, unknown, excessive, and incompatible authorization fields',
     expect(() =>
       Schema.decodeUnknownSync(EntrypointAuthorizationSchema, {
         onExcessProperty: 'error',
-      })(value)
+      })(value),
     ).toThrow();
   }
 });
@@ -77,7 +72,7 @@ it('requires role-compatible authorization and freezes nested classification', (
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
       role: 'action',
-    })
+    }),
   ).toThrow();
   expect(() =>
     defineTenantModuleEntrypoint({
@@ -86,7 +81,7 @@ it('requires role-compatible authorization and freezes nested classification', (
       entrypointKey: 'inventory.stock.project',
       moduleKey: 'inventory.stock',
       role: 'worker',
-    })
+    }),
   ).toThrow();
 });
 

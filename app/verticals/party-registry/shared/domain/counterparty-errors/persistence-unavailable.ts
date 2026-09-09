@@ -5,5 +5,5 @@ export class CounterpartyPersistenceUnavailable extends Schema.TaggedError<Count
   {
     code: Schema.Literal('counterparty_persistence_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

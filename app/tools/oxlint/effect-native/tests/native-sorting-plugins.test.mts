@@ -45,9 +45,7 @@ const cases = [
 ];
 
 it('native sorting integration does not resolve the ESLint runner', () => {
-  expect(() => applicationRequire.resolve('eslint')).toThrow(
-    /Cannot find module 'eslint'/u
-  );
+  expect(() => applicationRequire.resolve('eslint')).toThrow(/Cannot find module 'eslint'/u);
 });
 
 for (const fixture of cases) {
@@ -63,17 +61,13 @@ for (const fixture of cases) {
           rules: {
             [`perfectionist/${fixture.rule}`]: ['error', fixture.options ?? {}],
           },
-        })
+        }),
       );
       const source = path.join(directory, 'fixture.tsx');
       writeFileSync(source, fixture.invalid);
       const negative = runOxlint(config, [source], directory);
       expect(negative.exitCode).toBe(1);
-      expect(
-        negative.diagnostics.some(
-          ({ code }) => code === `perfectionist(${fixture.rule})`
-        )
-      ).toBeTruthy();
+      expect(negative.diagnostics.some(({ code }) => code === `perfectionist(${fixture.rule})`)).toBeTruthy();
       writeFileSync(source, fixture.valid);
       const positive = runOxlint(config, [source], directory);
       expect(positive.exitCode, JSON.stringify(positive.diagnostics)).toBe(0);
@@ -91,13 +85,10 @@ it('native enum and object sorting preserves explicit comment partitions', () =>
         categories: { correctness: 'off' },
         jsPlugins: [{ name: 'perfectionist', specifier: plugin }],
         rules: {
-          'perfectionist/sort-enums': [
-            'error',
-            { partitionByComment: true, sortByValue: 'always' },
-          ],
+          'perfectionist/sort-enums': ['error', { partitionByComment: true, sortByValue: 'always' }],
           'perfectionist/sort-objects': ['error', { partitionByComment: true }],
         },
-      })
+      }),
     );
     const source = path.join(directory, 'fixture.ts');
     writeFileSync(
@@ -112,7 +103,7 @@ const value = {
   // separate partition
   alpha: 2,
 };
-`
+`,
     );
     const result = runOxlint(config, [source], directory);
     expect(result.exitCode, JSON.stringify(result.diagnostics)).toBe(0);

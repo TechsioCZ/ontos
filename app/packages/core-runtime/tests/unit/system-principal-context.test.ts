@@ -20,15 +20,57 @@ const resolverFor = (record: {
     load: () => Effect.succeedSome(record),
   });
 
-it.effect(
-  'constructs one immutable trusted system context from a branded registration',
-  () =>
-    Effect.gen(function* testScenario1() {
-      const registration = registerSystemWorkload({
-        jobKey: 'inventory-reconcile',
-      });
-      const context = yield* resolverFor({
+it.effect('constructs one immutable trusted system context from a branded registration', () =>
+  Effect.gen(function* testScenario1() {
+    const registration = registerSystemWorkload({
+      jobKey: 'inventory-reconcile',
+    });
+    const context = yield* resolverFor({
+      kind: 'system',
+      principalStatus: 'active',
+      tenantStatus: 'active',
+    }).resolve({
+      principalId,
+      registration,
+      runReference: 'run-42',
+      tenantId,
+    });
+
+    expect(Object.isFrozen(registration)).toBe(true);
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(context).toEqual({
+      authContextRef: 'job:inventory-reconcile:run:run-42',
+      authMethod: 'system',
+      principalId,
+      tenantId,
+    });
+    expect(yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(context)).toEqual(context);
+    expect(yield* decodeTrustedPrincipalContext(context)).toEqual(context);
+    expect(yield* Effect.flip(decodeTrustedPrincipalContext({ ...context }))).toBeDefined();
+  }),
+);
+
+it.effect('rejects forged registrations, unsafe refs, wrong kinds, and inactive state', () =>
+  Effect.gen(function* testScenario2() {
+    const registration = registerSystemWorkload({
+      jobKey: 'inventory-reconcile',
+    });
+    const forged = { ...registration };
+    const invalid = yield* Effect.flip(
+      resolverFor({
         kind: 'system',
+        principalStatus: 'active',
+        tenantStatus: 'active',
+      }).resolve({
+        principalId,
+        registration: forged,
+        runReference: 'run-42',
+        tenantId,
+      }),
+    );
+    const wrongKind = yield* Effect.flip(
+      resolverFor({
+        kind: 'human',
         principalStatus: 'active',
         tenantStatus: 'active',
       }).resolve({
@@ -36,121 +78,59 @@ it.effect(
         registration,
         runReference: 'run-42',
         tenantId,
-      });
-
-      expect(Object.isFrozen(registration)).toBe(true);
-      expect(Object.isFrozen(context)).toBe(true);
-      expect(context).toEqual({
-        authContextRef: 'job:inventory-reconcile:run:run-42',
-        authMethod: 'system',
+      }),
+    );
+    const inactive = yield* Effect.flip(
+      resolverFor({
+        kind: 'system',
+        principalStatus: 'disabled',
+        tenantStatus: 'active',
+      }).resolve({
         principalId,
+        registration,
+        runReference: 'run-42',
         tenantId,
-      });
-      expect(
-        yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(context)
-      ).toEqual(context);
-      expect(yield* decodeTrustedPrincipalContext(context)).toEqual(context);
-      expect(
-        yield* Effect.flip(decodeTrustedPrincipalContext({ ...context }))
-      ).toBeDefined();
-    })
+      }),
+    );
+
+    expect(Predicate.isTagged(invalid, 'SystemPrincipalContextInvalidError')).toBe(true);
+    expect(Predicate.isTagged(wrongKind, 'SystemPrincipalContextDeniedError')).toBe(true);
+    expect(Predicate.isTagged(inactive, 'SystemPrincipalContextDeniedError')).toBe(true);
+    expect(() => registerSystemWorkload({ jobKey: 'unsafe:key' })).toThrow(TypeError);
+  }),
 );
 
-it.effect(
-  'rejects forged registrations, unsafe refs, wrong kinds, and inactive state',
-  () =>
-    Effect.gen(function* testScenario2() {
-      const registration = registerSystemWorkload({
-        jobKey: 'inventory-reconcile',
-      });
-      const forged = { ...registration };
-      const invalid = yield* Effect.flip(
-        resolverFor({
-          kind: 'system',
-          principalStatus: 'active',
-          tenantStatus: 'active',
-        }).resolve({
-          principalId,
-          registration: forged,
-          runReference: 'run-42',
-          tenantId,
-        })
-      );
-      const wrongKind = yield* Effect.flip(
-        resolverFor({
-          kind: 'human',
-          principalStatus: 'active',
-          tenantStatus: 'active',
-        }).resolve({
-          principalId,
-          registration,
-          runReference: 'run-42',
-          tenantId,
-        })
-      );
-      const inactive = yield* Effect.flip(
-        resolverFor({
-          kind: 'system',
-          principalStatus: 'disabled',
-          tenantStatus: 'active',
-        }).resolve({
-          principalId,
-          registration,
-          runReference: 'run-42',
-          tenantId,
-        })
-      );
-
-      expect(
-        Predicate.isTagged(invalid, 'SystemPrincipalContextInvalidError')
-      ).toBe(true);
-      expect(
-        Predicate.isTagged(wrongKind, 'SystemPrincipalContextDeniedError')
-      ).toBe(true);
-      expect(
-        Predicate.isTagged(inactive, 'SystemPrincipalContextDeniedError')
-      ).toBe(true);
-      expect(() => registerSystemWorkload({ jobKey: 'unsafe:key' })).toThrow(
-        TypeError
-      );
-    })
-);
-
-it.effect(
-  'permits service principals only when the trusted registration opts in',
-  () =>
-    Effect.gen(function* testScenario3() {
-      const denied = yield* Effect.flip(
-        resolverFor({
-          kind: 'service',
-          principalStatus: 'active',
-          tenantStatus: 'active',
-        }).resolve({
-          principalId,
-          registration: registerSystemWorkload({ jobKey: 'service-job' }),
-          runReference: 'run-1',
-          tenantId,
-        })
-      );
-      const allowed = yield* resolverFor({
+it.effect('permits service principals only when the trusted registration opts in', () =>
+  Effect.gen(function* testScenario3() {
+    const denied = yield* Effect.flip(
+      resolverFor({
         kind: 'service',
         principalStatus: 'active',
         tenantStatus: 'active',
       }).resolve({
         principalId,
-        registration: registerSystemWorkload({
-          allowServicePrincipal: true,
-          jobKey: 'service-job',
-        }),
+        registration: registerSystemWorkload({ jobKey: 'service-job' }),
         runReference: 'run-1',
         tenantId,
-      });
+      }),
+    );
+    const allowed = yield* resolverFor({
+      kind: 'service',
+      principalStatus: 'active',
+      tenantStatus: 'active',
+    }).resolve({
+      principalId,
+      registration: registerSystemWorkload({
+        allowServicePrincipal: true,
+        jobKey: 'service-job',
+      }),
+      runReference: 'run-1',
+      tenantId,
+    });
 
-      expect(
-        Predicate.isTagged(denied, 'SystemPrincipalContextDeniedError')
-      ).toBe(true);
-      expect(allowed.authMethod).toBe('system');
-    })
+    expect(Predicate.isTagged(denied, 'SystemPrincipalContextDeniedError')).toBe(true);
+    expect(allowed.authMethod).toBe('system');
+  }),
 );
 
 it('enforces mode-specific trusted context cross-field invariants', () => {
@@ -181,9 +161,7 @@ it('enforces mode-specific trusted context cross-field invariants', () => {
     },
   ];
   for (const context of valid) {
-    expect(() =>
-      Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(context)
-    ).not.toThrow();
+    expect(() => Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(context)).not.toThrow();
   }
   expect(() =>
     Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -191,7 +169,7 @@ it('enforces mode-specific trusted context cross-field invariants', () => {
       authMethod: 'api_key',
       principalId,
       tenantId,
-    })
+    }),
   ).toThrow();
   expect(() =>
     Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -201,6 +179,6 @@ it('enforces mode-specific trusted context cross-field invariants', () => {
       impersonatedByPrincipalId: principalId,
       principalId,
       tenantId,
-    })
+    }),
   ).toThrow();
 });

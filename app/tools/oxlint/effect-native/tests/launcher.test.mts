@@ -10,9 +10,7 @@ import { appRoot, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const decodePackageScripts = Schema.decodeUnknownSync(
-  Schema.fromJsonString(
-    Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })
-  )
+  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })),
 );
 
 rstest.mock('node:child_process', () => {
@@ -24,10 +22,7 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
   withTemporaryWorkspace((directory) => {
     const config = nodePath.join(directory, 'lint config.json');
     const input = 'source with spaces.ts';
-    writeFileSync(
-      config,
-      JSON.stringify({ categories: { correctness: 'off' } })
-    );
+    writeFileSync(config, JSON.stringify({ categories: { correctness: 'off' } }));
     writeFileSync(nodePath.join(directory, input), 'export const value = 1;');
     const spawn = rstest.mocked(spawnSync);
     spawn.mockClear();
@@ -44,12 +39,7 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
         throw new TypeError('Expected spawn arguments array');
       }
       expect(args[1][0]).toBe(
-        nodePath.join(
-          nodePath.dirname(
-            createRequire(import.meta.url).resolve('oxlint/package.json')
-          ),
-          'bin/oxlint'
-        )
+        nodePath.join(nodePath.dirname(createRequire(import.meta.url).resolve('oxlint/package.json')), 'bin/oxlint'),
       );
       expect(args[1].includes(input)).toBe(true);
       expect(args[1].includes(config)).toBe(true);
@@ -60,9 +50,7 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
 });
 
 it('lint and lint:fix cover the same directories without changing reporting-only commands', () => {
-  const { scripts } = decodePackageScripts(
-    readFileSync(nodePath.join(appRoot, 'package.json'), 'utf-8')
-  );
+  const { scripts } = decodePackageScripts(readFileSync(nodePath.join(appRoot, 'package.json'), 'utf-8'));
   expect(scripts.lint).toBeDefined();
   expect(scripts['lint:fix']).toBeDefined();
   const lint = (scripts.lint ?? '').split(/\s+/u);
@@ -71,9 +59,6 @@ it('lint and lint:fix cover the same directories without changing reporting-only
   expect(fix.filter((argument) => argument === '--fix').length).toBe(1);
   expect(lint.includes('scripts')).toBe(true);
   for (const name of ['lint', 'lint:effect', 'test:lint-rules', 'check']) {
-    expect(
-      !(scripts[name] ?? '').includes('--fix'),
-      `${name} must remain reporting-only`
-    ).toBe(true);
+    expect(!(scripts[name] ?? '').includes('--fix'), `${name} must remain reporting-only`).toBe(true);
   }
 });

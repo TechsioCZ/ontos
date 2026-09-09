@@ -4,19 +4,13 @@ import type { OperationalScope } from '../operations/context.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing
-) =>
-  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 export interface ReadEvidenceMetadata {
   readonly queryHash?: string;
@@ -37,12 +31,7 @@ export interface ReadHandlerResult<Result> {
 }
 
 const sha256 = /^[\da-f]{64}$/u;
-const evidenceKeys = new Set([
-  'queryHash',
-  'resultCount',
-  'resultFingerprintHash',
-  'resultFingerprintSchema',
-]);
+const evidenceKeys = new Set(['queryHash', 'resultCount', 'resultFingerprintHash', 'resultFingerprintSchema']);
 const invalidEvidence = (cause?: unknown): ReadEvidenceValidationError => {
   const failure = new ReadEvidenceValidationError({
     code: 'read_evidence_invalid',
@@ -67,33 +56,24 @@ const ReadEvidenceCandidateSchema = Schema.Struct({
 type ReadEvidenceCandidate = typeof ReadEvidenceCandidateSchema.Type;
 
 const isValidResultCount = Schema.is(
-  Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isBetween({ maximum: 2_147_483_647, minimum: 0 })
-  )
+  Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 2_147_483_647, minimum: 0 })),
 );
 
-const hasInvalidFingerprintHash = (
-  value: ReadEvidenceCandidate['resultFingerprintHash']
-): boolean =>
+const hasInvalidFingerprintHash = (value: ReadEvidenceCandidate['resultFingerprintHash']): boolean =>
   value !== undefined && (!Predicate.isString(value) || !sha256.test(value));
 
-const hasInvalidFingerprintSchema = (
-  value: ReadEvidenceCandidate['resultFingerprintSchema']
-): boolean =>
-  value !== undefined &&
-  (!Predicate.isString(value) || value.length === 0 || value.length > 300);
+const hasInvalidFingerprintSchema = (value: ReadEvidenceCandidate['resultFingerprintSchema']): boolean =>
+  value !== undefined && (!Predicate.isString(value) || value.length === 0 || value.length > 300);
 
 const hasInvalidHashEvidence = (record: ReadEvidenceCandidate): boolean =>
   record.queryHash !== undefined ||
-  (record.resultFingerprintHash === undefined) !==
-    (record.resultFingerprintSchema === undefined) ||
+  (record.resultFingerprintHash === undefined) !== (record.resultFingerprintSchema === undefined) ||
   hasInvalidFingerprintHash(record.resultFingerprintHash) ||
   hasInvalidFingerprintSchema(record.resultFingerprintSchema);
 
 export const validateReadEvidenceMetadata = <Value>(
   captureMode: ReadEvidenceCaptureMode,
-  value: Value
+  value: Value,
 ): Effect.Effect<Readonly<ReadEvidenceMetadata>, ReadEvidenceValidationError> =>
   Schema.decodeUnknownEffect(ReadEvidenceCandidateSchema, {
     onExcessProperty: 'error',
@@ -106,17 +86,12 @@ export const validateReadEvidenceMetadata = <Value>(
         resultFingerprintHash: fingerprintHash,
         resultFingerprintSchema: fingerprintSchema,
       } = record;
-      if (
-        Object.keys(record).some((key) => !evidenceKeys.has(key)) ||
-        !isValidResultCount(resultCount)
-      ) {
+      if (Object.keys(record).some((key) => !evidenceKeys.has(key)) || !isValidResultCount(resultCount)) {
         return Effect.fail(invalidEvidence());
       }
       if (
         captureMode === 'metadata_only' &&
-        (queryHash !== undefined ||
-          fingerprintHash !== undefined ||
-          fingerprintSchema !== undefined)
+        (queryHash !== undefined || fingerprintHash !== undefined || fingerprintSchema !== undefined)
       ) {
         return Effect.fail(invalidEvidence());
       }
@@ -127,26 +102,20 @@ export const validateReadEvidenceMetadata = <Value>(
         Object.freeze(
           withOptionalProperty(
             withOptionalProperty(
-              withOptionalProperty(
-                {},
-                Predicate.isString(queryHash),
-                'queryHash',
-                queryHash,
-                {
-                  resultCount,
-                }
-              ),
+              withOptionalProperty({}, Predicate.isString(queryHash), 'queryHash', queryHash, {
+                resultCount,
+              }),
               Predicate.isString(fingerprintHash),
               'resultFingerprintHash',
               fingerprintHash,
-              {}
+              {},
             ),
             Predicate.isString(fingerprintSchema),
             'resultFingerprintSchema',
             fingerprintSchema,
-            {}
-          )
-        )
+            {},
+          ),
+        ),
       );
-    })
+    }),
   );

@@ -24,56 +24,48 @@ interface Services {
   readonly create: (
     payload: Payload,
     principalId: string,
-    actionInvocationId: string
+    actionInvocationId: string,
   ) => Effect.Effect<RelationshipCreateResult, RelationshipMutationError>;
 }
 
-const handleCreatePartyRelationship = Effect.fn(
-  'CreatePartyRelationshipAction.handleCreatePartyRelationship'
-)(function* handleCreateRelationship(
-  payload: Payload,
-  context: ActionHandlerContext<
-    Readonly<{
-      'party.registry.relationship-created.v1': typeof PartyRelationshipLifecycleEventPayloadJsonSchema;
-    }>,
-    Services
-  >
-) {
-  const result = yield* context.services.create(
-    payload,
-    context.scope.principalId,
-    context.actionInvocationId
-  );
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `party-relationship-endpoints:${payload.fromPartyRef.resourceId}:${payload.toPartyRef.resourceId}`,
-    resultCount: 2,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
-    targetResourceId: result.relationship.relationshipRef.resourceId,
-    targetResourceType: result.relationship.relationshipRef.resourceType,
-  });
-  if (result.outcome === 'CREATED') {
-    const payloadJson = yield* encodeRelationshipEventPayload(
-      result.relationship
-    );
-    const domainEvent = yield* context.addDomainEvent({
-      eventType: 'party.registry.relationship-created.v1',
-      payloadJson,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.relationship.relationshipRef.resourceId,
-      subjectResourceType: result.relationship.relationshipRef.resourceType,
+const handleCreatePartyRelationship = Effect.fn('CreatePartyRelationshipAction.handleCreatePartyRelationship')(
+  function* handleCreateRelationship(
+    payload: Payload,
+    context: ActionHandlerContext<
+      Readonly<{
+        'party.registry.relationship-created.v1': typeof PartyRelationshipLifecycleEventPayloadJsonSchema;
+      }>,
+      Services
+    >,
+  ) {
+    const result = yield* context.services.create(payload, context.scope.principalId, context.actionInvocationId);
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `party-relationship-endpoints:${payload.fromPartyRef.resourceId}:${payload.toPartyRef.resourceId}`,
+      resultCount: 2,
+      servingModuleKey: 'party.registry',
+      targetModuleKey: 'party.registry',
+      targetResourceId: result.relationship.relationshipRef.resourceId,
+      targetResourceType: result.relationship.relationshipRef.resourceType,
     });
-    yield* context.addOutboxMessage(
-      domainEvent,
-      createCreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxMessage(
-        payloadJson
-      )
-    );
-  }
-  return result;
-});
+    if (result.outcome === 'CREATED') {
+      const payloadJson = yield* encodeRelationshipEventPayload(result.relationship);
+      const domainEvent = yield* context.addDomainEvent({
+        eventType: 'party.registry.relationship-created.v1',
+        payloadJson,
+        producerModuleKey: 'party.registry',
+        subjectModuleKey: 'party.registry',
+        subjectResourceId: result.relationship.relationshipRef.resourceId,
+        subjectResourceType: result.relationship.relationshipRef.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        domainEvent,
+        createCreatePartyRelationshipPartyRegistryRelationshipCreatedV1OutboxMessage(payloadJson),
+      );
+    }
+    return result;
+  },
+);
 
 export const createPartyRelationshipAction = defineAction(
   {
@@ -85,8 +77,7 @@ export const createPartyRelationshipAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: PartyRelationshipMutationErrorSchema,
     domainEvents: {
-      'party.registry.relationship-created.v1':
-        PartyRelationshipLifecycleEventPayloadJsonSchema,
+      'party.registry.relationship-created.v1': PartyRelationshipLifecycleEventPayloadJsonSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -111,12 +102,6 @@ export const createPartyRelationshipAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({
       create: (payload, principalId, actionInvocationId) =>
-        createPartyRelationshipRecord(
-          transaction,
-          scope.tenantId,
-          principalId,
-          actionInvocationId,
-          payload
-        ),
-    })
+        createPartyRelationshipRecord(transaction, scope.tenantId, principalId, actionInvocationId, payload),
+    }),
 );

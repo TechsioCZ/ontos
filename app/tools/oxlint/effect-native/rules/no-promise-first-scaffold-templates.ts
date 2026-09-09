@@ -101,18 +101,10 @@
 import { defineRule } from '@oxlint/plugins';
 import type { ESTree } from '@oxlint/plugins';
 
-import {
-  booleanOption,
-  compilePatterns,
-  stringArray,
-} from '../shared/options.ts';
+import { booleanOption, compilePatterns, stringArray } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 import { snippet } from '../shared/reporting.ts';
-import {
-  driverText as sharedDriverText,
-  emittedText,
-  reportNode,
-} from '../shared/scaffold-text.ts';
+import { driverText as sharedDriverText, emittedText, reportNode } from '../shared/scaffold-text.ts';
 import type { StringNode } from '../shared/scaffold-text.ts';
 
 /** Files whose template literals are emitted as source code into someone else's module. */
@@ -130,12 +122,7 @@ const DEFAULT_TEMPLATE_PATHS: readonly string[] = [
 ];
 
 /** Generated or vendored output that is never hand-edited. */
-const DEFAULT_EXCLUDE: readonly string[] = [
-  '**/dist/**',
-  '**/.output/**',
-  '**/node_modules/**',
-  '**/*.d.ts',
-];
+const DEFAULT_EXCLUDE: readonly string[] = ['**/dist/**', '**/.output/**', '**/node_modules/**', '**/*.d.ts'];
 
 /**
  * A8 "Promise-first browser code" / A9 "~40 scattered browser `runPromise` calls". Sources, not
@@ -188,23 +175,12 @@ interface Match {
 
 function readOptions(raw: unknown): RuleOptions {
   const record: Record<string, unknown> =
-    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : {};
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
     templatePaths: stringArray(record.templatePaths, DEFAULT_TEMPLATE_PATHS),
-    promiseFirstPatterns: stringArray(
-      record.promiseFirstPatterns,
-      DEFAULT_PROMISE_FIRST
-    ),
-    perCallClientPatterns: stringArray(
-      record.perCallClientPatterns,
-      DEFAULT_PER_CALL_CLIENT
-    ),
-    routeParamPatterns: stringArray(
-      record.routeParamPatterns,
-      DEFAULT_ROUTE_PARAMS
-    ),
+    promiseFirstPatterns: stringArray(record.promiseFirstPatterns, DEFAULT_PROMISE_FIRST),
+    perCallClientPatterns: stringArray(record.perCallClientPatterns, DEFAULT_PER_CALL_CLIENT),
+    routeParamPatterns: stringArray(record.routeParamPatterns, DEFAULT_ROUTE_PARAMS),
     strictPerCallClient: booleanOption(record.strictPerCallClient, false),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
   };
@@ -214,8 +190,7 @@ function readOptions(raw: unknown): RuleOptions {
 function maskText(text: string, strings: boolean): string {
   return text.replace(
     /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*|'(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*"|`(?:\\[\s\S]|[^`\\])*`/gu,
-    (part) =>
-      strings || part.startsWith('/') ? part.replace(/[^\r\n]/g, ' ') : part
+    (part) => (strings || part.startsWith('/') ? part.replace(/[^\r\n]/g, ' ') : part),
   );
 }
 /** Keep function/class boundaries: shared driver filtering also serves broader scanners. */
@@ -224,28 +199,13 @@ function driverText(node: ESTree.Node): boolean {
   let parent = node.parent;
   if (
     parent &&
-    [
-      'ImportDeclaration',
-      'ImportExpression',
-      'ExportNamedDeclaration',
-      'ExportAllDeclaration',
-    ].includes(parent.type)
+    ['ImportDeclaration', 'ImportExpression', 'ExportNamedDeclaration', 'ExportAllDeclaration'].includes(parent.type)
   )
     return sharedDriverText(node);
   while (parent) {
-    if (/Function/u.test(parent.type) || parent.type === 'ClassBody')
-      return false;
-    if (parent.type === 'CallExpression' || parent.type === 'NewExpression')
-      break;
-    if (
-      [
-        'VariableDeclarator',
-        'ReturnStatement',
-        'TemplateLiteral',
-        'Program',
-      ].includes(parent.type)
-    )
-      break;
+    if (/Function/u.test(parent.type) || parent.type === 'ClassBody') return false;
+    if (parent.type === 'CallExpression' || parent.type === 'NewExpression') break;
+    if (['VariableDeclarator', 'ReturnStatement', 'TemplateLiteral', 'Program'].includes(parent.type)) break;
     parent = parent.parent;
   }
   return sharedDriverText(node);
@@ -290,9 +250,7 @@ function closingParen(text: string, start: number): number {
 function operationSpans(text: string): { functions: Span[]; layers: Span[] } {
   const functions: Span[] = [];
   const layers: Span[] = [];
-  for (const match of text.matchAll(
-    /=>\s*|\bfunction\s*\*?\s*(?:[\w$]+\s*)?\(/gu
-  )) {
+  for (const match of text.matchAll(/=>\s*|\bfunction\s*\*?\s*(?:[\w$]+\s*)?\(/gu)) {
     let start = match.index + match[0].length;
     if (match[0].startsWith('function')) {
       start = closingParen(text, start - 1);
@@ -304,71 +262,45 @@ function operationSpans(text: string): { functions: Span[]; layers: Span[] } {
     while (/\s/u.test(text[start] ?? 'X')) start += 1;
     functions.push({ start: match.index, end: expressionEnd(text, start) });
   }
-  for (const match of text.matchAll(
-    /\bLayer\s*\.\s*(?:effect|scoped|sync|succeed)\s*\(/gu
-  )) {
+  for (const match of text.matchAll(/\bLayer\s*\.\s*(?:effect|scoped|sync|succeed)\s*\(/gu)) {
     let end = closingParen(text, match.index + match[0].length - 1);
     const following = /^\s*\(/u.exec(text.slice(end));
-    if (following !== null)
-      end = closingParen(text, end + following[0].length - 1);
+    if (following !== null) end = closingParen(text, end + following[0].length - 1);
     layers.push({ start: match.index, end });
   }
   return { functions, layers };
 }
 /** Collect named emitted imports without treating arbitrary receivers as Effect. */
-function collectRunnerImports(
-  entries: string,
-  source: string,
-  names: string[],
-  namespace: string[]
-): void {
+function collectRunnerImports(entries: string, source: string, names: string[], namespace: string[]): void {
   for (const entry of entries.split(',')) {
     const binding = /^\s*([\w$]+)(?:\s+as\s+([\w$]+))?\s*$/u.exec(entry);
     if (binding === null) continue;
     const imported = binding[1]!;
     const local = binding[2] ?? imported;
     if (source === 'effect' && imported === 'Effect') namespace.push(local);
-    if (
-      source === 'effect/Effect' &&
-      /^run(?:Promise|Sync|Fork)(?:Exit)?$/u.test(imported)
-    )
-      names.push(local);
+    if (source === 'effect/Effect' && /^run(?:Promise|Sync|Fork)(?:Exit)?$/u.test(imported)) names.push(local);
   }
 }
 /** Resolve only explicit emitted Effect import aliases, never arbitrary *.runPromise receivers. */
 function runnerPatterns(text: string): readonly RegExp[] {
   const names: string[] = [];
   const namespace: string[] = [];
-  const imports =
-    /\bimport\s+(?:\*\s+as\s+([\w$]+)|\{([^}]+)\})\s+from\s+['"](effect(?:\/Effect)?)['"]/gu;
+  const imports = /\bimport\s+(?:\*\s+as\s+([\w$]+)|\{([^}]+)\})\s+from\s+['"](effect(?:\/Effect)?)['"]/gu;
   for (const match of text.matchAll(imports)) {
-    if (match[1] !== undefined && match[3] === 'effect/Effect')
-      namespace.push(match[1]);
+    if (match[1] !== undefined && match[3] === 'effect/Effect') namespace.push(match[1]);
     collectRunnerImports(match[2] ?? '', match[3]!, names, namespace);
   }
-  const escape = (value: string) =>
-    value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
   return [
-    ...names.map(
-      (name) => new RegExp(String.raw`(?<![.\w$])${escape(name)}\s*\(`, 'gu')
-    ),
+    ...names.map((name) => new RegExp(String.raw`(?<![.\w$])${escape(name)}\s*\(`, 'gu')),
     ...namespace.map(
-      (name) =>
-        new RegExp(
-          String.raw`\b${escape(name)}\s*\.\s*run(?:Promise|Sync|Fork)(?:Exit)?\s*\(`,
-          'gu'
-        )
+      (name) => new RegExp(String.raw`\b${escape(name)}\s*\.\s*run(?:Promise|Sync|Fork)(?:Exit)?\s*\(`, 'gu'),
     ),
   ];
 }
 
 /** All matches of one compiled group over the joined text. */
-function scan(
-  text: string,
-  patterns: readonly RegExp[],
-  group: Group,
-  found: Match[]
-): void {
+function scan(text: string, patterns: readonly RegExp[], group: Group, found: Match[]): void {
   for (const pattern of patterns) {
     pattern.lastIndex = 0;
     let match = pattern.exec(text);
@@ -464,8 +396,7 @@ export const rule = defineRule({
           exclude: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs never scanned (default: build output, node_modules, *.d.ts).',
+            description: 'Globs never scanned (default: build output, node_modules, *.d.ts).',
           },
         },
       },
@@ -493,8 +424,7 @@ export const rule = defineRule({
     const promiseFirst = compilePatterns(options.promiseFirstPatterns);
     const perCallClient = compilePatterns(options.perCallClientPatterns);
     const routeParams = compilePatterns(options.routeParamPatterns);
-    if (promiseFirst.length + perCallClient.length + routeParams.length === 0)
-      return {};
+    if (promiseFirst.length + perCallClient.length + routeParams.length === 0) return {};
 
     function inspect(node: StringNode): void {
       if (driverText(node)) return;
@@ -504,34 +434,19 @@ export const rule = defineRule({
       const syntax = maskText(text, true);
       const found: Match[] = [];
       scan(syntax, promiseFirst, 'promiseFirst', found);
-      if (
-        options.promiseFirstPatterns.includes(
-          String.raw`\bEffect\.run(?:Promise|Sync|Fork)(?:Exit)?\b`
-        )
-      )
-        scan(
-          syntax,
-          runnerPatterns(maskText(text, false)),
-          'promiseFirst',
-          found
-        );
+      if (options.promiseFirstPatterns.includes(String.raw`\bEffect\.run(?:Promise|Sync|Fork)(?:Exit)?\b`))
+        scan(syntax, runnerPatterns(maskText(text, false)), 'promiseFirst', found);
       const spans = operationSpans(syntax);
       const clients: Match[] = [];
       scan(syntax, perCallClient, 'perCallClient', clients);
       for (const candidate of clients) {
-        const enclosing = spans.functions.filter(
-          (span) => span.start < candidate.start && span.end > candidate.start
-        );
+        const enclosing = spans.functions.filter((span) => span.start < candidate.start && span.end > candidate.start);
         const perOperation = enclosing.some(
-          (fn) =>
-            !spans.layers.some(
-              (layer) => layer.start < fn.start && layer.end > candidate.start
-            )
+          (fn) => !spans.layers.some((layer) => layer.start < fn.start && layer.end > candidate.start),
         );
         if (options.strictPerCallClient || perOperation) found.push(candidate);
       }
-      if (ROUTE_PARAMS_GATE.test(syntax))
-        scan(syntax, routeParams, 'routeParams', found);
+      if (ROUTE_PARAMS_GATE.test(syntax)) scan(syntax, routeParams, 'routeParams', found);
       found.sort((a, b) => a.start - b.start || b.end - a.end);
       let consumedTo = -1;
       for (const match of found) {

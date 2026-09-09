@@ -33,7 +33,7 @@ const matchDecisionUnavailable = (cause: unknown) =>
       code: 'read_handler_unavailable',
       reason: 'Party matching persistence is unavailable',
     }),
-    { cause }
+    { cause },
   );
 export const partyMatchDecisionRead = defineRead(
   {
@@ -53,22 +53,19 @@ export const partyMatchDecisionRead = defineRead(
     schemaVersion: '1',
   },
   (input, context: ReadHandlerContext<Services>) => {
-    if (
-      input.decisionRef !== undefined &&
-      input.decisionRef.tenantId !== context.scope.tenantId
-    ) {
+    if (input.decisionRef !== undefined && input.decisionRef.tenantId !== context.scope.tenantId) {
       return Effect.fail(
         new ReadHandlerNotFound({
           code: 'read_handler_not_found',
           reason: 'The Party Match Decision does not exist',
-        })
+        }),
       );
     }
     return context.services
       .find(
         input.decisionRef === undefined
           ? { actionInvocationId: input.actionInvocationId ?? '' }
-          : { decisionId: input.decisionRef.resourceId }
+          : { decisionId: input.decisionRef.resourceId },
       )
       .pipe(
         Effect.mapError(matchDecisionUnavailable),
@@ -80,28 +77,26 @@ export const partyMatchDecisionRead = defineRead(
                   evidence: { resultCount: 1 },
                   result,
                 })),
-                Effect.mapError(matchDecisionUnavailable)
-              )
+                Effect.mapError(matchDecisionUnavailable),
+              ),
             ),
             Match.tag('not_found', () =>
               Effect.fail(
                 new ReadHandlerNotFound({
                   code: 'read_handler_not_found',
                   reason: 'The Party Match Decision does not exist',
-                })
-              )
+                }),
+              ),
             ),
-            Match.exhaustive
-          )
-        )
+            Match.exhaustive,
+          ),
+        ),
       );
   },
   (transaction, scope) =>
     Effect.succeed({
-      find: (input: {
-        readonly actionInvocationId?: string;
-        readonly decisionId?: string;
-      }) => findMatchDecision(transaction, scope.tenantId, input),
+      find: (input: { readonly actionInvocationId?: string; readonly decisionId?: string }) =>
+        findMatchDecision(transaction, scope.tenantId, input),
     }),
-  () => ({ kind: 'tenant', permission: 'review_party_identity' })
+  () => ({ kind: 'tenant', permission: 'review_party_identity' }),
 );

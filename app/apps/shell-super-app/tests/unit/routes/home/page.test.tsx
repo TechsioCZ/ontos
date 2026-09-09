@@ -19,10 +19,7 @@ import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
-import type {
-  LocalizedLinkCall,
-  LocalizedLinkDoubleProps,
-} from '../../../support/localized-link-double.tsx';
+import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
 const {
@@ -78,7 +75,7 @@ const translations = new Map(
     'shell.modules.unavailable': 'Module access unavailable',
     'shell.search.label': 'Search this legal entity',
     'shell.search.submit': 'Search',
-  })
+  }),
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -112,31 +109,16 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
   browserRuntime: { runPromise: browserRunPromiseMock },
 }));
 
-const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)(
-  '00000000-0000-4000-8000-000000000001'
-);
-const tenantId1 = Schema.decodeUnknownSync(TenantIdSchema)(
-  '00000000-0000-4000-8000-000000000101'
-);
-const tenantId2 = Schema.decodeUnknownSync(TenantIdSchema)(
-  '00000000-0000-4000-8000-000000000102'
-);
-const legalEntityId1 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
-  '00000000-0000-4000-8000-000000000201'
-);
-const legalEntityId2 = Schema.decodeUnknownSync(LegalEntityIdSchema)(
-  '00000000-0000-4000-8000-000000000202'
-);
+const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
+const tenantId1 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
+const tenantId2 = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000102');
+const legalEntityId1 = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000201');
+const legalEntityId2 = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000202');
 const inventoryAppId = Schema.decodeUnknownSync(AppIdSchema)('inventory-app');
-const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)(
-  'shell.navigation.modules'
-);
-const inventoryModuleId =
-  Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
+const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.modules');
+const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 
-const authenticatedModel = (options?: {
-  readonly moduleEnabled?: boolean;
-}): HomePageModel => ({
+const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): HomePageModel => ({
   contextState: 'authenticated',
   identity: {
     displayName: 'Ada Lovelace',
@@ -184,12 +166,8 @@ beforeEach(() => {
   navigateMock.mockResolvedValue(undefined);
   browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
-  switchTenantMock.mockReturnValue(
-    Effect.succeed({ selectedTenantId: tenantId2 })
-  );
-  switchLegalEntityMock.mockReturnValue(
-    Effect.succeed({ selectedLegalEntityId: legalEntityId2 })
-  );
+  switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
+  switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));
 });
 
 afterEach(() => {
@@ -201,9 +179,7 @@ afterEach(() => {
 
 it('anonymous home exposes only the localized login action', () => {
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
-  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe(
-    '/en/login'
-  );
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/en/login');
   expect(screen.queryByRole('banner')).toBeNull();
 });
 
@@ -219,9 +195,7 @@ it('the anonymous login action resolves Czech from the same canonical target', (
   languageState.current = 'cs';
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
   expect(localizedLinkCalls.map((call) => call.to)).toContain('/login');
-  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe(
-    '/cs/login'
-  );
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/cs/login');
 });
 
 it('the unavailable dashboard exposes no navigable affordance', () => {
@@ -231,21 +205,15 @@ it('the unavailable dashboard exposes no navigable affordance', () => {
 });
 
 it('a disabled module affordance stays non-interactive text', () => {
-  render(
-    <HomeView initialModel={authenticatedModel({ moduleEnabled: false })} />
-  );
+  render(<HomeView initialModel={authenticatedModel({ moduleEnabled: false })} />);
   expect(screen.queryByRole('link', { name: 'Inventory' })).toBeNull();
   expect(screen.getByText('Inventory')).toBeTruthy();
-  expect(localizedLinkCalls.map((call) => call.to)).not.toContain(
-    '/modules/inventory.stock'
-  );
+  expect(localizedLinkCalls.map((call) => call.to)).not.toContain('/modules/inventory.stock');
 });
 
 it('authenticated home renders server-composed navigation and selected legal context', () => {
   render(<HomeView initialModel={authenticatedModel()} />);
-  expect(
-    screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')
-  ).toBe('/en/modules/inventory.stock');
+  expect(screen.getByRole('link', { name: 'Inventory' }).getAttribute('href')).toBe('/en/modules/inventory.stock');
   expect(screen.getByText('Read only')).toBeTruthy();
   expect(screen.getByText(legalEntityId1)).toBeTruthy();
   expect(screen.queryByText('inventory.stock')).toBeNull();
@@ -255,127 +223,93 @@ it.live('successful tenant switch performs a full document reload', () =>
   Effect.gen(function* successfulTenantSwitchPerformsAFull() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() =>
-      user.click(screen.getByRole('combobox', { name: 'Current tenant' }))
-    );
-    const tenantOption = yield* Effect.promise(() =>
-      screen.findByRole('option', { name: 'Zeta tenant' })
-    );
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current tenant' })));
+    const tenantOption = yield* Effect.promise(() => screen.findByRole('option', { name: 'Zeta tenant' }));
     yield* Effect.promise(() => user.click(tenantOption));
     yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(switchTenantMock).toHaveBeenCalledWith(
-          { tenantId: tenantId2 },
-          { locale: 'en' }
-        )
-      )
+      waitFor(() => expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: tenantId2 }, { locale: 'en' })),
     );
     yield* Effect.promise(() =>
       waitFor(() =>
         expect(navigateMock).toHaveBeenCalledWith({
           reloadDocument: true,
           to: '.',
-        })
-      )
+        }),
+      ),
     );
-  })
+  }),
 );
 
 it.live('successful legal-entity switch performs a full document reload', () =>
   Effect.gen(function* successfulLegalEntitySwitchPerformsA() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() =>
-      user.click(screen.getByRole('combobox', { name: 'Current legal entity' }))
-    );
-    const legalEntityOption = yield* Effect.promise(() =>
-      screen.findByRole('option', { name: 'Beta company' })
-    );
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
+    const legalEntityOption = yield* Effect.promise(() => screen.findByRole('option', { name: 'Beta company' }));
     yield* Effect.promise(() => user.click(legalEntityOption));
     yield* Effect.promise(() =>
       waitFor(() =>
-        expect(switchLegalEntityMock).toHaveBeenCalledWith(
-          { legalEntityId: legalEntityId2 },
-          { locale: 'en' }
-        )
-      )
+        expect(switchLegalEntityMock).toHaveBeenCalledWith({ legalEntityId: legalEntityId2 }, { locale: 'en' }),
+      ),
     );
     yield* Effect.promise(() =>
       waitFor(() =>
         expect(navigateMock).toHaveBeenCalledWith({
           reloadDocument: true,
           to: '.',
-        })
-      )
+        }),
+      ),
     );
-  })
+  }),
 );
 
 it.live('search submission navigates to the localized Shell search route', () =>
   Effect.gen(function* searchSubmissionNavigatesToTheLocalized() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() =>
-      user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1')
-    );
-    yield* Effect.promise(() =>
-      user.click(screen.getByRole('button', { name: 'Search' }))
-    );
+    yield* Effect.promise(() => user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Search' })));
     expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
-  })
+  }),
 );
 
 it.live('logout clears the authenticated composition together', () =>
   Effect.gen(function* logoutClearsTheAuthenticatedCompositionTogether() {
     const user = userEvent.setup();
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() =>
-      user.click(screen.getByRole('button', { name: 'Ada Lovelace' }))
-    );
-    const logoutItem = yield* Effect.promise(() =>
-      screen.findByRole('menuitem', { name: 'Logout' })
-    );
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Ada Lovelace' })));
+    const logoutItem = yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Logout' }));
     // Happy DOM has no layout. Give pointer movement distinct coordinates so
     // the menu can distinguish it from virtual focus after a prior selection.
-    yield* Effect.promise(() =>
-      user.pointer({ coords: { x: 10, y: 10 }, target: logoutItem })
-    );
+    yield* Effect.promise(() => user.pointer({ coords: { x: 10, y: 10 }, target: logoutItem }));
     yield* Effect.promise(() => user.click(logoutItem));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(signOutMock).toHaveBeenCalledWith({ locale: 'en' }))
-    );
+    yield* Effect.promise(() => waitFor(() => expect(signOutMock).toHaveBeenCalledWith({ locale: 'en' })));
     yield* Effect.promise(() =>
       waitFor(() =>
         expect(navigateMock).toHaveBeenCalledWith({
           reloadDocument: true,
           to: '/en/login',
-        })
-      )
+        }),
+      ),
     );
-  })
+  }),
 );
 
-const tenantAuthenticationRequired = Schema.decodeUnknownSync(
-  TenantAuthenticationRequiredProblemSchema
-)({
+const tenantAuthenticationRequired = Schema.decodeUnknownSync(TenantAuthenticationRequiredProblemSchema)({
   _tag: 'TenantAuthenticationRequiredProblem',
   detail: 'The tenant session expired.',
   status: 401,
   title: 'Tenant authentication required',
   type: 'https://ontos.dev/problems/tenant-authentication-required',
 });
-const tenantAccessForbidden = Schema.decodeUnknownSync(
-  TenantAccessForbiddenProblemSchema
-)({
+const tenantAccessForbidden = Schema.decodeUnknownSync(TenantAccessForbiddenProblemSchema)({
   _tag: 'TenantAccessForbiddenProblem',
   detail: 'The principal cannot use this tenant.',
   status: 403,
   title: 'Tenant access forbidden',
   type: 'https://ontos.dev/problems/tenant-access-forbidden',
 });
-const legalEntityAccessForbidden = Schema.decodeUnknownSync(
-  LegalEntityAccessForbiddenProblemSchema
-)({
+const legalEntityAccessForbidden = Schema.decodeUnknownSync(LegalEntityAccessForbiddenProblemSchema)({
   _tag: 'LegalEntityAccessForbiddenProblem',
   detail: 'The principal cannot use this legal entity.',
   status: 403,
@@ -442,30 +376,16 @@ const switchFailureCases: SwitchFailureCase[] = [
 
 it.live.each(switchFailureCases)(
   'settles $name into its own selector without leaving it pending',
-  ({
-    comboboxName,
-    failedText,
-    failure,
-    optionName,
-    pendingText,
-    reloads,
-    switchMock,
-  }) =>
+  ({ comboboxName, failedText, failure, optionName, pendingText, reloads, switchMock }) =>
     Effect.gen(function* settlesTheSwitchFailureIntoItsOwnSelector() {
       switchMock.mockReturnValue(Effect.fail(failure));
       const user = userEvent.setup();
       render(<HomeView initialModel={authenticatedModel()} />);
 
-      yield* Effect.promise(() =>
-        user.click(screen.getByRole('combobox', { name: comboboxName }))
-      );
-      const option = yield* Effect.promise(() =>
-        screen.findByRole('option', { name: optionName })
-      );
+      yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: comboboxName })));
+      const option = yield* Effect.promise(() => screen.findByRole('option', { name: optionName }));
       yield* Effect.promise(() => user.click(option));
-      yield* Effect.promise(() =>
-        waitFor(() => expect(switchMock).toHaveBeenCalledTimes(1))
-      );
+      yield* Effect.promise(() => waitFor(() => expect(switchMock).toHaveBeenCalledTimes(1)));
 
       if (reloads) {
         yield* Effect.promise(() =>
@@ -473,25 +393,17 @@ it.live.each(switchFailureCases)(
             expect(navigateMock).toHaveBeenCalledWith({
               reloadDocument: true,
               to: '.',
-            })
-          )
+            }),
+          ),
         );
-        yield* Effect.promise(() =>
-          waitFor(() => expect(screen.queryByText(pendingText)).toBeNull())
-        );
+        yield* Effect.promise(() => waitFor(() => expect(screen.queryByText(pendingText)).toBeNull()));
         expect(screen.queryByText(failedText)).toBeNull();
       } else {
-        yield* Effect.promise(() =>
-          waitFor(() => expect(screen.getByText(failedText)).toBeTruthy())
-        );
+        yield* Effect.promise(() => waitFor(() => expect(screen.getByText(failedText)).toBeTruthy()));
         expect(navigateMock).not.toHaveBeenCalled();
         expect(screen.queryByText(pendingText)).toBeNull();
       }
 
-      expect(
-        screen
-          .getByRole('combobox', { name: comboboxName })
-          .hasAttribute('disabled')
-      ).toBe(false);
-    })
+      expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(false);
+    }),
 );

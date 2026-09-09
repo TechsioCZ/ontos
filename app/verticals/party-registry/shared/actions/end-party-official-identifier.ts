@@ -10,11 +10,9 @@ export const EndPartyOfficialIdentifierPayloadSchema = Schema.Struct({
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   validTo: IsoTimestampSchema,
 });
-export type EndPartyOfficialIdentifierPayload =
-  typeof EndPartyOfficialIdentifierPayloadSchema.Type;
+export type EndPartyOfficialIdentifierPayload = typeof EndPartyOfficialIdentifierPayloadSchema.Type;
 export const EndPartyOfficialIdentifierResultSchema = Schema.Struct({
   officialIdentifierRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
 });
-export type EndPartyOfficialIdentifierResult =
-  typeof EndPartyOfficialIdentifierResultSchema.Type;
+export type EndPartyOfficialIdentifierResult = typeof EndPartyOfficialIdentifierResultSchema.Type;

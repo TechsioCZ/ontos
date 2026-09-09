@@ -19,9 +19,7 @@ import type { PartyRef } from '../../shared/resources/party.ts';
 
 const CanonicalSurvivorSelectionSchema = Schema.Union([
   Schema.TaggedStruct('CanonicalSurvivorSelected', {
-    confirmedDuplicateDecisionId: Schema.toEncoded(
-      ConfirmedDuplicateDecisionIdSchema
-    ),
+    confirmedDuplicateDecisionId: Schema.toEncoded(ConfirmedDuplicateDecisionIdSchema),
     decidingCriterion: MergeSurvivorSelectionReasonSchema,
     evidenceChain: Schema.Array(MergeSelectionEvidenceStepSchema),
     policyVersion: Schema.Literal(MERGE_SURVIVOR_SELECTION_POLICY_VERSION),
@@ -37,18 +35,13 @@ const CanonicalSurvivorSelectionSchema = Schema.Union([
     conflictingPartyRefs: Schema.Array(PartyRefSchema),
   }),
 ]);
-export type CanonicalSurvivorSelection =
-  typeof CanonicalSurvivorSelectionSchema.Type;
+export type CanonicalSurvivorSelection = typeof CanonicalSurvivorSelectionSchema.Type;
 
 const compareDescending = (left: number, right: number) => right - left;
-const compareLifecycle = (
-  left: MergeSurvivorCandidate,
-  right: MergeSurvivorCandidate
-) => Number(right.lifecycle === 'ACTIVE') - Number(left.lifecycle === 'ACTIVE');
-const compareCreatedAt = (
-  left: MergeSurvivorCandidate,
-  right: MergeSurvivorCandidate
-) => left.createdAt.localeCompare(right.createdAt);
+const compareLifecycle = (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) =>
+  Number(right.lifecycle === 'ACTIVE') - Number(left.lifecycle === 'ACTIVE');
+const compareCreatedAt = (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) =>
+  left.createdAt.localeCompare(right.createdAt);
 const confirmationHasEvidence = (confirmation: ConfirmedDuplicateSet) =>
   confirmation.confirmedDuplicateDecisionId.trim().length > 0 &&
   confirmation.decisionActorPrincipalId.trim().length > 0 &&
@@ -57,7 +50,7 @@ const confirmationHasEvidence = (confirmation: ConfirmedDuplicateSet) =>
 
 const criterionValue = (
   criterion: MergeSelectionEvidenceCriterion,
-  candidate: MergeSurvivorCandidate
+  candidate: MergeSurvivorCandidate,
 ): string | number | boolean =>
   ({
     AUTHORITATIVE_EVIDENCE: candidate.authoritativeEvidenceRank,
@@ -77,12 +70,10 @@ const evidenceStep = (
   eligible: readonly MergeSurvivorCandidate[],
   retained: readonly MergeSurvivorCandidate[],
   explanation: string,
-  winnerPartyRef: PartyRef | null
+  winnerPartyRef: PartyRef | null,
 ): MergeSelectionEvidenceStep =>
   Object.freeze({
-    candidatePartyRefs: Object.freeze(
-      candidates.map(({ partyRef }) => partyRef)
-    ),
+    candidatePartyRefs: Object.freeze(candidates.map(({ partyRef }) => partyRef)),
     candidateSnapshots: Object.freeze(
       candidates.map((candidate) =>
         Object.freeze({
@@ -90,8 +81,8 @@ const evidenceStep = (
           criterionValue: criterionValue(criterion, candidate),
           eligibleBefore: eligible.includes(candidate),
           retainedAfter: retained.includes(candidate),
-        })
-      )
+        }),
+      ),
     ),
     criterion,
     evidenceRefs: Object.freeze([...evidenceRefs]),
@@ -102,18 +93,12 @@ const evidenceStep = (
 const criteria = [
   {
     compare: (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) =>
-      compareDescending(
-        left.authoritativeEvidenceRank,
-        right.authoritativeEvidenceRank
-      ),
+      compareDescending(left.authoritativeEvidenceRank, right.authoritativeEvidenceRank),
     reason: 'AUTHORITATIVE_EVIDENCE',
   },
   {
     compare: (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) =>
-      compareDescending(
-        left.referenceStabilityRank,
-        right.referenceStabilityRank
-      ),
+      compareDescending(left.referenceStabilityRank, right.referenceStabilityRank),
     reason: 'REFERENCE_STABILITY',
   },
   { compare: compareLifecycle, reason: 'LIFECYCLE' },
@@ -124,10 +109,7 @@ const criteria = [
   },
   { compare: compareCreatedAt, reason: 'CREATION_AGE' },
 ] as const satisfies readonly Readonly<{
-  compare: (
-    left: MergeSurvivorCandidate,
-    right: MergeSurvivorCandidate
-  ) => number;
+  compare: (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) => number;
   reason: MergeSurvivorSelectionReason;
 }>[];
 
@@ -135,11 +117,9 @@ const selectionEvidence = (
   candidates: readonly MergeSurvivorCandidate[],
   confirmation: ConfirmedDuplicateSet,
   survivor: MergeSurvivorCandidate,
-  decidingCriterion: MergeSurvivorSelectionReason
+  decidingCriterion: MergeSurvivorSelectionReason,
 ): readonly MergeSelectionEvidenceStep[] => {
-  const decidingIndex = criteria.findIndex(
-    ({ reason }) => reason === decidingCriterion
-  );
+  const decidingIndex = criteria.findIndex(({ reason }) => reason === decidingCriterion);
   const evidenceChain: MergeSelectionEvidenceStep[] = [
     evidenceStep(
       candidates,
@@ -148,7 +128,7 @@ const selectionEvidence = (
       candidates,
       candidates,
       `Decision ${confirmation.confirmedDuplicateDecisionId} confirms the same-subject Party set.`,
-      null
+      null,
     ),
     evidenceStep(
       candidates,
@@ -157,16 +137,13 @@ const selectionEvidence = (
       candidates,
       candidates,
       'No unresolved authoritative identity conflict blocks survivor selection.',
-      null
+      null,
     ),
   ];
-  const evaluatedCriteria =
-    decidingIndex === -1 ? criteria : criteria.slice(0, decidingIndex + 1);
+  const evaluatedCriteria = decidingIndex === -1 ? criteria : criteria.slice(0, decidingIndex + 1);
   let eligible: readonly MergeSurvivorCandidate[] = candidates;
   for (const { reason, compare } of evaluatedCriteria) {
-    const retained = eligible.filter(
-      (candidate) => compare(candidate, survivor) === 0
-    );
+    const retained = eligible.filter((candidate) => compare(candidate, survivor) === 0);
     evidenceChain.push(
       evidenceStep(
         candidates,
@@ -175,8 +152,8 @@ const selectionEvidence = (
         eligible,
         retained,
         `${retained.length} of ${eligible.length} eligible candidates remain after ${reason}; ${eligible.length - retained.length} eliminated.`,
-        reason === decidingCriterion ? survivor.partyRef : null
-      )
+        reason === decidingCriterion ? survivor.partyRef : null,
+      ),
     );
     eligible = retained;
   }
@@ -189,8 +166,8 @@ const selectionEvidence = (
         eligible,
         [survivor],
         `${survivor.partyRef.resourceId} wins the final stable identity tie-break among ${eligible.length} eligible candidates.`,
-        survivor.partyRef
-      )
+        survivor.partyRef,
+      ),
     );
   }
 
@@ -199,7 +176,7 @@ const selectionEvidence = (
 
 const confirmationMatchesCandidates = (
   confirmation: ConfirmedDuplicateSet,
-  candidateKeys: readonly string[]
+  candidateKeys: readonly string[],
 ): boolean => {
   if (!confirmationHasEvidence(confirmation)) {
     return false;
@@ -214,10 +191,7 @@ const confirmationMatchesCandidates = (
   );
 };
 
-const compareCandidates = (
-  left: MergeSurvivorCandidate,
-  right: MergeSurvivorCandidate
-) => {
+const compareCandidates = (left: MergeSurvivorCandidate, right: MergeSurvivorCandidate) => {
   for (const { compare } of criteria) {
     const difference = compare(left, right);
     if (difference !== 0) {
@@ -229,25 +203,20 @@ const compareCandidates = (
 
 const findDecidingCriterion = (
   survivor: MergeSurvivorCandidate,
-  runnerUp: MergeSurvivorCandidate
+  runnerUp: MergeSurvivorCandidate,
 ): MergeSurvivorSelectionReason =>
-  criteria.find(({ compare }) => compare(survivor, runnerUp) !== 0)?.reason ??
-  'STABLE_RESOURCE_IDENTITY';
+  criteria.find(({ compare }) => compare(survivor, runnerUp) !== 0)?.reason ?? 'STABLE_RESOURCE_IDENTITY';
 
-export const selectCanonicalSurvivor = (
-  input: MergeSurvivorSelectionInput
-): CanonicalSurvivorSelection => {
+export const selectCanonicalSurvivor = (input: MergeSurvivorSelectionInput): CanonicalSurvivorSelection => {
   const { confirmation } = input;
   const candidates = input.candidates
     .map((candidate) =>
       Object.freeze({
         ...candidate,
         partyRef: Object.freeze({ ...candidate.partyRef }),
-      })
+      }),
     )
-    .toSorted((left, right) =>
-      left.partyRef.resourceId.localeCompare(right.partyRef.resourceId)
-    );
+    .toSorted((left, right) => left.partyRef.resourceId.localeCompare(right.partyRef.resourceId));
   if (candidates.length < 2) {
     return {
       _tag: 'SurvivorSelectionBlocked',
@@ -255,9 +224,7 @@ export const selectCanonicalSurvivor = (
       conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
     };
   }
-  const candidateKeys = candidates.map(
-    ({ partyRef }) => `${partyRef.tenantId}:${partyRef.resourceId}`
-  );
+  const candidateKeys = candidates.map(({ partyRef }) => `${partyRef.tenantId}:${partyRef.resourceId}`);
   if (new Set(candidateKeys).size !== candidates.length) {
     return {
       _tag: 'SurvivorSelectionBlocked',
@@ -265,10 +232,7 @@ export const selectCanonicalSurvivor = (
       conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
     };
   }
-  if (
-    confirmation === null ||
-    !confirmationMatchesCandidates(confirmation, candidateKeys)
-  ) {
+  if (confirmation === null || !confirmationMatchesCandidates(confirmation, candidateKeys)) {
     return {
       _tag: 'SurvivorSelectionBlocked',
       blocker: 'DUPLICATE_SET_NOT_CONFIRMED',
@@ -283,9 +247,7 @@ export const selectCanonicalSurvivor = (
       conflictingPartyRefs: candidates.map(({ partyRef }) => partyRef),
     };
   }
-  const conflicts = candidates.filter(
-    ({ blockingAuthoritativeConflict }) => blockingAuthoritativeConflict
-  );
+  const conflicts = candidates.filter(({ blockingAuthoritativeConflict }) => blockingAuthoritativeConflict);
   if (conflicts.length > 0) {
     return {
       _tag: 'SurvivorSelectionBlocked',
@@ -309,12 +271,7 @@ export const selectCanonicalSurvivor = (
     _tag: 'CanonicalSurvivorSelected',
     confirmedDuplicateDecisionId: confirmation.confirmedDuplicateDecisionId,
     decidingCriterion,
-    evidenceChain: selectionEvidence(
-      candidates,
-      confirmation,
-      survivor,
-      decidingCriterion
-    ),
+    evidenceChain: selectionEvidence(candidates, confirmation, survivor, decidingCriterion),
     policyVersion: MERGE_SURVIVOR_SELECTION_POLICY_VERSION,
     survivorPartyRef: survivor.partyRef,
   };

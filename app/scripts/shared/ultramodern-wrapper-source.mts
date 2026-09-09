@@ -7,10 +7,7 @@ const withoutComments = (source: string): string => {
   }
   let text = source;
   for (const comment of parsed.comments) {
-    text =
-      text.slice(0, comment.start) +
-      ' '.repeat(comment.end - comment.start) +
-      text.slice(comment.end);
+    text = text.slice(0, comment.start) + ' '.repeat(comment.end - comment.start) + text.slice(comment.end);
   }
   return text;
 };
@@ -23,10 +20,7 @@ const hasSharedUltramodernDispatch = (source: string): boolean =>
   source.includes('resolveUltramodernInvocation(options).pipe(') &&
   source.includes('Effect.flatMap(launchUltramodern)');
 
-export const hasUltramodernSkillsDispatch = (
-  source: string,
-  implementation: string
-): boolean => {
+export const hasUltramodernSkillsDispatch = (source: string, implementation: string): boolean => {
   const wrapper = withoutComments(source);
   const runner = withoutComments(implementation);
   return (
@@ -35,7 +29,7 @@ export const hasUltramodernSkillsDispatch = (
     wrapper.includes("['skills', 'install',") &&
     wrapper.includes("['ultramodern', ...skillArgs]") &&
     /ultramodernLaunch\(\s*createBin\s*,\s*ultramodernArgs\s*,\s*workspaceRoot\s*,\s*path\.sep\s*,?\s*\)/u.test(
-      wrapper
+      wrapper,
     ) &&
     wrapper.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
     runner.includes("executable: 'ultramodern-create'") &&
@@ -47,7 +41,7 @@ export const hasUltramodernSkillsDispatch = (
 export const hasUltramodernDispatch = (
   source: string | undefined,
   command: string,
-  implementation: string | undefined
+  implementation: string | undefined,
 ): boolean => {
   if (source === undefined || !/^[a-z-]+$/u.test(command)) {
     return false;
@@ -56,7 +50,7 @@ export const hasUltramodernDispatch = (
   if (
     new RegExp(
       `\\[\\s*['"]ultramodern['"]\\s*,\\s*['"]${command}['"]\\s*,\\s*\\.\\.\\.forwardedArgs\\s*,?\\s*\\]`,
-      'u'
+      'u',
     ).test(wrapper)
   ) {
     return true;
@@ -67,13 +61,11 @@ export const hasUltramodernDispatch = (
   const runner = withoutComments(implementation);
   const importsRunner =
     /import\s*\{[^}]*\b(?:runUltramodernScript|resolveUltramodernInvocation)\b[^}]*\}\s*from\s*['"]\.\/shared\/ultramodern-command\.mts['"]/u.test(
-      wrapper
+      wrapper,
     );
   const invokesCommand = new RegExp(
     `(?:runUltramodernScript|resolveUltramodernInvocation)\\(\\{\\s*command:\\s*['"]${command}['"]`,
-    'u'
+    'u',
   ).test(wrapper);
-  return (
-    importsRunner && invokesCommand && hasSharedUltramodernDispatch(runner)
-  );
+  return importsRunner && invokesCommand && hasSharedUltramodernDispatch(runner);
 };

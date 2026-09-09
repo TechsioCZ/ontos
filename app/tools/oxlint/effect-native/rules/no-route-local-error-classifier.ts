@@ -68,14 +68,10 @@ import { optionRecord } from '../shared/options.ts';
 import { compile, stringArray } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
-const DEFAULT_ROUTE_GLOBS = [
-  'apps/*/src/routes/**',
-  'verticals/*/src/routes/**',
-];
+const DEFAULT_ROUTE_GLOBS = ['apps/*/src/routes/**', 'verticals/*/src/routes/**'];
 
 // A9 targets error classifiers, not unrelated helpers such as classifyGridDensity.
-const DEFAULT_NAME_PATTERN =
-  '^classify.*(?:Error|Failure|Problem|Defect|Cause)(?:$|[A-Z])';
+const DEFAULT_NAME_PATTERN = '^classify.*(?:Error|Failure|Problem|Defect|Cause)(?:$|[A-Z])';
 
 const DEFAULT_CLASSIFIER_INPUT_TYPES = ['ErrorClassificationInput'];
 
@@ -83,11 +79,7 @@ const DEFAULT_ERROR_PARAMETER_PATTERN = 'error|failure|problem|defect|cause';
 
 const TAG_PROPERTY = '_tag';
 
-const FUNCTION_TYPES = new Set([
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
+const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 
 /** Expression wrappers that keep the same runtime value (type assertions, parens, chains). */
 const TRANSPARENT_EXPRESSIONS = new Set([
@@ -118,15 +110,8 @@ function readOptions(context: Context): RuleOptions {
   return {
     routeGlobs: stringArray(record.routeGlobs, DEFAULT_ROUTE_GLOBS),
     namePattern: compile(record.namePattern, DEFAULT_NAME_PATTERN, 'u'),
-    classifierInputTypes: stringArray(
-      record.classifierInputTypes,
-      DEFAULT_CLASSIFIER_INPUT_TYPES
-    ),
-    errorParameterPattern: compile(
-      record.errorParameterPattern,
-      DEFAULT_ERROR_PARAMETER_PATTERN,
-      'iu'
-    ),
+    classifierInputTypes: stringArray(record.classifierInputTypes, DEFAULT_CLASSIFIER_INPUT_TYPES),
+    errorParameterPattern: compile(record.errorParameterPattern, DEFAULT_ERROR_PARAMETER_PATTERN, 'iu'),
     detectTagDiscrimination: record.detectTagDiscrimination !== false,
     includeInlineHandlers: record.includeInlineHandlers !== false,
     allowedNames: stringArray(record.allowedNames, []),
@@ -139,11 +124,7 @@ function readOptions(context: Context): RuleOptions {
  * visited set guards against any other shared node reference, and `skip` prunes whole subtrees
  * (used to honour shadowing: a nested function that re-binds the tracked name).
  */
-function forEachNode(
-  root: unknown,
-  visit: (node: AnyNode) => void,
-  skip?: (node: AnyNode) => boolean
-): void {
+function forEachNode(root: unknown, visit: (node: AnyNode) => void, skip?: (node: AnyNode) => boolean): void {
   const stack: unknown[] = [root];
   const seen = new Set<object>();
   while (stack.length > 0) {
@@ -239,19 +220,14 @@ function collectObjectBindings(properties: unknown, into: Set<string>): void {
   if (!Array.isArray(properties)) return;
   for (const property of properties) {
     if (!isNode(property)) continue;
-    patternBindingNames(
-      property.type === 'Property' ? property.value : property,
-      into
-    );
+    patternBindingNames(property.type === 'Property' ? property.value : property, into);
   }
 }
 
 /** `{ _tag }` / `{ _tag: tag }` / `{ '_tag': tag }` — the pattern pulls out the discriminant. */
 function patternHasTagKey(pattern: AnyNode): boolean {
   if (pattern.type !== 'ObjectPattern') return false;
-  const properties = Array.isArray(pattern.properties)
-    ? pattern.properties
-    : [];
+  const properties = Array.isArray(pattern.properties) ? pattern.properties : [];
   return properties.some((property) => {
     if (!isNode(property) || property.type !== 'Property') return false;
     if (property.computed === true) return false;
@@ -286,10 +262,7 @@ function parameterShape(parameter: unknown): ParameterShape {
   const bindings = new Set<string>();
   patternBindingNames(target, bindings);
   return {
-    name:
-      target.type === 'Identifier' && typeof target.name === 'string'
-        ? target.name
-        : null,
+    name: target.type === 'Identifier' && typeof target.name === 'string' ? target.name : null,
     bindings: [...bindings],
     typeNames,
     destructuresTag: patternHasTagKey(target),
@@ -310,55 +283,30 @@ function variableAt(context: Context, node: AnyNode): Variable | null {
 function computedTagKey(context: Context, node: AnyNode): boolean {
   if (node.computed !== true || !isNode(node.property)) return false;
   const variable = variableAt(context, node.property);
-  if (
-    variable === null ||
-    variable.references.some(
-      (reference) => reference.isWrite() && !reference.init
-    )
-  )
+  if (variable === null || variable.references.some((reference) => reference.isWrite() && !reference.init))
     return false;
   return variable.defs.some((definition) => {
-    if (
-      definition.type !== 'Variable' ||
-      definition.node.type !== 'VariableDeclarator'
-    )
-      return false;
+    if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return false;
     const init = unwrapExpression(definition.node.init);
     return init?.type === 'Literal' && init.value === TAG_PROPERTY;
   });
 }
 
-function readsParameterTag(
-  context: Context,
-  node: AnyNode,
-  fromParameter: (value: unknown) => boolean
-): boolean {
+function readsParameterTag(context: Context, node: AnyNode, fromParameter: (value: unknown) => boolean): boolean {
   if (node.type === 'MemberExpression') {
     const key = memberName(node);
-    const isTag =
-      key === TAG_PROPERTY || (key === null && computedTagKey(context, node));
+    const isTag = key === TAG_PROPERTY || (key === null && computedTagKey(context, node));
     return isTag && fromParameter(node.object);
   }
-  return (
-    node.type === 'VariableDeclarator' &&
-    isNode(node.id) &&
-    patternHasTagKey(node.id) &&
-    fromParameter(node.init)
-  );
+  return node.type === 'VariableDeclarator' && isNode(node.id) && patternHasTagKey(node.id) && fromParameter(node.init);
 }
 
-function discriminatesTag(
-  context: Context,
-  body: unknown,
-  binding: string,
-  parameter: AnyNode
-): boolean {
+function discriminatesTag(context: Context, body: unknown, binding: string, parameter: AnyNode): boolean {
   const fromParameter = (value: unknown, depth = 0): boolean => {
     if (depth > 8) return false;
     const node = unwrapExpression(value);
     if (node === null) return false;
-    if (node.type === 'MemberExpression')
-      return fromParameter(node.object, depth + 1);
+    if (node.type === 'MemberExpression') return fromParameter(node.object, depth + 1);
     const variable = variableAt(context, node);
     if (variable === null) return false;
     return variable.defs.some((definition) => {
@@ -368,18 +316,9 @@ function discriminatesTag(
         definition.name.end <= Number(parameter.end)
       )
         return true;
-      if (
-        definition.type !== 'Variable' ||
-        definition.node.type !== 'VariableDeclarator'
-      )
-        return false;
+      if (definition.type !== 'Variable' || definition.node.type !== 'VariableDeclarator') return false;
       // Reassigned aliases do not prove identity at this use site.
-      if (
-        variable.references.some(
-          (reference) => reference.isWrite() && !reference.init
-        )
-      )
-        return false;
+      if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return false;
       return fromParameter(definition.node.init, depth + 1);
     });
   };
@@ -393,32 +332,19 @@ function discriminatesTag(
 /** Only the Exit envelope's own tag is success/failure state, not a contract error classifier. */
 function isExitEnvelope(context: Context, parameter: unknown): boolean {
   let target = parameter;
-  while (
-    isNode(target) &&
-    ['AssignmentPattern', 'TSParameterProperty'].includes(target.type)
-  ) {
-    target =
-      target.type === 'AssignmentPattern' ? target.left : target.parameter;
+  while (isNode(target) && ['AssignmentPattern', 'TSParameterProperty'].includes(target.type)) {
+    target = target.type === 'AssignmentPattern' ? target.left : target.parameter;
   }
   if (!isNode(target) || !isNode(target.typeAnnotation)) return false;
   const type = target.typeAnnotation.typeAnnotation;
-  if (
-    !isNode(type) ||
-    type.type !== 'TSTypeReference' ||
-    !isNode(type.typeName)
-  )
-    return false;
+  if (!isNode(type) || type.type !== 'TSTypeReference' || !isNode(type.typeName)) return false;
   return exitTypeReference(context, type.typeName);
 }
 
 function exitTypeReference(context: Context, name: AnyNode): boolean {
   let root = name;
   const parts: string[] = [];
-  while (
-    root.type === 'TSQualifiedName' &&
-    isNode(root.left) &&
-    isNode(root.right)
-  ) {
+  while (root.type === 'TSQualifiedName' && isNode(root.left) && isNode(root.right)) {
     if (typeof root.right.name !== 'string') return false;
     parts.unshift(root.right.name);
     root = root.left;
@@ -426,57 +352,32 @@ function exitTypeReference(context: Context, name: AnyNode): boolean {
   const variable = variableAt(context, root);
   if (variable === null) return false;
   return variable.defs.some((definition) => {
-    if (
-      definition.type !== 'ImportBinding' ||
-      definition.parent?.type !== 'ImportDeclaration'
-    )
-      return false;
-    return isExitImport(
-      definition.node,
-      definition.parent.source.value,
-      parts.join('.')
-    );
+    if (definition.type !== 'ImportBinding' || definition.parent?.type !== 'ImportDeclaration') return false;
+    return isExitImport(definition.node, definition.parent.source.value, parts.join('.'));
   });
 }
 
-function isExitImport(
-  specifier: ESTree.Node,
-  source: unknown,
-  path: string
-): boolean {
+function isExitImport(specifier: ESTree.Node, source: unknown, path: string): boolean {
   if (specifier.type === 'ImportSpecifier') {
     if (importedName(specifier) !== 'Exit') return false;
-    return (
-      (source === 'effect' && path === 'Exit') ||
-      (source === 'effect/Exit' && path === '')
-    );
+    return (source === 'effect' && path === 'Exit') || (source === 'effect/Exit' && path === '');
   }
   if (specifier.type !== 'ImportNamespaceSpecifier') return false;
-  return (
-    (source === 'effect/Exit' && path === 'Exit') ||
-    (source === 'effect' && path === 'Exit.Exit')
-  );
+  return (source === 'effect/Exit' && path === 'Exit') || (source === 'effect' && path === 'Exit.Exit');
 }
 
 /** Type identity needs an import, not just a matching printed local type name. */
-function importsClassifierType(
-  context: Context,
-  parameter: unknown,
-  expected: string
-): boolean {
+function importsClassifierType(context: Context, parameter: unknown, expected: string): boolean {
   let found = false;
   forEachNode(parameter, (node) => {
     if (node.type !== 'TSTypeReference' || !isNode(node.typeName)) return;
     const name = node.typeName;
-    const root =
-      name.type === 'TSQualifiedName' && isNode(name.left) ? name.left : name;
+    const root = name.type === 'TSQualifiedName' && isNode(name.left) ? name.left : name;
     const variable = variableAt(context, root);
     if (variable === null) return;
     if (
       variable.defs.some(
-        (definition) =>
-          definition.type === 'ImportBinding' &&
-          matchesClassifierImport(name, definition.node, expected)
+        (definition) => definition.type === 'ImportBinding' && matchesClassifierImport(name, definition.node, expected),
       )
     )
       found = true;
@@ -484,13 +385,8 @@ function importsClassifierType(
   return found;
 }
 
-function matchesClassifierImport(
-  name: AnyNode,
-  imported: ESTree.Node,
-  expected: string
-): boolean {
-  if (name.type === 'Identifier' && imported.type === 'ImportSpecifier')
-    return importedName(imported) === expected;
+function matchesClassifierImport(name: AnyNode, imported: ESTree.Node, expected: string): boolean {
+  if (name.type === 'Identifier' && imported.type === 'ImportSpecifier') return importedName(imported) === expected;
   return (
     name.type === 'TSQualifiedName' &&
     imported.type === 'ImportNamespaceSpecifier' &&
@@ -509,10 +405,7 @@ function bindingAnchor(node: ESTree.Node): AnyNode {
   for (let hops = 0; hops < 8; hops += 1) {
     const parent = (current as { parent?: unknown }).parent;
     if (!isNode(parent)) break;
-    if (
-      TRANSPARENT_EXPRESSIONS.has(parent.type) &&
-      parent.expression === current
-    ) {
+    if (TRANSPARENT_EXPRESSIONS.has(parent.type) && parent.expression === current) {
       current = parent;
       continue;
     }
@@ -541,12 +434,7 @@ function keyName(key: unknown): string | null {
 type Definition = { name: string; node: ESTree.Node };
 
 function identifierDefinition(value: unknown): Definition | null {
-  if (
-    !isNode(value) ||
-    value.type !== 'Identifier' ||
-    typeof value.name !== 'string'
-  )
-    return null;
+  if (!isNode(value) || value.type !== 'Identifier' || typeof value.name !== 'string') return null;
   return { name: value.name, node: value };
 }
 
@@ -561,23 +449,13 @@ function assignmentDefinition(left: unknown): Definition | null {
 function anchorDefinition(anchor: AnyNode): Definition | null {
   const parent = anchor.parent;
   if (!isNode(parent)) return null;
-  if (parent.type === 'VariableDeclarator' && parent.init === anchor)
-    return identifierDefinition(parent.id);
-  if (parent.type === 'AssignmentExpression' && parent.right === anchor)
-    return assignmentDefinition(parent.left);
+  if (parent.type === 'VariableDeclarator' && parent.init === anchor) return identifierDefinition(parent.id);
+  if (parent.type === 'AssignmentExpression' && parent.right === anchor) return assignmentDefinition(parent.left);
   return propertyDefinition(parent, anchor);
 }
 
-function propertyDefinition(
-  parent: AnyNode,
-  anchor: AnyNode
-): Definition | null {
-  if (
-    !['Property', 'PropertyDefinition', 'MethodDefinition'].includes(
-      parent.type
-    )
-  )
-    return null;
+function propertyDefinition(parent: AnyNode, anchor: AnyNode): Definition | null {
+  if (!['Property', 'PropertyDefinition', 'MethodDefinition'].includes(parent.type)) return null;
   if (parent.value !== anchor || parent.computed === true) return null;
   const name = keyName(parent.key);
   return name === null ? null : { name, node: parent.key as ESTree.Node };
@@ -588,51 +466,37 @@ function definitionName(node: ESTree.Node): Definition | null {
   const candidate = node as unknown as AnyNode;
   if (candidate.type === 'FunctionDeclaration') {
     const id = candidate.id;
-    if (isNode(id) && typeof id.name === 'string')
-      return { name: id.name, node: id };
+    if (isNode(id) && typeof id.name === 'string') return { name: id.name, node: id };
   }
   const definition = anchorDefinition(bindingAnchor(node));
   if (definition !== null) return definition;
   if (candidate.type !== 'FunctionExpression') return null;
   const id = candidate.id;
-  return isNode(id) && typeof id.name === 'string'
-    ? { name: id.name, node: id }
-    : null;
+  return isNode(id) && typeof id.name === 'string' ? { name: id.name, node: id } : null;
 }
 
 function discriminatedParameter(
   context: Context,
   raw: AnyNode,
   parameter: unknown,
-  options: RuleOptions
+  options: RuleOptions,
 ): string | null {
   if (isExitEnvelope(context, parameter)) return null;
   const shape = parameterShape(parameter);
-  const typeMatches = [...shape.typeNames].some((type) =>
-    options.errorParameterPattern.test(type)
-  );
-  const errorBindings = shape.bindings.filter((binding) =>
-    options.errorParameterPattern.test(binding)
-  );
-  if (shape.destructuresTag && (typeMatches || errorBindings.length > 0))
-    return shape.name ?? '{ _tag }';
+  const typeMatches = [...shape.typeNames].some((type) => options.errorParameterPattern.test(type));
+  const errorBindings = shape.bindings.filter((binding) => options.errorParameterPattern.test(binding));
+  if (shape.destructuresTag && (typeMatches || errorBindings.length > 0)) return shape.name ?? '{ _tag }';
   if (!isNode(parameter)) return null;
   return (
     (typeMatches ? shape.bindings : errorBindings).find((binding) =>
-      discriminatesTag(context, raw.body, binding, parameter)
+      discriminatesTag(context, raw.body, binding, parameter),
     ) ?? null
   );
 }
 
-function classifierInput(
-  context: Context,
-  parameters: readonly unknown[],
-  options: RuleOptions
-): string | undefined {
+function classifierInput(context: Context, parameters: readonly unknown[], options: RuleOptions): string | undefined {
   for (const parameter of parameters) {
-    const matched = options.classifierInputTypes.find((type) =>
-      importsClassifierType(context, parameter, type)
-    );
+    const matched = options.classifierInputTypes.find((type) => importsClassifierType(context, parameter, type));
     if (matched !== undefined) return matched;
   }
   return undefined;
@@ -707,25 +571,19 @@ export const rule = defineRule({
     const insideReportedFunction = (node: ESTree.Node): boolean => {
       let current: unknown = (node as { parent?: unknown }).parent;
       while (isNode(current)) {
-        if (FUNCTION_TYPES.has(current.type) && reported.has(current))
-          return true;
+        if (FUNCTION_TYPES.has(current.type) && reported.has(current)) return true;
         current = (current as { parent?: unknown }).parent;
       }
       return false;
     };
 
-    const inspectParameters = (
-      node: ESTree.Node,
-      definition: Definition | null
-    ): void => {
+    const inspectParameters = (node: ESTree.Node, definition: Definition | null): void => {
       const anonymous = definition === null;
       if (anonymous && !options.includeInlineHandlers) return;
       const target = definition?.node ?? node;
       const name = definition?.name ?? '(anonymous)';
       const raw = node as AnyNode;
-      const parameters: readonly unknown[] = Array.isArray(raw.params)
-        ? raw.params
-        : [];
+      const parameters: readonly unknown[] = Array.isArray(raw.params) ? raw.params : [];
       const matched = classifierInput(context, parameters, options);
       if (matched !== undefined) {
         reported.add(node);
@@ -744,16 +602,11 @@ export const rule = defineRule({
       parameters: readonly unknown[],
       target: ESTree.Node,
       name: string,
-      anonymous: boolean
+      anonymous: boolean,
     ): void => {
       if (!options.detectTagDiscrimination) return;
       for (const parameter of parameters) {
-        const binding = discriminatedParameter(
-          context,
-          node as AnyNode,
-          parameter,
-          options
-        );
+        const binding = discriminatedParameter(context, node as AnyNode, parameter, options);
         if (binding === null) continue;
         reported.add(node);
         context.report({

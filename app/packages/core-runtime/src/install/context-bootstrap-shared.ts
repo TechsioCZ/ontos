@@ -1,11 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 
-import {
-  legalEntities,
-  principalAuthBindings,
-  principals,
-} from '../db/schema.ts';
+import { legalEntities, principalAuthBindings, principals } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
 
 interface BootstrapIdentity {
@@ -19,10 +15,7 @@ interface BootstrapIdentity {
   readonly tenantId: string;
 }
 
-export const selectBootstrapLegalEntities = (
-  transaction: CoreTransaction,
-  context: BootstrapIdentity
-) =>
+export const selectBootstrapLegalEntities = (transaction: CoreTransaction, context: BootstrapIdentity) =>
   transaction
     .select({
       legalEntityId: legalEntities.legalEntityId,
@@ -39,16 +32,13 @@ export const selectBootstrapLegalEntities = (
         and(
           eq(legalEntities.tenantId, context.tenantId),
           eq(legalEntities.registrationCountry, context.registrationCountry),
-          eq(legalEntities.registrationNumber, context.registrationNumber)
-        )
-      )
+          eq(legalEntities.registrationNumber, context.registrationNumber),
+        ),
+      ),
     )
     .limit(2);
 
-export const selectBootstrapPrincipals = (
-  transaction: CoreTransaction,
-  context: BootstrapIdentity
-) =>
+export const selectBootstrapPrincipals = (transaction: CoreTransaction, context: BootstrapIdentity) =>
   transaction
     .select({
       displayName: principals.displayName,
@@ -64,7 +54,7 @@ export const selectBootstrapPrincipals = (
 export const selectBootstrapAuthBindings = (
   transaction: CoreTransaction,
   context: BootstrapIdentity,
-  authUserId: string
+  authUserId: string,
 ) =>
   transaction
     .select({
@@ -84,9 +74,9 @@ export const selectBootstrapAuthBindings = (
           eq(principalAuthBindings.tenantId, context.tenantId),
           eq(principalAuthBindings.provider, 'better_auth'),
           eq(principalAuthBindings.subjectType, 'user'),
-          eq(principalAuthBindings.providerSubjectId, authUserId)
-        )
-      )
+          eq(principalAuthBindings.providerSubjectId, authUserId),
+        ),
+      ),
     )
     .limit(2);
 
@@ -107,9 +97,7 @@ interface BootstrapRelationship {
   readonly subjectType: string;
 }
 
-export const bootstrapRelationshipRequest = (
-  relationships: readonly BootstrapRelationship[]
-) =>
+export const bootstrapRelationshipRequest = (relationships: readonly BootstrapRelationship[]) =>
   v1.WriteRelationshipsRequest.create({
     updates: relationships.map((item) =>
       v1.RelationshipUpdate.create({
@@ -127,6 +115,6 @@ export const bootstrapRelationshipRequest = (
             }),
           }),
         }),
-      })
+      }),
     ),
   });

@@ -1,9 +1,6 @@
 import { assert, expect, it } from 'effect-rstest';
 
-import {
-  comparePartyCatalog,
-  expectedPartyTableCatalog,
-} from '../../src/db/catalog.ts';
+import { comparePartyCatalog, expectedPartyTableCatalog } from '../../src/db/catalog.ts';
 
 it('reports exact Party Registry catalog differences', () => {
   expect(expectedPartyTableCatalog.length).toBe(17);
@@ -13,9 +10,7 @@ it('reports exact Party Registry catalog differences', () => {
     missing: ['party.counterparties'],
     unexpected: [],
   });
-  expect(
-    comparePartyCatalog([...expectedPartyTableCatalog, 'party.unexpected'])
-  ).toEqual({
+  expect(comparePartyCatalog([...expectedPartyTableCatalog, 'party.unexpected'])).toEqual({
     missing: [],
     unexpected: ['party.unexpected'],
   });
@@ -29,12 +24,9 @@ it('compares catalog sets without input order, duplicates, or previous results a
     unexpected: ['party.a_extra', 'party.z_extra'],
   });
   difference.missing.pop();
-  assert.deepEqual(
-    comparePartyCatalog(expectedPartyTableCatalog.toReversed()),
-    {
-      missing: [],
-      unexpected: [],
-    }
-  );
+  assert.deepEqual(comparePartyCatalog(expectedPartyTableCatalog.toReversed()), {
+    missing: [],
+    unexpected: [],
+  });
   assert.deepEqual(actual, ['party.z_extra', 'party.a_extra', 'party.z_extra']);
 });

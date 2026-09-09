@@ -11,58 +11,45 @@ const EFFECT_PLUGIN = '@effect/language-service';
 const Manifest = Schema.fromJsonString(
   Schema.Struct({
     dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-    devDependencies: Schema.optional(
-      Schema.Record(Schema.String, Schema.String)
-    ),
+    devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  })
+  }),
 );
-const InstalledPackage = Schema.fromJsonString(
-  Schema.Struct({ name: Schema.String, version: Schema.String })
-);
+const InstalledPackage = Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String }));
 const documentsBuiltInPlugin = (readme: string): boolean =>
   readme.includes('A wrapper around [TypeScript-Go]') &&
   readme.includes('Adding the `@effect/tsgo` dependency to your project.') &&
-  readme.includes(
-    'Configuring your `tsconfig.json` to use the Effect Language Service plugin.'
-  ) &&
+  readme.includes('Configuring your `tsconfig.json` to use the Effect Language Service plugin.') &&
   readme.includes('"name": "@effect/language-service"');
-class InvalidTsconfig extends Schema.TaggedError<InvalidTsconfig>()(
-  'InvalidTsconfig',
-  {
-    file: Schema.String,
-    offset: Schema.Finite.check(
-      Schema.isInt(),
-      Schema.isGreaterThanOrEqualTo(0)
-    ),
-  }
-) {}
+class InvalidTsconfig extends Schema.TaggedError<InvalidTsconfig>()('InvalidTsconfig', {
+  file: Schema.String,
+  offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+}) {}
 const Tsconfig = Schema.Struct({
   compilerOptions: Schema.optional(
     Schema.Struct({
-      plugins: Schema.optional(
-        Schema.Array(Schema.Struct({ name: Schema.String }))
-      ),
+      plugins: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
       types: Schema.optional(Schema.Array(Schema.String)),
-    })
+    }),
   ),
   exclude: Schema.optional(Schema.Array(Schema.String)),
   files: Schema.optional(Schema.Array(Schema.String)),
   include: Schema.optional(Schema.Array(Schema.String)),
 });
-const parseTsconfig = Effect.fn('QualityAudit.parseTsconfig')(
-  function* parseTsconfigEffect(file: string, source: string) {
-    const errors: ParseError[] = [];
-    const parsed: unknown = parseJsonc(source, errors, {
-      allowTrailingComma: true,
-    });
-    const [error] = errors;
-    if (error !== undefined) {
-      return yield* new InvalidTsconfig({ file, offset: error.offset });
-    }
-    return yield* Schema.decodeUnknownEffect(Tsconfig)(parsed);
+const parseTsconfig = Effect.fn('QualityAudit.parseTsconfig')(function* parseTsconfigEffect(
+  file: string,
+  source: string,
+) {
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(source, errors, {
+    allowTrailingComma: true,
+  });
+  const [error] = errors;
+  if (error !== undefined) {
+    return yield* new InvalidTsconfig({ file, offset: error.offset });
   }
-);
+  return yield* Schema.decodeUnknownEffect(Tsconfig)(parsed);
+});
 const at = (
   source: string,
   text: string,
@@ -70,7 +57,7 @@ const at = (
   workspace: string,
   kind: KnipModelEvidence['kind'],
   target: string,
-  reason: string
+  reason: string,
 ): KnipModelEvidence => ({
   column: offset - text.lastIndexOf('\n', offset - 1),
   kind,
@@ -84,14 +71,9 @@ const packageName = (specifier: string): string | undefined => {
   if (/^(?:[./#]|[a-z]+:)/u.test(specifier)) {
     return undefined;
   }
-  return specifier.startsWith('@')
-    ? specifier.split('/').slice(0, 2).join('/')
-    : specifier.split('/')[0];
+  return specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
 };
-const uncomment = (
-  file: string,
-  source: string | undefined
-): string | undefined => {
+const uncomment = (file: string, source: string | undefined): string | undefined => {
   if (source === undefined) {
     return undefined;
   }
@@ -110,86 +92,63 @@ const uncomment = (
 };
 
 const invokedShell = (command: string): string | undefined => {
-  const { shell } =
-    /^(?:sh|bash)\s+(?:\.\/)?(?<shell>[\w./-]+\.sh)(?:\s|$)/u.exec(command)
-      ?.groups ?? {};
+  const { shell } = /^(?:sh|bash)\s+(?:\.\/)?(?<shell>[\w./-]+\.sh)(?:\s|$)/u.exec(command)?.groups ?? {};
   if (shell === undefined || shell.includes('..')) {
     return undefined;
   }
   return shell;
 };
-const cssDependencies = (
-  cssFile: string,
-  css: string,
-  layoutFile: string,
-  workspace: string
-): KnipModelEvidence[] => {
+const cssDependencies = (cssFile: string, css: string, layoutFile: string, workspace: string): KnipModelEvidence[] => {
   const result: KnipModelEvidence[] = [];
-  const withoutComments = css.replaceAll(/\/\*[\s\S]*?\*\//gu, (comment) =>
-    comment.replaceAll(/[^\n]/gu, ' ')
-  );
-  for (const match of withoutComments.matchAll(
-    /@import\s+(?:url\(\s*)?["'](?<specifier>[^"']+)["']/gu
-  )) {
+  const withoutComments = css.replaceAll(/\/\*[\s\S]*?\*\//gu, (comment) => comment.replaceAll(/[^\n]/gu, ' '));
+  for (const match of withoutComments.matchAll(/@import\s+(?:url\(\s*)?["'](?<specifier>[^"']+)["']/gu)) {
     const { specifier = '' } = match.groups ?? {};
     const target = packageName(specifier);
     if (target === undefined || target.length === 0) {
       continue;
     }
     result.push(
-      at(
-        cssFile,
-        css,
-        match.index,
-        workspace,
-        'dependency',
-        target,
-        `CSS package import reached from ${layoutFile}`
-      )
+      at(cssFile, css, match.index, workspace, 'dependency', target, `CSS package import reached from ${layoutFile}`),
     );
   }
   return result;
 };
 
-export const workspaceDirectories = Effect.fn('QualityAudit.knipWorkspaces')(
-  function* readModelWorkspaces(appRoot: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const workspaces = ['.'];
-    for (const directory of ['apps', 'verticals', 'packages']) {
-      const location = path.join(appRoot, directory);
-      if (!(yield* fs.exists(location))) {
-        continue;
-      }
-      for (const name of yield* fs.readDirectory(location)) {
-        if (yield* fs.exists(path.join(location, name, 'package.json'))) {
-          workspaces.push(`${directory}/${name}`);
-        }
-      }
-    }
-    return workspaces;
-  }
-);
-
-/** Model only source-backed runtime contracts; never execute a wrapper or vendor module. */
-export const buildKnipRuntimeEvidence = Effect.fn(
-  'QualityAudit.buildKnipRuntimeEvidence'
-)(function* buildRuntimeEvidence(appRoot: string) {
+export const workspaceDirectories = Effect.fn('QualityAudit.knipWorkspaces')(function* readModelWorkspaces(
+  appRoot: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const evidence: KnipModelEvidence[] = [];
-  const read = Effect.fn('QualityAudit.readRuntimeModelFile')(
-    function* readOptional(file: string) {
+  const workspaces = ['.'];
+  for (const directory of ['apps', 'verticals', 'packages']) {
+    const location = path.join(appRoot, directory);
+    if (!(yield* fs.exists(location))) {
+      continue;
+    }
+    for (const name of yield* fs.readDirectory(location)) {
+      if (yield* fs.exists(path.join(location, name, 'package.json'))) {
+        workspaces.push(`${directory}/${name}`);
+      }
+    }
+  }
+  return workspaces;
+});
+
+/** Model only source-backed runtime contracts; never execute a wrapper or vendor module. */
+export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntimeEvidence')(
+  function* buildRuntimeEvidence(appRoot: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const evidence: KnipModelEvidence[] = [];
+    const read = Effect.fn('QualityAudit.readRuntimeModelFile')(function* readOptional(file: string) {
       return (yield* fs.exists(path.join(appRoot, file)))
         ? yield* fs.readFileString(path.join(appRoot, file))
         : undefined;
-    }
-  );
-  const shellEvidence = Effect.fn('QualityAudit.shellEvidence')(
-    function* shellEvidence(
+    });
+    const shellEvidence = Effect.fn('QualityAudit.shellEvidence')(function* shellEvidence(
       command: string,
       prefix: string,
-      workspace: string
+      workspace: string,
     ) {
       const shell = invokedShell(command);
       if (shell === undefined) {
@@ -201,21 +160,12 @@ export const buildKnipRuntimeEvidence = Effect.fn(
         return;
       }
       // This recognized wrapper explicitly changes from scripts/ to its package root.
-      if (
-        !source.includes(`cd "\${script_directory}/.."`) ||
-        !source.includes('dirname -- "$0"')
-      ) {
+      if (!source.includes(`cd "\${script_directory}/.."`) || !source.includes('dirname -- "$0"')) {
         return;
       }
-      for (const match of source.matchAll(
-        /^\s*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu
-      )) {
+      for (const match of source.matchAll(/^\s*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu)) {
         const { target } = match.groups ?? {};
-        if (
-          target !== undefined &&
-          !target.includes('..') &&
-          (yield* read(`${prefix}${target}`)) !== undefined
-        ) {
+        if (target !== undefined && !target.includes('..') && (yield* read(`${prefix}${target}`)) !== undefined) {
           evidence.push(
             at(
               file,
@@ -224,29 +174,23 @@ export const buildKnipRuntimeEvidence = Effect.fn(
               workspace,
               'file',
               target,
-              'Package script invokes shell wrapper; wrapper changes to package root and executes Node source'
-            )
+              'Package script invokes shell wrapper; wrapper changes to package root and executes Node source',
+            ),
           );
         }
       }
-    }
-  );
-  const testConsumerEvidence = Effect.fn('QualityAudit.testConsumerEvidence')(
-    function* testConsumerEvidence(
+    });
+    const testConsumerEvidence = Effect.fn('QualityAudit.testConsumerEvidence')(function* testConsumerEvidence(
       manifestFile: string,
       manifestText: string,
       commands: readonly string[],
       prefix: string,
-      workspace: string
+      workspace: string,
     ) {
       // Rstest's default-config loader consumes default, not every named export.
       const config = `${prefix}rstest.config.ts`;
       if (
-        commands.some(
-          (command) =>
-            /^rstest(?:\s|$)/u.test(command) &&
-            !/--config(?:\s|=)/u.test(command)
-        ) &&
+        commands.some((command) => /^rstest(?:\s|$)/u.test(command) && !/--config(?:\s|=)/u.test(command)) &&
         (yield* read(config)) !== undefined
       ) {
         evidence.push(
@@ -257,7 +201,7 @@ export const buildKnipRuntimeEvidence = Effect.fn(
             workspace,
             'file',
             'rstest.config.ts',
-            'Package script invokes Rstest default configuration discovery'
+            'Package script invokes Rstest default configuration discovery',
           ),
           at(
             manifestFile,
@@ -266,8 +210,8 @@ export const buildKnipRuntimeEvidence = Effect.fn(
             workspace,
             'export',
             `${config}#default`,
-            'Rstest default-config loader consumes the default export'
-          )
+            'Rstest default-config loader consumes the default export',
+          ),
         );
       }
       const tsconfigFile = `${prefix}tsconfig.json`;
@@ -286,9 +230,7 @@ export const buildKnipRuntimeEvidence = Effect.fn(
       ) {
         return;
       }
-      for (const name of yield* fs.readDirectory(
-        path.join(appRoot, prefix, 'src')
-      )) {
+      for (const name of yield* fs.readDirectory(path.join(appRoot, prefix, 'src'))) {
         if (name.endsWith('.type-test.ts')) {
           evidence.push(
             at(
@@ -298,18 +240,16 @@ export const buildKnipRuntimeEvidence = Effect.fn(
               workspace,
               'file',
               `src/${name}`,
-              'TypeScript include src compiles this type-test module; exports remain audited'
-            )
+              'TypeScript include src compiles this type-test module; exports remain audited',
+            ),
           );
         }
       }
-    }
-  );
-  const cssEvidence = Effect.fn('QualityAudit.cssEvidence')(
-    function* cssEvidence(
+    });
+    const cssEvidence = Effect.fn('QualityAudit.cssEvidence')(function* cssEvidence(
       extension: string,
       prefix: string,
-      workspace: string
+      workspace: string,
     ) {
       const layoutFile = `${prefix}src/routes/layout.${extension}`;
       const layout = yield* read(layoutFile);
@@ -331,22 +271,19 @@ export const buildKnipRuntimeEvidence = Effect.fn(
         const cssFile = path.join(prefix, 'src/routes', statement.source.value);
         const css = yield* read(cssFile);
         if (css !== undefined) {
-          evidence.push(
-            ...cssDependencies(cssFile, css, layoutFile, workspace)
-          );
+          evidence.push(...cssDependencies(cssFile, css, layoutFile, workspace));
         }
       }
-    }
-  );
-  const federationEvidence = Effect.fn('QualityAudit.federationEvidence')(
-    function* federationEvidence(prefix: string, workspace: string) {
+    });
+    const federationEvidence = Effect.fn('QualityAudit.federationEvidence')(function* federationEvidence(
+      prefix: string,
+      workspace: string,
+    ) {
       const federationFile = `${prefix}module-federation.config.ts`;
       const federation = uncomment(federationFile, yield* read(federationFile));
       if (
         federation?.includes("from '@modern-js/app-tools/config'") === true &&
-        /resolveEffectTsgoCompiler\s*\(\s*\{\s*from:\s*import\.meta\.url\s*,?\s*\}\s*\)/u.test(
-          federation
-        )
+        /resolveEffectTsgoCompiler\s*\(\s*\{\s*from:\s*import\.meta\.url\s*,?\s*\}\s*\)/u.test(federation)
       ) {
         const offset = federation.indexOf('resolveEffectTsgoCompiler');
         evidence.push(
@@ -357,15 +294,12 @@ export const buildKnipRuntimeEvidence = Effect.fn(
             workspace,
             'dependency',
             EFFECT_TSGO,
-            'Framework DTS resolver resolves the Effect TSGo package from this configuration module'
-          )
+            'Framework DTS resolver resolves the Effect TSGo package from this configuration module',
+          ),
         );
         const readmeFile = `${prefix}node_modules/@effect/tsgo/README.md`;
         const readme = yield* read(readmeFile);
-        if (
-          readme?.includes('tries `typescript`, then `@typescript/native`') ===
-          true
-        ) {
+        if (readme?.includes('tries `typescript`, then `@typescript/native`') === true) {
           evidence.push(
             at(
               federationFile,
@@ -374,15 +308,13 @@ export const buildKnipRuntimeEvidence = Effect.fn(
               workspace,
               'dependency',
               '@typescript/native',
-              `Effect TSGo native compiler fallback documented in ${readmeFile}`
-            )
+              `Effect TSGo native compiler fallback documented in ${readmeFile}`,
+            ),
           );
         }
       }
-    }
-  );
-  const zeropsEvidence = Effect.fn('QualityAudit.zeropsEvidence')(
-    function* zeropsEvidence() {
+    });
+    const zeropsEvidence = Effect.fn('QualityAudit.zeropsEvidence')(function* zeropsEvidence() {
       // Zerops buildCommands run from the repository root and explicitly cd into app.
       for (const file of ['zerops.yaml', 'zerops.yml']) {
         const source = yield* read(file);
@@ -390,14 +322,10 @@ export const buildKnipRuntimeEvidence = Effect.fn(
           continue;
         }
         for (const match of source.matchAll(
-          /^\s*-\s+cd app && (?:[A-Z_]+=\S+\s+)*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu
+          /^\s*-\s+cd app && (?:[A-Z_]+=\S+\s+)*node\s+(?<target>[\w./-]+\.[cm]?[jt]s)(?:\s|$)/gmu,
         )) {
           const { target } = match.groups ?? {};
-          if (
-            target !== undefined &&
-            !target.includes('..') &&
-            (yield* read(target)) !== undefined
-          ) {
+          if (target !== undefined && !target.includes('..') && (yield* read(target)) !== undefined) {
             evidence.push(
               at(
                 file,
@@ -406,57 +334,35 @@ export const buildKnipRuntimeEvidence = Effect.fn(
                 '.',
                 'file',
                 target,
-                'Zerops build command changes to app and invokes this Node source'
-              )
+                'Zerops build command changes to app and invokes this Node source',
+              ),
             );
           }
         }
       }
-    }
-  );
-  const tsgoDocumentation = Effect.fn('QualityAudit.tsgoDocumentation')(
-    function* tsgoDocumentation() {
+    });
+    const tsgoDocumentation = Effect.fn('QualityAudit.tsgoDocumentation')(function* tsgoDocumentation() {
       const readme = yield* read('node_modules/@effect/tsgo/README.md');
-      const installedText = yield* read(
-        'node_modules/@effect/tsgo/package.json'
-      );
+      const installedText = yield* read('node_modules/@effect/tsgo/package.json');
       const rootText = yield* read('package.json');
-      if (
-        readme === undefined ||
-        installedText === undefined ||
-        rootText === undefined
-      ) {
+      if (readme === undefined || installedText === undefined || rootText === undefined) {
         return false;
       }
-      const installed =
-        yield* Schema.decodeUnknownEffect(InstalledPackage)(installedText);
+      const installed = yield* Schema.decodeUnknownEffect(InstalledPackage)(installedText);
       const root = yield* Schema.decodeUnknownEffect(Manifest)(rootText);
-      const pinned =
-        root.devDependencies?.[EFFECT_TSGO] ?? root.dependencies?.[EFFECT_TSGO];
-      return (
-        installed.name === EFFECT_TSGO &&
-        pinned === installed.version &&
-        documentsBuiltInPlugin(readme)
-      );
-    }
-  );
-  const tsgoEvidence = Effect.fn('QualityAudit.tsgoEvidence')(
-    function* tsgoEvidence() {
+      const pinned = root.devDependencies?.[EFFECT_TSGO] ?? root.dependencies?.[EFFECT_TSGO];
+      return installed.name === EFFECT_TSGO && pinned === installed.version && documentsBuiltInPlugin(readme);
+    });
+    const tsgoEvidence = Effect.fn('QualityAudit.tsgoEvidence')(function* tsgoEvidence() {
       const typecheckFile = 'scripts/ultramodern-typecheck.mts';
       const typecheck = yield* read(typecheckFile);
       const vendorTypecheck = yield* read(
-        'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-typecheck.mjs'
+        'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-typecheck.mjs',
       );
       const usesTsgo =
-        hasUltramodernDispatch(
-          typecheck,
-          'typecheck',
-          yield* read('scripts/shared/ultramodern-command.mts')
-        ) &&
+        hasUltramodernDispatch(typecheck, 'typecheck', yield* read('scripts/shared/ultramodern-command.mts')) &&
         vendorTypecheck?.includes('resolveEffectTsgoCompiler({') === true &&
-        vendorTypecheck.includes(
-          "from: pathToFileURL(join(workspaceRoot, 'package.json'))"
-        );
+        vendorTypecheck.includes("from: pathToFileURL(join(workspaceRoot, 'package.json'))");
       if (usesTsgo && typecheck !== undefined) {
         evidence.push(
           at(
@@ -466,24 +372,18 @@ export const buildKnipRuntimeEvidence = Effect.fn(
             '.',
             'dependency',
             EFFECT_TSGO,
-            'Invoked framework typecheck resolves Effect TSGo from workspaceRoot/package.json'
-          )
+            'Invoked framework typecheck resolves Effect TSGo from workspaceRoot/package.json',
+          ),
         );
         const configFile = 'tsconfig.base.json';
         const configText = yield* read(configFile);
         if (configText !== undefined && (yield* tsgoDocumentation())) {
           const config = yield* parseTsconfig(configFile, configText);
           if (
-            config.compilerOptions?.plugins?.some(
-              (plugin) => plugin.name === EFFECT_PLUGIN
-            ) === true &&
-            config.compilerOptions.types?.some(
-              (name) => packageName(name) === EFFECT_PLUGIN
-            ) !== true
+            config.compilerOptions?.plugins?.some((plugin) => plugin.name === EFFECT_PLUGIN) === true &&
+            config.compilerOptions.types?.some((name) => packageName(name) === EFFECT_PLUGIN) !== true
           ) {
-            const match = /"name"\s*:\s*"@effect\/language-service"/u.exec(
-              configText
-            );
+            const match = /"name"\s*:\s*"@effect\/language-service"/u.exec(configText);
             if (match !== null) {
               evidence.push({
                 ...at(
@@ -493,7 +393,7 @@ export const buildKnipRuntimeEvidence = Effect.fn(
                   '.',
                   'compiler-option',
                   EFFECT_PLUGIN,
-                  'Effect TSGo built-in plugin configuration namespace'
+                  'Effect TSGo built-in plugin configuration namespace',
                 ),
                 anchor: typecheckFile,
                 resolved: 'node_modules/@effect/tsgo/README.md',
@@ -502,10 +402,8 @@ export const buildKnipRuntimeEvidence = Effect.fn(
           }
         }
       }
-    }
-  );
-  const readinessEvidence = Effect.fn('QualityAudit.readinessEvidence')(
-    function* readinessEvidence() {
+    });
+    const readinessEvidence = Effect.fn('QualityAudit.readinessEvidence')(function* readinessEvidence() {
       const readinessFile = 'scripts/ultramodern-performance-readiness.mts';
       const readiness = yield* read(readinessFile);
       const vendorFile =
@@ -515,10 +413,9 @@ export const buildKnipRuntimeEvidence = Effect.fn(
         hasUltramodernDispatch(
           readiness,
           'performance-readiness',
-          yield* read('scripts/shared/ultramodern-command.mts')
+          yield* read('scripts/shared/ultramodern-command.mts'),
         ) &&
-        vendor?.includes('pathToFileURL(path.join(root, configPath)).href') ===
-          true &&
+        vendor?.includes('pathToFileURL(path.join(root, configPath)).href') === true &&
         vendor.includes('import(moduleUrl)')
       ) {
         const match = /const configPath = '(?<target>[^']+)'/u.exec(vendor);
@@ -526,11 +423,7 @@ export const buildKnipRuntimeEvidence = Effect.fn(
           return;
         }
         const [, target] = match;
-        if (
-          target !== undefined &&
-          !target.includes('..') &&
-          (yield* read(target)) !== undefined
-        ) {
+        if (target !== undefined && !target.includes('..') && (yield* read(target)) !== undefined) {
           evidence.push(
             at(
               vendorFile,
@@ -539,8 +432,8 @@ export const buildKnipRuntimeEvidence = Effect.fn(
               '.',
               'file',
               target,
-              `Invoked by ${readinessFile}; installed framework imports this exact configPath`
-            )
+              `Invoked by ${readinessFile}; installed framework imports this exact configPath`,
+            ),
           );
           if (vendor.includes('module.default ?? {}')) {
             evidence.push(
@@ -551,29 +444,22 @@ export const buildKnipRuntimeEvidence = Effect.fn(
                 '.',
                 'export',
                 `${target}#default`,
-                'Installed framework loader reads the imported configuration default export'
-              )
+                'Installed framework loader reads the imported configuration default export',
+              ),
             );
           }
         }
       }
-    }
-  );
-  const lefthookEvidence = Effect.fn('QualityAudit.lefthookEvidence')(
-    function* lefthookEvidence() {
+    });
+    const lefthookEvidence = Effect.fn('QualityAudit.lefthookEvidence')(function* lefthookEvidence() {
       const file = 'lefthook.yml';
       const source = yield* read(file);
       if (source === undefined) {
         return;
       }
-      for (const match of source.matchAll(
-        /^(?:pre-commit|pre-push):\r?\n(?<body>(?:^[ \t].*(?:\r?\n|$))*)/gmu
-      )) {
+      for (const match of source.matchAll(/^(?:pre-commit|pre-push):\r?\n(?<body>(?:^[ \t].*(?:\r?\n|$))*)/gmu)) {
         const { body = '' } = match.groups ?? {};
-        if (
-          /^\s+commands:\s*$/mu.test(body) &&
-          /^\s+run:\s+\S.+$/mu.test(body)
-        ) {
+        if (/^\s+commands:\s*$/mu.test(body) && /^\s+run:\s+\S.+$/mu.test(body)) {
           evidence.push(
             at(
               file,
@@ -582,41 +468,35 @@ export const buildKnipRuntimeEvidence = Effect.fn(
               '.',
               'dependency',
               'lefthook',
-              'Configured optional Lefthook tool; this configuration does not establish hook activation or enforcement'
-            )
+              'Configured optional Lefthook tool; this configuration does not establish hook activation or enforcement',
+            ),
           );
         }
       }
+    });
+    const workspaces = yield* workspaceDirectories(appRoot);
+    for (const workspace of workspaces) {
+      const prefix = workspace === '.' ? '' : `${workspace}/`;
+      const manifestFile = `${prefix}package.json`;
+      const manifestText = yield* read(manifestFile);
+      if (manifestText === undefined) {
+        continue;
+      }
+      const manifest = yield* Schema.decodeUnknownEffect(Manifest)(manifestText);
+      const commands = Object.values(manifest.scripts ?? {});
+      yield* testConsumerEvidence(manifestFile, manifestText, commands, prefix, workspace);
+      for (const command of commands) {
+        yield* shellEvidence(command, prefix, workspace);
+      }
+      for (const extension of ['tsx', 'ts', 'jsx', 'js']) {
+        yield* cssEvidence(extension, prefix, workspace);
+      }
+      yield* federationEvidence(prefix, workspace);
     }
-  );
-  const workspaces = yield* workspaceDirectories(appRoot);
-  for (const workspace of workspaces) {
-    const prefix = workspace === '.' ? '' : `${workspace}/`;
-    const manifestFile = `${prefix}package.json`;
-    const manifestText = yield* read(manifestFile);
-    if (manifestText === undefined) {
-      continue;
-    }
-    const manifest = yield* Schema.decodeUnknownEffect(Manifest)(manifestText);
-    const commands = Object.values(manifest.scripts ?? {});
-    yield* testConsumerEvidence(
-      manifestFile,
-      manifestText,
-      commands,
-      prefix,
-      workspace
-    );
-    for (const command of commands) {
-      yield* shellEvidence(command, prefix, workspace);
-    }
-    for (const extension of ['tsx', 'ts', 'jsx', 'js']) {
-      yield* cssEvidence(extension, prefix, workspace);
-    }
-    yield* federationEvidence(prefix, workspace);
-  }
-  yield* zeropsEvidence();
-  yield* tsgoEvidence();
-  yield* readinessEvidence();
-  yield* lefthookEvidence();
-  return evidence;
-});
+    yield* zeropsEvidence();
+    yield* tsgoEvidence();
+    yield* readinessEvidence();
+    yield* lefthookEvidence();
+    return evidence;
+  },
+);

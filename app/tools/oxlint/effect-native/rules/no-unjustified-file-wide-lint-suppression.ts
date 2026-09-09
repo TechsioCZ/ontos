@@ -75,13 +75,7 @@ import { stringArray, booleanOption as boolean } from '../shared/options.ts';
 import { scopePath, matchesGlobs } from '../shared/paths.ts';
 
 /** A8 names `scripts/` and `tools/oxlint` explicitly; the seam suppressions live across all roots. */
-const DEFAULT_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-  'tools/**',
-];
+const DEFAULT_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**', 'tools/**'];
 
 /** This rule's own fixtures deliberately contain ungoverned suppressions. */
 const DEFAULT_IGNORE_PATHS: readonly string[] = []; // Production config excludes fixtures; synthetic paths stay testable.
@@ -141,21 +135,11 @@ function readOptions(context: Context): RuleOptions {
   const minimum = record.minJustificationLength;
   const pattern = record.expiryPattern;
   return {
-    effectSeamRules: stringArray(
-      record.effectSeamRules,
-      DEFAULT_EFFECT_SEAM_RULES
-    ),
-    effectSeamRulesAlwaysReport: boolean(
-      record.effectSeamRulesAlwaysReport,
-      true
-    ),
-    expiryPattern:
-      typeof pattern === 'string' ? pattern : DEFAULT_EXPIRY_PATTERN,
+    effectSeamRules: stringArray(record.effectSeamRules, DEFAULT_EFFECT_SEAM_RULES),
+    effectSeamRulesAlwaysReport: boolean(record.effectSeamRulesAlwaysReport, true),
+    expiryPattern: typeof pattern === 'string' ? pattern : DEFAULT_EXPIRY_PATTERN,
     ignorePaths: stringArray(record.ignorePaths, DEFAULT_IGNORE_PATHS),
-    includeEffectDiagnosticsDirectives: boolean(
-      record.includeEffectDiagnosticsDirectives,
-      true
-    ),
+    includeEffectDiagnosticsDirectives: boolean(record.includeEffectDiagnosticsDirectives, true),
     includeTsNocheck: boolean(record.includeTsNocheck, true),
     minJustificationLength:
       typeof minimum === 'number' && Number.isFinite(minimum) && minimum >= 0
@@ -184,9 +168,7 @@ function compileExpiry(pattern: string): RegExp | null {
 function normaliseRuleName(name: string): string {
   const lower = name.trim().toLowerCase().replace(/^@/u, '');
   if (lower.startsWith('eslint/')) return lower.slice('eslint/'.length);
-  return lower.startsWith('typescript-eslint/')
-    ? `typescript/${lower.slice('typescript-eslint/'.length)}`
-    : lower;
+  return lower.startsWith('typescript-eslint/') ? `typescript/${lower.slice('typescript-eslint/'.length)}` : lower;
 }
 
 /** Rule names in a directive are comma- and/or whitespace-separated. */
@@ -238,7 +220,7 @@ function parseDirective(value: string): Directive | null {
 function justificationReasons(
   justification: string | null,
   options: RuleOptions,
-  expiry: RegExp | null
+  expiry: RegExp | null,
 ): readonly string[] {
   if (justification === null) return ['it carries no `-- <why>` justification'];
   if (justification.length < options.minJustificationLength) {
@@ -253,17 +235,12 @@ function justificationReasons(
 }
 
 /** Returns null when a later enable fully bounds this disable region. */
-function unboundedRules(
-  directive: Directive,
-  laterComments: readonly Comment[]
-): readonly string[] | null {
+function unboundedRules(directive: Directive, laterComments: readonly Comment[]): readonly string[] | null {
   const remaining = new Set(directive.rules.map(normaliseRuleName));
   for (const later of laterComments) {
     const enable = ENABLE.exec(later.value.trim());
     if (enable === null) continue;
-    const rules = parseRuleList(
-      splitDescription(enable.groups?.rest ?? '').head
-    );
+    const rules = parseRuleList(splitDescription(enable.groups?.rest ?? '').head);
     if (rules.length === 0) return null;
     for (const name of rules) remaining.delete(normaliseRuleName(name));
     if (directive.rules.length > 0 && remaining.size === 0) return null;
@@ -346,24 +323,17 @@ export const rule = defineRule({
     const seamRules = new Set(options.effectSeamRules.map(normaliseRuleName));
     const expiry = compileExpiry(options.expiryPattern);
 
-    const inspectEffectDiagnostics = (
-      comment: Comment,
-      effectDiagnostics: RegExpExecArray
-    ): void => {
+    const inspectEffectDiagnostics = (comment: Comment, effectDiagnostics: RegExpExecArray): void => {
       if (!options.includeEffectDiagnosticsDirectives) return;
       const body = effectDiagnostics.groups?.rest ?? '';
       const parsed = splitDescription(body);
       const silenced = parseRuleList(parsed.head).filter((token) =>
-        SILENCED_SEVERITY.has((token.split(':')[1] ?? '').toLowerCase())
+        SILENCED_SEVERITY.has((token.split(':')[1] ?? '').toLowerCase()),
       );
       if (silenced.length === 0) return;
-      const reasons = [
-        ...justificationReasons(parsed.description, options, expiry),
-      ];
+      const reasons = [...justificationReasons(parsed.description, options, expiry)];
       if (silenced.some((token) => token.split(':')[0] === '*'))
-        reasons.push(
-          'a wildcard suppresses every diagnostic rather than naming exact rules'
-        );
+        reasons.push('a wildcard suppresses every diagnostic rather than naming exact rules');
       // A file-wide Effect diagnostic waiver is never line-scoped and never narrow, so an
       // ungoverned one is always reported; a justified, expiring one is accepted.
       if (reasons.length === 0) return;
@@ -372,39 +342,28 @@ export const rule = defineRule({
         messageId: 'ungovernedEffectDiagnostics',
         data: {
           reason: reasons.join('; '),
-          rules: quoteList(
-            silenced.map((token) => token.split(':')[0] ?? token)
-          ),
+          rules: quoteList(silenced.map((token) => token.split(':')[0] ?? token)),
         },
       });
     };
 
     const inspectDirective = (comment: Comment, directive: Directive): void => {
       const reasons: string[] = [];
-      const seamHits = directive.rules.filter((name) =>
-        seamRules.has(normaliseRuleName(name))
-      );
+      const seamHits = directive.rules.filter((name) => seamRules.has(normaliseRuleName(name)));
 
       if (directive.rules.length === 0) {
-        reasons.push(
-          'it names no rules, so it silences every rule for the whole file'
-        );
+        reasons.push('it names no rules, so it silences every rule for the whole file');
       }
       if (options.effectSeamRulesAlwaysReport && seamHits.length > 0) {
         reasons.push(
-          `it silences the Effect/Promise seam ${seamHits.length === 1 ? 'rule' : 'rules'} ${quoteList(seamHits)} for the whole file`
+          `it silences the Effect/Promise seam ${seamHits.length === 1 ? 'rule' : 'rules'} ${quoteList(seamHits)} for the whole file`,
         );
       }
-      reasons.push(
-        ...justificationReasons(directive.justification, options, expiry)
-      );
+      reasons.push(...justificationReasons(directive.justification, options, expiry));
 
       if (reasons.length === 0) return;
 
-      const messageId =
-        seamHits.length > 0
-          ? 'ungovernedSeamSuppression'
-          : 'ungovernedSuppression';
+      const messageId = seamHits.length > 0 ? 'ungovernedSeamSuppression' : 'ungovernedSuppression';
       const named = seamHits.length > 0 ? seamHits : directive.rules;
       context.report({
         node: comment,
@@ -419,10 +378,7 @@ export const rule = defineRule({
       });
     };
 
-    const inspect = (
-      comment: Comment,
-      unboundedRules?: readonly string[]
-    ): void => {
+    const inspect = (comment: Comment, unboundedRules?: readonly string[]): void => {
       if (comment.type === 'Shebang') return;
 
       if (options.includeTsNocheck && TS_NOCHECK.test(comment.value.trim())) {
@@ -438,10 +394,7 @@ export const rule = defineRule({
 
       const parsedDirective = parseDirective(comment.value);
       if (parsedDirective === null) return;
-      const directive =
-        unboundedRules === undefined
-          ? parsedDirective
-          : { ...parsedDirective, rules: unboundedRules };
+      const directive = unboundedRules === undefined ? parsedDirective : { ...parsedDirective, rules: unboundedRules };
 
       inspectDirective(comment, directive);
     };
@@ -454,10 +407,7 @@ export const rule = defineRule({
         for (const [index, comment] of comments.entries()) {
           const directive = parseDirective(comment.value);
           if (directive !== null) {
-            const remaining = unboundedRules(
-              directive,
-              comments.slice(index + 1)
-            );
+            const remaining = unboundedRules(directive, comments.slice(index + 1));
             if (remaining !== null) inspect(comment, remaining);
             continue;
           }

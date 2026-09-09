@@ -1,11 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import {
-  copyFileSync,
-  mkdirSync,
-  realpathSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -16,25 +10,15 @@ import { discoverRules } from '../shared/discover-rules.ts';
 import { pluginDirectory } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
-it.effect(
-  'rule discovery loads the selected production rule and rejects unknown names',
-  () =>
-    Effect.gen(function* ruleDiscoveryEffect() {
-      const rules = yield* Effect.tryPromise(() =>
-        discoverRules(['no-native-timers'])
-      );
-      expect(Object.keys(rules)).toEqual(['no-native-timers']);
-      expect(Predicate.isFunction(rules['no-native-timers']?.create)).toBe(
-        true
-      );
-      const error = yield* Effect.flip(
-        Effect.tryPromise(() => discoverRules(['not-a-rule']))
-      );
-      const message: unknown = expect.stringMatching(
-        /Unknown fixture rule: not-a-rule/u
-      );
-      expect(error.cause).toMatchObject({ message });
-    })
+it.effect('rule discovery loads the selected production rule and rejects unknown names', () =>
+  Effect.gen(function* ruleDiscoveryEffect() {
+    const rules = yield* Effect.tryPromise(() => discoverRules(['no-native-timers']));
+    expect(Object.keys(rules)).toEqual(['no-native-timers']);
+    expect(Predicate.isFunction(rules['no-native-timers']?.create)).toBe(true);
+    const error = yield* Effect.flip(Effect.tryPromise(() => discoverRules(['not-a-rule'])));
+    const message: unknown = expect.stringMatching(/Unknown fixture rule: not-a-rule/u);
+    expect(error.cause).toMatchObject({ message });
+  }),
 );
 
 it('rule discovery uses file URLs in workspaces containing spaces, URL delimiters, and Unicode', () => {
@@ -46,21 +30,12 @@ it('rule discovery uses file URLs in workspaces containing spaces, URL delimiter
     const discoveryFile = 'discover-rules.ts';
     mkdirSync(shared, { recursive: true });
     mkdirSync(rules, { recursive: true });
-    writeFileSync(
-      path.join(workspace, 'package.json'),
-      JSON.stringify({ type: 'module' })
-    );
-    copyFileSync(
-      path.join(pluginDirectory, 'shared', discoveryFile),
-      path.join(shared, discoveryFile)
-    );
-    writeFileSync(
-      path.join(rules, selectedFile),
-      'export const rule = { marker: "selected" };'
-    );
+    writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ type: 'module' }));
+    copyFileSync(path.join(pluginDirectory, 'shared', discoveryFile), path.join(shared, discoveryFile));
+    writeFileSync(path.join(rules, selectedFile), 'export const rule = { marker: "selected" };');
     writeFileSync(
       path.join(rules, 'unselected.ts'),
-      'throw new Error("unselected rule must not load"); export const rule = {};'
+      'throw new Error("unselected rule must not load"); export const rule = {};',
     );
     const alias = path.join(directory, 'workspace-link');
     symlinkSync(workspace, alias, 'dir');
@@ -97,7 +72,7 @@ it('rule discovery uses file URLs in workspaces containing spaces, URL delimiter
         }
       `,
       ],
-      { cwd: workspace, encoding: 'utf-8', timeout: 30_000 }
+      { cwd: workspace, encoding: 'utf-8', timeout: 30_000 },
     );
     expect(result.error).toBe(undefined);
     expect(result.status, result.stderr || result.stdout).toBe(0);

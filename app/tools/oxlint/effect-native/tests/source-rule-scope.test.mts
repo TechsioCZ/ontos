@@ -16,13 +16,13 @@ it('source rule scope applies include and ignore gates before opt-ins', () => {
     isSourceRuleInScope('apps/example/src/main.ts', {
       ...defaults,
       ignore: ['apps/**'],
-    })
+    }),
   ).toBe(false);
   expect(
     isSourceRuleInScope('scripts/main.ts', {
       ...defaults,
       includeScripts: true,
-    })
+    }),
   ).toBe(false);
 });
 
@@ -37,35 +37,22 @@ it('source rule scope independently gates scripts and tests', () => {
   const testFile = 'apps/example/src/main.test.ts';
   const scriptTest = 'scripts/main.test.ts';
   expect(isSourceRuleInScope(script, scriptDefaults)).toBe(false);
-  expect(
-    isSourceRuleInScope(script, { ...scriptDefaults, includeScripts: true })
-  ).toBe(true);
+  expect(isSourceRuleInScope(script, { ...scriptDefaults, includeScripts: true })).toBe(true);
   expect(isSourceRuleInScope(testFile, scriptDefaults)).toBe(false);
-  expect(
-    isSourceRuleInScope(testFile, { ...scriptDefaults, includeTests: true })
-  ).toBe(true);
-  expect(
-    isSourceRuleInScope(scriptTest, { ...scriptDefaults, includeScripts: true })
-  ).toBe(false);
-  expect(
-    isSourceRuleInScope(scriptTest, { ...scriptDefaults, includeTests: true })
-  ).toBe(false);
+  expect(isSourceRuleInScope(testFile, { ...scriptDefaults, includeTests: true })).toBe(true);
+  expect(isSourceRuleInScope(scriptTest, { ...scriptDefaults, includeScripts: true })).toBe(false);
+  expect(isSourceRuleInScope(scriptTest, { ...scriptDefaults, includeTests: true })).toBe(false);
   expect(
     isSourceRuleInScope(scriptTest, {
       ...scriptDefaults,
       includeScripts: true,
       includeTests: true,
-    })
+    }),
   ).toBe(true);
 });
 
 it('source rule scope preserves fixture path normalization', () => {
-  const prefix =
-    'tools/oxlint/effect-native/tests/fixtures/no-dependency-parameters/invalid/';
-  expect(
-    isSourceRuleInScope(`${prefix}apps/example/src/main.ts`, defaults)
-  ).toBe(true);
-  expect(
-    isSourceRuleInScope(`${prefix}apps/example/src/main.test.ts`, defaults)
-  ).toBe(false);
+  const prefix = 'tools/oxlint/effect-native/tests/fixtures/no-dependency-parameters/invalid/';
+  expect(isSourceRuleInScope(`${prefix}apps/example/src/main.ts`, defaults)).toBe(true);
+  expect(isSourceRuleInScope(`${prefix}apps/example/src/main.test.ts`, defaults)).toBe(false);
 });

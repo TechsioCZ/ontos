@@ -7,10 +7,7 @@ import type { useShellControls } from './use-shell-controls.ts';
 
 type Controls = ReturnType<typeof useShellControls>;
 type Shell = NonNullable<Parameters<typeof useShellControls>[0]>;
-type PageProps = Pick<
-  ComponentProps<typeof AuthenticatedDashboardLayout>,
-  'children' | 'currentModuleId' | 'title'
->;
+type PageProps = Pick<ComponentProps<typeof AuthenticatedDashboardLayout>, 'children' | 'currentModuleId' | 'title'>;
 
 export const ShellContentLayout = ({
   children,
@@ -24,9 +21,7 @@ export const ShellContentLayout = ({
   const { t } = useModernI18n();
   return (
     <AuthenticatedDashboardLayout
-      {...(shell.selectedLegalEntityId === undefined
-        ? {}
-        : { currentLegalEntityId: shell.selectedLegalEntityId })}
+      {...(shell.selectedLegalEntityId === undefined ? {} : { currentLegalEntityId: shell.selectedLegalEntityId })}
       {...pageProps}
       currentTenantId={shell.identity.tenantId}
       homeCurrent={false}

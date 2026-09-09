@@ -26,10 +26,7 @@ export type EngagementActionError =
   | EngagementProfileNotFound
   | EngagementProfilePersistenceUnavailable
   | PartyRegistryReferenceUnavailable;
-export type EngagementAttachProblem = Exclude<
-  ContactsProblem,
-  { readonly _tag: 'ContactsNotFoundProblem' }
->;
+export type EngagementAttachProblem = Exclude<ContactsProblem, { readonly _tag: 'ContactsNotFoundProblem' }>;
 
 export const engagementProblem = {
   authentication: () =>
@@ -40,35 +37,28 @@ export const engagementProblem = {
         status: 401,
         title: 'Authentication required',
         type: 'https://ontos.dev/problems/operation-authentication-required',
-      })
+      }),
     ),
-  conflict: (
-    code: Extract<
-      ContactsProblem,
-      { readonly _tag: 'ContactsConflictProblem' }
-    >['code']
-  ) =>
+  conflict: (code: Extract<ContactsProblem, { readonly _tag: 'ContactsConflictProblem' }>['code']) =>
     Result.getOrThrow(
       Schema.decodeResult(ContactsConflictProblemSchema)({
         _tag: 'ContactsConflictProblem',
         code,
-        detail:
-          'The engagement profile operation conflicts with the current state.',
+        detail: 'The engagement profile operation conflicts with the current state.',
         status: 409,
         title: 'Engagement profile conflict',
         type: 'https://ontos.dev/problems/contacts-engagement-conflict',
-      })
+      }),
     ),
   forbidden: () =>
     Result.getOrThrow(
       Schema.decodeResult(ContactsForbiddenProblemSchema)({
         _tag: 'ContactsForbiddenProblem',
-        detail:
-          'The principal is not permitted to perform this Party Registry operation.',
+        detail: 'The principal is not permitted to perform this Party Registry operation.',
         status: 403,
         title: 'Party Registry operation forbidden',
         type: 'https://ontos.dev/problems/party-registry-forbidden',
-      })
+      }),
     ),
   internal: () =>
     Result.getOrThrow(
@@ -78,7 +68,7 @@ export const engagementProblem = {
         status: 500,
         title: 'Engagement profile operation failed',
         type: 'https://ontos.dev/problems/party-registry-engagement-failed',
-      })
+      }),
     ),
   invalid: () =>
     Result.getOrThrow(
@@ -88,7 +78,7 @@ export const engagementProblem = {
         status: 400,
         title: 'Invalid engagement profile request',
         type: 'https://ontos.dev/problems/party-registry-engagement-invalid',
-      })
+      }),
     ),
   notFound: () =>
     Result.getOrThrow(
@@ -98,7 +88,7 @@ export const engagementProblem = {
         status: 404,
         title: 'Engagement profile not found',
         type: 'https://ontos.dev/problems/party-registry-engagement-not-found',
-      })
+      }),
     ),
   precondition: () =>
     Result.getOrThrow(
@@ -108,7 +98,7 @@ export const engagementProblem = {
         status: 428,
         title: 'Idempotency key required',
         type: 'https://ontos.dev/problems/idempotency-key-required',
-      })
+      }),
     ),
   unavailable: () =>
     Result.getOrThrow(
@@ -119,45 +109,31 @@ export const engagementProblem = {
         status: 503,
         title: 'Engagement profile unavailable',
         type: 'https://ontos.dev/problems/party-registry-engagement-unavailable',
-      })
+      }),
     ),
 };
 
-export const isEngagementAuthenticationProblem = Schema.is(
-  ContactsAuthenticationProblemSchema
-);
-export const failEngagementProblem = <Problem extends ContactsProblem>(
-  mapped: Problem
-) => failAuthenticatedProblem(mapped, isEngagementAuthenticationProblem);
+export const isEngagementAuthenticationProblem = Schema.is(ContactsAuthenticationProblemSchema);
+export const failEngagementProblem = <Problem extends ContactsProblem>(mapped: Problem) =>
+  failAuthenticatedProblem(mapped, isEngagementAuthenticationProblem);
 
-export const mapEngagementActionProblem = (
-  error: EngagementActionError
-): ContactsProblem =>
+export const mapEngagementActionProblem = (error: EngagementActionError): ContactsProblem =>
   Match.value(error).pipe(
     Match.tags({
-      ActionAlreadyCommitted: () =>
-        engagementProblem.conflict(
-          'contacts_engagement_profile_lifecycle_conflict'
-        ),
+      ActionAlreadyCommitted: () => engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
       ActionCollectorError: engagementProblem.internal,
       ActionCommitIndeterminate: engagementProblem.unavailable,
       ActionHandlerExecutionError: engagementProblem.internal,
       ActionIdempotencyKeyRequired: engagementProblem.precondition,
       ActionInvocationNotFound: engagementProblem.notFound,
       ActionInvocationPersistenceError: engagementProblem.unavailable,
-      ActionInvocationStateError: () =>
-        engagementProblem.conflict(
-          'contacts_engagement_profile_lifecycle_conflict'
-        ),
+      ActionInvocationStateError: () => engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
       ActionPayloadValidationError: engagementProblem.invalid,
       ActionPermissionCheckError: engagementProblem.unavailable,
       ActionPermissionDenied: engagementProblem.forbidden,
       ActionPolicyDenied: engagementProblem.internal,
       ActionPolicyEvaluationError: engagementProblem.unavailable,
-      ActionRequestHashConflict: () =>
-        engagementProblem.conflict(
-          'contacts_engagement_profile_lifecycle_conflict'
-        ),
+      ActionRequestHashConflict: () => engagementProblem.conflict('contacts_engagement_profile_lifecycle_conflict'),
       ActionResultValidationError: engagementProblem.internal,
       ActionTransactionError: engagementProblem.unavailable,
       ActionTrustedContextValidationError: engagementProblem.authentication,
@@ -172,12 +148,8 @@ export const mapEngagementActionProblem = (
       OperationContextUnavailable: engagementProblem.unavailable,
       PartyRegistryReferenceUnavailable: engagementProblem.unavailable,
     }),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
-export const mapEngagementAttachProblem = (
-  error: ContactsProblem
-): EngagementAttachProblem =>
-  Schema.is(ContactsNotFoundProblemSchema)(error)
-    ? engagementProblem.internal()
-    : error;
+export const mapEngagementAttachProblem = (error: ContactsProblem): EngagementAttachProblem =>
+  Schema.is(ContactsNotFoundProblemSchema)(error) ? engagementProblem.internal() : error;

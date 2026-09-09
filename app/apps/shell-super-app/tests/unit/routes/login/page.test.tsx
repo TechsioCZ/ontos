@@ -8,30 +8,21 @@ import LoginPage from '../../../../src/routes/[lang]/login/page';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
-import type {
-  LocalizedLinkCall,
-  LocalizedLinkDoubleProps,
-} from '../../../support/localized-link-double.tsx';
+import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
-const {
-  browserRunPromiseMock,
-  invalidateMock,
-  languageState,
-  localizedLinkCalls,
-  navigateMock,
-  signInMock,
-} = rstest.hoisted(() => {
-  const recordedLinkCalls: LocalizedLinkCall[] = [];
-  return {
-    browserRunPromiseMock: rstest.fn(),
-    invalidateMock: rstest.fn(),
-    languageState: { current: 'en' },
-    localizedLinkCalls: recordedLinkCalls,
-    navigateMock: rstest.fn(),
-    signInMock: rstest.fn(),
-  };
-});
+const { browserRunPromiseMock, invalidateMock, languageState, localizedLinkCalls, navigateMock, signInMock } =
+  rstest.hoisted(() => {
+    const recordedLinkCalls: LocalizedLinkCall[] = [];
+    return {
+      browserRunPromiseMock: rstest.fn(),
+      invalidateMock: rstest.fn(),
+      languageState: { current: 'en' },
+      localizedLinkCalls: recordedLinkCalls,
+      navigateMock: rstest.fn(),
+      signInMock: rstest.fn(),
+    };
+  });
 
 beforeEach(() => {
   invalidateMock.mockImplementation(() => Promise.resolve());
@@ -45,7 +36,7 @@ beforeEach(() => {
         principalId: 'principal-1',
         tenantId: 'tenant-1',
       },
-    })
+    }),
   );
 });
 
@@ -60,7 +51,7 @@ const translations = new Map(
     'shell.login.title': 'Login',
     'shell.login.toast.description': 'Fill in both required fields.',
     'shell.login.toast.title': 'Login details are incomplete',
-  })
+  }),
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -96,8 +87,7 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
 }));
 
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
-const getPassword = () =>
-  screen.getByLabelText(/^Password/u, { selector: 'input' });
+const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 
 const renderLogin = () => render(<LoginPage />);
@@ -126,11 +116,7 @@ it('shows the required login controls through the UI kit', () => {
   expect(password.getAttribute('autocomplete')).toBe('current-password');
   expect(password.hasAttribute('required')).toBe(true);
   expect(submit.getAttribute('type')).toBe('submit');
-  expect(
-    screen
-      .getByRole('link', { name: '← Back to the home page' })
-      .getAttribute('href')
-  ).toBe('/en');
+  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/en');
 });
 
 it('the back link hands the canonical home target to the framework link', () => {
@@ -147,11 +133,7 @@ it('the back link resolves Czech from the same canonical target', () => {
   renderLogin();
 
   expect(localizedLinkCalls.map((call) => call.to)).toContain('/');
-  expect(
-    screen
-      .getByRole('link', { name: '← Back to the home page' })
-      .getAttribute('href')
-  ).toBe('/cs');
+  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/cs');
 });
 
 const submitLogin = (login: string, password: string) =>
@@ -233,26 +215,14 @@ it.effect.each(validationCases)(
       yield* submitLogin(login, password);
 
       const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
-      expect(getLogin().getAttribute('aria-invalid')).toBe(
-        loginInvalid ? 'true' : null
-      );
-      expect(getPassword().getAttribute('aria-invalid')).toBe(
-        passwordInvalid ? 'true' : null
-      );
-      expect(screen.queryAllByText('Enter your login.')).toHaveLength(
-        loginInvalid ? 1 : 0
-      );
-      expect(screen.queryAllByText('Enter your password.')).toHaveLength(
-        passwordInvalid ? 1 : 0
-      );
-      expect(
-        screen.queryAllByText('Login details are incomplete')
-      ).toHaveLength(incompleteToasts);
-      expect(
-        screen.queryAllByText('Fill in both required fields.')
-      ).toHaveLength(incompleteToasts);
+      expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
+      expect(getPassword().getAttribute('aria-invalid')).toBe(passwordInvalid ? 'true' : null);
+      expect(screen.queryAllByText('Enter your login.')).toHaveLength(loginInvalid ? 1 : 0);
+      expect(screen.queryAllByText('Enter your password.')).toHaveLength(passwordInvalid ? 1 : 0);
+      expect(screen.queryAllByText('Login details are incomplete')).toHaveLength(incompleteToasts);
+      expect(screen.queryAllByText('Fill in both required fields.')).toHaveLength(incompleteToasts);
       expect(document.activeElement).toBe(focusTargets[focus]());
-    })
+    }),
 );
 
 it.effect('creates one Toast per repeated invalid submission', () =>
@@ -261,10 +231,8 @@ it.effect('creates one Toast per repeated invalid submission', () =>
 
     yield* Effect.promise(() => user.click(getSubmit()));
     expect(screen.getAllByText('Login details are incomplete')).toHaveLength(2);
-    expect(screen.getAllByText('Fill in both required fields.')).toHaveLength(
-      2
-    );
-  })
+    expect(screen.getAllByText('Fill in both required fields.')).toHaveLength(2);
+  }),
 );
 
 it.effect('clears stale errors after both fields are corrected', () =>
@@ -278,7 +246,7 @@ it.effect('clears stale errors after both fields are corrected', () =>
     expect(getPassword().getAttribute('aria-invalid')).toBeNull();
     expect(screen.queryByText('Enter your login.')).toBeNull();
     expect(screen.queryByText('Enter your password.')).toBeNull();
-  })
+  }),
 );
 
 it.effect('runs the same validation when submitted with Enter', () =>
@@ -292,66 +260,60 @@ it.effect('runs the same validation when submitted with Enter', () =>
     expect(getPassword().getAttribute('aria-invalid')).toBe('true');
     expect(screen.getAllByText('Login details are incomplete')).toHaveLength(1);
     expect(document.activeElement).toBe(getLogin());
-  })
+  }),
 );
 
-it.effect(
-  'submits valid values through the Shell authentication client and navigates home',
-  () =>
-    Effect.gen(function* submitsValidValuesThroughShellAuthClient() {
-      yield* submitLogin('admin', 'secret');
+it.effect('submits valid values through the Shell authentication client and navigates home', () =>
+  Effect.gen(function* submitsValidValuesThroughShellAuthClient() {
+    yield* submitLogin('admin', 'secret');
 
-      yield* Effect.promise(() =>
-        waitFor(() => {
-          expect(signInMock).toHaveBeenCalledWith(
-            {
-              email: 'admin',
-              password: Redacted.make('secret'),
-            },
-            { locale: 'en' }
-          );
-          expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
-          expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
-          expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
-          expect(getSubmit().hasAttribute('disabled')).toBe(false);
-          expect(screen.queryByText('shell.login.error.internal')).toBeNull();
-          expect(screen.queryByText('Login details are incomplete')).toBeNull();
-        })
-      );
-    })
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(signInMock).toHaveBeenCalledWith(
+          {
+            email: 'admin',
+            password: Redacted.make('secret'),
+          },
+          { locale: 'en' },
+        );
+        expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
+        expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(screen.queryByText('shell.login.error.internal')).toBeNull();
+        expect(screen.queryByText('Login details are incomplete')).toBeNull();
+      }),
+    );
+  }),
 );
 
-it.effect(
-  'reports navigation failure and restores the login form after authentication',
-  () =>
-    Effect.gen(function* reportsNavigationFailure() {
-      navigateMock.mockRejectedValueOnce('Navigation failed');
-      yield* submitLogin('admin', 'secret');
+it.effect('reports navigation failure and restores the login form after authentication', () =>
+  Effect.gen(function* reportsNavigationFailure() {
+    navigateMock.mockRejectedValueOnce('Navigation failed');
+    yield* submitLogin('admin', 'secret');
 
-      yield* Effect.promise(() =>
-        waitFor(() => {
-          expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
-          expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-          expect(getSubmit().hasAttribute('disabled')).toBe(false);
-          expect(document.activeElement).toBe(getLogin());
-        })
-      );
-    })
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
+        expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(document.activeElement).toBe(getLogin());
+      }),
+    );
+  }),
 );
 
-it.effect(
-  'keeps navigation on the login route when auth cache refresh fails',
-  () =>
-    Effect.gen(function* reportsAuthenticationRefreshFailure() {
-      invalidateMock.mockRejectedValueOnce('Route refresh failed');
-      yield* submitLogin('admin', 'secret');
-      yield* Effect.promise(() =>
-        waitFor(() => {
-          expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
-          expect(navigateMock).not.toHaveBeenCalled();
-          expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-          expect(getSubmit().hasAttribute('disabled')).toBe(false);
-        })
-      );
-    })
+it.effect('keeps navigation on the login route when auth cache refresh fails', () =>
+  Effect.gen(function* reportsAuthenticationRefreshFailure() {
+    invalidateMock.mockRejectedValueOnce('Route refresh failed');
+    yield* submitLogin('admin', 'secret');
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
+        expect(navigateMock).not.toHaveBeenCalled();
+        expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+      }),
+    );
+  }),
 );

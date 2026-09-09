@@ -6,35 +6,20 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 /** Only the durable Action accepts an explicit prior review case for material new evidence. */
-import {
-  MatchPartyPayloadSchema,
-  MatchPartyResultSchema,
-} from '../../shared/actions/match-party.ts';
+import { MatchPartyPayloadSchema, MatchPartyResultSchema } from '../../shared/actions/match-party.ts';
 import type { MatchPartyPayload } from '../../shared/actions/match-party.ts';
-import {
-  PartyEvidenceInsufficient,
-  PartyPersistenceUnavailable,
-} from '../../shared/domain/identity-contracts.ts';
+import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
-import {
-  candidateFingerprint,
-  matchParty,
-} from '../services/party-matching-persistence.service.ts';
+import { candidateFingerprint, matchParty } from '../services/party-matching-persistence.service.ts';
 
 export type { MatchPartyPayload } from '../../shared/actions/match-party.ts';
 
 interface Services {
-  readonly match: (
-    payload: MatchPartyPayload,
-    invocationId: string
-  ) => ReturnType<typeof matchParty>;
+  readonly match: (payload: MatchPartyPayload, invocationId: string) => ReturnType<typeof matchParty>;
 }
 
 const handleMatchParty = Effect.fn('MatchPartyAction.handleMatchParty')(
-  (
-    payload: MatchPartyPayload,
-    context: ActionHandlerContext<Readonly<Record<string, never>>, Services>
-  ) =>
+  (payload: MatchPartyPayload, context: ActionHandlerContext<Readonly<Record<string, never>>, Services>) =>
     context.services.match(payload, context.actionInvocationId).pipe(
       Effect.map((result) => ({
         ...result,
@@ -52,9 +37,9 @@ const handleMatchParty = Effect.fn('MatchPartyAction.handleMatchParty')(
           targetModuleKey: 'party.registry',
           targetResourceId: result.decisionRef.resourceId,
           targetResourceType: result.decisionRef.resourceType,
-        })
-      )
-    )
+        }),
+      ),
+    ),
 );
 
 export const matchPartyAction = defineAction(
@@ -65,10 +50,7 @@ export const matchPartyAction = defineAction(
     },
     actionKey: 'party.registry.match-party',
     auditProfile: 'sensitive',
-    domainErrorSchema: Schema.Union([
-      PartyEvidenceInsufficient,
-      PartyPersistenceUnavailable,
-    ]),
+    domainErrorSchema: Schema.Union([PartyEvidenceInsufficient, PartyPersistenceUnavailable]),
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -107,7 +89,7 @@ export const matchPartyAction = defineAction(
         }
         return matchParty(transaction, input);
       },
-    })
+    }),
 );
 
 // <generated-outbox-message-exports>

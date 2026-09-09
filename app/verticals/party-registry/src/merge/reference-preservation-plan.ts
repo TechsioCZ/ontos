@@ -14,10 +14,7 @@ const SupportedReferenceClassSchema = Schema.Literals([
   'HISTORICAL_DOCUMENT',
 ]);
 type SupportedReferenceClass = typeof SupportedReferenceClassSchema.Type;
-const ReferenceClassSchema = Schema.Union([
-  SupportedReferenceClassSchema,
-  Schema.Literal('UNSUPPORTED'),
-]);
+const ReferenceClassSchema = Schema.Union([SupportedReferenceClassSchema, Schema.Literal('UNSUPPORTED')]);
 type ReferenceClass = typeof ReferenceClassSchema.Type;
 interface HistoricalPartySnapshot {
   readonly address?: string;
@@ -50,7 +47,7 @@ type ReferenceBlocker = Readonly<{ code: string; ownerKey: string }>;
 
 const consumerContractBlocker = (
   ownerKey: string,
-  contract: ConsumerReconciliationContract | undefined
+  contract: ConsumerReconciliationContract | undefined,
 ): ReferenceBlocker | undefined => {
   if (ownerKey === 'party.registry') {
     return undefined;
@@ -71,15 +68,10 @@ const consumerContractBlocker = (
 
 const collectReferenceBlockers = (
   references: readonly PartyReferenceInventoryItem[],
-  consumerReconciliation: readonly ConsumerReconciliationContract[] | undefined
+  consumerReconciliation: readonly ConsumerReconciliationContract[] | undefined,
 ): ReferenceBlocker[] => {
   const blockers: ReferenceBlocker[] = [];
-  const contracts = new Map(
-    (consumerReconciliation ?? []).map((contract) => [
-      contract.consumerKey,
-      contract,
-    ])
-  );
+  const contracts = new Map((consumerReconciliation ?? []).map((contract) => [contract.consumerKey, contract]));
   for (const reference of references) {
     if (reference.class === 'UNSUPPORTED') {
       blockers.push({
@@ -88,10 +80,7 @@ const collectReferenceBlockers = (
       });
       continue;
     }
-    const blocker = consumerContractBlocker(
-      reference.ownerKey,
-      contracts.get(reference.ownerKey)
-    );
+    const blocker = consumerContractBlocker(reference.ownerKey, contracts.get(reference.ownerKey));
     if (blocker !== undefined) {
       blockers.push(blocker);
     }
@@ -104,23 +93,13 @@ export const planReferencePreservation = (
     aliases: readonly PartyAlias[];
     consumerReconciliation?: readonly ConsumerReconciliationContract[];
     references: readonly PartyReferenceInventoryItem[];
-  }>
+  }>,
 ) => {
-  const blockers = collectReferenceBlockers(
-    input.references,
-    input.consumerReconciliation
-  );
+  const blockers = collectReferenceBlockers(input.references, input.consumerReconciliation);
   if (blockers.length > 0) {
     return {
       _tag: 'ReferencePreservationBlocked',
-      blockers: [
-        ...new Map(
-          blockers.map((blocker) => [
-            `${blocker.code}:${blocker.ownerKey}`,
-            blocker,
-          ])
-        ).values(),
-      ],
+      blockers: [...new Map(blockers.map((blocker) => [`${blocker.code}:${blocker.ownerKey}`, blocker])).values()],
     } as const;
   }
 
@@ -130,10 +109,7 @@ export const planReferencePreservation = (
       continue;
     }
     const supportedReferenceClass: SupportedReferenceClass = reference.class;
-    const resolution = resolveCanonicalPartyRef(
-      reference.partyRef,
-      input.aliases
-    );
+    const resolution = resolveCanonicalPartyRef(reference.partyRef, input.aliases);
     const planned = Match.value(resolution).pipe(
       Match.tag('CanonicalPartyResolved', ({ canonicalPartyRef }) =>
         Option.some({
@@ -142,7 +118,7 @@ export const planReferencePreservation = (
           originalPartyRef: reference.partyRef,
           ownerKey: reference.ownerKey,
           physicalRewriteRequired: false as const,
-        })
+        }),
       ),
       Match.tag('PartyAliasCycleRejected', ({ _tag }) => {
         blockers.push({ code: _tag, ownerKey: reference.ownerKey });
@@ -156,7 +132,7 @@ export const planReferencePreservation = (
         blockers.push({ code: _tag, ownerKey: reference.ownerKey });
         return Option.none<PlannedPartyReference>();
       }),
-      Match.exhaustive
+      Match.exhaustive,
     );
     if (Option.isSome(planned)) {
       references.push(
@@ -165,7 +141,7 @@ export const planReferencePreservation = (
           : {
               ...planned.value,
               historicalSnapshot: reference.historicalSnapshot,
-            }
+            },
       );
     }
   }

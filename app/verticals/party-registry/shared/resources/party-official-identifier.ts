@@ -8,5 +8,4 @@ export const {
   makeRef: makePartyOfficialIdentifierRef,
   refSchema: PartyOfficialIdentifierRefSchema,
 } = timelineResource('party-official-identifier', 'Party Official Identifier');
-export type PartyOfficialIdentifierRef =
-  typeof PartyOfficialIdentifierRefSchema.Type;
+export type PartyOfficialIdentifierRef = typeof PartyOfficialIdentifierRefSchema.Type;

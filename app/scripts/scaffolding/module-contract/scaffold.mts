@@ -1,10 +1,4 @@
-import {
-  Array as EffectArray,
-  Effect,
-  FileSystem,
-  Option,
-  Schema,
-} from 'effect';
+import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 
 import { topLevelSeparators } from '../../boundary-source-structure.mts';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
@@ -98,9 +92,7 @@ import type {
 const moduleMarkerPattern = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu;
 const MANIFEST_FILE_NAME = 'vertical.manifest.ts';
 
-const renderGovernedHttpApiRoot = (
-  vertical: VerticalMetadata
-): string => `${MODULE_CONTRACT_GENERATOR_HEADER}
+const renderGovernedHttpApiRoot = (vertical: VerticalMetadata): string => `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
 import { HttpApi } from '@modern-js/plugin-bff/effect-client';
 import { identity } from 'effect';
@@ -117,59 +109,44 @@ export const governedHttpApi = HttpApi.make('${toCamelCase(vertical.slug)}Govern
 const topLevelStatementEnd = (structure: string, start: number): number =>
   topLevelSeparators(structure, ';', start)[0] ?? -1;
 
-const initializeGovernedHttpApiRoot = (
-  source: string,
-  vertical: VerticalMetadata
-): string => {
+const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadata): string => {
   if (
     source.includes(GOVERNED_HTTP_API_IMPORT_SLOT_START) ||
     source.includes(GOVERNED_HTTP_API_ADDITION_SLOT_START) ||
     source.includes('governedHttpApi')
   ) {
-    return raiseScaffoldFailure(
-      `vertical ${vertical.slug} shared API already uses reserved governed-read composition`
-    );
+    return raiseScaffoldFailure(`vertical ${vertical.slug} shared API already uses reserved governed-read composition`);
   }
   const structure = maskNonCode(source);
-  const declarations = [
-    ...structure.matchAll(
-      /export const (?<api>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu
-    ),
-  ];
+  const declarations = [...structure.matchAll(/export const (?<api>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu)];
   if (declarations.length !== 1) {
-    return raiseScaffoldFailure(
-      `vertical ${vertical.slug} shared API must contain exactly one generated HttpApi root`
-    );
+    return raiseScaffoldFailure(`vertical ${vertical.slug} shared API must contain exactly one generated HttpApi root`);
   }
   const [declaration] = declarations;
   const apiValue = declaration?.groups?.['api'];
   const declarationStart = declaration?.index;
   if (apiValue === undefined || declarationStart === undefined) {
-    return raiseScaffoldFailure(
-      `vertical ${vertical.slug} shared API root is malformed`
-    );
+    return raiseScaffoldFailure(`vertical ${vertical.slug} shared API root is malformed`);
   }
   const statementEnd = topLevelStatementEnd(structure, declarationStart);
   if (statementEnd === -1) {
-    return raiseScaffoldFailure(
-      `vertical ${vertical.slug} shared API root has no terminator`
-    );
+    return raiseScaffoldFailure(`vertical ${vertical.slug} shared API root has no terminator`);
   }
   return `${source.slice(0, declarationStart)}${GOVERNED_HTTP_API_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_API_IMPORT_SLOT_END}
 
+import { identity as governedHttpApiIdentity } from 'effect';
+
 ${source.slice(declarationStart, statementEnd)}
   ${GOVERNED_HTTP_API_ADDITION_SLOT_START}
-  ${GOVERNED_HTTP_API_ADDITION_SLOT_END}${source.slice(statementEnd, statementEnd + 1)}
+  ${GOVERNED_HTTP_API_ADDITION_SLOT_END}
+  .pipe(governedHttpApiIdentity)${source.slice(statementEnd, statementEnd + 1)}
 
 /** Canonical composition-root binding consumed by generated governed HTTP adapters. */
 export const governedHttpApi = ${apiValue};${source.slice(statementEnd + 1)}`;
 };
 
-const initializeGovernedHttpHandlerRoot = (
-  source: string,
-  vertical: VerticalMetadata
-): string => {
+const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMetadata): string => {
   for (const reserved of [
     'GovernedReadRuntime',
     'GovernedReadLayer',
@@ -182,25 +159,18 @@ const initializeGovernedHttpHandlerRoot = (
   ]) {
     if (source.includes(reserved)) {
       return raiseScaffoldFailure(
-        `vertical ${vertical.slug} API root already uses reserved governed-read composition ${reserved}`
+        `vertical ${vertical.slug} API root already uses reserved governed-read composition ${reserved}`,
       );
     }
   }
   const runtimeLayerNeedle = ') satisfies EffectRuntimeLayer;';
   const runtimeLayerEnd = source.lastIndexOf(runtimeLayerNeedle);
   if (runtimeLayerEnd === -1) {
-    return raiseScaffoldFailure(
-      `vertical ${vertical.slug} API root must expose the pinned Effect runtime layer`
-    );
+    return raiseScaffoldFailure(`vertical ${vertical.slug} API root must expose the pinned Effect runtime layer`);
   }
-  const runtimeLayerStart = source.lastIndexOf(
-    'const layer = HttpApiBuilder.layer(',
-    runtimeLayerEnd
-  );
+  const runtimeLayerStart = source.lastIndexOf('const layer = HttpApiBuilder.layer(', runtimeLayerEnd);
   if (runtimeLayerStart === -1) {
-    return raiseScaffoldFailure(
-      `vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`
-    );
+    return raiseScaffoldFailure(`vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`);
   }
   const generatedRoot = `import {
   ContextAccessLive as GovernedContextAccessLive,
@@ -253,7 +223,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
 `;
   return `${generatedRoot}\n${source.slice(0, runtimeLayerStart)}${source.slice(
     runtimeLayerStart,
-    runtimeLayerEnd
+    runtimeLayerEnd,
   )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.orDie,
@@ -265,43 +235,27 @@ class ModuleContractScaffoldError extends Schema.TaggedError<ModuleContractScaff
   {
     cause: Schema.optionalKey(Schema.Unknown),
     message: Schema.String,
-  }
+  },
 ) {}
 
 const { scaffoldError, trySync } = createScaffoldErrorTools(
   ModuleContractScaffoldError,
   Schema.is(ModuleContractScaffoldError),
-  'module contract update failed'
+  'module contract update failed',
 );
 
-const readModuleOwner = (
-  fileSystem: FileSystem.FileSystem,
-  verticalsRoot: string,
-  entryName: string
-) => {
-  const manifestPath = resolveContainedPath(
-    verticalsRoot,
-    entryName,
-    MANIFEST_FILE_NAME
-  );
+const readModuleOwner = (fileSystem: FileSystem.FileSystem, verticalsRoot: string, entryName: string) => {
+  const manifestPath = resolveContainedPath(verticalsRoot, entryName, MANIFEST_FILE_NAME);
   return Effect.gen(function* readModuleOwnerEffect() {
     const exists = yield* fileSystem
       .exists(manifestPath)
-      .pipe(
-        Effect.mapError((cause) =>
-          scaffoldError(`failed to inspect ${manifestPath}`, cause)
-        )
-      );
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${manifestPath}`, cause)));
     if (!exists) {
       return null;
     }
     const content = yield* fileSystem
       .readFileString(manifestPath)
-      .pipe(
-        Effect.mapError((cause) =>
-          scaffoldError(`failed to read ${manifestPath}`, cause)
-        )
-      );
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${manifestPath}`, cause)));
     return {
       entryName,
       moduleId: moduleMarkerPattern.exec(content)?.groups?.['moduleId'],
@@ -312,41 +266,29 @@ const readModuleOwner = (
 const assertUniqueModuleId = (
   workspaceRoot: string,
   targetSlug: string,
-  moduleId: string
+  moduleId: string,
 ): Effect.Effect<void, ModuleContractScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* assertUniqueModuleIdEffect() {
-    const verticalsRoot = yield* trySync(() =>
-      resolveContainedPath(workspaceRoot, 'verticals')
-    );
+    const verticalsRoot = yield* trySync(() => resolveContainedPath(workspaceRoot, 'verticals'));
     const fileSystem = yield* FileSystem.FileSystem;
     const entries = yield* fileSystem
       .readDirectory(verticalsRoot)
       .pipe(
-        Effect.mapError((cause) =>
-          scaffoldError(
-            `failed to inspect generated verticals at ${verticalsRoot}`,
-            cause
-          )
-        )
+        Effect.mapError((cause) => scaffoldError(`failed to inspect generated verticals at ${verticalsRoot}`, cause)),
       );
     const owners = yield* Effect.forEach(
       entries.filter((entryName) => entryName !== targetSlug),
       (entryName) => readModuleOwner(fileSystem, verticalsRoot, entryName),
-      { concurrency: 'unbounded' }
+      { concurrency: 'unbounded' },
     );
     const duplicate = owners.find((owner) => owner?.moduleId === moduleId);
     if (duplicate !== undefined && duplicate !== null) {
-      return yield* scaffoldError(
-        `duplicate OntOS module ID ${moduleId} in vertical ${duplicate.entryName}`
-      );
+      return yield* scaffoldError(`duplicate OntOS module ID ${moduleId} in vertical ${duplicate.entryName}`);
     }
     return yield* Effect.void;
   });
 
-const renderManifest = (
-  vertical: VerticalMetadata,
-  moduleId: string
-): string => {
+const renderManifest = (vertical: VerticalMetadata, moduleId: string): string => {
   const valueName = `${toCamelCase(vertical.slug)}Manifest`;
   return `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
@@ -458,10 +400,7 @@ export const ${valueName} = defineOntosModuleManifest({
 `;
 };
 
-const renderRegistration = (
-  vertical: VerticalMetadata,
-  moduleId: string
-): string => {
+const renderRegistration = (vertical: VerticalMetadata, moduleId: string): string => {
   const prefix = toCamelCase(vertical.slug);
   return `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
@@ -518,78 +457,49 @@ const addArtifactCommand = (
   current: JsonValue | undefined,
   vertical: VerticalMetadata,
   target: 'cloudflare-dist' | 'dist',
-  label: string
+  label: string,
 ): Effect.Effect<string, ModuleContractScaffoldError> =>
   Effect.gen(function* addArtifactCommandEffect() {
-    const script = yield* trySync(() =>
-      requiredString(current, `vertical ${vertical.slug} ${label} script`)
-    );
+    const script = yield* trySync(() => requiredString(current, `vertical ${vertical.slug} ${label} script`));
     const command = `node ../../scripts/generate-ontos-module-contract.mts --vertical ${vertical.slug} --target ${target}`;
     if (script.includes('generate-ontos-module-contract.mts')) {
-      return yield* scaffoldError(
-        `vertical ${vertical.slug} ${label} script already contains module emission`
-      );
+      return yield* scaffoldError(`vertical ${vertical.slug} ${label} script already contains module emission`);
     }
-    const buildToken =
-      target === 'dist'
-        ? 'modern build'
-        : 'MODERNJS_DEPLOY=cloudflare modern build';
+    const buildToken = target === 'dist' ? 'modern build' : 'MODERNJS_DEPLOY=cloudflare modern build';
     if (!script.includes(buildToken)) {
-      return yield* scaffoldError(
-        `vertical ${vertical.slug} ${label} script is not a generated Modern build`
-      );
+      return yield* scaffoldError(`vertical ${vertical.slug} ${label} script is not a generated Modern build`);
     }
     return script.replace(buildToken, `${buildToken} && ${command}`);
   });
 
 const patchPackage = (
   vertical: VerticalMetadata,
-  moduleId: string
+  moduleId: string,
 ): Effect.Effect<string, ModuleContractScaffoldError> =>
   Effect.gen(function* patchPackageEffect() {
     const dependencies = yield* trySync(() => ({
-      ...asJsonObject(
-        vertical.packageJson['dependencies'],
-        `vertical ${vertical.slug} dependencies`
-      ),
+      ...asJsonObject(vertical.packageJson['dependencies'], `vertical ${vertical.slug} dependencies`),
     }));
     const currentCore = dependencies['@app/core-runtime'];
     if (currentCore !== undefined && currentCore !== 'workspace:*') {
-      return yield* scaffoldError(
-        `vertical ${vertical.slug} has an incompatible @app/core-runtime dependency`
-      );
+      return yield* scaffoldError(`vertical ${vertical.slug} has an incompatible @app/core-runtime dependency`);
     }
     dependencies['@app/core-runtime'] = 'workspace:*';
     const sortedDependencies = Object.fromEntries(
-      Object.entries(dependencies).toSorted(([left], [right]) =>
-        left.localeCompare(right)
-      )
+      Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
     );
     const scripts = yield* trySync(() => ({
-      ...asJsonObject(
-        vertical.packageJson['scripts'],
-        `vertical ${vertical.slug} scripts`
-      ),
+      ...asJsonObject(vertical.packageJson['scripts'], `vertical ${vertical.slug} scripts`),
     }));
-    scripts['build'] = yield* addArtifactCommand(
-      scripts['build'],
-      vertical,
-      'dist',
-      'build'
-    );
+    scripts['build'] = yield* addArtifactCommand(scripts['build'], vertical, 'dist', 'build');
     scripts['cloudflare:build'] = yield* addArtifactCommand(
       scripts['cloudflare:build'],
       vertical,
       'cloudflare-dist',
-      'cloudflare:build'
+      'cloudflare:build',
     );
     return yield* trySync(() => {
-      let content = patchJsonObjectProperty(
-        vertical.packageContent,
-        [],
-        'dependencies',
-        sortedDependencies
-      );
+      let content = patchJsonObjectProperty(vertical.packageContent, [], 'dependencies', sortedDependencies);
       content = patchJsonObjectProperty(content, [], 'scripts', scripts);
       return patchJsonObjectProperty(content, ['modernjs'], 'ontosModule', {
         contractPath: '/.well-known/ontos-module-manifest.json',
@@ -602,50 +512,30 @@ const patchPackage = (
   });
 
 const patchTsconfig = (
-  vertical: VerticalMetadata
-): Effect.Effect<
-  Option.Option<Mutation>,
-  ModuleContractScaffoldError | ScaffoldFailure,
-  FileSystem.FileSystem
-> =>
+  vertical: VerticalMetadata,
+): Effect.Effect<Option.Option<Mutation>, ModuleContractScaffoldError | ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* patchTsconfigEffect() {
-    const tsconfigPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, 'tsconfig.json')
-    );
-    const { content, value } = yield* readJsonEffect(
-      tsconfigPath,
-      `vertical ${vertical.slug} tsconfig`
-    );
-    const include = yield* Schema.decodeUnknownEffect(
-      Schema.Array(Schema.String)
-    )(value['include']).pipe(
+    const tsconfigPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'tsconfig.json'));
+    const { content, value } = yield* readJsonEffect(tsconfigPath, `vertical ${vertical.slug} tsconfig`);
+    const include = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.String))(value['include']).pipe(
       Effect.mapError((cause) =>
-        scaffoldError(
-          `vertical ${vertical.slug} tsconfig include must be a string array`,
-          cause
-        )
-      )
+        scaffoldError(`vertical ${vertical.slug} tsconfig include must be a string array`, cause),
+      ),
     );
     const nextInclude = [
       ...include,
-      ...[MANIFEST_FILE_NAME, 'vertical.registration.ts'].filter(
-        (entry) => !include.includes(entry)
-      ),
+      ...[MANIFEST_FILE_NAME, 'vertical.registration.ts'].filter((entry) => !include.includes(entry)),
     ];
     return yield* trySync(() =>
       Option.fromNullishOr(
-        updateMutation(
-          tsconfigPath,
-          content,
-          patchJsonObjectProperty(content, [], 'include', nextInclude)
-        )
-      )
+        updateMutation(tsconfigPath, content, patchJsonObjectProperty(content, [], 'include', nextInclude)),
+      ),
     );
   });
 
 const planModuleContractScaffold = (
   workspaceRoot: string,
-  config: ModuleContractScaffoldConfig
+  config: ModuleContractScaffoldConfig,
 ): Effect.Effect<
   ScaffoldPlan<ModuleContractScaffoldResult>,
   ModuleContractScaffoldError | ScaffoldFailure,
@@ -653,90 +543,37 @@ const planModuleContractScaffold = (
 > =>
   Effect.gen(function* planModuleContractScaffoldEffect() {
     const moduleId = yield* trySync(() => requireOntosModuleId(config.module));
-    const vertical = yield* discoverVerticalEffect(
-      workspaceRoot,
-      config.vertical
-    );
+    const vertical = yield* discoverVerticalEffect(workspaceRoot, config.vertical);
     yield* assertUniqueModuleId(workspaceRoot, vertical.slug, moduleId);
-    const manifestPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, MANIFEST_FILE_NAME)
-    );
-    const registrationPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, 'vertical.registration.ts')
-    );
-    const sharedApiPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, 'shared', 'api.ts')
-    );
-    const apiRootPath = yield* trySync(() =>
-      resolveContainedPath(vertical.directory, 'api', 'index.ts')
-    );
-    const manifestMutation = yield* createMutationEffect(
-      manifestPath,
-      renderManifest(vertical, moduleId)
-    );
-    const registrationMutation = yield* createMutationEffect(
-      registrationPath,
-      renderRegistration(vertical, moduleId)
-    );
+    const manifestPath = yield* trySync(() => resolveContainedPath(vertical.directory, MANIFEST_FILE_NAME));
+    const registrationPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'vertical.registration.ts'));
+    const sharedApiPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'shared', 'api.ts'));
+    const apiRootPath = yield* trySync(() => resolveContainedPath(vertical.directory, 'api', 'index.ts'));
+    const manifestMutation = yield* createMutationEffect(manifestPath, renderManifest(vertical, moduleId));
+    const registrationMutation = yield* createMutationEffect(registrationPath, renderRegistration(vertical, moduleId));
     const fileSystem = yield* FileSystem.FileSystem;
     const sharedApiExists = yield* fileSystem
       .exists(sharedApiPath)
       .pipe(
-        Effect.mapError((cause) =>
-          scaffoldError(
-            `failed to inspect vertical ${vertical.slug} shared API root`,
-            cause
-          )
-        )
+        Effect.mapError((cause) => scaffoldError(`failed to inspect vertical ${vertical.slug} shared API root`, cause)),
       );
     const sharedApiMutation = sharedApiExists
       ? yield* fileSystem.readFileString(sharedApiPath).pipe(
-          Effect.mapError((cause) =>
-            scaffoldError(
-              `failed to read vertical ${vertical.slug} shared API root`,
-              cause
-            )
-          ),
+          Effect.mapError((cause) => scaffoldError(`failed to read vertical ${vertical.slug} shared API root`, cause)),
           Effect.flatMap((content) =>
-            trySync(() =>
-              updateMutation(
-                sharedApiPath,
-                content,
-                initializeGovernedHttpApiRoot(content, vertical)
-              )
-            )
-          )
+            trySync(() => updateMutation(sharedApiPath, content, initializeGovernedHttpApiRoot(content, vertical))),
+          ),
         )
-      : yield* createMutationEffect(
-          sharedApiPath,
-          renderGovernedHttpApiRoot(vertical)
-        );
+      : yield* createMutationEffect(sharedApiPath, renderGovernedHttpApiRoot(vertical));
     const apiRootContent = yield* fileSystem
       .readFileString(apiRootPath)
-      .pipe(
-        Effect.mapError((cause) =>
-          scaffoldError(
-            `failed to read vertical ${vertical.slug} API root`,
-            cause
-          )
-        )
-      );
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to read vertical ${vertical.slug} API root`, cause)));
     const apiRootMutation = yield* trySync(() =>
-      updateMutation(
-        apiRootPath,
-        apiRootContent,
-        initializeGovernedHttpHandlerRoot(apiRootContent, vertical)
-      )
+      updateMutation(apiRootPath, apiRootContent, initializeGovernedHttpHandlerRoot(apiRootContent, vertical)),
     );
     const packageContent = yield* patchPackage(vertical, moduleId);
     const packageMutation = yield* trySync(() =>
-      Option.fromNullishOr(
-        updateMutation(
-          vertical.packagePath,
-          vertical.packageContent,
-          packageContent
-        )
-      )
+      Option.fromNullishOr(updateMutation(vertical.packagePath, vertical.packageContent, packageContent)),
     );
     const tsconfigMutation = yield* patchTsconfig(vertical);
     const mutations = EffectArray.getSomes([

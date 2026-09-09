@@ -23,17 +23,15 @@ const context = {
 };
 
 it('rollout contract accepts an active configuration bound to the classified inventory', () => {
-  expect(validateAuthorizationRolloutContract(contract, context)).toEqual(
-    contract
-  );
+  expect(validateAuthorizationRolloutContract(contract, context)).toEqual(contract);
 });
 
 it('the historical baseline revision does not have to equal the self-referential current commit', () => {
   expect(
     validateAuthorizationRolloutContract(
       { ...contract, baselineSourceRevision: 'historical-baseline-revision' },
-      context
-    ).baselineSourceRevision
+      context,
+    ).baselineSourceRevision,
   ).toEqual('historical-baseline-revision');
 });
 
@@ -41,8 +39,8 @@ it('enforced rollout remains active after the report-only deadline', () => {
   expect(
     validateAuthorizationRolloutContract(
       { ...contract, mode: 'enforced' },
-      { ...context, nowEpochMs: Date.parse('2026-11-01T00:00:00.000Z') }
-    ).mode
+      { ...context, nowEpochMs: Date.parse('2026-11-01T00:00:00.000Z') },
+    ).mode,
   ).toBe('enforced');
 });
 
@@ -51,28 +49,23 @@ it('rollout contract rejects expiry, stale inventory binding, extra fields, and 
     validateAuthorizationRolloutContract(contract, {
       ...context,
       nowEpochMs: Date.parse(expiry),
-    })
+    }),
   ).toThrow(/inactive or expired/u);
   expect(() =>
     validateAuthorizationRolloutContract(contract, {
       ...context,
       inventoryHash: 'other',
-    })
+    }),
   ).toThrow(/does not match/u);
-  expect(() =>
-    validateAuthorizationRolloutContract(
-      { ...contract, arbitrary: true },
-      context
-    )
-  ).toThrow(/malformed/u);
+  expect(() => validateAuthorizationRolloutContract({ ...contract, arbitrary: true }, context)).toThrow(/malformed/u);
   expect(() =>
     validateAuthorizationRolloutContract(
       {
         ...contract,
         compatibilityEligibleEntrypoints: [entrypointKey, entrypointKey],
       },
-      context
-    )
+      context,
+    ),
   ).toThrow(/duplicates/u);
   expect(() =>
     validateAuthorizationRolloutContract(
@@ -80,7 +73,7 @@ it('rollout contract rejects expiry, stale inventory binding, extra fields, and 
         ...contract,
         compatibilityEligibleEntrypoints: ['contacts.new-action'],
       },
-      context
-    )
+      context,
+    ),
   ).toThrow(/unknown entrypoint/u);
 });

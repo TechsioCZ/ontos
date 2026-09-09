@@ -4,10 +4,7 @@ import { expect, it } from 'effect-rstest';
 import { Headers, HttpServerRequest } from 'effect/unstable/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import {
-  classifyReadCoreError,
-  makeGovernedReadHttpHandler,
-} from '../../src/http/governed-read.ts';
+import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { ModuleStateCheckUnavailableError } from '../../src/modules/module-state-check-unavailable-error.ts';
 import { ModuleStateDeniedError } from '../../src/modules/module-state-denied-error.ts';
@@ -31,10 +28,10 @@ import { ReadResultValidationError } from '../../src/reads/read-result-validatio
 import { ReadRuntime } from '../../src/reads/runtime.ts';
 import type { ReadRuntimeService } from '../../src/reads/runtime.ts';
 
-const problem = <const Kind extends string, const Status extends number>(
-  kind: Kind,
-  status: Status
-) => ({ kind, status });
+const problem = <const Kind extends string, const Status extends number>(kind: Kind, status: Status) => ({
+  kind,
+  status,
+});
 
 const problems = {
   authentication: () => problem('authentication', 401),
@@ -55,10 +52,7 @@ const capturedLoggerLayer = (entries: string[]) =>
   ]);
 
 const reason = 'safe reason';
-const coreFailures: readonly [
-  ReadCoreError,
-  ReturnType<(typeof problems)[keyof typeof problems]>,
-][] = [
+const coreFailures: readonly [ReadCoreError, ReturnType<(typeof problems)[keyof typeof problems]>][] = [
   [
     new ModuleStateCheckUnavailableError({
       code: 'module_state_check_unavailable',
@@ -66,10 +60,7 @@ const coreFailures: readonly [
     }),
     problems.unavailable(),
   ],
-  [
-    new ModuleStateDeniedError({ code: 'module_state_denied', reason }),
-    problems.forbidden(),
-  ],
+  [new ModuleStateDeniedError({ code: 'module_state_denied', reason }), problems.forbidden()],
   [
     new OperationAuthenticationRequired({
       code: 'operation_authentication_required',
@@ -77,14 +68,8 @@ const coreFailures: readonly [
     }),
     problems.authentication(),
   ],
-  [
-    new OperationContextDenied({ code: 'operation_context_denied', reason }),
-    problems.forbidden(),
-  ],
-  [
-    new OperationContextInvalid({ code: 'operation_context_invalid', reason }),
-    problems.forbidden(),
-  ],
+  [new OperationContextDenied({ code: 'operation_context_denied', reason }), problems.forbidden()],
+  [new OperationContextInvalid({ code: 'operation_context_invalid', reason }), problems.forbidden()],
   [
     new OperationContextUnavailable({
       code: 'operation_context_unavailable',
@@ -99,10 +84,7 @@ const coreFailures: readonly [
     }),
     problems.unavailable(),
   ],
-  [
-    new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }),
-    problems.internal(),
-  ],
+  [new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason }), problems.internal()],
   [
     new ReadHandlerExecutionError({
       code: 'read_handler_execution_failed',
@@ -110,22 +92,10 @@ const coreFailures: readonly [
     }),
     problems.internal(),
   ],
-  [
-    new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }),
-    problems.notFound(),
-  ],
-  [
-    new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }),
-    problems.unavailable(),
-  ],
-  [
-    new ReadInputValidationError({ code: 'read_input_invalid', reason }),
-    problems.invalid(),
-  ],
-  [
-    new ReadPermissionDenied({ code: 'read_permission_denied', reason }),
-    problems.forbidden(),
-  ],
+  [new ReadHandlerNotFound({ code: 'read_handler_not_found', reason }), problems.notFound()],
+  [new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }), problems.unavailable()],
+  [new ReadInputValidationError({ code: 'read_input_invalid', reason }), problems.invalid()],
+  [new ReadPermissionDenied({ code: 'read_permission_denied', reason }), problems.forbidden()],
   [
     new ReadPermissionUnavailable({
       code: 'read_permission_unavailable',
@@ -140,10 +110,7 @@ const coreFailures: readonly [
     }),
     problems.unavailable(),
   ],
-  [
-    new ReadResultValidationError({ code: 'read_result_invalid', reason }),
-    problems.internal(),
-  ],
+  [new ReadResultValidationError({ code: 'read_result_invalid', reason }), problems.internal()],
 ];
 
 it('classifies every Core governed-read failure through the endpoint problem set', () => {
@@ -203,7 +170,7 @@ const registration = defineRead(
       result: { ok: true as const },
     }),
   () => Effect.succeed({}),
-  () => ({ kind: 'module', moduleId: 'core.shell' })
+  () => ({ kind: 'module', moduleId: 'core.shell' }),
 );
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -224,205 +191,174 @@ const readRuntime = {
     return Effect.succeed({ ok: true as const });
   },
 } as ReadRuntimeService;
-const requestService = HttpServerRequest.fromWeb(
-  new Request('https://ontos.test/reads/fixture')
-);
+const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
 
-it.effect(
-  'validates correlation before authentication or ReadRuntime acquisition',
-  () =>
-    Effect.gen(function* validateCorrelationFirst() {
-      let authenticationCalls = 0;
-      const handler = makeGovernedReadHttpHandler({
-        authenticatePrincipal: () => {
-          authenticationCalls += 1;
-          return Effect.succeed(principal);
-        },
-        problems,
-        registration,
-      });
-      const exit = yield* Effect.exit(
-        handler({
-          payload: { query: 'fixture' },
-          request: {
-            headers: Headers.fromInput({
-              authorization: 'Bearer private',
-              'x-correlation-id': '   ',
-            }),
-          },
-        })
-      ).pipe(
-        Effect.provideService(ReadRuntime, readRuntime),
-        Effect.provideService(
-          HttpServerRequest.HttpServerRequest,
-          requestService
-        )
-      );
-      expect(authenticationCalls).toBe(0);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toEqual(problems.invalid());
-      }
-    })
-);
-
-it.effect(
-  'sanitizes synchronous defects across correlation validation and authentication',
-  () =>
-    Effect.gen(function* sanitizeSynchronousDefects() {
-      const cases = [
-        {
-          handler: makeGovernedReadHttpHandler({
-            authenticatePrincipal: () => Effect.succeed(principal),
-            problems: {
-              ...problems,
-              invalid: () => {
-                throw new Error('private invalid-problem factory detail');
-              },
-            },
-            registration,
-          }),
-          headers: Headers.empty,
-        },
-        {
-          handler: makeGovernedReadHttpHandler({
-            authenticatePrincipal: (): Effect.Effect<typeof principal> => {
-              throw new Error('private authentication adapter detail');
-            },
-            problems,
-            registration,
-          }),
-          headers: Headers.fromInput({
-            'x-correlation-id': 'synchronous-defect',
-          }),
-        },
-      ];
-      const exits = yield* Effect.forEach(
-        cases,
-        ({ handler, headers }) =>
-          Effect.exit(
-            handler({ payload: { query: 'fixture' }, request: { headers } })
-          ).pipe(
-            Effect.provideService(ReadRuntime, readRuntime),
-            Effect.provideService(
-              HttpServerRequest.HttpServerRequest,
-              requestService
-            )
-          ),
-        { concurrency: 'unbounded' }
-      );
-      for (const exit of exits) {
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const publicFailure = Cause.squash(exit.cause);
-          expect(publicFailure).toEqual(problems.internal());
-          expect(
-            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-              publicFailure
-            )
-          ).not.toMatch(/private/u);
-        }
-      }
-    })
-);
-
-it.effect(
-  'passes only payload, trusted principal, registration, and correlation to ReadRuntime',
-  () =>
-    Effect.gen(function* forwardTrustedReadInputs() {
-      const payload = { query: 'fixture' };
-      observed.length = 0;
-      const handler = makeGovernedReadHttpHandler({
-        authenticatePrincipal: (authorization) => {
-          expect(Redacted.value(authorization)).toBe('Bearer private');
-          return Effect.succeed(principal);
-        },
-        problems,
-        registration,
-      });
-      const assertDecodedPayloadInput = () =>
-        handler({
-          payload: {
-            // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
-            query: 123,
-          },
-          request: { headers: Headers.empty },
-        });
-      void assertDecodedPayloadInput;
-      const result = yield* handler({
-        payload,
+it.effect('validates correlation before authentication or ReadRuntime acquisition', () =>
+  Effect.gen(function* validateCorrelationFirst() {
+    let authenticationCalls = 0;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => {
+        authenticationCalls += 1;
+        return Effect.succeed(principal);
+      },
+      problems,
+      registration,
+    });
+    const exit = yield* Effect.exit(
+      handler({
+        payload: { query: 'fixture' },
         request: {
           headers: Headers.fromInput({
             authorization: 'Bearer private',
-            'x-correlation-id': 'correlation-test',
+            'x-correlation-id': '   ',
           }),
         },
-      }).pipe(
-        Effect.provideService(ReadRuntime, readRuntime),
-        Effect.provideService(
-          HttpServerRequest.HttpServerRequest,
-          requestService
-        )
-      );
-      expect(result).toEqual({ ok: true });
-      expect(observed).toEqual([
-        {
-          input: payload,
-          principal,
-          registration,
-          transport: { correlationId: 'correlation-test' },
-        },
-      ]);
-    })
+      }),
+    ).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(authenticationCalls).toBe(0);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toEqual(problems.invalid());
+    }
+  }),
 );
 
-it.effect(
-  'sanitizes unexpected defects at the complete governed handler boundary',
-  () =>
-    Effect.gen(function* sanitizeHandlerDefects() {
-      // SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
-      // other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
-      const defectRuntime = {
-        runRead: () =>
-          Effect.die(new Error('private database connection detail')),
-      } as ReadRuntimeService;
-      const handler = makeGovernedReadHttpHandler({
-        authenticatePrincipal: () => Effect.succeed(principal),
-        problems,
-        registration,
-      });
-      const logEntries: string[] = [];
-      const exit = yield* Effect.exit(
-        handler({
-          payload: { query: 'fixture' },
-          request: {
-            headers: Headers.fromInput({
-              'x-correlation-id': 'correlation-defect',
-            }),
+it.effect('sanitizes synchronous defects across correlation validation and authentication', () =>
+  Effect.gen(function* sanitizeSynchronousDefects() {
+    const cases = [
+      {
+        handler: makeGovernedReadHttpHandler({
+          authenticatePrincipal: () => Effect.succeed(principal),
+          problems: {
+            ...problems,
+            invalid: () => {
+              throw new Error('private invalid-problem factory detail');
+            },
           },
-        })
-      ).pipe(
-        Effect.provideService(ReadRuntime, defectRuntime),
-        Effect.provideService(
-          HttpServerRequest.HttpServerRequest,
-          requestService
+          registration,
+        }),
+        headers: Headers.empty,
+      },
+      {
+        handler: makeGovernedReadHttpHandler({
+          authenticatePrincipal: (): Effect.Effect<typeof principal> => {
+            throw new Error('private authentication adapter detail');
+          },
+          problems,
+          registration,
+        }),
+        headers: Headers.fromInput({
+          'x-correlation-id': 'synchronous-defect',
+        }),
+      },
+    ];
+    const exits = yield* Effect.forEach(
+      cases,
+      ({ handler, headers }) =>
+        Effect.exit(handler({ payload: { query: 'fixture' }, request: { headers } })).pipe(
+          Effect.provideService(ReadRuntime, readRuntime),
+          Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
         ),
-        Effect.provide(capturedLoggerLayer(logEntries))
-      );
+      { concurrency: 'unbounded' },
+    );
+    for (const exit of exits) {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const publicFailure = Cause.squash(exit.cause);
         expect(publicFailure).toEqual(problems.internal());
-        expect(
-          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
-            publicFailure
-          )
-        ).not.toMatch(/private database connection detail/u);
+        expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure)).not.toMatch(
+          /private/u,
+        );
       }
-      expect(logEntries.length).toBe(1);
-      expect(logEntries.join('\n')).not.toMatch(
-        /private database connection detail/u
+    }
+  }),
+);
+
+it.effect('passes only payload, trusted principal, registration, and correlation to ReadRuntime', () =>
+  Effect.gen(function* forwardTrustedReadInputs() {
+    const payload = { query: 'fixture' };
+    observed.length = 0;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: (authorization) => {
+        expect(Redacted.value(authorization)).toBe('Bearer private');
+        return Effect.succeed(principal);
+      },
+      problems,
+      registration,
+    });
+    const assertDecodedPayloadInput = () =>
+      handler({
+        payload: {
+          // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
+          query: 123,
+        },
+        request: { headers: Headers.empty },
+      });
+    void assertDecodedPayloadInput;
+    const result = yield* handler({
+      payload,
+      request: {
+        headers: Headers.fromInput({
+          authorization: 'Bearer private',
+          'x-correlation-id': 'correlation-test',
+        }),
+      },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(observed).toEqual([
+      {
+        input: payload,
+        principal,
+        registration,
+        transport: { correlationId: 'correlation-test' },
+      },
+    ]);
+  }),
+);
+
+it.effect('sanitizes unexpected defects at the complete governed handler boundary', () =>
+  Effect.gen(function* sanitizeHandlerDefects() {
+    // SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
+    // other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
+    const defectRuntime = {
+      runRead: () => Effect.die(new Error('private database connection detail')),
+    } as ReadRuntimeService;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => Effect.succeed(principal),
+      problems,
+      registration,
+    });
+    const logEntries: string[] = [];
+    const exit = yield* Effect.exit(
+      handler({
+        payload: { query: 'fixture' },
+        request: {
+          headers: Headers.fromInput({
+            'x-correlation-id': 'correlation-defect',
+          }),
+        },
+      }),
+    ).pipe(
+      Effect.provideService(ReadRuntime, defectRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+      Effect.provide(capturedLoggerLayer(logEntries)),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const publicFailure = Cause.squash(exit.cause);
+      expect(publicFailure).toEqual(problems.internal());
+      expect(yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(publicFailure)).not.toMatch(
+        /private database connection detail/u,
       );
-      expect(logEntries[0] ?? '').toMatch(/correlation-defect/u);
-    })
+    }
+    expect(logEntries.length).toBe(1);
+    expect(logEntries.join('\n')).not.toMatch(/private database connection detail/u);
+    expect(logEntries[0] ?? '').toMatch(/correlation-defect/u);
+  }),
 );

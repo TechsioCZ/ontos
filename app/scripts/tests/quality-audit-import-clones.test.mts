@@ -2,17 +2,13 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Path, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  containsOnlyImportBindings,
-  importCloneEvidence,
-} from '../../quality-audit/import-clone-evidence.mts';
+import { containsOnlyImportBindings, importCloneEvidence } from '../../quality-audit/import-clone-evidence.mts';
 
 it.effect(
   'recognizes complete static bindings while retaining side effects, implementations and incomplete spans',
   () =>
     Effect.sync(() => {
-      const bindings =
-        "import { alpha } from './alpha';\nimport { beta } from './beta';";
+      const bindings = "import { alpha } from './alpha';\nimport { beta } from './beta';";
       expect(containsOnlyImportBindings(bindings)).toBe(true);
       for (const source of [
         `${bindings}\nalpha(beta);`,
@@ -24,7 +20,7 @@ it.effect(
       ]) {
         expect(containsOnlyImportBindings(source)).toBe(false);
       }
-    })
+    }),
 );
 
 it.live('requires both reported file ranges to prove import bindings', () =>
@@ -37,8 +33,7 @@ it.live('requires both reported file ranges to prove import bindings', () =>
         Effect.gen(function* verifyImportRanges() {
           const first = path.join(root, 'first.ts');
           const second = path.join(root, 'second.ts');
-          const source =
-            "import { alpha } from './alpha';\nimport { beta } from './beta';\nalpha(beta);";
+          const source = "import { alpha } from './alpha';\nimport { beta } from './beta';\nalpha(beta);";
           yield* fs.writeFileString(first, source);
           yield* fs.writeFileString(second, source);
           const firstFile = { end: 2, name: first, start: 1 };
@@ -56,14 +51,12 @@ it.live('requires both reported file ranges to prove import bindings', () =>
               },
             },
           ];
-          const report = yield* Schema.encodeEffect(
-            Schema.fromJsonString(Schema.Unknown)
-          )({ duplicates });
-          expect(yield* importCloneEvidence(root, report)).toEqual([
-            { firstFile, secondFile },
-          ]);
+          const report = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            duplicates,
+          });
+          expect(yield* importCloneEvidence(root, report)).toEqual([{ firstFile, secondFile }]);
         }),
-      (root) => fs.remove(root, { recursive: true })
+      (root) => fs.remove(root, { recursive: true }),
     );
-  }).pipe(Effect.provide(NodeServices.layer))
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

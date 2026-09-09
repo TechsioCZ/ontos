@@ -5,10 +5,7 @@ import { Cause, Effect } from 'effect';
 // acquisition must finalize before reporting its typed timeout and must never complete.
 const stalledAcquisitionDeadline = '250 millis';
 
-const test = base.extend<
-  Record<never, never>,
-  { stalledAcquisition: readonly string[] }
->({
+const test = base.extend<Record<never, never>, { stalledAcquisition: readonly string[] }>({
   stalledAcquisition: [
     async ({ browserName: _browserName }, use) => {
       const events: string[] = [];
@@ -17,7 +14,7 @@ const test = base.extend<
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             events.push('finalizer');
-          })
+          }),
         );
         return yield* Effect.never;
       });
@@ -26,8 +23,8 @@ const test = base.extend<
           Effect.gen(function* useStalledAcquisition() {
             yield* Effect.timeout(acquisition, stalledAcquisitionDeadline);
             events.push('acquired');
-          }).pipe(Effect.scoped)
-        )
+          }).pipe(Effect.scoped),
+        ),
       );
       expect(failure).toBeInstanceOf(Cause.TimeoutError);
       events.push('reported timeout');
@@ -37,8 +34,6 @@ const test = base.extend<
   ],
 });
 
-test('finishes installed finalizers before reporting a stalled acquisition', ({
-  stalledAcquisition,
-}) => {
+test('finishes installed finalizers before reporting a stalled acquisition', ({ stalledAcquisition }) => {
   expect(stalledAcquisition).toEqual(['finalizer', 'reported timeout']);
 });

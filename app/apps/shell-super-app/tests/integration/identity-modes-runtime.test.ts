@@ -38,17 +38,8 @@ import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/suppor
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
-import {
-  account,
-  apikey,
-  session,
-  supportImpersonationRecovery,
-  user,
-} from '../../api/auth/db/schema.ts';
-import {
-  issueGatewayContextAssertion,
-  makeGatewayIssuerLayer,
-} from '../../api/auth/gateway-issuer.ts';
+import { account, apikey, session, supportImpersonationRecovery, user } from '../../api/auth/db/schema.ts';
+import { issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import { makeIdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
 import {
   makeSupportAuthProvider,
@@ -58,10 +49,7 @@ import {
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
-import {
-  AuthenticationService,
-  makeAuthenticationService,
-} from '../../api/auth/service.ts';
+import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   const cookies = new Map<string, string>();
@@ -88,32 +76,16 @@ it.live.each([
   Effect.fnUntraced(function* runIntegration1({ pendingCleanupOnly }) {
     const baseConfiguration = yield* loadAuthConfig();
     const corePool = yield* Effect.acquireRelease(
-      Effect.sync(
-        () => new Pool({ connectionString: baseConfiguration.connectionString })
-      ),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie)
+      Effect.sync(() => new Pool({ connectionString: baseConfiguration.connectionString })),
+      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
     );
     const authPersistence = yield* makeAuthDatabase(baseConfiguration);
     const authDatabase = authPersistence.executor;
-    const coreDatabase = yield* makeTestDatabaseFromPool(
-      corePool,
-      coreRelations
-    );
-    const principalManagementRepository =
-      principalManagementRepositoryFromTransaction(coreDatabase);
-    const providePrincipalManagementRepository = <
-      Success,
-      Failure,
-      Requirements,
-    >(
-      effect: Effect.Effect<Success, Failure, Requirements>
-    ) =>
-      effect.pipe(
-        Effect.provideService(
-          PrincipalManagementRepository,
-          principalManagementRepository
-        )
-      );
+    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const principalManagementRepository = principalManagementRepositoryFromTransaction(coreDatabase);
+    const providePrincipalManagementRepository = <Success, Failure, Requirements>(
+      effect: Effect.Effect<Success, Failure, Requirements>,
+    ) => effect.pipe(Effect.provideService(PrincipalManagementRepository, principalManagementRepository));
     const tenantId = randomUUID();
     const originalPrincipalId = randomUUID();
     const targetPrincipalId = randomUUID();
@@ -149,53 +121,40 @@ it.live.each([
         Effect.succeed(
           tenantIds.map((key) => ({
             decision:
-              permission === 'impersonate' && !supportPermissionAllowed
-                ? ('denied' as const)
-                : ('allowed' as const),
+              permission === 'impersonate' && !supportPermissionAllowed ? ('denied' as const) : ('allowed' as const),
             key,
-          }))
+          })),
         ),
     };
     const provideContextAccess = <Success, Failure, Requirements>(
-      effect: Effect.Effect<Success, Failure, Requirements>
-    ) =>
-      effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess));
+      effect: Effect.Effect<Success, Failure, Requirements>,
+    ) => effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess));
     const operationalScope = makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }),
-      allowedContextAccess
+      allowedContextAccess,
     );
     const actionRuntime = makeActionRuntime(
       { executor: coreDatabase },
       makeActionRepository(),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
-      { ...openActionRuntimeOptions, contextAccess: allowedContextAccess }
+      { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },
     );
     const fixtureAuthentication = yield* makeAuthenticationService({
       allowFixtureSignUp: true,
     }).pipe(
       Effect.provideService(AuthConfig, baseConfiguration),
       Effect.provideService(AuthDatabase, authPersistence),
-      Effect.provideService(PrincipalResolver, resolver)
+      Effect.provideService(PrincipalResolver, resolver),
     );
     let originalUserId = '';
     let targetUserId = '';
     let secondAdministratorUserId = '';
     const cleanup = Effect.fnUntraced(function* runIntegration2() {
-      if (
-        originalUserId.length > 0 ||
-        targetUserId.length > 0 ||
-        secondAdministratorUserId.length > 0
-      ) {
-        const ids = [
-          originalUserId,
-          targetUserId,
-          secondAdministratorUserId,
-        ].filter((id) => id.length > 0);
+      if (originalUserId.length > 0 || targetUserId.length > 0 || secondAdministratorUserId.length > 0) {
+        const ids = [originalUserId, targetUserId, secondAdministratorUserId].filter((id) => id.length > 0);
         yield* purgeFixtureRows([
-          authDatabase
-            .delete(supportImpersonationRecovery)
-            .where(eq(supportImpersonationRecovery.tenantId, tenantId)),
+          authDatabase.delete(supportImpersonationRecovery).where(eq(supportImpersonationRecovery.tenantId, tenantId)),
           authDatabase.delete(apikey).where(inArray(apikey.referenceId, ids)),
           authDatabase.delete(session).where(inArray(session.userId, ids)),
           authDatabase.delete(account).where(inArray(account.userId, ids)),
@@ -203,21 +162,11 @@ it.live.each([
         ]);
       }
       yield* purgeFixtureRows([
-        coreDatabase
-          .delete(dataAccessEvents)
-          .where(eq(dataAccessEvents.tenantId, tenantId)),
-        coreDatabase
-          .delete(auditEvents)
-          .where(eq(auditEvents.tenantId, tenantId)),
-        coreDatabase
-          .delete(actionInvocations)
-          .where(eq(actionInvocations.tenantId, tenantId)),
-        coreDatabase
-          .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.tenantId, tenantId)),
-        coreDatabase
-          .delete(principals)
-          .where(eq(principals.tenantId, tenantId)),
+        coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+        coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+        coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+        coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
+        coreDatabase.delete(principals).where(eq(principals.tenantId, tenantId)),
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
       ]);
     });
@@ -225,22 +174,14 @@ it.live.each([
       Effect.void,
       Effect.fnUntraced(function* integrationEffect3() {
         yield* cleanup();
-      }, Effect.orDie)
+      }, Effect.orDie),
     );
-    originalUserId = yield* fixtureAuthentication.createFixtureUser(
-      originalEmail,
-      'Support original',
-      password
-    );
-    targetUserId = yield* fixtureAuthentication.createFixtureUser(
-      targetEmail,
-      'Support target',
-      password
-    );
+    originalUserId = yield* fixtureAuthentication.createFixtureUser(originalEmail, 'Support original', password);
+    targetUserId = yield* fixtureAuthentication.createFixtureUser(targetEmail, 'Support target', password);
     secondAdministratorUserId = yield* fixtureAuthentication.createFixtureUser(
       secondAdministratorEmail,
       'Second identity administrator',
-      password
+      password,
     );
     yield* coreDatabase.insert(tenants).values({
       defaultLocale: 'en',
@@ -308,12 +249,12 @@ it.live.each([
     const authentication = yield* makeAuthenticationService({}).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
-      Effect.provideService(PrincipalResolver, resolver)
+      Effect.provideService(PrincipalResolver, resolver),
     );
     const signedIn = yield* authentication.signIn(
       originalEmail,
       password,
-      new Headers({ origin: configuration.baseUrl })
+      new Headers({ origin: configuration.baseUrl }),
     );
     const originalHeaders = new Headers({
       cookie: cookieHeader(signedIn.setCookieHeaders),
@@ -321,11 +262,9 @@ it.live.each([
     });
     const keys = yield* makeApiKeyService().pipe(
       Effect.provideService(AuthConfig, configuration),
-      Effect.provideService(AuthDatabase, authPersistence)
+      Effect.provideService(AuthDatabase, authPersistence),
     );
-    const resolvedOriginal = yield* provideContextAccess(
-      authentication.resolveTenantContext(originalHeaders)
-    );
+    const resolvedOriginal = yield* provideContextAccess(authentication.resolveTenantContext(originalHeaders));
     expect(resolvedOriginal.state).toBe('authenticated');
     if (resolvedOriginal.state !== 'authenticated') {
       throw new Error('The live original session did not resolve');
@@ -350,7 +289,7 @@ it.live.each([
             lifecycleOperationId: randomUUID(),
             nowEpochMillis,
             tenantId,
-          })
+          }),
         ).toEqual({ hasMore: false, providerKeyIds: [pending.providerKeyId] });
         yield* authDatabase
           .update(apikey)
@@ -369,18 +308,14 @@ it.live.each([
             lifecycleOperationId: randomUUID(),
             nowEpochMillis,
             tenantId,
-          })
+          }),
         ).toEqual({ hasMore: false, providerKeyIds: [pending.providerKeyId] });
         yield* keys.setEnabled(pending.providerKeyId, false);
         yield* keys.clearPendingCleanup(pending.providerKeyId);
       });
       return;
     }
-    const lifecycle = makeIdentityLifecycleService(
-      actionRuntime,
-      keys,
-      resolver
-    );
+    const lifecycle = makeIdentityLifecycleService(actionRuntime, keys, resolver);
     const issued = yield* lifecycle.issue({
       correlationId: randomUUID(),
       idempotencyKey: `identity-integration-key-${randomUUID()}`,
@@ -390,14 +325,12 @@ it.live.each([
     });
     const verified = yield* keys.verify(issued.secret);
     const apiKeyAuthBindingId = issued.authBindingId;
-    const apiKeyIdentity = yield* resolver.resolveBetterAuthApiKey(
-      verified.providerKeyId
-    );
+    const apiKeyIdentity = yield* resolver.resolveBetterAuthApiKey(verified.providerKeyId);
     const { privateKey, publicKey } = yield* Effect.tryPromise(() =>
       generateKeyPair('EdDSA', {
         crv: 'Ed25519',
         extractable: true,
-      })
+      }),
     );
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(privateKey));
     const assertion = yield* issueGatewayContextAssertion({
@@ -427,8 +360,8 @@ it.live.each([
               x: privateJwk.x ?? '',
             },
           }),
-        })
-      )
+        }),
+      ),
     );
     const verifiedAssertion = yield* Effect.tryPromise(() =>
       jwtVerify(assertion.token, publicKey, {
@@ -436,7 +369,7 @@ it.live.each([
         audience: 'identity-integration',
         currentDate: new Date(1_800_000_001_000),
         issuer: 'https://shell.identity-integration.test',
-      })
+      }),
     );
     expect(verifiedAssertion.payload['principal']).toEqual({
       authBindingId: apiKeyAuthBindingId,
@@ -445,9 +378,7 @@ it.live.each([
       principalId: originalPrincipalId,
       tenantId,
     });
-    expect(
-      JSON.stringify(verifiedAssertion.payload).includes(issued.secret)
-    ).toBe(false);
+    expect(JSON.stringify(verifiedAssertion.payload).includes(issued.secret)).toBe(false);
     yield* providePrincipalManagementRepository(
       actionRuntime.runAction({
         payload: { displayName: 'API-key evidence target', kind: 'service' },
@@ -463,13 +394,11 @@ it.live.each([
           correlationId: randomUUID(),
           idempotencyKey: randomUUID(),
         },
-      })
+      }),
     );
     yield* keys.setEnabled(verified.providerKeyId, false);
     const invalidKey = yield* Effect.flip(keys.verify(issued.secret));
-    expect(Predicate.isTagged(invalidKey, 'ApiKeyCredentialInvalidError')).toBe(
-      true
-    );
+    expect(Predicate.isTagged(invalidKey, 'ApiKeyCredentialInvalidError')).toBe(true);
     const managedPrincipal = yield* providePrincipalManagementRepository(
       lifecycle.createNonHumanPrincipal({
         correlationId: randomUUID(),
@@ -479,7 +408,7 @@ it.live.each([
           kind: 'integration',
         },
         principal: resolvedOriginal.principal,
-      })
+      }),
     );
     const managedKey = yield* lifecycle.issue({
       correlationId: randomUUID(),
@@ -492,15 +421,15 @@ it.live.each([
     const secondAdministratorSignIn = yield* authentication.signIn(
       secondAdministratorEmail,
       password,
-      new Headers({ origin: configuration.baseUrl })
+      new Headers({ origin: configuration.baseUrl }),
     );
     const secondAdministratorContext = yield* provideContextAccess(
       authentication.resolveTenantContext(
         new Headers({
           cookie: cookieHeader(secondAdministratorSignIn.setCookieHeaders),
           origin: configuration.baseUrl,
-        })
-      )
+        }),
+      ),
     );
     expect(secondAdministratorContext.state).toBe('authenticated');
     if (secondAdministratorContext.state !== 'authenticated') {
@@ -518,29 +447,19 @@ it.live.each([
     });
     expect(crossAdminDisabled.enabled).toBe(false);
     expect(crossAdminDisabled.cleanupPending).toBe(false);
-    const supportRecoveryPrincipal =
-      makeSupportRecoveryPrincipalContextResolver({
-        executor: coreDatabase,
-      });
+    const supportRecoveryPrincipal = makeSupportRecoveryPrincipalContextResolver({
+      executor: coreDatabase,
+    });
     const support = makeSupportImpersonationService(
       Context.empty().pipe(
         Context.add(ActionRuntime, actionRuntime),
         Context.add(AuthenticationService, authentication),
         Context.add(AuthConfig, configuration),
         Context.add(PrincipalResolver, resolver),
-        Context.add(
-          SupportRecoveryPrincipalContextResolver,
-          supportRecoveryPrincipal
-        ),
-        Context.add(
-          SupportAuthProviderService,
-          makeSupportAuthProvider(configuration, authPersistence.adapter)
-        ),
-        Context.add(
-          SupportImpersonationStoreService,
-          makeSupportImpersonationStore(authDatabase)
-        )
-      )
+        Context.add(SupportRecoveryPrincipalContextResolver, supportRecoveryPrincipal),
+        Context.add(SupportAuthProviderService, makeSupportAuthProvider(configuration, authPersistence.adapter)),
+        Context.add(SupportImpersonationStoreService, makeSupportImpersonationStore(authDatabase)),
+      ),
     );
     const started = yield* provideContextAccess(
       providePrincipalManagementRepository(
@@ -551,13 +470,8 @@ it.live.each([
             requestHeaders: originalHeaders,
             targetPrincipalId,
           })
-          .pipe(
-            Effect.provideService(
-              SupportImpersonationCorrelationId,
-              randomUUID()
-            )
-          )
-      )
+          .pipe(Effect.provideService(SupportImpersonationCorrelationId, randomUUID())),
+      ),
     );
     const impersonatedHeaders = new Headers({
       cookie: cookieHeader(started.setCookieHeaders),
@@ -566,37 +480,24 @@ it.live.each([
     const [impersonationSession] = yield* authDatabase
       .select({ actionId: session.impersonationActionId, id: session.id })
       .from(session)
-      .where(
-        and(
-          eq(session.userId, targetUserId),
-          eq(session.impersonatedBy, originalUserId)
-        )
-      )
+      .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
       .limit(1);
     expect(impersonationSession).not.toBe(undefined);
     if (impersonationSession === undefined) {
-      throw new TypeError(
-        'The support impersonation session was not persisted'
-      );
+      throw new TypeError('The support impersonation session was not persisted');
     }
     expect(Predicate.isString(impersonationSession.actionId)).toBe(true);
     if (!Predicate.isString(impersonationSession.actionId)) {
-      throw new TypeError(
-        'The approved support start did not persist its Action correlation'
-      );
+      throw new TypeError('The approved support start did not persist its Action correlation');
     }
     yield* authDatabase
       .update(session)
       .set({ impersonationActionId: null })
       .where(eq(session.id, impersonationSession.id));
     const incompleteImpersonation = yield* Effect.flip(
-      provideContextAccess(
-        authentication.resolveTenantContext(impersonatedHeaders)
-      )
+      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
     );
-    expect(
-      Predicate.isTagged(incompleteImpersonation, 'OntosIdentityForbiddenError')
-    ).toBe(true);
+    expect(Predicate.isTagged(incompleteImpersonation, 'OntosIdentityForbiddenError')).toBe(true);
     yield* authDatabase
       .update(session)
       .set({ impersonationActionId: impersonationSession.actionId })
@@ -606,30 +507,19 @@ it.live.each([
       .set({ impersonationReason: 'Tampered support reason' })
       .where(eq(session.id, impersonationSession.id));
     const mismatchedImpersonationReason = yield* Effect.flip(
-      provideContextAccess(
-        authentication.resolveTenantContext(impersonatedHeaders)
-      )
+      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
     );
-    expect(
-      Predicate.isTagged(
-        mismatchedImpersonationReason,
-        'OntosIdentityForbiddenError'
-      )
-    ).toBe(true);
+    expect(Predicate.isTagged(mismatchedImpersonationReason, 'OntosIdentityForbiddenError')).toBe(true);
     yield* authDatabase
       .update(session)
       .set({ impersonationReason: 'Investigating a tenant support request' })
       .where(eq(session.id, impersonationSession.id));
-    const impersonated = yield* provideContextAccess(
-      authentication.resolveTenantContext(impersonatedHeaders)
-    );
+    const impersonated = yield* provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders));
     expect(impersonated.state).toBe('authenticated');
     if (impersonated.state === 'authenticated') {
       expect(impersonated.principal.authMethod).toBe('support_impersonation');
       expect(impersonated.principal.principalId).toBe(targetPrincipalId);
-      expect(impersonated.principal.impersonatedByPrincipalId).toBe(
-        originalPrincipalId
-      );
+      expect(impersonated.principal.impersonatedByPrincipalId).toBe(originalPrincipalId);
       yield* providePrincipalManagementRepository(
         actionRuntime.runAction({
           payload: {
@@ -642,18 +532,14 @@ it.live.each([
             correlationId: randomUUID(),
             idempotencyKey: randomUUID(),
           },
-        })
+        }),
       );
     }
     supportPermissionAllowed = false;
     const revokedImpersonation = yield* Effect.flip(
-      provideContextAccess(
-        authentication.resolveTenantContext(impersonatedHeaders)
-      )
+      provideContextAccess(authentication.resolveTenantContext(impersonatedHeaders)),
     );
-    expect(
-      Predicate.isTagged(revokedImpersonation, 'OntosIdentityForbiddenError')
-    ).toBe(true);
+    expect(Predicate.isTagged(revokedImpersonation, 'OntosIdentityForbiddenError')).toBe(true);
     const stopped = yield* provideContextAccess(
       providePrincipalManagementRepository(
         support
@@ -661,13 +547,8 @@ it.live.each([
             idempotencyKey: randomUUID(),
             requestHeaders: impersonatedHeaders,
           })
-          .pipe(
-            Effect.provideService(
-              SupportImpersonationCorrelationId,
-              randomUUID()
-            )
-          )
-      )
+          .pipe(Effect.provideService(SupportImpersonationCorrelationId, randomUUID())),
+      ),
     );
     expect(stopped.checkpointPending).toBe(false);
     expect(stopped.setCookieHeaders.length > 0).toBe(true);
@@ -683,9 +564,9 @@ it.live.each([
           'checkpoint' in evidence &&
           Predicate.isString(evidence.checkpoint)
             ? [evidence.checkpoint]
-            : []
+            : [],
         )
-        .toSorted()
+        .toSorted(),
     ).toEqual(['requested', 'started', 'stopped']);
     const identityEvidence = yield* coreDatabase
       .select({
@@ -702,8 +583,8 @@ it.live.each([
           evidence.authMethod === 'api_key' &&
           evidence.authBindingId === apiKeyAuthBindingId &&
           evidence.principalId === originalPrincipalId &&
-          evidence.impersonatedByPrincipalId === null
-      )
+          evidence.impersonatedByPrincipalId === null,
+      ),
     ).toBe(true);
     expect(
       identityEvidence.some(
@@ -711,12 +592,10 @@ it.live.each([
           evidence.authMethod === 'support_impersonation' &&
           evidence.authBindingId === targetAuthBindingId &&
           evidence.principalId === targetPrincipalId &&
-          evidence.impersonatedByPrincipalId === originalPrincipalId
-      )
+          evidence.impersonatedByPrincipalId === originalPrincipalId,
+      ),
     ).toBe(true);
-    const recovery = yield* authDatabase
-      .select()
-      .from(supportImpersonationRecovery);
+    const recovery = yield* authDatabase.select().from(supportImpersonationRecovery);
     expect(recovery.length).toBe(0);
-  })
+  }),
 );

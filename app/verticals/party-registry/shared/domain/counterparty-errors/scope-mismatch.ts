@@ -5,5 +5,5 @@ export class CounterpartyScopeMismatch extends Schema.TaggedError<CounterpartySc
   {
     code: Schema.Literal('counterparty_scope_mismatch'),
     reason: Schema.String,
-  }
+  },
 ) {}

@@ -7,5 +7,5 @@ export class PartyRelationshipPersistenceUnavailable extends Schema.TaggedError<
   {
     ...RelationshipErrorBase,
     code: Schema.Literal('party_relationship_persistence_unavailable'),
-  }
+  },
 ) {}

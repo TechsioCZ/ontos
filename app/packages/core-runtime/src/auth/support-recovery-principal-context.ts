@@ -25,10 +25,7 @@ export interface SupportRecoveryPrincipalContextResolverService {
     readonly originalPrincipalId: string;
     readonly originalSessionId: string;
     readonly tenantId: string;
-  }) => Effect.Effect<
-    TrustedPrincipalContext,
-    SupportRecoveryPrincipalContextError
-  >;
+  }) => Effect.Effect<TrustedPrincipalContext, SupportRecoveryPrincipalContextError>;
 }
 
 interface SupportRecoveryPrincipalContextRecord {
@@ -53,37 +50,28 @@ type SupportRecoveryPrincipalContextRepositoryLoadResult = Effect.Effect<
 interface SupportRecoveryPrincipalContextRecordReader<
   Result extends SupportRecoveryPrincipalContextRepositoryLoadResult,
 > {
-  readonly load: (
-    input: SupportRecoveryPrincipalContextRepositoryInput
-  ) => Result;
+  readonly load: (input: SupportRecoveryPrincipalContextRepositoryInput) => Result;
 }
 
 interface SupportRecoveryPrincipalContextEffectRecordReader {
   readonly load: (
-    input: SupportRecoveryPrincipalContextRepositoryInput
+    input: SupportRecoveryPrincipalContextRepositoryInput,
   ) => Effect.Effect<
     Option.Option<SupportRecoveryPrincipalContextRecord>,
     SupportRecoveryPrincipalContextUnavailableError
   >;
 }
 
-const attachCause = <Failure extends object>(
-  failure: Failure,
-  cause: unknown
-): Failure =>
-  cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', { value: cause });
+const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
+  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
 
-const unavailable = (
-  cause?: unknown
-): SupportRecoveryPrincipalContextUnavailableError =>
+const unavailable = (cause?: unknown): SupportRecoveryPrincipalContextUnavailableError =>
   attachCause(
     new SupportRecoveryPrincipalContextUnavailableError({
       code: 'support_recovery_context_unavailable',
       reason: 'The support recovery identity could not be revalidated',
     }),
-    cause
+    cause,
   );
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
@@ -105,21 +93,18 @@ const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
         principals,
         and(
           eq(principals.tenantId, principalAuthBindings.tenantId),
-          eq(principals.principalId, principalAuthBindings.principalId)
-        )
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
       )
       .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
       .where(
         and(
-          eq(
-            principalAuthBindings.principalAuthBindingId,
-            input.originalAuthBindingId
-          ),
+          eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
           eq(principalAuthBindings.tenantId, input.tenantId),
           eq(principalAuthBindings.principalId, input.originalPrincipalId),
           eq(principalAuthBindings.provider, 'better_auth'),
-          eq(principalAuthBindings.subjectType, 'user')
-        )
+          eq(principalAuthBindings.subjectType, 'user'),
+        ),
       )
       .limit(1)
       .pipe(
@@ -128,14 +113,12 @@ const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
         Effect.timeoutOrElse({
           duration: DATABASE_OPERATION_TIMEOUT,
           orElse: () => Effect.fail(unavailable()),
-        })
+        }),
       ),
 });
 
 const isInvalidRecoveryInput = (
-  input: Parameters<
-    SupportRecoveryPrincipalContextResolverService['resolveStoppedImpersonation']
-  >[0]
+  input: Parameters<SupportRecoveryPrincipalContextResolverService['resolveStoppedImpersonation']>[0],
 ): boolean =>
   !Schema.is(uuid)(input.originalAuthBindingId) ||
   !Schema.is(uuid)(input.originalPrincipalId) ||
@@ -145,61 +128,58 @@ const isInvalidRecoveryInput = (
   /\s/u.test(input.originalSessionId);
 
 const supportRecoveryPrincipalContextResolverFromEffectRecordReader = (
-  repository: SupportRecoveryPrincipalContextEffectRecordReader
+  repository: SupportRecoveryPrincipalContextEffectRecordReader,
 ): SupportRecoveryPrincipalContextResolverService => ({
-  resolveStoppedImpersonation: Effect.fn(
-    'SupportRecoveryPrincipalContext.resolveStoppedImpersonation'
-  )(function* resolveStoppedImpersonation(input): Effect.fn.Return<
-    TrustedPrincipalContext,
-    SupportRecoveryPrincipalContextError
-  > {
-    if (isInvalidRecoveryInput(input)) {
-      return yield* new SupportRecoveryPrincipalContextDeniedError({
-        code: 'support_recovery_context_denied',
-        reason: 'The support recovery identity is invalid',
-      });
-    }
-    const maybeRecord = yield* repository.load({
-      originalAuthBindingId: input.originalAuthBindingId,
-      originalPrincipalId: input.originalPrincipalId,
-      tenantId: input.tenantId,
-    });
-    if (Option.isNone(maybeRecord)) {
-      return yield* new SupportRecoveryPrincipalContextDeniedError({
-        code: 'support_recovery_context_denied',
-        reason:
-          'The support recovery identity is not a historical tenant-local user binding',
-      });
-    }
-    const record = maybeRecord.value;
-    if (
-      record.bindingPrincipalId !== input.originalPrincipalId ||
-      record.bindingTenantId !== input.tenantId ||
-      record.principalKind !== 'human' ||
-      record.principalTenantId !== input.tenantId ||
-      record.tenantId !== input.tenantId
-    ) {
-      return yield* new SupportRecoveryPrincipalContextDeniedError({
-        code: 'support_recovery_context_denied',
-        reason:
-          'The support recovery identity is not a historical tenant-local user binding',
-      });
-    }
-    return trustSupportRecoveryPrincipalContext(
-      Object.freeze({
-        authBindingId: input.originalAuthBindingId,
-        authContextRef: `better-auth-session:${input.originalSessionId}`,
-        authMethod: 'session' as const,
-        principalId: input.originalPrincipalId,
+  resolveStoppedImpersonation: Effect.fn('SupportRecoveryPrincipalContext.resolveStoppedImpersonation')(
+    function* resolveStoppedImpersonation(
+      input,
+    ): Effect.fn.Return<TrustedPrincipalContext, SupportRecoveryPrincipalContextError> {
+      if (isInvalidRecoveryInput(input)) {
+        return yield* new SupportRecoveryPrincipalContextDeniedError({
+          code: 'support_recovery_context_denied',
+          reason: 'The support recovery identity is invalid',
+        });
+      }
+      const maybeRecord = yield* repository.load({
+        originalAuthBindingId: input.originalAuthBindingId,
+        originalPrincipalId: input.originalPrincipalId,
         tenantId: input.tenantId,
-      }),
-      recordSupportImpersonationAction
-    );
-  }),
+      });
+      if (Option.isNone(maybeRecord)) {
+        return yield* new SupportRecoveryPrincipalContextDeniedError({
+          code: 'support_recovery_context_denied',
+          reason: 'The support recovery identity is not a historical tenant-local user binding',
+        });
+      }
+      const record = maybeRecord.value;
+      if (
+        record.bindingPrincipalId !== input.originalPrincipalId ||
+        record.bindingTenantId !== input.tenantId ||
+        record.principalKind !== 'human' ||
+        record.principalTenantId !== input.tenantId ||
+        record.tenantId !== input.tenantId
+      ) {
+        return yield* new SupportRecoveryPrincipalContextDeniedError({
+          code: 'support_recovery_context_denied',
+          reason: 'The support recovery identity is not a historical tenant-local user binding',
+        });
+      }
+      return trustSupportRecoveryPrincipalContext(
+        Object.freeze({
+          authBindingId: input.originalAuthBindingId,
+          authContextRef: `better-auth-session:${input.originalSessionId}`,
+          authMethod: 'session' as const,
+          principalId: input.originalPrincipalId,
+          tenantId: input.tenantId,
+        }),
+        recordSupportImpersonationAction,
+      );
+    },
+  ),
 });
 
 export const supportRecoveryPrincipalContextResolverFromRepository = (
-  repository: SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>
+  repository: SupportRecoveryPrincipalContextRecordReader<SupportRecoveryPrincipalContextRepositoryLoadResult>,
 ): SupportRecoveryPrincipalContextResolverService =>
   supportRecoveryPrincipalContextResolverFromEffectRecordReader(repository);
 
@@ -207,17 +187,15 @@ export const makeSupportRecoveryPrincipalContextResolver = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
 }): SupportRecoveryPrincipalContextResolverService =>
   supportRecoveryPrincipalContextResolverFromEffectRecordReader(
-    supportRecoveryPrincipalContextRepositoryFromDatabase(database)
+    supportRecoveryPrincipalContextRepositoryFromDatabase(database),
   );
 
 export class SupportRecoveryPrincipalContextResolver extends Context.Service<
   SupportRecoveryPrincipalContextResolver,
   SupportRecoveryPrincipalContextResolverService
->()(
-  '@app/core-runtime/auth/support-recovery-principal-context/SupportRecoveryPrincipalContextResolver'
-) {}
+>()('@app/core-runtime/auth/support-recovery-principal-context/SupportRecoveryPrincipalContextResolver') {}
 
 export const SupportRecoveryPrincipalContextResolverLive = Layer.effect(
   SupportRecoveryPrincipalContextResolver,
-  CoreDatabase.pipe(Effect.map(makeSupportRecoveryPrincipalContextResolver))
+  CoreDatabase.pipe(Effect.map(makeSupportRecoveryPrincipalContextResolver)),
 );

@@ -8,7 +8,7 @@ const OwnerPackageSchema = Schema.Struct({
   scripts: Schema.optional(
     Schema.Struct({
       'worker:start': Schema.optional(Schema.String),
-    })
+    }),
   ),
 });
 
@@ -16,12 +16,9 @@ const OwnerPackageSchema = Schema.Struct({
 /** @typedef {{ readonly _tag: 'OutboxWorkerDeliveryInvalid', readonly reason: string }} OutboxWorkerDeliveryInvalidValue */
 /** @typedef {{ readonly entry: string, readonly id: string, readonly ownerId: string, readonly packageName: string, readonly path: string, readonly serviceIdEnv: string, readonly stageSetup: string }} OutboxWorkerDelivery */
 
-class OutboxWorkerDeliveryInvalid extends Schema.TaggedError()(
-  'OutboxWorkerDeliveryInvalid',
-  {
-    reason: Schema.String,
-  }
-) {}
+class OutboxWorkerDeliveryInvalid extends Schema.TaggedError()('OutboxWorkerDeliveryInvalid', {
+  reason: Schema.String,
+}) {}
 
 /**
  * A generated worker host is the deployment capability; topology owns its identity.
@@ -42,17 +39,15 @@ export const outboxWorkerDelivery = Effect.fn('outboxWorkerDelivery')(
       return yield* Effect.undefined;
     }
 
-    const ownerPackage = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(OwnerPackageSchema)
-    )(yield* fileSystem.readFileString(packagePath));
+    const ownerPackage = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnerPackageSchema))(
+      yield* fileSystem.readFileString(packagePath),
+    );
     const workerStart = ownerPackage.scripts?.['worker:start'];
     if (workerStart === undefined || workerStart.length === 0) {
       return yield* Effect.undefined;
     }
 
-    const host = yield* fileSystem.readFileString(
-      path.join(root, vertical.path, workerEntry)
-    );
+    const host = yield* fileSystem.readFileString(path.join(root, vertical.path, workerEntry));
     if (
       ownerPackage.name !== vertical.package ||
       workerStart !== workerStartCommand ||
@@ -73,5 +68,5 @@ export const outboxWorkerDelivery = Effect.fn('outboxWorkerDelivery')(
       serviceIdEnv: `ZEROPS_${vertical.id.replaceAll('-', '_').toUpperCase()}_WORKER_SERVICE_ID`,
       stageSetup: `${vertical.id}-worker`,
     };
-  }
+  },
 );

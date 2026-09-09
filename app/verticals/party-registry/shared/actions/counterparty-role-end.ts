@@ -15,8 +15,7 @@ export const CounterpartyRoleEndPayloadSchema = Schema.Struct({
   rolePeriodRef: CounterpartyRolePeriodRefSchema,
   validTo: CounterpartyIsoTimestampSchema,
 });
-export type CounterpartyRoleEndPayload =
-  typeof CounterpartyRoleEndPayloadSchema.Type;
+export type CounterpartyRoleEndPayload = typeof CounterpartyRoleEndPayloadSchema.Type;
 
 export const CounterpartyRoleEndResultSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,

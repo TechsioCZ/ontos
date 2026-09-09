@@ -12,9 +12,7 @@ const packageVersion = (specifier: string): string =>
 const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
 const effectVersion = packageVersion('effect/package.json');
 
-const moduleFederationConfig: Parameters<
-  typeof createModuleFederationConfig
->[0] = createModuleFederationConfig({
+const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   dts: false,
   exposes: {
     './effect-api': './api/effect-api.ts',

@@ -5,19 +5,13 @@ import react from 'ultracite/oxlint/react';
 
 import { testRestrictedImports } from './tools/oxlint/effect-native/shared/test-restricted-imports.ts';
 
-const selectedJsPlugins = selectJsPlugins([
-  'github',
-  'sonarjs',
-  'react-doctor',
-]);
+const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
 const jsPlugins = {
   ...selectedJsPlugins,
   // Load GitHub's published rule-only entrypoint, not its ESLint configuration aggregator.
   // The aggregator eagerly imports eslint-plugin-import and the ESLint runner; the rules do not.
   jsPlugins: selectedJsPlugins.jsPlugins.map((plugin) =>
-    plugin.name === 'github'
-      ? { ...plugin, specifier: 'eslint-plugin-github/lib/plugin.js' }
-      : plugin
+    plugin.name === 'github' ? { ...plugin, specifier: 'eslint-plugin-github/lib/plugin.js' } : plugin,
   ),
 };
 
@@ -45,9 +39,7 @@ const antiSlopEffectRules = {
 
 // Effect-native architecture rules derived from docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md.
 // Each rule cites the audit finding it enforces; see tools/oxlint/effect-native/README.md.
-const effectNativeRules: NonNullable<
-  Parameters<typeof defineConfig>[0]['rules']
-> = {
+const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
   'effect-native/no-ad-hoc-argv-in-scripts': 'error',
   'effect-native/no-ambient-date': 'error',
   'effect-native/no-ambient-process-env': 'error',
@@ -246,10 +238,7 @@ export default defineConfig({
     {
       // This guarded test-only entrypoint composes real services with boundary fakes.
       // database-access:check rejects imports of it from production source.
-      files: [
-        'packages/core-runtime/src/testing/**/*.ts',
-        'apps/shell-super-app/tests/e2e/auth-fixture.ts',
-      ],
+      files: ['packages/core-runtime/src/testing/**/*.ts', 'apps/shell-super-app/tests/e2e/auth-fixture.ts'],
       rules: {
         'anti-slop-effect/no-service-constructor-imports': 'off',
       },
@@ -315,10 +304,7 @@ export default defineConfig({
     },
     {
       // Test registration deliberately returns an ignored promise, and test synchronization may use `.then`.
-      files: [
-        '**/*.{test,spec,test-d,spec-d}.{ts,tsx,js,jsx}',
-        '**/__tests__/**/*.{ts,tsx,js,jsx}',
-      ],
+      files: ['**/*.{test,spec,test-d,spec-d}.{ts,tsx,js,jsx}', '**/__tests__/**/*.{ts,tsx,js,jsx}'],
       rules: {
         'github/no-then': 'off',
         // Ultracite's JS-plugin preset applies the same test-data exception; repeat it because
@@ -447,10 +433,7 @@ export default defineConfig({
     },
     {
       // React component names are intentionally PascalCase, contrary to SonarJS's function-name default.
-      files: [
-        '**/*.tsx',
-        'apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts',
-      ],
+      files: ['**/*.tsx', 'apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts'],
       rules: {
         'sonarjs/function-name': 'off',
       },
@@ -486,10 +469,7 @@ export default defineConfig({
     {
       // Dynamic Modern.js cache paths contain `.js-${appId}` but are filesystem paths,
       // not CSS class names; the GitHub rule cannot distinguish those string domains.
-      files: [
-        'apps/shell-super-app/modern.config.ts',
-        'verticals/party-registry/modern.config.ts',
-      ],
+      files: ['apps/shell-super-app/modern.config.ts', 'verticals/party-registry/modern.config.ts'],
       rules: {
         'github/js-class-name': 'off',
       },
@@ -497,9 +477,7 @@ export default defineConfig({
     {
       // React Doctor currently emits its internal computed-property lowering TODO for this
       // typed form-error update; the code is valid and the dedicated compiler rules stay active.
-      files: [
-        'verticals/party-registry/src/features/customers/customer-form.tsx',
-      ],
+      files: ['verticals/party-registry/src/features/customers/customer-form.tsx'],
       rules: {
         'react/todo': 'off',
       },
@@ -515,10 +493,7 @@ export default defineConfig({
     {
       // These aliases name stable domain boundaries even when their current representation is
       // identical to another type; removing the names would couple public/runtime APIs to storage.
-      files: [
-        'apps/shell-super-app/src/api/auth-client.ts',
-        'packages/core-runtime/src/actions/runtime.ts',
-      ],
+      files: ['apps/shell-super-app/src/api/auth-client.ts', 'packages/core-runtime/src/actions/runtime.ts'],
       rules: {
         'sonarjs/redundant-type-aliases': 'off',
       },
@@ -690,9 +665,7 @@ export default defineConfig({
     {
       // The edit page keeps one cohesive mutation/detail workflow; splitting it would move
       // authorization and retry state across component boundaries during this lint-only migration.
-      files: [
-        'verticals/party-registry/src/routes/**/contacts/customers/**/contacts/**/edit/page.tsx',
-      ],
+      files: ['verticals/party-registry/src/routes/**/contacts/customers/**/contacts/**/edit/page.tsx'],
       rules: {
         'react-doctor/no-giant-component': 'off',
       },
@@ -787,9 +760,7 @@ export default defineConfig({
     {
       // This Proxy preserves the real Drizzle executor type while replacing two methods in a live
       // integration fixture. Reflect.get is required to preserve the original receiver.
-      files: [
-        'verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts',
-      ],
+      files: ['verticals/party-registry/tests/integration/customer-ares-lookup-bff.test.ts'],
       rules: {
         'anti-slop/no-reflect-get': 'off',
       },
@@ -879,10 +850,7 @@ export default defineConfig({
     'import/export': 'error',
     'import/no-namespace': ['error', { ignore: ['effect/*'] }],
     'no-console': 'error',
-    'perfectionist/sort-enums': [
-      'error',
-      { partitionByComment: true, sortByValue: 'always' },
-    ],
+    'perfectionist/sort-enums': ['error', { partitionByComment: true, sortByValue: 'always' }],
     'perfectionist/sort-heritage-clauses': 'error',
     'perfectionist/sort-interfaces': 'error',
     'perfectionist/sort-jsx-props': 'error',
@@ -901,15 +869,9 @@ export default defineConfig({
     'sonarjs/no-nested-conditional': 'off',
     'sonarjs/no-redundant-jump': 'off',
     'sonarjs/no-unused-vars': 'off',
-    'typescript/no-require-imports': [
-      'error',
-      { allow: [String.raw`/package\.json$`] },
-    ],
+    'typescript/no-require-imports': ['error', { allow: [String.raw`/package\.json$`] }],
     // Terse void callbacks are idiomatic for framework and test APIs; confusing assignments remain errors.
-    'typescript/no-confusing-void-expression': [
-      'error',
-      { ignoreArrowShorthand: true },
-    ],
+    'typescript/no-confusing-void-expression': ['error', { ignoreArrowShorthand: true }],
     // Single-use generics preserve inferred return predicates and object value types throughout Effect APIs.
     'typescript/no-unnecessary-type-parameters': 'off',
     // Annotating rejected-promise callbacks as unknown bypasses OntOS's named-error boundary policy.

@@ -9,10 +9,7 @@ interface SchemaRuleScope {
 }
 
 /** Shared source-schema rule scope, including the legacy fixture-path normalization. */
-export function isSchemaRuleInScope(
-  filename: string,
-  options: SchemaRuleScope
-): boolean {
+export function isSchemaRuleInScope(filename: string, options: SchemaRuleScope): boolean {
   const path = scopePath(filename);
   return (
     !matchesGlobs(path, options.ignore) &&
@@ -30,7 +27,7 @@ interface ConstructorArgumentOptions {
 /** Recognize direct and curried Schema constructor arguments, inspecting at most eight callees. */
 export function isSchemaConstructorArgument(
   node: ESTree.Node,
-  { resolveMember, constructors, unwrap }: ConstructorArgumentOptions
+  { resolveMember, constructors, unwrap }: ConstructorArgumentOptions,
 ): boolean {
   const parent = node.parent;
   if (parent?.type !== 'CallExpression') return false;

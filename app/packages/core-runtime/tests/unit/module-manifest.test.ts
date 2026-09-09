@@ -1,10 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiGroup,
-} from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 import { defineAction } from '../../src/actions/definition.ts';
 import {
@@ -54,7 +50,7 @@ const createAction = (owner = 'property.registry') =>
       resultSchema: Schema.Struct({ id: Schema.String }),
       schemaVersion: '1',
     },
-    ({ name }) => Effect.succeed({ id: name })
+    ({ name }) => Effect.succeed({ id: name }),
   );
 
 const emptyManifestInput = () => ({
@@ -62,15 +58,7 @@ const emptyManifestInput = () => ({
     defaultState: 'inactive' as const,
     preservesHistoryWhenInactive: true,
     scope: 'tenant' as const,
-    supportedStates: [
-      'inactive',
-      'active',
-      'read_only',
-      'suspended',
-      'quarantined',
-      'deprecated',
-      'archived',
-    ] as const,
+    supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'] as const,
   },
   module: {
     description: 'Property capability',
@@ -105,147 +93,132 @@ it('defines a valid empty manifest, preserves literals, and freezes its public s
   const literal: 'property.registry' = manifest.module.id;
 
   expect(literal).toBe('property.registry');
-  expect(Object.keys(manifest)).toEqual([
-    'activation',
-    'module',
-    'publicSurface',
-  ]);
+  expect(Object.keys(manifest)).toEqual(['activation', 'module', 'publicSurface']);
   expect(Object.isFrozen(manifest)).toBe(true);
   expect(Object.isFrozen(manifest.activation.supportedStates)).toBe(true);
   expect(Object.isFrozen(manifest.publicSurface.actions)).toBe(true);
   expect(() =>
     Object.defineProperty(manifest.publicSurface.actions, 0, {
       value: 'private',
-    })
+    }),
   ).toThrow();
 });
 
-it.effect(
-  'accepts populated typed surfaces and keeps executable values out of safe descriptors',
-  () =>
-    Effect.gen(function* verifySafeDescriptors() {
-      const action = createAction();
-      const apiValue = HttpApi.make('PropertyApi').add(
-        HttpApiGroup.make('property').add(
-          HttpApiEndpoint.get('listUnits', '/units')
-        )
-      );
-      const parameterizedApiValue = HttpApi.make('PropertyDetailApi').add(
-        HttpApiGroup.make('propertyDetail').add(
-          HttpApiEndpoint.get('getUnit', '/units/:unitId', {
-            headers: {},
-            params: { unitId: UnitId },
-            query: {},
-          })
-        )
-      );
-      const manifest = defineOntosModuleManifest({
-        ...emptyManifestInput(),
-        publicSurface: {
-          actions: [action],
-          api: {
-            PropertyClient: apiValue,
-            PropertyDetail: parameterizedApiValue,
-          },
-          components: { PropertyUnitCard: componentValue },
-          events: [
-            {
-              key: 'property.unit-created',
-              owningModuleId: 'property.registry',
-              payloadSchema: Schema.Struct({ unitId: UnitId }),
-              referencesResourceTypes: ['property.unit'],
-              tense: 'past',
-              visibility: 'public_module_event',
-            },
-          ],
-          reports: [
-            {
-              accessFiltering: 'legal_entity_scope',
-              dimensions: ['legal_entity'],
-              key: 'property.unit-inventory',
-              label: 'Unit inventory',
-              owningModuleId: 'property.registry',
-              resourceTypes: ['property.unit'],
-            },
-          ],
-          resourceTypes: [
-            {
-              capabilities: {
-                graphVisible: true,
-                linkable: true,
-                mediaAttachable: true,
-                searchable: true,
-                timelineVisible: true,
-              },
-              description: 'A physical unit',
-              key: 'property.unit',
-              label: 'Unit',
-              owningModuleId: 'property.registry',
-            },
-          ],
-          search: [
-            {
-              accessFiltering: 'legal_entity_scope',
-              key: 'property.unit-search',
-              owningModuleId: 'property.registry',
-              resourceType: 'property.unit',
-            },
-          ],
-          shellContributions:
-            emptyManifestInput().publicSurface.shellContributions,
-        },
-      });
-      const registration = defineVerticalRuntimeRegistration({
+it.effect('accepts populated typed surfaces and keeps executable values out of safe descriptors', () =>
+  Effect.gen(function* verifySafeDescriptors() {
+    const action = createAction();
+    const apiValue = HttpApi.make('PropertyApi').add(
+      HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),
+    );
+    const parameterizedApiValue = HttpApi.make('PropertyDetailApi').add(
+      HttpApiGroup.make('propertyDetail').add(
+        HttpApiEndpoint.get('getUnit', '/units/:unitId', {
+          headers: {},
+          params: { unitId: UnitId },
+          query: {},
+        }),
+      ),
+    );
+    const manifest = defineOntosModuleManifest({
+      ...emptyManifestInput(),
+      publicSurface: {
         actions: [action],
-        entrypoints: {
-          api: { resource: () => Promise.resolve(apiValue) },
-          components: {
-            dashboard: () => Promise.resolve(componentValue),
-          },
-          pages: {},
-          reports: {},
-          search: {},
+        api: {
+          PropertyClient: apiValue,
+          PropertyDetail: parameterizedApiValue,
         },
-        manifest,
-        outboxWorkers: [],
-      });
-      const descriptors = extractVerticalRuntimeSafeDescriptors(registration);
-
-      expect(manifest.publicSurface.actions[0]).toBe(action);
-      expect(manifest.publicSurface.api.PropertyClient).toBe(apiValue);
-      expect(manifest.publicSurface.api.PropertyDetail).toBe(
-        parameterizedApiValue
-      );
-      expect(manifest.publicSurface.components.PropertyUnitCard).toBe(
-        componentValue
-      );
-      expect(Object.keys(registration)).toEqual(['moduleId']);
-      expect(getVerticalRuntimeActions(registration)[0]).toBe(action);
-      const loadDashboard =
-        getVerticalRuntimeEntrypoints(registration).components['dashboard'];
-      expect(loadDashboard).toBeDefined();
-      if (loadDashboard === undefined) {
-        throw new Error('Expected assertion to hold');
-      }
-      expect(yield* Effect.promise(loadDashboard)).toBe(componentValue);
-      expect(descriptors).toEqual({
-        actions: [
+        components: { PropertyUnitCard: componentValue },
+        events: [
           {
-            actionKey: 'property.registry.create-unit',
-            auditProfile: 'standard',
-            entrypoint: action.descriptor.entrypoint,
-            idempotency: 'required',
-            legalEntityScope: 'optional',
+            key: 'property.unit-created',
             owningModuleId: 'property.registry',
-            schemaVersion: '1',
+            payloadSchema: Schema.Struct({ unitId: UnitId }),
+            referencesResourceTypes: ['property.unit'],
+            tense: 'past',
+            visibility: 'public_module_event',
           },
         ],
-        moduleId: 'property.registry',
-        outboxSubscriptions: [],
-        shellContributions:
-          emptyManifestInput().publicSurface.shellContributions,
-      });
-    })
+        reports: [
+          {
+            accessFiltering: 'legal_entity_scope',
+            dimensions: ['legal_entity'],
+            key: 'property.unit-inventory',
+            label: 'Unit inventory',
+            owningModuleId: 'property.registry',
+            resourceTypes: ['property.unit'],
+          },
+        ],
+        resourceTypes: [
+          {
+            capabilities: {
+              graphVisible: true,
+              linkable: true,
+              mediaAttachable: true,
+              searchable: true,
+              timelineVisible: true,
+            },
+            description: 'A physical unit',
+            key: 'property.unit',
+            label: 'Unit',
+            owningModuleId: 'property.registry',
+          },
+        ],
+        search: [
+          {
+            accessFiltering: 'legal_entity_scope',
+            key: 'property.unit-search',
+            owningModuleId: 'property.registry',
+            resourceType: 'property.unit',
+          },
+        ],
+        shellContributions: emptyManifestInput().publicSurface.shellContributions,
+      },
+    });
+    const registration = defineVerticalRuntimeRegistration({
+      actions: [action],
+      entrypoints: {
+        api: { resource: () => Promise.resolve(apiValue) },
+        components: {
+          dashboard: () => Promise.resolve(componentValue),
+        },
+        pages: {},
+        reports: {},
+        search: {},
+      },
+      manifest,
+      outboxWorkers: [],
+    });
+    const descriptors = extractVerticalRuntimeSafeDescriptors(registration);
+
+    expect(manifest.publicSurface.actions[0]).toBe(action);
+    expect(manifest.publicSurface.api.PropertyClient).toBe(apiValue);
+    expect(manifest.publicSurface.api.PropertyDetail).toBe(parameterizedApiValue);
+    expect(manifest.publicSurface.components.PropertyUnitCard).toBe(componentValue);
+    expect(Object.keys(registration)).toEqual(['moduleId']);
+    expect(getVerticalRuntimeActions(registration)[0]).toBe(action);
+    const loadDashboard = getVerticalRuntimeEntrypoints(registration).components['dashboard'];
+    expect(loadDashboard).toBeDefined();
+    if (loadDashboard === undefined) {
+      throw new Error('Expected assertion to hold');
+    }
+    expect(yield* Effect.promise(loadDashboard)).toBe(componentValue);
+    expect(descriptors).toEqual({
+      actions: [
+        {
+          actionKey: 'property.registry.create-unit',
+          auditProfile: 'standard',
+          entrypoint: action.descriptor.entrypoint,
+          idempotency: 'required',
+          legalEntityScope: 'optional',
+          owningModuleId: 'property.registry',
+          schemaVersion: '1',
+        },
+      ],
+      moduleId: 'property.registry',
+      outboxSubscriptions: [],
+      shellContributions: emptyManifestInput().publicSurface.shellContributions,
+    });
+  }),
 );
 
 it('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
@@ -253,28 +226,18 @@ it('rejects invalid identities, private fields, duplicates, cross-owner values, 
     defineOntosModuleManifest({
       ...emptyManifestInput(),
       module: { ...emptyManifestInput().module, id: 'property-registry' },
-    })
+    }),
   ).toThrow();
   const privateRoutesInput = {
     ...emptyManifestInput(),
     privateRoutes: [],
   };
-  expect(() =>
-    validateOntosModuleManifestFields(
-      privateRoutesInput,
-      privateRoutesInput.publicSurface
-    )
-  ).toThrow();
+  expect(() => validateOntosModuleManifestFields(privateRoutesInput, privateRoutesInput.publicSurface)).toThrow();
   const dependenciesInput = {
     ...emptyManifestInput(),
     dependencies: { core: [], externalSystems: [], modules: [] },
   };
-  expect(() =>
-    validateOntosModuleManifestFields(
-      dependenciesInput,
-      dependenciesInput.publicSurface
-    )
-  ).toThrow();
+  expect(() => validateOntosModuleManifestFields(dependenciesInput, dependenciesInput.publicSurface)).toThrow();
   expect(() =>
     defineOntosModuleManifest({
       ...emptyManifestInput(),
@@ -282,7 +245,7 @@ it('rejects invalid identities, private fields, duplicates, cross-owner values, 
         ...emptyManifestInput().activation,
         supportedStates: ['inactive', 'inactive'],
       },
-    })
+    }),
   ).toThrow();
   expect(() =>
     defineOntosModuleManifest({
@@ -291,7 +254,7 @@ it('rejects invalid identities, private fields, duplicates, cross-owner values, 
         ...emptyManifestInput().publicSurface,
         actions: [createAction('billing.invoice')],
       },
-    })
+    }),
   ).toThrow();
   expect(() =>
     defineOntosModuleManifest({
@@ -307,7 +270,7 @@ it('rejects invalid identities, private fields, duplicates, cross-owner values, 
           },
         ],
       },
-    })
+    }),
   ).toThrow();
   expect(() =>
     validateOntosModuleExecutableReferences(
@@ -326,36 +289,18 @@ it('rejects invalid identities, private fields, duplicates, cross-owner values, 
       [],
       [],
       [],
-      'property.registry'
-    )
+      'property.registry',
+    ),
   ).toThrow(/real values created by defineAction/u);
-  expect(() =>
-    validateOntosModuleExecutableReferences(
-      [],
-      [42],
-      [],
-      [],
-      'property.registry'
-    )
-  ).toThrow(/real Effect HttpApi/u);
-  expect(() =>
-    validateOntosModuleExecutableReferences(
-      [],
-      [],
-      ['not-a-component'],
-      [],
-      'property.registry'
-    )
-  ).toThrow(/callable component/u);
-  expect(() =>
-    validateOntosModuleExecutableReferences(
-      [],
-      [],
-      [],
-      [{}],
-      'property.registry'
-    )
-  ).toThrow(/Effect Schema value/u);
+  expect(() => validateOntosModuleExecutableReferences([], [42], [], [], 'property.registry')).toThrow(
+    /real Effect HttpApi/u,
+  );
+  expect(() => validateOntosModuleExecutableReferences([], [], ['not-a-component'], [], 'property.registry')).toThrow(
+    /callable component/u,
+  );
+  expect(() => validateOntosModuleExecutableReferences([], [], [], [{}], 'property.registry')).toThrow(
+    /Effect Schema value/u,
+  );
 });
 
 it('deployment contract decoding is exact and versioned', () => {
@@ -371,8 +316,7 @@ it('deployment contract decoding is exact and versioned', () => {
         reports: [],
         resourceTypes: [],
         search: [],
-        shellContributions:
-          emptyManifestInput().publicSurface.shellContributions,
+        shellContributions: emptyManifestInput().publicSurface.shellContributions,
       },
     },
     runtime: { outboxSubscriptions: [] },
@@ -385,7 +329,7 @@ it('deployment contract decoding is exact and versioned', () => {
     decodeOntosModuleDeploymentContract({
       ...contract,
       sourcePath: './private.ts',
-    })
+    }),
   ).toThrow();
   expect(() =>
     decodeOntosModuleDeploymentContract({
@@ -394,12 +338,8 @@ it('deployment contract decoding is exact and versioned', () => {
         ...contract.manifest,
         dependencies: { core: [], externalSystems: [], modules: [] },
       },
-    })
+    }),
   ).toThrow();
-  expect(() =>
-    decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '0' })
-  ).toThrow();
-  expect(() =>
-    decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '999' })
-  ).toThrow();
+  expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '0' })).toThrow();
+  expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '999' })).toThrow();
 });

@@ -14,10 +14,7 @@ export const ruleFilePolicyProperties = {
 } as const;
 
 /** Preserve source-rule fixture normalization and ignore-before-include precedence. */
-export function acceptsRuleFile(
-  filename: string,
-  policy: RuleFilePolicy
-): boolean {
+export function acceptsRuleFile(filename: string, policy: RuleFilePolicy): boolean {
   const path = scopePath(filename);
   if (matchesGlobs(path, policy.ignore)) return false;
   if (!matchesGlobs(path, policy.include)) return false;

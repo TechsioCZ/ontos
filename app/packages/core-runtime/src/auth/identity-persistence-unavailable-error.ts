@@ -5,5 +5,5 @@ export class IdentityPersistenceUnavailableError extends Schema.TaggedError<Iden
   {
     code: Schema.Literal('identity_persistence_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

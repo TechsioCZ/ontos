@@ -19,18 +19,15 @@ export const CounterpartyRoleAddPayloadSchema = Schema.Struct({
   Schema.makeFilter((payload) =>
     payload.validTo === undefined || payload.validTo >= payload.validFrom
       ? undefined
-      : [{ issue: 'validTo must not precede validFrom', path: ['validTo'] }]
-  )
+      : [{ issue: 'validTo must not precede validFrom', path: ['validTo'] }],
+  ),
 );
-export type CounterpartyRoleAddPayload =
-  typeof CounterpartyRoleAddPayloadSchema.Type;
+export type CounterpartyRoleAddPayload = typeof CounterpartyRoleAddPayloadSchema.Type;
 
 export const CounterpartyRoleAddResultSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   rolePeriodRef: CounterpartyRolePeriodRefSchema,
   roleType: CounterpartyRoleTypeSchema,
   validFrom: CounterpartyIsoTimestampSchema,
-  validTo: Schema.toEncoded(
-    Schema.OptionFromNullOr(CounterpartyIsoTimestampSchema)
-  ),
+  validTo: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyIsoTimestampSchema)),
 });

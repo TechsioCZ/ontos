@@ -3,10 +3,7 @@
 // @ontos-outbox-topic party.registry.counterparty-role-added.v1
 import { Schema } from 'effect';
 
-import {
-  CounterpartyIsoTimestampSchema,
-  CounterpartyRoleTypeSchema,
-} from '../domain/counterparty-contract.ts';
+import { CounterpartyIsoTimestampSchema, CounterpartyRoleTypeSchema } from '../domain/counterparty-contract.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 
@@ -15,9 +12,7 @@ export const OutboxPayloadSchema = Schema.Struct({
   rolePeriodRef: CounterpartyRolePeriodRefSchema,
   roleType: CounterpartyRoleTypeSchema,
   validFrom: CounterpartyIsoTimestampSchema,
-  validTo: Schema.toEncoded(
-    Schema.OptionFromNullOr(CounterpartyIsoTimestampSchema)
-  ),
+  validTo: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyIsoTimestampSchema)),
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 

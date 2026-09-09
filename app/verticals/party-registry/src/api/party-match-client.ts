@@ -16,15 +16,12 @@ type PartyMatchAuthorizedInvocation = readonly [
   options?: PartyMatchClientOptions,
 ];
 
-type PartyMatchOperationInvocation = readonly [
-  requestCorrelation: string,
-  options?: PartyMatchClientOptions,
-];
+type PartyMatchOperationInvocation = readonly [requestCorrelation: string, options?: PartyMatchClientOptions];
 
 const partyMatchClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartyMatchClientOptions
+  options: PartyMatchClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,21 +30,15 @@ const partyMatchClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executePartyMatchWithAuthorization = (
   payload: PartyMatchRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartyMatchAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartyMatchAuthorizedInvocation
 ) =>
   partyMatchClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.partyMatch.execute({ headers: {}, params: {}, payload, query: {} })
-    )
+    Effect.flatMap((client) => client.partyMatch.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executePartyMatch = (
@@ -55,10 +46,5 @@ export const executePartyMatch = (
   ...[requestCorrelation, options = {}]: PartyMatchOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePartyMatchWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executePartyMatchWithAuthorization(payload, credential, requestCorrelation, options),
   );

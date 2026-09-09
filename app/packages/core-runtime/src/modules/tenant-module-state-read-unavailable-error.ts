@@ -5,5 +5,5 @@ export class TenantModuleStateReadUnavailableError extends Schema.TaggedError<Te
   {
     code: Schema.Literal('tenant_module_state_read_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

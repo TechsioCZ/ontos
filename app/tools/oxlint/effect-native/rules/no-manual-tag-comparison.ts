@@ -94,24 +94,12 @@ import type { EffectBindings } from '../shared/effect-imports.ts';
 import { optionRecord, stringArray } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
-const DEFAULT_INCLUDE = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Tag literals owned by Effect's built-in ADTs — `no-raw-effect-adt-tag-check` reports those. */
-const DEFAULT_ADT_TAGS = [
-  'Some',
-  'None',
-  'Success',
-  'Failure',
-  'Left',
-  'Right',
-];
+const DEFAULT_ADT_TAGS = ['Some', 'None', 'Success', 'Failure', 'Left', 'Right'];
 
 /** Barrels that re-export Effect namespaces verbatim (the Modern.js BFF edge barrel). */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
@@ -121,13 +109,7 @@ const EQUALITY_OPERATORS = new Set(['===', '!==', '==', '!=']);
 const TAG_PROPERTY = '_tag';
 
 /** String methods that turn a closed tag vocabulary into a naming convention. */
-const STRING_PROBES = new Set([
-  'startsWith',
-  'endsWith',
-  'includes',
-  'match',
-  'test',
-]);
+const STRING_PROBES = new Set(['startsWith', 'endsWith', 'includes', 'match', 'test']);
 
 /** Regex methods whose *argument* is the probed string (`/^Contacts/u.test(error._tag)`). */
 const REGEX_PROBES = new Set(['test', 'exec']);
@@ -159,12 +141,7 @@ const STRING_TRANSFORMS = new Set([
 ]);
 
 /** Membership containers: `KNOWN.includes(tag)`, `SET.has(tag)`. */
-const MEMBERSHIP_METHODS = new Set([
-  'includes',
-  'has',
-  'indexOf',
-  'lastIndexOf',
-]);
+const MEMBERSHIP_METHODS = new Set(['includes', 'has', 'indexOf', 'lastIndexOf']);
 
 /** `Effect.*` combinators whose callback is the error channel (`includeErrorCombinators: false`). */
 const ERROR_COMBINATORS = new Set([
@@ -180,12 +157,7 @@ const ERROR_COMBINATORS = new Set([
 ]);
 
 /** `Schedule.*` combinators taking a failure predicate. */
-const SCHEDULE_COMBINATORS = new Set([
-  'recurWhile',
-  'recurUntil',
-  'whileInput',
-  'untilInput',
-]);
+const SCHEDULE_COMBINATORS = new Set(['recurWhile', 'recurUntil', 'whileInput', 'untilInput']);
 
 /** `Match.*` combinators whose first argument may be a hand-written predicate. */
 const MATCH_COMBINATORS = new Set(['when', 'whenOr', 'whenAnd', 'not']);
@@ -220,10 +192,7 @@ function readOptions(context: Context): RuleOptions {
     adtTags: stringArray(record.adtTags, DEFAULT_ADT_TAGS),
     allowTags: stringArray(record.allowTags, []),
     requireEffectImport: record.requireEffectImport === true,
-    reexportModules: stringArray(
-      record.reexportModules,
-      DEFAULT_REEXPORT_MODULES
-    ),
+    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
   };
 }
 
@@ -235,21 +204,12 @@ function unwrap(node: ESTree.Node): ESTree.Node {
 /** A statically known string operand (`'X'`, `"X"`, `` `X` ``), or null. */
 function asStringLiteral(node: ESTree.Node): string | null {
   const expression = unwrap(node);
-  if (expression.type === 'Literal')
-    return typeof expression.value === 'string' ? expression.value : null;
-  if (
-    expression.type === 'TemplateLiteral' &&
-    expression.expressions.length === 0
-  )
-    return templateText(expression);
+  if (expression.type === 'Literal') return typeof expression.value === 'string' ? expression.value : null;
+  if (expression.type === 'TemplateLiteral' && expression.expressions.length === 0) return templateText(expression);
   return null;
 }
 
-function resolveVariable(
-  context: Context,
-  name: string,
-  from: ESTree.Node
-): Variable | null {
+function resolveVariable(context: Context, name: string, from: ESTree.Node): Variable | null {
   let scope: Scope | null = null;
   try {
     scope = context.sourceCode.getScope(from);
@@ -271,16 +231,11 @@ function isNamedIdentifier(node: ESTree.Node, name: string): boolean {
 /** A single-assignment variable declarator, resolved at the identifier's lexical scope. */
 function immutableDeclarator(
   context: Context,
-  node: Extract<ESTree.Node, { type: 'Identifier' }>
+  node: Extract<ESTree.Node, { type: 'Identifier' }>,
 ): ESTree.VariableDeclarator | null {
   const variable = resolveVariable(context, node.name, node);
   if (variable === null || variable.defs.length !== 1) return null;
-  if (
-    variable.references.some(
-      (reference) => reference.isWrite() && !reference.init
-    )
-  )
-    return null;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return null;
   const def = variable.defs[0];
   if (def === undefined || def.type !== 'Variable') return null;
   const declarator = def.node as ESTree.Node;
@@ -288,21 +243,17 @@ function immutableDeclarator(
 }
 
 /** Single-assignment `const NAME = <expr>` initialiser for an identifier reference, or null. */
-function constInitialiser(
-  context: Context,
-  node: ESTree.Node
-): ESTree.Node | null {
+function constInitialiser(context: Context, node: ESTree.Node): ESTree.Node | null {
   const expression = unwrap(node);
   if (expression.type !== 'Identifier') return null;
   const declarator = immutableDeclarator(context, expression);
-  if (declarator === null || !isNamedIdentifier(declarator.id, expression.name))
-    return null;
+  if (declarator === null || !isNamedIdentifier(declarator.id, expression.name)) return null;
   return declarator.init ?? null;
 }
 
 function assertionPropertyName(
   context: Context,
-  property: { readonly key: ESTree.Node; readonly computed: boolean }
+  property: { readonly key: ESTree.Node; readonly computed: boolean },
 ): string | null {
   return !property.computed && property.key.type === 'Identifier'
     ? property.key.name
@@ -310,10 +261,7 @@ function assertionPropertyName(
 }
 
 /** Trace a simple immutable destructured method without losing the source binding's scope. */
-function destructuredMethod(
-  context: Context,
-  node: ESTree.Node
-): { source: ESTree.Node; method: string } | null {
+function destructuredMethod(context: Context, node: ESTree.Node): { source: ESTree.Node; method: string } | null {
   if (node.type !== 'Identifier') return null;
   const declarator = immutableDeclarator(context, node);
   if (
@@ -325,8 +273,7 @@ function destructuredMethod(
   )
     return null;
   const property = declarator.id.properties.find(
-    (entry) =>
-      entry.type === 'Property' && isNamedIdentifier(entry.value, node.name)
+    (entry) => entry.type === 'Property' && isNamedIdentifier(entry.value, node.name),
   );
   if (property?.type !== 'Property') return null;
   const method = assertionPropertyName(context, property);
@@ -340,16 +287,11 @@ interface AssertionCall {
 }
 
 /** Node assertions allow strict/default namespace prefixes but never an expect subject. */
-function nodeAssertion(
-  members: string[],
-  subject: ESTree.CallExpression | null
-): AssertionCall | null {
+function nodeAssertion(members: string[], subject: ESTree.CallExpression | null): AssertionCall | null {
   if (subject !== null) return null;
   while (members[0] === 'strict' || members[0] === 'default') members.shift();
   const method = members[0];
-  return members.length === 1 && method !== undefined
-    ? { method, subject: null }
-    : null;
+  return members.length === 1 && method !== undefined ? { method, subject: null } : null;
 }
 
 /** Static expect helpers are expected values, never subject-bearing assertions. */
@@ -367,28 +309,14 @@ function staticAssertion(members: string[]): AssertionCall | null {
 function importedAssertion(
   source: string,
   members: string[],
-  subject: ESTree.CallExpression | null
+  subject: ESTree.CallExpression | null,
 ): AssertionCall | null {
-  if (/^(?:node:)?assert(?:\/strict)?$/u.test(source))
-    return nodeAssertion(members, subject);
-  if (
-    ![
-      '@rstest/core',
-      'effect-rstest',
-      'vitest',
-      '@jest/globals',
-      'expect',
-    ].includes(source)
-  )
-    return null;
+  if (/^(?:node:)?assert(?:\/strict)?$/u.test(source)) return nodeAssertion(members, subject);
+  if (!['@rstest/core', 'effect-rstest', 'vitest', '@jest/globals', 'expect'].includes(source)) return null;
   if (subject === null) return staticAssertion(members);
   if (members.shift() !== 'expect') return null;
   const method = members.pop();
-  if (
-    method === undefined ||
-    !members.every((member) => ['not', 'resolves', 'rejects'].includes(member))
-  )
-    return null;
+  if (method === undefined || !members.every((member) => ['not', 'resolves', 'rejects'].includes(member))) return null;
   return { method, subject };
 }
 
@@ -396,44 +324,26 @@ function assertionImport(
   context: Context,
   expression: ESTree.Node,
   members: string[],
-  subject: ESTree.CallExpression | null
+  subject: ESTree.CallExpression | null,
 ): AssertionCall | null {
   if (expression.type !== 'Identifier') return null;
   const variable = resolveVariable(context, expression.name, expression);
-  const definition = variable?.defs.find(
-    (entry) => entry.type === 'ImportBinding'
-  );
+  const definition = variable?.defs.find((entry) => entry.type === 'ImportBinding');
   const specifier = definition?.node as ESTree.Node | undefined;
   if (specifier === undefined) return null;
   const declaration = context.sourceCode.ast.body.find(
-    (statement) =>
-      statement.type === 'ImportDeclaration' &&
-      statement.specifiers.some((entry) => entry === specifier)
+    (statement) => statement.type === 'ImportDeclaration' && statement.specifiers.some((entry) => entry === specifier),
   );
   if (declaration?.type !== 'ImportDeclaration') return null;
   const path = [...members];
   if (specifier.type === 'ImportSpecifier')
-    members.unshift(
-      specifier.imported.type === 'Identifier'
-        ? specifier.imported.name
-        : specifier.imported.value
-    );
+    members.unshift(specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value);
   const source = declaration.source.value;
-  if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect')
-    members.unshift('expect');
-  return stableAssertion(
-    context,
-    expression,
-    path,
-    importedAssertion(source, members, subject)
-  );
+  if (specifier.type === 'ImportDefaultSpecifier' && source === 'expect') members.unshift('expect');
+  return stableAssertion(context, expression, path, importedAssertion(source, members, subject));
 }
 
-function assertionAlias(
-  context: Context,
-  expression: ESTree.Node,
-  members: string[]
-): ESTree.Node | null {
+function assertionAlias(context: Context, expression: ESTree.Node, members: string[]): ESTree.Node | null {
   const destructured = destructuredMethod(context, expression);
   if (destructured === null) return constInitialiser(context, expression);
   members.unshift(destructured.method);
@@ -458,34 +368,20 @@ function assertionPathWrite(node: ESTree.Node): boolean {
 function assertionAliasTarget(
   context: Context,
   pattern: ESTree.Node,
-  members: readonly string[]
+  members: readonly string[],
 ): { node: ESTree.Node; members: readonly string[] } | null {
   if (pattern.type === 'Identifier')
-    return immutableDeclarator(context, pattern) === null
-      ? null
-      : { node: pattern, members };
+    return immutableDeclarator(context, pattern) === null ? null : { node: pattern, members };
   if (pattern.type !== 'ObjectPattern') return null;
   const property = pattern.properties.find(
-    (entry) =>
-      entry.type === 'Property' &&
-      assertionPropertyName(context, entry) === members[0]
+    (entry) => entry.type === 'Property' && assertionPropertyName(context, entry) === members[0],
   );
-  return property?.type === 'Property'
-    ? assertionAliasTarget(context, property.value, members.slice(1))
-    : null;
+  return property?.type === 'Property' ? assertionAliasTarget(context, property.value, members.slice(1)) : null;
 }
 
-function assertionMemberTail(
-  node: ESTree.Node,
-  members: readonly string[]
-): readonly string[] | null {
+function assertionMemberTail(node: ESTree.Node, members: readonly string[]): readonly string[] | null {
   const parent = node.parent;
-  if (
-    members.length === 0 ||
-    parent?.type !== 'MemberExpression' ||
-    parent.object !== node
-  )
-    return null;
+  if (members.length === 0 || parent?.type !== 'MemberExpression' || parent.object !== node) return null;
   const member = memberPropertyName(parent);
   return member === null || member === members[0] ? members.slice(1) : null;
 }
@@ -494,7 +390,7 @@ function assertionReferenceWrite(
   context: Context,
   node: ESTree.Node,
   members: readonly string[],
-  seen: Map<Variable, Set<string>>
+  seen: Map<Variable, Set<string>>,
 ): boolean {
   let current = node;
   for (let depth = 0; depth < MAX_DEPTH; depth += 1) {
@@ -507,10 +403,7 @@ function assertionReferenceWrite(
     }
     if (parent.type === 'VariableDeclarator' && parent.init === current) {
       const alias = assertionAliasTarget(context, parent.id, members);
-      return (
-        alias !== null &&
-        assertionBindingWrite(context, alias.node, alias.members, seen)
-      );
+      return alias !== null && assertionBindingWrite(context, alias.node, alias.members, seen);
     }
     const tail = assertionMemberTail(current, members);
     if (tail === null) return false;
@@ -525,7 +418,7 @@ function assertionBindingWrite(
   context: Context,
   node: ESTree.Node,
   members: readonly string[],
-  seen = new Map<Variable, Set<string>>()
+  seen = new Map<Variable, Set<string>>(),
 ): boolean {
   if (node.type !== 'Identifier') return false;
   const variable = resolveVariable(context, node.name, node);
@@ -537,8 +430,7 @@ function assertionBindingWrite(
   seen.set(variable, paths.add(path));
   return variable.references.some(
     (reference) =>
-      (reference.isWrite() && !reference.init) ||
-      assertionReferenceWrite(context, reference.identifier, members, seen)
+      (reference.isWrite() && !reference.init) || assertionReferenceWrite(context, reference.identifier, members, seen),
   );
 }
 
@@ -547,19 +439,13 @@ function stableAssertion(
   context: Context,
   expression: ESTree.Node,
   members: readonly string[],
-  assertion: AssertionCall | null
+  assertion: AssertionCall | null,
 ): AssertionCall | null {
-  return assertion?.expectedWrapper === true &&
-    assertionBindingWrite(context, expression, members)
-    ? null
-    : assertion;
+  return assertion?.expectedWrapper === true && assertionBindingWrite(context, expression, members) ? null : assertion;
 }
 
 /** Resolve assertion imports through lexical bindings, aliases, and matcher modifiers. */
-function assertionCall(
-  context: Context,
-  call: ESTree.CallExpression
-): AssertionCall | null {
+function assertionCall(context: Context, call: ESTree.CallExpression): AssertionCall | null {
   let expression = unwrap(call.callee);
   const members: string[] = [];
   const seen = new Set<ESTree.Node>();
@@ -578,8 +464,7 @@ function assertionCall(
       expression = unwrap(expression.object as ESTree.Node);
       continue;
     }
-    if (expression.type !== 'CallExpression')
-      return assertionImport(context, expression, members, subject);
+    if (expression.type !== 'CallExpression') return assertionImport(context, expression, members, subject);
     if (subject !== null) return null;
     subject = expression;
     expression = unwrap(expression.callee);
@@ -605,10 +490,7 @@ function staticString(context: Context, node: ESTree.Node): string | null {
 }
 
 /** Array paths permit static strings and numeric indexes, but never holes or spreads. */
-function validTagPathSegment(
-  context: Context,
-  element: ESTree.Node | null
-): boolean {
+function validTagPathSegment(context: Context, element: ESTree.Node | null): boolean {
   if (element === null || element.type === 'SpreadElement') return false;
   if (staticString(context, element) !== null) return true;
   const value = unwrap(element);
@@ -623,44 +505,22 @@ function tagPropertyPath(context: Context, node: ESTree.Node): boolean {
     return segments.length <= MAX_DEPTH && segments.at(-1) === TAG_PROPERTY;
   }
   const expression = unwrap(node);
-  if (
-    expression.type !== 'ArrayExpression' ||
-    expression.elements.length > MAX_DEPTH
-  )
-    return false;
-  if (
-    !expression.elements.every((element) =>
-      validTagPathSegment(context, element)
-    )
-  )
-    return false;
+  if (expression.type !== 'ArrayExpression' || expression.elements.length > MAX_DEPTH) return false;
+  if (!expression.elements.every((element) => validTagPathSegment(context, element))) return false;
   const last = expression.elements.at(-1);
-  return (
-    last !== undefined &&
-    last !== null &&
-    staticString(context, last) === TAG_PROPERTY
-  );
+  return last !== undefined && last !== null && staticString(context, last) === TAG_PROPERTY;
 }
 
 /** The `_tag` member access itself (`x._tag`, `x?._tag`, `x!._tag`, `x["_tag"]`, `x[KEY]`), or null. */
-function asTagMember(
-  context: Context,
-  node: ESTree.Node
-): ESTree.MemberExpression | null {
-  return asNamedMember(
-    node,
-    TAG_PROPERTY,
-    (key) => staticString(context, key),
-    {
-      maxDepth: MAX_DEPTH,
-    }
-  );
+function asTagMember(context: Context, node: ESTree.Node): ESTree.MemberExpression | null {
+  return asNamedMember(node, TAG_PROPERTY, (key) => staticString(context, key), {
+    maxDepth: MAX_DEPTH,
+  });
 }
 
 /** Non-computed `.x` or computed `["x"]` property name of a member expression. */
 function memberPropertyName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed)
-    return node.property.type === 'Identifier' ? node.property.name : null;
+  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
   return asStringLiteral(node.property);
 }
 
@@ -668,15 +528,10 @@ function memberPropertyName(node: ESTree.MemberExpression): string | null {
 function describe(context: Context, node: ESTree.Node): string {
   const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
   if (text.length === 0) return '…';
-  return text.length > MAX_TEXT_LENGTH
-    ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…`
-    : text;
+  return text.length > MAX_TEXT_LENGTH ? `${text.slice(0, MAX_TEXT_LENGTH - 1)}…` : text;
 }
 
-function importsEffectOrBarrel(
-  program: ESTree.Program,
-  reexportModules: readonly string[]
-): boolean {
+function importsEffectOrBarrel(program: ESTree.Program, reexportModules: readonly string[]): boolean {
   if (collectEffectBindings(program).importsEffect) return true;
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
@@ -690,11 +545,7 @@ function importsEffectOrBarrel(
  * through the file's real Effect import bindings. A conventional name or a shadow is not evidence.
  * Direct-member imports and unknown re-export barrels are not resolved for this optional exclusion.
  */
-function combinatorName(
-  context: Context,
-  node: ESTree.CallExpression,
-  bindings: EffectBindings
-): string | null {
+function combinatorName(context: Context, node: ESTree.CallExpression, bindings: EffectBindings): string | null {
   const callee = unwrap(node.callee);
   if (callee.type !== 'MemberExpression') return null;
   const object = unwrap(callee.object);
@@ -702,11 +553,7 @@ function combinatorName(
   const member = memberPropertyName(callee);
   if (member === null) return null;
   const variable = resolveVariable(context, object.name, object);
-  if (
-    variable === null ||
-    !variable.defs.some((definition) => definition.type === 'ImportBinding')
-  )
-    return null;
+  if (variable === null || !variable.defs.some((definition) => definition.type === 'ImportBinding')) return null;
   const namespace = bindings.namespaces.get(object.name);
   if (namespace === undefined) return null;
   const members = new Map([
@@ -717,36 +564,21 @@ function combinatorName(
   return members?.has(member) ? `${namespace}.${member}` : null;
 }
 
-const FUNCTION_TYPES = new Set([
-  'ArrowFunctionExpression',
-  'FunctionExpression',
-  'FunctionDeclaration',
-]);
+const FUNCTION_TYPES = new Set(['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration']);
 
 /**
  * True when `node` sits inside a function passed *directly* as an argument to one of the error /
  * predicate combinators above. Walks parent links, so `pipe(x, Effect.catch((e) => e._tag === 'A'))`
  * and `x.pipe(Effect.mapError(fn))` are both recognised.
  */
-function insideErrorCombinator(
-  context: Context,
-  node: ESTree.Node,
-  bindings: EffectBindings
-): boolean {
+function insideErrorCombinator(context: Context, node: ESTree.Node, bindings: EffectBindings): boolean {
   let current: ESTree.Node | null = node;
   for (let depth = 0; current !== null && depth < 512; depth += 1) {
     const candidate: ESTree.Node = current;
     const parent: ESTree.Node | null = candidate.parent ?? null;
-    if (
-      FUNCTION_TYPES.has(candidate.type) &&
-      parent !== null &&
-      parent.type === 'CallExpression'
-    ) {
-      const isArgument = parent.arguments.some(
-        (argument) => (argument as ESTree.Node) === candidate
-      );
-      if (isArgument && combinatorName(context, parent, bindings) !== null)
-        return true;
+    if (FUNCTION_TYPES.has(candidate.type) && parent !== null && parent.type === 'CallExpression') {
+      const isArgument = parent.arguments.some((argument) => (argument as ESTree.Node) === candidate);
+      if (isArgument && combinatorName(context, parent, bindings) !== null) return true;
     }
     if (parent === candidate) return false;
     current = parent;
@@ -759,9 +591,7 @@ function insideErrorCombinator(
 // ---------------------------------------------------------------------------------------------
 
 /** `true` when a binding pattern property key is the `_tag` discriminant. */
-function isTagKey(
-  property: ESTree.Node & { key?: ESTree.Node; computed?: boolean }
-): boolean {
+function isTagKey(property: ESTree.Node & { key?: ESTree.Node; computed?: boolean }): boolean {
   const key = property.key;
   if (key === undefined) return false;
   if (property.computed !== true) {
@@ -776,22 +606,13 @@ function isTagKey(
  * (`{ _tag }`), renamed (`{ _tag: classification }`), defaulted (`{ _tag = 'none' }`) or nested
  * (`{ reason: { _tag } }`, `[{ _tag }]`).
  */
-function patternBindsTag(
-  pattern: ESTree.Node | null | undefined,
-  name: string,
-  depth = 0
-): boolean {
-  if (pattern === null || pattern === undefined || depth > MAX_DEPTH)
-    return false;
+function patternBindsTag(pattern: ESTree.Node | null | undefined, name: string, depth = 0): boolean {
+  if (pattern === null || pattern === undefined || depth > MAX_DEPTH) return false;
   switch (pattern.type) {
     case 'ObjectPattern':
-      return pattern.properties.some((property) =>
-        propertyBindsTag(property, name, depth)
-      );
+      return pattern.properties.some((property) => propertyBindsTag(property, name, depth));
     case 'ArrayPattern':
-      return pattern.elements.some((element) =>
-        patternBindsTag(element, name, depth + 1)
-      );
+      return pattern.elements.some((element) => patternBindsTag(element, name, depth + 1));
     case 'AssignmentPattern':
       return patternBindsTag(pattern.left as ESTree.Node, name, depth + 1);
     case 'RestElement':
@@ -801,43 +622,28 @@ function patternBindsTag(
   }
 }
 
-function propertyBindsTag(
-  property: ESTree.Node,
-  name: string,
-  depth: number
-): boolean {
+function propertyBindsTag(property: ESTree.Node, name: string, depth: number): boolean {
   if (property.type === 'RestElement') return false;
   const entry = property as ESTree.Node & {
     key?: ESTree.Node;
     computed?: boolean;
     value: ESTree.Node;
   };
-  return isTagKey(entry)
-    ? bindsName(entry.value, name, depth + 1)
-    : patternBindsTag(entry.value, name, depth + 1);
+  return isTagKey(entry) ? bindsName(entry.value, name, depth + 1) : patternBindsTag(entry.value, name, depth + 1);
 }
 
 /** `true` when a (possibly defaulted) binding target is exactly the identifier `name`. */
-function bindsName(
-  target: ESTree.Node | null | undefined,
-  name: string,
-  depth = 0
-): boolean {
-  if (target === null || target === undefined || depth > MAX_DEPTH)
-    return false;
+function bindsName(target: ESTree.Node | null | undefined, name: string, depth = 0): boolean {
+  if (target === null || target === undefined || depth > MAX_DEPTH) return false;
   if (target.type === 'Identifier') return target.name === name;
-  if (target.type === 'AssignmentPattern')
-    return bindsName(target.left as ESTree.Node, name, depth + 1);
+  if (target.type === 'AssignmentPattern') return bindsName(target.left as ESTree.Node, name, depth + 1);
   return false;
 }
 
 /** Binding patterns introduced by a scope definition node (declarator, function params, catch clause). */
-function definitionPatterns(
-  node: ESTree.Node
-): readonly (ESTree.Node | null)[] {
+function definitionPatterns(node: ESTree.Node): readonly (ESTree.Node | null)[] {
   if (node.type === 'VariableDeclarator') return [node.id as ESTree.Node];
-  if (node.type === 'CatchClause')
-    return [(node.param ?? null) as ESTree.Node | null];
+  if (node.type === 'CatchClause') return [(node.param ?? null) as ESTree.Node | null];
   const params = (node as { params?: readonly unknown[] }).params;
   if (Array.isArray(params)) return params as readonly ESTree.Node[];
   return [];
@@ -850,20 +656,12 @@ function definitionPatterns(
  *
  * Returns `undefined` when the binding is not a tag alias at all.
  */
-function tagAliasOrigin(
-  context: Context,
-  node: ESTree.Node
-): ESTree.Node | null | undefined {
+function tagAliasOrigin(context: Context, node: ESTree.Node): ESTree.Node | null | undefined {
   const expression = unwrap(node);
   if (expression.type !== 'Identifier') return undefined;
   const variable = resolveVariable(context, expression.name, expression);
   if (variable === null) return undefined;
-  if (
-    variable.references.some(
-      (reference) => reference.isWrite() && !reference.init
-    )
-  )
-    return undefined;
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return undefined;
   for (const def of variable.defs) {
     const declaration = def.node as ESTree.Node | undefined;
     if (declaration === undefined) continue;
@@ -876,14 +674,10 @@ function tagAliasOrigin(
 function declarationTagOrigin(
   context: Context,
   declaration: ESTree.Node,
-  name: string
+  name: string,
 ): ESTree.Node | null | undefined {
   if (declaration.type !== 'VariableDeclarator') {
-    return definitionPatterns(declaration).some((pattern) =>
-      patternBindsTag(pattern, name)
-    )
-      ? null
-      : undefined;
+    return definitionPatterns(declaration).some((pattern) => patternBindsTag(pattern, name)) ? null : undefined;
   }
   const init = declaration.init ?? null;
   if (isNamedIdentifier(declaration.id, name) && init !== null) {
@@ -902,12 +696,7 @@ interface TagReference {
  * Resolve every spelling of "this expression is the `_tag` discriminant": a direct member access, a
  * local binding that holds one, `String(tag)` laundering and tag-derived string surgery.
  */
-function tagReference(
-  context: Context,
-  node: ESTree.Node,
-  options: RuleOptions,
-  depth = 0
-): TagReference | null {
+function tagReference(context: Context, node: ESTree.Node, options: RuleOptions, depth = 0): TagReference | null {
   if (depth > MAX_DEPTH) return null;
   const expression = unwrap(node);
 
@@ -925,25 +714,21 @@ function tagReference(
     return { origin, fallback: expression.name };
   }
 
-  return expression.type === 'CallExpression'
-    ? callTagReference(context, expression, options, depth)
-    : null;
+  return expression.type === 'CallExpression' ? callTagReference(context, expression, options, depth) : null;
 }
 
 function callTagReference(
   context: Context,
   expression: ESTree.CallExpression,
   options: RuleOptions,
-  depth: number
+  depth: number,
 ): TagReference | null {
   const callee = unwrap(expression.callee);
   if (isNamedIdentifier(callee, 'String')) {
     const variable = resolveVariable(context, 'String', callee);
     if (variable !== null && variable.defs.length > 0) return null;
     const argument = firstArgument(expression);
-    return argument === null
-      ? null
-      : tagReference(context, argument, options, depth + 1);
+    return argument === null ? null : tagReference(context, argument, options, depth + 1);
   }
   if (callee.type !== 'MemberExpression') return null;
   const method = memberPropertyName(callee);
@@ -954,16 +739,12 @@ function callTagReference(
 
 function firstArgument(node: ESTree.CallExpression): ESTree.Node | null {
   const argument = node.arguments[0];
-  return argument === undefined || argument.type === 'SpreadElement'
-    ? null
-    : argument;
+  return argument === undefined || argument.type === 'SpreadElement' ? null : argument;
 }
 
 /** The text used to name the compared value in the diagnostic. */
 function referenceText(context: Context, reference: TagReference): string {
-  return reference.origin === null
-    ? reference.fallback
-    : describe(context, reference.origin);
+  return reference.origin === null ? reference.fallback : describe(context, reference.origin);
 }
 
 /** `Object.hasOwn` / `Reflect.has` / `Object.is` — a global namespace call, not a shadowed local. */
@@ -971,7 +752,7 @@ function globalNamespaceCall(
   context: Context,
   node: ESTree.CallExpression,
   namespace: string,
-  method: string
+  method: string,
 ): boolean {
   const callee = unwrap(node.callee);
   if (callee.type !== 'MemberExpression') return false;
@@ -983,18 +764,10 @@ function globalNamespaceCall(
 }
 
 /** `/^Contacts/u`, `new RegExp('^Contacts')`, or a const bound to either. */
-function isRegexReceiver(
-  context: Context,
-  node: ESTree.Node,
-  depth = 0
-): boolean {
+function isRegexReceiver(context: Context, node: ESTree.Node, depth = 0): boolean {
   if (depth > 2) return false;
   const expression = unwrap(node);
-  if (
-    expression.type === 'Literal' &&
-    (expression as { regex?: unknown }).regex !== undefined
-  )
-    return true;
+  if (expression.type === 'Literal' && (expression as { regex?: unknown }).regex !== undefined) return true;
   if (expression.type === 'NewExpression') {
     const callee = unwrap(expression.callee as ESTree.Node);
     if (callee.type !== 'Identifier' || callee.name !== 'RegExp') return false;
@@ -1002,48 +775,29 @@ function isRegexReceiver(
     return variable === null || variable.defs.length === 0;
   }
   const initialiser = constInitialiser(context, expression);
-  return initialiser === null
-    ? false
-    : isRegexReceiver(context, initialiser, depth + 1);
+  return initialiser === null ? false : isRegexReceiver(context, initialiser, depth + 1);
 }
 
-function containerElements(
-  expression: ESTree.Node
-): ESTree.ArrayExpression['elements'] | null {
+function containerElements(expression: ESTree.Node): ESTree.ArrayExpression['elements'] | null {
   if (expression.type === 'ArrayExpression') return expression.elements;
-  if (expression.type !== 'NewExpression' || expression.arguments.length !== 1)
-    return null;
+  if (expression.type !== 'NewExpression' || expression.arguments.length !== 1) return null;
   const first = unwrap(expression.arguments[0] as ESTree.Node);
   return first.type === 'ArrayExpression' ? first.elements : null;
 }
 
 /** Only map callback results propagate tag values; arbitrary callback reads do not. */
-function mappedTagValues(
-  context: Context,
-  expression: ESTree.CallExpression
-): readonly ESTree.Node[] {
+function mappedTagValues(context: Context, expression: ESTree.CallExpression): readonly ESTree.Node[] {
   const callee = unwrap(expression.callee);
-  if (
-    callee.type !== 'MemberExpression' ||
-    memberPropertyName(callee) !== 'map'
-  )
-    return [];
+  if (callee.type !== 'MemberExpression' || memberPropertyName(callee) !== 'map') return [];
   const first = firstArgument(expression);
   if (first === null) return [];
   const callback = unwrap(constInitialiser(context, first) ?? first);
-  if (
-    callback.type !== 'ArrowFunctionExpression' &&
-    callback.type !== 'FunctionExpression'
-  )
-    return [];
+  if (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression') return [];
   return callback.body === null ? [] : [callback.body];
 }
 
 /** Follow values reaching a comparison, without descending into unrelated predicates or fields. */
-function comparedValues(
-  context: Context,
-  expression: ESTree.Node
-): readonly ESTree.Node[] {
+function comparedValues(context: Context, expression: ESTree.Node): readonly ESTree.Node[] {
   switch (expression.type) {
     case 'ArrayExpression':
       return expression.elements.filter((element) => element !== null);
@@ -1070,9 +824,7 @@ function returnedTagValues(expression: ESTree.Node): readonly ESTree.Node[] {
     case 'ReturnStatement':
       return expression.argument === null ? [] : [expression.argument];
     case 'IfStatement':
-      return expression.alternate === null
-        ? [expression.consequent]
-        : [expression.consequent, expression.alternate];
+      return expression.alternate === null ? [expression.consequent] : [expression.consequent, expression.alternate];
     default:
       return [];
   }
@@ -1114,15 +866,10 @@ const EXPECTED_WRAPPERS = new Set(['objectContaining', 'arrayContaining']);
 type ExpectedShapeVisits = readonly [Set<ESTree.Node>, Set<ESTree.Node>];
 
 /** An object's payload is not another discriminant: inspect only its own `_tag`. */
-function expectedObjectTags(
-  context: Context,
-  shape: ESTree.Node
-): readonly ESTree.Node[] {
+function expectedObjectTags(context: Context, shape: ESTree.Node): readonly ESTree.Node[] {
   if (shape.type !== 'ObjectExpression') return [];
   const tag = shape.properties.find(
-    (property) =>
-      property.type === 'Property' &&
-      assertionPropertyName(context, property) === TAG_PROPERTY
+    (property) => property.type === 'Property' && assertionPropertyName(context, property) === TAG_PROPERTY,
   );
   return tag?.type === 'Property' ? [tag.value] : [];
 }
@@ -1132,13 +879,11 @@ function expectedContainedTags(
   context: Context,
   shape: ESTree.Node,
   depth: number,
-  seen: ExpectedShapeVisits
+  seen: ExpectedShapeVisits,
 ): readonly ESTree.Node[] {
   if (shape.type !== 'ArrayExpression') return [];
   return shape.elements.flatMap((element) =>
-    element === null
-      ? []
-      : expectedShapeTags(context, element, false, depth + 1, seen)
+    element === null ? [] : expectedShapeTags(context, element, false, depth + 1, seen),
   );
 }
 
@@ -1148,28 +893,20 @@ function expectedShapeTags(
   expected: ESTree.Node,
   contained = false,
   depth = 0,
-  seen: ExpectedShapeVisits = [new Set(), new Set()]
+  seen: ExpectedShapeVisits = [new Set(), new Set()],
 ): readonly ESTree.Node[] {
   const shape = unwrap(expected);
   const visited = seen[contained ? 1 : 0];
   if (depth > MAX_DEPTH || visited.has(shape)) return [];
   visited.add(shape);
   const initialiser = constInitialiser(context, shape);
-  if (initialiser !== null)
-    return expectedShapeTags(context, initialiser, contained, depth + 1, seen);
+  if (initialiser !== null) return expectedShapeTags(context, initialiser, contained, depth + 1, seen);
   if (contained) return expectedContainedTags(context, shape, depth, seen);
-  if (shape.type !== 'CallExpression')
-    return expectedObjectTags(context, shape);
+  if (shape.type !== 'CallExpression') return expectedObjectTags(context, shape);
   const wrapper = assertionCall(context, shape);
   const argument = firstArgument(shape);
   return wrapper?.expectedWrapper === true && argument !== null
-    ? expectedShapeTags(
-        context,
-        argument,
-        wrapper.method === 'arrayContaining',
-        depth + 1,
-        seen
-      )
+    ? expectedShapeTags(context, argument, wrapper.method === 'arrayContaining', depth + 1, seen)
     : [];
 }
 
@@ -1205,8 +942,7 @@ export const rule = defineRule({
         '`Schema.is(TaggedError)`, or `Effect.catchTag(s)`.',
     },
     messages: {
-      tagSwitch:
-        'Manual `_tag` switching must use Effect Match.tag/Match.tags or typed error handlers.',
+      tagSwitch: 'Manual `_tag` switching must use Effect Match.tag/Match.tags or typed error handlers.',
       tagEquality:
         "Manual `_tag` comparison on `{{text}}` (`{{operator}} '{{tag}}'`) re-implements pattern matching by " +
         'hand and silently stops matching when the tag vocabulary moves (audit A4 / C2). Use ' +
@@ -1271,24 +1007,16 @@ export const rule = defineRule({
     if (!matchesGlobs(path, options.include)) return {};
     if (options.ignoreTests && isTestFile(path)) return {};
     const bindings = collectEffectBindings(context.sourceCode.ast);
-    if (
-      options.requireEffectImport &&
-      !importsEffectOrBarrel(context.sourceCode.ast, options.reexportModules)
-    ) {
+    if (options.requireEffectImport && !importsEffectOrBarrel(context.sourceCode.ast, options.reexportModules)) {
       return {};
     }
 
     const exempt = new Set([...options.adtTags, ...options.allowTags]);
     const suppressed = (node: ESTree.Node): boolean =>
-      !options.includeErrorCombinators &&
-      insideErrorCombinator(context, node, bindings);
-    const tagOf = (node: ESTree.Node): TagReference | null =>
-      tagReference(context, node, options);
+      !options.includeErrorCombinators && insideErrorCombinator(context, node, bindings);
+    const tagOf = (node: ESTree.Node): TagReference | null => tagReference(context, node, options);
 
-    const comparedTag = (
-      node: ESTree.Node,
-      seen = new Set<ESTree.Node>()
-    ): TagReference | null => {
+    const comparedTag = (node: ESTree.Node, seen = new Set<ESTree.Node>()): TagReference | null => {
       if (seen.has(node)) return null;
       seen.add(node);
       const direct = tagOf(node);
@@ -1311,11 +1039,7 @@ export const rule = defineRule({
       if (elements === null || elements.length === 0) return false;
       let sawTag = false;
       for (const element of elements) {
-        if (
-          element === null ||
-          (element as ESTree.Node).type === 'SpreadElement'
-        )
-          return false;
+        if (element === null || (element as ESTree.Node).type === 'SpreadElement') return false;
         const literal = asStringLiteral(element as ESTree.Node);
         if (literal === null || !exempt.has(literal)) return false;
         sawTag = true;
@@ -1392,15 +1116,11 @@ export const rule = defineRule({
     function checkShape(node: ESTree.CallExpression): boolean {
       // `Object.hasOwn(error, '_tag')` / `Reflect.has(error, '_tag')` — `'_tag' in error` by another name.
       const shapeProbe =
-        globalNamespaceCall(context, node, 'Object', 'hasOwn') ||
-        globalNamespaceCall(context, node, 'Reflect', 'has');
+        globalNamespaceCall(context, node, 'Object', 'hasOwn') || globalNamespaceCall(context, node, 'Reflect', 'has');
       if (shapeProbe && node.arguments.length >= 2) {
         const target = node.arguments[0] as ESTree.Node;
         const key = node.arguments[1] as ESTree.Node;
-        if (
-          target.type !== 'SpreadElement' &&
-          staticString(context, key) === TAG_PROPERTY
-        ) {
+        if (target.type !== 'SpreadElement' && staticString(context, key) === TAG_PROPERTY) {
           if (suppressed(node)) return true;
           context.report({
             node,
@@ -1415,14 +1135,10 @@ export const rule = defineRule({
     }
     function checkEqualityCall(node: ESTree.CallExpression): boolean {
       // `Object.is(error._tag, 'X')` — equality without an equality operator.
-      if (
-        globalNamespaceCall(context, node, 'Object', 'is') &&
-        node.arguments.length === 2
-      ) {
+      if (globalNamespaceCall(context, node, 'Object', 'is') && node.arguments.length === 2) {
         const first = node.arguments[0] as ESTree.Node;
         const second = node.arguments[1] as ESTree.Node;
-        if (first.type === 'SpreadElement' || second.type === 'SpreadElement')
-          return true;
+        if (first.type === 'SpreadElement' || second.type === 'SpreadElement') return true;
         const operands = equalityOperands(first, second);
         if (operands === null) return true;
         const { reference } = operands;
@@ -1440,11 +1156,7 @@ export const rule = defineRule({
 
       return false;
     }
-    function checkStringProbe(
-      node: ESTree.CallExpression,
-      receiver: ESTree.Node,
-      method: string
-    ): boolean {
+    function checkStringProbe(node: ESTree.CallExpression, receiver: ESTree.Node, method: string): boolean {
       // `error._tag.startsWith('Contacts')`, `String(error._tag).endsWith('Problem')`.
       if (STRING_PROBES.has(method)) {
         const reference = tagOf(receiver);
@@ -1464,11 +1176,7 @@ export const rule = defineRule({
 
       return false;
     }
-    function checkRegexProbe(
-      node: ESTree.CallExpression,
-      receiver: ESTree.Node,
-      method: string
-    ): boolean {
+    function checkRegexProbe(node: ESTree.CallExpression, receiver: ESTree.Node, method: string): boolean {
       // `/^Contacts/u.test(error._tag)` — the mirrored spelling of the same naming-convention probe.
       if (REGEX_PROBES.has(method) && isRegexReceiver(context, receiver)) {
         const argument = node.arguments[0] as ESTree.Node | undefined;
@@ -1491,11 +1199,7 @@ export const rule = defineRule({
 
       return false;
     }
-    function checkMembership(
-      node: ESTree.CallExpression,
-      receiver: ESTree.Node,
-      method: string
-    ) {
+    function checkMembership(node: ESTree.CallExpression, receiver: ESTree.Node, method: string) {
       // `KNOWN_TAGS.includes(error._tag)`, `TAG_SET.has(error._tag)`.
       if (options.includeMembershipProbes && MEMBERSHIP_METHODS.has(method)) {
         const argument = firstArgument(node);
@@ -1532,26 +1236,17 @@ export const rule = defineRule({
       return literal !== null && exempt.has(literal);
     }
 
-    function checkPropertyAssertion(
-      node: ESTree.CallExpression,
-      subject: ESTree.CallExpression
-    ) {
+    function checkPropertyAssertion(node: ESTree.CallExpression, subject: ESTree.CallExpression) {
       const assertedPath = firstArgument(node);
       const target = firstArgument(subject);
-      if (
-        assertedPath === null ||
-        target === null ||
-        !tagPropertyPath(context, assertedPath) ||
-        suppressed(node)
-      )
+      if (assertedPath === null || target === null || !tagPropertyPath(context, assertedPath) || suppressed(node))
         return;
       const expected = node.arguments[1];
       if (expected?.type === 'SpreadElement') return;
       if (exemptStaticTag(expected)) return;
       context.report({
         node,
-        messageId:
-          expected === undefined ? 'tagPresenceCheck' : 'tagEqualityCall',
+        messageId: expected === undefined ? 'tagPresenceCheck' : 'tagEqualityCall',
         data: {
           callee: describe(context, node.callee),
           text: describe(context, target),
@@ -1560,54 +1255,32 @@ export const rule = defineRule({
     }
 
     /** Object matchers inspect only the expected top-level discriminant, never payload fields. */
-    function checkObjectAssertion(
-      node: ESTree.CallExpression,
-      assertion: AssertionCall
-    ): boolean {
+    function checkObjectAssertion(node: ESTree.CallExpression, assertion: AssertionCall): boolean {
       if (!OBJECT_ASSERTION_METHODS.has(assertion.method)) return false;
       const expected = node.arguments[assertion.subject === null ? 1 : 0];
-      if (expected === undefined || expected.type === 'SpreadElement')
-        return false;
+      if (expected === undefined || expected.type === 'SpreadElement') return false;
       const tags = expectedShapeTags(context, expected);
       if (!tags.some((tag) => !exemptStaticTag(tag))) return false;
       if (suppressed(node)) return false;
-      reportAssertion(
-        node,
-        describe(
-          context,
-          assertion.subject?.arguments[0] ?? node.arguments[0] ?? node
-        )
-      );
+      reportAssertion(node, describe(context, assertion.subject?.arguments[0] ?? node.arguments[0] ?? node));
       return true;
     }
 
     function exemptAssertionValue(other: ESTree.Node | undefined): boolean {
       if (other === undefined || other.type === 'SpreadElement') return false;
       const literal = asStringLiteral(other);
-      return (
-        (literal !== null && exempt.has(literal)) || containerIsAdtOnly(other)
-      );
+      return (literal !== null && exempt.has(literal)) || containerIsAdtOnly(other);
     }
 
-    function checkAssertionValues(
-      node: ESTree.CallExpression,
-      assertion: AssertionCall
-    ): boolean {
+    function checkAssertionValues(node: ESTree.CallExpression, assertion: AssertionCall): boolean {
       const compared =
         assertion.subject === null
           ? node.arguments.slice(0, 2)
-          : [
-              ...assertion.subject.arguments.slice(0, 1),
-              ...node.arguments.slice(0, 1),
-            ];
+          : [...assertion.subject.arguments.slice(0, 1), ...node.arguments.slice(0, 1)];
       for (const [index, argument] of compared.entries()) {
         if (argument.type === 'SpreadElement') continue;
         const reference = comparedTag(argument);
-        if (
-          reference === null ||
-          exemptAssertionValue(compared[index === 0 ? 1 : 0])
-        )
-          continue;
+        if (reference === null || exemptAssertionValue(compared[index === 0 ? 1 : 0])) continue;
         if (suppressed(node)) return true;
         reportAssertion(node, referenceText(context, reference));
         return true;
@@ -1615,10 +1288,7 @@ export const rule = defineRule({
       return false;
     }
 
-    function checkAssertion(
-      node: ESTree.CallExpression,
-      assertion: AssertionCall | null
-    ): boolean {
+    function checkAssertion(node: ESTree.CallExpression, assertion: AssertionCall | null): boolean {
       if (assertion === null) return false;
       // Property assertions are shape/equality probes only on a proven `expect(subject)` chain.
       if (assertion.method === 'toHaveProperty' && assertion.subject !== null) {
@@ -1626,16 +1296,9 @@ export const rule = defineRule({
         return true;
       }
       if (!ASSERTION_METHODS.has(assertion.method)) return false;
-      return (
-        checkObjectAssertion(node, assertion) ||
-        checkAssertionValues(node, assertion)
-      );
+      return checkObjectAssertion(node, assertion) || checkAssertionValues(node, assertion);
     }
-    function checkReceiverProbes(
-      node: ESTree.CallExpression,
-      receiver: ESTree.Node,
-      method: string
-    ) {
+    function checkReceiverProbes(node: ESTree.CallExpression, receiver: ESTree.Node, method: string) {
       if (checkStringProbe(node, receiver, method)) return;
       if (checkRegexProbe(node, receiver, method)) return;
       checkMembership(node, receiver, method);
@@ -1645,12 +1308,8 @@ export const rule = defineRule({
       if (checkShape(node) || checkEqualityCall(node)) return;
       const callee = assertionCallee(context, node.callee);
       const assertion = assertionCall(context, node);
-      const method =
-        callee.type === 'MemberExpression'
-          ? memberPropertyName(callee)
-          : assertion?.method;
-      const receiver =
-        callee.type === 'MemberExpression' ? callee.object : null;
+      const method = callee.type === 'MemberExpression' ? memberPropertyName(callee) : assertion?.method;
+      const receiver = callee.type === 'MemberExpression' ? callee.object : null;
       if (method === null || method === undefined) return;
       if (checkAssertion(node, assertion) || receiver === null) return;
 
@@ -1659,9 +1318,7 @@ export const rule = defineRule({
     return {
       SwitchStatement(node) {
         if (tagOf(node.discriminant) === null || suppressed(node)) return;
-        const labels = node.cases.flatMap((branch) =>
-          branch.test === null ? [] : [branch.test]
-        );
+        const labels = node.cases.flatMap((branch) => (branch.test === null ? [] : [branch.test]));
         if (
           labels.length > 0 &&
           labels.every((label) => {

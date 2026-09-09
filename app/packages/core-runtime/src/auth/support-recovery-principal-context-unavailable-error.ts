@@ -5,5 +5,5 @@ export class SupportRecoveryPrincipalContextUnavailableError extends Schema.Tagg
   {
     code: Schema.Literal('support_recovery_context_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

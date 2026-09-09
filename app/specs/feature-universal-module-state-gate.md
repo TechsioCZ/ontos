@@ -49,14 +49,14 @@ Separate state acquisition from state evaluation. At the start of one trusted Sh
 
 Use this database-query budget:
 
-| Runtime composition | Module-state database work |
-| --- | --- |
-| One Shell/SSR/page composition with any number of declared module entrypoints | At most one batch query for all distinct tenant module keys |
-| Repeated gateway decisions from the same request snapshot | Zero additional queries |
-| Explicit Core system entrypoints | Zero tenant-module-state queries |
-| One independently deployed BFF request | At most one batch query for that request's declared entrypoints |
-| One business Action attempt | One early indexed read plus one authoritative transactional recheck |
-| One Outbox Worker claim cycle | Zero additional queries beyond the existing transactional claim query/join |
+| Runtime composition                                                           | Module-state database work                                                 |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| One Shell/SSR/page composition with any number of declared module entrypoints | At most one batch query for all distinct tenant module keys                |
+| Repeated gateway decisions from the same request snapshot                     | Zero additional queries                                                    |
+| Explicit Core system entrypoints                                              | Zero tenant-module-state queries                                           |
+| One independently deployed BFF request                                        | At most one batch query for that request's declared entrypoints            |
+| One business Action attempt                                                   | One early indexed read plus one authoritative transactional recheck        |
+| One Outbox Worker claim cycle                                                 | Zero additional queries beyond the existing transactional claim query/join |
 
 Keep the snapshot request-scoped. Do not introduce a process-global, TTL, browser-authoritative, or distributed cache in this increment: activation changes must affect the next independent request without restart or invalidation coordination. A page-load decision never replaces the independent BFF/Action check at the next trust boundary. Instrument gate acquisition/evaluation with safe Effect telemetry for batch size, acquisition latency, snapshot reuse, scope/access, and outcome, without arbitrary payloads or credentials.
 

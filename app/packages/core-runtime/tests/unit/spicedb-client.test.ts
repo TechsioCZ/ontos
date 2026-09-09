@@ -9,14 +9,14 @@ it('uses authenticated plaintext credentials for an explicitly insecure transpor
     spiceDbClientSecurity({
       endpoint: 'localhost:50051',
       insecureLocal: true,
-    })
+    }),
   ).toBe(v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS);
   expect(
     spiceDbClientSecurity({
       deploymentEnvironment: 'stage',
       endpoint: 'spicedb:50051',
       insecureLocal: true,
-    })
+    }),
   ).toBe(v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS);
 });
 
@@ -25,7 +25,7 @@ it('uses TLS credentials for a secure transport', () => {
     spiceDbClientSecurity({
       endpoint: 'spicedb.internal.example:443',
       insecureLocal: false,
-    })
+    }),
   ).toBe(v1.ClientSecurity.SECURE);
 });
 
@@ -39,8 +39,6 @@ it('rejects plaintext credentials for an arbitrary or non-stage endpoint', () =>
       insecureLocal: true,
     },
   ] as const) {
-    expect(() => spiceDbClientSecurity(configuration)).toThrow(
-      SpiceDbConfigError
-    );
+    expect(() => spiceDbClientSecurity(configuration)).toThrow(SpiceDbConfigError);
   }
 });

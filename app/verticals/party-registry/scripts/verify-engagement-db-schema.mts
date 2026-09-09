@@ -1,22 +1,15 @@
 // @effect-diagnostics globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
-import {
-  DatabaseConfig,
-  loadDatabaseConfig,
-  loadDatabaseConnectionPair,
-} from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import { compareContactsCatalog } from '../src/db/engagement-catalog.ts';
-import {
-  CONTACTS_SCHEMA_NAME,
-  CONTACTS_TABLES,
-} from '../src/db/engagement-schema.ts';
+import { CONTACTS_SCHEMA_NAME, CONTACTS_TABLES } from '../src/db/engagement-schema.ts';
 
 class ContactsDatabaseVerificationError extends Schema.TaggedError<ContactsDatabaseVerificationError>()(
   'ContactsDatabaseVerificationError',
-  { reason: Schema.String }
+  { reason: Schema.String },
 ) {}
 
 interface TableCatalogRow extends Readonly<Record<string, string>> {
@@ -26,9 +19,7 @@ interface ColumnCatalogRow extends Readonly<Record<string, string>> {
   readonly column_name: string;
   readonly table_name: string;
 }
-interface InfrastructureCatalogRow extends Readonly<
-  Record<string, boolean | number | string>
-> {
+interface InfrastructureCatalogRow extends Readonly<Record<string, boolean | number | string>> {
   readonly foreign_key_count: number;
   readonly journal_count: number;
   readonly organization_owner: string;
@@ -75,10 +66,7 @@ const runtimePrivilegesMatch = (verified: InfrastructureCatalogRow): boolean =>
   !verified.role_super &&
   !verified.role_bypass_rls;
 
-const infrastructureMatches = (
-  verified: InfrastructureCatalogRow,
-  adminUser: string
-): boolean =>
+const infrastructureMatches = (verified: InfrastructureCatalogRow, adminUser: string): boolean =>
   verified.organization_owner === adminUser &&
   verified.person_owner === adminUser &&
   verified.foreign_key_count === 0 &&
@@ -101,8 +89,8 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
           () =>
             new ContactsDatabaseVerificationError({
               reason: 'Typed Contacts table verification failed',
-            })
-        )
+            }),
+        ),
       );
   }
 
@@ -115,19 +103,17 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
       where namespace.nspname = ${CONTACTS_SCHEMA_NAME} and relation.relkind in (${'r'}, ${'p'})
       order by relation.relname
     `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(
         () =>
           new ContactsDatabaseVerificationError({
             reason: 'Unable to compare the Contacts catalog',
-          })
-      )
+          }),
+      ),
     );
-  const difference = compareContactsCatalog(
-    catalog.map((row) => `${CONTACTS_SCHEMA_NAME}.${row.table_name}`)
-  );
+  const difference = compareContactsCatalog(catalog.map((row) => `${CONTACTS_SCHEMA_NAME}.${row.table_name}`));
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     return yield* new ContactsDatabaseVerificationError({
       reason: `Contacts catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
@@ -143,19 +129,17 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
         and table_name in (${'organization_engagement_profiles'}, ${'person_engagement_profiles'})
       order by table_name, column_name
     `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(
         () =>
           new ContactsDatabaseVerificationError({
             reason: 'Unable to compare Contacts columns',
-          })
-      )
+          }),
+      ),
     );
-  const actualColumns = columns.map(
-    (row) => `${row.table_name}.${row.column_name}`
-  );
+  const actualColumns = columns.map((row) => `${row.table_name}.${row.column_name}`);
   if (
     actualColumns.length !== expectedColumns.length ||
     !actualColumns.every((column, index) => column === expectedColumns[index])
@@ -194,34 +178,26 @@ const verification = Effect.gen(function* verifyContactsDatabase() {
         and person_profile.relname = ${'person_engagement_profiles'}
         and runtime_role.rolname = ${'ontos_runtime'}
     `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(
         () =>
           new ContactsDatabaseVerificationError({
             reason: 'Unable to verify Contacts infrastructure',
-          })
-      )
+          }),
+      ),
     );
   const [verified] = infrastructure;
-  if (
-    verified === undefined ||
-    !infrastructureMatches(verified, connections.admin.user)
-  ) {
+  if (verified === undefined || !infrastructureMatches(verified, connections.admin.user)) {
     return yield* new ContactsDatabaseVerificationError({
-      reason:
-        'Contacts infrastructure does not match the engagement profile contract',
+      reason: 'Contacts infrastructure does not match the engagement profile contract',
     });
   }
 
   return { typedTableCount: CONTACTS_TABLES.length };
 });
 
-const runtime = PartyDatabaseLive.pipe(
-  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig()))
-);
+const runtime = PartyDatabaseLive.pipe(Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())));
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
-console.log(
-  `Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${CONTACTS_SCHEMA_NAME}`
-);
+console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${CONTACTS_SCHEMA_NAME}`);

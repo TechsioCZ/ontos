@@ -49,10 +49,7 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
-import {
-  collectEffectBindings,
-  effectMember,
-} from '../shared/effect-imports.ts';
+import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
 import { isNonReferencePosition } from '../shared/reference-positions.ts';
@@ -62,11 +59,7 @@ const EFFECT_ROOT_MODULE = 'effect';
 /** `effect/Layer`, and re-exported nestings such as `effect/unstable/Layer`. */
 const EFFECT_LAYER_MODULE = /^effect\/(?:.*\/)?Layer$/u;
 
-const DEFAULT_SCOPE: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-];
+const DEFAULT_SCOPE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 
 const DEFAULT_IGNORE: readonly string[] = [
   '**/dist/**',
@@ -126,10 +119,7 @@ function readOptions(context: Context): RuleOptions {
 }
 
 /** `true` when this file is a library file the A1 rule governs. */
-function isGovernedLibraryFile(
-  filename: string,
-  options: RuleOptions
-): boolean {
+function isGovernedLibraryFile(filename: string, options: RuleOptions): boolean {
   if (matchesAny(filename, options.ignore)) return false;
   if (matchesAny(filename, options.rootFiles)) return false;
   if (matchesAny(filename, options.compositionFiles)) return false;
@@ -141,22 +131,17 @@ function isGovernedLibraryFile(
 }
 
 function importedName(specifier: ESTree.ImportSpecifier): string {
-  return specifier.imported.type === 'Identifier'
-    ? specifier.imported.name
-    : specifier.imported.value;
+  return specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
 }
 
 /** Local names bound by `import * as X from "effect"` — `X.Layer.provide` must still be caught. */
-function collectEffectRootNamespaces(
-  program: ESTree.Program
-): ReadonlySet<string> {
+function collectEffectRootNamespaces(program: ESTree.Program): ReadonlySet<string> {
   const roots = new Set<string>();
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
     if (statement.source.value !== EFFECT_ROOT_MODULE) continue;
     for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier')
-        roots.add(specifier.local.name);
+      if (specifier.type === 'ImportNamespaceSpecifier') roots.add(specifier.local.name);
     }
   }
   return roots;
@@ -167,10 +152,7 @@ function collectEffectRootNamespaces(
  * escape hatch as `const { provide } = Layer`, one step earlier: there is no `Layer.` member
  * expression left to match, so bare references to these locals are what must be reported.
  */
-function collectDirectMemberImports(
-  program: ESTree.Program,
-  members: readonly string[]
-): ReadonlyMap<string, string> {
+function collectDirectMemberImports(program: ESTree.Program, members: readonly string[]): ReadonlyMap<string, string> {
   const locals = new Map<string, string>();
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
@@ -178,8 +160,7 @@ function collectDirectMemberImports(
     for (const specifier of statement.specifiers) {
       if (specifier.type !== 'ImportSpecifier') continue;
       const imported = importedName(specifier);
-      if (members.includes(imported))
-        locals.set(specifier.local.name, imported);
+      if (members.includes(imported)) locals.set(specifier.local.name, imported);
     }
   }
   return locals;
@@ -187,13 +168,8 @@ function collectDirectMemberImports(
 
 /** A single-quasi template literal (`` `provide` ``) or a plain string literal. */
 function constantStringName(node: ESTree.Node): string | null {
-  if (node.type === 'Literal')
-    return typeof node.value === 'string' ? node.value : null;
-  if (
-    node.type === 'TemplateLiteral' &&
-    node.expressions.length === 0 &&
-    node.quasis.length === 1
-  ) {
+  if (node.type === 'Literal') return typeof node.value === 'string' ? node.value : null;
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0 && node.quasis.length === 1) {
     const cooked = node.quasis[0]?.value.cooked;
     return typeof cooked === 'string' ? cooked : null;
   }
@@ -202,27 +178,20 @@ function constantStringName(node: ESTree.Node): string | null {
 
 /** Static property name of a member expression: `x.provide`, `x["provide"]` and `` x[`provide`] `` alike. */
 function staticPropertyName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed)
-    return node.property.type === 'Identifier' ? node.property.name : null;
+  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
   return constantStringName(node.property);
 }
 
 /** Property key of an object pattern property: `{ provide }`, `{ "provide": p }`, `` { [`provide`]: p } ``. */
-function patternKeyName(
-  property: Extract<ESTree.Node, { type: 'Property' }>
-): string | null {
-  if (!property.computed && property.key.type === 'Identifier')
-    return property.key.name;
+function patternKeyName(property: Extract<ESTree.Node, { type: 'Property' }>): string | null {
+  if (!property.computed && property.key.type === 'Identifier') return property.key.name;
   return constantStringName(property.key);
 }
 
 /** The binding identifiers introduced by a pattern (only the shapes a rebinding can use). */
-function patternIdentifiers(
-  pattern: ESTree.Node
-): Extract<ESTree.Node, { type: 'Identifier' }>[] {
+function patternIdentifiers(pattern: ESTree.Node): Extract<ESTree.Node, { type: 'Identifier' }>[] {
   if (pattern.type === 'Identifier') return [pattern];
-  if (pattern.type === 'AssignmentPattern')
-    return patternIdentifiers(pattern.left);
+  if (pattern.type === 'AssignmentPattern') return patternIdentifiers(pattern.left);
   return [];
 }
 
@@ -262,10 +231,7 @@ function isTypePosition(node: ESTree.Node): boolean {
   return false;
 }
 
-function lookupVariable(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>
-): Variable | null {
+function lookupVariable(context: Context, identifier: Extract<ESTree.Node, { type: 'Identifier' }>): Variable | null {
   let scope: Scope | null = context.sourceCode.getScope(identifier);
   while (scope !== null) {
     const variable = scope.set.get(identifier.name);
@@ -331,12 +297,7 @@ export const rule = defineRule({
     for (const [local, namespace] of bindings.namespaces) {
       if (namespace === LAYER_NAMESPACE) importedLayerLocals.add(local);
     }
-    if (
-      importedLayerLocals.size === 0 &&
-      effectRoots.size === 0 &&
-      directMembers.size === 0
-    )
-      return {};
+    if (importedLayerLocals.size === 0 && effectRoots.size === 0 && directMembers.size === 0) return {};
 
     // ---- Resolution -------------------------------------------------------------------------
     // `start` offsets of binding identifiers that alias the Effect `Layer` namespace locally
@@ -347,32 +308,24 @@ export const rule = defineRule({
     /** `true` when the identifier still resolves to the import it names (no local shadow). */
     function resolvesToImport(
       identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-      importedLocals: { has(name: string): boolean }
+      importedLocals: { has(name: string): boolean },
     ): boolean {
       if (!importedLocals.has(identifier.name)) return false;
       const variable = lookupVariable(context, identifier);
       // Unresolved: the module-level import declaration already proved the binding exists.
       if (variable === null || variable.defs.length === 0) return true;
-      return variable.defs.some(
-        (definition) => definition.type === 'ImportBinding'
-      );
+      return variable.defs.some((definition) => definition.type === 'ImportBinding');
     }
 
     /** `true` when the identifier resolves to a local rebinding of the `Layer` namespace. */
-    function resolvesToLayerAlias(
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): boolean {
+    function resolvesToLayerAlias(identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
       const variable = lookupVariable(context, identifier);
       if (variable === null) return false;
-      return variable.defs.some((definition) =>
-        layerAliasBindings.has(definition.name.start)
-      );
+      return variable.defs.some((definition) => layerAliasBindings.has(definition.name.start));
     }
 
     /** `true` when this identifier denotes the Effect `Layer` module in its own scope. */
-    function isLayerNamespaceIdentifier(
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): boolean {
+    function isLayerNamespaceIdentifier(identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
       if (resolvesToImport(identifier, importedLayerLocals)) return true;
       return resolvesToLayerAlias(identifier);
     }
@@ -397,8 +350,7 @@ export const rule = defineRule({
       readonly namespace: ESTree.Node;
     }
     const memberCandidates: MemberCandidate[] = [];
-    const identifierCandidates: Extract<ESTree.Node, { type: 'Identifier' }>[] =
-      [];
+    const identifierCandidates: Extract<ESTree.Node, { type: 'Identifier' }>[] = [];
     const declarators: ESTree.VariableDeclarator[] = [];
     const reports: Array<{
       node: ESTree.Node;
@@ -418,10 +370,7 @@ export const rule = defineRule({
       // 4. Bare references to `import { provide } from "effect/Layer"` locals.
       for (const identifier of identifierCandidates) {
         if (!resolvesToImport(identifier, directMembers)) continue;
-        queue(
-          identifier,
-          directMembers.get(identifier.name) ?? identifier.name
-        );
+        queue(identifier, directMembers.get(identifier.name) ?? identifier.name);
       }
     }
 
@@ -435,31 +384,21 @@ export const rule = defineRule({
       return changed;
     }
 
-    function collectLayerAliases(
-      declarator: ESTree.VariableDeclarator
-    ): boolean {
+    function collectLayerAliases(declarator: ESTree.VariableDeclarator): boolean {
       const init = declarator.init;
       if (init === null) return false;
-      if (isLayerNamespaceExpression(init))
-        return addLayerAliases(declarator.id);
+      if (isLayerNamespaceExpression(init)) return addLayerAliases(declarator.id);
       if (declarator.id.type !== 'ObjectPattern') return false;
-      if (init.type !== 'Identifier' || !resolvesToImport(init, effectRoots))
-        return false;
+      if (init.type !== 'Identifier' || !resolvesToImport(init, effectRoots)) return false;
       let changed = false;
       for (const property of declarator.id.properties) {
-        if (
-          property.type !== 'Property' ||
-          patternKeyName(property) !== LAYER_NAMESPACE
-        )
-          continue;
+        if (property.type !== 'Property' || patternKeyName(property) !== LAYER_NAMESPACE) continue;
         if (addLayerAliases(property.value)) changed = true;
       }
       return changed;
     }
 
-    function collectDestructuredMembers(
-      declarator: ESTree.VariableDeclarator
-    ): void {
+    function collectDestructuredMembers(declarator: ESTree.VariableDeclarator): void {
       const init = declarator.init;
       if (init === null || declarator.id.type !== 'ObjectPattern') return;
       if (!isLayerNamespaceExpression(init)) return;
@@ -475,8 +414,7 @@ export const rule = defineRule({
         if (isTypePosition(node)) return;
         // Fast path via the shared matcher: plain `Layer.provide` on an import binding.
         const shared = effectMember(node, bindings);
-        const member =
-          shared !== null ? shared.member : staticPropertyName(node);
+        const member = shared !== null ? shared.member : staticPropertyName(node);
         if (member === null || !members.has(member)) return;
         memberCandidates.push({ node, member, namespace: node.object });
       },
@@ -498,8 +436,7 @@ export const rule = defineRule({
             if (collectLayerAliases(declarator)) changed = true;
           }
         }
-        for (const declarator of declarators)
-          collectDestructuredMembers(declarator);
+        for (const declarator of declarators) collectDestructuredMembers(declarator);
 
         // 3. `Layer.provide` in every spelling, confirmed against scope.
         for (const candidate of memberCandidates) {

@@ -21,33 +21,28 @@ const domainEvents = {
 } as const;
 
 /** Queues committed intent only; projection I/O belongs to the post-commit Worker. */
-const handleRequestSearchRebuild = Effect.fn(
-  'RequestSearchRebuildAction.handleRequestSearchRebuild'
-)(function* requestSearchRebuild(
-  _payload: RequestSearchRebuildPayload,
-  context: ActionHandlerContext<
-    typeof domainEvents,
-    Readonly<Record<string, never>>
-  >
-) {
-  const requestId = ActionInvocationIdSchema.make(context.actionInvocationId);
-  const payload = { requestId };
-  const event = yield* context.addDomainEvent({
-    eventType: 'party.registry.search-rebuild-requested.v1',
-    payloadJson: payload,
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'core.identity',
-    subjectResourceId: context.scope.tenantId,
-    subjectResourceType: 'tenant',
-  });
-  yield* context.addOutboxMessage(
-    event,
-    createRequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxMessage(
-      payload
-    )
-  );
-  return { requestId, status: 'QUEUED' as const };
-});
+const handleRequestSearchRebuild = Effect.fn('RequestSearchRebuildAction.handleRequestSearchRebuild')(
+  function* requestSearchRebuild(
+    _payload: RequestSearchRebuildPayload,
+    context: ActionHandlerContext<typeof domainEvents, Readonly<Record<string, never>>>,
+  ) {
+    const requestId = ActionInvocationIdSchema.make(context.actionInvocationId);
+    const payload = { requestId };
+    const event = yield* context.addDomainEvent({
+      eventType: 'party.registry.search-rebuild-requested.v1',
+      payloadJson: payload,
+      producerModuleKey: 'party.registry',
+      subjectModuleKey: 'core.identity',
+      subjectResourceId: context.scope.tenantId,
+      subjectResourceType: 'tenant',
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createRequestSearchRebuildPartyRegistrySearchRebuildRequestedV1OutboxMessage(payload),
+    );
+    return { requestId, status: 'QUEUED' as const };
+  },
+);
 
 export const requestSearchRebuildAction = defineAction(
   {
@@ -78,5 +73,5 @@ export const requestSearchRebuildAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handleRequestSearchRebuild
+  handleRequestSearchRebuild,
 );

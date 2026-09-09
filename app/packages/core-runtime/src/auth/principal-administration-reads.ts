@@ -13,10 +13,7 @@ const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const BindingStatusSchema = Schema.Literals(['active', 'disabled', 'revoked']);
 const databaseReadTimeout = '30 seconds';
 const paginationInput = {
-  limit: Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isBetween({ maximum: 100, minimum: 1 })
-  ),
+  limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 };
 const bindingMetadata = Schema.Struct({
@@ -47,10 +44,7 @@ const ManagedResult = Schema.Struct({
 const SelfResultJson = Schema.toCodecJson(SelfResult);
 const ManagedResultJson = Schema.toCodecJson(ManagedResult);
 
-const readUnavailable = (
-  reason: string,
-  cause: unknown
-): ReadHandlerUnavailable => {
+const readUnavailable = (reason: string, cause: unknown): ReadHandlerUnavailable => {
   const error = new ReadHandlerUnavailable({
     code: 'read_handler_unavailable',
     reason,
@@ -63,23 +57,17 @@ interface IdentityReadServices {
   readonly listManaged: (input: {
     readonly limit: number;
     readonly offset: number;
-  }) => Effect.Effect<
-    Schema.Schema.Type<typeof ManagedResult>,
-    ReadHandlerUnavailable
-  >;
+  }) => Effect.Effect<Schema.Schema.Type<typeof ManagedResult>, ReadHandlerUnavailable>;
   readonly listSelf: (input: {
     readonly limit: number;
     readonly offset: number;
-  }) => Effect.Effect<
-    Schema.Schema.Type<typeof SelfResult>,
-    ReadHandlerUnavailable
-  >;
+  }) => Effect.Effect<Schema.Schema.Type<typeof SelfResult>, ReadHandlerUnavailable>;
 }
 
 const services = (
   transaction: ScopedTransactionExecutor,
   tenantId: string,
-  principalId: string
+  principalId: string,
 ): IdentityReadServices => ({
   listManaged: ({ limit, offset }) =>
     transaction
@@ -99,46 +87,34 @@ const services = (
         and(
           eq(principalAuthBindings.tenantId, principals.tenantId),
           eq(principalAuthBindings.principalId, principals.principalId),
-          eq(principalAuthBindings.subjectType, 'api_key')
-        )
+          eq(principalAuthBindings.subjectType, 'api_key'),
+        ),
       )
       .where(
-        and(
-          eq(principals.tenantId, tenantId),
-          or(eq(principals.kind, 'service'), eq(principals.kind, 'integration'))
-        )
+        and(eq(principals.tenantId, tenantId), or(eq(principals.kind, 'service'), eq(principals.kind, 'integration'))),
       )
-      .orderBy(
-        asc(principals.displayName),
-        asc(principals.principalId),
-        asc(principalAuthBindings.createdAt)
-      )
+      .orderBy(asc(principals.displayName), asc(principals.principalId), asc(principalAuthBindings.createdAt))
       .limit(limit + 1)
       .offset(offset)
       .pipe(
-        Effect.mapError((cause) =>
-          readUnavailable(
-            'Managed identities are temporarily unavailable',
-            cause
-          )
-        ),
+        Effect.mapError((cause) => readUnavailable('Managed identities are temporarily unavailable', cause)),
         Effect.timeoutOrElse({
           duration: databaseReadTimeout,
           orElse: () =>
             Effect.fail(
               readUnavailable(
                 'Managed identities are temporarily unavailable',
-                new Cause.TimeoutError('Database read timed out')
-              )
+                new Cause.TimeoutError('Database read timed out'),
+              ),
             ),
         }),
         Effect.map((rows) => {
           const eligible = rows.filter(
             (
-              row
+              row,
             ): row is typeof row & {
               readonly kind: 'integration' | 'service';
-            } => row.kind === 'service' || row.kind === 'integration'
+            } => row.kind === 'service' || row.kind === 'integration',
           );
           return {
             items: eligible.slice(0, limit).map((row) => ({
@@ -146,15 +122,11 @@ const services = (
               bindingCreatedAt:
                 row.bindingCreatedAt === null
                   ? null
-                  : DateTime.formatIso(
-                      DateTime.fromDateUnsafe(row.bindingCreatedAt)
-                    ),
+                  : DateTime.formatIso(DateTime.fromDateUnsafe(row.bindingCreatedAt)),
               bindingRevokedAt:
                 row.bindingRevokedAt === null
                   ? null
-                  : DateTime.formatIso(
-                      DateTime.fromDateUnsafe(row.bindingRevokedAt)
-                    ),
+                  : DateTime.formatIso(DateTime.fromDateUnsafe(row.bindingRevokedAt)),
               kind: row.kind,
             })),
             nextOffset: rows.length > limit ? offset + limit : null,
@@ -162,14 +134,9 @@ const services = (
         }),
         Effect.flatMap((result) =>
           Schema.decodeEffect(ManagedResultJson)(result).pipe(
-            Effect.mapError((cause) =>
-              readUnavailable(
-                'Managed identities are temporarily unavailable',
-                cause
-              )
-            )
-          )
-        )
+            Effect.mapError((cause) => readUnavailable('Managed identities are temporarily unavailable', cause)),
+          ),
+        ),
       ),
   listSelf: ({ limit, offset }) =>
     transaction
@@ -184,55 +151,37 @@ const services = (
         and(
           eq(principalAuthBindings.tenantId, tenantId),
           eq(principalAuthBindings.principalId, principalId),
-          eq(principalAuthBindings.subjectType, 'api_key')
-        )
+          eq(principalAuthBindings.subjectType, 'api_key'),
+        ),
       )
-      .orderBy(
-        asc(principalAuthBindings.createdAt),
-        asc(principalAuthBindings.principalAuthBindingId)
-      )
+      .orderBy(asc(principalAuthBindings.createdAt), asc(principalAuthBindings.principalAuthBindingId))
       .limit(limit + 1)
       .offset(offset)
       .pipe(
-        Effect.mapError((cause) =>
-          readUnavailable(
-            'Identity bindings are temporarily unavailable',
-            cause
-          )
-        ),
+        Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
         Effect.timeoutOrElse({
           duration: databaseReadTimeout,
           orElse: () =>
             Effect.fail(
               readUnavailable(
                 'Identity bindings are temporarily unavailable',
-                new Cause.TimeoutError('Database read timed out')
-              )
+                new Cause.TimeoutError('Database read timed out'),
+              ),
             ),
         }),
         Effect.map((rows) => ({
           items: rows.slice(0, limit).map((row) => ({
             ...row,
-            createdAt: DateTime.formatIso(
-              DateTime.fromDateUnsafe(row.createdAt)
-            ),
-            revokedAt:
-              row.revokedAt === null
-                ? null
-                : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
+            createdAt: DateTime.formatIso(DateTime.fromDateUnsafe(row.createdAt)),
+            revokedAt: row.revokedAt === null ? null : DateTime.formatIso(DateTime.fromDateUnsafe(row.revokedAt)),
           })),
           nextOffset: rows.length > limit ? offset + limit : null,
         })),
         Effect.flatMap((result) =>
           Schema.decodeEffect(SelfResultJson)(result).pipe(
-            Effect.mapError((cause) =>
-              readUnavailable(
-                'Identity bindings are temporarily unavailable',
-                cause
-              )
-            )
-          )
-        )
+            Effect.mapError((cause) => readUnavailable('Identity bindings are temporarily unavailable', cause)),
+          ),
+        ),
       ),
 });
 
@@ -274,11 +223,10 @@ export const selfApiKeyBindingsRead = defineRead<
       Effect.map((result) => ({
         evidence: { resultCount: result.items.length },
         result,
-      }))
+      })),
     ),
-  (transaction, scope) =>
-    Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
-  () => ({ kind: 'tenant', permission: 'access' })
+  (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
+  () => ({ kind: 'tenant', permission: 'access' }),
 );
 
 export const managedPrincipalsRead = defineRead<
@@ -319,9 +267,8 @@ export const managedPrincipalsRead = defineRead<
       Effect.map((result) => ({
         evidence: { resultCount: result.items.length },
         result,
-      }))
+      })),
     ),
-  (transaction, scope) =>
-    Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
-  () => ({ kind: 'tenant', permission: 'manage_identity' })
+  (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId, scope.principalId)),
+  () => ({ kind: 'tenant', permission: 'manage_identity' }),
 );

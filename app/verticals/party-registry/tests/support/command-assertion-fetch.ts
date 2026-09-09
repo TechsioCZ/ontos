@@ -1,7 +1,4 @@
-export const makeCommandAssertionFetch = (
-  ownerResponse: (request: Request) => Response,
-  tokenPrefix: string
-) => {
+export const makeCommandAssertionFetch = (ownerResponse: (request: Request) => Response, tokenPrefix: string) => {
   const requests: Request[] = [];
   let assertions = 0;
   const fakeFetch: typeof fetch = (input, init) => {
@@ -13,7 +10,7 @@ export const makeCommandAssertionFetch = (
         Response.json({
           expiresAt: 2_000_000_000,
           token: `${tokenPrefix}-${assertions}`,
-        })
+        }),
       );
     }
     return Promise.resolve(ownerResponse(request));

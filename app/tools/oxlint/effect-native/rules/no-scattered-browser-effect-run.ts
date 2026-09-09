@@ -54,10 +54,7 @@ import type { EffectBindings } from '../shared/effect-imports.ts';
 import { globToRegExp, isTestFile, matchesAny } from '../shared/paths.ts';
 
 const DEFAULT_BROWSER_GLOBS = ['apps/*/src/**', 'verticals/*/src/**'];
-const DEFAULT_ADAPTER_FILES = [
-  'apps/*/src/runtime/**',
-  'verticals/*/src/runtime/**',
-];
+const DEFAULT_ADAPTER_FILES = ['apps/*/src/runtime/**', 'verticals/*/src/runtime/**'];
 const DEFAULT_SERVER_GLOBS = [
   '**/src/db/**',
   '**/src/server/**',
@@ -114,11 +111,7 @@ interface RuleOptions {
   readonly includeTestFiles?: boolean;
 }
 
-const FUNCTION_TYPES = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-]);
+const FUNCTION_TYPES = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression']);
 
 function readOptions(context: Context): Required<RuleOptions> {
   const raw = (context.options[0] ?? {}) as RuleOptions;
@@ -135,8 +128,7 @@ function readOptions(context: Context): Required<RuleOptions> {
 
 function moduleExportName(name: ESTree.Node): string | null {
   if (name.type === 'Identifier') return name.name;
-  if (name.type === 'Literal' && typeof name.value === 'string')
-    return name.value;
+  if (name.type === 'Literal' && typeof name.value === 'string') return name.value;
   return null;
 }
 
@@ -146,18 +138,12 @@ function memberName(node: ESTree.MemberExpression): string | null {
 }
 
 /** True when `name` at `node` still resolves to the module-level import (no shadowing binding). */
-function resolvesToModuleImport(
-  context: Context,
-  node: ESTree.Node,
-  name: string
-): boolean {
+function resolvesToModuleImport(context: Context, node: ESTree.Node, name: string): boolean {
   let scope: Scope | null = context.sourceCode.getScope(node);
   while (scope !== null) {
     const variable = scope.set.get(name);
     if (variable !== undefined) {
-      return variable.defs.some(
-        (definition) => definition.type === 'ImportBinding'
-      );
+      return variable.defs.some((definition) => definition.type === 'ImportBinding');
     }
     scope = scope.upper;
   }
@@ -165,47 +151,29 @@ function resolvesToModuleImport(
   return true;
 }
 
-function runnerImportName(
-  specifier: ESTree.ImportDeclaration['specifiers'][number]
-): string | null {
+function runnerImportName(specifier: ESTree.ImportDeclaration['specifiers'][number]): string | null {
   if (specifier.type !== 'ImportSpecifier') return specifier.local.name;
-  return specifier.importKind === 'type'
-    ? null
-    : moduleExportName(specifier.imported);
+  return specifier.importKind === 'type' ? null : moduleExportName(specifier.imported);
 }
 
 /** Locals bound to an ad hoc runner by name, default or namespace import; local → imported name. */
-function collectRunnerImports(
-  program: ESTree.Program,
-  runnerNames: readonly string[]
-): ReadonlyMap<string, string> {
+function collectRunnerImports(program: ESTree.Program, runnerNames: readonly string[]): ReadonlyMap<string, string> {
   const locals = new Map<string, string>();
   for (const statement of program.body) {
-    if (
-      statement.type !== 'ImportDeclaration' ||
-      statement.importKind === 'type'
-    )
-      continue;
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
     for (const specifier of statement.specifiers) {
       const imported = runnerImportName(specifier);
-      if (imported !== null && runnerNames.includes(imported))
-        locals.set(specifier.local.name, imported);
+      if (imported !== null && runnerNames.includes(imported)) locals.set(specifier.local.name, imported);
     }
   }
   return locals;
 }
 
 /** Locals bound by `import * as ns from "..."` (any module), local → module source. */
-function collectNamespaceImports(
-  program: ESTree.Program
-): ReadonlyMap<string, string> {
+function collectNamespaceImports(program: ESTree.Program): ReadonlyMap<string, string> {
   const locals = new Map<string, string>();
   for (const statement of program.body) {
-    if (
-      statement.type !== 'ImportDeclaration' ||
-      statement.importKind === 'type'
-    )
-      continue;
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
     for (const specifier of statement.specifiers) {
       if (specifier.type !== 'ImportNamespaceSpecifier') continue;
       locals.set(specifier.local.name, statement.source.value);
@@ -221,21 +189,16 @@ function collectNamespaceImports(
  */
 function collectRootNamespaceImports(
   program: ESTree.Program,
-  effectModulePatterns: readonly RegExp[]
+  effectModulePatterns: readonly RegExp[],
 ): ReadonlySet<string> {
   const locals = new Set<string>();
   for (const statement of program.body) {
-    if (
-      statement.type !== 'ImportDeclaration' ||
-      statement.importKind === 'type'
-    )
-      continue;
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') continue;
     const source = statement.source.value;
     if (!effectModulePatterns.some((pattern) => pattern.test(source))) continue;
     if (source.split('/').at(-1) !== 'effect') continue;
     for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier')
-        locals.add(specifier.local.name);
+      if (specifier.type === 'ImportNamespaceSpecifier') locals.add(specifier.local.name);
     }
   }
   return locals;
@@ -247,8 +210,7 @@ function unwrap(node: ESTree.Node): ESTree.Node {
 
 function ancestorsOf(node: ESTree.Node): ESTree.Node[] {
   const ancestors: ESTree.Node[] = [];
-  for (let current = node.parent; current !== null; current = current.parent)
-    ancestors.push(current);
+  for (let current = node.parent; current !== null; current = current.parent) ancestors.push(current);
   return ancestors.reverse();
 }
 
@@ -258,26 +220,20 @@ const BOUNDARY_OWNER_TYPES = new Set(['Property', 'VariableDeclarator']);
 function ancestorBoundary(
   ancestor: ESTree.Node,
   owner: ESTree.Node,
-  boundaryKeys: readonly string[]
+  boundaryKeys: readonly string[],
 ): string | null | undefined {
   if (ancestor.type === 'Property' && !ancestor.computed) {
     const key = moduleExportName(ancestor.key);
     return key !== null && boundaryKeys.includes(key) ? key : null;
   }
-  if (
-    ancestor.type === 'VariableDeclarator' &&
-    ancestor.id.type === 'Identifier'
-  )
+  if (ancestor.type === 'VariableDeclarator' && ancestor.id.type === 'Identifier')
     return boundaryKeys.includes(ancestor.id.name) ? ancestor.id.name : null;
   if (!FUNCTION_TYPES.has(ancestor.type)) return undefined;
   return BOUNDARY_OWNER_TYPES.has(owner.type) ? undefined : null;
 }
 
 /** The boundary owning the nearest enclosing function, if any. */
-function boundaryKeyFor(
-  node: ESTree.Node,
-  boundaryKeys: readonly string[]
-): string | null {
+function boundaryKeyFor(node: ESTree.Node, boundaryKeys: readonly string[]): string | null {
   const ancestors = ancestorsOf(node);
   for (let index = ancestors.length - 1; index >= 0; index -= 1) {
     const ancestor = ancestors[index];
@@ -296,35 +252,20 @@ const DECLARATION_PARENTS = new Set([
   'ImportNamespaceSpecifier',
   'ExportSpecifier',
 ]);
-const CLASS_KEY_PARENTS = new Set([
-  'PropertyDefinition',
-  'MethodDefinition',
-  'AccessorProperty',
-]);
+const CLASS_KEY_PARENTS = new Set(['PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 
-function isNonReferenceKey(
-  node: Extract<ESTree.Node, { type: 'Identifier' }>,
-  parent: ESTree.Node
-): boolean {
-  if (parent.type === 'MemberExpression')
-    return !parent.computed && parent.property === node;
-  if (parent.type === 'Property')
-    return !parent.computed && parent.key === node && !parent.shorthand;
+function isNonReferenceKey(node: Extract<ESTree.Node, { type: 'Identifier' }>, parent: ESTree.Node): boolean {
+  if (parent.type === 'MemberExpression') return !parent.computed && parent.property === node;
+  if (parent.type === 'Property') return !parent.computed && parent.key === node && !parent.shorthand;
   if (!CLASS_KEY_PARENTS.has(parent.type)) return false;
   const property = parent as ESTree.PropertyDefinition;
   return property.key === node && !property.computed;
 }
 
-function isRunnerReference(
-  node: Extract<ESTree.Node, { type: 'Identifier' }>
-): boolean {
+function isRunnerReference(node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   const parent = node.parent;
   if (parent === null) return false;
-  if (
-    DECLARATION_PARENTS.has(parent.type) ||
-    TYPE_POSITION_PARENTS.has(parent.type)
-  )
-    return false;
+  if (DECLARATION_PARENTS.has(parent.type) || TYPE_POSITION_PARENTS.has(parent.type)) return false;
   return !isNonReferenceKey(node, parent);
 }
 
@@ -380,9 +321,7 @@ export const rule = defineRule({
     if (matchesAny(filename, options.serverGlobs)) return {};
     if (!options.includeTestFiles && isTestFile(filename)) return {};
 
-    const effectModulePatterns = options.effectModules.map((glob) =>
-      globToRegExp(glob)
-    );
+    const effectModulePatterns = options.effectModules.map((glob) => globToRegExp(glob));
     let bindings: EffectBindings = {
       importsEffect: false,
       namespaces: new Map(),
@@ -390,27 +329,18 @@ export const rule = defineRule({
     let runnerImports: ReadonlyMap<string, string> = new Map();
     let namespaceImports: ReadonlyMap<string, string> = new Map();
     let rootNamespaces: ReadonlySet<string> = new Set();
-    const reported: Array<{ readonly start: number; readonly end: number }> =
-      [];
+    const reported: Array<{ readonly start: number; readonly end: number }> = [];
 
-    const importedNamespace = (
-      node: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): boolean => {
+    const importedNamespace = (node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
       const namespace = bindings.namespaces.get(node.name);
       return (
-        namespace !== undefined &&
-        RUNNER_NAMESPACES.has(namespace) &&
-        resolvesToModuleImport(context, node, node.name)
+        namespace !== undefined && RUNNER_NAMESPACES.has(namespace) && resolvesToModuleImport(context, node, node.name)
       );
     };
 
-    const rootRunSeam = (
-      object: ESTree.MemberExpression,
-      member: string
-    ): string | null => {
+    const rootRunSeam = (object: ESTree.MemberExpression, member: string): string | null => {
       const root = unwrap(object.object);
-      if (root.type !== 'Identifier' || !rootNamespaces.has(root.name))
-        return null;
+      if (root.type !== 'Identifier' || !rootNamespaces.has(root.name)) return null;
       const namespace = memberName(object);
       if (namespace === null || !RUNNER_NAMESPACES.has(namespace)) return null;
       if (!resolvesToModuleImport(context, root, root.name)) return null;
@@ -422,11 +352,8 @@ export const rule = defineRule({
       const object = unwrap(node.object);
       const member = memberName(node);
       if (member === null || !RUN_MEMBER.test(member)) return null;
-      if (object.type === 'Identifier')
-        return importedNamespace(object) ? `${object.name}.${member}` : null;
-      return object.type === 'MemberExpression'
-        ? rootRunSeam(object, member)
-        : null;
+      if (object.type === 'Identifier') return importedNamespace(object) ? `${object.name}.${member}` : null;
+      return object.type === 'MemberExpression' ? rootRunSeam(object, member) : null;
     };
 
     /** `api.runEffectRequest(...)` where `api` is a namespace import of the runner's module. */
@@ -435,8 +362,7 @@ export const rule = defineRule({
       if (!namespaceImports.has(node.object.name)) return null;
       const member = memberName(node);
       if (member === null || !options.runnerNames.includes(member)) return null;
-      if (!resolvesToModuleImport(context, node.object, node.object.name))
-        return null;
+      if (!resolvesToModuleImport(context, node.object, node.object.name)) return null;
       return `${node.object.name}.${member}`;
     };
 
@@ -452,15 +378,13 @@ export const rule = defineRule({
               specifier.type === 'ImportSpecifier' &&
               specifier.importKind !== 'type' &&
               specifier.local.name === name &&
-              RUN_MEMBER.test(moduleExportName(specifier.imported) ?? '')
-          )
+              RUN_MEMBER.test(moduleExportName(specifier.imported) ?? ''),
+          ),
       );
     };
 
     /** The call expression a callee belongs to, so nested seams inside its arguments dedupe. */
-    const siteOf = (
-      node: ESTree.Node
-    ): { readonly start: number; readonly end: number } => {
+    const siteOf = (node: ESTree.Node): { readonly start: number; readonly end: number } => {
       const ancestors = ancestorsOf(node);
       let current: ESTree.Node = node;
       for (let index = ancestors.length - 1; index >= 0; index -= 1) {
@@ -470,8 +394,7 @@ export const rule = defineRule({
           current = ancestor;
           continue;
         }
-        if (ancestor.type === 'CallExpression' && ancestor.callee === current)
-          return ancestor;
+        if (ancestor.type === 'CallExpression' && ancestor.callee === current) return ancestor;
         break;
       }
       return current;
@@ -479,19 +402,9 @@ export const rule = defineRule({
 
     /** Report unless the site is lexically nested inside an already reported run seam. */
     const reportSite = (node: ESTree.Node, runner: string): void => {
-      if (
-        ancestorsOf(node).some((parent) =>
-          TYPE_POSITION_PARENTS.has(parent.type)
-        )
-      )
-        return;
+      if (ancestorsOf(node).some((parent) => TYPE_POSITION_PARENTS.has(parent.type))) return;
       const site = siteOf(node);
-      if (
-        reported.some(
-          (range) => site.start >= range.start && site.end <= range.end
-        )
-      )
-        return;
+      if (reported.some((range) => site.start >= range.start && site.end <= range.end)) return;
       reported.push(site);
       const key = boundaryKeyFor(node, options.boundaryKeys);
       if (key === null) {
@@ -507,7 +420,7 @@ export const rule = defineRule({
 
     const reportDestructuredRunner = (
       property: ESTree.ObjectPattern['properties'][number],
-      namespace: string
+      namespace: string,
     ): void => {
       if (property.type !== 'Property' || property.computed) return;
       const key = moduleExportName(property.key);
@@ -519,26 +432,17 @@ export const rule = defineRule({
       });
     };
 
-    const isRunnerExport = (
-      specifier: ESTree.ExportSpecifier,
-      source: string | null,
-      local: string
-    ): boolean => {
+    const isRunnerExport = (specifier: ESTree.ExportSpecifier, source: string | null, local: string): boolean => {
       if (source === null)
         return (
           (runnerImports.has(local) || importedRunMember(local)) &&
           resolvesToModuleImport(context, specifier.local, local)
         );
       const exported = moduleExportName(specifier.exported);
-      return [local, exported].some(
-        (name) => name !== null && options.runnerNames.includes(name)
-      );
+      return [local, exported].some((name) => name !== null && options.runnerNames.includes(name));
     };
 
-    const reportRunnerExport = (
-      specifier: ESTree.ExportSpecifier,
-      source: string | null
-    ): void => {
+    const reportRunnerExport = (specifier: ESTree.ExportSpecifier, source: string | null): void => {
       if (specifier.exportKind === 'type') return;
       const local = moduleExportName(specifier.local);
       if (local === null || !isRunnerExport(specifier, source, local)) return;
@@ -554,10 +458,7 @@ export const rule = defineRule({
         bindings = collectEffectBindings(node);
         runnerImports = collectRunnerImports(node, options.runnerNames);
         namespaceImports = collectNamespaceImports(node);
-        rootNamespaces = collectRootNamespaceImports(
-          node,
-          effectModulePatterns
-        );
+        rootNamespaces = collectRootNamespaceImports(node, effectModulePatterns);
       },
       MemberExpression(node) {
         const runner = runSeam(node) ?? namespacedRunner(node);
@@ -565,8 +466,7 @@ export const rule = defineRule({
         reportSite(node, runner);
       },
       Identifier(node) {
-        if (!runnerImports.has(node.name) && !importedRunMember(node.name))
-          return;
+        if (!runnerImports.has(node.name) && !importedRunMember(node.name)) return;
         if (!isRunnerReference(node)) return;
         if (!resolvesToModuleImport(context, node, node.name)) return;
         reportSite(node, node.name);
@@ -574,16 +474,13 @@ export const rule = defineRule({
       VariableDeclarator(node) {
         if (node.id.type !== 'ObjectPattern') return;
         const init = node.init;
-        if (init === null || init === undefined || init.type !== 'Identifier')
-          return;
+        if (init === null || init === undefined || init.type !== 'Identifier') return;
         if (!importedNamespace(init)) return;
-        for (const property of node.id.properties)
-          reportDestructuredRunner(property, init.name);
+        for (const property of node.id.properties) reportDestructuredRunner(property, init.name);
       },
       ExportNamedDeclaration(node) {
         if (node.exportKind === 'type') return;
-        for (const specifier of node.specifiers)
-          reportRunnerExport(specifier, node.source?.value ?? null);
+        for (const specifier of node.specifiers) reportRunnerExport(specifier, node.source?.value ?? null);
       },
       ExportAllDeclaration(node) {
         if (node.exportKind === 'type') return;

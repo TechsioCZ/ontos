@@ -5,5 +5,5 @@ export class EngagementProfilePersistenceUnavailable extends Schema.TaggedError<
   {
     code: Schema.Literal('contacts_engagement_profile_persistence_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

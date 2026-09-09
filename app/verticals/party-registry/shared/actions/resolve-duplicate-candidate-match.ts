@@ -8,6 +8,5 @@ export const ResolveDuplicateCandidateMatchPayloadSchema = Schema.Struct({
   ...DuplicateCaseResolutionPayloadSchema.fields,
   selectedPartyRef: PartyRefSchema,
 });
-export type ResolveDuplicateCandidateMatchPayload =
-  typeof ResolveDuplicateCandidateMatchPayloadSchema.Type;
+export type ResolveDuplicateCandidateMatchPayload = typeof ResolveDuplicateCandidateMatchPayloadSchema.Type;
 export { DuplicateCaseResolutionResultSchema as ResolveDuplicateCandidateMatchResultSchema } from '../domain/matching-contracts.ts';

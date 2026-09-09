@@ -84,23 +84,13 @@ type AnyNode = ESTree.Node;
 const CONTAINER_GLOBALS = new Set(['globalThis', 'global', 'window', 'self']);
 
 /** Comparison operators that turn serialized text into a structural-equality verdict. */
-const COMPARISON_OPERATORS = new Set([
-  '===',
-  '!==',
-  '==',
-  '!=',
-  '<',
-  '>',
-  '<=',
-  '>=',
-]);
+const COMPARISON_OPERATORS = new Set(['===', '!==', '==', '!=', '<', '>', '<=', '>=']);
 
 /** Methods whose first argument is a lookup key (Map, Set, cache, keyed store). */
 const KEYED_METHODS = new Set(['set', 'get', 'has', 'add', 'delete']);
 
 /** A binding/property name that declares the value is an identity or hash key. */
-const IDENTITY_NAME =
-  /(?:Key|Hash|Id|Fingerprint|Digest|Signature|Etag|Checksum|Cache)$/u;
+const IDENTITY_NAME = /(?:Key|Hash|Id|Fingerprint|Digest|Signature|Etag|Checksum|Cache)$/u;
 
 const DEFAULT_INCLUDE_PATHS: readonly string[] = [
   'apps/**',
@@ -171,49 +161,30 @@ function isGlobalContainer(context: Context, node: AnyNode): boolean {
 
 function isJsonHost(context: Context, node: AnyNode): boolean {
   const host = unwrap(node);
-  if (host.type === 'Identifier')
-    return isUnshadowedGlobal(context, host, 'JSON', true);
+  if (host.type === 'Identifier') return isUnshadowedGlobal(context, host, 'JSON', true);
   return (
-    host.type === 'MemberExpression' &&
-    staticPropertyName(host) === 'JSON' &&
-    isGlobalContainer(context, host.object)
+    host.type === 'MemberExpression' && staticPropertyName(host) === 'JSON' && isGlobalContainer(context, host.object)
   );
 }
 
-function isKeyedCall(
-  consumer: ESTree.CallExpression,
-  result: AnyNode
-): boolean {
-  if (
-    consumer.arguments[0] !== result ||
-    consumer.callee.type !== 'MemberExpression'
-  )
-    return false;
+function isKeyedCall(consumer: ESTree.CallExpression, result: AnyNode): boolean {
+  if (consumer.arguments[0] !== result || consumer.callee.type !== 'MemberExpression') return false;
   const method = staticPropertyName(consumer.callee);
   return method !== null && KEYED_METHODS.has(method);
 }
 
 function isKeyConsumer(consumer: AnyNode | null, result: AnyNode): boolean {
   if (consumer?.type === 'CallExpression') return isKeyedCall(consumer, result);
-  return (
-    consumer?.type === 'MemberExpression' &&
-    consumer.computed &&
-    consumer.property === result
-  );
+  return consumer?.type === 'MemberExpression' && consumer.computed && consumer.property === result;
 }
 
 function callMessage(call: AnyNode): string {
   const { node: result, parent: consumer } = skipWrappers(call);
-  if (
-    consumer?.type === 'BinaryExpression' &&
-    COMPARISON_OPERATORS.has(consumer.operator)
-  )
+  if (consumer?.type === 'BinaryExpression' && COMPARISON_OPERATORS.has(consumer.operator))
     return 'jsonStringifyEquality';
   if (isKeyConsumer(consumer, result)) return 'jsonStringifyIdentityKey';
   const owner = ownerName(call);
-  return owner !== null && IDENTITY_NAME.test(owner)
-    ? 'jsonStringifyIdentityKey'
-    : 'nativeJsonStringify';
+  return owner !== null && IDENTITY_NAME.test(owner) ? 'jsonStringifyIdentityKey' : 'nativeJsonStringify';
 }
 
 /** Called references anchor at their call; point-free references anchor at capture. */
@@ -280,14 +251,7 @@ export const rule = defineRule({
     ],
   },
   create(context) {
-    if (
-      !inJsonRuleScope(
-        context.filename,
-        context.options[0],
-        DEFAULT_INCLUDE_PATHS
-      )
-    )
-      return {};
+    if (!inJsonRuleScope(context.filename, context.options[0], DEFAULT_INCLUDE_PATHS)) return {};
 
     const report = (node: AnyNode, messageId: string): void => {
       context.report({
@@ -321,8 +285,7 @@ export const rule = defineRule({
         if (source === null || !isJsonHost(context, source)) return;
         for (const property of node.properties) {
           if (property.type !== 'Property') continue;
-          if (keyName((property as { key: AnyNode }).key) !== 'stringify')
-            continue;
+          if (keyName((property as { key: AnyNode }).key) !== 'stringify') continue;
           report(property as unknown as AnyNode, 'jsonStringifyReference');
         }
       },

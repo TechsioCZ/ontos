@@ -36,9 +36,7 @@ import type {
 export class PartySearchProjectionSource extends Context.Service<
   PartySearchProjectionSource,
   { readonly load: PartySearchProjectionSourceService['load'] }
->()(
-  '@app/party-registry/services/party-search-projection-source.service/PartySearchProjectionSource'
-) {}
+>()('@app/party-registry/services/party-search-projection-source.service/PartySearchProjectionSource') {}
 
 const unavailable = (cause?: unknown) => {
   const error = new PartySearchProjectionUnavailable({
@@ -51,22 +49,13 @@ const unavailable = (cause?: unknown) => {
   return error;
 };
 
-const counterpartyRef = (
-  tenantId: string,
-  resourceId: string
-): CounterpartyRef => ({
+const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef => ({
   moduleId: 'party.registry',
   resourceId,
   resourceType: 'party.registry.counterparty',
   tenantId,
 });
-const period = ({
-  validFrom,
-  validTo,
-}: {
-  readonly validFrom: Date;
-  readonly validTo: Date | null;
-}) =>
+const period = ({ validFrom, validTo }: { readonly validFrom: Date; readonly validTo: Date | null }) =>
   validTo === null
     ? { validFrom: validFrom.toISOString() }
     : {
@@ -74,41 +63,40 @@ const period = ({
         validTo: validTo.toISOString(),
       };
 
-const readIdentities = Effect.fn(
-  'PartySearchProjectionSourceService.readIdentities'
-)((executor: CoreSearchSnapshotReadExecutor, tenantId: string) =>
-  executor
-    .select({
-      archivedAt: parties.archivedAt,
-      displayName: parties.currentDisplayName,
-      partyId: parties.partyId,
-      tenantId: parties.tenantId,
-    })
-    .from(parties)
-    .where(eq(parties.tenantId, tenantId))
-    .pipe(
-      Effect.mapError(unavailable),
-      Effect.flatMap((records) =>
-        executor
-          .select({
-            aliasPartyId: partyAliases.aliasPartyId,
-            canonicalPartyId: partyAliases.canonicalPartyId,
-            tenantId: partyAliases.tenantId,
-          })
-          .from(partyAliases)
-          .where(eq(partyAliases.tenantId, tenantId))
-          .pipe(
-            Effect.mapError(unavailable),
-            Effect.map((aliases) => ({ aliases, records }))
-          )
-      )
-    )
+const readIdentities = Effect.fn('PartySearchProjectionSourceService.readIdentities')(
+  (executor: CoreSearchSnapshotReadExecutor, tenantId: string) =>
+    executor
+      .select({
+        archivedAt: parties.archivedAt,
+        displayName: parties.currentDisplayName,
+        partyId: parties.partyId,
+        tenantId: parties.tenantId,
+      })
+      .from(parties)
+      .where(eq(parties.tenantId, tenantId))
+      .pipe(
+        Effect.mapError(unavailable),
+        Effect.flatMap((records) =>
+          executor
+            .select({
+              aliasPartyId: partyAliases.aliasPartyId,
+              canonicalPartyId: partyAliases.canonicalPartyId,
+              tenantId: partyAliases.tenantId,
+            })
+            .from(partyAliases)
+            .where(eq(partyAliases.tenantId, tenantId))
+            .pipe(
+              Effect.mapError(unavailable),
+              Effect.map((aliases) => ({ aliases, records })),
+            ),
+        ),
+      ),
 );
 
 const readFacts = Effect.fn('PartySearchProjectionSourceService.readFacts')((
   executor: CoreSearchSnapshotReadExecutor,
   tenantId: string,
-  familyIds: readonly string[]
+  familyIds: readonly string[],
 ) => {
   if (familyIds.length === 0) {
     return Effect.succeed({ contacts: [], identifiers: [] });
@@ -129,8 +117,8 @@ const readFacts = Effect.fn('PartySearchProjectionSourceService.readFacts')((
         eq(partyOfficialIdentifiers.tenantId, tenantId),
         inArray(partyOfficialIdentifiers.partyId, familyIds),
         eq(partyOfficialIdentifiers.state, 'ACTIVE'),
-        eq(partyOfficialIdentifiers.isCurrent, true)
-      )
+        eq(partyOfficialIdentifiers.isCurrent, true),
+      ),
     )
     .pipe(
       Effect.mapError(unavailable),
@@ -156,14 +144,14 @@ const readFacts = Effect.fn('PartySearchProjectionSourceService.readFacts')((
               inArray(partyContactPoints.contactPointType, ['EMAIL', 'PHONE']),
               eq(partyContactPoints.privacyClassification, 'PUBLIC'),
               eq(partyContactPoints.state, 'ACTIVE'),
-              eq(partyContactPoints.isCurrent, true)
-            )
+              eq(partyContactPoints.isCurrent, true),
+            ),
           )
           .pipe(
             Effect.mapError(unavailable),
-            Effect.map((contacts) => ({ contacts, identifiers }))
-          )
-      )
+            Effect.map((contacts) => ({ contacts, identifiers })),
+          ),
+      ),
     );
 });
 
@@ -175,97 +163,92 @@ interface PartySearchSourceCounterpartyRecord {
   readonly roles: PartySearchSourceCounterparty['rolePeriods'];
 }
 
-const readScopedCounterparties = Effect.fn(
-  'PartySearchProjectionSourceService.readScopedCounterparties'
-)(function* readScopedCounterpartyRows(
-  executor: CoreSearchSnapshotReadExecutor,
-  snapshot: CoreSearchWorkerSnapshotView,
-  target: PartySearchProjectionTarget,
-  familyIds: readonly string[],
-  legalEntityId: string
-) {
-  let targetPredicate: SQL | undefined;
-  if ('counterpartyId' in target) {
-    targetPredicate = eq(counterparties.counterpartyId, target.counterpartyId);
-  } else if ('partyId' in target) {
-    targetPredicate = inArray(counterparties.partyId, familyIds);
-  }
-  const rows = yield* executor
-    .select({
-      counterpartyId: counterparties.counterpartyId,
-      legalEntityId: counterparties.legalEntityId,
-      partyId: counterparties.partyId,
-      tenantId: counterparties.tenantId,
-    })
-    .from(counterparties)
-    .where(
-      and(
-        eq(counterparties.tenantId, snapshot.tenantId),
-        eq(counterparties.legalEntityId, legalEntityId),
-        targetPredicate
-      )
-    );
-  const selected = rows.filter((row) => {
-    if (
-      row.tenantId !== snapshot.tenantId ||
-      row.legalEntityId !== legalEntityId
-    ) {
-      return false;
-    }
+const readScopedCounterparties = Effect.fn('PartySearchProjectionSourceService.readScopedCounterparties')(
+  function* readScopedCounterpartyRows(
+    executor: CoreSearchSnapshotReadExecutor,
+    snapshot: CoreSearchWorkerSnapshotView,
+    target: PartySearchProjectionTarget,
+    familyIds: readonly string[],
+    legalEntityId: string,
+  ) {
+    let targetPredicate: SQL | undefined;
     if ('counterpartyId' in target) {
-      return row.counterpartyId === target.counterpartyId;
+      targetPredicate = eq(counterparties.counterpartyId, target.counterpartyId);
+    } else if ('partyId' in target) {
+      targetPredicate = inArray(counterparties.partyId, familyIds);
     }
-    if ('partyId' in target) {
-      return familyIds.includes(row.partyId);
-    }
-    return true;
-  });
-  if (selected.length === 0) {
-    return [];
-  }
-  const roles = yield* executor
-    .select({
-      counterpartyId: counterpartyRolePeriods.counterpartyId,
-      legalEntityId: counterpartyRolePeriods.legalEntityId,
-      role: counterpartyRolePeriods.roleType,
-      state: counterpartyRolePeriods.state,
-      tenantId: counterpartyRolePeriods.tenantId,
-      validFrom: counterpartyRolePeriods.validFrom,
-      validTo: counterpartyRolePeriods.validTo,
-    })
-    .from(counterpartyRolePeriods)
-    .where(
-      and(
-        eq(counterpartyRolePeriods.tenantId, snapshot.tenantId),
-        eq(counterpartyRolePeriods.legalEntityId, legalEntityId),
-        inArray(
-          counterpartyRolePeriods.counterpartyId,
-          selected.map((row) => row.counterpartyId)
+    const rows = yield* executor
+      .select({
+        counterpartyId: counterparties.counterpartyId,
+        legalEntityId: counterparties.legalEntityId,
+        partyId: counterparties.partyId,
+        tenantId: counterparties.tenantId,
+      })
+      .from(counterparties)
+      .where(
+        and(
+          eq(counterparties.tenantId, snapshot.tenantId),
+          eq(counterparties.legalEntityId, legalEntityId),
+          targetPredicate,
         ),
-        eq(counterpartyRolePeriods.state, 'ACTIVE')
-      )
-    );
-  return selected.map((row): PartySearchSourceCounterpartyRecord => ({
-    ...row,
-    roles: roles.flatMap(
-      (role): PartySearchSourceCounterparty['rolePeriods'] =>
+      );
+    const selected = rows.filter((row) => {
+      if (row.tenantId !== snapshot.tenantId || row.legalEntityId !== legalEntityId) {
+        return false;
+      }
+      if ('counterpartyId' in target) {
+        return row.counterpartyId === target.counterpartyId;
+      }
+      if ('partyId' in target) {
+        return familyIds.includes(row.partyId);
+      }
+      return true;
+    });
+    if (selected.length === 0) {
+      return [];
+    }
+    const roles = yield* executor
+      .select({
+        counterpartyId: counterpartyRolePeriods.counterpartyId,
+        legalEntityId: counterpartyRolePeriods.legalEntityId,
+        role: counterpartyRolePeriods.roleType,
+        state: counterpartyRolePeriods.state,
+        tenantId: counterpartyRolePeriods.tenantId,
+        validFrom: counterpartyRolePeriods.validFrom,
+        validTo: counterpartyRolePeriods.validTo,
+      })
+      .from(counterpartyRolePeriods)
+      .where(
+        and(
+          eq(counterpartyRolePeriods.tenantId, snapshot.tenantId),
+          eq(counterpartyRolePeriods.legalEntityId, legalEntityId),
+          inArray(
+            counterpartyRolePeriods.counterpartyId,
+            selected.map((row) => row.counterpartyId),
+          ),
+          eq(counterpartyRolePeriods.state, 'ACTIVE'),
+        ),
+      );
+    return selected.map((row): PartySearchSourceCounterpartyRecord => ({
+      ...row,
+      roles: roles.flatMap((role): PartySearchSourceCounterparty['rolePeriods'] =>
         role.counterpartyId === row.counterpartyId &&
         role.tenantId === snapshot.tenantId &&
         role.legalEntityId === legalEntityId &&
         role.state === 'ACTIVE' &&
         (role.role === 'CUSTOMER' || role.role === 'SUPPLIER')
           ? [{ role: role.role, state: role.state, ...period(role) }]
-          : []
-    ),
-  }));
-}, Effect.mapError(unavailable));
+          : [],
+      ),
+    }));
+  },
+  Effect.mapError(unavailable),
+);
 
-const readCounterparties = Effect.fn(
-  'PartySearchProjectionSourceService.readCounterparties'
-)((
+const readCounterparties = Effect.fn('PartySearchProjectionSourceService.readCounterparties')((
   snapshot: CoreSearchWorkerSnapshotView,
   target: PartySearchProjectionTarget,
-  familyIds: readonly string[]
+  familyIds: readonly string[],
 ) => {
   if ('partyId' in target && familyIds.length === 0) {
     return Effect.succeed<PartySearchSourceCounterpartyRecord[]>([]);
@@ -274,21 +257,15 @@ const readCounterparties = Effect.fn(
     snapshot.legalEntityIds,
     (legalEntityId) =>
       snapshot.forLegalEntity(legalEntityId, (executor) =>
-        readScopedCounterparties(
-          executor,
-          snapshot,
-          target,
-          familyIds,
-          legalEntityId
-        )
+        readScopedCounterparties(executor, snapshot, target, familyIds, legalEntityId),
       ),
-    { concurrency: 1 }
+    { concurrency: 1 },
   ).pipe(Effect.map((records) => records.flat()));
 });
 
 const wantedCanonicalIds = (
   target: PartySearchProjectionTarget,
-  canonicalIds: ReadonlyMap<string, string>
+  canonicalIds: ReadonlyMap<string, string>,
 ): Set<string> => {
   const wanted = new Set<string>();
   if ('partyId' in target) {
@@ -304,160 +281,137 @@ const wantedCanonicalIds = (
   return wanted;
 };
 
-const readCanonicalProjection = Effect.fn(
-  'PartySearchProjectionSourceService.readCanonicalProjection'
-)(function* readCanonicalProjectionSnapshot(
-  snapshot: CoreSearchWorkerSnapshotView,
-  context: OutboxWorkerHandlerContext,
-  target: PartySearchProjectionTarget
-) {
-  if (snapshot.tenantId !== context.tenantId) {
-    return yield* unavailable();
-  }
-  const { records, aliases } = yield* snapshot.tenant((executor) =>
-    readIdentities(executor, snapshot.tenantId)
-  );
-  if (
-    records.some((row) => row.tenantId !== snapshot.tenantId) ||
-    aliases.some((row) => row.tenantId !== snapshot.tenantId)
+const readCanonicalProjection = Effect.fn('PartySearchProjectionSourceService.readCanonicalProjection')(
+  function* readCanonicalProjectionSnapshot(
+    snapshot: CoreSearchWorkerSnapshotView,
+    context: OutboxWorkerHandlerContext,
+    target: PartySearchProjectionTarget,
   ) {
-    return yield* unavailable();
-  }
-  const resolver = makePartyAliasResolutionService({
-    findAlias: (_tenantId, id) =>
-      Effect.succeed(
-        Option.fromNullishOr(aliases.find((alias) => alias.aliasPartyId === id))
-      ),
-    partyExists: (_tenantId, id) =>
-      Effect.succeed(records.some((row) => row.partyId === id)),
-  });
-  const canonicalIdEntries = yield* Effect.forEach(
-    records,
-    (row) =>
-      resolver.resolvePartyAlias(snapshot.tenantId, row.partyId).pipe(
-        Effect.mapError(unavailable),
-        Effect.map(
-          (resolved) => [row.partyId, resolved.canonicalPartyId] as const
-        )
-      ),
-    { concurrency: 1 }
-  );
-  const canonicalIds = new Map<string, string>(canonicalIdEntries);
-  const wanted = wantedCanonicalIds(target, canonicalIds);
-  const initialFamily = records
-    .filter((row) => wanted.has(canonicalIds.get(row.partyId) ?? ''))
-    .map((row) => row.partyId);
-  const contexts = yield* readCounterparties(snapshot, target, initialFamily);
-  if (contexts.some((row) => !canonicalIds.has(row.partyId))) {
-    return yield* unavailable();
-  }
-  const expandedWanted = new Set([
-    ...wanted,
-    ...contexts.flatMap((row) => {
-      const canonicalId = canonicalIds.get(row.partyId);
-      return canonicalId === undefined ? [] : [canonicalId];
-    }),
-  ]);
-  const family = records.filter((row) =>
-    expandedWanted.has(canonicalIds.get(row.partyId) ?? '')
-  );
-  const facts = yield* snapshot.tenant((executor) =>
-    readFacts(
-      executor,
-      snapshot.tenantId,
-      family.map((row) => row.partyId)
-    )
-  );
-  const identity = (
-    row: (typeof records)[number]
-  ): PartySearchSourceIdentity => ({
-    contacts: facts.contacts.flatMap((fact) =>
-      fact.tenantId === snapshot.tenantId &&
-      fact.partyId === row.partyId &&
-      fact.state === 'ACTIVE' &&
-      fact.isCurrent &&
-      fact.privacy === 'PUBLIC' &&
-      (fact.type === 'EMAIL' || fact.type === 'PHONE') &&
-      fact.value !== null
-        ? [
-            {
-              privacy: 'PUBLIC',
-              state: fact.state,
-              type: fact.type,
-              value: fact.value,
-              ...period(fact),
-            },
-          ]
-        : []
-    ),
-    displayName: row.displayName,
-    identifiers: facts.identifiers
-      .filter(
-        (fact) =>
-          fact.tenantId === snapshot.tenantId &&
-          fact.partyId === row.partyId &&
-          fact.state === 'ACTIVE' &&
-          fact.isCurrent
-      )
-      .map((fact) => ({
-        state: fact.state,
-        value: fact.value,
-        ...period(fact),
-      })),
-    ref: makePartyRef(snapshot.tenantId, row.partyId),
-  });
-  const removedRefs: PartySearchSourceSnapshot['removedRefs'][number][] = family
-    .filter((row) => canonicalIds.get(row.partyId) !== row.partyId)
-    .map((row) => makePartyRef(snapshot.tenantId, row.partyId));
-  if ('partyId' in target && !canonicalIds.has(target.partyId)) {
-    removedRefs.push(makePartyRef(snapshot.tenantId, target.partyId));
-  }
-  if ('counterpartyId' in target && contexts.length === 0) {
-    removedRefs.push(counterpartyRef(snapshot.tenantId, target.counterpartyId));
-  }
-  return {
-    counterparties: contexts.map((row) => ({
-      legalEntityId: row.legalEntityId,
-      partyRef: makePartyRef(
+    if (snapshot.tenantId !== context.tenantId) {
+      return yield* unavailable();
+    }
+    const { records, aliases } = yield* snapshot.tenant((executor) => readIdentities(executor, snapshot.tenantId));
+    if (
+      records.some((row) => row.tenantId !== snapshot.tenantId) ||
+      aliases.some((row) => row.tenantId !== snapshot.tenantId)
+    ) {
+      return yield* unavailable();
+    }
+    const resolver = makePartyAliasResolutionService({
+      findAlias: (_tenantId, id) =>
+        Effect.succeed(Option.fromNullishOr(aliases.find((alias) => alias.aliasPartyId === id))),
+      partyExists: (_tenantId, id) => Effect.succeed(records.some((row) => row.partyId === id)),
+    });
+    const canonicalIdEntries = yield* Effect.forEach(
+      records,
+      (row) =>
+        resolver.resolvePartyAlias(snapshot.tenantId, row.partyId).pipe(
+          Effect.mapError(unavailable),
+          Effect.map((resolved) => [row.partyId, resolved.canonicalPartyId] as const),
+        ),
+      { concurrency: 1 },
+    );
+    const canonicalIds = new Map<string, string>(canonicalIdEntries);
+    const wanted = wantedCanonicalIds(target, canonicalIds);
+    const initialFamily = records
+      .filter((row) => wanted.has(canonicalIds.get(row.partyId) ?? ''))
+      .map((row) => row.partyId);
+    const contexts = yield* readCounterparties(snapshot, target, initialFamily);
+    if (contexts.some((row) => !canonicalIds.has(row.partyId))) {
+      return yield* unavailable();
+    }
+    const expandedWanted = new Set([
+      ...wanted,
+      ...contexts.flatMap((row) => {
+        const canonicalId = canonicalIds.get(row.partyId);
+        return canonicalId === undefined ? [] : [canonicalId];
+      }),
+    ]);
+    const family = records.filter((row) => expandedWanted.has(canonicalIds.get(row.partyId) ?? ''));
+    const facts = yield* snapshot.tenant((executor) =>
+      readFacts(
+        executor,
         snapshot.tenantId,
-        canonicalIds.get(row.partyId) ?? row.partyId
+        family.map((row) => row.partyId),
       ),
-      ref: counterpartyRef(snapshot.tenantId, row.counterpartyId),
-      rolePeriods: row.roles,
-      storedPartyRef: makePartyRef(snapshot.tenantId, row.partyId),
-    })),
-    parties: family
-      .filter((row) => canonicalIds.get(row.partyId) === row.partyId)
-      .map((row) => ({
-        ...identity(row),
-        aliases: family
-          .filter(
-            (alias) =>
-              alias.partyId !== row.partyId &&
-              canonicalIds.get(alias.partyId) === row.partyId
-          )
-          .map(identity),
-        archived: row.archivedAt !== null,
+    );
+    const identity = (row: (typeof records)[number]): PartySearchSourceIdentity => ({
+      contacts: facts.contacts.flatMap((fact) =>
+        fact.tenantId === snapshot.tenantId &&
+        fact.partyId === row.partyId &&
+        fact.state === 'ACTIVE' &&
+        fact.isCurrent &&
+        fact.privacy === 'PUBLIC' &&
+        (fact.type === 'EMAIL' || fact.type === 'PHONE') &&
+        fact.value !== null
+          ? [
+              {
+                privacy: 'PUBLIC',
+                state: fact.state,
+                type: fact.type,
+                value: fact.value,
+                ...period(fact),
+              },
+            ]
+          : [],
+      ),
+      displayName: row.displayName,
+      identifiers: facts.identifiers
+        .filter(
+          (fact) =>
+            fact.tenantId === snapshot.tenantId &&
+            fact.partyId === row.partyId &&
+            fact.state === 'ACTIVE' &&
+            fact.isCurrent,
+        )
+        .map((fact) => ({
+          state: fact.state,
+          value: fact.value,
+          ...period(fact),
+        })),
+      ref: makePartyRef(snapshot.tenantId, row.partyId),
+    });
+    const removedRefs: PartySearchSourceSnapshot['removedRefs'][number][] = family
+      .filter((row) => canonicalIds.get(row.partyId) !== row.partyId)
+      .map((row) => makePartyRef(snapshot.tenantId, row.partyId));
+    if ('partyId' in target && !canonicalIds.has(target.partyId)) {
+      removedRefs.push(makePartyRef(snapshot.tenantId, target.partyId));
+    }
+    if ('counterpartyId' in target && contexts.length === 0) {
+      removedRefs.push(counterpartyRef(snapshot.tenantId, target.counterpartyId));
+    }
+    return {
+      counterparties: contexts.map((row) => ({
+        legalEntityId: row.legalEntityId,
+        partyRef: makePartyRef(snapshot.tenantId, canonicalIds.get(row.partyId) ?? row.partyId),
+        ref: counterpartyRef(snapshot.tenantId, row.counterpartyId),
+        rolePeriods: row.roles,
+        storedPartyRef: makePartyRef(snapshot.tenantId, row.partyId),
       })),
-    projectionVersion: snapshot.projectionVersion,
-    removedRefs,
-    tenantId: snapshot.tenantId,
-  };
-});
+      parties: family
+        .filter((row) => canonicalIds.get(row.partyId) === row.partyId)
+        .map((row) => ({
+          ...identity(row),
+          aliases: family
+            .filter((alias) => alias.partyId !== row.partyId && canonicalIds.get(alias.partyId) === row.partyId)
+            .map(identity),
+          archived: row.archivedAt !== null,
+        })),
+      projectionVersion: snapshot.projectionVersion,
+      removedRefs,
+      tenantId: snapshot.tenantId,
+    };
+  },
+);
 
 export const makePartySearchProjectionSource = (
   ...[reader]: readonly [CoreSearchWorkerSnapshotService]
 ): PartySearchProjectionSourceService => ({
   load: Effect.fn('PartySearchProjectionSourceService.load')(
-    (
-      context: OutboxWorkerHandlerContext,
-      target: PartySearchProjectionTarget
-    ) =>
+    (context: OutboxWorkerHandlerContext, target: PartySearchProjectionTarget) =>
       reader
-        .read(context, (snapshot) =>
-          readCanonicalProjection(snapshot, context, target)
-        )
-        .pipe(Effect.mapError(unavailable))
+        .read(context, (snapshot) => readCanonicalProjection(snapshot, context, target))
+        .pipe(Effect.mapError(unavailable)),
   ),
 });
 
@@ -465,5 +419,5 @@ export const PartySearchProjectionSourceLive = Layer.effect(
   PartySearchProjectionSource,
   Effect.gen(function* sourceLayer() {
     return makePartySearchProjectionSource(yield* CoreSearchWorkerSnapshot);
-  })
+  }),
 );

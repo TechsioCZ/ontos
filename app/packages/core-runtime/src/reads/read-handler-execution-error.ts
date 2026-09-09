@@ -5,5 +5,5 @@ export class ReadHandlerExecutionError extends Schema.TaggedError<ReadHandlerExe
   {
     code: Schema.Literal('read_handler_execution_failed'),
     reason: Schema.String,
-  }
+  },
 ) {}

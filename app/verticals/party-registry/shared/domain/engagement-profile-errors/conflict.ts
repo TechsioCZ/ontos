@@ -13,5 +13,5 @@ export class EngagementProfileConflict extends Schema.TaggedError<EngagementProf
       'contacts_party_type_mismatch',
     ]),
     reason: Schema.String,
-  }
+  },
 ) {}

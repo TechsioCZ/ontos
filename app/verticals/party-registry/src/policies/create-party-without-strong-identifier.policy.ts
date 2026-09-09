@@ -17,9 +17,7 @@ const CreateWithoutStrongIdentifierPolicyConfigurationSchema = Schema.Struct({
 export type CreateWithoutStrongIdentifierPolicyConfiguration =
   typeof CreateWithoutStrongIdentifierPolicyConfigurationSchema.Type;
 
-const subjectEvidenceReason = (
-  evidence: NonNullable<PartyCandidate['subjectEvidence']>
-) => {
+const subjectEvidenceReason = (evidence: NonNullable<PartyCandidate['subjectEvidence']>) => {
   const subjects = new Set(evidence.map((item) => item.subjectKey));
   const kinds = new Set(evidence.map((item) => item.observedSubject));
   if (evidence.length === 0) {
@@ -43,7 +41,7 @@ const subjectEvidenceReason = (
 /** Evaluates explicit actor attestations. The owner Action, not a reference prefix or provider
  * label, records who accepted them. A review decision never bypasses subject/type evidence. */
 export const evaluatePartySubjectEvidence = (
-  candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>
+  candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>,
 ): PartyEvidenceEvaluation => {
   const evidence = candidate.subjectEvidence ?? [];
   let reasonCode: string = subjectEvidenceReason(evidence);
@@ -51,9 +49,7 @@ export const evaluatePartySubjectEvidence = (
   const typeSupported =
     subjectEligible &&
     (candidate.partyType === 'UNRESOLVED' ||
-      evidence.some(
-        ({ observedSubject }) => observedSubject === candidate.partyType
-      ));
+      evidence.some(({ observedSubject }) => observedSubject === candidate.partyType));
   if (subjectEligible && !typeSupported) {
     reasonCode = 'party_type_evidence_required';
   }
@@ -81,11 +77,10 @@ const CreateWithoutStrongIdentifierDecisionSchema = Schema.Union([
     reasonCode: Schema.String,
   }),
 ]);
-export type CreateWithoutStrongIdentifierDecision =
-  typeof CreateWithoutStrongIdentifierDecisionSchema.Type;
+export type CreateWithoutStrongIdentifierDecision = typeof CreateWithoutStrongIdentifierDecisionSchema.Type;
 export const decideCreateWithoutStrongIdentifier = (
   candidate: PartyCandidate,
-  configuration: CreateWithoutStrongIdentifierPolicyConfiguration
+  configuration: CreateWithoutStrongIdentifierPolicyConfiguration,
 ): CreateWithoutStrongIdentifierDecision => {
   const evaluation = evaluatePartySubjectEvidence(candidate);
   if (!evaluation.subjectEligible || !evaluation.typeSupported) {
@@ -97,7 +92,7 @@ export const decideCreateWithoutStrongIdentifier = (
 };
 
 export const requirePartySubjectEvidence = (
-  candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>
+  candidate: Pick<PartyCandidate, 'partyType' | 'subjectEvidence'>,
 ): Effect.Effect<PartyEvidenceEvaluation, PartyEvidenceInsufficientError> => {
   const evaluation = evaluatePartySubjectEvidence(candidate);
   return evaluation.subjectEligible && evaluation.typeSupported
@@ -106,6 +101,6 @@ export const requirePartySubjectEvidence = (
         new PartyEvidenceInsufficient({
           code: 'party_evidence_insufficient',
           reason: evaluation.reasonCode,
-        })
+        }),
       );
 };

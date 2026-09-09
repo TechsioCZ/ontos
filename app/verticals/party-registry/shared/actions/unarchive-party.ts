@@ -7,10 +7,7 @@ import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.t
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const UnarchivePartyPayloadSchema = Schema.Struct({
-  expectedRevision: Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isGreaterThan(0)
-  ),
+  expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
   partyRef: PartyRefSchema,
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
 });

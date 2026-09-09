@@ -7,12 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import plugin from '../index.ts';
 import { listRuleNames } from '../shared/discover-rules.ts';
-import {
-  appRoot,
-  listFixtureRules,
-  pluginDirectory,
-  runOxlint,
-} from './oxlint.mts';
+import { appRoot, listFixtureRules, pluginDirectory, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 const RuleSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
@@ -26,14 +21,14 @@ const ProductionConfigModule = Schema.Struct({
         denyWarnings: Schema.optional(Schema.Boolean),
         typeAware: Schema.optional(Schema.Boolean),
         typeCheck: Schema.optional(Schema.Boolean),
-      })
+      }),
     ),
     overrides: Schema.Array(
       Schema.Struct({
         excludeFiles: Schema.optional(Schema.Array(Schema.String)),
         files: Schema.Array(Schema.String),
         rules: Schema.Record(Schema.String, RuleSetting),
-      })
+      }),
     ),
     rules: Schema.optional(Schema.Record(Schema.String, RuleSetting)),
   }),
@@ -42,7 +37,7 @@ const FixtureConfig = Schema.fromJsonString(
   Schema.Struct({
     ignorePatterns: Schema.optional(Schema.Array(Schema.String)),
     rules: Schema.Record(Schema.String, RuleSetting),
-  })
+  }),
 );
 const NamedPluginEntry = Schema.Struct({
   name: Schema.String,
@@ -51,7 +46,7 @@ const NamedPluginEntry = Schema.Struct({
 const isNamedPluginEntry = Schema.is(NamedPluginEntry);
 const decodeFixtureConfig = Schema.decodeUnknownSync(FixtureConfig);
 const { default: config } = Schema.decodeUnknownSync(ProductionConfigModule)(
-  await import(pathToFileURL(nodePath.join(appRoot, 'oxlint.config.ts')).href)
+  await import(pathToFileURL(nodePath.join(appRoot, 'oxlint.config.ts')).href),
 );
 const configuredRules = config.rules ?? {};
 const rules = listRuleNames();
@@ -60,18 +55,11 @@ it('every rule is actually exported, enabled at error severity, and covered by f
   expect(rules.length > 0, 'the plugin cannot be empty').toBe(true);
   expect(Object.keys(plugin.rules).toSorted()).toEqual(rules);
   expect([...listFixtureRules()].toSorted()).toEqual(rules);
-  const configured = Object.keys(configuredRules).filter((name) =>
-    name.startsWith('effect-native/')
-  );
-  expect(configured.toSorted()).toEqual(
-    rules.map((name) => `effect-native/${name}`)
-  );
+  const configured = Object.keys(configuredRules).filter((name) => name.startsWith('effect-native/'));
+  expect(configured.toSorted()).toEqual(rules.map((name) => `effect-native/${name}`));
   for (const rule of rules) {
     const setting = configuredRules[`effect-native/${rule}`];
-    expect(
-      Array.isArray(setting) ? setting[0] : setting,
-      `${rule} must be an error`
-    ).toBe('error');
+    expect(Array.isArray(setting) ? setting[0] : setting, `${rule} must be an error`).toBe('error');
   }
 });
 
@@ -81,8 +69,8 @@ it('production configuration loads the plugin and preserves strict typed linting
       (entry) =>
         isNamedPluginEntry(entry) &&
         entry.name === 'effect-native' &&
-        entry.specifier === './tools/oxlint/effect-native/index.ts'
-    )
+        entry.specifier === './tools/oxlint/effect-native/index.ts',
+    ),
   ).toBe(true);
   expect(config.options?.typeAware).toBe(true);
   expect(config.options?.typeCheck).toBe(true);
@@ -95,69 +83,41 @@ it('every rule is reporting-only and declares diagnostic metadata', () => {
     if (rule.meta === undefined) {
       throw new Error(`${name} needs metadata`);
     }
-    expect(
-      Object.keys(rule.meta.messages ?? {}).length > 0,
-      `${name} needs messages`
-    ).toBe(true);
-    expect(rule.meta.fixable, `${name} must not advertise fixes`).toBe(
-      undefined
-    );
-    expect(
-      !(rule.meta.hasSuggestions ?? false),
-      `${name} must not advertise suggestions`
-    ).toBe(true);
+    expect(Object.keys(rule.meta.messages ?? {}).length > 0, `${name} needs messages`).toBe(true);
+    expect(rule.meta.fixable, `${name} must not advertise fixes`).toBe(undefined);
+    expect(!(rule.meta.hasSuggestions ?? false), `${name} must not advertise suggestions`).toBe(true);
   }
 });
 
 it('fixture configs enable only their owned rule without file-ignore shortcuts', () => {
   for (const rule of rules) {
     const fixture = decodeFixtureConfig(
-      readFileSync(
-        nodePath.join(
-          pluginDirectory,
-          'tests',
-          'fixtures',
-          rule,
-          '.oxlintrc.json'
-        ),
-        'utf-8'
-      )
+      readFileSync(nodePath.join(pluginDirectory, 'tests', 'fixtures', rule, '.oxlintrc.json'), 'utf-8'),
     );
     expect(Object.keys(fixture.rules)).toEqual([`effect-native/${rule}`]);
     const setting = fixture.rules[`effect-native/${rule}`];
     expect(Array.isArray(setting) ? setting[0] : setting).toBe('error');
-    expect(
-      (fixture.ignorePatterns ?? []).length === 0,
-      `${rule} must exercise fixtures, not ignore them`
-    ).toBe(true);
+    expect((fixture.ignorePatterns ?? []).length === 0, `${rule} must exercise fixtures, not ignore them`).toBe(true);
   }
 });
 
 it('production import policy rejects node:test in application tests but not e2e adapters', () => {
   withTemporaryWorkspace((directory) => {
-    const overrides = config.overrides.filter(
-      (override) => 'eslint/no-restricted-imports' in override.rules
-    );
+    const overrides = config.overrides.filter((override) => 'eslint/no-restricted-imports' in override.rules);
     expect(overrides.length).toBe(1);
     const configPath = nodePath.join(directory, '.oxlintrc.json');
-    writeFileSync(
-      configPath,
-      JSON.stringify({ categories: { correctness: 'off' }, overrides })
-    );
+    writeFileSync(configPath, JSON.stringify({ categories: { correctness: 'off' }, overrides }));
     const paths = ['apps/x/tests/y.test.ts', 'apps/x/tests/e2e/y.test.ts'];
     for (const file of paths) {
       const fullPath = nodePath.join(directory, file);
       mkdirSync(nodePath.dirname(fullPath), { recursive: true });
-      writeFileSync(
-        fullPath,
-        "import { test } from 'node:test';\ntest('example', () => {});\n"
-      );
+      writeFileSync(fullPath, "import { test } from 'node:test';\ntest('example', () => {});\n");
     }
     const run = runOxlint(configPath, paths, directory);
     expect(run.numberOfFiles).toBe(2);
     expect(run.exitCode).toBe(1);
-    expect(
-      run.diagnostics.map(({ code, filename }) => ({ code, filename }))
-    ).toEqual([{ code: 'eslint(no-restricted-imports)', filename: paths[0] }]);
+    expect(run.diagnostics.map(({ code, filename }) => ({ code, filename }))).toEqual([
+      { code: 'eslint(no-restricted-imports)', filename: paths[0] },
+    ]);
   });
 });

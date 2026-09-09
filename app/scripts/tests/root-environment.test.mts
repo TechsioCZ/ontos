@@ -14,17 +14,8 @@ const expectedEnvironmentPath = path.join(appRoot, '.env');
 it('apps contain no environment files that can override the app-root .env', () => {
   const result = spawnSync(
     '/usr/bin/find',
-    [
-      path.join(appRoot, 'apps'),
-      '-type',
-      'f',
-      '-name',
-      '.env*',
-      '-not',
-      '-path',
-      '*/node_modules/*',
-    ],
-    { encoding: 'utf-8' }
+    [path.join(appRoot, 'apps'), '-type', 'f', '-name', '.env*', '-not', '-path', '*/node_modules/*'],
+    { encoding: 'utf-8' },
   );
 
   expect(result.status, result.stderr).toBe(0);
@@ -35,8 +26,7 @@ it.live(
   'workspace discovery resolves repository, app, shell, and microvertical directories',
   Effect.fn(function* testEffect1() {
     const { resolveAppWorkspaceRoot } = yield* Effect.tryPromise(
-      () =>
-        import('../../packages/core-runtime/src/environment/workspace-environment.ts')
+      () => import('../../packages/core-runtime/src/environment/workspace-environment.ts'),
     );
 
     for (const directory of [
@@ -47,27 +37,18 @@ it.live(
     ]) {
       expect(resolveAppWorkspaceRoot(directory)).toBe(appRoot);
     }
-  })
+  }),
 );
 
 it('all server configuration resolves the app-root .env from any invocation directory', () => {
-  const probe = new URL(
-    'server-environment-paths.fixture.mts',
-    import.meta.url
-  );
+  const probe = new URL('server-environment-paths.fixture.mts', import.meta.url);
   const child = spawnSync(
     '/usr/bin/env',
-    [
-      '-u',
-      'ULTRAMODERN_WORKSPACE_ROOT',
-      `INIT_CWD=${repositoryRoot}`,
-      process.execPath,
-      fileURLToPath(probe),
-    ],
+    ['-u', 'ULTRAMODERN_WORKSPACE_ROOT', `INIT_CWD=${repositoryRoot}`, process.execPath, fileURLToPath(probe)],
     {
       cwd: '/',
       encoding: 'utf-8',
-    }
+    },
   );
 
   expect(child.status, child.stderr).toBe(0);
@@ -79,9 +60,7 @@ it('all server configuration resolves the app-root .env from any invocation dire
 });
 
 it('Drizzle configuration remains bundleable as CommonJS', () => {
-  const outputDirectory = mkdtempSync(
-    path.join(tmpdir(), 'ontos-drizzle-cjs-')
-  );
+  const outputDirectory = mkdtempSync(path.join(tmpdir(), 'ontos-drizzle-cjs-'));
   try {
     const result = spawnSync(
       path.join(appRoot, 'node_modules/.bin/esbuild'),
@@ -93,7 +72,7 @@ it('Drizzle configuration remains bundleable as CommonJS', () => {
         '--platform=node',
         `--outfile=${path.join(outputDirectory, 'drizzle.config.cjs')}`,
       ],
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8' },
     );
     expect(result.status, result.stderr).toBe(0);
   } finally {

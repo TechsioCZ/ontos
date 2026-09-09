@@ -87,22 +87,14 @@ import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { memberName, keyName } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
-import {
-  collectEffectBindings,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import { importedName, collectNamespaceLocals } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 import { isNonReferencePosition } from '../shared/reference-positions.ts';
 
-const DEFAULT_INCLUDE = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** `jose` publishes deep subpaths (`jose/jwks/local`, `jose/key/import`, `jose/key/generate/*`). */
@@ -117,43 +109,20 @@ const DEFAULT_JOSE_MEMBERS = [
 ];
 
 const DEFAULT_NODE_CRYPTO_MODULES = ['node:crypto', 'crypto', 'node:crypto/**'];
-const DEFAULT_NODE_CRYPTO_MEMBERS = [
-  'createPublicKey',
-  'createPrivateKey',
-  'createSecretKey',
-];
+const DEFAULT_NODE_CRYPTO_MEMBERS = ['createPublicKey', 'createPrivateKey', 'createSecretKey'];
 
 const DEFAULT_SUBTLE_MEMBERS = ['importKey'];
 
 /** Layer constructors that make "once per layer build" the evaluation semantics. */
-const DEFAULT_LAYER_WRAPPERS = [
-  'effect',
-  'scoped',
-  'sync',
-  'unwrap',
-  'unwrapScoped',
-  'succeed',
-];
+const DEFAULT_LAYER_WRAPPERS = ['effect', 'scoped', 'sync', 'unwrap', 'unwrapScoped', 'succeed'];
 /**
  * Layer constructors whose second argument is an *effect/thunk that builds the service*, so a named
  * factory handed to them by reference is still evaluated once per Layer build. `succeed` is absent on
  * purpose: a function passed to `Layer.succeed` is a method of an already-built value.
  */
-const DEFAULT_LAYER_BUILDER_WRAPPERS = [
-  'effect',
-  'scoped',
-  'sync',
-  'unwrap',
-  'unwrapScoped',
-];
+const DEFAULT_LAYER_BUILDER_WRAPPERS = ['effect', 'scoped', 'sync', 'unwrap', 'unwrapScoped'];
 /** Effect combinators that memoise the produced value instead of recomputing it per call. */
-const DEFAULT_EFFECT_WRAPPERS = [
-  'cached',
-  'cachedWithTTL',
-  'cachedFunction',
-  'cachedInvalidateWithTTL',
-  'once',
-];
+const DEFAULT_EFFECT_WRAPPERS = ['cached', 'cachedWithTTL', 'cachedFunction', 'cachedInvalidateWithTTL', 'once'];
 
 /** Barrels that re-export Effect namespaces verbatim; `Layer` from them is Effect's `Layer`. */
 const DEFAULT_REEXPORT_MODULES = ['@modern-js/plugin-bff/effect-edge'];
@@ -171,11 +140,7 @@ const DEFAULT_GENERATOR_FILES = [
 const LAYER_NAMESPACE = 'Layer';
 const EFFECT_NAMESPACE = 'Effect';
 
-const FUNCTION_TYPES = new Set([
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
+const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
 
 /** Lexical markers that prove an emitted snippet already builds the key once. */
 const TEMPLATE_WRAPPER_MARKER =
@@ -190,25 +155,13 @@ function readOptions(context: Context) {
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     joseModules: stringArray(record.joseModules, DEFAULT_JOSE_MODULES),
     joseMembers: stringArray(record.joseMembers, DEFAULT_JOSE_MEMBERS),
-    nodeCryptoModules: stringArray(
-      record.nodeCryptoModules,
-      DEFAULT_NODE_CRYPTO_MODULES
-    ),
-    nodeCryptoMembers: stringArray(
-      record.nodeCryptoMembers,
-      DEFAULT_NODE_CRYPTO_MEMBERS
-    ),
+    nodeCryptoModules: stringArray(record.nodeCryptoModules, DEFAULT_NODE_CRYPTO_MODULES),
+    nodeCryptoMembers: stringArray(record.nodeCryptoMembers, DEFAULT_NODE_CRYPTO_MEMBERS),
     subtleMembers: stringArray(record.subtleMembers, DEFAULT_SUBTLE_MEMBERS),
     layerWrappers: stringArray(record.layerWrappers, DEFAULT_LAYER_WRAPPERS),
-    layerBuilderWrappers: stringArray(
-      record.layerBuilderWrappers,
-      DEFAULT_LAYER_BUILDER_WRAPPERS
-    ),
+    layerBuilderWrappers: stringArray(record.layerBuilderWrappers, DEFAULT_LAYER_BUILDER_WRAPPERS),
     effectWrappers: stringArray(record.effectWrappers, DEFAULT_EFFECT_WRAPPERS),
-    reexportModules: stringArray(
-      record.reexportModules,
-      DEFAULT_REEXPORT_MODULES
-    ),
+    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
     includeTests: record.includeTests === true,
     scanGeneratorTemplates: record.scanGeneratorTemplates !== false,
     generatorFiles: stringArray(record.generatorFiles, DEFAULT_GENERATOR_FILES),
@@ -217,9 +170,7 @@ function readOptions(context: Context) {
 
 /** Static key of an object-pattern / object-literal property (`{ subtle }`, `{ "importKey": k }`). */
 function propertyKeyName(property: ESTree.Node): string | null {
-  return property.type === 'Property'
-    ? keyName(property.key, property.computed)
-    : null;
+  return property.type === 'Property' ? keyName(property.key, property.computed) : null;
 }
 
 /** `globalThis.crypto.subtle` → `"globalThis.crypto.subtle"`; `null` for any dynamic segment. */
@@ -243,25 +194,19 @@ function recordKeyImport(
   specifier: ESTree.ImportDeclaration['specifiers'][number],
   members: readonly string[],
   direct: Map<string, string>,
-  namespaces: Map<string, readonly string[]>
+  namespaces: Map<string, readonly string[]>,
 ): void {
   if (specifier.type === 'ImportSpecifier') {
     if (specifier.importKind === 'type') return;
     const imported = importedName(specifier);
     if (members.includes(imported)) direct.set(specifier.local.name, imported);
-  } else if (
-    specifier.type === 'ImportNamespaceSpecifier' ||
-    specifier.type === 'ImportDefaultSpecifier'
-  ) {
+  } else if (specifier.type === 'ImportNamespaceSpecifier' || specifier.type === 'ImportDefaultSpecifier') {
     const existing = namespaces.get(specifier.local.name) ?? [];
     namespaces.set(specifier.local.name, [...existing, ...members]);
   }
 }
 
-function collectKeyBindings(
-  program: ESTree.Program,
-  options: RuleOptions
-): KeyBindings {
+function collectKeyBindings(program: ESTree.Program, options: RuleOptions): KeyBindings {
   const direct = new Map<string, string>();
   const namespaces = new Map<string, readonly string[]>();
   for (const statement of program.body) {
@@ -272,25 +217,18 @@ function collectKeyBindings(
     const isNodeCrypto = matchesGlobs(source, options.nodeCryptoModules);
     if (!isJose && !isNodeCrypto) continue;
     const members = isJose ? options.joseMembers : options.nodeCryptoMembers;
-    for (const specifier of statement.specifiers)
-      recordKeyImport(specifier, members, direct, namespaces);
+    for (const specifier of statement.specifiers) recordKeyImport(specifier, members, direct, namespaces);
   }
   return { direct, namespaces };
 }
 
 /** Names bound at module top level — the granularity of the one-hop "handed to a Layer" check. */
-function collectModuleBindingNames(
-  program: ESTree.Program
-): ReadonlySet<string> {
+function collectModuleBindingNames(program: ESTree.Program): ReadonlySet<string> {
   const names = new Set<string>();
   const record = (declaration: ESTree.Node | null | undefined): void => {
     if (declaration === null || declaration === undefined) return;
-    if (
-      declaration.type === 'FunctionDeclaration' ||
-      declaration.type === 'ClassDeclaration'
-    ) {
-      if (declaration.id !== null && declaration.id !== undefined)
-        names.add(declaration.id.name);
+    if (declaration.type === 'FunctionDeclaration' || declaration.type === 'ClassDeclaration') {
+      if (declaration.id !== null && declaration.id !== undefined) names.add(declaration.id.name);
       return;
     }
     if (declaration.type !== 'VariableDeclaration') return;
@@ -299,10 +237,7 @@ function collectModuleBindingNames(
     }
   };
   for (const statement of program.body) {
-    if (
-      statement.type === 'ExportNamedDeclaration' ||
-      statement.type === 'ExportDefaultDeclaration'
-    ) {
+    if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration') {
       record(statement.declaration);
     } else record(statement);
   }
@@ -313,7 +248,7 @@ function collectModuleBindingNames(
 function collectWrapperLocals(
   program: ESTree.Program,
   bindings: EffectBindings,
-  options: RuleOptions
+  options: RuleOptions,
 ): {
   layer: ReadonlySet<string>;
   effect: ReadonlySet<string>;
@@ -323,7 +258,7 @@ function collectWrapperLocals(
     program,
     bindings,
     new Set([LAYER_NAMESPACE, EFFECT_NAMESPACE]),
-    options.reexportModules
+    options.reexportModules,
   );
   const layer = new Set<string>();
   const effect = new Set<string>();
@@ -410,9 +345,7 @@ export const rule = defineRule({
     const effectBindings = collectEffectBindings(program);
     const wrappers = collectWrapperLocals(program, effectBindings, options);
     const moduleNames = collectModuleBindingNames(program);
-    const scanTemplates =
-      options.scanGeneratorTemplates &&
-      matchesGlobs(path, options.generatorFiles);
+    const scanTemplates = options.scanGeneratorTemplates && matchesGlobs(path, options.generatorFiles);
 
     /**
      * Locals rebound one hop from a tracked import (`const load = importJWK`, `const { importJWK } = jose`)
@@ -426,11 +359,7 @@ export const rule = defineRule({
     /** Identifier nodes that merely *declare* an alias — never reported themselves. */
     const bindingNodes = new Set<ESTree.Node>();
     /** Names worth collecting as candidates (imports plus every alias discovered so far). */
-    const watched = new Set<string>([
-      ...keys.direct.keys(),
-      ...keys.namespaces.keys(),
-      ...options.subtleMembers,
-    ]);
+    const watched = new Set<string>([...keys.direct.keys(), ...keys.namespaces.keys(), ...options.subtleMembers]);
     /** Member names that can ever denote key material — the cheap pre-filter for candidates. */
     const interestingMembers = new Set<string>([
       ...options.joseMembers,
@@ -441,10 +370,7 @@ export const rule = defineRule({
     const builderReferenced = new Set<string>();
 
     /** `Layer.effect(…)` / `Effect.cached(…)` / `E.Layer.scoped(…)` — the blessed "build once" shapes. */
-    const isWrapperCall = (
-      node: ESTree.Node,
-      layerMembers: readonly string[]
-    ): boolean => {
+    const isWrapperCall = (node: ESTree.Node, layerMembers: readonly string[]): boolean => {
       if (node.type !== 'CallExpression') return false;
       const callee = node.callee;
       if (callee.type !== 'MemberExpression') return false;
@@ -454,50 +380,31 @@ export const rule = defineRule({
 
       return isWrapperMember(object, member, layerMembers);
     };
-    const isDirectWrapper = (
-      name: string,
-      member: string,
-      layerMembers: readonly string[]
-    ): boolean =>
+    const isDirectWrapper = (name: string, member: string, layerMembers: readonly string[]): boolean =>
       (wrappers.layer.has(name) && layerMembers.includes(member)) ||
       (wrappers.effect.has(name) && options.effectWrappers.includes(member));
-    const isWrapperMember = (
-      object: ESTree.Node,
-      member: string,
-      layerMembers: readonly string[]
-    ): boolean => {
-      if (object.type === 'Identifier')
-        return isDirectWrapper(object.name, member, layerMembers);
+    const isWrapperMember = (object: ESTree.Node, member: string, layerMembers: readonly string[]): boolean => {
+      if (object.type === 'Identifier') return isDirectWrapper(object.name, member, layerMembers);
       // `E.Layer.effect(…)` through `import * as E from "effect"`.
       if (object.type !== 'MemberExpression') return false;
       const namespace = memberName(object);
       if (namespace === null) return false;
-      if (
-        object.object.type !== 'Identifier' ||
-        !wrappers.barrel.has(object.object.name)
-      )
-        return false;
+      if (object.object.type !== 'Identifier' || !wrappers.barrel.has(object.object.name)) return false;
       if (namespace === LAYER_NAMESPACE) return layerMembers.includes(member);
-      if (namespace === EFFECT_NAMESPACE)
-        return options.effectWrappers.includes(member);
+      if (namespace === EFFECT_NAMESPACE) return options.effectWrappers.includes(member);
       return false;
     };
 
-    const isEnclosingWrapper = (node: ESTree.Node): boolean =>
-      isWrapperCall(node, options.layerWrappers);
-    const isBuilderWrapper = (node: ESTree.Node): boolean =>
-      isWrapperCall(node, options.layerBuilderWrappers);
+    const isEnclosingWrapper = (node: ESTree.Node): boolean => isWrapperCall(node, options.layerWrappers);
+    const isBuilderWrapper = (node: ESTree.Node): boolean => isWrapperCall(node, options.layerBuilderWrappers);
 
     /**
      * The `crypto` segment of a `<…>.subtle.<member>` chain must be a global or an import; a
      * parameter, local `const` or DI port named `crypto` is not WebCrypto.
      */
-    const isImportedCryptoIdentifier = (
-      node: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): boolean => {
+    const isImportedCryptoIdentifier = (node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
       const variable = lookupVariable(context, node);
-      if (variable === null || variable.defs.length === 0)
-        return node.name === 'crypto';
+      if (variable === null || variable.defs.length === 0) return node.name === 'crypto';
       return variable.defs.some((definition) => {
         if (definition.type !== 'ImportBinding') return false;
         const specifier = definition.node;
@@ -518,10 +425,7 @@ export const rule = defineRule({
       const member = memberName(node);
       if (node.object.type !== 'Identifier') return false;
       const variable = lookupVariable(context, node.object);
-      if (
-        member === 'crypto' &&
-        ['globalThis', 'window', 'self'].includes(node.object.name)
-      ) {
+      if (member === 'crypto' && ['globalThis', 'window', 'self'].includes(node.object.name)) {
         return variable === null || variable.defs.length === 0;
       }
       return (
@@ -533,29 +437,23 @@ export const rule = defineRule({
             definition.type === 'ImportBinding' &&
             declaration?.type === 'ImportDeclaration' &&
             matchesGlobs(declaration.source.value, options.nodeCryptoModules) &&
-            ['ImportNamespaceSpecifier', 'ImportDefaultSpecifier'].includes(
-              definition.node.type
-            )
+            ['ImportNamespaceSpecifier', 'ImportDefaultSpecifier'].includes(definition.node.type)
           );
         })
       );
     };
     const cryptoRootIsAmbient = (node: ESTree.Node): boolean =>
-      node.type === 'MemberExpression' &&
-      memberName(node) === 'subtle' &&
-      isCryptoObject(node.object);
+      node.type === 'MemberExpression' && memberName(node) === 'subtle' && isCryptoObject(node.object);
 
     /** Stable identity for a resolved variable: the offset of its declaring identifier. */
     const variableKey = (variable: Variable): number | null => {
       const declaration = variable.defs[0]?.name ?? variable.identifiers[0];
-      return declaration === undefined || declaration === null
-        ? null
-        : declaration.start;
+      return declaration === undefined || declaration === null ? null : declaration.start;
     };
 
     const bindsTo = (
       identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-      registry: ReadonlySet<number>
+      registry: ReadonlySet<number>,
     ): boolean => {
       if (registry.size === 0) return false;
       const variable = lookupVariable(context, identifier);
@@ -565,9 +463,7 @@ export const rule = defineRule({
     };
 
     /** Members reachable through a dynamically required/imported key module bound to `identifier`. */
-    const dynamicMembers = (
-      identifier: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): readonly string[] | null => {
+    const dynamicMembers = (identifier: Extract<ESTree.Node, { type: 'Identifier' }>): readonly string[] | null => {
       if (dynamicNamespaces.size === 0) return null;
       const variable = lookupVariable(context, identifier);
       if (variable === null) return null;
@@ -579,35 +475,23 @@ export const rule = defineRule({
      * `require("jose")`, `await import("jose")`, `import("node:crypto")` — the CommonJS/dynamic
      * spellings of the same import, which a static `ImportDeclaration` scan would miss entirely.
      */
-    const literalModuleSource = (
-      node: ESTree.Node | undefined
-    ): string | null =>
-      node?.type === 'Literal' && typeof node.value === 'string'
-        ? node.value
-        : null;
+    const literalModuleSource = (node: ESTree.Node | undefined): string | null =>
+      node?.type === 'Literal' && typeof node.value === 'string' ? node.value : null;
     const dynamicModuleSource = (node: ESTree.Node): string | null => {
       let current: ESTree.Node = node;
       if (current.type === 'AwaitExpression') current = current.argument;
-      if (current.type === 'ImportExpression')
-        return literalModuleSource(current.source);
-      if (
-        current.type !== 'CallExpression' ||
-        current.callee.type !== 'Identifier'
-      )
-        return null;
+      if (current.type === 'ImportExpression') return literalModuleSource(current.source);
+      if (current.type !== 'CallExpression' || current.callee.type !== 'Identifier') return null;
       if (current.callee.name !== 'require') return null;
       const variable = lookupVariable(context, current.callee);
       if (variable !== null && variable.defs.length > 0) return null;
       return literalModuleSource(current.arguments[0]);
     };
-    const dynamicKeyModuleMembers = (
-      node: ESTree.Node
-    ): readonly string[] | null => {
+    const dynamicKeyModuleMembers = (node: ESTree.Node): readonly string[] | null => {
       const source = dynamicModuleSource(node);
       if (source === null) return null;
       if (matchesGlobs(source, options.joseModules)) return options.joseMembers;
-      if (matchesGlobs(source, options.nodeCryptoModules))
-        return options.nodeCryptoMembers;
+      if (matchesGlobs(source, options.nodeCryptoModules)) return options.nodeCryptoMembers;
       return null;
     };
 
@@ -615,14 +499,11 @@ export const rule = defineRule({
     const resolveSubtleReference = (
       node: ESTree.MemberExpression,
       member: string,
-      objectPath: string | null
+      objectPath: string | null,
     ): string | null => {
       if (options.subtleMembers.includes(member)) {
         // `subtle.importKey` where `subtle` was destructured/aliased off WebCrypto.
-        if (
-          node.object.type === 'Identifier' &&
-          bindsTo(node.object, subtleVariables)
-        ) {
+        if (node.object.type === 'Identifier' && bindsTo(node.object, subtleVariables)) {
           return `${node.object.name}.${member}`;
         }
         // `crypto.subtle.importKey`, `globalThis.crypto.subtle.generateKey`, `webcrypto.subtle.importKey`.
@@ -634,8 +515,7 @@ export const rule = defineRule({
     };
     const resolveKeyReference = (node: ESTree.Node): string | null => {
       if (node.type === 'Identifier') {
-        if (keys.direct.has(node.name) && resolvesToImport(context, node))
-          return node.name;
+        if (keys.direct.has(node.name) && resolvesToImport(context, node)) return node.name;
         if (bindsTo(node, aliasVariables)) return node.name;
         return null;
       }
@@ -651,18 +531,15 @@ export const rule = defineRule({
     const resolveNamespaceReference = (
       node: ESTree.MemberExpression,
       member: string,
-      objectPath: string | null
+      objectPath: string | null,
     ): string | null => {
       if (objectPath === null) return null;
       if (node.object.type !== 'Identifier') return null;
       const dynamic = dynamicMembers(node.object);
-      if (dynamic !== null)
-        return dynamic.includes(member) ? `${objectPath}.${member}` : null;
+      if (dynamic !== null) return dynamic.includes(member) ? `${objectPath}.${member}` : null;
       const allowed = keys.namespaces.get(node.object.name);
       if (allowed === undefined || !allowed.includes(member)) return null;
-      return resolvesToImport(context, node.object)
-        ? `${objectPath}.${member}`
-        : null;
+      return resolvesToImport(context, node.object) ? `${objectPath}.${member}` : null;
     };
 
     const register = (identifier: ESTree.Node, registry: Set<number>): void => {
@@ -672,16 +549,11 @@ export const rule = defineRule({
       registry.add(identifier.start);
     };
 
-    const registerAlias = (identifier: ESTree.Node): void =>
-      register(identifier, aliasVariables);
-    const registerSubtle = (identifier: ESTree.Node): void =>
-      register(identifier, subtleVariables);
+    const registerAlias = (identifier: ESTree.Node): void => register(identifier, aliasVariables);
+    const registerSubtle = (identifier: ESTree.Node): void => register(identifier, subtleVariables);
 
     /** `const { a, b } = <source>` → run `onMember(key, valueIdentifier)` for each static property. */
-    const eachPatternProperty = (
-      pattern: ESTree.Node,
-      onMember: (key: string, value: ESTree.Node) => void
-    ): void => {
+    const eachPatternProperty = (pattern: ESTree.Node, onMember: (key: string, value: ESTree.Node) => void): void => {
       if (pattern.type !== 'ObjectPattern') return;
       for (const property of pattern.properties) {
         const key = propertyKeyName(property);
@@ -702,8 +574,7 @@ export const rule = defineRule({
     /** Report unless the site is module scope, lexically inside a wrapper, or one hop from one. */
     const enclosingBindingName = (node: ESTree.Node): string | null => {
       if (node.type === 'FunctionDeclaration') return node.id?.name ?? null;
-      if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier')
-        return node.id.name;
+      if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') return node.id.name;
       return null;
     };
     const isReferencedBuilder = (name: string | null): boolean =>
@@ -734,23 +605,16 @@ export const rule = defineRule({
     const isCalleePosition = (node: ESTree.Node): boolean => {
       const parent = node.parent;
       if (parent === null || parent === undefined) return false;
-      if (parent.type === 'CallExpression' || parent.type === 'NewExpression')
-        return parent.callee === node;
+      if (parent.type === 'CallExpression' || parent.type === 'NewExpression') return parent.callee === node;
       return false;
     };
 
-    const registerIdentifierBinding = (
-      id: ESTree.Node,
-      init: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): void => {
+    const registerIdentifierBinding = (id: ESTree.Node, init: Extract<ESTree.Node, { type: 'Identifier' }>): void => {
       const namespaceMembers = keys.namespaces.get(init.name);
-      const isTrackedNamespace =
-        namespaceMembers !== undefined && resolvesToImport(context, init);
+      const isTrackedNamespace = namespaceMembers !== undefined && resolvesToImport(context, init);
       const isTrackedDirect =
-        (keys.direct.has(init.name) && resolvesToImport(context, init)) ||
-        bindsTo(init, aliasVariables);
-      const isTrackedSubtle =
-        bindsTo(init, subtleVariables) || isCryptoObject(init);
+        (keys.direct.has(init.name) && resolvesToImport(context, init)) || bindsTo(init, aliasVariables);
+      const isTrackedSubtle = bindsTo(init, subtleVariables) || isCryptoObject(init);
 
       if (isTrackedDirect && id.type === 'Identifier') {
         registerAlias(id);
@@ -773,10 +637,7 @@ export const rule = defineRule({
     };
     const cryptoBindingRootAllowed = (node: ESTree.Node): boolean =>
       node.type !== 'Identifier' || resolvesToImport(context, node);
-    const registerMemberBinding = (
-      id: ESTree.Node,
-      init: ESTree.MemberExpression
-    ): void => {
+    const registerMemberBinding = (id: ESTree.Node, init: ESTree.MemberExpression): void => {
       const member = memberName(init);
       const initPath = dottedPath(init);
 
@@ -801,27 +662,17 @@ export const rule = defineRule({
         return;
       }
       // `const load = jose.importJWK`.
-      if (
-        member !== null &&
-        id.type === 'Identifier' &&
-        resolveKeyReference(init) !== null
-      ) {
+      if (member !== null && id.type === 'Identifier' && resolveKeyReference(init) !== null) {
         registerAlias(id);
       }
     };
     const templateElements: Array<{ start: number; end: number }> = [];
     const templateLiterals: Array<{ start: number; end: number }> = [];
 
-    const reportTemplateMatch = (
-      match: RegExpExecArray,
-      text: string,
-      seen: Set<number>
-    ): void => {
+    const reportTemplateMatch = (match: RegExpExecArray, text: string, seen: Set<number>): void => {
       const member = match[1] ?? '';
       const index = match.index + match[0].lastIndexOf(member);
-      const inTemplate = templateElements.some(
-        (entry) => index >= entry.start && index < entry.end
-      );
+      const inTemplate = templateElements.some((entry) => index >= entry.start && index < entry.end);
       if (inTemplate && !seen.has(index)) {
         // Scan back to the start of the *whole* template literal, not a character window, so a
         // realistically sized emitted `Layer.effect(…)` body still counts as already fixed.
@@ -863,19 +714,13 @@ export const rule = defineRule({
           return;
         }
 
-        if (init.type === 'Identifier')
-          registerIdentifierBinding(node.id, init);
-        else if (init.type === 'MemberExpression')
-          registerMemberBinding(node.id, init);
+        if (init.type === 'Identifier') registerIdentifierBinding(node.id, init);
+        else if (init.type === 'MemberExpression') registerMemberBinding(node.id, init);
       },
       CallExpression(node) {
         const callee = node.callee;
         const name =
-          callee.type === 'Identifier'
-            ? callee.name
-            : callee.type === 'MemberExpression'
-              ? memberName(callee)
-              : null;
+          callee.type === 'Identifier' ? callee.name : callee.type === 'MemberExpression' ? memberName(callee) : null;
         if (name === null) return;
         if (!watched.has(name) && !interestingMembers.has(name)) return;
         candidates.push({
@@ -890,10 +735,7 @@ export const rule = defineRule({
           let child: ESTree.Node = node;
           let current: ESTree.Node | null | undefined = node.parent;
           while (current !== null && current !== undefined) {
-            if (
-              isBuilderWrapper(current) &&
-              (current as ESTree.CallExpression).callee !== child
-            ) {
+            if (isBuilderWrapper(current) && (current as ESTree.CallExpression).callee !== child) {
               builderReferenced.add(node.name);
               break;
             }
@@ -904,11 +746,7 @@ export const rule = defineRule({
         if (isCalleePosition(node)) return;
         if (
           isNonReferencePosition(node, {
-            nonReferenceParents: new Set([
-              'TSTypeReference',
-              'TSQualifiedName',
-              'TSTypeQuery',
-            ]),
+            nonReferenceParents: new Set(['TSTypeReference', 'TSQualifiedName', 'TSTypeQuery']),
           })
         )
           return;
@@ -923,12 +761,7 @@ export const rule = defineRule({
         if (isCalleePosition(node)) return;
         const parent = node.parent;
         // Intermediate link of a longer chain (`crypto.subtle` inside `crypto.subtle.importKey`).
-        if (
-          parent !== null &&
-          parent !== undefined &&
-          parent.type === 'MemberExpression' &&
-          parent.object === node
-        ) {
+        if (parent !== null && parent !== undefined && parent.type === 'MemberExpression' && parent.object === node) {
           return;
         }
         const member = memberName(node);
@@ -958,17 +791,11 @@ export const rule = defineRule({
         const named = [...options.joseMembers, ...options.nodeCryptoMembers];
         const patterns: RegExp[] = [];
         // `createLocalJWKSet(`, `importJWK(` … — names distinctive enough to match bare.
-        if (named.length > 0)
-          patterns.push(
-            new RegExp(`\\b(${named.map(escapeMember).join('|')})\\s*\\(`, 'gu')
-          );
+        if (named.length > 0) patterns.push(new RegExp(`\\b(${named.map(escapeMember).join('|')})\\s*\\(`, 'gu'));
         // `importKey`/`generateKey` are ordinary app identifiers; only match real WebCrypto access.
         if (options.subtleMembers.length > 0) {
           patterns.push(
-            new RegExp(
-              `\\bsubtle\\s*\\??\\.\\s*(${options.subtleMembers.map(escapeMember).join('|')})\\s*\\(`,
-              'gu'
-            )
+            new RegExp(`\\bsubtle\\s*\\??\\.\\s*(${options.subtleMembers.map(escapeMember).join('|')})\\s*\\(`, 'gu'),
           );
         }
         const seen = new Set<number>();

@@ -6,10 +6,7 @@ export class PartyContactPointRevisionConflict extends Schema.TaggedError<PartyC
   'PartyContactPointRevisionConflict',
   {
     code: Schema.Literal('party_contact_point_revision_conflict'),
-    currentRevision: Schema.Finite.check(
-      Schema.isInt(),
-      Schema.isGreaterThanOrEqualTo(1)
-    ),
+    currentRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
     reason: ContactPointErrorReasonSchema,
-  }
+  },
 ) {}

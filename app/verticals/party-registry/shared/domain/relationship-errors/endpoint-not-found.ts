@@ -10,5 +10,5 @@ export class PartyRelationshipEndpointNotFound extends Schema.TaggedError<PartyR
     code: Schema.Literal('party_relationship_endpoint_not_found'),
     endpoint: RelationshipEndpointSchema,
     partyRef: PartyRefSchema,
-  }
+  },
 ) {}

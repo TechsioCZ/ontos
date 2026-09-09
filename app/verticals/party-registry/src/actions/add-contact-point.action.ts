@@ -5,10 +5,7 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
-import {
-  AddContactPointPayloadSchema,
-  AddContactPointResultSchema,
-} from '../../shared/actions/add-contact-point.ts';
+import { AddContactPointPayloadSchema, AddContactPointResultSchema } from '../../shared/actions/add-contact-point.ts';
 import type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
 import {
   PartyContactPointAlreadyExists,
@@ -63,7 +60,7 @@ export interface AddContactPointCommand {
 
 interface Services {
   readonly add: (
-    command: AddContactPointCommand
+    command: AddContactPointCommand,
   ) => Effect.Effect<
     PartyContactPoint,
     | PartyAliasWriteRejected
@@ -80,34 +77,28 @@ const validateAndNormalize = (payload: AddContactPointPayload) =>
       Object.assign(
         new PartyContactPointInvalid({
           code: 'party_contact_point_invalid',
-          reason:
-            'The Contact Point does not satisfy its type, purpose, or evidence rules',
+          reason: 'The Contact Point does not satisfy its type, purpose, or evidence rules',
         }),
-        { cause }
+        { cause },
       ),
     try: () => {
       assertVerificationRules(payload.verification);
       if (payload.contactPoint.type === 'ADDRESS') {
-        assertAddressPurposeRules(
-          payload.contactPoint.purposes,
-          payload.provenance
-        );
+        assertAddressPurposeRules(payload.contactPoint.purposes, payload.provenance);
       }
       normalizeContactPointInput(payload.contactPoint);
       return payload;
     },
   });
 
-const handleAddContactPoint = Effect.fn(
-  'AddContactPointAction.handleAddContactPoint'
-)(function* addContactPoint(
+const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactPoint')(function* addContactPoint(
   payload: AddContactPointPayload,
   context: ActionHandlerContext<
     Readonly<{
       'party.registry.contact-point-added.v1': typeof ContactPointAddedEventSchema;
     }>,
     Services
-  >
+  >,
 ) {
   const command = yield* validateAndNormalize(payload);
   const contactPoint = yield* context.services.add({
@@ -142,7 +133,7 @@ const handleAddContactPoint = Effect.fn(
     createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage({
       contactPointRef: contactPoint.contactPointRef,
       partyRef: contactPoint.partyRef,
-    })
+    }),
   );
   return contactPoint;
 });
@@ -181,7 +172,6 @@ export const addContactPointAction = defineAction(
   handleAddContactPoint,
   (transaction, scope) =>
     Effect.succeed({
-      add: (command: AddContactPointCommand) =>
-        addContactPointRecord(transaction, scope, command),
-    })
+      add: (command: AddContactPointCommand) => addContactPointRecord(transaction, scope, command),
+    }),
 );

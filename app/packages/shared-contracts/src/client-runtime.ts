@@ -1,37 +1,17 @@
-import {
-  Effect,
-  Schema,
-  makeEffectHttpApiClient,
-} from '@modern-js/plugin-bff/effect-client';
-import type {
-  EffectHttpApiClientOptions,
-  HttpApi,
-  HttpApiGroup,
-} from '@modern-js/plugin-bff/effect-client';
+import { Effect, Schema, makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
+import type { EffectHttpApiClientOptions, HttpApi, HttpApiGroup } from '@modern-js/plugin-bff/effect-client';
 import { Redacted } from 'effect';
-import {
-  Headers as HttpHeaders,
-  HttpClient,
-  HttpClientRequest,
-} from 'effect/unstable/http';
+import { Headers as HttpHeaders, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 const EffectBffOperationContextSchema = Schema.Struct({
   method: Schema.String,
   // eslint-disable-next-line effect-native/no-unbranded-identifier-schema -- The framework operation name is owner-supplied routing metadata, not an interchangeable Resource identifier.
   operationId: Schema.String,
   routePath: Schema.String,
-  source: Schema.Literals([
-    'client',
-    'server',
-    'generated-client',
-    'effect-adapter',
-    'data-platform',
-    'unknown',
-  ]),
+  source: Schema.Literals(['client', 'server', 'generated-client', 'effect-adapter', 'data-platform', 'unknown']),
 });
 
-export type EffectBffOperationContext =
-  typeof EffectBffOperationContextSchema.Type;
+export type EffectBffOperationContext = typeof EffectBffOperationContextSchema.Type;
 
 export interface EffectBffRequestContext {
   readonly locale?: string;
@@ -54,14 +34,9 @@ export interface EffectBffClientConfig<
   readonly defaultApiPrefix: string | URL;
 }
 
-const encodeOperationContext = Schema.encodeResult(
-  Schema.fromJsonString(EffectBffOperationContextSchema)
-);
+const encodeOperationContext = Schema.encodeResult(Schema.fromJsonString(EffectBffOperationContextSchema));
 
-export const makeEffectBffClient = <
-  ApiId extends string,
-  Groups extends HttpApiGroup.Constraint,
->({
+export const makeEffectBffClient = <ApiId extends string, Groups extends HttpApiGroup.Constraint>({
   api,
   baseUrl,
   defaultApiPrefix,
@@ -77,39 +52,23 @@ export const makeEffectBffClient = <
         const transformedClient = client.pipe(
           HttpClient.mapRequest((request) => {
             let nextRequest = request;
-            if (
-              operationContext !== undefined &&
-              operationContextText !== null
-            ) {
+            if (operationContext !== undefined && operationContextText !== null) {
               nextRequest = HttpClientRequest.setHeader(
                 nextRequest,
                 'x-modernjs-bff-operation-context',
-                operationContextText
+                operationContextText,
               );
               const { operationId } = operationContext;
-              nextRequest = HttpClientRequest.setHeader(
-                nextRequest,
-                'x-operation-id',
-                operationId
-              );
+              nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-operation-id', operationId);
             }
-            return HttpClientRequest.setHeaders(
-              nextRequest,
-              resolvedTransportHeaders
-            );
-          })
+            return HttpClientRequest.setHeaders(nextRequest, resolvedTransportHeaders);
+          }),
         );
         // Effect injects fresh trace headers after request transforms. This boundary instead makes
         // the caller's request context authoritative so explicit traceparent values survive and
         // absent optional tracing metadata stays absent.
         return transformedClient.pipe(
-          HttpClient.transform((effect) =>
-            Effect.provideService(
-              effect,
-              HttpClient.TracerPropagationEnabled,
-              false
-            )
-          )
+          HttpClient.transform((effect) => Effect.provideService(effect, HttpClient.TracerPropagationEnabled, false)),
         );
       },
     };
@@ -120,16 +79,11 @@ export const makeEffectBffClient = <
     return makeEffectHttpApiClient(api, clientOptions);
   };
   const operationContextText: Effect.Effect<string | null, Schema.SchemaError> =
-    operationContext === undefined
-      ? Effect.succeed(null)
-      : Effect.fromResult(encodeOperationContext(operationContext));
+    operationContext === undefined ? Effect.succeed(null) : Effect.fromResult(encodeOperationContext(operationContext));
   return operationContextText.pipe(Effect.flatMap(makeClient));
 };
 
-interface GovernedEffectBffClientConfig<
-  ApiId extends string,
-  Groups extends HttpApiGroup.Constraint,
-> {
+interface GovernedEffectBffClientConfig<ApiId extends string, Groups extends HttpApiGroup.Constraint> {
   readonly api: HttpApi.HttpApi<ApiId, Groups>;
   readonly credential: Redacted.Redacted;
   readonly defaultApiPrefix: string | URL;
@@ -151,17 +105,9 @@ const isGovernedBaseUrl = (value: string): boolean => {
 };
 
 /** Fresh per-invocation transport; credentials remain redacted until HTTP header construction. */
-export const makeGovernedEffectBffClient = <
-  ApiId extends string,
-  Groups extends HttpApiGroup.Constraint,
->(
-  {
-    api,
-    credential,
-    defaultApiPrefix,
-    requestCorrelation,
-  }: GovernedEffectBffClientConfig<ApiId, Groups>,
-  options: Pick<EffectBffClientOptions, 'baseUrl'>
+export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends HttpApiGroup.Constraint>(
+  { api, credential, defaultApiPrefix, requestCorrelation }: GovernedEffectBffClientConfig<ApiId, Groups>,
+  options: Pick<EffectBffClientOptions, 'baseUrl'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
   const clientConfig = {
@@ -173,10 +119,8 @@ export const makeGovernedEffectBffClient = <
       'x-correlation-id': requestCorrelation,
     },
   };
-  return Schema.decodeUnknownEffect(Schema.Literal(true))(
-    isGovernedBaseUrl(baseUrl)
-  ).pipe(
+  return Schema.decodeUnknownEffect(Schema.Literal(true))(isGovernedBaseUrl(baseUrl)).pipe(
     Effect.map(() => clientConfig),
-    Effect.flatMap(makeEffectBffClient)
+    Effect.flatMap(makeEffectBffClient),
   );
 };

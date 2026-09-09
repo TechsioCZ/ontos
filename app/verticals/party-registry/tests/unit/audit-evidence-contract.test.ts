@@ -1,10 +1,7 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  PartySubjectEvidenceSchema,
-  makePartyRef,
-} from '../../shared/domain/identity-contracts.ts';
+import { PartySubjectEvidenceSchema, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
 import { makePartyMatchDecisionRef } from '../../shared/resources/party-match-decision.ts';
@@ -20,20 +17,18 @@ it('typed subject evidence accepts arbitrary reference spelling, rejects unsuppo
     statement: 'Met the human who submitted this request',
     subjectKey: 'request-subject',
   };
-  expect(
-    Schema.decodeUnknownSync(PartySubjectEvidenceSchema)(evidence)
-  ).toEqual(evidence);
+  expect(Schema.decodeUnknownSync(PartySubjectEvidenceSchema)(evidence)).toEqual(evidence);
   expect(() =>
     Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
       ...evidence,
       kind: 'AUTHORITATIVE_REGISTRY',
-    })
+    }),
   ).toThrow();
   expect(() =>
     Schema.decodeUnknownSync(PartySubjectEvidenceSchema)({
       ...evidence,
       statement: '',
-    })
+    }),
   ).toThrow();
 });
 it('Create recovery distinguishes matching outcome and enforces reference invariants', () => {
@@ -52,20 +47,16 @@ it('Create recovery distinguishes matching outcome and enforces reference invari
   expect(decode(record).committedCreateOutcome).toBe('MATCHED_EXISTING');
   expect(decode(record).decidedAt).toBe('2026-09-04T00:00:00.000Z');
   expect(() => decode({ ...record, decidedAt: 'September 4, 2026' })).toThrow();
-  expect(() =>
-    decode({ ...record, committedCreateOutcome: 'MATCHED' })
-  ).toThrow();
+  expect(() => decode({ ...record, committedCreateOutcome: 'MATCHED' })).toThrow();
   expect(() => decode({ ...record, operation: 'MATCH' })).toThrow();
-  expect(() =>
-    decode({ ...record, caseRef: makeDuplicateCandidateCaseRef(tenant, id) })
-  ).toThrow();
+  expect(() => decode({ ...record, caseRef: makeDuplicateCandidateCaseRef(tenant, id) })).toThrow();
   expect(() =>
     decode({
       ...record,
       committedCreateOutcome: null,
       outcome: 'NO_MATCH',
       partyRef: null,
-    })
+    }),
   ).toThrow();
   expect(
     decode({
@@ -74,7 +65,7 @@ it('Create recovery distinguishes matching outcome and enforces reference invari
       operation: 'MATCH',
       outcome: 'NO_MATCH',
       partyRef: null,
-    }).outcome
+    }).outcome,
   ).toBe('NO_MATCH');
 });
 it('matching decision JSON keeps nullable and optional wire fields compatible', () => {
@@ -91,9 +82,7 @@ it('matching decision JSON keeps nullable and optional wire fields compatible', 
     partyRef: null,
   };
   const decoded = Schema.decodeSync(PartyMatchDecisionRecordSchema)(record);
-  const encoded = Schema.encodeUnknownSync(
-    Schema.toCodecJson(PartyMatchDecisionRecordSchema)
-  )(decoded);
+  const encoded = Schema.encodeUnknownSync(Schema.toCodecJson(PartyMatchDecisionRecordSchema))(decoded);
   expect(encoded).toEqual(record);
   const omitted = {
     caseRef: record.caseRef,
@@ -105,12 +94,10 @@ it('matching decision JSON keeps nullable and optional wire fields compatible', 
     outcome: record.outcome,
     partyRef: record.partyRef,
   };
-  const omittedEncoded = Schema.encodeUnknownSync(
-    Schema.toCodecJson(PartyMatchDecisionRecordSchema)
-  )(Schema.decodeSync(PartyMatchDecisionRecordSchema)(omitted));
-  const omittedEncodedObject = Schema.decodeUnknownSync(
-    Schema.Record(Schema.String, Schema.Json)
-  )(omittedEncoded);
+  const omittedEncoded = Schema.encodeUnknownSync(Schema.toCodecJson(PartyMatchDecisionRecordSchema))(
+    Schema.decodeSync(PartyMatchDecisionRecordSchema)(omitted),
+  );
+  const omittedEncodedObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(omittedEncoded);
   expect('committedCreateOutcome' in omittedEncodedObject).toBe(false);
   expect('evidenceEvaluation' in omittedEncodedObject).toBe(false);
 });

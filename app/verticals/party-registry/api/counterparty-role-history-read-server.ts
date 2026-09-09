@@ -38,6 +38,6 @@ export const counterpartyRoleHistoryReadApiLive = HttpApiBuilder.group(
         authenticatePrincipal: authenticateOperationPrincipal,
         problems,
         registration: counterpartyRoleHistoryRead,
-      })
-    )
+      }),
+    ),
 );

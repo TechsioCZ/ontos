@@ -1,20 +1,8 @@
-import {
-  Effect,
-  HttpEffect,
-  HttpServerResponse,
-} from '@modern-js/plugin-bff/effect-edge';
+import { Effect, HttpEffect, HttpServerResponse } from '@modern-js/plugin-bff/effect-edge';
 
-const bearerChallenge = HttpEffect.appendPreResponseHandler(
-  (_request, response) =>
-    Effect.succeed(
-      HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')
-    )
+const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
 
-export const failAuthenticatedProblem = <Problem>(
-  mapped: Problem,
-  isAuthentication: (problem: Problem) => boolean
-) =>
-  (isAuthentication(mapped) ? bearerChallenge : Effect.void).pipe(
-    Effect.andThen(Effect.fail(mapped))
-  );
+export const failAuthenticatedProblem = <Problem>(mapped: Problem, isAuthentication: (problem: Problem) => boolean) =>
+  (isAuthentication(mapped) ? bearerChallenge : Effect.void).pipe(Effect.andThen(Effect.fail(mapped)));

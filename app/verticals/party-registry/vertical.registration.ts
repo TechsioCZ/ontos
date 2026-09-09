@@ -91,33 +91,21 @@ export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'ares-lookup': () => import('./src/api/ares-lookup-client.ts'),
-      'counterparty-read': () =>
-        import('./src/api/counterparty-read-client.ts'),
-      'counterparty-role-history': () =>
-        import('./src/api/counterparty-role-history-client.ts'),
-      'duplicate-candidate-detail': () =>
-        import('./src/api/duplicate-candidate-detail-client.ts'),
-      'organization-engagement-profile': () =>
-        import('./src/api/organization-engagement-profile-client.ts'),
-      'party-contact-point-detail': () =>
-        import('./src/api/party-contact-point-detail-client.ts'),
-      'party-contact-points': () =>
-        import('./src/api/party-contact-points-client.ts'),
+      'counterparty-read': () => import('./src/api/counterparty-read-client.ts'),
+      'counterparty-role-history': () => import('./src/api/counterparty-role-history-client.ts'),
+      'duplicate-candidate-detail': () => import('./src/api/duplicate-candidate-detail-client.ts'),
+      'organization-engagement-profile': () => import('./src/api/organization-engagement-profile-client.ts'),
+      'party-contact-point-detail': () => import('./src/api/party-contact-point-detail-client.ts'),
+      'party-contact-points': () => import('./src/api/party-contact-points-client.ts'),
       'party-correction': () => import('./src/api/party-correction-client.ts'),
       'party-detail': () => import('./src/api/party-detail-client.ts'),
       'party-match': () => import('./src/api/party-match-client.ts'),
-      'party-match-decision': () =>
-        import('./src/api/party-match-decision-client.ts'),
-      'party-merge-readiness': () =>
-        import('./src/api/party-merge-readiness-client.ts'),
-      'party-official-identifier-detail': () =>
-        import('./src/api/party-official-identifier-detail-client.ts'),
-      'party-official-identifier-history': () =>
-        import('./src/api/party-official-identifier-history-client.ts'),
-      'party-relationship-detail': () =>
-        import('./src/api/party-relationship-detail-client.ts'),
-      'person-engagement-profile': () =>
-        import('./src/api/person-engagement-profile-client.ts'),
+      'party-match-decision': () => import('./src/api/party-match-decision-client.ts'),
+      'party-merge-readiness': () => import('./src/api/party-merge-readiness-client.ts'),
+      'party-official-identifier-detail': () => import('./src/api/party-official-identifier-detail-client.ts'),
+      'party-official-identifier-history': () => import('./src/api/party-official-identifier-history-client.ts'),
+      'party-relationship-detail': () => import('./src/api/party-relationship-detail-client.ts'),
+      'person-engagement-profile': () => import('./src/api/person-engagement-profile-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

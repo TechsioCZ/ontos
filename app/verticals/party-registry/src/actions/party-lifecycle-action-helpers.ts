@@ -24,15 +24,15 @@ export const decodeParty = (party: PersistedParty) =>
               reason: 'The stored Party could not be decoded',
             }),
             'cause',
-            { configurable: true, value: cause }
-          )
-        )
+            { configurable: true, value: cause },
+          ),
+        ),
       );
 
 export const resolvePartyLifecycle = (
   persistenceResult: PartyLifecycle,
   resourceId: string,
-  conflict: ConstructorParameters<typeof PartyLifecycleConflict>[0]
+  conflict: ConstructorParameters<typeof PartyLifecycleConflict>[0],
 ) =>
   Match.value(persistenceResult).pipe(
     Match.tag('not_found', () =>
@@ -41,29 +41,22 @@ export const resolvePartyLifecycle = (
           code: 'party_not_found',
           partyId: partyIdFromString(resourceId),
           reason: 'The Party does not exist',
-        })
-      )
+        }),
+      ),
     ),
-    Match.tag('conflict', () =>
-      Effect.fail(new PartyLifecycleConflict(conflict))
-    ),
+    Match.tag('conflict', () => Effect.fail(new PartyLifecycleConflict(conflict))),
     Match.tag('found', ({ value }) => decodeParty(value)),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
 export const recordPartyInvariantAccess = (
-  context: Pick<
-    ActionHandlerContext<Readonly<Record<string, never>>>,
-    'recordDataAccess'
-  >,
+  context: Pick<ActionHandlerContext<Readonly<Record<string, never>>>, 'recordDataAccess'>,
   party: typeof PartySchema.Type,
-  queryPrefix: string
+  queryPrefix: string,
 ) =>
   context.recordDataAccess({
     accessKind: 'read',
-    queryHash: createHash('sha256')
-      .update(`${queryPrefix}:${party.partyRef.resourceId}`)
-      .digest('hex'),
+    queryHash: createHash('sha256').update(`${queryPrefix}:${party.partyRef.resourceId}`).digest('hex'),
     resultCount: 1,
     servingModuleKey: 'party.registry',
     targetModuleKey: 'party.registry',

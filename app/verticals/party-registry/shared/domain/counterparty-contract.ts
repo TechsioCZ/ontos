@@ -5,34 +5,25 @@ import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
 export const CounterpartyUuidSchema = Schema.String.check(Schema.isUUID());
-const CounterpartyTextSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500)
-);
+const CounterpartyTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const CounterpartyInstantSchema = Schema.String.check(
   Schema.makeFilter((value) => {
     const parsed = DateTime.make(value);
     return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
       ? undefined
       : 'timestamp must be one canonical UTC instant with millisecond precision';
-  })
+  }),
 ).pipe(
   Schema.decodeTo(Schema.toType(Schema.DateTimeUtc), {
     decode: SchemaGetter.transform(DateTime.makeUnsafe),
     encode: SchemaGetter.transform(DateTime.formatIso),
-  })
+  }),
 );
 /** JSON-compatible view retained for existing action, API, and outbox consumers. */
-export const CounterpartyIsoTimestampSchema = Schema.toEncoded(
-  CounterpartyInstantSchema
-);
+export const CounterpartyIsoTimestampSchema = Schema.toEncoded(CounterpartyInstantSchema);
 
-const CounterpartyLegalEntityIdSchema = CounterpartyUuidSchema.pipe(
-  Schema.brand('LegalEntityId')
-);
-const CounterpartyTenantIdSchema = CounterpartyUuidSchema.pipe(
-  Schema.brand('TenantId')
-);
+const CounterpartyLegalEntityIdSchema = CounterpartyUuidSchema.pipe(Schema.brand('LegalEntityId'));
+const CounterpartyTenantIdSchema = CounterpartyUuidSchema.pipe(Schema.brand('TenantId'));
 
 export const LegalEntityRefSchema = Schema.Struct({
   moduleId: Schema.Literal('core.identity'),
@@ -59,32 +50,19 @@ export const CounterpartyCreationProvenanceSchema = Schema.Struct({
 
 /** Bounded provenance explicitly admitted to the Core success audit collector. */
 export const CounterpartyAuditEvidenceSchema = Schema.Struct({
-  evidenceReference: Schema.toEncoded(
-    Schema.OptionFromNullOr(CounterpartyTextSchema)
-  ),
+  evidenceReference: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyTextSchema)),
   provenanceMethod: CounterpartyTextSchema,
   provenanceReason: CounterpartyTextSchema,
   provenanceSource: CounterpartyTextSchema,
 });
 
-export const CounterpartyRoleTypeSchema = Schema.Literals([
-  'CUSTOMER',
-  'SUPPLIER',
-]);
+export const CounterpartyRoleTypeSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 export type CounterpartyRoleType = typeof CounterpartyRoleTypeSchema.Type;
 
-const CounterpartyRoleStateSchema = Schema.Literals([
-  'ACTIVE',
-  'ENDED',
-  'SUPERSEDED',
-  'RETRACTED',
-  'DISPUTED',
-]);
+const CounterpartyRoleStateSchema = Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']);
 
 export const CounterpartyRolePeriodSchema = Schema.Struct({
-  endProvenance: Schema.toEncoded(
-    Schema.OptionFromOptionalNullOr(CounterpartyProvenanceSchema)
-  ),
+  endProvenance: Schema.toEncoded(Schema.OptionFromOptionalNullOr(CounterpartyProvenanceSchema)),
   provenance: CounterpartyProvenanceSchema,
   recordedAt: CounterpartyIsoTimestampSchema,
   rolePeriodRef: CounterpartyRolePeriodRefSchema,
@@ -96,17 +74,15 @@ export const CounterpartyRolePeriodSchema = Schema.Struct({
   Schema.makeFilter((period) =>
     period.validTo === null || period.validTo >= period.validFrom
       ? undefined
-      : [{ issue: 'validTo must not precede validFrom', path: ['validTo'] }]
-  )
+      : [{ issue: 'validTo must not precede validFrom', path: ['validTo'] }],
+  ),
 );
 export type CounterpartyRolePeriod = typeof CounterpartyRolePeriodSchema.Type;
 
 export const CounterpartyPartyProjectionSchema = Schema.Struct({
   archived: Schema.Boolean,
   canonicalPartyRef: PartyRefSchema,
-  displayName: Schema.toEncoded(
-    Schema.OptionFromNullOr(CounterpartyTextSchema)
-  ),
+  displayName: Schema.toEncoded(Schema.OptionFromNullOr(CounterpartyTextSchema)),
   partyType: Schema.Literals(['PERSON', 'ORGANIZATION', 'UNRESOLVED']),
   storedPartyRef: PartyRefSchema,
 });
@@ -119,10 +95,7 @@ const CounterpartyRecordSchema = Schema.Struct({
 });
 export type CounterpartyRecord = typeof CounterpartyRecordSchema.Type;
 
-export const legalEntityRef = (
-  tenantId: string,
-  legalEntityId: string
-): LegalEntityRef => ({
+export const legalEntityRef = (tenantId: string, legalEntityId: string): LegalEntityRef => ({
   moduleId: 'core.identity',
   resourceId: legalEntityId,
   resourceType: 'core.identity.legal-entity',

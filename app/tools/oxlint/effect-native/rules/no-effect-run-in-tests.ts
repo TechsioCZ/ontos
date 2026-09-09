@@ -52,10 +52,7 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
-import {
-  collectEffectBindings,
-  effectMember,
-} from '../shared/effect-imports.ts';
+import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { collectNamedImports } from '../shared/imports.ts';
 import { globToRegExp, isTestFile, matchesAny } from '../shared/paths.ts';
@@ -80,11 +77,7 @@ const ERASED_WRAPPERS = new Set([
 const MAX_ALIAS_HOPS = 8;
 
 /** D-tier: Promise adapters forced by Playwright and other browser drivers. */
-const DEFAULT_IGNORE_PATHS: readonly string[] = [
-  '**/tests/e2e/**',
-  '**/*.e2e.*',
-  '**/playwright/**',
-];
+const DEFAULT_IGNORE_PATHS: readonly string[] = ['**/tests/e2e/**', '**/*.e2e.*', '**/playwright/**'];
 
 const DEFAULT_EFFECT_MODULES: readonly string[] = ['Effect'];
 
@@ -122,19 +115,14 @@ function readOptions(context: Context): Required<RuleOptions> {
     ignorePaths: raw.ignorePaths ?? DEFAULT_IGNORE_PATHS,
     testPaths: raw.testPaths ?? [],
     effectModules: raw.effectModules ?? DEFAULT_EFFECT_MODULES,
-    effectModuleSources:
-      raw.effectModuleSources ?? DEFAULT_EFFECT_MODULE_SOURCES,
+    effectModuleSources: raw.effectModuleSources ?? DEFAULT_EFFECT_MODULE_SOURCES,
   };
 }
 
 /** Strip erased TS wrappers (`x!`, `x as T`, `x satisfies T`, `(x)`, `x<T>`) from an expression. */
 function unwrapErased(node: ESTree.Node): ESTree.Node {
   let current = node;
-  for (
-    let hop = 0;
-    hop < MAX_ALIAS_HOPS && ERASED_WRAPPERS.has(current.type);
-    hop += 1
-  ) {
+  for (let hop = 0; hop < MAX_ALIAS_HOPS && ERASED_WRAPPERS.has(current.type); hop += 1) {
     const inner = (current as { expression?: ESTree.Node }).expression;
     if (inner === undefined) break;
     current = inner;
@@ -144,8 +132,7 @@ function unwrapErased(node: ESTree.Node): ESTree.Node {
 
 /** The module specifier of `import("…")` when it is a static string, else `null`. */
 function staticStringValue(node: ESTree.Node): string | null {
-  if (node.type === 'Literal' && typeof node.value === 'string')
-    return node.value;
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
   if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
     return node.quasis[0]?.value.cooked ?? null;
   }
@@ -168,17 +155,11 @@ function moduleExportName(node: ESTree.Node): string | null {
  * Supplement `collectEffectBindings` with namespaces re-exported by non-`effect` barrels, so
  * `import { Effect } from "@modern-js/plugin-bff/effect-edge"` is tracked exactly like `from "effect"`.
  */
-function collectBarrelBindings(
-  program: ESTree.Program,
-  sources: readonly string[]
-): Map<string, string> {
+function collectBarrelBindings(program: ESTree.Program, sources: readonly string[]): Map<string, string> {
   const patterns = sources.map(globToRegExp);
-  return collectNamedImports(
-    program,
-    (source) => patterns.some((pattern) => pattern.test(source)),
-    undefined,
-    { valueOnly: true }
-  );
+  return collectNamedImports(program, (source) => patterns.some((pattern) => pattern.test(source)), undefined, {
+    valueOnly: true,
+  });
 }
 
 /**
@@ -187,10 +168,7 @@ function collectBarrelBindings(
  * `Effect.runPromise`. Submodule namespaces (`effect/Effect`) are already tracked by the shared
  * collector and are deliberately excluded here.
  */
-function collectRootNamespaces(
-  program: ESTree.Program,
-  sources: readonly string[]
-): Set<string> {
+function collectRootNamespaces(program: ESTree.Program, sources: readonly string[]): Set<string> {
   const roots = new Set<string>();
   const patterns = sources.map(globToRegExp);
   for (const statement of program.body) {
@@ -200,8 +178,7 @@ function collectRootNamespaces(
     if (source.startsWith('effect/')) continue;
     if (!patterns.some((pattern) => pattern.test(source))) continue;
     for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier')
-        roots.add(specifier.local.name);
+      if (specifier.type === 'ImportNamespaceSpecifier') roots.add(specifier.local.name);
     }
   }
   return roots;
@@ -261,8 +238,7 @@ export const rule = defineRule({
     const options = readOptions(context);
     const filename = context.filename;
     if (matchesAny(filename, options.ignorePaths)) return {};
-    if (!isTestFile(filename) && !matchesAny(filename, options.testPaths))
-      return {};
+    if (!isTestFile(filename) && !matchesAny(filename, options.testPaths)) return {};
 
     let bindings: EffectBindings = {
       namespaces: new Map<string, string>(),
@@ -271,10 +247,7 @@ export const rule = defineRule({
     /** `import * as X from "effect"` — `X.Effect` is the Effect namespace. */
     let rootNamespaces = new Set<string>();
     /** `const Effect = await import("effect/Effect")` — local name → submodule name. */
-    const dynamicNamespaces = new Map<
-      string,
-      { namespace: string; declaration: ESTree.Node }
-    >();
+    const dynamicNamespaces = new Map<string, { namespace: string; declaration: ESTree.Node }>();
     /** `const Lib = await import("effect")` — `Lib.Effect` is the Effect namespace. */
     const dynamicRootNamespaces = new Map<string, ESTree.Node>();
     /** Argument spans of `Effect.run*(...)` calls; sites inside them belong to no-nested-effect-run. */
@@ -302,14 +275,12 @@ export const rule = defineRule({
      */
     function resolvesToDeclaration(
       node: Extract<ESTree.Node, { type: 'Identifier' }>,
-      declaration: ESTree.Node
+      declaration: ESTree.Node,
     ): boolean {
       const variable = lookupVariable(node, node.name);
       return (
         variable?.defs.some(
-          (definition) =>
-            definition.name.start === declaration.start &&
-            definition.name.end === declaration.end
+          (definition) => definition.name.start === declaration.start && definition.name.end === declaration.end,
         ) ?? false
       );
     }
@@ -317,9 +288,7 @@ export const rule = defineRule({
     function resolvesToImport(node: ESTree.Node, name: string): boolean {
       const variable = lookupVariable(node, name);
       if (variable === null) return true;
-      return variable.defs.some(
-        (definition) => definition.type === 'ImportBinding'
-      );
+      return variable.defs.some((definition) => definition.type === 'ImportBinding');
     }
 
     /**
@@ -327,23 +296,16 @@ export const rule = defineRule({
      * back to the import. Only single-definition `const`/`let` declarators with an identifier or
      * member initialiser qualify; parameters, catch bindings and destructuring never do.
      */
-    function aliasInitialiser(
-      node: ESTree.Node,
-      name: string
-    ): ESTree.Node | null {
+    function aliasInitialiser(node: ESTree.Node, name: string): ESTree.Node | null {
       const variable = lookupVariable(node, name);
       if (variable === null || variable.defs.length !== 1) return null;
       const definition = variable.defs[0];
-      if (definition === undefined || definition.type !== 'Variable')
-        return null;
+      if (definition === undefined || definition.type !== 'Variable') return null;
       const declarator = definition.node;
       if (declarator.type !== 'VariableDeclarator') return null;
-      if (declarator.id.type !== 'Identifier' || declarator.init === null)
-        return null;
+      if (declarator.id.type !== 'Identifier' || declarator.init === null) return null;
       const init = unwrapErased(declarator.init);
-      return init.type === 'Identifier' || init.type === 'MemberExpression'
-        ? init
-        : null;
+      return init.type === 'Identifier' || init.type === 'MemberExpression' ? init : null;
     }
 
     /** Does `node` evaluate to the root `effect` barrel (so that `.Effect` is the namespace)? */
@@ -352,13 +314,8 @@ export const rule = defineRule({
       const target = unwrapErased(node);
       if (target.type !== 'Identifier') return false;
       const dynamic = dynamicRootNamespaces.get(target.name);
-      if (dynamic !== undefined && resolvesToDeclaration(target, dynamic))
-        return true;
-      if (
-        rootNamespaces.has(target.name) &&
-        resolvesToImport(target, target.name)
-      )
-        return true;
+      if (dynamic !== undefined && resolvesToDeclaration(target, dynamic)) return true;
+      if (rootNamespaces.has(target.name) && resolvesToImport(target, target.name)) return true;
       const alias = aliasInitialiser(target, target.name);
       return alias === null ? false : isRootBarrel(alias, hops + 1);
     }
@@ -379,9 +336,7 @@ export const rule = defineRule({
       return alias === null ? false : isEffectNamespace(alias, hops + 1);
     }
 
-    function isImportedEffectNamespace(
-      target: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): boolean {
+    function isImportedEffectNamespace(target: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
       const dynamic = dynamicNamespaces.get(target.name);
       if (
         dynamic !== undefined &&
@@ -404,39 +359,29 @@ export const rule = defineRule({
     function runMemberOf(node: ESTree.MemberExpression): string | null {
       if (!isEffectNamespace(node.object)) return null;
       const direct = effectMember(node, bindings);
-      const member =
-        direct === null
-          ? staticKey(node.property, node.computed)
-          : direct.member;
+      const member = direct === null ? staticKey(node.property, node.computed) : direct.member;
       if (member === null || !RUN_MEMBER.test(member)) return null;
       return member;
     }
 
     function isNested(node: ESTree.Node): boolean {
-      return runArgumentRanges.some(
-        (range) => node.start >= range.start && node.end <= range.end
-      );
+      return runArgumentRanges.some((range) => node.start >= range.start && node.end <= range.end);
     }
 
     /** `await import("effect/Effect")` / `import("effect")` → the module specifier, else `null`. */
     function dynamicImportSource(node: ESTree.Node | null): string | null {
       if (node === null) return null;
       let target = unwrapErased(node);
-      if (target.type === 'AwaitExpression')
-        target = unwrapErased(target.argument);
+      if (target.type === 'AwaitExpression') target = unwrapErased(target.argument);
       if (target.type !== 'ImportExpression') return null;
       return staticStringValue(target.source);
     }
 
-    function collectRunProperties(
-      pattern: ESTree.ObjectPattern,
-      sites: RunSite[]
-    ): void {
+    function collectRunProperties(pattern: ESTree.ObjectPattern, sites: RunSite[]): void {
       for (const property of pattern.properties) {
         if (property.type !== 'Property') continue;
         const member = staticKey(property.key, property.computed);
-        if (member !== null && RUN_MEMBER.test(member))
-          sites.push({ node: property, member });
+        if (member !== null && RUN_MEMBER.test(member)) sites.push({ node: property, member });
       }
     }
 
@@ -453,22 +398,15 @@ export const rule = defineRule({
       }
     }
 
-    function collectDynamicBinding(
-      id: ESTree.VariableDeclarator['id'],
-      source: string
-    ): void {
+    function collectDynamicBinding(id: ESTree.VariableDeclarator['id'], source: string): void {
       const submodule = SUBMODULE_SOURCE.exec(source)?.[1];
-      if (
-        submodule !== undefined &&
-        options.effectModules.includes(submodule)
-      ) {
+      if (submodule !== undefined && options.effectModules.includes(submodule)) {
         if (id.type === 'Identifier')
           dynamicNamespaces.set(id.name, {
             namespace: submodule,
             declaration: id,
           });
-        else if (id.type === 'ObjectPattern')
-          collectRunProperties(id, dynamicSites);
+        else if (id.type === 'ObjectPattern') collectRunProperties(id, dynamicSites);
         return;
       }
       if (source !== 'effect') return;
@@ -481,26 +419,16 @@ export const rule = defineRule({
         const canonical = collectEffectBindings(node);
         const barrel = collectBarrelBindings(node, options.effectModuleSources);
         bindings = {
-          namespaces: new Map<string, string>([
-            ...barrel,
-            ...canonical.namespaces,
-          ]),
+          namespaces: new Map<string, string>([...barrel, ...canonical.namespaces]),
           importsEffect: canonical.importsEffect || barrel.size > 0,
         };
-        rootNamespaces = collectRootNamespaces(
-          node,
-          options.effectModuleSources
-        );
+        rootNamespaces = collectRootNamespaces(node, options.effectModuleSources);
       },
 
       ImportDeclaration(node) {
         if (node.importKind === 'type') return;
         const submodule = SUBMODULE_SOURCE.exec(node.source.value)?.[1];
-        if (
-          submodule === undefined ||
-          !options.effectModules.includes(submodule)
-        )
-          return;
+        if (submodule === undefined || !options.effectModules.includes(submodule)) return;
         for (const specifier of node.specifiers) {
           if (specifier.type !== 'ImportSpecifier') continue;
           if (specifier.importKind === 'type') continue;
@@ -513,11 +441,7 @@ export const rule = defineRule({
       ExportNamedDeclaration(node) {
         if (node.source === null || node.exportKind === 'type') return;
         const submodule = SUBMODULE_SOURCE.exec(node.source.value)?.[1];
-        if (
-          submodule === undefined ||
-          !options.effectModules.includes(submodule)
-        )
-          return;
+        if (submodule === undefined || !options.effectModules.includes(submodule)) return;
         for (const specifier of node.specifiers) {
           if (specifier.exportKind === 'type') continue;
           const local = moduleExportName(specifier.local);
@@ -529,11 +453,7 @@ export const rule = defineRule({
       ExportAllDeclaration(node) {
         if (node.exportKind === 'type' || node.exported !== null) return;
         const submodule = SUBMODULE_SOURCE.exec(node.source.value)?.[1];
-        if (
-          submodule === undefined ||
-          !options.effectModules.includes(submodule)
-        )
-          return;
+        if (submodule === undefined || !options.effectModules.includes(submodule)) return;
         reexportSites.push({ node, member: `* from effect/${submodule}` });
       },
 
@@ -552,10 +472,7 @@ export const rule = defineRule({
         if (member === null) return;
         const parent = node.parent;
         const called =
-          parent !== null &&
-          parent !== undefined &&
-          parent.type === 'CallExpression' &&
-          parent.callee === node;
+          parent !== null && parent !== undefined && parent.type === 'CallExpression' && parent.callee === node;
         (called ? callSites : referenceSites).push({ node, member });
       },
 
@@ -566,8 +483,7 @@ export const rule = defineRule({
           return;
         }
         if (node.id.type !== 'ObjectPattern' || node.init == null) return;
-        if (isEffectNamespace(node.init))
-          collectRunProperties(node.id, referenceSites);
+        if (isEffectNamespace(node.init)) collectRunProperties(node.id, referenceSites);
       },
 
       'Program:exit'() {

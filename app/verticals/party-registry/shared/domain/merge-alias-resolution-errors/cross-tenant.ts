@@ -9,5 +9,5 @@ export class PartyAliasResolutionCrossTenant extends Schema.TaggedError<PartyAli
     code: Schema.Literal('party_alias_resolution_cross_tenant'),
     reason: Schema.String,
     tenantId: TenantIdJsonSchema,
-  }
+  },
 ) {}

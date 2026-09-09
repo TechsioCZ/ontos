@@ -11,20 +11,16 @@ type UnparsedCoreSearchInput = typeof Schema.Unknown.Type;
 
 export interface CoreSearchQueryRuntimeService {
   readonly search: (
-    input: UnparsedCoreSearchInput
+    input: UnparsedCoreSearchInput,
   ) => Effect.Effect<
     readonly CoreSearchProjectionHit[],
-    | CoreSearchProjectionInvalid
-    | InstanceType<typeof CoreSearchProjectionUnavailable>
+    CoreSearchProjectionInvalid | InstanceType<typeof CoreSearchProjectionUnavailable>
   >;
 }
 
 /** Core-owned query port returns hits without private searchable evidence. */
-export class CoreSearchQueryRuntime extends Context.Service<
-  CoreSearchQueryRuntime,
-  CoreSearchQueryRuntimeService
->()(
+export class CoreSearchQueryRuntime extends Context.Service<CoreSearchQueryRuntime, CoreSearchQueryRuntimeService>()(
   // Preserve the public Context identity after splitting the service into its owning module.
   // @effect-diagnostics-next-line deterministicKeys:off
-  '@app/core-runtime/search/projection/CoreSearchQueryRuntime'
+  '@app/core-runtime/search/projection/CoreSearchQueryRuntime',
 ) {}

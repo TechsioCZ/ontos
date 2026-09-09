@@ -13,6 +13,4 @@ export const PrincipalManagementErrorSchema = Schema.Union([
   IdentityTargetInvalidError,
   IdentityPersistenceUnavailableError,
 ]);
-export type PrincipalManagementError = Schema.Schema.Type<
-  typeof PrincipalManagementErrorSchema
->;
+export type PrincipalManagementError = Schema.Schema.Type<typeof PrincipalManagementErrorSchema>;

@@ -5,5 +5,5 @@ export class OperationContextUnavailable extends Schema.TaggedError<OperationCon
   {
     code: Schema.Literal('operation_context_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

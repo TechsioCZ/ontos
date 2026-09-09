@@ -14,10 +14,7 @@ const uuid = Schema.String.check(Schema.isUUID());
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const status = Schema.Literals(['active', 'disabled', 'revoked']);
-const reason = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500)
-);
+const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const SetManagedApiKeyBindingStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     authBindingId: AuthBindingIdSchema,
@@ -49,7 +46,7 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
       {
         readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
       }
-    >
+    >,
   ) {
     const result = yield* context.services.setStatus({
       ...payload,
@@ -66,7 +63,7 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
       targetResourceType: 'principal-auth-binding',
     });
     return result;
-  }
+  },
 );
 export const setManagedApiKeyBindingStatusAction = defineAction(
   {
@@ -99,8 +96,7 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
   },
   handle,
   (transaction) => {
-    const repository =
-      principalManagementRepositoryFromTransaction(transaction);
+    const repository = principalManagementRepositoryFromTransaction(transaction);
     return Effect.succeed({ setStatus: repository.setApiKeyBindingStatus });
-  }
+  },
 );

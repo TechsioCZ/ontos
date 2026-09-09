@@ -1,7 +1,4 @@
-import type {
-  CounterpartyRolePeriod,
-  CounterpartyRoleType,
-} from './counterparty-contract.ts';
+import type { CounterpartyRolePeriod, CounterpartyRoleType } from './counterparty-contract.ts';
 
 const counterpartyContextEvidenceMethods = new Set([
   'APPROVED_COMMERCIAL_RELATIONSHIP',
@@ -41,35 +38,20 @@ const supplierEndEvidenceMethods = new Set([
   'SIGNED_TERMINATION_AGREEMENT',
 ]);
 
-export const counterpartyContextEvidenceIsSufficient = (
-  method: string
-): boolean => counterpartyContextEvidenceMethods.has(method);
+export const counterpartyContextEvidenceIsSufficient = (method: string): boolean =>
+  counterpartyContextEvidenceMethods.has(method);
 
-export const roleEvidenceIsSufficient = (
-  roleType: CounterpartyRoleType,
-  method: string
-): boolean =>
-  (roleType === 'CUSTOMER'
-    ? customerEvidenceMethods
-    : supplierEvidenceMethods
-  ).has(method);
+export const roleEvidenceIsSufficient = (roleType: CounterpartyRoleType, method: string): boolean =>
+  (roleType === 'CUSTOMER' ? customerEvidenceMethods : supplierEvidenceMethods).has(method);
 
-export const roleEndEvidenceIsSufficient = (
-  roleType: CounterpartyRoleType,
-  method: string
-): boolean =>
-  (roleType === 'CUSTOMER'
-    ? customerEndEvidenceMethods
-    : supplierEndEvidenceMethods
-  ).has(method);
+export const roleEndEvidenceIsSufficient = (roleType: CounterpartyRoleType, method: string): boolean =>
+  (roleType === 'CUSTOMER' ? customerEndEvidenceMethods : supplierEndEvidenceMethods).has(method);
 
 export const rolePeriodIsCurrentAt = (
   period: Pick<CounterpartyRolePeriod, 'state' | 'validFrom' | 'validTo'>,
-  instant: string
+  instant: string,
 ): boolean =>
-  period.state === 'ACTIVE' &&
-  period.validFrom <= instant &&
-  (period.validTo === null || instant < period.validTo);
+  period.state === 'ACTIVE' && period.validFrom <= instant && (period.validTo === null || instant < period.validTo);
 
 export interface RolePeriodStorageState {
   readonly isCurrent: boolean;
@@ -78,21 +60,18 @@ export interface RolePeriodStorageState {
 
 export const rolePeriodStorageStateAt = (
   period: Readonly<{ validFrom: string; validTo: null | string }>,
-  recordedAt: string
+  recordedAt: string,
 ): RolePeriodStorageState => {
   const ended = period.validTo !== null && period.validTo <= recordedAt;
   return {
-    isCurrent:
-      !ended &&
-      period.validFrom <= recordedAt &&
-      (period.validTo === null || recordedAt < period.validTo),
+    isCurrent: !ended && period.validFrom <= recordedAt && (period.validTo === null || recordedAt < period.validTo),
     state: ended ? 'ENDED' : 'ACTIVE',
   };
 };
 
 export const rolePeriodsOverlap = (
   left: Readonly<{ validFrom: string; validTo: null | string }>,
-  right: Readonly<{ validFrom: string; validTo: null | string }>
+  right: Readonly<{ validFrom: string; validTo: null | string }>,
 ): boolean =>
   (left.validTo === null || right.validFrom < left.validTo) &&
   (right.validTo === null || left.validFrom < right.validTo);

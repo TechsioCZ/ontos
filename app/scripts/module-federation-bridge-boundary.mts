@@ -6,53 +6,34 @@ interface RouterDependencies {
   readonly devDependencies?: Readonly<Record<string, string>>;
 }
 
-const property = (
-  object: ObjectExpression,
-  name: string
-): Expression | undefined => {
+const property = (object: ObjectExpression, name: string): Expression | undefined => {
   // Computed keys, spreads and duplicates can overwrite an apparently literal capability.
-  if (
-    object.properties.some(
-      (entry) => entry.type === 'SpreadElement' || entry.computed
-    )
-  ) {
+  if (object.properties.some((entry) => entry.type === 'SpreadElement' || entry.computed)) {
     return undefined;
   }
   const entries = object.properties.filter(
     (entry) =>
       entry.type === 'Property' &&
       ((entry.key.type === 'Identifier' && entry.key.name === name) ||
-        (entry.key.type === 'Literal' && entry.key.value === name))
+        (entry.key.type === 'Literal' && entry.key.value === name)),
   );
   const entry = entries.length === 1 ? entries[0] : undefined;
-  return entry?.type === 'Property' && entry.kind === 'init' && !entry.method
-    ? entry.value
-    : undefined;
+  return entry?.type === 'Property' && entry.kind === 'init' && !entry.method ? entry.value : undefined;
 };
 
 const exportedConfiguration = (program: Program) => {
-  const exported = program.body.find(
-    (statement) => statement.type === 'ExportDefaultDeclaration'
-  );
-  let config =
-    exported?.type === 'ExportDefaultDeclaration'
-      ? exported.declaration
-      : undefined;
+  const exported = program.body.find((statement) => statement.type === 'ExportDefaultDeclaration');
+  let config = exported?.type === 'ExportDefaultDeclaration' ? exported.declaration : undefined;
   if (config?.type === 'Identifier') {
     const { name } = config;
     const declarations = program.body.flatMap((statement) =>
       statement.type === 'VariableDeclaration' && statement.kind === 'const'
         ? statement.declarations.filter(
-            (declaration) =>
-              declaration.id.type === 'Identifier' &&
-              declaration.id.name === name
+            (declaration) => declaration.id.type === 'Identifier' && declaration.id.name === name,
           )
-        : []
+        : [],
     );
-    config =
-      declarations.length === 1
-        ? (declarations[0]?.init ?? undefined)
-        : undefined;
+    config = declarations.length === 1 ? (declarations[0]?.init ?? undefined) : undefined;
   }
   return config;
 };
@@ -68,14 +49,12 @@ const configurationBindings = (program: Program) =>
           specifier.imported.type === 'Identifier' &&
           specifier.imported.name === 'createModuleFederationConfig'
             ? [specifier.local.name]
-            : []
+            : [],
         )
-      : []
+      : [],
   );
 
-const configurationObject = (
-  program: Program
-): ObjectExpression | undefined => {
+const configurationObject = (program: Program): ObjectExpression | undefined => {
   const bindings = configurationBindings(program);
   const config = exportedConfiguration(program);
   if (
@@ -92,30 +71,20 @@ const configurationObject = (
 
 const bridgeRouterEnabled = (config: ObjectExpression): boolean | undefined => {
   const bridge = property(config, 'bridge');
-  const enabled =
-    bridge?.type === 'ObjectExpression'
-      ? property(bridge, 'enableBridgeRouter')
-      : undefined;
+  const enabled = bridge?.type === 'ObjectExpression' ? property(bridge, 'enableBridgeRouter') : undefined;
   if (enabled?.type !== 'Literal') {
     return undefined;
   }
-  return enabled.value === true || enabled.value === false
-    ? enabled.value
-    : undefined;
+  return enabled.value === true || enabled.value === false ? enabled.value : undefined;
 };
 
 const declaresBridgeRouter = (manifest: RouterDependencies): boolean =>
   ['react-router', 'react-router-dom'].some(
-    (name) =>
-      Object.hasOwn(manifest.dependencies ?? {}, name) ||
-      Object.hasOwn(manifest.devDependencies ?? {}, name)
+    (name) => Object.hasOwn(manifest.dependencies ?? {}, name) || Object.hasOwn(manifest.devDependencies ?? {}, name),
   );
 
 /** Check the exported configuration, not an unexecuted decoy or obsolete always-on bridge rule. */
-export const moduleFederationBridgeViolation = (
-  source: string,
-  manifest: RouterDependencies
-): string | undefined => {
+export const moduleFederationBridgeViolation = (source: string, manifest: RouterDependencies): string | undefined => {
   const parsed = parseSync('module-federation.config.ts', source);
   if (parsed.errors.length !== 0) {
     return 'Module Federation configuration must parse.';

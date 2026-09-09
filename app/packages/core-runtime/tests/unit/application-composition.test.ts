@@ -12,7 +12,7 @@ const sha256 = (character: string) => character.repeat(64);
 
 const assertInvalid = Effect.fn(function* testProgram1<Value>(
   effect: Effect.Effect<Value, ApplicationCompositionValidationError>,
-  reason: RegExp
+  reason: RegExp,
 ) {
   const error = yield* Effect.flip(effect);
   expect(error.reason).toMatch(reason);
@@ -26,10 +26,7 @@ const candidate = () => {
   return {
     modules: [
       {
-        allowedContributions: [
-          'contacts.core.navigation.contacts',
-          'contacts.core.page.contacts',
-        ],
+        allowedContributions: ['contacts.core.navigation.contacts', 'contacts.core.page.contacts'],
         contract: {
           sha256: sha256('a'),
           url: 'https://contacts.example/.well-known/ontos-module-manifest.json',
@@ -81,12 +78,8 @@ const candidate = () => {
 const evidence = () => ({
   contracts: {
     contacts: {
-      contractUrl:
-        'https://contacts.example/.well-known/ontos-module-manifest.json',
-      contributionKeys: [
-        'contacts.core.navigation.contacts',
-        'contacts.core.page.contacts',
-      ],
+      contractUrl: 'https://contacts.example/.well-known/ontos-module-manifest.json',
+      contributionKeys: ['contacts.core.navigation.contacts', 'contacts.core.page.contacts'],
       deployment: { appId: 'contacts', buildMarker: 'contacts-build-1' },
       federationExposes: ['./Navigation', './PageContacts'],
       mfBoundaryId: 'contacts',
@@ -121,38 +114,23 @@ const required = <Value>(value: Value | undefined): Value => {
 const onlyModule = (input: Candidate) => required(input.modules[0]);
 
 const federationManifest = (observations: Evidence) =>
-  required(
-    observations.federationManifests[
-      'https://contacts.example/mf-manifest.json'
-    ]
-  );
+  required(observations.federationManifests['https://contacts.example/mf-manifest.json']);
 
-it.effect(
-  'defaults the validation error code without changing its encoded contract',
-  () =>
-    Effect.gen(function* encodeValidationError() {
-      const error = new ApplicationCompositionValidationError({
-        reason: 'Invalid candidate',
-      });
-      const encodedError = yield* Schema.encodeEffect(
-        ApplicationCompositionValidationError
-      )(error);
-      expect(
-        Schema.is(Schema.toEncoded(ApplicationCompositionValidationError))(
-          encodedError
-        )
-      ).toBe(true);
-      expect(Struct.omit(encodedError, ['_tag'])).toEqual({
-        code: 'application_composition_invalid',
-        reason: 'Invalid candidate',
-      });
-    })
+it.effect('defaults the validation error code without changing its encoded contract', () =>
+  Effect.gen(function* encodeValidationError() {
+    const error = new ApplicationCompositionValidationError({
+      reason: 'Invalid candidate',
+    });
+    const encodedError = yield* Schema.encodeEffect(ApplicationCompositionValidationError)(error);
+    expect(Schema.is(Schema.toEncoded(ApplicationCompositionValidationError))(encodedError)).toBe(true);
+    expect(Struct.omit(encodedError, ['_tag'])).toEqual({
+      code: 'application_composition_invalid',
+      reason: 'Invalid candidate',
+    });
+  }),
 );
 
-const addModuleCopy = (
-  input: Candidate,
-  overrides: Partial<ReturnType<typeof onlyModule>>
-): number => {
+const addModuleCopy = (input: Candidate, overrides: Partial<ReturnType<typeof onlyModule>>): number => {
   const module = onlyModule(input);
   return input.modules.push({
     ...structuredClone(module),
@@ -177,23 +155,15 @@ it.effect(
   'accepts one provider-neutral composition and produces deterministic canonical JSON',
   Effect.fn(function* testProgram2() {
     const input = candidate();
-    const composition = yield* validateApplicationCompositionCandidate(
-      input,
-      evidence()
-    );
+    const composition = yield* validateApplicationCompositionCandidate(input, evidence());
 
     expect(composition).toEqual(input);
     expect(Object.isFrozen(composition)).toBe(true);
-    expect(
-      Object.isFrozen(required(composition.modules[0]).federation.exposes)
-    ).toBe(true);
+    expect(Object.isFrozen(required(composition.modules[0]).federation.exposes)).toBe(true);
     expect(Object.isFrozen(input)).toBe(false);
     yield* assertInvalid(
-      validateApplicationCompositionCandidate(
-        { ...input, provider: 'zephyr' },
-        evidence()
-      ),
-      /supported .* schema/u
+      validateApplicationCompositionCandidate({ ...input, provider: 'zephyr' }, evidence()),
+      /supported .* schema/u,
     );
 
     const reordered = structuredClone(input);
@@ -205,42 +175,34 @@ it.effect(
     reordered.shell.coreCapabilities.reverse();
     reordered.shell.sharedSingletons.reverse();
     /* oxlint-disable perfectionist/sort-objects -- Deliberately reorder nested fields to test canonical encoding. expires: 2026-12-31. */
-    reordered.shell.coreCapabilities = reordered.shell.coreCapabilities.map(
-      ({ id, version }) => ({
-        version,
-        id,
-      })
-    );
-    reorderedModule.sharedSingletons = reorderedModule.sharedSingletons.map(
-      ({ packageName, version }) => ({ version, packageName })
-    );
+    reordered.shell.coreCapabilities = reordered.shell.coreCapabilities.map(({ id, version }) => ({
+      version,
+      id,
+    }));
+    reorderedModule.sharedSingletons = reorderedModule.sharedSingletons.map(({ packageName, version }) => ({
+      version,
+      packageName,
+    }));
     reorderedModule.contract = {
       url: reorderedModule.contract.url,
       sha256: reorderedModule.contract.sha256,
     };
     /* oxlint-enable perfectionist/sort-objects */
     expect(
-      canonicalizeApplicationComposition(
-        yield* validateApplicationCompositionCandidate(reordered, evidence())
-      )
+      canonicalizeApplicationComposition(yield* validateApplicationCompositionCandidate(reordered, evidence())),
     ).toBe(canonicalizeApplicationComposition(composition));
     expect(
-      yield* Schema.decodeEffect(
-        Schema.fromJsonString(ApplicationCompositionSchema)
-      )(canonicalizeApplicationComposition(composition))
+      yield* Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionSchema))(
+        canonicalizeApplicationComposition(composition),
+      ),
     ).toEqual(composition);
-  })
+  }),
 );
 
 it.effect(
   'allows loopback HTTP only with trusted development evidence',
   Effect.fn(function* testProgram3() {
-    for (const host of [
-      'localhost',
-      '127.0.0.1',
-      '[::1]',
-      'contacts.localhost',
-    ]) {
+    for (const host of ['localhost', '127.0.0.1', '[::1]', 'contacts.localhost']) {
       for (const artifact of ['contract', 'federation']) {
         const input = candidate();
         const observations = evidence();
@@ -257,24 +219,20 @@ it.effect(
             [module.federation.manifest.url]: federationManifest(observations),
           },
         };
-        for (const environment of [
-          {},
-          { environment: 'stage' },
-          { environment: 'production' },
-        ]) {
+        for (const environment of [{}, { environment: 'stage' }, { environment: 'production' }]) {
           yield* assertInvalid(
             validateApplicationCompositionCandidate(input, {
               ...observed,
               ...environment,
             }),
-            /HTTPS outside development/u
+            /HTTPS outside development/u,
           );
         }
         expect(
           yield* validateApplicationCompositionCandidate(input, {
             ...observed,
             environment: 'development',
-          })
+          }),
         ).toEqual(input);
       }
     }
@@ -285,72 +243,38 @@ it.effect(
         ...evidence(),
         environment: 'development',
       }),
-      /supported .* schema/u
+      /supported .* schema/u,
     );
-  })
+  }),
 );
 
 it.effect(
   'rejects candidate-wide ownership and compatibility contradictions',
   Effect.fn(function* testProgram4() {
     const cases: readonly [
-      mutate: (
-        input: Candidate,
-        observations: Evidence
-      ) => number | readonly string[] | string,
+      mutate: (input: Candidate, observations: Evidence) => number | readonly string[] | string,
       reason: RegExp,
     ][] = [
+      [(input) => (onlyModule(input).federation.remoteName = 'anotherRemote'), /observed deployment contract/u],
       [
-        (input) => (onlyModule(input).federation.remoteName = 'anotherRemote'),
+        (_input, observations) => (observations.contracts.contacts.mfBoundaryId = 'anotherRemote'),
         /observed deployment contract/u,
       ],
       [
-        (_input, observations) =>
-          (observations.contracts.contacts.mfBoundaryId = 'anotherRemote'),
-        /observed deployment contract/u,
-      ],
-      [
-        (_input, observations) =>
-          (federationManifest(observations).remoteName = 'anotherRemote'),
+        (_input, observations) => (federationManifest(observations).remoteName = 'anotherRemote'),
         /Module Federation manifest/u,
       ],
+      [(_input, observations) => (observations.contracts.contacts.contractUrl = 'invalid-url'), /observation schema/u],
+      [(input) => onlyModule(input).dependencies.push('billing.core'), /dependency billing\.core/u],
+      [(input) => onlyModule(input).dependencies.push('contacts.core'), /dependency cycle/u],
+      [(input) => onlyModule(input).dependencies.push('contacts.core', 'contacts.core'), /duplicate dependency/u],
+      [(input) => addModuleCopy(input, { moduleId: 'inventory.stock' }), /duplicate Shell contribution/u],
+      [(input) => addModuleCopy(input, { allowedContributions: [] }), /duplicate module ID contacts\.core/u],
       [
-        (_input, observations) =>
-          (observations.contracts.contacts.contractUrl = 'invalid-url'),
-        /observation schema/u,
-      ],
-      [
-        (input) => onlyModule(input).dependencies.push('billing.core'),
-        /dependency billing\.core/u,
-      ],
-      [
-        (input) => onlyModule(input).dependencies.push('contacts.core'),
-        /dependency cycle/u,
-      ],
-      [
-        (input) =>
-          onlyModule(input).dependencies.push('contacts.core', 'contacts.core'),
-        /duplicate dependency/u,
-      ],
-      [
-        (input) => addModuleCopy(input, { moduleId: 'inventory.stock' }),
-        /duplicate Shell contribution/u,
-      ],
-      [
-        (input) => addModuleCopy(input, { allowedContributions: [] }),
-        /duplicate module ID contacts\.core/u,
-      ],
-      [
-        (input) =>
-          (onlyModule(input).allowedContributions = [
-            'contacts.core.page.contacts',
-          ]),
+        (input) => (onlyModule(input).allowedContributions = ['contacts.core.page.contacts']),
         /observed deployment contract/u,
       ],
-      [
-        (input) => (onlyModule(input).federation.exposes = ['./Navigation']),
-        /observed deployment contract/u,
-      ],
+      [(input) => (onlyModule(input).federation.exposes = ['./Navigation']), /observed deployment contract/u],
       [
         (input) => {
           const module = onlyModule(input);
@@ -399,12 +323,8 @@ it.effect(
       ],
       [
         (input, observations) => {
-          const moduleSingleton = required(
-            onlyModule(input).sharedSingletons[0]
-          );
-          const runtimeSingleton = required(
-            observations.runtime.sharedSingletons[0]
-          );
+          const moduleSingleton = required(onlyModule(input).sharedSingletons[0]);
+          const runtimeSingleton = required(observations.runtime.sharedSingletons[0]);
           const shellSingleton = required(input.shell.sharedSingletons[0]);
           shellSingleton.packageName = 'foo';
           shellSingleton.version = 'bar@baz';
@@ -416,14 +336,9 @@ it.effect(
         },
         /incompatible shared singleton foo@bar/u,
       ],
+      [(input) => (onlyModule(input).requiredShellAbi.version = '2'), /Shell contribution ABI/u],
       [
-        (input) => (onlyModule(input).requiredShellAbi.version = '2'),
-        /Shell contribution ABI/u,
-      ],
-      [
-        (input) =>
-          (required(onlyModule(input).requiredCoreCapabilities[0]).version =
-            '2'),
+        (input) => (required(onlyModule(input).requiredCoreCapabilities[0]).version = '2'),
         /Core capability core\.authorization/u,
       ],
       [
@@ -434,26 +349,15 @@ it.effect(
           }),
         /shared singleton react/u,
       ],
+      [(input) => (onlyModule(input).federation.execution = 'server'), /supported .* schema/u],
       [
-        (input) => (onlyModule(input).federation.execution = 'server'),
+        (input) => (onlyModule(input).contract.url = 'https://contacts.example/manifest.json?tag=live'),
         /supported .* schema/u,
       ],
-      [
-        (input) =>
-          (onlyModule(input).contract.url =
-            'https://contacts.example/manifest.json?tag=live'),
-        /supported .* schema/u,
-      ],
-      [
-        (_input, observations) =>
-          (federationManifest(observations).exposes = []),
-        /Module Federation manifest/u,
-      ],
+      [(_input, observations) => (federationManifest(observations).exposes = []), /Module Federation manifest/u],
       [
         (_input, observations) => {
-          const singleton = required(
-            federationManifest(observations).sharedSingletons[0]
-          );
+          const singleton = required(federationManifest(observations).sharedSingletons[0]);
           singleton.version = '18.3.1';
           return singleton.version;
         },
@@ -465,10 +369,7 @@ it.effect(
       const input = candidate();
       const observations = evidence();
       mutate(input, observations);
-      yield* assertInvalid(
-        validateApplicationCompositionCandidate(input, observations),
-        reason
-      );
+      yield* assertInvalid(validateApplicationCompositionCandidate(input, observations), reason);
     }
-  })
+  }),
 );

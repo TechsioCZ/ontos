@@ -17,93 +17,78 @@ export const GENERATED_OWNER = {
   slug: 'isolation-owner',
 } as const;
 
-const json = <Value>(value: Value): string =>
-  `${JSON.stringify(value, null, 2)}\n`;
+const json = <Value>(value: Value): string => `${JSON.stringify(value, null, 2)}\n`;
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 
-const writeFixtureFile = Effect.fn('writeFixtureFile')(
-  function* writeFixtureFileEffect(
-    root: string,
-    relativePath: string,
-    content: string
-  ) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const filePath = path.join(root, relativePath);
-    yield* fileSystem.makeDirectory(path.dirname(filePath), {
-      recursive: true,
-    });
-    yield* fileSystem.writeFileString(filePath, content);
-  }
-);
+const writeFixtureFile = Effect.fn('writeFixtureFile')(function* writeFixtureFileEffect(
+  root: string,
+  relativePath: string,
+  content: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const filePath = path.join(root, relativePath);
+  yield* fileSystem.makeDirectory(path.dirname(filePath), {
+    recursive: true,
+  });
+  yield* fileSystem.writeFileString(filePath, content);
+});
 
-const replaceRequired = (
-  source: string,
-  current: string,
-  replacement: string
-): string => {
+const replaceRequired = (source: string, current: string, replacement: string): string => {
   if (!source.includes(current)) {
-    throw new Error(
-      `Generated isolation fixture no longer contains ${JSON.stringify(current)}`
-    );
+    throw new Error(`Generated isolation fixture no longer contains ${JSON.stringify(current)}`);
   }
   return source.replace(current, replacement);
 };
 
-const createWorkspace = Effect.fn('createWorkspace')(
-  function* createWorkspaceEffect(root: string) {
-    yield* writeFixtureFile(
-      root,
-      'package.json',
-      json({ name: 'generated-owner-fixture', private: true })
-    );
-    yield* writeFixtureFile(
-      root,
-      `verticals/${GENERATED_OWNER.slug}/module-federation.config.ts`,
-      'export default { exposes: {} };\n'
-    );
-    yield* writeFixtureFile(
-      root,
-      `verticals/${GENERATED_OWNER.slug}/tsconfig.json`,
-      json({
-        compilerOptions: { composite: true },
-        include: ['api', 'shared', 'src'],
-      })
-    );
-    yield* writeFixtureFile(
-      root,
-      `verticals/${GENERATED_OWNER.slug}/package.json`,
-      json({
-        dependencies: {},
-        modernjs: {
-          apiRuntime: 'effect',
-          appId: GENERATED_OWNER.appId,
-          preset: 'presetUltramodern',
-          role: 'module-federation-remote',
-          topology: '../../topology/reference-topology.json',
-        },
-        name: '@app/isolation-owner',
-        private: true,
-        scripts: {
-          build:
-            'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
-          'cloudflare:build':
-            'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
-        },
-        type: 'module',
-        version: '0.0.0',
-      })
-    );
-    yield* writeFixtureFile(
-      root,
-      `verticals/${GENERATED_OWNER.slug}/shared/api.ts`,
-      `import { HttpApi } from '@modern-js/plugin-bff/effect-client';
+const createWorkspace = Effect.fn('createWorkspace')(function* createWorkspaceEffect(root: string) {
+  yield* writeFixtureFile(root, 'package.json', json({ name: 'generated-owner-fixture', private: true }));
+  yield* writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/module-federation.config.ts`,
+    'export default { exposes: {} };\n',
+  );
+  yield* writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/tsconfig.json`,
+    json({
+      compilerOptions: { composite: true },
+      include: ['api', 'shared', 'src'],
+    }),
+  );
+  yield* writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/package.json`,
+    json({
+      dependencies: {},
+      modernjs: {
+        apiRuntime: 'effect',
+        appId: GENERATED_OWNER.appId,
+        preset: 'presetUltramodern',
+        role: 'module-federation-remote',
+        topology: '../../topology/reference-topology.json',
+      },
+      name: '@app/isolation-owner',
+      private: true,
+      scripts: {
+        build: 'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
+        'cloudflare:build':
+          'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
+      },
+      type: 'module',
+      version: '0.0.0',
+    }),
+  );
+  yield* writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/shared/api.ts`,
+    `import { HttpApi } from '@modern-js/plugin-bff/effect-client';
 export const isolationOwnerApi = HttpApi.make('IsolationOwnerApi');
-`
-    );
-    yield* writeFixtureFile(
-      root,
-      `verticals/${GENERATED_OWNER.slug}/api/index.ts`,
-      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+`,
+  );
+  yield* writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/api/index.ts`,
+    `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
 import { isolationOwnerApi } from '../shared/api.ts';
 
@@ -111,100 +96,86 @@ const layer = HttpApiBuilder.layer(isolationOwnerApi).pipe(
   Layer.provide(Layer.empty),
 ) satisfies EffectRuntimeLayer;
 export default defineEffectBff({ api: isolationOwnerApi, layer });
-`
-    );
-    yield* writeFixtureFile(
-      root,
-      `verticals/${GENERATED_OWNER.slug}/src/routes/ultramodern-route-head.tsx`,
-      'export const UltramodernRouteHead = () => null;\n'
-    );
-    yield* writeFixtureFile(
-      root,
-      'topology/reference-topology.json',
-      json({
-        schemaVersion: 1,
-        verticals: [
-          {
-            domain: 'isolation',
-            id: GENERATED_OWNER.appId,
-            kind: 'vertical',
-            moduleFederation: {
-              name: 'verticalIsolationOwner',
-              role: 'remote',
-            },
-            package: '@app/isolation-owner',
-            path: `verticals/${GENERATED_OWNER.slug}`,
+`,
+  );
+  yield* writeFixtureFile(
+    root,
+    `verticals/${GENERATED_OWNER.slug}/src/routes/ultramodern-route-head.tsx`,
+    'export const UltramodernRouteHead = () => null;\n',
+  );
+  yield* writeFixtureFile(
+    root,
+    'topology/reference-topology.json',
+    json({
+      schemaVersion: 1,
+      verticals: [
+        {
+          domain: 'isolation',
+          id: GENERATED_OWNER.appId,
+          kind: 'vertical',
+          moduleFederation: {
+            name: 'verticalIsolationOwner',
+            role: 'remote',
           },
-        ],
-      })
-    );
-  }
-);
-
-const linkRuntimeDependencies = Effect.fn('linkRuntimeDependencies')(
-  function* linkRuntimeDependenciesEffect(root: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@app'), {
-      recursive: true,
-    });
-    yield* fileSystem.makeDirectory(
-      path.join(root, 'node_modules', '@modern-js'),
-      {
-        recursive: true,
-      }
-    );
-    yield* Effect.all(
-      [
-        fileSystem.symlink(
-          path.join(appRoot, 'packages/core-runtime'),
-          path.join(root, 'node_modules/@app/core-runtime')
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'packages/shared-contracts'),
-          path.join(root, 'node_modules/@app/shared-contracts')
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'packages/gateway-principal-verifier'),
-          path.join(root, 'node_modules/@app/gateway-principal-verifier')
-        ),
-        fileSystem.symlink(
-          path.join(
-            appRoot,
-            'apps/shell-super-app/node_modules/@modern-js/plugin-bff'
-          ),
-          path.join(root, 'node_modules/@modern-js/plugin-bff')
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'apps/shell-super-app/node_modules/drizzle-orm'),
-          path.join(root, 'node_modules/drizzle-orm')
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'node_modules/effect'),
-          path.join(root, 'node_modules/effect')
-        ),
-        fileSystem.symlink(
-          path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
-          path.join(root, 'node_modules/jose')
-        ),
+          package: '@app/isolation-owner',
+          path: `verticals/${GENERATED_OWNER.slug}`,
+        },
       ],
-      { concurrency: 'unbounded', discard: true }
-    );
-  }
-);
+    }),
+  );
+});
 
-const addResourceType = Effect.fn('addResourceType')(
-  function* addResourceTypeEffect(root: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const manifestPath = path.join(
-      root,
-      `verticals/${GENERATED_OWNER.slug}/vertical.manifest.ts`
-    );
-    const manifest = yield* fileSystem.readFileString(manifestPath);
-    const withResourceType = replaceRequired(
-      manifest,
-      `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
+const linkRuntimeDependencies = Effect.fn('linkRuntimeDependencies')(function* linkRuntimeDependenciesEffect(
+  root: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@app'), {
+    recursive: true,
+  });
+  yield* fileSystem.makeDirectory(path.join(root, 'node_modules', '@modern-js'), {
+    recursive: true,
+  });
+  yield* Effect.all(
+    [
+      fileSystem.symlink(
+        path.join(appRoot, 'packages/core-runtime'),
+        path.join(root, 'node_modules/@app/core-runtime'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'packages/shared-contracts'),
+        path.join(root, 'node_modules/@app/shared-contracts'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'packages/gateway-principal-verifier'),
+        path.join(root, 'node_modules/@app/gateway-principal-verifier'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
+        path.join(root, 'node_modules/@modern-js/plugin-bff'),
+      ),
+      fileSystem.symlink(
+        path.join(appRoot, 'apps/shell-super-app/node_modules/drizzle-orm'),
+        path.join(root, 'node_modules/drizzle-orm'),
+      ),
+      fileSystem.symlink(path.join(appRoot, 'node_modules/effect'), path.join(root, 'node_modules/effect')),
+      fileSystem.symlink(
+        path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
+        path.join(root, 'node_modules/jose'),
+      ),
+    ],
+    { concurrency: 'unbounded', discard: true },
+  );
+});
+
+const addResourceType = Effect.fn('addResourceType')(function* addResourceTypeEffect(root: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const manifestPath = path.join(root, `verticals/${GENERATED_OWNER.slug}/vertical.manifest.ts`);
+  const manifest = yield* fileSystem.readFileString(manifestPath);
+  const withResourceType = replaceRequired(
+    manifest,
+    `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
       ${MODULE_MANIFEST_RESOURCE_SLOT_END}`,
-      `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
+    `      ${MODULE_MANIFEST_RESOURCE_SLOT_START}
       {
         capabilities: {
           graphVisible: false,
@@ -218,12 +189,12 @@ const addResourceType = Effect.fn('addResourceType')(
         label: 'Isolation record',
         owningModuleId: '${GENERATED_OWNER.moduleId}',
       },
-      ${MODULE_MANIFEST_RESOURCE_SLOT_END}`
-    );
-    const withResourceDetail = replaceRequired(
-      withResourceType,
-      '      resourceDetails: [],',
-      `      resourceDetails: [
+      ${MODULE_MANIFEST_RESOURCE_SLOT_END}`,
+  );
+  const withResourceDetail = replaceRequired(
+    withResourceType,
+    '      resourceDetails: [],',
+    `      resourceDetails: [
         {
           apiKey: '${GENERATED_OWNER.moduleId}.resource-detail',
           contributionKey: '${GENERATED_OWNER.moduleId}.detail.record',
@@ -237,14 +208,14 @@ const addResourceType = Effect.fn('addResourceType')(
           },
           resourceType: '${GENERATED_OWNER.resourceType}',
         },
-      ],`
-    );
-    yield* fileSystem.writeFileString(
-      manifestPath,
-      replaceRequired(
-        withResourceDetail,
-        '      timelines: [],',
-        `      timelines: [
+      ],`,
+  );
+  yield* fileSystem.writeFileString(
+    manifestPath,
+    replaceRequired(
+      withResourceDetail,
+      '      timelines: [],',
+      `      timelines: [
         {
           apiKey: '${GENERATED_OWNER.moduleId}.resource-list',
           contributionKey: '${GENERATED_OWNER.moduleId}.timeline.record',
@@ -258,34 +229,30 @@ const addResourceType = Effect.fn('addResourceType')(
           },
           resourceType: '${GENERATED_OWNER.resourceType}',
         },
-      ],`
-      )
-    );
-  }
-);
+      ],`,
+    ),
+  );
+});
 
 const adaptContract = Effect.fn('adaptContract')(function* adaptContractEffect(
   root: string,
   name: 'resource-detail' | 'resource-list',
   request: string,
-  response: string
+  response: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const contractPath = path.join(
-    root,
-    `verticals/${GENERATED_OWNER.slug}/shared/apis/${name}.ts`
-  );
+  const contractPath = path.join(root, `verticals/${GENERATED_OWNER.slug}/shared/apis/${name}.ts`);
   let contract = yield* fileSystem.readFileString(contractPath);
   const type = name === 'resource-detail' ? 'ResourceDetail' : 'ResourceList';
   contract = replaceRequired(
     contract,
     `export const ${type}RequestSchema = Schema.Struct({});`,
-    `export const ${type}RequestSchema = ${request};`
+    `export const ${type}RequestSchema = ${request};`,
   );
   contract = replaceRequired(
     contract,
     `export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });`,
-    `export const ${type}ResponseSchema = ${response};`
+    `export const ${type}ResponseSchema = ${response};`,
   );
   yield* fileSystem.writeFileString(contractPath, contract);
 });
@@ -552,148 +519,125 @@ export const createRecordAction = defineAction(
 );
 `;
 
-const adaptGeneratedOwner = Effect.fn('adaptGeneratedOwner')(
-  function* adaptGeneratedOwnerEffect(root: string, schemaName: string) {
-    const verticalRoot = `verticals/${GENERATED_OWNER.slug}`;
-    yield* adaptContract(
-      root,
-      'resource-detail',
-      'Schema.Struct({ resourceId: Schema.String.check(Schema.isUUID()) })',
-      `Schema.Struct({
+const adaptGeneratedOwner = Effect.fn('adaptGeneratedOwner')(function* adaptGeneratedOwnerEffect(
+  root: string,
+  schemaName: string,
+) {
+  const verticalRoot = `verticals/${GENERATED_OWNER.slug}`;
+  yield* adaptContract(
+    root,
+    'resource-detail',
+    'Schema.Struct({ resourceId: Schema.String.check(Schema.isUUID()) })',
+    `Schema.Struct({
   fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Schema.String })),
   title: Schema.String,
-})`
-    );
-    yield* adaptContract(
-      root,
-      'resource-list',
-      'Schema.Struct({ resourceId: Schema.String.check(Schema.isUUID()) })',
-      `Schema.Struct({
+})`,
+  );
+  yield* adaptContract(
+    root,
+    'resource-list',
+    'Schema.Struct({ resourceId: Schema.String.check(Schema.isUUID()) })',
+    `Schema.Struct({
   entries: Schema.Array(Schema.Struct({
     occurredAt: Schema.String,
     summary: Schema.String,
     timelineEntryId: Schema.String,
   })),
   projectionLagging: Schema.Boolean,
-})`
-    );
-    yield* Effect.all(
-      [
-        writeFixtureFile(
-          root,
-          `${verticalRoot}/src/isolation/instrumentation.ts`,
-          instrumentationSource
-        ),
-        writeFixtureFile(
-          root,
-          `${verticalRoot}/src/isolation/owner-repository.ts`,
-          ownerRepositorySource(schemaName)
-        ),
-        writeFixtureFile(
-          root,
-          `${verticalRoot}/src/api/resource-detail.read.ts`,
-          detailReadSource
-        ),
-        writeFixtureFile(
-          root,
-          `${verticalRoot}/src/api/resource-list.read.ts`,
-          listReadSource
-        ),
-        writeFixtureFile(
-          root,
-          `${verticalRoot}/src/search/records.provider.ts`,
-          searchReadSource
-        ),
-        writeFixtureFile(
-          root,
-          `${verticalRoot}/src/actions/create-record.action.ts`,
-          actionSource
-        ),
-      ],
-      { concurrency: 'unbounded', discard: true }
-    );
-  }
-);
-
-export const createGeneratedOwnerFixture = Effect.fn(
-  'createGeneratedOwnerFixture'
-)(function* createGeneratedOwnerFixtureEffect(schemaName: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const root = yield* fileSystem.makeTempDirectoryScoped({
-    directory: tmpdir(),
-    prefix: 'ontos-generated-owner-',
-  });
-  yield* createWorkspace(root);
-  yield* runScaffoldEffect(
-    'module-contract',
-    ['--vertical', GENERATED_OWNER.slug, '--module', GENERATED_OWNER.moduleId],
-    { workspaceRoot: root }
+})`,
   );
-  yield* addResourceType(root);
-  yield* runScaffoldEffect(
-    'action',
+  yield* Effect.all(
     [
-      '--vertical',
-      GENERATED_OWNER.slug,
-      '--action',
-      'create-record',
-      '--authorization',
-      'action_execution',
-      '--legal-entity-scope',
-      'required',
-      '--provisioning',
-      'tenant_membership_default',
+      writeFixtureFile(root, `${verticalRoot}/src/isolation/instrumentation.ts`, instrumentationSource),
+      writeFixtureFile(root, `${verticalRoot}/src/isolation/owner-repository.ts`, ownerRepositorySource(schemaName)),
+      writeFixtureFile(root, `${verticalRoot}/src/api/resource-detail.read.ts`, detailReadSource),
+      writeFixtureFile(root, `${verticalRoot}/src/api/resource-list.read.ts`, listReadSource),
+      writeFixtureFile(root, `${verticalRoot}/src/search/records.provider.ts`, searchReadSource),
+      writeFixtureFile(root, `${verticalRoot}/src/actions/create-record.action.ts`, actionSource),
     ],
-    { workspaceRoot: root }
+    { concurrency: 'unbounded', discard: true },
   );
-  yield* runScaffoldEffect(
-    'module-api',
-    [
-      '--vertical',
-      GENERATED_OWNER.slug,
-      '--name',
-      'resource-detail',
-      '--authorization',
-      'context_permission',
-      '--permission',
-      'module.access',
-    ],
-    { workspaceRoot: root }
-  );
-  yield* runScaffoldEffect(
-    'module-api',
-    [
-      '--vertical',
-      GENERATED_OWNER.slug,
-      '--name',
-      'resource-list',
-      '--authorization',
-      'context_permission',
-      '--permission',
-      'module.access',
-    ],
-    { workspaceRoot: root }
-  );
-  yield* runScaffoldEffect(
-    'search-provider',
-    [
-      '--vertical',
-      GENERATED_OWNER.slug,
-      '--name',
-      'records',
-      '--resource',
-      'record',
-      '--authorization',
-      'context_permission',
-      '--permission',
-      'module.access',
-    ],
-    { workspaceRoot: root }
-  );
-  yield* adaptGeneratedOwner(root, schemaName);
-  yield* linkRuntimeDependencies(root);
-  return {
-    root,
-    verticalRoot: path.join(root, 'verticals', GENERATED_OWNER.slug),
-  };
 });
+
+export const createGeneratedOwnerFixture = Effect.fn('createGeneratedOwnerFixture')(
+  function* createGeneratedOwnerFixtureEffect(schemaName: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped({
+      directory: tmpdir(),
+      prefix: 'ontos-generated-owner-',
+    });
+    yield* createWorkspace(root);
+    yield* runScaffoldEffect(
+      'module-contract',
+      ['--vertical', GENERATED_OWNER.slug, '--module', GENERATED_OWNER.moduleId],
+      { workspaceRoot: root },
+    );
+    yield* addResourceType(root);
+    yield* runScaffoldEffect(
+      'action',
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--action',
+        'create-record',
+        '--authorization',
+        'action_execution',
+        '--legal-entity-scope',
+        'required',
+        '--provisioning',
+        'tenant_membership_default',
+      ],
+      { workspaceRoot: root },
+    );
+    yield* runScaffoldEffect(
+      'module-api',
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-detail',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
+      { workspaceRoot: root },
+    );
+    yield* runScaffoldEffect(
+      'module-api',
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-list',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
+      { workspaceRoot: root },
+    );
+    yield* runScaffoldEffect(
+      'search-provider',
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'records',
+        '--resource',
+        'record',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
+      { workspaceRoot: root },
+    );
+    yield* adaptGeneratedOwner(root, schemaName);
+    yield* linkRuntimeDependencies(root);
+    return {
+      root,
+      verticalRoot: path.join(root, 'verticals', GENERATED_OWNER.slug),
+    };
+  },
+);

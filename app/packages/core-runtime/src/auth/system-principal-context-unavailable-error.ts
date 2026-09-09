@@ -5,5 +5,5 @@ export class SystemPrincipalContextUnavailableError extends Schema.TaggedError<S
   {
     code: Schema.Literal('system_principal_context_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

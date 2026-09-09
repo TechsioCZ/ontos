@@ -1,9 +1,6 @@
 import { expect, it } from 'effect-rstest';
 
-import {
-  localPublicClientValues,
-  localSpiceDbValues,
-} from './local-environment-values.mts';
+import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
 
 const spiceDbGrpcPort = '50052';
 const spiceDbHttpPort = '8444';
@@ -18,7 +15,7 @@ it('preserves canonical SpiceDB values when no local override is supplied', () =
       'SPICEDB_INSECURE=true',
       'SPICEDB_PRESHARED_KEY=existing-key',
     ],
-    {}
+    {},
   );
 
   expect(values).toEqual({
@@ -31,10 +28,10 @@ it('preserves canonical SpiceDB values when no local override is supplied', () =
 });
 
 it('applies explicit local port overrides as one consistent endpoint', () => {
-  const values = localSpiceDbValues(
-    ['SPICEDB_ENDPOINT=localhost:50051', 'SPICEDB_GRPC_PORT=50051'],
-    { grpcPort: spiceDbGrpcPort, httpPort: spiceDbHttpPort }
-  );
+  const values = localSpiceDbValues(['SPICEDB_ENDPOINT=localhost:50051', 'SPICEDB_GRPC_PORT=50051'], {
+    grpcPort: spiceDbGrpcPort,
+    httpPort: spiceDbHttpPort,
+  });
 
   expect(values.SPICEDB_ENDPOINT).toBe(spiceDbEndpoint);
   expect(values.SPICEDB_GRPC_PORT).toBe(spiceDbGrpcPort);
@@ -47,7 +44,7 @@ it('derives local public-client URLs from configured Shell identity/port and Par
       partyRegistryApiBaseUrl: 'http://localhost:4199/party-api',
       shellId: 'staff-shell',
       shellPort: 3099,
-    })
+    }),
   ).toEqual({
     ONTOS_PARTY_REGISTRY_API_BASE_URL: 'http://localhost:4199/party-api',
     ONTOS_SHELL_GATEWAY_BASE_URL: 'http://localhost:3099/staff-shell-api',
@@ -65,12 +62,10 @@ it('preserves explicitly configured public-client URLs', () => {
         partyRegistryApiBaseUrl: 'http://localhost:4102/party-registry-api',
         shellId: 'shell-super-app',
         shellPort: 3020,
-      }
-    )
+      },
+    ),
   ).toEqual({
-    ONTOS_PARTY_REGISTRY_API_BASE_URL:
-      'https://party.example.test/party-registry-api',
-    ONTOS_SHELL_GATEWAY_BASE_URL:
-      'https://gateway.example.test/shell-super-app-api',
+    ONTOS_PARTY_REGISTRY_API_BASE_URL: 'https://party.example.test/party-registry-api',
+    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://gateway.example.test/shell-super-app-api',
   });
 });

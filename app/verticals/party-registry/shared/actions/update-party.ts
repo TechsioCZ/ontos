@@ -13,10 +13,7 @@ import { PartyRefSchema } from '../resources/party.ts';
 
 export const UpdatePartyPayloadSchema = Schema.Struct({
   displayName: Schema.optionalKey(PartyDisplayNameSchema),
-  expectedRevision: Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isGreaterThan(0)
-  ),
+  expectedRevision: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)),
   externalEvidence: Schema.optionalKey(AresAppliedEvidenceSchema),
   partyRef: PartyRefSchema,
   partyType: Schema.optionalKey(PartyTypeSchema),
@@ -28,8 +25,8 @@ export const UpdatePartyPayloadSchema = Schema.Struct({
   Schema.makeFilter((input) =>
     input.displayName === undefined && input.partyType === undefined
       ? 'a display-name change or Party Type enrichment is required'
-      : undefined
-  )
+      : undefined,
+  ),
 );
 export type UpdatePartyPayload = typeof UpdatePartyPayloadSchema.Type;
 export const UpdatePartyResultSchema = PartySchema;

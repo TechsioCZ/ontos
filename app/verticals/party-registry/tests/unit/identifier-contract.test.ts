@@ -30,9 +30,7 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
     value: '1000004',
     verification: 'VERIFIED',
   });
-  expect(normalizeOfficialIdentifier(legacyShortIco).normalizedValue).toBe(
-    '01000004'
-  );
+  expect(normalizeOfficialIdentifier(legacyShortIco).normalizedValue).toBe('01000004');
 
   const dic = Schema.decodeSync(OfficialIdentifierInputSchema)({
     identifierType: 'CZ_DIC',
@@ -48,7 +46,7 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
       namespace: 'caller-controlled',
       value: '27074358',
       verification: 'VERIFIED',
-    })
+    }),
   ).toThrow();
 
   expect(() =>
@@ -56,7 +54,7 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
       identifierType: 'ICO',
       value: '270 74 358',
       verification: 'VERIFIED',
-    })
+    }),
   ).toThrow();
 
   expect(() =>
@@ -64,14 +62,14 @@ it('Official Identifier V1 accepts only IČO and Czech DIČ', () => {
       identifierType: 'VAT_ID',
       value: 'CZ27074358',
       verification: 'VERIFIED',
-    })
+    }),
   ).toThrow();
   expect(() =>
     decode(OfficialIdentifierInputSchema)({
       identifierType: 'OTHER',
       value: '1',
       verification: 'VERIFIED',
-    })
+    }),
   ).toThrow();
 });
 
@@ -84,9 +82,7 @@ it('Official Identifier writes require tenant Party identity authority and idemp
     expect(action.descriptor.legalEntityScope).toBe('optional');
     expect(action.descriptor.idempotency).toBe('required');
     // SAFETY: these permission selectors are payload-independent; no handler receives this sentinel.
-    expect(action.descriptor.tenantPermission?.({} as never)).toBe(
-      'manage_party_identity'
-    );
+    expect(action.descriptor.tenantPermission?.({} as never)).toBe('manage_party_identity');
   }
 });
 
@@ -99,8 +95,8 @@ it('only verified, formally valid identifiers create deterministic exclusive cla
         verification: 'VERIFIED',
       },
       'ORGANIZATION',
-      'party-exact-claims.v1'
-    )
+      'party-exact-claims.v1',
+    ),
   ).toBe('ICO\u0000CZ:ICO\u000027074358');
   expect(
     qualifyingClaimKey(
@@ -110,8 +106,8 @@ it('only verified, formally valid identifiers create deterministic exclusive cla
         verification: 'UNVERIFIED',
       },
       'ORGANIZATION',
-      'party-exact-claims.v1'
-    )
+      'party-exact-claims.v1',
+    ),
   ).toBe(undefined);
   expect(
     qualifyingClaimKey(
@@ -121,8 +117,8 @@ it('only verified, formally valid identifiers create deterministic exclusive cla
         verification: 'VERIFIED',
       },
       'PERSON',
-      'party-exact-claims.v1'
-    )
+      'party-exact-claims.v1',
+    ),
   ).toBe(undefined);
   expect(
     qualifyingClaimKey(
@@ -132,8 +128,8 @@ it('only verified, formally valid identifiers create deterministic exclusive cla
         verification: 'VERIFIED',
       },
       'PERSON',
-      'party-exact-claims.v1'
-    )
+      'party-exact-claims.v1',
+    ),
   ).toBe(undefined);
 });
 
@@ -155,40 +151,32 @@ it('Identifier Update is a closed evidence-backed metadata or validity command, 
     officialIdentifierRef: identifierRef,
     reason: 'Registry confirmed the existing identifier',
   };
-  expect(
-    decode(UpdatePartyOfficialIdentifierPayloadSchema)(command).change.type
-  ).toBe('SET_VERIFICATION');
+  expect(decode(UpdatePartyOfficialIdentifierPayloadSchema)(command).change.type).toBe('SET_VERIFICATION');
   expect(
     Schema.decodeSync(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       change: { type: 'END_VALIDITY', validTo: '2026-01-01T00:00:00.000Z' },
-    }).change.type
+    }).change.type,
   ).toBe('END_VALIDITY');
-  for (const forbidden of [
-    'value',
-    'normalizedValue',
-    'identifierType',
-    'namespace',
-    'partyRef',
-  ]) {
+  for (const forbidden of ['value', 'normalizedValue', 'identifierType', 'namespace', 'partyRef']) {
     expect(() =>
       decode(UpdatePartyOfficialIdentifierPayloadSchema)({
         ...command,
         [forbidden]: 'changed-identity',
-      })
+      }),
     ).toThrow();
   }
   expect(() =>
     decode(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       evidenceRefs: [],
-    })
+    }),
   ).toThrow();
   expect(() =>
     decode(UpdatePartyOfficialIdentifierPayloadSchema)({
       ...command,
       change: { type: 'REPLACE_VALUE', value: '12345678' },
-    })
+    }),
   ).toThrow();
 });
 

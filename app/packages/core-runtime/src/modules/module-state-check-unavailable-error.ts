@@ -5,5 +5,5 @@ export class ModuleStateCheckUnavailableError extends Schema.TaggedError<ModuleS
   {
     code: Schema.Literal('module_state_check_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

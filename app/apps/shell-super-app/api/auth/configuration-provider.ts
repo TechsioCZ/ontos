@@ -10,16 +10,13 @@ interface LoadConfigurationOptions<Key extends string> {
 
 export const loadConfigurationProvider = <Key extends string, Failure>(
   options: LoadConfigurationOptions<Key>,
-  unableToLoadEnvironment: () => Failure
+  unableToLoadEnvironment: () => Failure,
 ): Effect.Effect<ConfigProvider.ConfigProvider, Failure> =>
-  loadEnvironmentFileProvider(
-    options.envPath ?? APP_ENV_PATH,
-    unableToLoadEnvironment
-  ).pipe(
+  loadEnvironmentFileProvider(options.envPath ?? APP_ENV_PATH, unableToLoadEnvironment).pipe(
     Effect.map((fileProvider) =>
       (options.environment === undefined
         ? ConfigProvider.fromEnv()
         : ConfigProvider.fromEnvRecord(options.environment)
-      ).pipe(ConfigProvider.orElse(fileProvider))
-    )
+      ).pipe(ConfigProvider.orElse(fileProvider)),
+    ),
   );

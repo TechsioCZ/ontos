@@ -1,10 +1,6 @@
 type SharedRuntimeVersions = Readonly<
   Record<
-    | '@modern-js/plugin-i18n/runtime'
-    | '@modern-js/runtime'
-    | '@tanstack/react-router'
-    | 'react'
-    | 'react-dom',
+    '@modern-js/plugin-i18n/runtime' | '@modern-js/runtime' | '@tanstack/react-router' | 'react' | 'react-dom',
     string
   >
 >;

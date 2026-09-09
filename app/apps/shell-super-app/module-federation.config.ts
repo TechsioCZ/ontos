@@ -8,10 +8,7 @@ import {
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
 } from 'effect/Option';
-import {
-  getOrThrow as getResultOrThrow,
-  isSuccess as isResultSuccess,
-} from 'effect/Result';
+import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Boolean as BooleanSchema,
   Literals,
@@ -32,52 +29,34 @@ import { dependencies } from './package.json';
 
 const nonEmptyBuildStringSchema = Trim.pipe(check(isMinLength(1)));
 const getOptionalBuildConfig = (name: string): string | undefined => {
-  const decoded = decodeUnknownResult(
-    OptionFromUndefinedOr(nonEmptyBuildStringSchema)
-  )(getBuildConfigEnvironment(name));
-  return isResultSuccess(decoded)
-    ? getOptionOrUndefined(decoded.success)
-    : undefined;
+  const decoded = decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
+    getBuildConfigEnvironment(name),
+  );
+  return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
 };
 const cloudflareDeployMode = getResultOrThrow(
   decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
-    getBuildConfigEnvironment('MODERNJS_DEPLOY')
-  )
+    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
+  ),
 );
-const cloudflareDeployEnabled = optionContains(
-  cloudflareDeployMode,
-  'cloudflare'
-);
-const cloudflareWorkersDevSubdomain = getOptionalBuildConfig(
-  'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN'
-);
-const BuildBooleanSchema = Literals([
-  'true',
-  'yes',
-  'on',
-  '1',
-  'y',
-  'false',
-  'no',
-  'off',
-  '0',
-  'n',
-]).pipe(
+const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
+const cloudflareWorkersDevSubdomain = getOptionalBuildConfig('ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN');
+const BuildBooleanSchema = Literals(['true', 'yes', 'on', '1', 'y', 'false', 'no', 'off', '0', 'n']).pipe(
   decodeTo(
     BooleanSchema,
     transform({
       decode: (value) => ['true', 'yes', 'on', '1', 'y'].includes(value),
       encode: (value) => (value ? 'true' : 'false'),
-    })
-  )
+    }),
+  ),
 );
 const requireCloudflarePublicUrls = getOptionOrElse(
   getResultOrThrow(
     decodeUnknownResult(OptionFromUndefinedOr(BuildBooleanSchema))(
-      getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS')
-    )
+      getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS'),
+    ),
   ),
-  () => false
+  () => false,
 );
 
 const createRemoteManifestUrl = (options: {
@@ -103,7 +82,7 @@ const createRemoteManifestUrl = (options: {
 
   if (cloudflareDeployEnabled && requireCloudflarePublicUrls) {
     throw new Error(
-      `Cloudflare deploy needs ${options.publicUrlEnv}, ${options.manifestEnv}, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN for remote ${options.mfName}.`
+      `Cloudflare deploy needs ${options.publicUrlEnv}, ${options.manifestEnv}, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN for remote ${options.mfName}.`,
     );
   }
 
@@ -113,17 +92,13 @@ const createRemoteManifestUrl = (options: {
 const require = createRequire(import.meta.url);
 const PackageVersionSchema = Struct({ version: StringSchema });
 const packageVersion = (packageName: string): string =>
-  decodeUnknownSync(PackageVersionSchema)(
-    require(`${packageName}/package.json`)
-  ).version;
+  decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
 const i18nVersion = packageVersion('@modern-js/plugin-i18n');
 const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');
 const reactDomVersion = packageVersion('react-dom');
 
-const moduleFederationConfig: Parameters<
-  typeof createModuleFederationConfig
->[0] = createModuleFederationConfig({
+const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
     enableBridgeRouter: false,
   },

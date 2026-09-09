@@ -16,10 +16,7 @@ import {
   legalEntityRef,
 } from '../../shared/domain/counterparty-contract.ts';
 import { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
-import {
-  roleEndEvidenceIsSufficient,
-  rolePeriodStorageStateAt,
-} from '../../shared/domain/counterparty-role-period.ts';
+import { roleEndEvidenceIsSufficient, rolePeriodStorageStateAt } from '../../shared/domain/counterparty-role-period.ts';
 import type { CounterpartyRolePeriodRef } from '../../shared/resources/counterparty-role-period.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
@@ -33,15 +30,9 @@ import {
   parties,
 } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
-import {
-  requireCanonicalPartyWriteTarget,
-  resolvePartyAlias,
-} from '../merge/party-alias-resolution.service.ts';
+import { requireCanonicalPartyWriteTarget, resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 
-type CounterpartyTransaction = Pick<
-  PartyTransaction,
-  'insert' | 'select' | 'update'
->;
+type CounterpartyTransaction = Pick<PartyTransaction, 'insert' | 'select' | 'update'>;
 type CounterpartyRow = typeof counterparties.$inferSelect;
 type RolePeriodRow = typeof counterpartyRolePeriods.$inferSelect;
 type RolePeriodReadRow = typeof counterpartyRoleAdminReadModels.$inferSelect;
@@ -51,14 +42,9 @@ type CounterpartyReadRow = Pick<
 >;
 
 const lookupResultSchema = <Value>(value: Schema.Schema<Value>) =>
-  Schema.Union([
-    Schema.TaggedStruct('found', { value }),
-    Schema.TaggedStruct('not_found', {}),
-  ]);
+  Schema.Union([Schema.TaggedStruct('found', { value }), Schema.TaggedStruct('not_found', {})]);
 
-export type LookupResult<Value> = Schema.Schema.Type<
-  ReturnType<typeof lookupResultSchema<Value>>
->;
+export type LookupResult<Value> = Schema.Schema.Type<ReturnType<typeof lookupResultSchema<Value>>>;
 
 const CreateCounterpartyResultSchema = Schema.Union([
   Schema.TaggedStruct('party_alias', {
@@ -74,8 +60,7 @@ const CreateCounterpartyResultSchema = Schema.Union([
     partyRef: PartyRefSchema,
   }),
 ]);
-export type CreateCounterpartyResult =
-  typeof CreateCounterpartyResultSchema.Type;
+export type CreateCounterpartyResult = typeof CreateCounterpartyResultSchema.Type;
 
 const AddCounterpartyRoleResultSchema = Schema.Union([
   Schema.TaggedStruct('counterparty_not_found', {
@@ -85,8 +70,7 @@ const AddCounterpartyRoleResultSchema = Schema.Union([
   Schema.TaggedStruct('party_archived', { partyId: CounterpartyUuidSchema }),
   Schema.TaggedStruct('found', { value: CounterpartyRolePeriodSchema }),
 ]);
-export type AddCounterpartyRoleResult =
-  typeof AddCounterpartyRoleResultSchema.Type;
+export type AddCounterpartyRoleResult = typeof AddCounterpartyRoleResultSchema.Type;
 
 const EndCounterpartyRoleResultSchema = Schema.Union([
   Schema.TaggedStruct('already_ended', {
@@ -108,12 +92,11 @@ const EndCounterpartyRoleResultSchema = Schema.Union([
     value: CounterpartyRolePeriodSchema,
   }),
 ]);
-export type EndCounterpartyRoleResult =
-  typeof EndCounterpartyRoleResultSchema.Type;
+export type EndCounterpartyRoleResult = typeof EndCounterpartyRoleResultSchema.Type;
 
 class CounterpartyPersistenceInvariant extends Schema.TaggedError<CounterpartyPersistenceInvariant>()(
   'CounterpartyPersistenceInvariant',
-  { reason: Schema.String }
+  { reason: Schema.String },
 ) {}
 
 interface AcceptedActionEvidence {
@@ -157,8 +140,7 @@ const unavailable = (cause?: unknown) => {
   return error;
 };
 
-const instantAsDate = (instant: string): Date =>
-  DateTime.toDateUtc(DateTime.makeUnsafe(instant));
+const instantAsDate = (instant: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(instant));
 
 const dieInvariant = (reason: string): never => {
   throw new CounterpartyPersistenceInvariant({ reason });
@@ -171,20 +153,14 @@ const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
   tenantId,
 });
 
-const counterpartyRef = (
-  tenantId: string,
-  resourceId: string
-): CounterpartyRef => ({
+const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef => ({
   moduleId: 'party.registry',
   resourceId,
   resourceType: 'party.registry.counterparty',
   tenantId,
 });
 
-const rolePeriodRef = (
-  tenantId: string,
-  resourceId: string
-): CounterpartyRolePeriodRef => ({
+const rolePeriodRef = (tenantId: string, resourceId: string): CounterpartyRolePeriodRef => ({
   moduleId: 'party.registry',
   resourceId,
   resourceType: 'party.registry.counterparty-role-period',
@@ -194,9 +170,7 @@ const rolePeriodRef = (
 const rowProvenance = (row: RolePeriodReadRow): CounterpartyProvenance => {
   const [evidenceReference] = row.addEvidenceRefs;
   if (evidenceReference === undefined) {
-    return dieInvariant(
-      'Counterparty Role period violates its add-provenance invariant'
-    );
+    return dieInvariant('Counterparty Role period violates its add-provenance invariant');
   }
   return {
     evidenceReference,
@@ -206,9 +180,7 @@ const rowProvenance = (row: RolePeriodReadRow): CounterpartyProvenance => {
   };
 };
 
-const rowEndProvenance = (
-  row: RolePeriodReadRow
-): CounterpartyProvenance | null => {
+const rowEndProvenance = (row: RolePeriodReadRow): CounterpartyProvenance | null => {
   const evidenceReference = row.endEvidenceRefs?.[0];
   if (row.validTo === null) {
     return null;
@@ -219,9 +191,7 @@ const rowEndProvenance = (
     row.endProvenanceSource === null ||
     evidenceReference === undefined
   ) {
-    return dieInvariant(
-      'Counterparty Role period violates its end-provenance invariant'
-    );
+    return dieInvariant('Counterparty Role period violates its end-provenance invariant');
   }
   return {
     evidenceReference,
@@ -231,10 +201,7 @@ const rowEndProvenance = (
   };
 };
 
-const roleDto = (
-  row: RolePeriodReadRow,
-  effectiveAt?: Date
-): CounterpartyRolePeriod => ({
+const roleDto = (row: RolePeriodReadRow, effectiveAt?: Date): CounterpartyRolePeriod => ({
   endProvenance: rowEndProvenance(row),
   provenance: rowProvenance(row),
   recordedAt: row.recordedAt.toISOString(),
@@ -242,51 +209,33 @@ const roleDto = (
   // SAFETY: the owner table's role-type CHECK constraint admits only the V1 closed catalog.
   roleType: row.roleType as CounterpartyRoleType,
   // SAFETY: the owner table's lifecycle CHECK constraint admits only assertion lifecycle states.
-  state: (row.state === 'ACTIVE' &&
-  effectiveAt !== undefined &&
-  row.validTo !== null &&
-  row.validTo <= effectiveAt
+  state: (row.state === 'ACTIVE' && effectiveAt !== undefined && row.validTo !== null && row.validTo <= effectiveAt
     ? 'ENDED'
     : row.state) as CounterpartyRolePeriod['state'],
   validFrom: row.validFrom.toISOString(),
   validTo: row.validTo?.toISOString() ?? null,
 });
 
-const resolveCanonicalParty = Effect.fn(
-  'CounterpartyPersistenceService.resolveCanonicalParty'
-)(function* resolveCanonicalPartyRow(
-  transaction: CounterpartyTransaction,
-  tenantId: string,
-  storedPartyId: string
-) {
-  const resolution = yield* resolvePartyAlias(
-    transaction,
-    tenantId,
-    storedPartyId
-  );
-  const [party] = yield* transaction
-    .select()
-    .from(parties)
-    .where(
-      and(
-        eq(parties.tenantId, tenantId),
-        eq(parties.partyId, resolution.canonicalPartyId)
-      )
-    )
-    .limit(1);
-  return Option.fromUndefinedOr(party);
-}, Effect.mapError(unavailable));
+const resolveCanonicalParty = Effect.fn('CounterpartyPersistenceService.resolveCanonicalParty')(
+  function* resolveCanonicalPartyRow(transaction: CounterpartyTransaction, tenantId: string, storedPartyId: string) {
+    const resolution = yield* resolvePartyAlias(transaction, tenantId, storedPartyId);
+    const [party] = yield* transaction
+      .select()
+      .from(parties)
+      .where(and(eq(parties.tenantId, tenantId), eq(parties.partyId, resolution.canonicalPartyId)))
+      .limit(1);
+    return Option.fromUndefinedOr(party);
+  },
+  Effect.mapError(unavailable),
+);
 
 const findCounterpartyRow = (
   transaction: CounterpartyTransaction,
   tenantId: string,
   legalEntityId: string,
   counterpartyId: string,
-  lock: boolean
-): Effect.Effect<
-  Option.Option<CounterpartyRow>,
-  CounterpartyPersistenceUnavailable
-> =>
+  lock: boolean,
+): Effect.Effect<Option.Option<CounterpartyRow>, CounterpartyPersistenceUnavailable> =>
   lock
     ? transaction
         .select()
@@ -295,14 +244,14 @@ const findCounterpartyRow = (
           and(
             eq(counterparties.tenantId, tenantId),
             eq(counterparties.legalEntityId, legalEntityId),
-            eq(counterparties.counterpartyId, counterpartyId)
-          )
+            eq(counterparties.counterpartyId, counterpartyId),
+          ),
         )
         .limit(1)
         .for('update')
         .pipe(
           Effect.mapError(unavailable),
-          Effect.map((rows) => Option.fromUndefinedOr(rows[0]))
+          Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
         )
     : transaction
         .select()
@@ -311,24 +260,21 @@ const findCounterpartyRow = (
           and(
             eq(counterparties.tenantId, tenantId),
             eq(counterparties.legalEntityId, legalEntityId),
-            eq(counterparties.counterpartyId, counterpartyId)
-          )
+            eq(counterparties.counterpartyId, counterpartyId),
+          ),
         )
         .limit(1)
         .pipe(
           Effect.mapError(unavailable),
-          Effect.map((rows) => Option.fromUndefinedOr(rows[0]))
+          Effect.map((rows) => Option.fromUndefinedOr(rows[0])),
         );
 
 const findCounterpartyReadRow = (
   transaction: CounterpartyTransaction,
   tenantId: string,
   legalEntityId: string | undefined,
-  counterpartyId: string
-): Effect.Effect<
-  Option.Option<CounterpartyReadRow>,
-  CounterpartyPersistenceUnavailable
-> =>
+  counterpartyId: string,
+): Effect.Effect<Option.Option<CounterpartyReadRow>, CounterpartyPersistenceUnavailable> =>
   legalEntityId === undefined
     ? transaction
         .select()
@@ -336,8 +282,8 @@ const findCounterpartyReadRow = (
         .where(
           and(
             eq(counterpartyAdminReadModels.tenantId, tenantId),
-            eq(counterpartyAdminReadModels.counterpartyId, counterpartyId)
-          )
+            eq(counterpartyAdminReadModels.counterpartyId, counterpartyId),
+          ),
         )
         .limit(1)
         .pipe(
@@ -349,21 +295,12 @@ const findCounterpartyReadRow = (
               legalEntityId: value.legalEntityId,
               partyId: value.storedPartyId,
               tenantId: value.tenantId,
-            }))
-          )
+            })),
+          ),
         )
-    : findCounterpartyRow(
-        transaction,
-        tenantId,
-        legalEntityId,
-        counterpartyId,
-        false
-      );
+    : findCounterpartyRow(transaction, tenantId, legalEntityId, counterpartyId, false);
 
-const syncCounterpartyReadModel = (
-  transaction: CounterpartyTransaction,
-  row: CounterpartyRow
-) =>
+const syncCounterpartyReadModel = (transaction: CounterpartyTransaction, row: CounterpartyRow) =>
   transaction
     .insert(counterpartyAdminReadModels)
     .values({
@@ -377,10 +314,7 @@ const syncCounterpartyReadModel = (
     .onConflictDoNothing()
     .pipe(Effect.mapError(unavailable));
 
-const syncRoleReadModel = (
-  transaction: CounterpartyTransaction,
-  row: RolePeriodRow
-) => {
+const syncRoleReadModel = (transaction: CounterpartyTransaction, row: RolePeriodRow) => {
   const values = {
     addEvidenceRefs: row.addEvidenceRefs,
     addReason: row.addReason,
@@ -404,10 +338,7 @@ const syncRoleReadModel = (
     .values(values)
     .onConflictDoUpdate({
       set: values,
-      target: [
-        counterpartyRoleAdminReadModels.tenantId,
-        counterpartyRoleAdminReadModels.rolePeriodId,
-      ],
+      target: [counterpartyRoleAdminReadModels.tenantId, counterpartyRoleAdminReadModels.rolePeriodId],
     })
     .pipe(Effect.mapError(unavailable));
 };
@@ -417,11 +348,8 @@ const listRoleReadRows = (
   counterparty: CounterpartyReadRow,
   adminRead: boolean,
   currentOnly: boolean,
-  effectiveAt: Date
-): Effect.Effect<
-  readonly RolePeriodReadRow[],
-  CounterpartyPersistenceUnavailable
-> =>
+  effectiveAt: Date,
+): Effect.Effect<readonly RolePeriodReadRow[], CounterpartyPersistenceUnavailable> =>
   adminRead
     ? transaction
         .select()
@@ -429,26 +357,20 @@ const listRoleReadRows = (
         .where(
           and(
             eq(counterpartyRoleAdminReadModels.tenantId, counterparty.tenantId),
-            eq(
-              counterpartyRoleAdminReadModels.counterpartyId,
-              counterparty.counterpartyId
-            ),
+            eq(counterpartyRoleAdminReadModels.counterpartyId, counterparty.counterpartyId),
             currentOnly
               ? and(
                   eq(counterpartyRoleAdminReadModels.state, 'ACTIVE'),
                   lte(counterpartyRoleAdminReadModels.validFrom, effectiveAt),
                   or(
                     isNull(counterpartyRoleAdminReadModels.validTo),
-                    gt(counterpartyRoleAdminReadModels.validTo, effectiveAt)
-                  )
+                    gt(counterpartyRoleAdminReadModels.validTo, effectiveAt),
+                  ),
                 )
-              : undefined
-          )
+              : undefined,
+          ),
         )
-        .orderBy(
-          asc(counterpartyRoleAdminReadModels.validFrom),
-          asc(counterpartyRoleAdminReadModels.rolePeriodId)
-        )
+        .orderBy(asc(counterpartyRoleAdminReadModels.validFrom), asc(counterpartyRoleAdminReadModels.rolePeriodId))
         .pipe(Effect.mapError(unavailable))
     : transaction
         .select()
@@ -456,140 +378,110 @@ const listRoleReadRows = (
         .where(
           and(
             eq(counterpartyRolePeriods.tenantId, counterparty.tenantId),
-            eq(
-              counterpartyRolePeriods.legalEntityId,
-              counterparty.legalEntityId
-            ),
-            eq(
-              counterpartyRolePeriods.counterpartyId,
-              counterparty.counterpartyId
-            ),
+            eq(counterpartyRolePeriods.legalEntityId, counterparty.legalEntityId),
+            eq(counterpartyRolePeriods.counterpartyId, counterparty.counterpartyId),
             currentOnly
               ? and(
                   eq(counterpartyRolePeriods.state, 'ACTIVE'),
                   lte(counterpartyRolePeriods.validFrom, effectiveAt),
-                  or(
-                    isNull(counterpartyRolePeriods.validTo),
-                    gt(counterpartyRolePeriods.validTo, effectiveAt)
-                  )
+                  or(isNull(counterpartyRolePeriods.validTo), gt(counterpartyRolePeriods.validTo, effectiveAt)),
                 )
-              : undefined
-          )
+              : undefined,
+          ),
         )
-        .orderBy(
-          asc(counterpartyRolePeriods.validFrom),
-          asc(counterpartyRolePeriods.rolePeriodId)
-        )
+        .orderBy(asc(counterpartyRolePeriods.validFrom), asc(counterpartyRolePeriods.rolePeriodId))
         .pipe(Effect.mapError(unavailable));
 
-export const createCounterpartyRecord = Effect.fn(
-  'CounterpartyPersistenceService.createCounterpartyRecord'
-)(function* createCounterparty(
-  transaction: CounterpartyTransaction,
-  input: CreateCounterpartyInput
-): Effect.fn.Return<
-  CreateCounterpartyResult,
-  CounterpartyPersistenceUnavailable
-> {
-  const writeTarget = yield* requireCanonicalPartyWriteTarget(
-    transaction,
-    input.tenantId,
-    input.partyId
-  ).pipe(
-    Effect.map(() => ({ _tag: 'canonical' }) as const),
-    Effect.catchTags({
-      PartyAliasResolutionBrokenChain: (error) =>
-        error.missingPartyId === input.partyId
-          ? Effect.succeed({
-              _tag: 'party_not_found' as const,
-              partyId: input.partyId,
-            })
-          : Effect.fail(unavailable()),
-      PartyAliasWriteRejected: (error) =>
-        Effect.succeed({
-          _tag: 'party_alias' as const,
-          aliasPartyRef: error.aliasPartyRef,
-          canonicalPartyRef: error.canonicalPartyRef,
-        }),
-    }),
-    Effect.mapError(unavailable)
-  );
-  const nonCanonicalResult: Option.Option<CreateCounterpartyResult> =
-    Match.value(writeTarget).pipe(
-      Match.tag('canonical', () => Option.none<CreateCounterpartyResult>()),
-      Match.tag('party_alias', 'party_not_found', (result) =>
-        Option.some<CreateCounterpartyResult>(result)
-      ),
-      Match.exhaustive
+export const createCounterpartyRecord = Effect.fn('CounterpartyPersistenceService.createCounterpartyRecord')(
+  function* createCounterparty(
+    transaction: CounterpartyTransaction,
+    input: CreateCounterpartyInput,
+  ): Effect.fn.Return<CreateCounterpartyResult, CounterpartyPersistenceUnavailable> {
+    const writeTarget = yield* requireCanonicalPartyWriteTarget(transaction, input.tenantId, input.partyId).pipe(
+      Effect.map(() => ({ _tag: 'canonical' }) as const),
+      Effect.catchTags({
+        PartyAliasResolutionBrokenChain: (error) =>
+          error.missingPartyId === input.partyId
+            ? Effect.succeed({
+                _tag: 'party_not_found' as const,
+                partyId: input.partyId,
+              })
+            : Effect.fail(unavailable()),
+        PartyAliasWriteRejected: (error) =>
+          Effect.succeed({
+            _tag: 'party_alias' as const,
+            aliasPartyRef: error.aliasPartyRef,
+            canonicalPartyRef: error.canonicalPartyRef,
+          }),
+      }),
+      Effect.mapError(unavailable),
     );
-  if (Option.isSome(nonCanonicalResult)) {
-    return nonCanonicalResult.value;
-  }
-  const resolved = yield* resolveCanonicalParty(
-    transaction,
-    input.tenantId,
-    input.partyId
-  );
-  if (Option.isNone(resolved)) {
-    return { _tag: 'party_not_found', partyId: input.partyId } as const;
-  }
-  if (resolved.value.archivedAt !== null) {
-    return { _tag: 'party_archived', partyId: resolved.value.partyId } as const;
-  }
-  const inserted = yield* transaction
-    .insert(counterparties)
-    .values({
-      acceptedByActionInvocationId: input.actionInvocationId,
-      acceptedByPrincipalId: input.principalId,
-      creationReason: input.provenance.reason ?? input.provenance.method,
-      evidenceRefs: [input.provenance.evidenceReference],
-      legalEntityId: input.legalEntityId,
-      partyId: resolved.value.partyId,
-      policyVersion: input.policyVersion,
-      provenanceMethod: input.provenance.method,
-      provenanceSource: input.provenance.source,
-      sourceRecordRefs: [],
-      tenantId: input.tenantId,
-    })
-    .onConflictDoNothing()
-    .returning()
-    .pipe(Effect.mapError(unavailable));
-  const [created] = inserted;
-  const existing =
-    created ??
-    (yield* transaction
-      .select()
-      .from(counterparties)
-      .where(
-        and(
-          eq(counterparties.tenantId, input.tenantId),
-          eq(counterparties.legalEntityId, input.legalEntityId),
-          eq(counterparties.partyId, resolved.value.partyId)
+    const nonCanonicalResult: Option.Option<CreateCounterpartyResult> = Match.value(writeTarget).pipe(
+      Match.tag('canonical', () => Option.none<CreateCounterpartyResult>()),
+      Match.tag('party_alias', 'party_not_found', (result) => Option.some<CreateCounterpartyResult>(result)),
+      Match.exhaustive,
+    );
+    if (Option.isSome(nonCanonicalResult)) {
+      return nonCanonicalResult.value;
+    }
+    const resolved = yield* resolveCanonicalParty(transaction, input.tenantId, input.partyId);
+    if (Option.isNone(resolved)) {
+      return { _tag: 'party_not_found', partyId: input.partyId } as const;
+    }
+    if (resolved.value.archivedAt !== null) {
+      return { _tag: 'party_archived', partyId: resolved.value.partyId } as const;
+    }
+    const inserted = yield* transaction
+      .insert(counterparties)
+      .values({
+        acceptedByActionInvocationId: input.actionInvocationId,
+        acceptedByPrincipalId: input.principalId,
+        creationReason: input.provenance.reason ?? input.provenance.method,
+        evidenceRefs: [input.provenance.evidenceReference],
+        legalEntityId: input.legalEntityId,
+        partyId: resolved.value.partyId,
+        policyVersion: input.policyVersion,
+        provenanceMethod: input.provenance.method,
+        provenanceSource: input.provenance.source,
+        sourceRecordRefs: [],
+        tenantId: input.tenantId,
+      })
+      .onConflictDoNothing()
+      .returning()
+      .pipe(Effect.mapError(unavailable));
+    const [created] = inserted;
+    const existing =
+      created ??
+      (yield* transaction
+        .select()
+        .from(counterparties)
+        .where(
+          and(
+            eq(counterparties.tenantId, input.tenantId),
+            eq(counterparties.legalEntityId, input.legalEntityId),
+            eq(counterparties.partyId, resolved.value.partyId),
+          ),
         )
-      )
-      .limit(1)
-      .pipe(
-        Effect.mapError(unavailable),
-        Effect.map((rows) => rows[0])
-      ));
-  if (existing === undefined) {
-    return yield* unavailable();
-  }
-  yield* syncCounterpartyReadModel(transaction, existing);
-  return {
-    _tag: 'found',
-    counterpartyRef: counterpartyRef(input.tenantId, existing.counterpartyId),
-    created: created !== undefined,
-    legalEntityRef: legalEntityRef(input.tenantId, input.legalEntityId),
-    partyRef: partyRef(input.tenantId, resolved.value.partyId),
-  } as const;
-});
+        .limit(1)
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map((rows) => rows[0]),
+        ));
+    if (existing === undefined) {
+      return yield* unavailable();
+    }
+    yield* syncCounterpartyReadModel(transaction, existing);
+    return {
+      _tag: 'found',
+      counterpartyRef: counterpartyRef(input.tenantId, existing.counterpartyId),
+      created: created !== undefined,
+      legalEntityRef: legalEntityRef(input.tenantId, input.legalEntityId),
+      partyRef: partyRef(input.tenantId, resolved.value.partyId),
+    } as const;
+  },
+);
 
-const roleEndEvidence = (
-  input: AcceptedActionEvidence,
-  recordedAt: Date,
-  hasEnd: boolean
-) => {
+const roleEndEvidence = (input: AcceptedActionEvidence, recordedAt: Date, hasEnd: boolean) => {
   if (!hasEnd) {
     return {
       endEvidenceRefs: null,
@@ -612,317 +504,257 @@ const roleEndEvidence = (
   };
 };
 
-export const addCounterpartyRoleRecord = Effect.fn(
-  'CounterpartyPersistenceService.addCounterpartyRoleRecord'
-)(function* addCounterpartyRole(
-  transaction: CounterpartyTransaction,
-  input: AddCounterpartyRoleInput
-): Effect.fn.Return<
-  AddCounterpartyRoleResult,
-  CounterpartyPersistenceUnavailable
-> {
-  const counterparty = yield* findCounterpartyRow(
-    transaction,
-    input.tenantId,
-    input.legalEntityId,
-    input.counterpartyId,
-    true
-  );
-  if (Option.isNone(counterparty)) {
-    return {
-      _tag: 'counterparty_not_found',
-      counterpartyId: input.counterpartyId,
-    } as const;
-  }
-  const resolvedParty = yield* resolveCanonicalParty(
-    transaction,
-    input.tenantId,
-    counterparty.value.partyId
-  );
-  if (Option.isNone(resolvedParty)) {
-    return yield* unavailable();
-  }
-  if (resolvedParty.value.archivedAt !== null) {
-    return {
-      _tag: 'party_archived',
-      partyId: resolvedParty.value.partyId,
-    } as const;
-  }
-  const validFrom = instantAsDate(input.validFrom);
-  const validTo = input.validTo === null ? null : instantAsDate(input.validTo);
-  const recordedAt = yield* DateTime.nowAsDate;
-  const lifecycle = rolePeriodStorageStateAt(
-    { validFrom: input.validFrom, validTo: input.validTo },
-    recordedAt.toISOString()
-  );
-  const [overlap] = yield* transaction
-    .select()
-    .from(counterpartyRolePeriods)
-    .where(
-      and(
-        eq(counterpartyRolePeriods.tenantId, input.tenantId),
-        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
-        eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
-        eq(counterpartyRolePeriods.roleType, input.roleType),
-        inArray(counterpartyRolePeriods.state, ['ACTIVE', 'ENDED']),
+export const addCounterpartyRoleRecord = Effect.fn('CounterpartyPersistenceService.addCounterpartyRoleRecord')(
+  function* addCounterpartyRole(
+    transaction: CounterpartyTransaction,
+    input: AddCounterpartyRoleInput,
+  ): Effect.fn.Return<AddCounterpartyRoleResult, CounterpartyPersistenceUnavailable> {
+    const counterparty = yield* findCounterpartyRow(
+      transaction,
+      input.tenantId,
+      input.legalEntityId,
+      input.counterpartyId,
+      true,
+    );
+    if (Option.isNone(counterparty)) {
+      return {
+        _tag: 'counterparty_not_found',
+        counterpartyId: input.counterpartyId,
+      } as const;
+    }
+    const resolvedParty = yield* resolveCanonicalParty(transaction, input.tenantId, counterparty.value.partyId);
+    if (Option.isNone(resolvedParty)) {
+      return yield* unavailable();
+    }
+    if (resolvedParty.value.archivedAt !== null) {
+      return {
+        _tag: 'party_archived',
+        partyId: resolvedParty.value.partyId,
+      } as const;
+    }
+    const validFrom = instantAsDate(input.validFrom);
+    const validTo = input.validTo === null ? null : instantAsDate(input.validTo);
+    const recordedAt = yield* DateTime.nowAsDate;
+    const lifecycle = rolePeriodStorageStateAt(
+      { validFrom: input.validFrom, validTo: input.validTo },
+      recordedAt.toISOString(),
+    );
+    const [overlap] = yield* transaction
+      .select()
+      .from(counterpartyRolePeriods)
+      .where(
         and(
-          or(
-            isNull(counterpartyRolePeriods.validTo),
-            gt(counterpartyRolePeriods.validTo, validFrom)
+          eq(counterpartyRolePeriods.tenantId, input.tenantId),
+          eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+          eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
+          eq(counterpartyRolePeriods.roleType, input.roleType),
+          inArray(counterpartyRolePeriods.state, ['ACTIVE', 'ENDED']),
+          and(
+            or(isNull(counterpartyRolePeriods.validTo), gt(counterpartyRolePeriods.validTo, validFrom)),
+            validTo === null ? undefined : lt(counterpartyRolePeriods.validFrom, validTo),
           ),
-          validTo === null
-            ? undefined
-            : lt(counterpartyRolePeriods.validFrom, validTo)
-        )
+        ),
       )
-    )
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
-  if (overlap !== undefined) {
-    return { _tag: 'overlap', roleType: input.roleType } as const;
-  }
-  const [row] = yield* transaction
-    .insert(counterpartyRolePeriods)
-    .values({
-      acceptedByActionInvocationId: input.actionInvocationId,
-      acceptedByPrincipalId: input.principalId,
-      addEvidenceRefs: [input.provenance.evidenceReference],
-      addReason: input.provenance.reason ?? input.provenance.method,
-      counterpartyId: input.counterpartyId,
-      ...roleEndEvidence(input, recordedAt, validTo !== null),
-      isCurrent: lifecycle.isCurrent,
-      legalEntityId: input.legalEntityId,
-      policyVersion: input.policyVersion,
-      provenanceMethod: input.provenance.method,
-      provenanceSource: input.provenance.source,
-      roleType: input.roleType,
-      state: lifecycle.state,
-      tenantId: input.tenantId,
-      validFrom,
-      validTo,
-    })
-    .returning()
-    .pipe(Effect.mapError(unavailable));
-  if (row === undefined) {
-    return yield* unavailable();
-  }
-  yield* syncCounterpartyReadModel(transaction, counterparty.value);
-  yield* syncRoleReadModel(transaction, row);
-  return { _tag: 'found', value: roleDto(row) } as const;
-});
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (overlap !== undefined) {
+      return { _tag: 'overlap', roleType: input.roleType } as const;
+    }
+    const [row] = yield* transaction
+      .insert(counterpartyRolePeriods)
+      .values({
+        acceptedByActionInvocationId: input.actionInvocationId,
+        acceptedByPrincipalId: input.principalId,
+        addEvidenceRefs: [input.provenance.evidenceReference],
+        addReason: input.provenance.reason ?? input.provenance.method,
+        counterpartyId: input.counterpartyId,
+        ...roleEndEvidence(input, recordedAt, validTo !== null),
+        isCurrent: lifecycle.isCurrent,
+        legalEntityId: input.legalEntityId,
+        policyVersion: input.policyVersion,
+        provenanceMethod: input.provenance.method,
+        provenanceSource: input.provenance.source,
+        roleType: input.roleType,
+        state: lifecycle.state,
+        tenantId: input.tenantId,
+        validFrom,
+        validTo,
+      })
+      .returning()
+      .pipe(Effect.mapError(unavailable));
+    if (row === undefined) {
+      return yield* unavailable();
+    }
+    yield* syncCounterpartyReadModel(transaction, counterparty.value);
+    yield* syncRoleReadModel(transaction, row);
+    return { _tag: 'found', value: roleDto(row) } as const;
+  },
+);
 
-const repeatsRecordedRoleEnd = (
-  current: RolePeriodRow,
-  input: EndCounterpartyRoleInput,
-  validTo: Date
-): boolean =>
+const repeatsRecordedRoleEnd = (current: RolePeriodRow, input: EndCounterpartyRoleInput, validTo: Date): boolean =>
   current.validTo !== null &&
-  DateTime.Equivalence(
-    DateTime.makeUnsafe(current.validTo),
-    DateTime.makeUnsafe(validTo)
-  ) &&
+  DateTime.Equivalence(DateTime.makeUnsafe(current.validTo), DateTime.makeUnsafe(validTo)) &&
   current.endProvenanceMethod === input.provenance.method &&
   current.endProvenanceSource === input.provenance.source &&
   current.endEvidenceRefs?.[0] === input.provenance.evidenceReference &&
   current.endReason === (input.provenance.reason ?? input.provenance.method);
 
-export const endCounterpartyRoleRecord = Effect.fn(
-  'CounterpartyPersistenceService.endCounterpartyRoleRecord'
-)(function* endCounterpartyRole(
-  transaction: CounterpartyTransaction,
-  input: EndCounterpartyRoleInput
-): Effect.fn.Return<
-  EndCounterpartyRoleResult,
-  CounterpartyPersistenceUnavailable
-> {
-  const counterparty = yield* findCounterpartyRow(
-    transaction,
-    input.tenantId,
-    input.legalEntityId,
-    input.counterpartyId,
-    true
-  );
-  if (Option.isNone(counterparty)) {
-    return {
-      _tag: 'counterparty_not_found',
-      counterpartyId: input.counterpartyId,
-    } as const;
-  }
-  const [current] = yield* transaction
-    .select()
-    .from(counterpartyRolePeriods)
-    .where(
-      and(
-        eq(counterpartyRolePeriods.tenantId, input.tenantId),
-        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
-        eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
-        eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId)
+export const endCounterpartyRoleRecord = Effect.fn('CounterpartyPersistenceService.endCounterpartyRoleRecord')(
+  function* endCounterpartyRole(
+    transaction: CounterpartyTransaction,
+    input: EndCounterpartyRoleInput,
+  ): Effect.fn.Return<EndCounterpartyRoleResult, CounterpartyPersistenceUnavailable> {
+    const counterparty = yield* findCounterpartyRow(
+      transaction,
+      input.tenantId,
+      input.legalEntityId,
+      input.counterpartyId,
+      true,
+    );
+    if (Option.isNone(counterparty)) {
+      return {
+        _tag: 'counterparty_not_found',
+        counterpartyId: input.counterpartyId,
+      } as const;
+    }
+    const [current] = yield* transaction
+      .select()
+      .from(counterpartyRolePeriods)
+      .where(
+        and(
+          eq(counterpartyRolePeriods.tenantId, input.tenantId),
+          eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+          eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
+          eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId),
+        ),
       )
-    )
-    .limit(1)
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  if (current === undefined) {
-    return {
-      _tag: 'role_not_found',
-      rolePeriodId: input.rolePeriodId,
-    } as const;
-  }
-  const validTo = instantAsDate(input.validTo);
-  if (validTo < current.validFrom) {
-    return { _tag: 'temporal_conflict' } as const;
-  }
-  // SAFETY: the owner table's role-type CHECK constraint admits only the V1 closed catalog.
-  const roleType = current.roleType as CounterpartyRoleType;
-  if (!roleEndEvidenceIsSufficient(roleType, input.provenance.method)) {
-    return {
-      _tag: 'evidence_insufficient',
-      method: input.provenance.method,
-      roleType,
-    } as const;
-  }
-  if (repeatsRecordedRoleEnd(current, input, validTo)) {
-    return { _tag: 'found', changed: false, value: roleDto(current) } as const;
-  }
-  if (current.state !== 'ACTIVE' || current.validTo !== null) {
-    return { _tag: 'already_ended', rolePeriodId: input.rolePeriodId } as const;
-  }
-  const endedRecordedAt = yield* DateTime.nowAsDate;
-  const lifecycle = rolePeriodStorageStateAt(
-    { validFrom: current.validFrom.toISOString(), validTo: input.validTo },
-    endedRecordedAt.toISOString()
-  );
-  const [updated] = yield* transaction
-    .update(counterpartyRolePeriods)
-    .set({
-      endEvidenceRefs: [input.provenance.evidenceReference],
-      endProvenanceMethod: input.provenance.method,
-      endProvenanceSource: input.provenance.source,
-      endReason: input.provenance.reason ?? input.provenance.method,
-      endedByActionInvocationId: input.actionInvocationId,
-      endedByPrincipalId: input.principalId,
-      endedRecordedAt,
-      isCurrent: lifecycle.isCurrent,
-      state: lifecycle.state,
-      validTo,
-    })
-    .where(
-      and(
-        eq(counterpartyRolePeriods.tenantId, input.tenantId),
-        eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
-        eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
-        eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId),
-        eq(counterpartyRolePeriods.state, 'ACTIVE')
+      .limit(1)
+      .for('update')
+      .pipe(Effect.mapError(unavailable));
+    if (current === undefined) {
+      return {
+        _tag: 'role_not_found',
+        rolePeriodId: input.rolePeriodId,
+      } as const;
+    }
+    const validTo = instantAsDate(input.validTo);
+    if (validTo < current.validFrom) {
+      return { _tag: 'temporal_conflict' } as const;
+    }
+    // SAFETY: the owner table's role-type CHECK constraint admits only the V1 closed catalog.
+    const roleType = current.roleType as CounterpartyRoleType;
+    if (!roleEndEvidenceIsSufficient(roleType, input.provenance.method)) {
+      return {
+        _tag: 'evidence_insufficient',
+        method: input.provenance.method,
+        roleType,
+      } as const;
+    }
+    if (repeatsRecordedRoleEnd(current, input, validTo)) {
+      return { _tag: 'found', changed: false, value: roleDto(current) } as const;
+    }
+    if (current.state !== 'ACTIVE' || current.validTo !== null) {
+      return { _tag: 'already_ended', rolePeriodId: input.rolePeriodId } as const;
+    }
+    const endedRecordedAt = yield* DateTime.nowAsDate;
+    const lifecycle = rolePeriodStorageStateAt(
+      { validFrom: current.validFrom.toISOString(), validTo: input.validTo },
+      endedRecordedAt.toISOString(),
+    );
+    const [updated] = yield* transaction
+      .update(counterpartyRolePeriods)
+      .set({
+        endEvidenceRefs: [input.provenance.evidenceReference],
+        endProvenanceMethod: input.provenance.method,
+        endProvenanceSource: input.provenance.source,
+        endReason: input.provenance.reason ?? input.provenance.method,
+        endedByActionInvocationId: input.actionInvocationId,
+        endedByPrincipalId: input.principalId,
+        endedRecordedAt,
+        isCurrent: lifecycle.isCurrent,
+        state: lifecycle.state,
+        validTo,
+      })
+      .where(
+        and(
+          eq(counterpartyRolePeriods.tenantId, input.tenantId),
+          eq(counterpartyRolePeriods.legalEntityId, input.legalEntityId),
+          eq(counterpartyRolePeriods.counterpartyId, input.counterpartyId),
+          eq(counterpartyRolePeriods.rolePeriodId, input.rolePeriodId),
+          eq(counterpartyRolePeriods.state, 'ACTIVE'),
+        ),
       )
-    )
-    .returning()
-    .pipe(Effect.mapError(unavailable));
-  if (updated === undefined) {
-    return yield* unavailable();
-  }
-  yield* syncCounterpartyReadModel(transaction, counterparty.value);
-  yield* syncRoleReadModel(transaction, updated);
-  return {
-    _tag: 'found',
-    changed: true,
-    value: roleDto(updated, endedRecordedAt),
-  } as const;
-});
+      .returning()
+      .pipe(Effect.mapError(unavailable));
+    if (updated === undefined) {
+      return yield* unavailable();
+    }
+    yield* syncCounterpartyReadModel(transaction, counterparty.value);
+    yield* syncRoleReadModel(transaction, updated);
+    return {
+      _tag: 'found',
+      changed: true,
+      value: roleDto(updated, endedRecordedAt),
+    } as const;
+  },
+);
 
-export const findCounterpartyRecord = Effect.fn(
-  'CounterpartyPersistenceService.findCounterpartyRecord'
-)(function* findCounterparty(
-  transaction: CounterpartyTransaction,
-  tenantId: string,
-  legalEntityId: string | undefined,
-  counterpartyId: string
-): Effect.fn.Return<
-  LookupResult<
-    CounterpartyRecord & { currentRoles: readonly CounterpartyRolePeriod[] }
-  >,
-  CounterpartyPersistenceUnavailable
-> {
-  const counterparty = yield* findCounterpartyReadRow(
-    transaction,
-    tenantId,
-    legalEntityId,
-    counterpartyId
-  );
-  if (Option.isNone(counterparty)) {
-    return { _tag: 'not_found' } as const;
-  }
-  const resolvedParty = yield* resolveCanonicalParty(
-    transaction,
-    tenantId,
-    counterparty.value.partyId
-  );
-  if (Option.isNone(resolvedParty)) {
-    return yield* unavailable();
-  }
-  const now = yield* DateTime.nowAsDate;
-  const roles = yield* listRoleReadRows(
-    transaction,
-    counterparty.value,
-    legalEntityId === undefined,
-    true,
-    now
-  );
-  return {
-    _tag: 'found',
-    value: {
-      counterpartyRef: counterpartyRef(
-        tenantId,
-        counterparty.value.counterpartyId
-      ),
-      createdAt: counterparty.value.createdAt.toISOString(),
-      currentRoles: roles.map((role) => roleDto(role, now)),
-      legalEntityRef: legalEntityRef(
-        tenantId,
-        counterparty.value.legalEntityId
-      ),
-      party: {
-        archived: resolvedParty.value.archivedAt !== null,
-        canonicalPartyRef: partyRef(tenantId, resolvedParty.value.partyId),
-        displayName: resolvedParty.value.currentDisplayName,
-        // SAFETY: the owner table's Party-type CHECK constraint admits only the V1 closed catalog.
-        partyType: resolvedParty.value
-          .currentType as CounterpartyRecord['party']['partyType'],
-        storedPartyRef: partyRef(tenantId, counterparty.value.partyId),
+export const findCounterpartyRecord = Effect.fn('CounterpartyPersistenceService.findCounterpartyRecord')(
+  function* findCounterparty(
+    transaction: CounterpartyTransaction,
+    tenantId: string,
+    legalEntityId: string | undefined,
+    counterpartyId: string,
+  ): Effect.fn.Return<
+    LookupResult<CounterpartyRecord & { currentRoles: readonly CounterpartyRolePeriod[] }>,
+    CounterpartyPersistenceUnavailable
+  > {
+    const counterparty = yield* findCounterpartyReadRow(transaction, tenantId, legalEntityId, counterpartyId);
+    if (Option.isNone(counterparty)) {
+      return { _tag: 'not_found' } as const;
+    }
+    const resolvedParty = yield* resolveCanonicalParty(transaction, tenantId, counterparty.value.partyId);
+    if (Option.isNone(resolvedParty)) {
+      return yield* unavailable();
+    }
+    const now = yield* DateTime.nowAsDate;
+    const roles = yield* listRoleReadRows(transaction, counterparty.value, legalEntityId === undefined, true, now);
+    return {
+      _tag: 'found',
+      value: {
+        counterpartyRef: counterpartyRef(tenantId, counterparty.value.counterpartyId),
+        createdAt: counterparty.value.createdAt.toISOString(),
+        currentRoles: roles.map((role) => roleDto(role, now)),
+        legalEntityRef: legalEntityRef(tenantId, counterparty.value.legalEntityId),
+        party: {
+          archived: resolvedParty.value.archivedAt !== null,
+          canonicalPartyRef: partyRef(tenantId, resolvedParty.value.partyId),
+          displayName: resolvedParty.value.currentDisplayName,
+          // SAFETY: the owner table's Party-type CHECK constraint admits only the V1 closed catalog.
+          partyType: resolvedParty.value.currentType as CounterpartyRecord['party']['partyType'],
+          storedPartyRef: partyRef(tenantId, counterparty.value.partyId),
+        },
       },
-    },
-  } as const;
-});
+    } as const;
+  },
+);
 
-export const listCounterpartyRoleHistory = Effect.fn(
-  'CounterpartyPersistenceService.listCounterpartyRoleHistory'
-)(function* findCounterpartyRoleHistory(
-  transaction: CounterpartyTransaction,
-  tenantId: string,
-  legalEntityId: string | undefined,
-  counterpartyId: string
-): Effect.fn.Return<
-  LookupResult<readonly CounterpartyRolePeriod[]>,
-  CounterpartyPersistenceUnavailable
-> {
-  const counterparty = yield* findCounterpartyReadRow(
-    transaction,
-    tenantId,
-    legalEntityId,
-    counterpartyId
-  );
-  if (Option.isNone(counterparty)) {
-    return { _tag: 'not_found' } as const;
-  }
-  const now = yield* DateTime.nowAsDate;
-  const roles = yield* listRoleReadRows(
-    transaction,
-    counterparty.value,
-    legalEntityId === undefined,
-    false,
-    now
-  );
-  return {
-    _tag: 'found',
-    value: roles.map((role) => roleDto(role, now)),
-  } as const;
-});
+export const listCounterpartyRoleHistory = Effect.fn('CounterpartyPersistenceService.listCounterpartyRoleHistory')(
+  function* findCounterpartyRoleHistory(
+    transaction: CounterpartyTransaction,
+    tenantId: string,
+    legalEntityId: string | undefined,
+    counterpartyId: string,
+  ): Effect.fn.Return<LookupResult<readonly CounterpartyRolePeriod[]>, CounterpartyPersistenceUnavailable> {
+    const counterparty = yield* findCounterpartyReadRow(transaction, tenantId, legalEntityId, counterpartyId);
+    if (Option.isNone(counterparty)) {
+      return { _tag: 'not_found' } as const;
+    }
+    const now = yield* DateTime.nowAsDate;
+    const roles = yield* listRoleReadRows(transaction, counterparty.value, legalEntityId === undefined, false, now);
+    return {
+      _tag: 'found',
+      value: roles.map((role) => roleDto(role, now)),
+    } as const;
+  },
+);

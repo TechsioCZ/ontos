@@ -81,20 +81,14 @@ import type { Context, ESTree } from '@oxlint/plugins';
 
 import { optionRecord, stringArray } from '../shared/options.ts';
 import { isTestFile, matchesAny, normalisePath } from '../shared/paths.ts';
-import {
-  maskText,
-  driverText,
-  emittedText,
-  reportNode,
-} from '../shared/scaffold-text.ts';
+import { maskText, driverText, emittedText, reportNode } from '../shared/scaffold-text.ts';
 
 /**
  * Fixture files live at `tools/oxlint/<plugin>/tests/fixtures/<rule>/{valid,invalid}/<repo-like path>`.
  * Stripping that prefix lets the fixtures exercise the real production defaults instead of forcing
  * the fixture config to pass loosened options (which `run-on-repo.mts` reuses verbatim).
  */
-const FIXTURE_PREFIX =
-  /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
 /** Scaffold generators: the files whose template literals become every generated MicroVertical. */
 const DEFAULT_TEMPLATE_PATHS: readonly string[] = [
@@ -162,9 +156,7 @@ function snippetOf(text: string): string {
 }
 
 /** Which `messageId` names the right Effect-native replacement for this shape. */
-function messageIdFor(
-  text: string
-): 'tagSwitch' | 'instanceofError' | 'promiseCatchBranch' | 'tagComparison' {
+function messageIdFor(text: string): 'tagSwitch' | 'instanceofError' | 'promiseCatchBranch' | 'tagComparison' {
   if (SWITCH_SHAPE.test(text.trimStart())) return 'tagSwitch';
   if (CATCH_SHAPE.test(text.trimStart())) return 'promiseCatchBranch';
   if (INSTANCEOF_SHAPE.test(text)) return 'instanceofError';
@@ -175,22 +167,13 @@ function messageIdFor(
  * All non-overlapping matches of every pattern, earliest first. Longer matches win a tie so
  * `switch (error._tag)` is reported as a switch rather than twice.
  */
-function collectMatches(
-  text: string,
-  patterns: readonly RegExp[]
-): readonly Match[] {
+function collectMatches(text: string, patterns: readonly RegExp[]): readonly Match[] {
   const found: Match[] = [];
   for (const pattern of patterns) {
     pattern.lastIndex = 0;
     let match = pattern.exec(text);
     while (match !== null) {
-      if (
-        match[0].length > 0 &&
-        !(
-          CATCH_SHAPE.test(match[0]) &&
-          /\bEffect\s*$/u.test(text.slice(0, match.index))
-        )
-      ) {
+      if (match[0].length > 0 && !(CATCH_SHAPE.test(match[0]) && /\bEffect\s*$/u.test(text.slice(0, match.index)))) {
         found.push({
           start: match.index,
           end: match.index + match[0].length,
@@ -269,8 +252,7 @@ export const rule = defineRule({
           ignore: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs of template files exempted from this rule (default: none).',
+            description: 'Globs of template files exempted from this rule (default: none).',
           },
         },
       },
@@ -303,8 +285,7 @@ export const rule = defineRule({
         if (syntax[match.start] === ' ') continue;
         // `_tag` alone requires an actual destructuring declaration, not a coincidental
         // variable name in prose or application data. Full generated binding flow is unknown.
-        if (/^_tag/u.test(match.text) && !/\{\s*_tag\s*\}\s*=/u.test(syntax))
-          continue;
+        if (/^_tag/u.test(match.text) && !/\{\s*_tag\s*\}\s*=/u.test(syntax)) continue;
         context.report({
           node: reportNode(node, match.start, match.end),
           messageId: messageIdFor(match.text),

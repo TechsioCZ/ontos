@@ -1,31 +1,16 @@
 import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
-import type {
-  EffectBffClientOptions,
-  EffectBffRequestContext,
-} from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptions, EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
 import { Effect } from '@modern-js/plugin-bff/effect-client';
-import type {
-  HttpApi,
-  HttpApiClient,
-  HttpApiGroup,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
+import type { HttpApi, HttpApiClient, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
 import { Redacted } from 'effect';
 
-import {
-  partyRegistryApi,
-  partyRegistryApiContract,
-} from '../../shared/api.ts';
+import { partyRegistryApi, partyRegistryApiContract } from '../../shared/api.ts';
 import type { OperationContext } from '../../shared/api.ts';
 
 type PartyRegistryApiGroups =
-  typeof partyRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups>
-    ? Groups
-    : never;
+  typeof partyRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
-export type PartyRegistryHttpClient = HttpApiClient.Client<
-  Extract<PartyRegistryApiGroups, HttpApiGroup.Constraint>
->;
+export type PartyRegistryHttpClient = HttpApiClient.Client<Extract<PartyRegistryApiGroups, HttpApiGroup.Constraint>>;
 
 const traceparentOption = 'traceparent' as const;
 const requestCorrelationHeaderName = 'x-correlation-id' as const;
@@ -49,23 +34,14 @@ export interface PartyRegistryHttpRequestContextValue {
 }
 
 export const partyRegistryHttpRequestContext = (
-  options: PartyRegistryHttpClientOptions = {}
+  options: PartyRegistryHttpClientOptions = {},
 ): PartyRegistryHttpRequestContextValue => {
-  const {
-    baseUrl: configuredBaseUrl,
-    locale: requestLocale,
-    operationContext,
-  } = options;
+  const { baseUrl: configuredBaseUrl, locale: requestLocale, operationContext } = options;
   const baseUrl = configuredBaseUrl ?? partyRegistryApiContract.apiPrefix;
   const requestTraceparent = options[traceparentOption];
-  const context =
-    operationContext === undefined
-      ? { baseUrl }
-      : { baseUrl, operationContext };
+  const context = operationContext === undefined ? { baseUrl } : { baseUrl, operationContext };
   if (requestLocale === undefined) {
-    return requestTraceparent === undefined
-      ? context
-      : { ...context, requestTraceparent };
+    return requestTraceparent === undefined ? context : { ...context, requestTraceparent };
   }
   return requestTraceparent === undefined
     ? { ...context, requestLocale }
@@ -77,7 +53,7 @@ export const authenticatePartyRegistryHttpRequest = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
   requestCorrelationHeader = requestCorrelationHeaderName,
-  requestTrace?: string
+  requestTrace?: string,
 ): PartyRegistryHttpRequestContextValue =>
   requestTrace === undefined
     ? { ...context, credential, requestCorrelation, requestCorrelationHeader }
@@ -89,11 +65,8 @@ export const authenticatePartyRegistryHttpRequest = (
         requestTrace,
       };
 
-const effectBffClientOptions = (
-  context: PartyRegistryHttpRequestContextValue
-): EffectBffClientOptions => {
-  const requestCorrelationHeader =
-    context.requestCorrelationHeader ?? requestCorrelationHeaderName;
+const effectBffClientOptions = (context: PartyRegistryHttpRequestContextValue): EffectBffClientOptions => {
+  const requestCorrelationHeader = context.requestCorrelationHeader ?? requestCorrelationHeaderName;
   const transportHeaders =
     context.credential === undefined || context.requestCorrelation === undefined
       ? undefined
@@ -126,9 +99,7 @@ const effectBffClientOptions = (
 
 export const invokePartyRegistryHttpClient = <Success, Failure, Requirements>(
   context: PartyRegistryHttpRequestContextValue,
-  operation: (
-    client: PartyRegistryHttpClient
-  ) => Effect.Effect<Success, Failure, Requirements>
+  operation: (client: PartyRegistryHttpClient) => Effect.Effect<Success, Failure, Requirements>,
 ): Effect.Effect<Success, Failure | Schema.SchemaError, Requirements> =>
   makeEffectBffClient({
     api: partyRegistryApi,
@@ -136,9 +107,7 @@ export const invokePartyRegistryHttpClient = <Success, Failure, Requirements>(
     ...effectBffClientOptions(context),
   }).pipe(Effect.flatMap(operation));
 
-export const createPartyRegistryHttpClient = (
-  options: PartyRegistryHttpClientOptions = {}
-) =>
+export const createPartyRegistryHttpClient = (options: PartyRegistryHttpClientOptions = {}) =>
   makeEffectBffClient({
     api: partyRegistryApi,
     defaultApiPrefix: partyRegistryApiContract.apiPrefix,

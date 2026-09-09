@@ -5,5 +5,5 @@ export class TenantModuleStateUnchangedError extends Schema.TaggedError<TenantMo
   {
     code: Schema.Literal('tenant_module_state_unchanged'),
     reason: Schema.String,
-  }
+  },
 ) {}

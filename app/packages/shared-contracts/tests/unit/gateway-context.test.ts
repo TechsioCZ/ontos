@@ -16,7 +16,7 @@ import {
 } from '../../src/gateway-context.ts';
 
 const endpointStatuses = (
-  endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints]
+  endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints],
 ) =>
   [...endpoint.error]
     .map((schema) => schema.ast.annotations?.['httpApiStatus'])
@@ -28,9 +28,7 @@ const problemTag = (schema: Schema.Top) => {
     ? schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type
     : undefined;
   expect(tag !== undefined && SchemaAST.isLiteral(tag)).toBe(true);
-  return tag !== undefined && SchemaAST.isLiteral(tag)
-    ? tag.literal
-    : undefined;
+  return tag !== undefined && SchemaAST.isLiteral(tag) ? tag.literal : undefined;
 };
 
 const principal = {
@@ -60,7 +58,7 @@ it.effect('decodes the exact versioned public assertion contract', () =>
         alg: 'EdDSA',
         kid: 'current-2026-08',
         typ: 'JWT',
-      })
+      }),
     ).toEqual({
       alg: 'EdDSA',
       kid: 'current-2026-08',
@@ -69,91 +67,75 @@ it.effect('decodes the exact versioned public assertion contract', () =>
     expect(
       yield* Schema.decodeEffect(GatewayContextRequestSchema)({
         audience: 'inventory-stock',
-      })
+      }),
     ).toEqual({ audience: 'inventory-stock' });
     expect(
       yield* Schema.decodeEffect(GatewayContextResponseSchema)({
         expiresAt: claims.exp,
         token: 'header.payload.signature',
-      })
+      }),
     ).toEqual({ expiresAt: claims.exp, token: 'header.payload.signature' });
-  })
+  }),
 );
 
-it.effect(
-  'rejects malformed audiences, invalid ordering, and subject mismatch',
-  () =>
-    Effect.gen(function* testScenario2() {
-      expect(
-        yield* Effect.flip(
-          Schema.decodeEffect(GatewayContextRequestSchema)({
-            audience: '',
-          })
-        )
-      ).toBeDefined();
-      expect(
-        yield* Effect.flip(
-          decodeGatewayContextClaims({ ...claims, exp: claims.iat })
-        )
-      ).toBeDefined();
-      expect(
-        yield* Effect.flip(
-          decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 })
-        )
-      ).toBeDefined();
-      expect(
-        yield* Effect.flip(
-          decodeGatewayContextClaims({
-            ...claims,
-            sub: '60000000-0000-4000-8000-000000000001',
-          })
-        )
-      ).toBeDefined();
-    })
+it.effect('rejects malformed audiences, invalid ordering, and subject mismatch', () =>
+  Effect.gen(function* testScenario2() {
+    expect(
+      yield* Effect.flip(
+        Schema.decodeEffect(GatewayContextRequestSchema)({
+          audience: '',
+        }),
+      ),
+    ).toBeDefined();
+    expect(yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat }))).toBeDefined();
+    expect(yield* Effect.flip(decodeGatewayContextClaims({ ...claims, exp: claims.iat + 301 }))).toBeDefined();
+    expect(
+      yield* Effect.flip(
+        decodeGatewayContextClaims({
+          ...claims,
+          sub: '60000000-0000-4000-8000-000000000001',
+        }),
+      ),
+    ).toBeDefined();
+  }),
 );
 
-it.effect(
-  'rejects credential, display, authorization, Action, and business claim expansion',
-  () =>
-    Effect.gen(function* testScenario3() {
-      const forbiddenFields = [
-        'email',
-        'displayName',
-        'credential',
-        'rawApiKey',
-        'providerKeyId',
-        'keyId',
-        'cookie',
-        'sessionToken',
-        'actionKey',
-        'permission',
-        'policyDecision',
-        'businessPayload',
-      ] as const;
+it.effect('rejects credential, display, authorization, Action, and business claim expansion', () =>
+  Effect.gen(function* testScenario3() {
+    const forbiddenFields = [
+      'email',
+      'displayName',
+      'credential',
+      'rawApiKey',
+      'providerKeyId',
+      'keyId',
+      'cookie',
+      'sessionToken',
+      'actionKey',
+      'permission',
+      'policyDecision',
+      'businessPayload',
+    ] as const;
 
-      for (const field of forbiddenFields) {
-        expect(
-          yield* Effect.flip(
-            decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })
-          ),
-          field
-        ).toBeDefined();
-      }
+    for (const field of forbiddenFields) {
       expect(
-        yield* Effect.flip(
-          decodeGatewayContextClaims({
-            ...claims,
-            principal: { ...principal, email: 'must-not-pass@example.test' },
-          })
-        )
+        yield* Effect.flip(decodeGatewayContextClaims({ ...claims, [field]: 'must-not-pass' })),
+        field,
       ).toBeDefined();
-    })
+    }
+    expect(
+      yield* Effect.flip(
+        decodeGatewayContextClaims({
+          ...claims,
+          principal: { ...principal, email: 'must-not-pass@example.test' },
+        }),
+      ),
+    ).toBeDefined();
+  }),
 );
 
 it('schemas publish only the required public field names', () => {
-  expect(GatewayTrustedPrincipalContextSchema).toBe(
-    TrustedPrincipalContextSchema
-  );
+  expect(GatewayTrustedPrincipalContextSchema).toBe(TrustedPrincipalContextSchema);
   expect(Object.keys(GatewayContextClaimsSchema.fields).toSorted()).toEqual([
     'aud',
     'exp',
@@ -164,16 +146,14 @@ it('schemas publish only the required public field names', () => {
     'sub',
     'ver',
   ]);
-  expect(
-    Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted()
-  ).toEqual(['alg', 'kid', 'typ']);
+  expect(Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted()).toEqual(['alg', 'kid', 'typ']);
 });
 
 it('publishes the exact API-key credential boundary and failure statuses', () => {
   expect(Object.keys(ApiKeyGatewayHeadersSchema.fields)).toEqual(['x-api-key']);
-  expect(
-    endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext)
-  ).toEqual([400, 401, 403, 429, 500, 503]);
+  expect(endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext)).toEqual([
+    400, 401, 403, 429, 500, 503,
+  ]);
 });
 
 it('preserves migrated gateway Problem Details shapes and ordered endpoint membership', () => {
@@ -193,35 +173,21 @@ it('preserves migrated gateway Problem Details shapes and ordered endpoint membe
     title: 'Gateway unavailable',
     type: 'https://ontos.dev/problems/gateway-unavailable',
   } as const;
-  const decodedRateLimited = Schema.decodeSync(GatewayRateLimitedProblemSchema)(
-    rateLimited
-  );
-  expect(Schema.is(GatewayRateLimitedProblemSchema)(decodedRateLimited)).toBe(
-    true
-  );
-  expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(
-    Struct.omit(rateLimited, ['_tag'])
-  );
-  const decodedUnavailable = Schema.decodeSync(GatewayUnavailableProblemSchema)(
-    unavailable
-  );
-  expect(Schema.is(GatewayUnavailableProblemSchema)(decodedUnavailable)).toBe(
-    true
-  );
-  expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(
-    Struct.omit(unavailable, ['_tag'])
-  );
+  const decodedRateLimited = Schema.decodeSync(GatewayRateLimitedProblemSchema)(rateLimited);
+  expect(Schema.is(GatewayRateLimitedProblemSchema)(decodedRateLimited)).toBe(true);
+  expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(Struct.omit(rateLimited, ['_tag']));
+  const decodedUnavailable = Schema.decodeSync(GatewayUnavailableProblemSchema)(unavailable);
+  expect(Schema.is(GatewayUnavailableProblemSchema)(decodedUnavailable)).toBe(true);
+  expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(Struct.omit(unavailable, ['_tag']));
   expect(() =>
     Schema.decodeUnknownSync(GatewayRateLimitedProblemSchema, {
       onExcessProperty: 'error',
     })({
       ...rateLimited,
       internalDiagnostic: 'must-not-pass',
-    })
+    }),
   ).toThrow();
-  const actual = [
-    ...GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext.error,
-  ];
+  const actual = [...GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext.error];
   expect(actual.map(problemTag)).toEqual([
     'GatewayAuthenticationRequiredProblem',
     'GatewayAudienceInvalidProblem',

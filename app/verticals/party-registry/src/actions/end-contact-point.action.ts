@@ -5,10 +5,7 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
-import {
-  EndContactPointPayloadSchema,
-  EndContactPointResultSchema,
-} from '../../shared/actions/end-contact-point.ts';
+import { EndContactPointPayloadSchema, EndContactPointResultSchema } from '../../shared/actions/end-contact-point.ts';
 import type { EndContactPointPayload } from '../../shared/actions/end-contact-point.ts';
 import {
   PartyContactPointCorrectionRequired,
@@ -17,10 +14,7 @@ import {
   PartyContactPointNotFound,
   PartyContactPointPersistenceUnavailable,
 } from '../../shared/domain/contact-point-errors.ts';
-import {
-  ContactPointTimestampSchema,
-  PartyContactPointSchema,
-} from '../../shared/domain/contact-point.ts';
+import { ContactPointTimestampSchema, PartyContactPointSchema } from '../../shared/domain/contact-point.ts';
 import type {
   AddressPurposeTarget,
   ContactPointProvenance,
@@ -71,23 +65,18 @@ type EndError =
 
 interface Services {
   readonly end: (
-    command: EndContactPointCommand
-  ) => Effect.Effect<
-    Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>,
-    EndError
-  >;
+    command: EndContactPointCommand,
+  ) => Effect.Effect<Readonly<{ changed: boolean; contactPoint: PartyContactPoint }>, EndError>;
 }
 
-const handleEndContactPoint = Effect.fn(
-  'EndContactPointAction.handleEndContactPoint'
-)(function* endContactPoint(
+const handleEndContactPoint = Effect.fn('EndContactPointAction.handleEndContactPoint')(function* endContactPoint(
   payload: EndContactPointPayload,
   context: ActionHandlerContext<
     Readonly<{
       'party.registry.contact-point-ended.v1': typeof ContactPointEndedEventSchema;
     }>,
     Services
-  >
+  >,
 ) {
   const result = yield* context.services.end({
     ...payload,
@@ -117,7 +106,7 @@ const handleEndContactPoint = Effect.fn(
     createEndContactPointPartyRegistryContactPointEndedV1OutboxMessage({
       contactPointRef: contactPoint.contactPointRef,
       partyRef: contactPoint.partyRef,
-    })
+    }),
   );
   return contactPoint;
 });
@@ -156,7 +145,6 @@ export const endContactPointAction = defineAction(
   handleEndContactPoint,
   (transaction, scope) =>
     Effect.succeed({
-      end: (command: EndContactPointCommand) =>
-        endContactPointRecord(transaction, scope, command),
-    })
+      end: (command: EndContactPointCommand) => endContactPointRecord(transaction, scope, command),
+    }),
 );

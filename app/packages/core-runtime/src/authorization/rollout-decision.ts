@@ -2,12 +2,8 @@ import { DateTime, Schema } from 'effect';
 
 export const AUTHORIZATION_WOULD_DENY_SCHEMA_VERSION = 1 as const;
 
-const AuthorizationRolloutModeSchema = Schema.Literals([
-  'enforced',
-  'report_only',
-]);
-export type AuthorizationRolloutMode =
-  typeof AuthorizationRolloutModeSchema.Type;
+const AuthorizationRolloutModeSchema = Schema.Literals(['enforced', 'report_only']);
+export type AuthorizationRolloutMode = typeof AuthorizationRolloutModeSchema.Type;
 const AuthorizationDenialReasonSchema = Schema.Literals([
   'cross_tenant',
   'expired_credential',
@@ -18,8 +14,7 @@ const AuthorizationDenialReasonSchema = Schema.Literals([
   'replayed_credential',
   'wrong_audience',
 ]);
-export type AuthorizationDenialReason =
-  typeof AuthorizationDenialReasonSchema.Type;
+export type AuthorizationDenialReason = typeof AuthorizationDenialReasonSchema.Type;
 
 export interface AuthorizationRolloutRuntimeContract {
   readonly activatedAtEpochMs: number;
@@ -67,17 +62,14 @@ const nonBypassableReasons = new Set<AuthorizationDenialReason>([
   'wrong_audience',
 ]);
 
-const isReportOnlyActive = (
-  contract: AuthorizationRolloutRuntimeContract,
-  nowEpochMs: number
-): boolean =>
+const isReportOnlyActive = (contract: AuthorizationRolloutRuntimeContract, nowEpochMs: number): boolean =>
   contract.mode === 'report_only' &&
   nowEpochMs >= contract.activatedAtEpochMs &&
   nowEpochMs < contract.expiresAtEpochMs;
 
 export const decideAuthorizationRollout = (
   input: AuthorizationRolloutDecisionInput,
-  options: AuthorizationRolloutDecisionOptions
+  options: AuthorizationRolloutDecisionOptions,
 ): 'allowed' | 'denied' => {
   if (input.current === 'denied') {
     return 'denied';

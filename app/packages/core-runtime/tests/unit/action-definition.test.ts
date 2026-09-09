@@ -8,14 +8,8 @@ import {
   defineActionResourcePermission,
   validateActionDescriptorInput,
 } from '../../src/actions/definition.ts';
-import {
-  defineGlobalPolicy,
-  defineMicroverticalPolicy,
-} from '../../src/actions/policy.ts';
-import {
-  defineSystemModuleEntrypoint,
-  defineTenantModuleEntrypoint,
-} from '../../src/modules/module-entrypoint.ts';
+import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 const counterActionDescriptor = () =>
   ({
@@ -45,38 +39,30 @@ const counterActionDescriptor = () =>
     schemaVersion: '1',
   }) as const;
 
-it.effect(
-  'defines an immutable typed descriptor and decodes typed payloads and results',
-  () =>
-    Effect.gen(function* definesAnImmutableTypedDescriptorAndDecodesTyped() {
-      const registration = defineAction(
-        {
-          ...counterActionDescriptor(),
-          resultSchema: Schema.Struct({ total: Schema.Finite }),
-          schemaVersion: '1',
-        },
-        (payload) => Effect.succeed({ total: payload.amount })
-      );
+it.effect('defines an immutable typed descriptor and decodes typed payloads and results', () =>
+  Effect.gen(function* definesAnImmutableTypedDescriptorAndDecodesTyped() {
+    const registration = defineAction(
+      {
+        ...counterActionDescriptor(),
+        resultSchema: Schema.Struct({ total: Schema.Finite }),
+        schemaVersion: '1',
+      },
+      (payload) => Effect.succeed({ total: payload.amount }),
+    );
 
-      const payload = yield* decodeActionPayload(
-        registration.descriptor.payloadSchema,
-        {
-          amount: 4,
-        }
-      );
-      const result = yield* decodeActionResult(
-        registration.descriptor.resultSchema,
-        {
-          total: payload.amount,
-        }
-      );
+    const payload = yield* decodeActionPayload(registration.descriptor.payloadSchema, {
+      amount: 4,
+    });
+    const result = yield* decodeActionResult(registration.descriptor.resultSchema, {
+      total: payload.amount,
+    });
 
-      expect(payload).toEqual({ amount: 4 });
-      expect(result).toEqual({ total: 4 });
-      expect(Object.isFrozen(registration)).toBe(true);
-      expect(Object.isFrozen(registration.descriptor)).toBe(true);
-      expect(Object.isFrozen(registration.descriptor.policies)).toBe(true);
-    })
+    expect(payload).toEqual({ amount: 4 });
+    expect(result).toEqual({ total: 4 });
+    expect(Object.isFrozen(registration)).toBe(true);
+    expect(Object.isFrozen(registration.descriptor)).toBe(true);
+    expect(Object.isFrozen(registration.descriptor.policies)).toBe(true);
+  }),
 );
 
 it('keeps the Resource permission resolver private behind an immutable declaration', () => {
@@ -115,7 +101,7 @@ it('requires trusted Legal Entity scope for a Counterparty permission declaratio
       legalEntityScope: 'optional',
       owningModuleKey: 'party.registry',
       policies: [],
-    })
+    }),
   ).toThrow();
   expect(() =>
     validateActionDescriptorInput({
@@ -124,7 +110,7 @@ it('requires trusted Legal Entity scope for a Counterparty permission declaratio
       legalEntityScope: 'required',
       owningModuleKey: 'party.registry',
       policies: [],
-    })
+    }),
   ).not.toThrow();
 });
 
@@ -158,22 +144,18 @@ it.effect('uses Schema.Void for a no-payload Action', () =>
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => Effect.void
+      () => Effect.void,
     );
 
     const payload = yield* decodeActionPayload(
       registration.descriptor.payloadSchema,
-      Option.getOrUndefined(Option.none())
+      Option.getOrUndefined(Option.none()),
     );
-    const invalid = yield* Effect.flip(
-      decodeActionPayload(registration.descriptor.payloadSchema, {})
-    );
+    const invalid = yield* Effect.flip(decodeActionPayload(registration.descriptor.payloadSchema, {}));
 
     expect(payload).toBeUndefined();
-    expect(Predicate.isTagged(invalid, 'ActionPayloadValidationError')).toBe(
-      true
-    );
-  })
+    expect(Predicate.isTagged(invalid, 'ActionPayloadValidationError')).toBe(true);
+  }),
 );
 
 it('keeps the private handler outside the public Action registration', () => {
@@ -183,7 +165,7 @@ it('keeps the private handler outside the public Action registration', () => {
       resultSchema: Schema.Finite,
       schemaVersion: '1',
     },
-    (payload) => Effect.succeed(payload.amount)
+    (payload) => Effect.succeed(payload.amount),
   );
 
   expect('handler' in registration).toBe(false);
@@ -192,36 +174,28 @@ it('keeps the private handler outside the public Action registration', () => {
 
 it.effect('rejects invalid declared results through a typed error', () =>
   Effect.gen(function* rejectsInvalidDeclaredResultsThroughATypedError() {
-    const error = yield* Effect.flip(
-      decodeActionResult(Schema.Struct({ id: Schema.String }), { id: 1 })
-    );
+    const error = yield* Effect.flip(decodeActionResult(Schema.Struct({ id: Schema.String }), { id: 1 }));
 
     expect(Predicate.isTagged(error, 'ActionResultValidationError')).toBe(true);
     expect(error.code).toBe('action_result_invalid');
-  })
+  }),
 );
 
-it.effect(
-  'validates decoded DateTime and Option results through their encoded representation',
-  () =>
-    Effect.gen(
-      function* validatesDecodedDateTimeAndOptionResultsThroughTheir() {
-        const resultSchema = Schema.Struct({
-          archivedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
-          createdAt: Schema.DateTimeUtcFromString,
-        });
-        const decoded = yield* Schema.decodeEffect(resultSchema)({
-          archivedAt: null,
-          createdAt: '2026-09-07T10:30:00.000Z',
-        });
-        const result = yield* decodeActionResult(resultSchema, decoded);
+it.effect('validates decoded DateTime and Option results through their encoded representation', () =>
+  Effect.gen(function* validatesDecodedDateTimeAndOptionResultsThroughTheir() {
+    const resultSchema = Schema.Struct({
+      archivedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+      createdAt: Schema.DateTimeUtcFromString,
+    });
+    const decoded = yield* Schema.decodeEffect(resultSchema)({
+      archivedAt: null,
+      createdAt: '2026-09-07T10:30:00.000Z',
+    });
+    const result = yield* decodeActionResult(resultSchema, decoded);
 
-        expect(Option.isNone(result.archivedAt)).toBe(true);
-        expect(DateTime.formatIso(result.createdAt)).toBe(
-          '2026-09-07T10:30:00.000Z'
-        );
-      }
-    )
+    expect(Option.isNone(result.archivedAt)).toBe(true);
+    expect(DateTime.formatIso(result.createdAt)).toBe('2026-09-07T10:30:00.000Z');
+  }),
 );
 
 it('accepts global and same-owner Policy references and copies the collection', () => {
@@ -229,10 +203,7 @@ it('accepts global and same-owner Policy references and copies the collection', 
     evaluate: () => Effect.void,
     policyKey: 'global.tenant-active.v1',
   });
-  const modulePolicy = defineMicroverticalPolicy<
-    { readonly amount: number },
-    'inventory.stock'
-  >({
+  const modulePolicy = defineMicroverticalPolicy<{ readonly amount: number }, 'inventory.stock'>({
     evaluate: () => Effect.void,
     owningModuleKey: 'inventory.stock',
     policyKey: 'inventory.stock.available.v1',
@@ -266,14 +237,11 @@ it('accepts global and same-owner Policy references and copies the collection', 
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
-    () => Effect.void
+    () => Effect.void,
   );
 
   policies.pop();
-  expect(registration.descriptor.policies).toEqual([
-    globalPolicy,
-    modulePolicy,
-  ]);
+  expect(registration.descriptor.policies).toEqual([globalPolicy, modulePolicy]);
   expect(Object.isFrozen(registration.descriptor.policies)).toBe(true);
   expect(registration.descriptor.policies[0]).toBe(globalPolicy);
   expect(registration.descriptor.policies[1]).toBe(modulePolicy);
@@ -324,7 +292,7 @@ it('rejects cross-owner, string, copied, and missing Policy references at defini
         // @ts-expect-error Policy payload input must accept the decoded Action payload.
         policies: [incompatiblePayloadPolicy],
       },
-      () => Effect.void
+      () => Effect.void,
     );
     defineAction(
       {
@@ -332,7 +300,7 @@ it('rejects cross-owner, string, copied, and missing Policy references at defini
         // @ts-expect-error Raw Policy keys are not Policy object references.
         policies: ['inventory.stock.available.v1'],
       },
-      () => Effect.void
+      () => Effect.void,
     );
   };
 
@@ -343,21 +311,21 @@ it('rejects cross-owner, string, copied, and missing Policy references at defini
         // @ts-expect-error A foreign MicroVertical Policy is rejected by the owner contract.
         policies: [foreignPolicy],
       },
-      () => Effect.void
-    )
+      () => Effect.void,
+    ),
   ).toThrow();
   expect(Predicate.isFunction(compileOnlyInvalidReferences)).toBe(true);
   expect(() =>
     validateActionDescriptorInput({
       ...descriptor,
       policies: ['inventory.stock.available.v1'],
-    })
+    }),
   ).toThrow();
   expect(() =>
     validateActionDescriptorInput({
       ...descriptor,
       policies: [{ ...foreignPolicy }],
-    })
+    }),
   ).toThrow();
   expect(() => validateActionDescriptorInput(descriptor)).toThrow();
 });
@@ -391,7 +359,7 @@ it('rejects Action entrypoint owner, scope, role/access, and forged immutability
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
-    () => Effect.void
+    () => Effect.void,
   );
   expect(() =>
     validateActionDescriptorInput({
@@ -406,7 +374,7 @@ it('rejects Action entrypoint owner, scope, role/access, and forged immutability
         moduleKey: 'billing.invoice',
         role: 'action',
       }),
-    })
+    }),
   ).toThrow();
   expect(() =>
     validateActionDescriptorInput({
@@ -421,7 +389,7 @@ it('rejects Action entrypoint owner, scope, role/access, and forged immutability
         moduleKey: 'inventory.stock',
         role: 'action',
       }),
-    })
+    }),
   ).toThrow();
   expect(() =>
     validateActionDescriptorInput({
@@ -437,18 +405,18 @@ it('rejects Action entrypoint owner, scope, role/access, and forged immutability
         role: 'action',
       }),
       owningModuleKey: 'core.modules',
-    })
+    }),
   ).toThrow();
   expect(() =>
     validateActionDescriptorInput({
       ...registration.descriptor,
       entrypoint: { ...registration.descriptor.entrypoint },
-    })
+    }),
   ).toThrow();
   expect(() =>
     validateActionDescriptorInput({
       ...registration.descriptor,
       legalEntityScope: 'implicit',
-    })
+    }),
   ).toThrow();
 });

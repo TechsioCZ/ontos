@@ -16,15 +16,12 @@ type AresLookupAuthorizedInvocation = readonly [
   options?: AresLookupClientOptions,
 ];
 
-type AresLookupOperationInvocation = readonly [
-  requestCorrelation: string,
-  options?: AresLookupClientOptions,
-];
+type AresLookupOperationInvocation = readonly [requestCorrelation: string, options?: AresLookupClientOptions];
 
 const aresLookupClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: AresLookupClientOptions
+  options: AresLookupClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,21 +30,15 @@ const aresLookupClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executeAresLookupWithAuthorization = (
   payload: AresLookupRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: AresLookupAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: AresLookupAuthorizedInvocation
 ) =>
   aresLookupClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.aresLookup.execute({ headers: {}, params: {}, payload, query: {} })
-    )
+    Effect.flatMap((client) => client.aresLookup.execute({ headers: {}, params: {}, payload, query: {} })),
   );
 
 export const executeAresLookup = (
@@ -55,10 +46,5 @@ export const executeAresLookup = (
   ...[requestCorrelation, options = {}]: AresLookupOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeAresLookupWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executeAresLookupWithAuthorization(payload, credential, requestCorrelation, options),
   );

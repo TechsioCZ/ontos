@@ -15,14 +15,8 @@ import type {
 // @ontos-contribution-kind search-provider
 import { Effect, Layer, Schema } from 'effect';
 
-import {
-  PartiesProviderRequestSchema,
-  PartiesProviderResponseSchema,
-} from '../../shared/apis/parties-search.ts';
-import type {
-  PartiesProviderRequest,
-  PartiesProviderResponse,
-} from '../../shared/apis/parties-search.ts';
+import { PartiesProviderRequestSchema, PartiesProviderResponseSchema } from '../../shared/apis/parties-search.ts';
+import type { PartiesProviderRequest, PartiesProviderResponse } from '../../shared/apis/parties-search.ts';
 import { PartySearchProjectionUnavailable } from '../../shared/domain/search-projection-error.ts';
 import { PartySearchProjectionGateway } from '../../shared/domain/search-projection-gateway.ts';
 import type {
@@ -46,7 +40,7 @@ const partiesEntrypoint = defineTenantModuleEntrypoint({
 
 interface PartiesSearchServices {
   readonly load: (
-    input: PartiesProviderRequest
+    input: PartiesProviderRequest,
   ) => Effect.Effect<PartiesProviderResponse, PartySearchProjectionUnavailable>;
 }
 
@@ -71,82 +65,65 @@ const readHandlerUnavailable = (cause: PartySearchProjectionUnavailable) => {
 };
 
 const decodePartyRef = (input: CoreSearchResourceRef) =>
-  Schema.decodeUnknownEffect(PartyRefSchema)(input).pipe(
-    Effect.mapError(projectionUnavailable)
-  );
+  Schema.decodeUnknownEffect(PartyRefSchema)(input).pipe(Effect.mapError(projectionUnavailable));
 
 const decodeCounterpartyRef = (input: CoreSearchResourceRef) =>
-  Schema.decodeUnknownEffect(CounterpartyRefSchema)(input).pipe(
-    Effect.mapError(projectionUnavailable)
-  );
+  Schema.decodeUnknownEffect(CounterpartyRefSchema)(input).pipe(Effect.mapError(projectionUnavailable));
 
-const mapPartyProjectionHit = Effect.fn(
-  'PartiesProvider.mapPartyProjectionHit'
-)(function* mapPartyHit(hit: CoreSearchProjectionHit) {
+const mapPartyProjectionHit = Effect.fn('PartiesProvider.mapPartyProjectionHit')(function* mapPartyHit(
+  hit: CoreSearchProjectionHit,
+) {
   if (hit.subjectRef !== undefined || hit.matchedSubjectRef !== undefined) {
     return yield* projectionUnavailable();
   }
   const canonicalPartyRef = yield* decodePartyRef(hit.ref);
-  const matchedPartyRef =
-    hit.matchedRef === undefined
-      ? undefined
-      : yield* decodePartyRef(hit.matchedRef);
+  const matchedPartyRef = hit.matchedRef === undefined ? undefined : yield* decodePartyRef(hit.matchedRef);
   const base = { archived: hit.archived, canonicalPartyRef, title: hit.title };
   return matchedPartyRef === undefined ? base : { ...base, matchedPartyRef };
 });
 
-const mapRolePeriod = (
-  facet: NonNullable<CoreSearchProjectionHit['temporalFacets']>[number]
-) =>
+const mapRolePeriod = (facet: NonNullable<CoreSearchProjectionHit['temporalFacets']>[number]) =>
   Schema.decodeUnknownEffect(CurrentCounterpartyRoleSchema)(facet.value).pipe(
     Effect.mapError(projectionUnavailable),
     Effect.map((role) => {
       const base = { role, validFrom: facet.validFrom };
-      return facet.validTo === undefined
-        ? base
-        : { ...base, validTo: facet.validTo };
-    })
+      return facet.validTo === undefined ? base : { ...base, validTo: facet.validTo };
+    }),
   );
 
-const mapCounterpartyProjectionHit = Effect.fn(
-  'PartiesProvider.mapCounterpartyProjectionHit'
-)(function* mapCounterpartyHit(hit: CoreSearchProjectionHit) {
-  if (
-    hit.subjectRef === undefined ||
-    hit.selectedLegalEntityId === undefined ||
-    hit.matchedRef !== undefined
-  ) {
-    return yield* projectionUnavailable();
-  }
-  const [counterpartyRef, canonicalPartyRef] = yield* Effect.all(
-    [decodeCounterpartyRef(hit.ref), decodePartyRef(hit.subjectRef)],
-    { concurrency: 2 }
-  );
-  const matchedPartyRef =
-    hit.matchedSubjectRef === undefined
-      ? undefined
-      : yield* decodePartyRef(hit.matchedSubjectRef);
-  const rolePeriods = yield* Effect.forEach(
-    (hit.temporalFacets ?? []).filter(({ key }) => key === 'current-role'),
-    mapRolePeriod,
-    { concurrency: 1 }
-  );
-  const base = {
-    canonicalPartyRef,
-    counterpartyRef,
-    legalEntity: {
-      legalEntityId: hit.selectedLegalEntityId,
-      tenantId: counterpartyRef.tenantId,
-    },
-    partyArchived: hit.archived,
-    partyTitle: hit.title,
-    rolePeriods,
-  };
-  return matchedPartyRef === undefined ? base : { ...base, matchedPartyRef };
-});
+const mapCounterpartyProjectionHit = Effect.fn('PartiesProvider.mapCounterpartyProjectionHit')(
+  function* mapCounterpartyHit(hit: CoreSearchProjectionHit) {
+    if (hit.subjectRef === undefined || hit.selectedLegalEntityId === undefined || hit.matchedRef !== undefined) {
+      return yield* projectionUnavailable();
+    }
+    const [counterpartyRef, canonicalPartyRef] = yield* Effect.all(
+      [decodeCounterpartyRef(hit.ref), decodePartyRef(hit.subjectRef)],
+      { concurrency: 2 },
+    );
+    const matchedPartyRef =
+      hit.matchedSubjectRef === undefined ? undefined : yield* decodePartyRef(hit.matchedSubjectRef);
+    const rolePeriods = yield* Effect.forEach(
+      (hit.temporalFacets ?? []).filter(({ key }) => key === 'current-role'),
+      mapRolePeriod,
+      { concurrency: 1 },
+    );
+    const base = {
+      canonicalPartyRef,
+      counterpartyRef,
+      legalEntity: {
+        legalEntityId: hit.selectedLegalEntityId,
+        tenantId: counterpartyRef.tenantId,
+      },
+      partyArchived: hit.archived,
+      partyTitle: hit.title,
+      rolePeriods,
+    };
+    return matchedPartyRef === undefined ? base : { ...base, matchedPartyRef };
+  },
+);
 
 export const makePartySearchProjectionGateway = (
-  coreSearch: CoreSearchQueryRuntimePort
+  coreSearch: CoreSearchQueryRuntimePort,
 ): PartySearchProjectionGatewayPort =>
   Object.freeze({
     searchCounterparties: (input: CounterpartySearchProjectionQuery) =>
@@ -171,15 +148,15 @@ export const makePartySearchProjectionGateway = (
                 resourceType: 'party.registry.counterparty',
                 selectedLegalEntityId: input.legalEntityId,
                 tenantId: input.tenantId,
-              }
+              },
         )
         .pipe(
           Effect.flatMap((hits) =>
             Effect.forEach(hits, mapCounterpartyProjectionHit, {
               concurrency: 1,
-            })
+            }),
           ),
-          Effect.mapError(projectionUnavailable)
+          Effect.mapError(projectionUnavailable),
         ),
     searchParties: (input: PartySearchProjectionQuery) =>
       coreSearch
@@ -191,10 +168,8 @@ export const makePartySearchProjectionGateway = (
           tenantId: input.tenantId,
         })
         .pipe(
-          Effect.flatMap((hits) =>
-            Effect.forEach(hits, mapPartyProjectionHit, { concurrency: 1 })
-          ),
-          Effect.mapError(projectionUnavailable)
+          Effect.flatMap((hits) => Effect.forEach(hits, mapPartyProjectionHit, { concurrency: 1 })),
+          Effect.mapError(projectionUnavailable),
         ),
   });
 
@@ -203,13 +178,13 @@ export const PartySearchProjectionGatewayLive = Layer.effect(
   Effect.gen(function* makePartySearchProjectionGatewayLive() {
     const coreSearch = yield* CoreSearchQueryRuntime;
     return makePartySearchProjectionGateway(coreSearch);
-  })
+  }),
 );
 
 export const loadPartySearch = (
   gateway: PartySearchProjectionGatewayPort,
   scope: Readonly<{ readonly tenantId: string }>,
-  input: PartiesProviderRequest
+  input: PartiesProviderRequest,
 ) =>
   gateway
     .searchParties({
@@ -224,10 +199,10 @@ export const loadPartySearch = (
             includeArchived: input.includeArchived ?? false,
             tenantId: scope.tenantId,
           },
-          hits
+          hits,
         );
         return resolveSearchNormalization(normalized);
-      })
+      }),
     );
 
 export const partiesRead = defineRead(
@@ -253,18 +228,14 @@ export const partiesRead = defineRead(
       Effect.map((result) => ({
         evidence: { resultCount: result.length },
         result,
-      }))
+      })),
     ),
-  Effect.fn('PartiesProvider.partiesRead')(function* makePartySearchServices(
-    _transaction,
-    scope: OperationalScope
-  ) {
+  Effect.fn('PartiesProvider.partiesRead')(function* makePartySearchServices(_transaction, scope: OperationalScope) {
     const gateway = yield* PartySearchProjectionGateway;
     return {
-      load: (input: PartiesProviderRequest) =>
-        loadPartySearch(gateway, scope, input),
+      load: (input: PartiesProviderRequest) => loadPartySearch(gateway, scope, input),
     };
   }),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
-  (result) => result.map(({ ref }) => ref)
+  (result) => result.map(({ ref }) => ref),
 );

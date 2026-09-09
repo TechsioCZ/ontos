@@ -36,11 +36,7 @@ it('script classification requires a complete scripts directory segment', () => 
     'packages/core-runtime/scripts-backup/verify.mts',
     'packages/core-runtime/scripts',
   ]) {
-    for (const filename of [
-      path,
-      `/workspace/app/${path}`,
-      `C:\\workspace\\app\\${path.replaceAll('/', '\\')}`,
-    ]) {
+    for (const filename of [path, `/workspace/app/${path}`, `C:\\workspace\\app\\${path.replaceAll('/', '\\')}`]) {
       expect(isScriptFile(filename), filename).toBe(false);
       expect(isScriptFile(normalisePath(filename)), filename).toBe(false);
     }

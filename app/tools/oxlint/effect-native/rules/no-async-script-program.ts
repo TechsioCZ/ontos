@@ -67,12 +67,7 @@ import {
   propertyText,
 } from '../shared/ast.ts';
 import { stringList, booleanOption } from '../shared/options.ts';
-import {
-  globToRegExp,
-  inScriptScope,
-  scriptScope,
-  matchesAny,
-} from '../shared/paths.ts';
+import { globToRegExp, inScriptScope, scriptScope, matchesAny } from '../shared/paths.ts';
 import { provenance } from '../shared/provenance.ts';
 
 type AnyNode = ESTree.Node;
@@ -87,12 +82,7 @@ const TRANSPARENT_PARENTS = new Set([
   'TSTypeAssertion',
 ]);
 
-const FUNCTION_LIKE = new Set([
-  'ArrowFunctionExpression',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'StaticBlock',
-]);
+const FUNCTION_LIKE = new Set(['ArrowFunctionExpression', 'FunctionDeclaration', 'FunctionExpression', 'StaticBlock']);
 
 /** Length of the `async` / `await` keyword, used to anchor a diagnostic on the keyword itself. */
 const KEYWORD_LENGTH = 5;
@@ -115,14 +105,8 @@ function readOptions(raw: unknown): RuleOptions {
   const given = (raw ?? {}) as Partial<Record<keyof RuleOptions, unknown>>;
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
-    driverEdgeCallees: stringList(
-      given.driverEdgeCallees,
-      DEFAULTS.driverEdgeCallees
-    ),
-    reportTopLevelAwait: booleanOption(
-      given.reportTopLevelAwait,
-      DEFAULTS.reportTopLevelAwait
-    ),
+    driverEdgeCallees: stringList(given.driverEdgeCallees, DEFAULTS.driverEdgeCallees),
+    reportTopLevelAwait: booleanOption(given.reportTopLevelAwait, DEFAULTS.reportTopLevelAwait),
     scriptPaths: stringList(given.scriptPaths, DEFAULTS.scriptPaths),
   };
 }
@@ -162,24 +146,14 @@ function staticKeyName(node: AnyNode): string | null {
  * `Effect.tryPromise` (also `Effect["tryPromise"]`, `E.tryPromise` via `import { Effect as E }`,
  * and `import * as Effect from "effect/Effect"`) resolved to its *exported* namespace name.
  */
-function qualifiedEffectName(
-  node: AnyNode,
-  bindings: EffectBindings
-): string | null {
+function qualifiedEffectName(node: AnyNode, bindings: EffectBindings): string | null {
   return provenance(bindings.context, node);
 }
 
 /** `call` is one of the configured driver-edge constructors (`Effect.tryPromise`, …). */
-function isDriverEdgeCall(
-  call: AnyNode,
-  bindings: EffectBindings,
-  callees: readonly string[]
-): boolean {
+function isDriverEdgeCall(call: AnyNode, bindings: EffectBindings, callees: readonly string[]): boolean {
   if (call.type !== 'CallExpression') return false;
-  const qualified = qualifiedEffectName(
-    unwrap((call as ESTree.CallExpression).callee as AnyNode),
-    bindings
-  );
+  const qualified = qualifiedEffectName(unwrap((call as ESTree.CallExpression).callee as AnyNode), bindings);
   return qualified !== null && callees.includes(qualified);
 }
 
@@ -195,18 +169,12 @@ function isFirstArgumentOf(node: AnyNode, call: AnyNode): boolean {
  *   `Effect.promise(async () => …)`, `Effect.callback(async (resume) => …)` or
  *   `Effect.tryPromise({ try: async () => …, catch: toFailure })`.
  */
-function isDriverEdgeFunction(
-  fn: AnyNode,
-  bindings: EffectBindings,
-  callees: readonly string[]
-): boolean {
+function isDriverEdgeFunction(fn: AnyNode, bindings: EffectBindings, callees: readonly string[]): boolean {
   const { node, parent } = skipWrappers(fn);
   if (parent === null) return false;
-  if (isFirstArgumentOf(node, parent))
-    return isDriverEdgeCall(parent, bindings, callees);
+  if (isFirstArgumentOf(node, parent)) return isDriverEdgeCall(parent, bindings, callees);
   if (parent.type !== 'Property') return false;
-  if ((parent as Extract<ESTree.Node, { type: 'Property' }>).value !== node)
-    return false;
+  if ((parent as Extract<ESTree.Node, { type: 'Property' }>).value !== node) return false;
   if (staticKeyName(parent) !== 'try') return false;
   const object = parentOf(parent);
   if (object === null || object.type !== 'ObjectExpression') return false;
@@ -217,11 +185,7 @@ function isDriverEdgeFunction(
 }
 
 /** The function, or any enclosing function, is a driver-edge Promise seam. */
-function insideDriverEdge(
-  fn: AnyNode,
-  bindings: EffectBindings,
-  callees: readonly string[]
-): boolean {
+function insideDriverEdge(fn: AnyNode, bindings: EffectBindings, callees: readonly string[]): boolean {
   let current: AnyNode | null = fn;
   while (current !== null) {
     if (isDriverEdgeFunction(current, bindings, callees)) return true;
@@ -236,7 +200,7 @@ function insideDriverEdge(
  */
 function isRunAdapter(context: Context, node: unknown): boolean {
   return /^(?:Effect|Runtime)\.run(?:Promise|Sync|Fork|Callback)(?:Exit)?(?:With)?$/u.test(
-    provenance(context, node) ?? ''
+    provenance(context, node) ?? '',
   );
 }
 
@@ -251,38 +215,21 @@ function isRunAdapterExpression(node: AnyNode, context: Context): boolean {
   if (expression?.type !== 'CallExpression') return false;
   const callee = syntax(expression.callee);
   if (isRunAdapter(context, callee)) return true;
-  if (
-    callee?.type === 'MemberExpression' &&
-    ['then', 'catch', 'finally'].includes(propertyText(callee) ?? '')
-  )
+  if (callee?.type === 'MemberExpression' && ['then', 'catch', 'finally'].includes(propertyText(callee) ?? ''))
     return isRunAdapterExpression(callee.object, context);
-  return (
-    isPipeCall(context, callee) &&
-    expression.arguments.some((arg: AnyNode) => isRunAdapter(context, arg))
-  );
+  return isPipeCall(context, callee) && expression.arguments.some((arg: AnyNode) => isRunAdapter(context, arg));
 }
 
-const MEMBER_PARENTS = new Set([
-  'Property',
-  'MethodDefinition',
-  'PropertyDefinition',
-  'TSAbstractMethodDefinition',
-]);
+const MEMBER_PARENTS = new Set(['Property', 'MethodDefinition', 'PropertyDefinition', 'TSAbstractMethodDefinition']);
 
-function variableFunctionName(
-  fn: AnyNode
-): Extract<AnyNode, { type: 'Identifier' }> | null {
+function variableFunctionName(fn: AnyNode): Extract<AnyNode, { type: 'Identifier' }> | null {
   const parent = parentOf(fn);
-  return parent?.type === 'VariableDeclarator' &&
-    parent.init === fn &&
-    parent.id?.type === 'Identifier'
+  return parent?.type === 'VariableDeclarator' && parent.init === fn && parent.id?.type === 'Identifier'
     ? parent.id
     : null;
 }
 
-function declaredFunctionName(
-  fn: AnyNode
-): Extract<AnyNode, { type: 'Identifier' }> | null {
+function declaredFunctionName(fn: AnyNode): Extract<AnyNode, { type: 'Identifier' }> | null {
   const declared = (fn as { id?: AnyNode | null }).id;
   return declared?.type === 'Identifier' ? declared : null;
 }
@@ -290,15 +237,9 @@ function declaredFunctionName(
 /** A tight report anchor: the declared name, the member key, or the `async` keyword itself. */
 function functionAnchor(fn: AnyNode): Ranged {
   const parent = parentOf(fn);
-  const memberKey =
-    parent && MEMBER_PARENTS.has(parent.type) && parent.value === fn
-      ? parent.key
-      : null;
-  const anchor =
-    memberKey ?? variableFunctionName(fn) ?? declaredFunctionName(fn);
-  return anchor
-    ? { range: [...(anchor as ESTree.Span).range] }
-    : keywordAnchor(fn, KEYWORD_LENGTH);
+  const memberKey = parent && MEMBER_PARENTS.has(parent.type) && parent.value === fn ? parent.key : null;
+  const anchor = memberKey ?? variableFunctionName(fn) ?? declaredFunctionName(fn);
+  return anchor ? { range: [...(anchor as ESTree.Span).range] } : keywordAnchor(fn, KEYWORD_LENGTH);
 }
 
 function keywordAnchor(node: AnyNode, length: number): Ranged {
@@ -310,12 +251,7 @@ function keywordAnchor(node: AnyNode, length: number): Ranged {
 function functionLabel(fn: AnyNode): string {
   const parent = parentOf(fn);
   const key = parent?.value === fn ? staticKeyName(parent) : null;
-  return (
-    key ??
-    variableFunctionName(fn)?.name ??
-    declaredFunctionName(fn)?.name ??
-    'this callback'
-  );
+  return key ?? variableFunctionName(fn)?.name ?? declaredFunctionName(fn)?.name ?? 'this callback';
 }
 
 export const rule = defineRule({
@@ -368,11 +304,7 @@ export const rule = defineRule({
     defaultOptions: [
       {
         allowPaths: [],
-        driverEdgeCallees: [
-          'Effect.tryPromise',
-          'Effect.promise',
-          'Effect.callback',
-        ],
+        driverEdgeCallees: ['Effect.tryPromise', 'Effect.promise', 'Effect.callback'],
         reportTopLevelAwait: true,
         scriptPaths: [],
       },
@@ -384,12 +316,7 @@ export const rule = defineRule({
     // `scriptPaths` is an explicit opt-in that overrides both built-in scope checks.
     const forced = matchesAny(filename, options.scriptPaths);
     if (!forced && !inScriptScope(scriptScope(filename))) return {};
-    if (
-      options.allowPaths.some((glob) =>
-        globToRegExp(glob).test(scriptScope(filename))
-      )
-    )
-      return {};
+    if (options.allowPaths.some((glob) => globToRegExp(glob).test(scriptScope(filename)))) return {};
 
     let bindings: EffectBindings = {
       importsEffect: false,
@@ -428,21 +355,14 @@ export const rule = defineRule({
         const site = node as unknown as AnyNode;
         // `await` inside an async function is covered by the `asyncFunction` diagnostic.
         if (nearestFunction(site) !== null) return;
-        if (
-          isRunAdapterExpression(node.argument as unknown as AnyNode, context)
-        )
-          return;
+        if (isRunAdapterExpression(node.argument as unknown as AnyNode, context)) return;
         context.report({
           node: keywordAnchor(site, KEYWORD_LENGTH),
           messageId: 'topLevelAwait',
         });
       },
       VariableDeclaration(node) {
-        if (
-          options.reportTopLevelAwait &&
-          node.kind === 'await using' &&
-          nearestFunction(node) === null
-        )
+        if (options.reportTopLevelAwait && node.kind === 'await using' && nearestFunction(node) === null)
           context.report({
             node: keywordAnchor(node, KEYWORD_LENGTH),
             messageId: 'topLevelAwait',

@@ -10,14 +10,9 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('PrincipalId')
-);
+const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const status = Schema.Literals(['active', 'disabled', 'archived']);
-const reason = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500)
-);
+const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const ChangePrincipalStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     expectedStatus: status,
@@ -32,39 +27,35 @@ const ChangePrincipalStatusPayloadSchema = Schema.Union([
     reason,
   }),
 ]);
-export type ChangePrincipalStatusPayload = Schema.Schema.Type<
-  typeof ChangePrincipalStatusPayloadSchema
->;
+export type ChangePrincipalStatusPayload = Schema.Schema.Type<typeof ChangePrincipalStatusPayloadSchema>;
 const ChangePrincipalStatusResultSchema = Schema.Struct({
   previousStatus: status,
   status,
 });
-const handle = Effect.fn('ChangePrincipalStatusAction.handle')(
-  function* changePrincipalStatusActionHandle(
-    payload: ChangePrincipalStatusPayload,
-    context: ActionHandlerContext<
-      Readonly<Record<never, never>>,
-      {
-        readonly change: PrincipalManagementRepositoryService['changePrincipalStatus'];
-      }
-    >
-  ) {
-    const result = yield* context.services.change({
-      ...payload,
-      tenantId: context.scope.tenantId,
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `principal-status-prior:${payload.principalId}`,
-      resultCount: 1,
-      servingModuleKey: 'core.identity',
-      targetModuleKey: 'core.identity',
-      targetResourceId: payload.principalId,
-      targetResourceType: 'principal',
-    });
-    return result;
-  }
-);
+const handle = Effect.fn('ChangePrincipalStatusAction.handle')(function* changePrincipalStatusActionHandle(
+  payload: ChangePrincipalStatusPayload,
+  context: ActionHandlerContext<
+    Readonly<Record<never, never>>,
+    {
+      readonly change: PrincipalManagementRepositoryService['changePrincipalStatus'];
+    }
+  >,
+) {
+  const result = yield* context.services.change({
+    ...payload,
+    tenantId: context.scope.tenantId,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `principal-status-prior:${payload.principalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: payload.principalId,
+    targetResourceType: 'principal',
+  });
+  return result;
+});
 
 export const changePrincipalStatusAction = defineAction(
   {
@@ -97,8 +88,7 @@ export const changePrincipalStatusAction = defineAction(
   },
   handle,
   (transaction) => {
-    const repository =
-      principalManagementRepositoryFromTransaction(transaction);
+    const repository = principalManagementRepositoryFromTransaction(transaction);
     return Effect.succeed({ change: repository.changePrincipalStatus });
-  }
+  },
 );

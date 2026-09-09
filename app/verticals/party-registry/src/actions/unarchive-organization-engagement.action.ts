@@ -19,35 +19,26 @@ import { engagementLifecycleRegistration } from './engagement-lifecycle-registra
 export const unarchiveOrganizationEngagementAction = defineAction(
   {
     ...engagementLifecycleRegistration<OrganizationEngagementLifecyclePayload>(
-      'party.registry.unarchive-organization-engagement'
+      'party.registry.unarchive-organization-engagement',
     ),
     payloadSchema: OrganizationEngagementLifecyclePayloadSchema,
     resultSchema: OrganizationEngagementProfileSchema,
   },
-  handleEngagementLifecycle<
-    OrganizationEngagementLifecyclePayload,
-    OrganizationEngagementProfile
-  >('active'),
+  handleEngagementLifecycle<OrganizationEngagementLifecyclePayload, OrganizationEngagementProfile>('active'),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
-          reason:
-            'Organization engagement unarchive requires a trusted Legal Entity scope',
-        })
+          reason: 'Organization engagement unarchive requires a trusted Legal Entity scope',
+        }),
       );
     }
     return Effect.succeed({
       transition: (profileId) =>
-        transitionOrganizationEngagementProfile(
-          transaction,
-          scope.tenantId,
-          profileId,
-          'active'
-        ),
+        transitionOrganizationEngagementProfile(transaction, scope.tenantId, profileId, 'active'),
     });
-  }
+  },
 );
 
 // <generated-outbox-message-exports>

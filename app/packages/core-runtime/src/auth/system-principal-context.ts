@@ -63,22 +63,12 @@ type SystemPrincipalContextRepositoryLoadResult = Effect.Effect<
   SystemPrincipalContextUnavailableError
 >;
 
-interface SystemPrincipalContextRecordReader<
-  Result extends SystemPrincipalContextRepositoryLoadResult,
-> {
-  readonly load: (input: {
-    readonly principalId: string;
-    readonly tenantId: string;
-  }) => Result;
+interface SystemPrincipalContextRecordReader<Result extends SystemPrincipalContextRepositoryLoadResult> {
+  readonly load: (input: { readonly principalId: string; readonly tenantId: string }) => Result;
 }
 
-const attachCause = <Failure extends object>(
-  failure: Failure,
-  cause: unknown
-): Failure =>
-  cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', { value: cause });
+const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
+  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
 
 const unavailable = (cause?: unknown): SystemPrincipalContextUnavailableError =>
   attachCause(
@@ -86,20 +76,16 @@ const unavailable = (cause?: unknown): SystemPrincipalContextUnavailableError =>
       code: 'system_principal_context_unavailable',
       reason: 'The system principal could not be revalidated',
     }),
-    cause
+    cause,
   );
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
-const loadSystemPrincipalContextRecord = <
-  Result extends SystemPrincipalContextRepositoryLoadResult,
->(
+const loadSystemPrincipalContextRecord = <Result extends SystemPrincipalContextRepositoryLoadResult>(
   repository: SystemPrincipalContextRecordReader<Result>,
-  input: { readonly principalId: string; readonly tenantId: string }
-): Effect.Effect<
-  Option.Option<SystemPrincipalContextRecord>,
-  SystemPrincipalContextUnavailableError
-> => repository.load(input);
+  input: { readonly principalId: string; readonly tenantId: string },
+): Effect.Effect<Option.Option<SystemPrincipalContextRecord>, SystemPrincipalContextUnavailableError> =>
+  repository.load(input);
 
 const systemPrincipalContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
@@ -113,12 +99,7 @@ const systemPrincipalContextRepositoryFromDatabase = (database: {
       })
       .from(principals)
       .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
-      .where(
-        and(
-          eq(principals.tenantId, input.tenantId),
-          eq(principals.principalId, input.principalId)
-        )
-      )
+      .where(and(eq(principals.tenantId, input.tenantId), eq(principals.principalId, input.principalId)))
       .limit(1)
       .pipe(
         Effect.mapError(unavailable),
@@ -126,28 +107,20 @@ const systemPrincipalContextRepositoryFromDatabase = (database: {
         Effect.timeoutOrElse({
           duration: DATABASE_OPERATION_TIMEOUT,
           orElse: () => Effect.fail(unavailable()),
-        })
+        }),
       ),
 });
 
 const isEligibleSystemPrincipal = (
   record: SystemPrincipalContextRecord,
-  registration: SystemWorkloadRegistration
+  registration: SystemWorkloadRegistration,
 ): boolean => {
-  const kindAllowed =
-    record.kind === 'system' ||
-    (registration.allowServicePrincipal && record.kind === 'service');
-  return (
-    record.principalStatus === 'active' &&
-    record.tenantStatus === 'active' &&
-    kindAllowed
-  );
+  const kindAllowed = record.kind === 'system' || (registration.allowServicePrincipal && record.kind === 'service');
+  return record.principalStatus === 'active' && record.tenantStatus === 'active' && kindAllowed;
 };
 
-export const systemPrincipalContextResolverFromRepository = <
-  Result extends SystemPrincipalContextRepositoryLoadResult,
->(
-  repository: SystemPrincipalContextRecordReader<Result>
+export const systemPrincipalContextResolverFromRepository = <Result extends SystemPrincipalContextRepositoryLoadResult>(
+  repository: SystemPrincipalContextRecordReader<Result>,
 ) => ({
   resolve: Effect.fn('systemPrincipalContextResolverFromRepository.resolve')(
     function* resolveSystemPrincipalContext(input: {
@@ -174,16 +147,14 @@ export const systemPrincipalContextResolverFromRepository = <
       if (Option.isNone(maybeRecord)) {
         return yield* new SystemPrincipalContextDeniedError({
           code: 'system_principal_context_denied',
-          reason:
-            'The configured system principal is not active and eligible in this tenant',
+          reason: 'The configured system principal is not active and eligible in this tenant',
         });
       }
       const record = maybeRecord.value;
       if (!isEligibleSystemPrincipal(record, input.registration)) {
         return yield* new SystemPrincipalContextDeniedError({
           code: 'system_principal_context_denied',
-          reason:
-            'The configured system principal is not active and eligible in this tenant',
+          reason: 'The configured system principal is not active and eligible in this tenant',
         });
       }
       return trustResolvedSystemPrincipalContext(
@@ -192,15 +163,12 @@ export const systemPrincipalContextResolverFromRepository = <
           authMethod: 'system' as const,
           principalId: input.principalId,
           tenantId: input.tenantId,
-        })
+        }),
       );
-    }
+    },
   ),
 });
 
 export const makeSystemPrincipalContextResolver = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}) =>
-  systemPrincipalContextResolverFromRepository(
-    systemPrincipalContextRepositoryFromDatabase(database)
-  );
+}) => systemPrincipalContextResolverFromRepository(systemPrincipalContextRepositoryFromDatabase(database));

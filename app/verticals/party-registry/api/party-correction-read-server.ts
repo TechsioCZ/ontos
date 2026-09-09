@@ -28,16 +28,13 @@ const problems = makeGovernedReadProblems({
   unavailable: PartyCorrectionUnavailableProblemSchema,
 });
 
-export const partyCorrectionReadApiLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'partyCorrection',
-  (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: partyCorrectionRead,
-      })
-    )
+export const partyCorrectionReadApiLive = HttpApiBuilder.group(partyRegistryApi, 'partyCorrection', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: partyCorrectionRead,
+    }),
+  ),
 );

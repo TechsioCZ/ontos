@@ -21,11 +21,7 @@ interface ResourceLoaderArguments {
 export type ResourcePageModel =
   | {
       readonly shell: HomePageModel;
-      readonly state:
-        | 'forbidden'
-        | 'not_found'
-        | 'selection_required'
-        | 'unavailable';
+      readonly state: 'forbidden' | 'not_found' | 'selection_required' | 'unavailable';
     }
   | {
       readonly resource: ShellResourceResponse;
@@ -33,10 +29,7 @@ export type ResourcePageModel =
       readonly state: 'ready';
     };
 
-export const loader = ({
-  params,
-  request,
-}: ResourceLoaderArguments): Promise<ResourcePageModel> =>
+export const loader = ({ params, request }: ResourceLoaderArguments): Promise<ResourcePageModel> =>
   browserRuntime.runPromise(
     loadHomePageModel(request).pipe(
       Effect.timeout('30 seconds'),
@@ -44,19 +37,14 @@ export const loader = ({
         if (shell.state !== 'authenticated') {
           return Effect.succeed<ResourcePageModel>({
             shell,
-            state:
-              shell.state === 'unavailable'
-                ? 'unavailable'
-                : 'selection_required',
+            state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
           });
         }
         return shellAuthenticationClientOptionsFromRequest(request).pipe(
           Effect.flatMap((options) =>
             Schema.decodeEffect(ResourceRefSchema)(params).pipe(
-              Effect.flatMap((resourceRef) =>
-                resourceDetail(resourceRef, options)
-              )
-            )
+              Effect.flatMap((resourceRef) => resourceDetail(resourceRef, options)),
+            ),
           ),
           Effect.map((resource): ResourcePageModel => ({
             resource,
@@ -71,16 +59,10 @@ export const loader = ({
                   Match.tag(
                     'ShellAuthenticationRequiredProblem',
                     'ShellSelectionRequiredProblem',
-                    () => 'selection_required' as const
+                    () => 'selection_required' as const,
                   ),
-                  Match.tag(
-                    'ShellTargetForbiddenProblem',
-                    () => 'forbidden' as const
-                  ),
-                  Match.tag(
-                    'ShellTargetNotFoundProblem',
-                    () => 'not_found' as const
-                  ),
+                  Match.tag('ShellTargetForbiddenProblem', () => 'forbidden' as const),
+                  Match.tag('ShellTargetNotFoundProblem', () => 'not_found' as const),
                   Match.tag(
                     'ConfigError',
                     'HttpClientError',
@@ -92,15 +74,15 @@ export const loader = ({
                     'ShellPolicyUnprocessableProblem',
                     'ShellPreconditionRequiredProblem',
                     'ShellRateLimitedProblem',
-                    () => 'unavailable' as const
+                    () => 'unavailable' as const,
                   ),
-                  Match.exhaustive
+                  Match.exhaustive,
                 ),
               }),
             onSuccess: Effect.succeed,
-          })
+          }),
         );
-      })
+      }),
     ),
-    { signal: request.signal }
+    { signal: request.signal },
   );

@@ -1,13 +1,4 @@
-import {
-  Cause,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Option,
-  Predicate,
-  Schema,
-} from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
@@ -22,10 +13,7 @@ import {
   ReadPermissionDenied,
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
-import {
-  makeReadRuntime,
-  READ_RUNTIME_STAGES,
-} from '../../src/reads/runtime.ts';
+import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
@@ -61,13 +49,10 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly permissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resolvedScope?: typeof scope & { readonly legalEntityId?: string };
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
-    readonly resultTenantPermissionDecision?:
-      | 'allowed'
-      | 'denied'
-      | 'unavailable';
+    readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
-  } = {}
+  } = {},
 ) {
   let evidence = 0;
   let tenantPermissionChecks = 0;
@@ -82,9 +67,7 @@ const makeHarness = Effect.fn(function* makeHarness(
             }),
           });
         }
-        const queryHash = values
-          .filter(Predicate.isString)
-          .find((value) => /^[\da-f]{64}$/u.test(value));
+        const queryHash = values.filter(Predicate.isString).find((value) => /^[\da-f]{64}$/u.test(value));
         evidenceRows.push(queryHash === undefined ? {} : { queryHash });
         evidence += 1;
       }
@@ -104,8 +87,8 @@ const makeHarness = Effect.fn(function* makeHarness(
       Effect.ensuring(
         Effect.sync(() => {
           options.transactionEvents?.push('transaction_settled');
-        })
-      )
+        }),
+      ),
     );
   Object.defineProperty(database.executor, 'transaction', {
     value: transaction,
@@ -122,7 +105,7 @@ const makeHarness = Effect.fn(function* makeHarness(
           legalEntityIds.map((key) => ({
             decision: options.permissionDecision ?? ('unavailable' as const),
             key,
-          }))
+          })),
         );
       },
       modules: ({ moduleIds }) =>
@@ -130,7 +113,7 @@ const makeHarness = Effect.fn(function* makeHarness(
           moduleIds.map((key) => ({
             decision: options.permissionDecision ?? ('unavailable' as const),
             key,
-          }))
+          })),
         ),
       resources: ({ resources }) => {
         const [target] = resources;
@@ -139,12 +122,9 @@ const makeHarness = Effect.fn(function* makeHarness(
         }
         return Effect.succeed(
           resources.map((resource) => ({
-            decision:
-              options.resultPermissionDecision ??
-              options.permissionDecision ??
-              ('unavailable' as const),
+            decision: options.resultPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
             key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-          }))
+          })),
         );
       },
       tenants: ({ permission, tenantIds }) => {
@@ -158,15 +138,13 @@ const makeHarness = Effect.fn(function* makeHarness(
                   options.tenantPermissionDecision ??
                   options.permissionDecision ??
                   ('unavailable' as const))
-                : (options.tenantPermissionDecision ??
-                  options.permissionDecision ??
-                  ('unavailable' as const)),
+                : (options.tenantPermissionDecision ?? options.permissionDecision ?? ('unavailable' as const)),
             key,
-          }))
+          })),
         );
       },
     },
-    { onStage: (stage) => stages.push(stage) }
+    { onStage: (stage) => stages.push(stage) },
   );
   return {
     evidence: () => evidence,
@@ -208,55 +186,49 @@ const registration = (items: readonly string[] = []) =>
         result: context.services.items,
       }),
     () => Effect.succeed({ items }),
-    () => ({ kind: 'module', moduleId: 'core.shell' })
+    () => ({ kind: 'module', moduleId: 'core.shell' }),
   );
-it.effect(
-  'runs every gate before the handler and persists evidence before releasing zero results',
-  () =>
-    Effect.gen(function* migratedTest1() {
-      const harness = yield* makeHarness();
-      const result = yield* harness.runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: registration(),
-        transport: { correlationId: scope.correlationId },
-      });
-      expect(result).toEqual([]);
-      expect(harness.evidence()).toBe(1);
-      expect(harness.stages).toEqual(READ_RUNTIME_STAGES);
-    })
+it.effect('runs every gate before the handler and persists evidence before releasing zero results', () =>
+  Effect.gen(function* migratedTest1() {
+    const harness = yield* makeHarness();
+    const result = yield* harness.runtime.runRead({
+      input: {},
+      principal: scope,
+      registration: registration(),
+      transport: { correlationId: scope.correlationId },
+    });
+    expect(result).toEqual([]);
+    expect(harness.evidence()).toBe(1);
+    expect(harness.stages).toEqual(READ_RUNTIME_STAGES);
+  }),
 );
-it.effect(
-  'validates decoded transformed results and preserves their nullable JSON encoding',
-  () =>
-    Effect.gen(function* migratedTest2() {
-      const harness = yield* makeHarness();
-      const ResultSchema = Schema.Struct({
-        value: Schema.OptionFromNullOr(Schema.String),
-      });
-      const transformedRegistration = defineRead(
-        { ...registration().descriptor, resultSchema: ResultSchema },
-        () =>
-          Effect.succeed({
-            evidence: { resultCount: 1 },
-            result: { value: Option.none() },
-          }),
-        () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' })
-      );
-      const result = yield* harness.runtime.runRead({
-        input: {},
-        principal: scope,
-        registration: transformedRegistration,
-        transport: { correlationId: scope.correlationId },
-      });
-      const encoded = yield* Schema.encodeUnknownEffect(
-        Schema.toCodecJson(ResultSchema)
-      )(result);
+it.effect('validates decoded transformed results and preserves their nullable JSON encoding', () =>
+  Effect.gen(function* migratedTest2() {
+    const harness = yield* makeHarness();
+    const ResultSchema = Schema.Struct({
+      value: Schema.OptionFromNullOr(Schema.String),
+    });
+    const transformedRegistration = defineRead(
+      { ...registration().descriptor, resultSchema: ResultSchema },
+      () =>
+        Effect.succeed({
+          evidence: { resultCount: 1 },
+          result: { value: Option.none() },
+        }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const result = yield* harness.runtime.runRead({
+      input: {},
+      principal: scope,
+      registration: transformedRegistration,
+      transport: { correlationId: scope.correlationId },
+    });
+    const encoded = yield* Schema.encodeUnknownEffect(Schema.toCodecJson(ResultSchema))(result);
 
-      expect(Option.isNone(result.value)).toBe(true);
-      expect(encoded).toEqual({ value: null });
-    })
+    expect(Option.isNone(result.value)).toBe(true);
+    expect(encoded).toEqual({ value: null });
+  }),
 );
 it.effect('uses each denying Policy reference own declared HTTP status', () =>
   Effect.all(
@@ -264,10 +236,7 @@ it.effect('uses each denying Policy reference own declared HTTP status', () =>
       Effect.gen(function* migratedTest4() {
         const harness = yield* makeHarness();
         const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
-          evaluate: () =>
-            Effect.fail(
-              denyPolicy(`policy-${denialStatus}`, 'Denied by test Policy')
-            ),
+          evaluate: () => Effect.fail(denyPolicy(`policy-${denialStatus}`, 'Denied by test Policy')),
           policyKey: `global.read-policy-${denialStatus}.v1`,
         });
         const governed = defineRead(
@@ -279,7 +248,7 @@ it.effect('uses each denying Policy reference own declared HTTP status', () =>
           () => Effect.succeed({}),
           () => ({ kind: 'module', moduleId: 'core.shell' }),
           undefined,
-          [policy]
+          [policy],
         );
         const error = yield* Effect.flip(
           harness.runtime.runRead({
@@ -287,183 +256,159 @@ it.effect('uses each denying Policy reference own declared HTTP status', () =>
             principal: scope,
             registration: governed,
             transport: { correlationId: scope.correlationId },
-          })
+          }),
         );
         expect(Predicate.isTagged(error, 'ReadPolicyDenied')).toBe(true);
         expect(
           (yield* Schema.decodeEffect(ReadPolicyDenied)(
-            yield* Effect.filterOrFail(
-              Effect.succeed(error),
-              Schema.is(ReadPolicyDenied)
-            )
-          )).httpStatus
+            yield* Effect.filterOrFail(Effect.succeed(error), Schema.is(ReadPolicyDenied)),
+          )).httpStatus,
         ).toBe(denialStatus);
-      })
+      }),
     ),
-    { concurrency: 'unbounded' }
-  )
+    { concurrency: 'unbounded' },
+  ),
 );
-it.effect(
-  'executes every governed access kind and computes hash-only query evidence inside Core',
-  () =>
-    Effect.all(
-      (
-        ['detail', 'download', 'export', 'list', 'report', 'search'] as const
-      ).map((accessKind) =>
-        Effect.gen(function* migratedTest6() {
-          const legalEntityId = '00000000-0000-4000-8000-000000000004';
-          const harness = yield* makeHarness({
-            permissionDecision: 'allowed',
-            resolvedScope: { ...scope, legalEntityId },
-          });
-          const governed = defineRead(
-            {
-              ...registration().descriptor,
-              accessKind,
-              evidencePolicy: {
-                captureMode: 'hash_only',
-                policyKey: `core.shell.${accessKind}.hash.v1`,
-              },
-              legalEntityScope: 'required',
+it.effect('executes every governed access kind and computes hash-only query evidence inside Core', () =>
+  Effect.all(
+    (['detail', 'download', 'export', 'list', 'report', 'search'] as const).map((accessKind) =>
+      Effect.gen(function* migratedTest6() {
+        const legalEntityId = '00000000-0000-4000-8000-000000000004';
+        const harness = yield* makeHarness({
+          permissionDecision: 'allowed',
+          resolvedScope: { ...scope, legalEntityId },
+        });
+        const governed = defineRead(
+          {
+            ...registration().descriptor,
+            accessKind,
+            evidencePolicy: {
+              captureMode: 'hash_only',
+              policyKey: `core.shell.${accessKind}.hash.v1`,
             },
-            () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
-            () => Effect.succeed({}),
-            () => ({ kind: 'module', moduleId: 'core.shell' }),
-            accessKind === 'search' ? () => [] : undefined
-          );
-          expect(
-            yield* harness.runtime.runRead({
-              input: {},
-              principal: {
-                authBindingId: '00000000-0000-4000-8000-000000000005',
-                authContextRef: 'better-auth-session:read-runtime',
-                authMethod: 'session',
-                legalEntityId,
-                principalId: scope.principalId,
-                tenantId: scope.tenantId,
-              },
-              registration: governed,
-              transport: { correlationId: scope.correlationId },
-            })
-          ).toEqual([]);
-          expect(String(harness.evidenceRows()[0]?.queryHash)).toMatch(
-            /^[\da-f]{64}$/u
-          );
-        })
-      ),
-      { concurrency: 'unbounded' }
-    )
-);
-it.effect(
-  'rejects invalid input before opening a transaction or executing a handler',
-  () =>
-    Effect.gen(function* migratedTest7() {
-      const harness = yield* makeHarness();
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: { unexpected: Symbol('invalid') },
-          principal: {},
-          registration: registration(),
-          transport: {},
-        })
-      );
-      expect(Predicate.isTagged(error, 'ReadInputValidationError')).toBe(true);
-      expect(harness.evidence()).toBe(0);
-    })
-);
-it.effect(
-  'preserves typed result-validation failure across transaction rollback',
-  () =>
-    Effect.gen(function* migratedTest8() {
-      const harness = yield* makeHarness();
-      const invalidRegistration = defineRead(
-        registration().descriptor,
-        () => {
-          const result: string[] = [];
-          const handlerResult = { evidence: { resultCount: 1 }, result };
-          Object.defineProperty(handlerResult, 'result', { value: 42 });
-          return Effect.succeed(handlerResult);
-        },
-        () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' })
-      );
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: {
-            authBindingId: '00000000-0000-4000-8000-000000000005',
-            authContextRef: 'better-auth-session:read-runtime',
-            authMethod: 'session',
-            principalId: scope.principalId,
-            tenantId: scope.tenantId,
+            legalEntityScope: 'required',
           },
-          registration: invalidRegistration,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(error, 'ReadResultValidationError')).toBe(true);
-      expect(harness.evidence()).toBe(0);
-    })
+          () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+          () => Effect.succeed({}),
+          () => ({ kind: 'module', moduleId: 'core.shell' }),
+          accessKind === 'search' ? () => [] : undefined,
+        );
+        expect(
+          yield* harness.runtime.runRead({
+            input: {},
+            principal: {
+              authBindingId: '00000000-0000-4000-8000-000000000005',
+              authContextRef: 'better-auth-session:read-runtime',
+              authMethod: 'session',
+              legalEntityId,
+              principalId: scope.principalId,
+              tenantId: scope.tenantId,
+            },
+            registration: governed,
+            transport: { correlationId: scope.correlationId },
+          }),
+        ).toEqual([]);
+        expect(String(harness.evidenceRows()[0]?.queryHash)).toMatch(/^[\da-f]{64}$/u);
+      }),
+    ),
+    { concurrency: 'unbounded' },
+  ),
 );
-it.effect(
-  'never releases an allowed result when required evidence persistence fails',
-  () =>
-    Effect.gen(function* migratedTest9() {
-      const harness = yield* makeHarness({ failEvidence: true });
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: scope,
-          registration: registration(),
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(error, 'ReadEvidencePersistenceError')).toBe(
-        true
-      );
-      expect(harness.evidence()).toBe(0);
-    })
+it.effect('rejects invalid input before opening a transaction or executing a handler', () =>
+  Effect.gen(function* migratedTest7() {
+    const harness = yield* makeHarness();
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: { unexpected: Symbol('invalid') },
+        principal: {},
+        registration: registration(),
+        transport: {},
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ReadInputValidationError')).toBe(true);
+    expect(harness.evidence()).toBe(0);
+  }),
 );
-it.effect(
-  'preserves scoped service-factory unavailability and never invokes the handler',
-  () =>
-    Effect.gen(function* migratedTest10() {
-      const harness = yield* makeHarness();
-      let handlerCalls = 0;
-      const unavailableRegistration = defineRead(
-        registration().descriptor,
-        () => {
-          handlerCalls += 1;
-          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+it.effect('preserves typed result-validation failure across transaction rollback', () =>
+  Effect.gen(function* migratedTest8() {
+    const harness = yield* makeHarness();
+    const invalidRegistration = defineRead(
+      registration().descriptor,
+      () => {
+        const result: string[] = [];
+        const handlerResult = { evidence: { resultCount: 1 }, result };
+        Object.defineProperty(handlerResult, 'result', { value: 42 });
+        return Effect.succeed(handlerResult);
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: {
+          authBindingId: '00000000-0000-4000-8000-000000000005',
+          authContextRef: 'better-auth-session:read-runtime',
+          authMethod: 'session',
+          principalId: scope.principalId,
+          tenantId: scope.tenantId,
         },
-        () =>
-          Effect.fail(
-            new OperationContextUnavailable({
-              code: 'operation_context_unavailable',
-              reason: 'The owner repository scope is temporarily unavailable',
-            })
-          ),
-        () => ({ kind: 'module', moduleId: 'core.shell' })
-      );
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: scope,
-          registration: unavailableRegistration,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(error, 'OperationContextUnavailable')).toBe(
-        true
-      );
-      expect(handlerCalls).toBe(0);
-      expect(harness.evidence()).toBe(0);
-    })
+        registration: invalidRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ReadResultValidationError')).toBe(true);
+    expect(harness.evidence()).toBe(0);
+  }),
 );
-const counterpartyReadRegistration = (
-  legalEntityScope: 'required' | 'optional',
-  onHandler: () => void
-) =>
+it.effect('never releases an allowed result when required evidence persistence fails', () =>
+  Effect.gen(function* migratedTest9() {
+    const harness = yield* makeHarness({ failEvidence: true });
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: registration(),
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ReadEvidencePersistenceError')).toBe(true);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+it.effect('preserves scoped service-factory unavailability and never invokes the handler', () =>
+  Effect.gen(function* migratedTest10() {
+    const harness = yield* makeHarness();
+    let handlerCalls = 0;
+    const unavailableRegistration = defineRead(
+      registration().descriptor,
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
+      () =>
+        Effect.fail(
+          new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'The owner repository scope is temporarily unavailable',
+          }),
+        ),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: unavailableRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(error, 'OperationContextUnavailable')).toBe(true);
+    expect(handlerCalls).toBe(0);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+const counterpartyReadRegistration = (legalEntityScope: 'required' | 'optional', onHandler: () => void) =>
   defineRead(
     {
       ...registration().descriptor,
@@ -475,7 +420,7 @@ const counterpartyReadRegistration = (
       return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
     },
     () => Effect.succeed({}),
-    () => ({ kind: 'legal_entity', permission: 'read_counterparty' })
+    () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
   );
 
 const counterpartyReadPrincipal = (legalEntityId: string) => ({
@@ -487,100 +432,268 @@ const counterpartyReadPrincipal = (legalEntityId: string) => ({
   tenantId: scope.tenantId,
 });
 
-it.effect(
-  'persists sanitized permission denial and never invokes the private handler',
-  () =>
-    Effect.gen(function* migratedTest11() {
-      const legalEntityId = '00000000-0000-4000-8000-000000000004';
-      const legalEntityPermissions: (string | undefined)[] = [];
-      const harness = yield* makeHarness({
-        onLegalEntityPermission: (permission) =>
-          legalEntityPermissions.push(permission),
-        permissionDecision: 'denied',
-        resolvedScope: { ...scope, legalEntityId },
-      });
-      let handlerCalls = 0;
-      const deniedRegistration = counterpartyReadRegistration(
-        'required',
-        () => {
-          handlerCalls += 1;
-        }
-      );
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: counterpartyReadPrincipal(legalEntityId),
-          registration: deniedRegistration,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(error, 'ReadPermissionDenied')).toBe(true);
-      expect(legalEntityPermissions).toEqual(['read_counterparty']);
-      expect(handlerCalls).toBe(0);
-      expect(harness.evidence()).toBe(1);
-    })
+it.effect('persists sanitized permission denial and never invokes the private handler', () =>
+  Effect.gen(function* migratedTest11() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const legalEntityPermissions: (string | undefined)[] = [];
+    const harness = yield* makeHarness({
+      onLegalEntityPermission: (permission) => legalEntityPermissions.push(permission),
+      permissionDecision: 'denied',
+      resolvedScope: { ...scope, legalEntityId },
+    });
+    let handlerCalls = 0;
+    const deniedRegistration = counterpartyReadRegistration('required', () => {
+      handlerCalls += 1;
+    });
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: deniedRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ReadPermissionDenied')).toBe(true);
+    expect(legalEntityPermissions).toEqual(['read_counterparty']);
+    expect(handlerCalls).toBe(0);
+    expect(harness.evidence()).toBe(1);
+  }),
 );
-it.effect(
-  'fails closed when explicit Counterparty read authority is unavailable',
-  () =>
-    Effect.gen(function* migratedTest12() {
-      const legalEntityId = '00000000-0000-4000-8000-000000000004';
-      let handlerCalls = 0;
-      const harness = yield* makeHarness({
-        permissionDecision: 'unavailable',
-        resolvedScope: { ...scope, legalEntityId },
-      });
-      const counterpartyRead = counterpartyReadRegistration('optional', () => {
+it.effect('fails closed when explicit Counterparty read authority is unavailable', () =>
+  Effect.gen(function* migratedTest12() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    let handlerCalls = 0;
+    const harness = yield* makeHarness({
+      permissionDecision: 'unavailable',
+      resolvedScope: { ...scope, legalEntityId },
+    });
+    const counterpartyRead = counterpartyReadRegistration('optional', () => {
+      handlerCalls += 1;
+    });
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: counterpartyRead,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ReadPermissionUnavailable')).toBe(true);
+    expect(handlerCalls).toBe(0);
+    expect(harness.evidence()).toBe(0);
+  }),
+);
+it.effect('derives the authorized resource from decoded input and ignores conflicting transport hints', () =>
+  Effect.gen(function* migratedTest13() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    let authorizedTarget: { moduleId: string; resourceId: string; resourceType: string } | undefined;
+    const harness = yield* makeHarness({
+      onResourceTarget: (target) => {
+        authorizedTarget = target;
+      },
+      permissionDecision: 'allowed',
+      resolvedScope: { ...scope, legalEntityId },
+    });
+    const target = {
+      moduleId: 'inventory.stock',
+      resourceId: 'stock-1',
+      resourceType: 'inventory.stock.item',
+    };
+    const targetRegistration = defineRead(
+      {
+        ...registration().descriptor,
+        inputSchema: ResourceTargetSchema,
+        legalEntityScope: 'required',
+        permissionTarget: 'resource',
+        resultSchema: Schema.String,
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'visible' }),
+      () => Effect.succeed({}),
+      (input) => ({ kind: 'resource', resource: input }),
+    );
+    const result = yield* harness.runtime.runRead({
+      input: target,
+      principal: {
+        ...scope,
+        authBindingId: '00000000-0000-4000-8000-000000000005',
+        authContextRef: 'better-auth-session:read-runtime',
+        authMethod: 'session',
+        legalEntityId,
+      },
+      registration: targetRegistration,
+      transport: {
+        correlationId: scope.correlationId,
+        targetModuleKey: 'forged.module',
+        targetResourceId: 'forged-resource',
+        targetResourceType: 'forged.type',
+      },
+    });
+    expect(result).toBe('visible');
+    expect(authorizedTarget).toEqual(target);
+  }),
+);
+it.effect('authorizes a canonical Resource through explicit tenant Party administration alternatives', () =>
+  Effect.gen(function* migratedTest14() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const target = {
+      moduleId: 'party.registry',
+      resourceId: 'counterparty-1',
+      resourceType: 'counterparty',
+    };
+    const policyTargets: unknown[] = [];
+    const policy = defineGlobalPolicy<typeof target>({
+      evaluate: ({ target: policyTarget }) => {
+        policyTargets.push(policyTarget);
+        return Effect.void;
+      },
+      policyKey: 'party.registry.counterparty-read.v1',
+    });
+    let handlerCalls = 0;
+    const counterpartyRead = defineRead(
+      {
+        ...registration().descriptor,
+        inputSchema: ResourceTargetSchema,
+        legalEntityScope: 'required',
+        permissionTarget: 'resource',
+        policies: [{ denialStatus: 422, policyKey: policy.policyKey }],
+        resultSchema: Schema.String,
+      },
+      () => {
         handlerCalls += 1;
-      });
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: counterpartyReadPrincipal(legalEntityId),
-          registration: counterpartyRead,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(error, 'ReadPermissionUnavailable')).toBe(true);
-      expect(handlerCalls).toBe(0);
-      expect(harness.evidence()).toBe(0);
-    })
-);
-it.effect(
-  'derives the authorized resource from decoded input and ignores conflicting transport hints',
-  () =>
-    Effect.gen(function* migratedTest13() {
-      const legalEntityId = '00000000-0000-4000-8000-000000000004';
-      let authorizedTarget:
-        | { moduleId: string; resourceId: string; resourceType: string }
-        | undefined;
-      const harness = yield* makeHarness({
-        onResourceTarget: (target) => {
-          authorizedTarget = target;
-        },
-        permissionDecision: 'allowed',
-        resolvedScope: { ...scope, legalEntityId },
-      });
-      const target = {
-        moduleId: 'inventory.stock',
-        resourceId: 'stock-1',
-        resourceType: 'inventory.stock.item',
-      };
-      const targetRegistration = defineRead(
-        {
-          ...registration().descriptor,
-          inputSchema: ResourceTargetSchema,
-          legalEntityScope: 'required',
-          permissionTarget: 'resource',
-          resultSchema: Schema.String,
-        },
-        () =>
-          Effect.succeed({ evidence: { resultCount: 1 }, result: 'visible' }),
-        () => Effect.succeed({}),
-        (input) => ({ kind: 'resource', resource: input })
-      );
-      const result = yield* harness.runtime.runRead({
+        return Effect.succeed({
+          evidence: { resultCount: 1 },
+          result: 'visible',
+        });
+      },
+      () => Effect.succeed({}),
+      (input) => ({
+        kind: 'any_of',
+        targets: [
+          { kind: 'resource', resource: input },
+          { kind: 'tenant', permission: 'manage_party_identity' },
+        ],
+      }),
+      undefined,
+      [policy],
+    );
+    const principal = {
+      ...scope,
+      authBindingId: '00000000-0000-4000-8000-000000000005',
+      authContextRef: 'better-auth-session:read-runtime',
+      authMethod: 'session' as const,
+      legalEntityId,
+    };
+
+    const tenantAdmin = yield* makeHarness({
+      permissionDecision: 'denied',
+      tenantPermissionDecision: 'allowed',
+    });
+    expect(
+      yield* tenantAdmin.runtime.runRead({
         input: target,
+        principal: scope,
+        registration: counterpartyRead,
+        transport: {
+          correlationId: scope.correlationId,
+          targetModuleKey: 'forged.module',
+          targetResourceId: 'forged-resource',
+          targetResourceType: 'forged.type',
+        },
+      }),
+    ).toBe('visible');
+    expect(policyTargets).toEqual([
+      {
+        targetModuleKey: 'party.registry',
+        targetResourceId: 'counterparty-1',
+        targetResourceType: 'counterparty',
+      },
+    ]);
+
+    const resourceAuthority = yield* makeHarness({
+      permissionDecision: 'allowed',
+      resolvedScope: { ...scope, legalEntityId },
+      tenantPermissionDecision: 'denied',
+    });
+    expect(
+      yield* resourceAuthority.runtime.runRead({
+        input: target,
+        principal,
+        registration: counterpartyRead,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toBe('visible');
+
+    const indeterminate = yield* makeHarness({
+      permissionDecision: 'denied',
+      resolvedScope: { ...scope, legalEntityId },
+      tenantPermissionDecision: 'unavailable',
+    });
+    const unavailable = yield* Effect.flip(
+      indeterminate.runtime.runRead({
+        input: target,
+        principal,
+        registration: counterpartyRead,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(unavailable, 'ReadPermissionUnavailable')).toBe(true);
+    expect(indeterminate.evidence()).toBe(0);
+
+    const denied = yield* makeHarness({
+      permissionDecision: 'denied',
+      resolvedScope: { ...scope, legalEntityId },
+      tenantPermissionDecision: 'denied',
+    });
+    const denial = yield* Effect.flip(
+      denied.runtime.runRead({
+        input: target,
+        principal,
+        registration: counterpartyRead,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(denial, 'ReadPermissionDenied')).toBe(true);
+    expect(denied.evidence()).toBe(1);
+    expect(handlerCalls).toBe(2);
+  }),
+);
+it.effect('rejects generic tenant access as an alternative permission target', () =>
+  Effect.gen(function* migratedTest15() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    let handlerCalls = 0;
+    const invalid = defineRead(
+      {
+        ...registration().descriptor,
+        legalEntityScope: 'required',
+        permissionTarget: 'resource',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
+      () => Effect.succeed({}),
+      () =>
+        // SAFETY: This intentionally forges a runtime-invalid alternative to prove validation fails closed.
+        ({
+          kind: 'any_of',
+          targets: [
+            {
+              kind: 'resource',
+              resource: {
+                moduleId: 'party.registry',
+                resourceId: 'counterparty-1',
+                resourceType: 'counterparty',
+              },
+            },
+            { kind: 'tenant', permission: 'access' },
+          ],
+        }) as never,
+    );
+    const failure = yield* Effect.flip(
+      (yield* makeHarness({
+        resolvedScope: { ...scope, legalEntityId },
+      })).runtime.runRead({
+        input: {},
         principal: {
           ...scope,
           authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -588,202 +701,13 @@ it.effect(
           authMethod: 'session',
           legalEntityId,
         },
-        registration: targetRegistration,
-        transport: {
-          correlationId: scope.correlationId,
-          targetModuleKey: 'forged.module',
-          targetResourceId: 'forged-resource',
-          targetResourceType: 'forged.type',
-        },
-      });
-      expect(result).toBe('visible');
-      expect(authorizedTarget).toEqual(target);
-    })
-);
-it.effect(
-  'authorizes a canonical Resource through explicit tenant Party administration alternatives',
-  () =>
-    Effect.gen(function* migratedTest14() {
-      const legalEntityId = '00000000-0000-4000-8000-000000000004';
-      const target = {
-        moduleId: 'party.registry',
-        resourceId: 'counterparty-1',
-        resourceType: 'counterparty',
-      };
-      const policyTargets: unknown[] = [];
-      const policy = defineGlobalPolicy<typeof target>({
-        evaluate: ({ target: policyTarget }) => {
-          policyTargets.push(policyTarget);
-          return Effect.void;
-        },
-        policyKey: 'party.registry.counterparty-read.v1',
-      });
-      let handlerCalls = 0;
-      const counterpartyRead = defineRead(
-        {
-          ...registration().descriptor,
-          inputSchema: ResourceTargetSchema,
-          legalEntityScope: 'required',
-          permissionTarget: 'resource',
-          policies: [{ denialStatus: 422, policyKey: policy.policyKey }],
-          resultSchema: Schema.String,
-        },
-        () => {
-          handlerCalls += 1;
-          return Effect.succeed({
-            evidence: { resultCount: 1 },
-            result: 'visible',
-          });
-        },
-        () => Effect.succeed({}),
-        (input) => ({
-          kind: 'any_of',
-          targets: [
-            { kind: 'resource', resource: input },
-            { kind: 'tenant', permission: 'manage_party_identity' },
-          ],
-        }),
-        undefined,
-        [policy]
-      );
-      const principal = {
-        ...scope,
-        authBindingId: '00000000-0000-4000-8000-000000000005',
-        authContextRef: 'better-auth-session:read-runtime',
-        authMethod: 'session' as const,
-        legalEntityId,
-      };
-
-      const tenantAdmin = yield* makeHarness({
-        permissionDecision: 'denied',
-        tenantPermissionDecision: 'allowed',
-      });
-      expect(
-        yield* tenantAdmin.runtime.runRead({
-          input: target,
-          principal: scope,
-          registration: counterpartyRead,
-          transport: {
-            correlationId: scope.correlationId,
-            targetModuleKey: 'forged.module',
-            targetResourceId: 'forged-resource',
-            targetResourceType: 'forged.type',
-          },
-        })
-      ).toBe('visible');
-      expect(policyTargets).toEqual([
-        {
-          targetModuleKey: 'party.registry',
-          targetResourceId: 'counterparty-1',
-          targetResourceType: 'counterparty',
-        },
-      ]);
-
-      const resourceAuthority = yield* makeHarness({
-        permissionDecision: 'allowed',
-        resolvedScope: { ...scope, legalEntityId },
-        tenantPermissionDecision: 'denied',
-      });
-      expect(
-        yield* resourceAuthority.runtime.runRead({
-          input: target,
-          principal,
-          registration: counterpartyRead,
-          transport: { correlationId: scope.correlationId },
-        })
-      ).toBe('visible');
-
-      const indeterminate = yield* makeHarness({
-        permissionDecision: 'denied',
-        resolvedScope: { ...scope, legalEntityId },
-        tenantPermissionDecision: 'unavailable',
-      });
-      const unavailable = yield* Effect.flip(
-        indeterminate.runtime.runRead({
-          input: target,
-          principal,
-          registration: counterpartyRead,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(unavailable, 'ReadPermissionUnavailable')).toBe(
-        true
-      );
-      expect(indeterminate.evidence()).toBe(0);
-
-      const denied = yield* makeHarness({
-        permissionDecision: 'denied',
-        resolvedScope: { ...scope, legalEntityId },
-        tenantPermissionDecision: 'denied',
-      });
-      const denial = yield* Effect.flip(
-        denied.runtime.runRead({
-          input: target,
-          principal,
-          registration: counterpartyRead,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(denial, 'ReadPermissionDenied')).toBe(true);
-      expect(denied.evidence()).toBe(1);
-      expect(handlerCalls).toBe(2);
-    })
-);
-it.effect(
-  'rejects generic tenant access as an alternative permission target',
-  () =>
-    Effect.gen(function* migratedTest15() {
-      const legalEntityId = '00000000-0000-4000-8000-000000000004';
-      let handlerCalls = 0;
-      const invalid = defineRead(
-        {
-          ...registration().descriptor,
-          legalEntityScope: 'required',
-          permissionTarget: 'resource',
-        },
-        () => {
-          handlerCalls += 1;
-          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
-        },
-        () => Effect.succeed({}),
-        () =>
-          // SAFETY: This intentionally forges a runtime-invalid alternative to prove validation fails closed.
-          ({
-            kind: 'any_of',
-            targets: [
-              {
-                kind: 'resource',
-                resource: {
-                  moduleId: 'party.registry',
-                  resourceId: 'counterparty-1',
-                  resourceType: 'counterparty',
-                },
-              },
-              { kind: 'tenant', permission: 'access' },
-            ],
-          }) as never
-      );
-      const failure = yield* Effect.flip(
-        (yield* makeHarness({
-          resolvedScope: { ...scope, legalEntityId },
-        })).runtime.runRead({
-          input: {},
-          principal: {
-            ...scope,
-            authBindingId: '00000000-0000-4000-8000-000000000005',
-            authContextRef: 'better-auth-session:read-runtime',
-            authMethod: 'session',
-            legalEntityId,
-          },
-          registration: invalid,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(failure, 'ReadHandlerExecutionError')).toBe(
-        true
-      );
-      expect(handlerCalls).toBe(0);
-    })
+        registration: invalid,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadHandlerExecutionError')).toBe(true);
+    expect(handlerCalls).toBe(0);
+  }),
 );
 for (const scenario of [
   {
@@ -818,7 +742,7 @@ for (const scenario of [
             { kind: 'module', moduleId: 'party.registry' },
           ],
         }),
-        scenario.resultTargets ?? undefined
+        scenario.resultTargets ?? undefined,
       );
       const failure = yield* Effect.flip(
         (yield* makeHarness({
@@ -828,11 +752,11 @@ for (const scenario of [
           principal: scope,
           registration: alternativeRead,
           transport: { correlationId: scope.correlationId },
-        })
+        }),
       );
       expect(Predicate.isTagged(failure, scenario.expectedFailure)).toBe(true);
       expect(handlerCalls).toBe(0);
-    })
+    }),
   );
 }
 
@@ -854,7 +778,7 @@ for (const scenario of [
       new ReadPermissionDenied({
         code: 'read_permission_denied',
         reason: 'A late provider target check denied this read',
-      })
+      }),
     ),
   },
 ]) {
@@ -865,7 +789,7 @@ for (const scenario of [
         registration().descriptor,
         () => scenario.outcome,
         () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' })
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
       );
       const error = yield* Effect.flip(
         harness.runtime.runRead({
@@ -873,197 +797,177 @@ for (const scenario of [
           principal: scope,
           registration: failingRead,
           transport: { correlationId: scope.correlationId },
-        })
+        }),
       );
       expect(Predicate.isTagged(error, scenario.expectedFailure)).toBe(true);
       expect(harness.evidence()).toBe(scenario.expectedEvidence);
-    })
+    }),
   );
 }
 
-it.effect(
-  'does not release generated search candidates denied by result-level authorization',
-  () =>
-    Effect.gen(function* migratedTest20() {
-      const legalEntityId = '00000000-0000-4000-8000-000000000004';
-      const candidate = yield* Schema.decodeEffect(ResourceTargetSchema)({
-        moduleId: 'inventory.stock',
-        resourceId: 'stock-1',
-        resourceType: 'inventory.stock.item',
-      });
-      const harness = yield* makeHarness({
-        permissionDecision: 'allowed',
-        resolvedScope: { ...scope, legalEntityId },
-        resultPermissionDecision: 'denied',
-      });
-      const searchRegistration = defineRead(
-        {
-          ...registration().descriptor,
-          legalEntityScope: 'required',
-          resultSchema: Schema.Array(ResourceTargetSchema),
+it.effect('does not release generated search candidates denied by result-level authorization', () =>
+  Effect.gen(function* migratedTest20() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const candidate = yield* Schema.decodeEffect(ResourceTargetSchema)({
+      moduleId: 'inventory.stock',
+      resourceId: 'stock-1',
+      resourceType: 'inventory.stock.item',
+    });
+    const harness = yield* makeHarness({
+      permissionDecision: 'allowed',
+      resolvedScope: { ...scope, legalEntityId },
+      resultPermissionDecision: 'denied',
+    });
+    const searchRegistration = defineRead(
+      {
+        ...registration().descriptor,
+        legalEntityScope: 'required',
+        resultSchema: Schema.Array(ResourceTargetSchema),
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+      (result) => result,
+    );
+    const error = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: {
+          ...scope,
+          authBindingId: '00000000-0000-4000-8000-000000000005',
+          authContextRef: 'better-auth-session:read-runtime',
+          authMethod: 'session',
+          legalEntityId,
         },
-        () =>
-          Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
-        () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' }),
-        (result) => result
-      );
-      const error = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: {
-            ...scope,
-            authBindingId: '00000000-0000-4000-8000-000000000005',
-            authContextRef: 'better-auth-session:read-runtime',
-            authMethod: 'session',
-            legalEntityId,
-          },
-          registration: searchRegistration,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(error, 'ReadPermissionDenied')).toBe(true);
-      expect(harness.evidence()).toBe(1);
-    })
+        registration: searchRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ReadPermissionDenied')).toBe(true);
+    expect(harness.evidence()).toBe(1);
+  }),
 );
-it.effect(
-  'authorizes tenant-scoped Party search results without fabricating a Legal Entity',
-  () =>
-    Effect.gen(function* migratedTest21() {
-      const candidate = yield* Schema.decodeEffect(ResourceTargetSchema)({
-        moduleId: 'party.registry',
-        resourceId: 'party-1',
-        resourceType: 'party.registry.party',
-      });
-      let resourceChecks = 0;
-      const tenantPermissions: string[] = [];
-      const harness = yield* makeHarness({
-        onResourceTarget: () => {
-          resourceChecks += 1;
-        },
-        onTenantPermission: (permission) => tenantPermissions.push(permission),
-        permissionDecision: 'allowed',
-      });
-      const searchRegistration = defineRead(
-        {
-          ...registration().descriptor,
-          accessKind: 'search',
-          legalEntityScope: 'optional',
-          permissionTarget: 'tenant',
-          resultSchema: Schema.Array(ResourceTargetSchema),
-        },
-        () =>
-          Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
-        () => Effect.succeed({}),
-        () => ({ kind: 'tenant', permission: 'read_party_identity' }),
-        (result) => result
-      );
+it.effect('authorizes tenant-scoped Party search results without fabricating a Legal Entity', () =>
+  Effect.gen(function* migratedTest21() {
+    const candidate = yield* Schema.decodeEffect(ResourceTargetSchema)({
+      moduleId: 'party.registry',
+      resourceId: 'party-1',
+      resourceType: 'party.registry.party',
+    });
+    let resourceChecks = 0;
+    const tenantPermissions: string[] = [];
+    const harness = yield* makeHarness({
+      onResourceTarget: () => {
+        resourceChecks += 1;
+      },
+      onTenantPermission: (permission) => tenantPermissions.push(permission),
+      permissionDecision: 'allowed',
+    });
+    const searchRegistration = defineRead(
+      {
+        ...registration().descriptor,
+        accessKind: 'search',
+        legalEntityScope: 'optional',
+        permissionTarget: 'tenant',
+        resultSchema: Schema.Array(ResourceTargetSchema),
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+      (result) => result,
+    );
 
-      expect(
-        yield* harness.runtime.runRead({
-          input: {},
-          principal: scope,
-          registration: searchRegistration,
-          transport: { correlationId: scope.correlationId },
-        })
-      ).toEqual([candidate]);
-      expect(tenantPermissions).toEqual([
-        'read_party_identity',
-        'read_party_identity',
-      ]);
-      expect(resourceChecks).toBe(0);
-    })
+    expect(
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: searchRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toEqual([candidate]);
+    expect(tenantPermissions).toEqual(['read_party_identity', 'read_party_identity']);
+    expect(resourceChecks).toBe(0);
+  }),
 );
-it.effect(
-  'fails closed when tenant-scoped Party result authorization becomes unavailable',
-  () =>
-    Effect.gen(function* migratedTest22() {
-      const candidate = yield* Schema.decodeEffect(ResourceTargetSchema)({
-        moduleId: 'party.registry',
-        resourceId: 'party-1',
-        resourceType: 'party.registry.party',
-      });
-      const harness = yield* makeHarness({
-        permissionDecision: 'allowed',
-        resultTenantPermissionDecision: 'unavailable',
-      });
-      const searchRegistration = defineRead(
-        {
-          ...registration().descriptor,
-          accessKind: 'search',
-          legalEntityScope: 'optional',
-          permissionTarget: 'tenant',
-          resultSchema: Schema.Array(ResourceTargetSchema),
-        },
-        () =>
-          Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
-        () => Effect.succeed({}),
-        () => ({ kind: 'tenant', permission: 'read_party_identity' }),
-        (result) => result
-      );
-      const failure = yield* Effect.flip(
-        harness.runtime.runRead({
-          input: {},
-          principal: scope,
-          registration: searchRegistration,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(
-        true
-      );
-    })
+it.effect('fails closed when tenant-scoped Party result authorization becomes unavailable', () =>
+  Effect.gen(function* migratedTest22() {
+    const candidate = yield* Schema.decodeEffect(ResourceTargetSchema)({
+      moduleId: 'party.registry',
+      resourceId: 'party-1',
+      resourceType: 'party.registry.party',
+    });
+    const harness = yield* makeHarness({
+      permissionDecision: 'allowed',
+      resultTenantPermissionDecision: 'unavailable',
+    });
+    const searchRegistration = defineRead(
+      {
+        ...registration().descriptor,
+        accessKind: 'search',
+        legalEntityScope: 'optional',
+        permissionTarget: 'tenant',
+        resultSchema: Schema.Array(ResourceTargetSchema),
+      },
+      () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
+      () => Effect.succeed({}),
+      () => ({ kind: 'tenant', permission: 'read_party_identity' }),
+      (result) => result,
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: searchRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+  }),
 );
-it.effect(
-  'preserves declared owner read availability and not-found failures but sanitizes defects',
-  () =>
-    Effect.gen(function* migratedTest23() {
-      const failures = [
-        new ReadHandlerUnavailable({
-          code: 'read_handler_unavailable',
-          reason: 'A provider is temporarily unavailable',
+it.effect('preserves declared owner read availability and not-found failures but sanitizes defects', () =>
+  Effect.gen(function* migratedTest23() {
+    const failures = [
+      new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'A provider is temporarily unavailable',
+      }),
+      new ReadHandlerNotFound({
+        code: 'read_handler_not_found',
+        reason: 'The resource does not exist',
+      }),
+      new Error('secret owner defect'),
+    ] as const;
+    const expectedTags = ['ReadHandlerUnavailable', 'ReadHandlerNotFound', 'ReadHandlerExecutionError'];
+    yield* Effect.forEach(
+      failures,
+      (failure, index) =>
+        Effect.gen(function* migratedTest24() {
+          const harness = yield* makeHarness();
+          const failingRegistration = defineRead(
+            registration().descriptor,
+            () => Effect.fail(failure),
+            () => Effect.succeed({}),
+            () => ({ kind: 'module', moduleId: 'core.shell' }),
+          );
+          const error = yield* Effect.flip(
+            harness.runtime.runRead({
+              input: {},
+              principal: scope,
+              registration: failingRegistration,
+              transport: { correlationId: scope.correlationId },
+            }),
+          );
+          const expectedTag = expectedTags[index];
+          if (expectedTag === undefined) {
+            expect.unreachable('Expected value to be present');
+          }
+          expect(Predicate.isTagged(error, expectedTag)).toBe(true);
+          expect(error.reason).not.toMatch(/secret/u);
+          expect(harness.evidence()).toBe(0);
         }),
-        new ReadHandlerNotFound({
-          code: 'read_handler_not_found',
-          reason: 'The resource does not exist',
-        }),
-        new Error('secret owner defect'),
-      ] as const;
-      const expectedTags = [
-        'ReadHandlerUnavailable',
-        'ReadHandlerNotFound',
-        'ReadHandlerExecutionError',
-      ];
-      yield* Effect.forEach(
-        failures,
-        (failure, index) =>
-          Effect.gen(function* migratedTest24() {
-            const harness = yield* makeHarness();
-            const failingRegistration = defineRead(
-              registration().descriptor,
-              () => Effect.fail(failure),
-              () => Effect.succeed({}),
-              () => ({ kind: 'module', moduleId: 'core.shell' })
-            );
-            const error = yield* Effect.flip(
-              harness.runtime.runRead({
-                input: {},
-                principal: scope,
-                registration: failingRegistration,
-                transport: { correlationId: scope.correlationId },
-              })
-            );
-            const expectedTag = expectedTags[index];
-            if (expectedTag === undefined) {
-              expect.unreachable('Expected value to be present');
-            }
-            expect(Predicate.isTagged(error, expectedTag)).toBe(true);
-            expect(error.reason).not.toMatch(/secret/u);
-            expect(harness.evidence()).toBe(0);
-          }),
-        { concurrency: 'unbounded' }
-      );
-    })
+      { concurrency: 'unbounded' },
+    );
+  }),
 );
 it.effect('keeps read interruption and waits for transaction settlement', () =>
   Effect.gen(function* migratedTest25() {
@@ -1081,7 +985,7 @@ it.effect('keeps read interruption and waits for transaction settlement', () =>
           return { evidence: { resultCount: 0 }, result: [] };
         }),
       () => Effect.succeed({}),
-      () => ({ kind: 'module', moduleId: 'core.shell' })
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
     );
     const fiber = yield* harness.runtime
       .runRead({
@@ -1101,44 +1005,36 @@ it.effect('keeps read interruption and waits for transaction settlement', () =>
     expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     expect(events).toEqual(['transaction_settled', 'read_completed']);
     expect(harness.evidence()).toBe(0);
-  })
+  }),
 );
-it.effect(
-  'prioritizes failed denial evidence while retaining permission denial in the cause',
-  () =>
-    Effect.gen(function* migratedTest26() {
-      const harness = yield* makeHarness({ failEvidence: true });
-      const denied = new ReadPermissionDenied({
-        code: 'read_permission_denied',
-        reason: 'Denied by read handler',
-      });
-      const governed = defineRead(
-        registration().descriptor,
-        () => Effect.fail(denied),
-        () => Effect.succeed({}),
-        () => ({ kind: 'module', moduleId: 'core.shell' })
-      );
-      const exit = yield* Effect.exit(
-        harness.runtime.runRead({
-          input: {},
-          principal: scope,
-          registration: governed,
-          transport: { correlationId: scope.correlationId },
-        })
-      );
-      if (!Exit.isFailure(exit)) {
-        expect.unreachable('Expected value to be present');
-      }
-      const failures = exit.cause.reasons
-        .filter(Cause.isFailReason)
-        .map((reason) => reason.error);
-      expect(failures.length).toBe(2);
-      expect(
-        Predicate.isTagged(failures[0], 'ReadEvidencePersistenceError')
-      ).toBe(true);
-      expect(failures[1]).toBe(denied);
-      expect(Predicate.isTagged(failures[1], 'ReadPermissionDenied')).toBe(
-        true
-      );
-    })
+it.effect('prioritizes failed denial evidence while retaining permission denial in the cause', () =>
+  Effect.gen(function* migratedTest26() {
+    const harness = yield* makeHarness({ failEvidence: true });
+    const denied = new ReadPermissionDenied({
+      code: 'read_permission_denied',
+      reason: 'Denied by read handler',
+    });
+    const governed = defineRead(
+      registration().descriptor,
+      () => Effect.fail(denied),
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const exit = yield* Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: governed,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    if (!Exit.isFailure(exit)) {
+      expect.unreachable('Expected value to be present');
+    }
+    const failures = exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+    expect(failures.length).toBe(2);
+    expect(Predicate.isTagged(failures[0], 'ReadEvidencePersistenceError')).toBe(true);
+    expect(failures[1]).toBe(denied);
+    expect(Predicate.isTagged(failures[1], 'ReadPermissionDenied')).toBe(true);
+  }),
 );

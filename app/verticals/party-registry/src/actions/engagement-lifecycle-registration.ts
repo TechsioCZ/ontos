@@ -1,7 +1,4 @@
-import {
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineActionResourcePermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import type {
   OrganizationEngagementLifecyclePayload,
@@ -9,17 +6,12 @@ import type {
 } from '../../shared/domain/engagement-profile.ts';
 import { EngagementLifecycleErrorSchema } from './engagement-lifecycle-handler.ts';
 
-type EngagementLifecyclePayload =
-  | OrganizationEngagementLifecyclePayload
-  | PersonEngagementLifecyclePayload;
-type EngagementLifecycleActionKey =
-  `party.registry.${'archive' | 'unarchive'}-${'person' | 'organization'}-engagement`;
+type EngagementLifecyclePayload = OrganizationEngagementLifecyclePayload | PersonEngagementLifecyclePayload;
+type EngagementLifecycleActionKey = `party.registry.${'archive' | 'unarchive'}-${'person' | 'organization'}-engagement`;
 
 /** The shared governed-write contract; schemas and transaction services stay owner-specific. */
-export const engagementLifecycleRegistration = <
-  Payload extends EngagementLifecyclePayload,
->(
-  actionKey: EngagementLifecycleActionKey
+export const engagementLifecycleRegistration = <Payload extends EngagementLifecyclePayload>(
+  actionKey: EngagementLifecycleActionKey,
 ) =>
   ({
     accessEvidencePolicy: {

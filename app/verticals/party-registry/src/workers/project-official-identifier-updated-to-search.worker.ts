@@ -20,8 +20,7 @@ export const {
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
       authorization: { kind: 'owner_local_background' },
-      entrypointKey:
-        'party.registry.project-official-identifier-updated-to-search',
+      entrypointKey: 'party.registry.project-official-identifier-updated-to-search',
       moduleKey: 'party.registry',
       role: 'worker',
     }),
@@ -32,5 +31,5 @@ export const {
   {
     spanName: 'handleProjectOfficialIdentifierUpdatedToSearch',
     target: (payload) => ({ partyId: payload.partyRef.resourceId }),
-  }
+  },
 );

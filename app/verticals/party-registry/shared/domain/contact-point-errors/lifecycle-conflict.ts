@@ -7,5 +7,5 @@ export class PartyContactPointLifecycleConflict extends Schema.TaggedError<Party
   {
     code: Schema.Literal('party_contact_point_lifecycle_conflict'),
     reason: ContactPointErrorReasonSchema,
-  }
+  },
 ) {}

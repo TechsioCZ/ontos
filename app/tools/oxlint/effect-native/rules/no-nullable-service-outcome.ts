@@ -86,25 +86,13 @@ import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { typeNameSegments } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
-import {
-  collectEffectBindings,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import { collectRootNamespaces } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
-import {
-  booleanOption as boolean,
-  positiveInteger,
-  stringArray,
-} from '../shared/options.ts';
+import { booleanOption as boolean, positiveInteger, stringArray } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
-const DEFAULT_INCLUDE = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: readonly string[] = [];
 
 /** Global async outcome wrappers, matched by name (no import required). */
@@ -116,12 +104,7 @@ const EFFECT_TYPE = 'Effect';
 
 const ABSENCE_TYPES = new Set(['TSNullKeyword', 'TSUndefinedKeyword']);
 /** Members that carry no value worth wrapping in an `Option`. */
-const VOID_LIKE_TYPES = new Set([
-  'TSVoidKeyword',
-  'TSNeverKeyword',
-  'TSAnyKeyword',
-  'TSUnknownKeyword',
-]);
+const VOID_LIKE_TYPES = new Set(['TSVoidKeyword', 'TSNeverKeyword', 'TSAnyKeyword', 'TSUnknownKeyword']);
 
 function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
@@ -210,45 +193,26 @@ export const rule = defineRule({
     /** Strip type-level parentheses so `(Row | undefined)` behaves like the bare union. */
     const unwrapType = (type: ESTree.TSType): ESTree.TSType => {
       let current = type;
-      while (current.type === 'TSParenthesizedType')
-        current = current.typeAnnotation;
+      while (current.type === 'TSParenthesizedType') current = current.typeAnnotation;
       return current;
     };
 
     const printed = (node: ESTree.Node): string => {
-      const text = context.sourceCode
-        .getText(node)
-        .replace(/\s+/gu, ' ')
-        .trim();
+      const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
       return text.length > 60 ? `${text.slice(0, 57)}...` : text;
     };
 
-    const rootVariable = (
-      reference: ESTree.TSTypeReference
-    ): Variable | null => {
+    const rootVariable = (reference: ESTree.TSTypeReference): Variable | null => {
       let root = reference.typeName;
       while (root.type === 'TSQualifiedName') root = root.left;
-      return root.type === 'Identifier'
-        ? resolveVariable(context, root.name, root)
-        : null;
+      return root.type === 'Identifier' ? resolveVariable(context, root.name, root) : null;
     };
 
-    const aliasTarget = (
-      reference: ESTree.TSTypeReference
-    ): ESTree.TSType | null => {
-      if (
-        reference.typeName.type !== 'Identifier' ||
-        reference.typeArguments != null
-      )
-        return null;
+    const aliasTarget = (reference: ESTree.TSTypeReference): ESTree.TSType | null => {
+      if (reference.typeName.type !== 'Identifier' || reference.typeArguments != null) return null;
       const variable = rootVariable(reference);
-      const definition =
-        variable?.defs.length === 1 ? variable.defs[0] : undefined;
-      if (
-        definition?.node.type !== 'TSTypeAliasDeclaration' ||
-        definition.node.typeParameters != null
-      )
-        return null;
+      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      if (definition?.node.type !== 'TSTypeAliasDeclaration' || definition.node.typeParameters != null) return null;
       return definition.node.typeAnnotation;
     };
 
@@ -262,14 +226,10 @@ export const rule = defineRule({
       }
       if (segments[segments.length - 1] !== EFFECT_TYPE) return null;
       if (segments.length === 2) {
-        return bindings.namespaces.get(root) === EFFECT_NAMESPACE
-          ? segments.join('.')
-          : null;
+        return bindings.namespaces.get(root) === EFFECT_NAMESPACE ? segments.join('.') : null;
       }
       if (segments.length !== 3) return null;
-      return barrels.has(root) && segments[1] === EFFECT_NAMESPACE
-        ? segments.join('.')
-        : null;
+      return barrels.has(root) && segments[1] === EFFECT_NAMESPACE ? segments.join('.') : null;
     };
 
     const wrapperName = (reference: ESTree.TSTypeReference): string | null => {
@@ -281,9 +241,7 @@ export const rule = defineRule({
         return variable === null || variable.defs.length === 0 ? name : null;
       }
       if (!options.checkEffect) return null;
-      const imported = variable?.defs.some(
-        (definition) => definition.type === 'ImportBinding'
-      );
+      const imported = variable?.defs.some((definition) => definition.type === 'ImportBinding');
       return imported ? effectWrapperName(segments) : null;
     };
 
@@ -305,27 +263,14 @@ export const rule = defineRule({
       flattenUnion(current, members);
       const absent = members.filter((member) => ABSENCE_TYPES.has(member.type));
       if (absent.length === 0) return null;
-      const values = members.filter(
-        (member) => !ABSENCE_TYPES.has(member.type)
-      );
+      const values = members.filter((member) => !ABSENCE_TYPES.has(member.type));
       // `void | undefined`, `null | undefined`, `never | null`: nothing to wrap in an Option.
       if (values.length === 0) return null;
-      if (values.every((member) => VOID_LIKE_TYPES.has(member.type)))
-        return null;
+      if (values.every((member) => VOID_LIKE_TYPES.has(member.type))) return null;
       // any/unknown absorb the union; a value member does not make their absence meaningful.
-      if (
-        values.some(
-          (member) =>
-            member.type === 'TSAnyKeyword' || member.type === 'TSUnknownKeyword'
-        )
-      )
-        return null;
+      if (values.some((member) => member.type === 'TSAnyKeyword' || member.type === 'TSUnknownKeyword')) return null;
       const absenceNames = [
-        ...new Set(
-          absent.map((member) =>
-            member.type === 'TSNullKeyword' ? 'null' : 'undefined'
-          )
-        ),
+        ...new Set(absent.map((member) => (member.type === 'TSNullKeyword' ? 'null' : 'undefined'))),
       ];
       return {
         absence: absenceNames.join(' | '),
@@ -368,7 +313,7 @@ export const rule = defineRule({
      * alias name written at the return position (or `null` when the wrapper was written directly).
      */
     const resolveWrapper = (
-      annotation: ESTree.TSType
+      annotation: ESTree.TSType,
     ): {
       readonly wrapper: string;
       readonly first: ESTree.TSType;
@@ -405,8 +350,8 @@ export const rule = defineRule({
             definition.type === 'ImportBinding' &&
             definition.parent?.type === 'ImportDeclaration' &&
             /^(?:react(?:\/|$)|@tanstack\/|@modern-js\/|(?:@playwright\/test|playwright)(?:\/|$)|drizzle-orm(?:\/|$)|node:)/u.test(
-              definition.parent.source.value
-            )
+              definition.parent.source.value,
+            ),
         ) === true
       );
     };
@@ -415,43 +360,25 @@ export const rule = defineRule({
       let current = fn;
       for (let depth = 0; depth < 8; depth += 1) {
         const container = current.parent;
-        if (
-          container?.type !== 'Property' &&
-          container?.type !== 'ObjectExpression'
-        )
-          break;
+        if (container?.type !== 'Property' && container?.type !== 'ObjectExpression') break;
         current = container;
       }
       return current;
     };
 
-    const hasExternalAdapterType = (
-      annotation: ESTree.TSTypeAnnotation
-    ): boolean => {
+    const hasExternalAdapterType = (annotation: ESTree.TSTypeAnnotation): boolean => {
       const fn = annotation.parent;
       if (!fn) return false;
-      if (
-        fn.type !== 'ArrowFunctionExpression' &&
-        fn.type !== 'FunctionExpression'
-      )
-        return false;
+      if (fn.type !== 'ArrowFunctionExpression' && fn.type !== 'FunctionExpression') return false;
       const parent = adapterContainer(fn).parent;
       if (!parent) return false;
-      if (parent.type === 'TSSatisfiesExpression')
-        return externalType(parent.typeAnnotation);
-      if (
-        parent.type !== 'VariableDeclarator' ||
-        parent.id.type !== 'Identifier'
-      )
-        return false;
+      if (parent.type === 'TSSatisfiesExpression') return externalType(parent.typeAnnotation);
+      if (parent.type !== 'VariableDeclarator' || parent.id.type !== 'Identifier') return false;
       const type = parent.id.typeAnnotation;
       return type != null && externalType(type.typeAnnotation);
     };
 
-    const absenceMessage = (
-      outcomeAlias: string | null,
-      absenceAlias: string | null
-    ) => {
+    const absenceMessage = (outcomeAlias: string | null, absenceAlias: string | null) => {
       if (outcomeAlias !== null) return 'nullableOutcomeAlias';
       return absenceAlias === null ? 'nullableOutcome' : 'nullableAlias';
     };
@@ -459,9 +386,7 @@ export const rule = defineRule({
     const reported = new Set<number>();
 
     /** Report when `annotation` is `Wrapper<Value | undefined, ...>`, directly or via an alias. */
-    const checkReturnType = (
-      annotation: ESTree.TSTypeAnnotation | null | undefined
-    ): void => {
+    const checkReturnType = (annotation: ESTree.TSTypeAnnotation | null | undefined): void => {
       if (annotation === null || annotation === undefined) return;
       if (hasExternalAdapterType(annotation)) return;
       const anchor = unwrapType(annotation.typeAnnotation);
@@ -486,26 +411,20 @@ export const rule = defineRule({
     };
 
     const visitors: Record<string, (node: never) => void> = {
-      TSMethodSignature: (node: ESTree.TSMethodSignature) =>
+      TSMethodSignature: (node: ESTree.TSMethodSignature) => checkReturnType(node.returnType),
+      TSFunctionType: (node: ESTree.TSFunctionType) => checkReturnType(node.returnType),
+      TSCallSignatureDeclaration: (node: ESTree.TSCallSignatureDeclaration) => checkReturnType(node.returnType),
+      TSConstructSignatureDeclaration: (node: ESTree.TSConstructSignatureDeclaration) =>
         checkReturnType(node.returnType),
-      TSFunctionType: (node: ESTree.TSFunctionType) =>
-        checkReturnType(node.returnType),
-      TSCallSignatureDeclaration: (node: ESTree.TSCallSignatureDeclaration) =>
-        checkReturnType(node.returnType),
-      TSConstructSignatureDeclaration: (
-        node: ESTree.TSConstructSignatureDeclaration
-      ) => checkReturnType(node.returnType),
       // A bodyless class member: `abstract load(): ...`, a `declare class` method, or an overload
       // signature. Type-level port declarations, so never gated behind `includeAsyncFunctions`.
-      TSEmptyBodyFunctionExpression: (node: {
-        readonly returnType?: ESTree.TSTypeAnnotation | null;
-      }) => checkReturnType(node.returnType),
+      TSEmptyBodyFunctionExpression: (node: { readonly returnType?: ESTree.TSTypeAnnotation | null }) =>
+        checkReturnType(node.returnType),
     } as Record<string, (node: never) => void>;
 
     if (options.includeAsyncFunctions) {
-      const checkFunction = (node: {
-        readonly returnType?: ESTree.TSTypeAnnotation | null;
-      }): void => checkReturnType(node.returnType);
+      const checkFunction = (node: { readonly returnType?: ESTree.TSTypeAnnotation | null }): void =>
+        checkReturnType(node.returnType);
       visitors.FunctionDeclaration = checkFunction as (node: never) => void;
       visitors.FunctionExpression = checkFunction as (node: never) => void;
       visitors.ArrowFunctionExpression = checkFunction as (node: never) => void;

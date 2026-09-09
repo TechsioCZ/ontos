@@ -34,37 +34,25 @@ const marker = {
   version: generatedBuildMetadata.version,
 };
 
-it.effect(
-  'marker and readiness schemas preserve the generated wire representation',
-  () =>
-    Effect.gen(function* wireRepresentationEffect() {
-      const readiness = {
-        checks: {
-          api: 'ready' as const,
-          moduleFederation: 'ready' as const,
-          ssr: 'ready' as const,
-          translations: 'ready' as const,
-        },
-        marker,
-        status: 'ready' as const,
-        versionSkew: 'none' as const,
-      };
+it.effect('marker and readiness schemas preserve the generated wire representation', () =>
+  Effect.gen(function* wireRepresentationEffect() {
+    const readiness = {
+      checks: {
+        api: 'ready' as const,
+        moduleFederation: 'ready' as const,
+        ssr: 'ready' as const,
+        translations: 'ready' as const,
+      },
+      marker,
+      status: 'ready' as const,
+      versionSkew: 'none' as const,
+    };
 
-      expect(
-        yield* Schema.decodeEffect(MicroVerticalBuildMarkerSchema)(
-          generatedBuildMetadata
-        )
-      ).toEqual(marker);
-      expect(
-        yield* Schema.encodeEffect(MicroVerticalBuildMarkerSchema)(marker)
-      ).toEqual(marker);
-      expect(
-        yield* Schema.decodeEffect(MicroVerticalReadinessSchema)(readiness)
-      ).toEqual(readiness);
-      expect(
-        yield* Schema.encodeEffect(MicroVerticalReadinessSchema)(readiness)
-      ).toEqual(readiness);
-    })
+    expect(yield* Schema.decodeEffect(MicroVerticalBuildMarkerSchema)(generatedBuildMetadata)).toEqual(marker);
+    expect(yield* Schema.encodeEffect(MicroVerticalBuildMarkerSchema)(marker)).toEqual(marker);
+    expect(yield* Schema.decodeEffect(MicroVerticalReadinessSchema)(readiness)).toEqual(readiness);
+    expect(yield* Schema.encodeEffect(MicroVerticalReadinessSchema)(readiness)).toEqual(readiness);
+  }),
 );
 
 it('constructs generated-client operation metadata with and without trace identity', () => {
@@ -77,21 +65,19 @@ it('constructs generated-client operation metadata with and without trace identi
     routePath: '/inventory/readiness',
     tenantId: 'must-not-pass',
   };
-  expect(createMicroVerticalOperationContext(inputWithSensitiveExtras)).toEqual(
-    {
-      method: 'GET',
-      operationId: 'InventoryApi:inventory:readiness',
-      routePath: '/inventory/readiness',
-      source: 'generated-client',
-    }
-  );
+  expect(createMicroVerticalOperationContext(inputWithSensitiveExtras)).toEqual({
+    method: 'GET',
+    operationId: 'InventoryApi:inventory:readiness',
+    routePath: '/inventory/readiness',
+    source: 'generated-client',
+  });
   expect(
     createMicroVerticalOperationContext({
       method: 'POST',
       operationId: 'InventoryApi:inventory:create',
       routePath: '/inventory',
       traceId: 'trace-123',
-    })
+    }),
   ).toEqual({
     method: 'POST',
     operationId: 'InventoryApi:inventory:create',
@@ -130,8 +116,8 @@ it('projects only standard operation telemetry attributes', () => {
         method: 'GET',
         operationId: 'InventoryApi:inventory:list',
         routePath: '/inventory',
-      })
-    )
+      }),
+    ),
   ).toEqual({
     'modernjs.operation.id': 'InventoryApi:inventory:list',
     'modernjs.operation.method': 'GET',

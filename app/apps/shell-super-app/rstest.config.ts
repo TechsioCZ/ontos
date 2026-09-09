@@ -15,69 +15,48 @@ import {
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
-const topologyJsonSchema = Schema.fromJsonString(
-  DeploymentAllowlistTopologySchema
-);
-const overlayJsonSchema = Schema.fromJsonString(
-  DeploymentAllowlistOverlaySchema
-);
+const topologyJsonSchema = Schema.fromJsonString(DeploymentAllowlistTopologySchema);
+const overlayJsonSchema = Schema.fromJsonString(DeploymentAllowlistOverlaySchema);
 const moduleDeploymentAllowlistJsonSchema = Schema.fromJsonString(
   Schema.Struct({
     environment: Schema.Literal('development'),
     overlay: DeploymentAllowlistOverlaySchema,
     topology: DeploymentAllowlistTopologySchema,
-  })
+  }),
 );
 const siteUrlJsonSchema = Schema.fromJsonString(Schema.String);
 const referenceTopology = Result.getOrThrow(
   Schema.decodeUnknownResult(topologyJsonSchema, {
     onExcessProperty: 'preserve',
-  })(
-    readFileSync(
-      new URL('../../topology/reference-topology.json', import.meta.url),
-      'utf-8'
-    )
-  )
+  })(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
 );
 const developmentOverlay = Result.getOrThrow(
   Schema.decodeUnknownResult(overlayJsonSchema, {
     onExcessProperty: 'preserve',
-  })(
-    readFileSync(
-      new URL(
-        '../../topology/local-overlays/development.json',
-        import.meta.url
-      ),
-      'utf-8'
-    )
-  )
+  })(readFileSync(new URL('../../topology/local-overlays/development.json', import.meta.url), 'utf-8')),
 );
 const encodeOptions = { onExcessProperty: 'preserve' } as const;
 const encodedReferenceTopology = Result.getOrThrow(
-  Schema.encodeResult(topologyJsonSchema, encodeOptions)(referenceTopology)
+  Schema.encodeResult(topologyJsonSchema, encodeOptions)(referenceTopology),
 );
 const encodedModuleDeploymentAllowlist = Result.getOrThrow(
   Schema.encodeResult(
     moduleDeploymentAllowlistJsonSchema,
-    encodeOptions
+    encodeOptions,
   )({
     environment: 'development',
     overlay: developmentOverlay,
     topology: referenceTopology,
-  })
+  }),
 );
-const encodedSiteUrl = Result.getOrThrow(
-  Schema.encodeResult(siteUrlJsonSchema)('http://localhost:3020')
-);
+const encodedSiteUrl = Result.getOrThrow(Schema.encodeResult(siteUrlJsonSchema)('http://localhost:3020'));
 
-const coreRuntimeRoot = fileURLToPath(
-  new URL('../../packages/core-runtime/', import.meta.url)
-);
+const coreRuntimeRoot = fileURLToPath(new URL('../../packages/core-runtime/', import.meta.url));
 // Generated owner modules are imported natively from disk, so core-runtime must be one Node
 // instance shared by the test bundle and those modules (brand symbols, private fields).
 const externalizeCoreRuntime = (
   { context, request }: Rspack.ExternalItemFunctionData,
-  resolveExternal: (error?: Error, external?: string) => void
+  resolveExternal: (error?: Error, external?: string) => void,
 ): void => {
   if (request === undefined || context === undefined) {
     resolveExternal();
@@ -87,9 +66,7 @@ const externalizeCoreRuntime = (
     resolveExternal(undefined, `module-import ${request}`);
     return;
   }
-  const resolved = request.startsWith('.')
-    ? path.resolve(context, request)
-    : undefined;
+  const resolved = request.startsWith('.') ? path.resolve(context, request) : undefined;
   if (resolved !== undefined && resolved.startsWith(coreRuntimeRoot)) {
     resolveExternal(undefined, `module-import ${pathToFileURL(resolved).href}`);
     return;
@@ -120,8 +97,7 @@ export default defineConfig({
       source: {
         define: {
           ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: encodedReferenceTopology,
-          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST:
-            encodedModuleDeploymentAllowlist,
+          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: encodedModuleDeploymentAllowlist,
           ULTRAMODERN_SITE_URL: encodedSiteUrl,
         },
       },

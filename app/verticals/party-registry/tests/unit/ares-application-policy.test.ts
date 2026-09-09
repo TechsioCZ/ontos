@@ -48,10 +48,7 @@ const canonical: AresCanonicalSnapshot = {
   partyType: 'ORGANIZATION',
   registeredAddresses: [],
 };
-const derive = (
-  snapshot: AresCanonicalSnapshot | null = canonical,
-  confirmed = true
-) =>
+const derive = (snapshot: AresCanonicalSnapshot | null = canonical, confirmed = true) =>
   deriveAresEvidenceApplication({
     canonical: snapshot,
     decidedAt: '2026-09-03T08:01:00.000Z',
@@ -74,12 +71,8 @@ it('#246 fixed owner policy enriches only selected missing facts after explicit 
     selectedFacts: ['ICO'],
     userConfirmed: true,
   });
-  expect(selected.factDecisions.map((decision) => decision.fact)).toEqual([
-    'ICO',
-  ]);
-  expect(selected.factDecisions[0]?.authorityPolicyKey).toBe(
-    'party_registry.ares_enrichment'
-  );
+  expect(selected.factDecisions.map((decision) => decision.fact)).toEqual(['ICO']);
+  expect(selected.factDecisions[0]?.authorityPolicyKey).toBe('party_registry.ares_enrichment');
 });
 
 it('#246 canonical equality is no-change and conflicting facts never authorize overwrite', () => {
@@ -97,9 +90,7 @@ it('#246 canonical equality is no-change and conflicting facts never authorize o
     ],
   });
   expect(result.outcome).toBe('NO_CHANGE');
-  expect(
-    result.factDecisions.every((decision) => decision.route === null)
-  ).toBe(true);
+  expect(result.factDecisions.every((decision) => decision.route === null)).toBe(true);
   const conflict = derive({
     ...canonical,
     displayName: 'Different',
@@ -123,9 +114,8 @@ it('#246 conflicting official identity blocks all enrichment and no Party remain
   ]) {
     expect(
       derive(snapshot).factDecisions.every(
-        (decision) =>
-          decision.outcome === 'IDENTITY_AMBIGUITY' && decision.route === null
-      )
+        (decision) => decision.outcome === 'IDENTITY_AMBIGUITY' && decision.route === null,
+      ),
     ).toBe(true);
   }
   expect(derive(null).outcome).toBe('PREFILL_ONLY');
@@ -160,22 +150,16 @@ it('#246 structural registered address comparison cannot confuse substrings or u
     aresRegisteredAddressMatches(observed, {
       ...current,
       addressLine1: 'Main 100',
-    })
+    }),
   ).toBe(false);
-  expect(
-    aresRegisteredAddressMatches(observed, { ...current, region: 'Extra' })
-  ).toBe(false);
-  expect(
-    aresRegisteredAddressMatches(observed, { ...current, postalCode: '13000' })
-  ).toBe(false);
+  expect(aresRegisteredAddressMatches(observed, { ...current, region: 'Extra' })).toBe(false);
+  expect(aresRegisteredAddressMatches(observed, { ...current, postalCode: '13000' })).toBe(false);
 });
 
 it('#246 stale observations and archived Parties cannot be enriched', () => {
-  expect(
-    derive({ ...canonical, archived: true }).factDecisions.every(
-      (decision) => decision.route === null
-    )
-  ).toBe(true);
+  expect(derive({ ...canonical, archived: true }).factDecisions.every((decision) => decision.route === null)).toBe(
+    true,
+  );
   const stale = deriveAresEvidenceApplication({
     canonical,
     decidedAt: '2026-09-03T09:01:00.000Z',
@@ -195,26 +179,20 @@ it('#246 durable evidence retains observation and authority metadata without raw
   }
   const durable = makeAresAppliedEvidence(application, decision);
   expect(DateTime.formatIso(durable.observedAt)).toBe(evidence.observedAt);
-  expect(DateTime.formatIso(durable.decidedAt)).toBe(
-    DateTime.formatIso(application.decidedAt)
-  );
+  expect(DateTime.formatIso(durable.decidedAt)).toBe(DateTime.formatIso(application.decidedAt));
   expect(
     Option.match(durable.providerChangedOn, {
       onNone: () => null,
       onSome: DateTime.formatIsoDateUtc,
-    })
+    }),
   ).toBe(evidence.providerChangedOn);
   expect(durable.fact).toBe('BUSINESS_NAME');
   expect(durable.evidenceRef.startsWith('ares:01234567:')).toBe(true);
   expect(Object.hasOwn(durable, 'subject')).toBe(false);
-  const encoded = Result.getOrThrow(
-    Schema.encodeUnknownResult(AresAppliedEvidenceSchema)(durable)
-  );
+  const encoded = Result.getOrThrow(Schema.encodeUnknownResult(AresAppliedEvidenceSchema)(durable));
   expect(encoded.observedAt).toBe(evidence.observedAt);
   expect(encoded.providerChangedOn).toBe(evidence.providerChangedOn);
-  expect(
-    Result.getOrThrow(Schema.decodeResult(AresAppliedEvidenceSchema)(encoded))
-  ).toEqual(durable);
+  expect(Result.getOrThrow(Schema.decodeResult(AresAppliedEvidenceSchema)(encoded))).toEqual(durable);
 });
 
 const acceptedEvidence = (fact: 'BUSINESS_NAME' | 'ICO') => {
@@ -225,9 +203,7 @@ const acceptedEvidence = (fact: 'BUSINESS_NAME' | 'ICO') => {
     throw new Error('Expected decision to be defined');
   }
   return Result.getOrThrow(
-    Schema.encodeUnknownResult(AresAppliedEvidenceSchema)(
-      makeAresAppliedEvidence(result, decision)
-    )
+    Schema.encodeUnknownResult(AresAppliedEvidenceSchema)(makeAresAppliedEvidence(result, decision)),
   );
 };
 const conflictingName: AresCanonicalSnapshot = {
@@ -257,9 +233,7 @@ it('unchanged provider revision nominates an exact conflicting accepted assertio
   expect(result.outcome).toBe('CORRECTION_CANDIDATE');
   expect(result.factDecisions[0]?.route).toBe(null);
   const [review] = deriveAresCorrectionReviewHandoffs(result, conflictingName);
-  expect(review?.targetAssertionId).toBe(
-    conflictingName.factEvidence?.[0]?.assertionId
-  );
+  expect(review?.targetAssertionId).toBe(conflictingName.factEvidence?.[0]?.assertionId);
   expect(review?.observedValue).toBe('Example');
   expect(review?.evidence.outcome).toBe('CORRECTION_CANDIDATE');
 });
@@ -283,9 +257,7 @@ it('ordinary change, missing provenance, ambiguous assertions and temporal misma
     },
     {
       ...conflictingName,
-      factEvidence: [
-        { ...assertion, externalEvidence: { ...prior, queryIco: '87654321' } },
-      ],
+      factEvidence: [{ ...assertion, externalEvidence: { ...prior, queryIco: '87654321' } }],
     },
     {
       ...conflictingName,
@@ -311,25 +283,21 @@ it('ordinary change, missing provenance, ambiguous assertions and temporal misma
     },
   ]) {
     expect(decideName(snapshot).outcome).toBe('NEEDS_CONFIRMATION');
-    expect(
-      deriveAresCorrectionReviewHandoffs(decideName(snapshot), snapshot)
-    ).toEqual([]);
+    expect(deriveAresCorrectionReviewHandoffs(decideName(snapshot), snapshot)).toEqual([]);
   }
   expect(
     decideName(conflictingName, {
       ...evidence,
       providerChangedOn: '2026-09-02',
-    }).outcome
+    }).outcome,
   ).toBe('NEEDS_CONFIRMATION');
   expect(
     decideName(conflictingName, {
       ...evidence,
       observedAt: '2026-09-03T07:00:00.000Z',
-    }).outcome
+    }).outcome,
   ).toBe('NEEDS_CONFIRMATION');
-  expect(decideName({ ...conflictingName, archived: true }).outcome).toBe(
-    'NEEDS_CONFIRMATION'
-  );
+  expect(decideName({ ...conflictingName, archived: true }).outcome).toBe('NEEDS_CONFIRMATION');
 });
 
 it('historical ICO suspicion nominates only its assertion and never permits other enrichment', () => {
@@ -347,19 +315,11 @@ it('historical ICO suspicion nominates only its assertion and never permits othe
     icoValues: ['87654321'],
   };
   const result = derive(snapshot);
-  expect(
-    result.factDecisions.find((item) => item.fact === 'ICO')?.outcome
-  ).toBe('CORRECTION_CANDIDATE');
-  expect(
-    result.factDecisions.find((item) => item.fact === 'BUSINESS_NAME')?.outcome
-  ).toBe('IDENTITY_AMBIGUITY');
+  expect(result.factDecisions.find((item) => item.fact === 'ICO')?.outcome).toBe('CORRECTION_CANDIDATE');
+  expect(result.factDecisions.find((item) => item.fact === 'BUSINESS_NAME')?.outcome).toBe('IDENTITY_AMBIGUITY');
   expect(result.factDecisions.every((item) => item.route === null)).toBe(true);
-  expect(deriveAresCorrectionReviewHandoffs(result, snapshot)[0]?.fact).toBe(
-    'ICO'
-  );
-  expect(derive({ ...snapshot, identityAmbiguous: true }).outcome).toBe(
-    'IDENTITY_AMBIGUITY'
-  );
+  expect(deriveAresCorrectionReviewHandoffs(result, snapshot)[0]?.fact).toBe('ICO');
+  expect(derive({ ...snapshot, identityAmbiguous: true }).outcome).toBe('IDENTITY_AMBIGUITY');
 });
 
 it('candidate prefill supplies a proposal without declaring subject type or actor evidence', () => {
@@ -386,7 +346,7 @@ it('six amended outcomes remain reachable and unsupported name or address never 
       derive(canonical, false).outcome,
       decideName().outcome,
       derive({ ...canonical, identityAmbiguous: true }).outcome,
-    ])
+    ]),
   ).toEqual(
     new Set([
       'PREFILL_ONLY',
@@ -395,7 +355,7 @@ it('six amended outcomes remain reachable and unsupported name or address never 
       'NEEDS_CONFIRMATION',
       'CORRECTION_CANDIDATE',
       'IDENTITY_AMBIGUITY',
-    ])
+    ]),
   );
   const result = deriveAresEvidenceApplication({
     canonical,
@@ -424,9 +384,7 @@ it('authoritative ICO enrichment requires an ORGANIZATION and address enrichment
       userConfirmed: true,
     });
     expect(result.outcome).toBe('NEEDS_CONFIRMATION');
-    expect(result.factDecisions[0]?.reasonCode).toBe(
-      'party_type_not_supported_for_authoritative_ico'
-    );
+    expect(result.factDecisions[0]?.reasonCode).toBe('party_type_not_supported_for_authoritative_ico');
   }
   const address = evidence.subject.registeredAddress;
   expect(address).toBeDefined();

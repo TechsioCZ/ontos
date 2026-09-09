@@ -51,7 +51,7 @@ const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(
   {
     buildMarker: () => ULTRAMODERN_BUILD_MARKER,
     sourceRevision: () => ULTRAMODERN_SOURCE_REVISION,
-  }
+  },
 );
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;

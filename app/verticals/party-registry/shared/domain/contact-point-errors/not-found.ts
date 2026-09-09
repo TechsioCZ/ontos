@@ -9,5 +9,5 @@ export class PartyContactPointNotFound extends Schema.TaggedError<PartyContactPo
     code: Schema.Literal('party_contact_point_not_found'),
     contactPointRef: PartyContactPointRefSchema,
     reason: ContactPointErrorReasonSchema,
-  }
+  },
 ) {}

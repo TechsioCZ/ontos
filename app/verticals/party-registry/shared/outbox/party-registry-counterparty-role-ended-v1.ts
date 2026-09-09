@@ -3,10 +3,7 @@
 // @ontos-outbox-topic party.registry.counterparty-role-ended.v1
 import { Schema } from 'effect';
 
-import {
-  CounterpartyIsoTimestampSchema,
-  CounterpartyRoleTypeSchema,
-} from '../domain/counterparty-contract.ts';
+import { CounterpartyIsoTimestampSchema, CounterpartyRoleTypeSchema } from '../domain/counterparty-contract.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 

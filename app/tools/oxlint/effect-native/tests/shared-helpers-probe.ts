@@ -2,43 +2,21 @@ import { defineRule, eslintCompatPlugin } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 import { Predicate } from 'effect';
 
-import {
-  asNode,
-  identityUnwrap,
-  memberName,
-  syntax,
-  unwrapNode,
-  walk,
-} from '../shared/ast.ts';
+import { asNode, identityUnwrap, memberName, syntax, unwrapNode, walk } from '../shared/ast.ts';
 import type { Syntax } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolvesToImport } from '../shared/bindings.ts';
-import {
-  bindingPath,
-  effectOrigin,
-  isGenCallee,
-} from '../shared/effect-identity.ts';
+import { bindingPath, effectOrigin, isGenCallee } from '../shared/effect-identity.ts';
 import { collectEffectBindings } from '../shared/effect-imports.ts';
-import {
-  collectDirectMemberImports,
-  collectRootNamespaces,
-  collectSchemaLocals,
-} from '../shared/imports.ts';
+import { collectDirectMemberImports, collectRootNamespaces, collectSchemaLocals } from '../shared/imports.ts';
 import { provenance } from '../shared/provenance.ts';
-import {
-  isInErasedTypePosition,
-  isInTypePosition,
-  isNonReferencePosition,
-} from '../shared/reference-positions.ts';
+import { isInErasedTypePosition, isInTypePosition, isNonReferencePosition } from '../shared/reference-positions.ts';
 import { snippet } from '../shared/reporting.ts';
 import { emittedText, maskText, reportNode } from '../shared/scaffold-text.ts';
 import { schemaIdentity } from '../shared/schema-identity.ts';
 import { isEntryPosition } from '../shared/script-entry.ts';
 
 type ProbeValue = string | number | boolean | null | readonly ProbeValue[];
-type Probe = (
-  context: Context,
-  program: ESTree.Program
-) => readonly ProbeValue[];
+type Probe = (context: Context, program: ESTree.Program) => readonly ProbeValue[];
 
 const expression = (program: ESTree.Program): ESTree.Expression => {
   const last = program.body.at(-1);
@@ -68,21 +46,14 @@ const probes = new Map<string, Probe>([
     'wrappers',
     (_context, program) => {
       const node = expression(program);
-      return [
-        unwrapNode(node, { wrappers: new Set() }) === node,
-        asNode({ type: 'Identifier' }, true) === null,
-      ];
+      return [unwrapNode(node, { wrappers: new Set() }) === node, asNode({ type: 'Identifier' }, true) === null];
     },
   ],
   [
     'members',
     (_context, program) => {
       const node = expression(program);
-      return [
-        memberName(node),
-        memberName(node, { templates: true }),
-        memberName(node, { unwrap: {} }),
-      ];
+      return [memberName(node), memberName(node, { templates: true }), memberName(node, { unwrap: {} })];
     },
   ],
   [
@@ -96,12 +67,8 @@ const probes = new Map<string, Probe>([
         }).size,
         imported?.namespace ?? null,
         imported?.member ?? null,
-        collectDirectMemberImports(program, undefined, { valueOnly: true }).has(
-          'tgen'
-        ),
-        collectSchemaLocals(program, collectEffectBindings(program)).schema.has(
-          'S'
-        ),
+        collectDirectMemberImports(program, undefined, { valueOnly: true }).has('tgen'),
+        collectSchemaLocals(program, collectEffectBindings(program)).schema.has('S'),
       ];
     },
   ],
@@ -114,10 +81,7 @@ const probes = new Map<string, Probe>([
   ],
   [
     'origin',
-    (context, program) => [
-      bindingPath(context, expression(program)),
-      effectOrigin(context, expression(program), []),
-    ],
+    (context, program) => [bindingPath(context, expression(program)), effectOrigin(context, expression(program), [])],
   ],
   [
     'barrel',
@@ -128,10 +92,7 @@ const probes = new Map<string, Probe>([
   ],
   [
     'provenance',
-    (context, program) => [
-      provenance(context, expression(program)),
-      bindingPath(context, expression(program)),
-    ],
+    (context, program) => [provenance(context, expression(program)), bindingPath(context, expression(program))],
   ],
   [
     'globals',
@@ -145,10 +106,7 @@ const probes = new Map<string, Probe>([
       ];
     },
   ],
-  [
-    'schema',
-    (context, program) => [schemaIdentity(context, expression(program))],
-  ],
+  ['schema', (context, program) => [schemaIdentity(context, expression(program))]],
   [
     'schema-syntax',
     (context, program) => [
@@ -195,10 +153,7 @@ const probes = new Map<string, Probe>([
     (context, program) => {
       const calls: Syntax[] = [];
       walk(program, context.sourceCode.visitorKeys, (node) => {
-        if (
-          node.type === 'CallExpression' &&
-          node.callee.type === 'MemberExpression'
-        ) {
+        if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression') {
           calls.push(node);
         }
       });
@@ -223,9 +178,7 @@ const probes = new Map<string, Probe>([
         isNonReferencePosition(binding),
         isNonReferencePosition(binding, { variableBindings: true }),
         schema.map((node) => isInErasedTypePosition(node)),
-        schema.map((node) =>
-          isInTypePosition(node, new Set(['TSAsExpression']))
-        ),
+        schema.map((node) => isInTypePosition(node, new Set(['TSAsExpression']))),
       ];
     },
   ],

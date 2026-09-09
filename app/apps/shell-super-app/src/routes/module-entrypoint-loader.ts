@@ -14,16 +14,14 @@ export type SettledModuleEntrypointLoad<Value> =
     }
   | { readonly state: 'ready'; readonly value: Value };
 
-export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> =
-  SettledModuleEntrypointLoad<Value> & { readonly identity: Identity };
+export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> = SettledModuleEntrypointLoad<Value> & {
+  readonly identity: Identity;
+};
 
 /** Bound for independent external module loads so one navigation cannot fan out without limit. */
 export const MODULE_LOAD_CONCURRENCY = 8;
 
-const safelyCheckCompatibility = <Value>(
-  value: Value,
-  isCompatible: (value: Value) => boolean
-): boolean => {
+const safelyCheckCompatibility = <Value>(value: Value, isCompatible: (value: Value) => boolean): boolean => {
   try {
     return isCompatible(value);
   } catch {
@@ -35,14 +33,14 @@ const safelyCheckCompatibility = <Value>(
 export const settleModuleEntrypointLoad = <Value>(
   load: () => Promise<Value>,
   isCompatible: (value: Value) => boolean,
-  timeoutMs = 5000
+  timeoutMs = 5000,
 ): Effect.Effect<SettledModuleEntrypointLoad<Value>> =>
   Effect.tryPromise(load).pipe(
     Effect.timeout(`${timeoutMs} millis`),
     Effect.map((value): SettledModuleEntrypointLoad<Value> =>
       safelyCheckCompatibility(value, isCompatible)
         ? { state: 'ready', value }
-        : { reason: 'incompatible', state: 'unavailable' }
+        : { reason: 'incompatible', state: 'unavailable' },
     ),
     Effect.matchEffect({
       onFailure: (error) =>
@@ -51,7 +49,7 @@ export const settleModuleEntrypointLoad = <Value>(
           state: 'unavailable',
         }),
       onSuccess: Effect.succeed,
-    })
+    }),
   );
 
 export interface ModuleEntrypointLoadRequest<Identity, Value> {
@@ -67,7 +65,7 @@ const timeoutResult = { reason: 'timeout', state: 'unavailable' } as const;
 // settlement because the underlying import cannot be cancelled; the deadline lives elsewhere.
 const settleIntoDeferred = <Value>(
   { isCompatible, load }: ModuleEntrypointLoadRequest<unknown, Value>,
-  result: Deferred.Deferred<SettledModuleEntrypointLoad<Value>>
+  result: Deferred.Deferred<SettledModuleEntrypointLoad<Value>>,
 ): Effect.Effect<void> =>
   Effect.tryPromise(load).pipe(
     // The caller deadline is delivered through its Deferred; settlement itself must not release
@@ -76,14 +74,14 @@ const settleIntoDeferred = <Value>(
     Effect.map((value): SettledModuleEntrypointLoad<Value> =>
       safelyCheckCompatibility(value, isCompatible)
         ? { state: 'ready', value }
-        : { reason: 'incompatible', state: 'unavailable' }
+        : { reason: 'incompatible', state: 'unavailable' },
     ),
     Effect.orElseSucceed((): SettledModuleEntrypointLoad<Value> => ({
       reason: 'unavailable',
       state: 'unavailable',
     })),
     Effect.flatMap((settled) => Deferred.succeed(result, settled)),
-    Effect.asVoid
+    Effect.asVoid,
   );
 
 interface PendingModuleEntrypointLoad<Identity, Value> {
@@ -92,32 +90,26 @@ interface PendingModuleEntrypointLoad<Identity, Value> {
   readonly result: Deferred.Deferred<SettledModuleEntrypointLoad<Value>>;
 }
 
-const settlePendingLoad = Effect.fn('ModuleEntrypointLoader.settlePendingLoad')(
-  function* settlePendingLoadEffect<Identity, Value>({
-    deadline,
-    request,
-    result,
-  }: PendingModuleEntrypointLoad<Identity, Value>) {
-    // Check only once this worker owns a slot, even if an overdue timer has not run yet.
-    const done = yield* Deferred.isDone(result);
-    const now = yield* Clock.currentTimeMillis;
-    if (done || now >= deadline) {
-      yield* Deferred.succeed(result, timeoutResult);
-      return;
-    }
-    yield* settleIntoDeferred(request, result);
+const settlePendingLoad = Effect.fn('ModuleEntrypointLoader.settlePendingLoad')(function* settlePendingLoadEffect<
+  Identity,
+  Value,
+>({ deadline, request, result }: PendingModuleEntrypointLoad<Identity, Value>) {
+  // Check only once this worker owns a slot, even if an overdue timer has not run yet.
+  const done = yield* Deferred.isDone(result);
+  const now = yield* Clock.currentTimeMillis;
+  if (done || now >= deadline) {
+    yield* Deferred.succeed(result, timeoutResult);
+    return;
   }
-);
+  yield* settleIntoDeferred(request, result);
+});
 
 const identify = <Identity, Value>({
   request,
   result,
 }: PendingModuleEntrypointLoad<Identity, Value>): Effect.Effect<
   IdentifiedSettledModuleEntrypointLoad<Identity, Value>
-> =>
-  Deferred.await(result).pipe(
-    Effect.map((settled) => ({ identity: request.identity, ...settled }))
-  );
+> => Deferred.await(result).pipe(Effect.map((settled) => ({ identity: request.identity, ...settled })));
 
 /**
  * Settles a set of browser entrypoints concurrently without widening one failure to the set.
@@ -129,29 +121,25 @@ const identify = <Identity, Value>({
  * waits for a permit. Results stay in request order and each entry settles on its own.
  */
 export const settleModuleEntrypointLoads = <Identity, Value>(
-  loads: readonly ModuleEntrypointLoadRequest<Identity, Value>[]
-): Effect.Effect<
-  readonly IdentifiedSettledModuleEntrypointLoad<Identity, Value>[]
-> =>
+  loads: readonly ModuleEntrypointLoadRequest<Identity, Value>[],
+): Effect.Effect<readonly IdentifiedSettledModuleEntrypointLoad<Identity, Value>[]> =>
   Clock.currentTimeMillis.pipe(
     Effect.flatMap((startedAt) => {
-      const pending: PendingModuleEntrypointLoad<Identity, Value>[] = loads.map(
-        (request) => ({
-          deadline: startedAt + (request.timeoutMs ?? 5000),
-          request,
-          result: Deferred.makeUnsafe<SettledModuleEntrypointLoad<Value>>(),
-        })
-      );
+      const pending: PendingModuleEntrypointLoad<Identity, Value>[] = loads.map((request) => ({
+        deadline: startedAt + (request.timeoutMs ?? 5000),
+        request,
+        result: Deferred.makeUnsafe<SettledModuleEntrypointLoad<Value>>(),
+      }));
       // Deadlines are children of this call's fiber: whichever of settlement or deadline completes
       // the Deferred first wins, and leftover deadline fibers end with the call.
       const deadlines = Effect.forEach(
         pending,
         ({ request, result }) =>
           Effect.sleep(`${request.timeoutMs ?? 5000} millis`).pipe(
-            Effect.flatMap(() => Deferred.succeed(result, timeoutResult))
+            Effect.flatMap(() => Deferred.succeed(result, timeoutResult)),
           ),
         // Every deadline starts now: the ceiling is the number of loads, never the load window.
-        { concurrency: Math.max(pending.length, 1), discard: true }
+        { concurrency: Math.max(pending.length, 1), discard: true },
       );
       // Detached: the settlement fibers only observe promises the JS runtime is already executing
       // and cannot cancel them, so they outlive the caller's deadline by design.
@@ -167,79 +155,44 @@ export const settleModuleEntrypointLoads = <Identity, Value>(
         Effect.flatMap(() => results),
         // Caller interruption cancels deadlines, so abandon queued work before slots free up.
         Effect.onInterrupt(() =>
-          Effect.forEach(
-            pending,
-            ({ result }) => Deferred.succeed(result, timeoutResult),
-            {
-              concurrency: 1,
-              discard: true,
-            }
-          )
-        )
+          Effect.forEach(pending, ({ result }) => Deferred.succeed(result, timeoutResult), {
+            concurrency: 1,
+            discard: true,
+          }),
+        ),
       );
-    })
+    }),
   );
 
-export type LazyModuleEntrypointLoad<
-  Value,
-  AuthorizationError,
-  LoadError,
-  Requirements,
-> = Omit<
-  RunGatedModuleEntrypointInput<
-    Value,
-    AuthorizationError,
-    LoadError,
-    Requirements
-  >,
+export type LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements> = Omit<
+  RunGatedModuleEntrypointInput<Value, AuthorizationError, LoadError, Requirements>,
   'entrypoint' | 'snapshot'
 > & {
   readonly entrypoint: ModuleEntrypointDescriptor<'page' | 'public_component'>;
 };
 
 /** Shell-only composition seam. Callers pass typed descriptors and lazy Effects, never remote strings. */
-export const loadModuleEntrypointComposition = Effect.fn(
-  'ModuleEntrypointLoader.loadModuleEntrypointComposition'
-)(function* loadModuleEntrypointCompositionEffect<
-  Value,
-  AuthorizationError,
-  LoadError,
-  Requirements,
->(
-  gateway: ModuleEntrypointAdapter,
-  context: Readonly<TrustedPrincipalContext>,
-  loads: readonly LazyModuleEntrypointLoad<
-    Value,
-    AuthorizationError,
-    LoadError,
-    Requirements
-  >[]
-) {
-  const snapshot = yield* gateway.prepareSnapshot(
-    context,
-    loads.map((load) => load.entrypoint)
-  );
-  yield* Effect.forEach(
-    loads,
-    (load: (typeof loads)[number]) => gateway.check(snapshot, load.entrypoint),
-    { concurrency: 1 }
-  );
-  return yield* Effect.forEach(
-    loads,
-    (load: (typeof loads)[number]) => gateway.run({ ...load, snapshot }),
-    { concurrency: 1 }
-  );
-});
+export const loadModuleEntrypointComposition = Effect.fn('ModuleEntrypointLoader.loadModuleEntrypointComposition')(
+  function* loadModuleEntrypointCompositionEffect<Value, AuthorizationError, LoadError, Requirements>(
+    gateway: ModuleEntrypointAdapter,
+    context: Readonly<TrustedPrincipalContext>,
+    loads: readonly LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements>[],
+  ) {
+    const snapshot = yield* gateway.prepareSnapshot(
+      context,
+      loads.map((load) => load.entrypoint),
+    );
+    yield* Effect.forEach(loads, (load: (typeof loads)[number]) => gateway.check(snapshot, load.entrypoint), {
+      concurrency: 1,
+    });
+    return yield* Effect.forEach(loads, (load: (typeof loads)[number]) => gateway.run({ ...load, snapshot }), {
+      concurrency: 1,
+    });
+  },
+);
 
 /** A resolved BFF target is the capability token that permits the browser-side lazy registry lookup. */
-export const resolveThenLoadModuleTarget = <
-  Target,
-  Value,
-  ResolutionError,
-  LoadError,
-  Requirements,
->(
+export const resolveThenLoadModuleTarget = <Target, Value, ResolutionError, LoadError, Requirements>(
   resolution: Effect.Effect<Target, ResolutionError, Requirements>,
-  load: (target: Target) => Effect.Effect<Value, LoadError, Requirements>
-): Effect.Effect<Value, ResolutionError | LoadError, Requirements> =>
-  resolution.pipe(Effect.flatMap(load));
+  load: (target: Target) => Effect.Effect<Value, LoadError, Requirements>,
+): Effect.Effect<Value, ResolutionError | LoadError, Requirements> => resolution.pipe(Effect.flatMap(load));

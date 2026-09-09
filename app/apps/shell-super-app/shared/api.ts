@@ -1,40 +1,25 @@
 import { GatewayContextApiGroup } from '@app/shared-contracts';
-import {
-  makeProblemDetailsSchema,
-  makeRetryableProblemDetailsSchema,
-} from '@app/shared-contracts/problem-details';
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
+import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
-export type SafeAuthenticatedIdentity =
-  typeof SafeAuthenticatedIdentitySchema.Type;
+export type SafeAuthenticatedIdentity = typeof SafeAuthenticatedIdentitySchema.Type;
 export type LegalEntityChoice = typeof LegalEntityChoiceSchema.Type;
 export type CurrentSession = typeof CurrentSessionSchema.Type;
 export type SignInPayload = typeof SignInPayloadSchema.Type;
 export type SignInResponse = typeof SignInResponseSchema.Type;
 export type SignOutResponse = typeof SignOutResponseSchema.Type;
 export type AvailableTenant = typeof AvailableTenantSchema.Type;
-export type AvailableTenantsResponse =
-  typeof AvailableTenantsResponseSchema.Type;
+export type AvailableTenantsResponse = typeof AvailableTenantsResponseSchema.Type;
 export type SwitchTenantPayload = typeof SwitchTenantPayloadSchema.Type;
 export type SwitchTenantResponse = typeof SwitchTenantResponseSchema.Type;
-export type AvailableLegalEntitiesResponse =
-  typeof AvailableLegalEntitiesResponseSchema.Type;
-export type SwitchLegalEntityPayload =
-  typeof SwitchLegalEntityPayloadSchema.Type;
-export type SwitchLegalEntityResponse =
-  typeof SwitchLegalEntityResponseSchema.Type;
+export type AvailableLegalEntitiesResponse = typeof AvailableLegalEntitiesResponseSchema.Type;
+export type SwitchLegalEntityPayload = typeof SwitchLegalEntityPayloadSchema.Type;
+export type SwitchLegalEntityResponse = typeof SwitchLegalEntityResponseSchema.Type;
 export type ShellNavigationItem = typeof ShellNavigationItemSchema.Type;
-export type ShellUnavailableDeployment =
-  typeof ShellUnavailableDeploymentSchema.Type;
+export type ShellUnavailableDeployment = typeof ShellUnavailableDeploymentSchema.Type;
 export type ShellComposition = typeof ShellCompositionSchema.Type;
-export type ResolveModuleTargetPayload =
-  typeof ResolveModuleTargetPayloadSchema.Type;
+export type ResolveModuleTargetPayload = typeof ResolveModuleTargetPayloadSchema.Type;
 export type ResolvedModuleTarget = typeof ResolvedModuleTargetSchema.Type;
 export type ResourceRef = typeof ResourceRefSchema.Type;
 export type ShellSearchResult = typeof ShellSearchResultSchema.Type;
@@ -45,53 +30,35 @@ export type MediaAttachmentResponse = typeof MediaAttachmentResponseSchema.Type;
 
 const SafePrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
 export const PrincipalIdSchema = SafePrincipalIdSchema.check(Schema.isUUID());
-export const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('AuthBindingId')
-);
+export const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('AuthBindingId'));
 const SafeTenantIdSchema = Schema.String.pipe(Schema.brand('TenantId'));
 export const TenantIdSchema = SafeTenantIdSchema.check(Schema.isUUID());
-export const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('LegalEntityId')
-);
+export const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
 export const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 export const GroupKeySchema = Schema.String.pipe(Schema.brand('GroupKey'));
-export const ModuleIdSchema = Schema.String.check(Schema.isMinLength(3)).pipe(
-  Schema.brand('ModuleId')
-);
-export const ComponentKeySchema = Schema.String.pipe(
-  Schema.brand('ComponentKey')
-);
+export const ModuleIdSchema = Schema.String.check(Schema.isMinLength(3)).pipe(Schema.brand('ModuleId'));
+export const ComponentKeySchema = Schema.String.pipe(Schema.brand('ComponentKey'));
 export const EntrypointKeySchema = Schema.String.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
 ).pipe(Schema.brand('EntrypointKey'));
-export const ResourceIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300)
-).pipe(Schema.brand('ResourceId'));
-export const TimelineEntryIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300)
-).pipe(Schema.brand('TimelineEntryId'));
+export const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('ResourceId'),
+);
+export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('TimelineEntryId'),
+);
 
 export const IdentityRequestHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))
-  ),
+  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
-  displayName: Schema.String.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(200)
-  ),
+  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   kind: Schema.Literals(['service', 'integration', 'system']),
 });
 const principalStatus = Schema.Literals(['active', 'disabled', 'archived']);
-const identityReason = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500)
-);
+const identityReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 export const ChangePrincipalStatusPayloadSchema = Schema.Union([
   Schema.Struct({
     expectedStatus: principalStatus,
@@ -107,18 +74,13 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
   }),
 ]);
 export const IssueApiKeyPayloadSchema = Schema.Struct({
-  name: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))
-  ),
+  name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
 export const IssueManagedApiKeyPayloadSchema = Schema.Struct({
   ...IssueApiKeyPayloadSchema.fields,
   principalId: PrincipalIdSchema,
 });
-const MutableApiKeyBindingStatusSchema = Schema.Literals([
-  'active',
-  'disabled',
-]);
+const MutableApiKeyBindingStatusSchema = Schema.Literals(['active', 'disabled']);
 const apiKeyStatusFields = {
   authBindingId: AuthBindingIdSchema,
   expectedStatus: MutableApiKeyBindingStatusSchema,
@@ -150,9 +112,7 @@ export const SetManagedApiKeyStatusPayloadSchema = Schema.Union([
   }),
 ]);
 export const RotateApiKeyPayloadSchema = Schema.Struct({
-  name: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))
-  ),
+  name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
   oldAuthBindingId: AuthBindingIdSchema,
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
 });
@@ -174,10 +134,7 @@ export const ApiKeyIssueResponseSchema = Schema.Struct({
   secret: Schema.Redacted(Schema.String.check(Schema.isMinLength(1))),
 });
 export const IdentityListPayloadSchema = Schema.Struct({
-  limit: Schema.Finite.check(
-    Schema.isInt(),
-    Schema.isBetween({ maximum: 100, minimum: 1 })
-  ),
+  limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 });
 export const SelfApiKeyListResponseSchema = Schema.Struct({
@@ -208,63 +165,27 @@ export const SupportImpersonationResponseSchema = Schema.Struct({
   targetPrincipalId: Schema.optionalKey(PrincipalIdSchema),
 });
 
-export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
-  typeof CreateNonHumanPrincipalPayloadSchema
->;
-export type ChangePrincipalStatusPayload = Schema.Schema.Type<
-  typeof ChangePrincipalStatusPayloadSchema
->;
-export type IssueApiKeyPayload = Schema.Schema.Type<
-  typeof IssueApiKeyPayloadSchema
->;
-export type IssueManagedApiKeyPayload = Schema.Schema.Type<
-  typeof IssueManagedApiKeyPayloadSchema
->;
-export type SetApiKeyStatusPayload = Schema.Schema.Type<
-  typeof SetApiKeyStatusPayloadSchema
->;
-export type SetManagedApiKeyStatusPayload = Schema.Schema.Type<
-  typeof SetManagedApiKeyStatusPayloadSchema
->;
-export type RotateApiKeyPayload = Schema.Schema.Type<
-  typeof RotateApiKeyPayloadSchema
->;
-export type RotateManagedApiKeyPayload = Schema.Schema.Type<
-  typeof RotateManagedApiKeyPayloadSchema
->;
-export type IdentityListPayload = Schema.Schema.Type<
-  typeof IdentityListPayloadSchema
->;
-export type ApiKeyLifecycleResponse = Schema.Schema.Type<
-  typeof ApiKeyLifecycleResponseSchema
->;
-export type ApiKeyIssueResponse = Schema.Schema.Type<
-  typeof ApiKeyIssueResponseSchema
->;
-export type PrincipalMutationResponse = Schema.Schema.Type<
-  typeof PrincipalMutationResponseSchema
->;
-export type SelfApiKeyListResponse = Schema.Schema.Type<
-  typeof SelfApiKeyListResponseSchema
->;
-export type ManagedApiKeyListResponse = Schema.Schema.Type<
-  typeof ManagedApiKeyListResponseSchema
->;
-export type StartSupportImpersonationPayload = Schema.Schema.Type<
-  typeof StartSupportImpersonationPayloadSchema
->;
-export type SupportImpersonationResponse = Schema.Schema.Type<
-  typeof SupportImpersonationResponseSchema
->;
+export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayloadSchema>;
+export type ChangePrincipalStatusPayload = Schema.Schema.Type<typeof ChangePrincipalStatusPayloadSchema>;
+export type IssueApiKeyPayload = Schema.Schema.Type<typeof IssueApiKeyPayloadSchema>;
+export type IssueManagedApiKeyPayload = Schema.Schema.Type<typeof IssueManagedApiKeyPayloadSchema>;
+export type SetApiKeyStatusPayload = Schema.Schema.Type<typeof SetApiKeyStatusPayloadSchema>;
+export type SetManagedApiKeyStatusPayload = Schema.Schema.Type<typeof SetManagedApiKeyStatusPayloadSchema>;
+export type RotateApiKeyPayload = Schema.Schema.Type<typeof RotateApiKeyPayloadSchema>;
+export type RotateManagedApiKeyPayload = Schema.Schema.Type<typeof RotateManagedApiKeyPayloadSchema>;
+export type IdentityListPayload = Schema.Schema.Type<typeof IdentityListPayloadSchema>;
+export type ApiKeyLifecycleResponse = Schema.Schema.Type<typeof ApiKeyLifecycleResponseSchema>;
+export type ApiKeyIssueResponse = Schema.Schema.Type<typeof ApiKeyIssueResponseSchema>;
+export type PrincipalMutationResponse = Schema.Schema.Type<typeof PrincipalMutationResponseSchema>;
+export type SelfApiKeyListResponse = Schema.Schema.Type<typeof SelfApiKeyListResponseSchema>;
+export type ManagedApiKeyListResponse = Schema.Schema.Type<typeof ManagedApiKeyListResponseSchema>;
+export type StartSupportImpersonationPayload = Schema.Schema.Type<typeof StartSupportImpersonationPayloadSchema>;
+export type SupportImpersonationResponse = Schema.Schema.Type<typeof SupportImpersonationResponseSchema>;
 
-export type InvalidCredentialsProblem =
-  typeof InvalidCredentialsProblemSchema.Type;
-export type OntosIdentityForbiddenProblem =
-  typeof OntosIdentityForbiddenProblemSchema.Type;
-export type AuthenticationUnavailableProblem =
-  typeof AuthenticationUnavailableProblemSchema.Type;
-export type AuthenticationInternalProblem =
-  typeof AuthenticationInternalProblemSchema.Type;
+export type InvalidCredentialsProblem = typeof InvalidCredentialsProblemSchema.Type;
+export type OntosIdentityForbiddenProblem = typeof OntosIdentityForbiddenProblemSchema.Type;
+export type AuthenticationUnavailableProblem = typeof AuthenticationUnavailableProblemSchema.Type;
+export type AuthenticationInternalProblem = typeof AuthenticationInternalProblemSchema.Type;
 
 export type AuthenticationProblem =
   | InvalidCredentialsProblem
@@ -272,12 +193,9 @@ export type AuthenticationProblem =
   | AuthenticationUnavailableProblem
   | AuthenticationInternalProblem;
 
-export type TenantAuthenticationRequiredProblem =
-  typeof TenantAuthenticationRequiredProblemSchema.Type;
-export type TenantAccessForbiddenProblem =
-  typeof TenantAccessForbiddenProblemSchema.Type;
-export type TenantCapabilityUnavailableProblem =
-  typeof TenantCapabilityUnavailableProblemSchema.Type;
+export type TenantAuthenticationRequiredProblem = typeof TenantAuthenticationRequiredProblemSchema.Type;
+export type TenantAccessForbiddenProblem = typeof TenantAccessForbiddenProblemSchema.Type;
+export type TenantCapabilityUnavailableProblem = typeof TenantCapabilityUnavailableProblemSchema.Type;
 export type TenantInternalProblem = typeof TenantInternalProblemSchema.Type;
 
 export type AvailableTenantsProblem =
@@ -285,35 +203,21 @@ export type AvailableTenantsProblem =
   | TenantCapabilityUnavailableProblem
   | TenantInternalProblem;
 
-export type SwitchTenantProblem =
-  | AvailableTenantsProblem
-  | TenantAccessForbiddenProblem;
+export type SwitchTenantProblem = AvailableTenantsProblem | TenantAccessForbiddenProblem;
 
-export type LegalEntityAccessForbiddenProblem =
-  typeof LegalEntityAccessForbiddenProblemSchema.Type;
+export type LegalEntityAccessForbiddenProblem = typeof LegalEntityAccessForbiddenProblemSchema.Type;
 
-export type LegalEntityProblem =
-  | AvailableTenantsProblem
-  | LegalEntityAccessForbiddenProblem;
+export type LegalEntityProblem = AvailableTenantsProblem | LegalEntityAccessForbiddenProblem;
 
-export type ShellAuthenticationRequiredProblem =
-  typeof ShellAuthenticationRequiredProblemSchema.Type;
-export type ShellTargetForbiddenProblem =
-  typeof ShellTargetForbiddenProblemSchema.Type;
-export type ShellTargetNotFoundProblem =
-  typeof ShellTargetNotFoundProblemSchema.Type;
-export type ShellSelectionRequiredProblem =
-  typeof ShellSelectionRequiredProblemSchema.Type;
-export type ShellPolicyConflictProblem =
-  typeof ShellPolicyConflictProblemSchema.Type;
-export type ShellPolicyUnprocessableProblem =
-  typeof ShellPolicyUnprocessableProblemSchema.Type;
-export type ShellInvalidRequestProblem =
-  typeof ShellInvalidRequestProblemSchema.Type;
-export type ShellPreconditionRequiredProblem =
-  typeof ShellPreconditionRequiredProblemSchema.Type;
-export type ShellCapabilityUnavailableProblem =
-  typeof ShellCapabilityUnavailableProblemSchema.Type;
+export type ShellAuthenticationRequiredProblem = typeof ShellAuthenticationRequiredProblemSchema.Type;
+export type ShellTargetForbiddenProblem = typeof ShellTargetForbiddenProblemSchema.Type;
+export type ShellTargetNotFoundProblem = typeof ShellTargetNotFoundProblemSchema.Type;
+export type ShellSelectionRequiredProblem = typeof ShellSelectionRequiredProblemSchema.Type;
+export type ShellPolicyConflictProblem = typeof ShellPolicyConflictProblemSchema.Type;
+export type ShellPolicyUnprocessableProblem = typeof ShellPolicyUnprocessableProblemSchema.Type;
+export type ShellInvalidRequestProblem = typeof ShellInvalidRequestProblemSchema.Type;
+export type ShellPreconditionRequiredProblem = typeof ShellPreconditionRequiredProblemSchema.Type;
+export type ShellCapabilityUnavailableProblem = typeof ShellCapabilityUnavailableProblemSchema.Type;
 export type ShellInternalProblem = typeof ShellInternalProblemSchema.Type;
 export type ShellRateLimitedProblem = typeof ShellRateLimitedProblemSchema.Type;
 
@@ -410,11 +314,7 @@ export const SwitchTenantResponseSchema = Schema.Struct({
 export const AvailableLegalEntitiesResponseSchema = Schema.Struct({
   legalEntities: Schema.Array(LegalEntityChoiceSchema),
   selectedLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  state: Schema.Literals([
-    'access_blocked',
-    'authenticated',
-    'selection_required',
-  ]),
+  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required']),
 });
 
 export const SwitchLegalEntityPayloadSchema = Schema.Struct({
@@ -486,10 +386,7 @@ export const ResourceRefSchema = Schema.Struct({
   tenantId: Schema.optionalKey(TenantIdSchema),
 });
 
-const searchTitle = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300)
-);
+const searchTitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 const ShellSearchResultSchema = Schema.Union([
   Schema.Struct({
@@ -509,7 +406,7 @@ const ShellSearchResultSchema = Schema.Union([
       Schema.Struct({
         counterpartyRefs: Schema.Array(ResourceRefSchema),
         kind: Schema.Literal('CANONICAL_PARTY_COUNTERPARTY_COLLISION'),
-      })
+      }),
     ),
     currentRoles: Schema.Array(PartyRoleSchema),
     kind: Schema.Literal('counterparty'),
@@ -557,13 +454,7 @@ export const ShellResourceResponseSchema = Schema.Struct({
   }),
   media: Schema.Struct({
     enabled: Schema.Boolean,
-    reason: Schema.Literals([
-      'absent',
-      'available',
-      'forbidden',
-      'read_only',
-      'unavailable',
-    ]),
+    reason: Schema.Literals(['absent', 'available', 'forbidden', 'read_only', 'unavailable']),
   }),
   projectionLagging: Schema.Boolean,
   ref: ResourceRefSchema,
@@ -574,99 +465,61 @@ export const MediaAttachmentResponseSchema = Schema.Struct({
   attached: Schema.Literal(true),
 });
 
-export const InvalidCredentialsProblemSchema = makeProblemDetailsSchema(
-  'InvalidCredentialsProblem',
-  401
+export const InvalidCredentialsProblemSchema = makeProblemDetailsSchema('InvalidCredentialsProblem', 401);
+
+export const OntosIdentityForbiddenProblemSchema = makeProblemDetailsSchema('OntosIdentityForbiddenProblem', 403);
+
+export const AuthenticationUnavailableProblemSchema = makeProblemDetailsSchema('AuthenticationUnavailableProblem', 503);
+
+export const AuthenticationInternalProblemSchema = makeProblemDetailsSchema('AuthenticationInternalProblem', 500);
+
+export const TenantAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
+  'TenantAuthenticationRequiredProblem',
+  401,
 );
 
-export const OntosIdentityForbiddenProblemSchema = makeProblemDetailsSchema(
-  'OntosIdentityForbiddenProblem',
-  403
+export const TenantAccessForbiddenProblemSchema = makeProblemDetailsSchema('TenantAccessForbiddenProblem', 403);
+
+export const TenantCapabilityUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'TenantCapabilityUnavailableProblem',
+  503,
 );
 
-export const AuthenticationUnavailableProblemSchema = makeProblemDetailsSchema(
-  'AuthenticationUnavailableProblem',
-  503
-);
-
-export const AuthenticationInternalProblemSchema = makeProblemDetailsSchema(
-  'AuthenticationInternalProblem',
-  500
-);
-
-export const TenantAuthenticationRequiredProblemSchema =
-  makeProblemDetailsSchema('TenantAuthenticationRequiredProblem', 401);
-
-export const TenantAccessForbiddenProblemSchema = makeProblemDetailsSchema(
-  'TenantAccessForbiddenProblem',
-  403
-);
-
-export const TenantCapabilityUnavailableProblemSchema =
-  makeRetryableProblemDetailsSchema('TenantCapabilityUnavailableProblem', 503);
-
-export const TenantInternalProblemSchema = makeProblemDetailsSchema(
-  'TenantInternalProblem',
-  500
-);
+export const TenantInternalProblemSchema = makeProblemDetailsSchema('TenantInternalProblem', 500);
 
 export const LegalEntityAccessForbiddenProblemSchema = makeProblemDetailsSchema(
   'LegalEntityAccessForbiddenProblem',
-  403
+  403,
 );
 
-export const ShellAuthenticationRequiredProblemSchema =
-  makeProblemDetailsSchema('ShellAuthenticationRequiredProblem', 401);
-
-export const ShellTargetForbiddenProblemSchema = makeProblemDetailsSchema(
-  'ShellTargetForbiddenProblem',
-  403
+export const ShellAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
+  'ShellAuthenticationRequiredProblem',
+  401,
 );
 
-export const ShellTargetNotFoundProblemSchema = makeProblemDetailsSchema(
-  'ShellTargetNotFoundProblem',
-  404
+export const ShellTargetForbiddenProblemSchema = makeProblemDetailsSchema('ShellTargetForbiddenProblem', 403);
+
+export const ShellTargetNotFoundProblemSchema = makeProblemDetailsSchema('ShellTargetNotFoundProblem', 404);
+
+export const ShellSelectionRequiredProblemSchema = makeProblemDetailsSchema('ShellSelectionRequiredProblem', 409);
+
+export const ShellPolicyConflictProblemSchema = makeProblemDetailsSchema('ShellPolicyConflictProblem', 409);
+
+export const ShellPolicyUnprocessableProblemSchema = makeProblemDetailsSchema('ShellPolicyUnprocessableProblem', 422);
+
+export const ShellInvalidRequestProblemSchema = makeProblemDetailsSchema('ShellInvalidRequestProblem', 400);
+
+export const ShellPreconditionRequiredProblemSchema = makeProblemDetailsSchema('ShellPreconditionRequiredProblem', 428);
+
+export const ShellCapabilityUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'ShellCapabilityUnavailableProblem',
+  503,
 );
 
-export const ShellSelectionRequiredProblemSchema = makeProblemDetailsSchema(
-  'ShellSelectionRequiredProblem',
-  409
-);
-
-export const ShellPolicyConflictProblemSchema = makeProblemDetailsSchema(
-  'ShellPolicyConflictProblem',
-  409
-);
-
-export const ShellPolicyUnprocessableProblemSchema = makeProblemDetailsSchema(
-  'ShellPolicyUnprocessableProblem',
-  422
-);
-
-export const ShellInvalidRequestProblemSchema = makeProblemDetailsSchema(
-  'ShellInvalidRequestProblem',
-  400
-);
-
-export const ShellPreconditionRequiredProblemSchema = makeProblemDetailsSchema(
-  'ShellPreconditionRequiredProblem',
-  428
-);
-
-export const ShellCapabilityUnavailableProblemSchema =
-  makeRetryableProblemDetailsSchema('ShellCapabilityUnavailableProblem', 503);
-
-export const ShellInternalProblemSchema = makeProblemDetailsSchema(
-  'ShellInternalProblem',
-  500
-);
-export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema(
-  'ShellRateLimitedProblem',
-  429,
-  {
-    retryAfterSeconds: Schema.Finite,
-  }
-);
+export const ShellInternalProblemSchema = makeProblemDetailsSchema('ShellInternalProblem', 500);
+export const ShellRateLimitedProblemSchema = makeProblemDetailsSchema('ShellRateLimitedProblem', 429, {
+  retryAfterSeconds: Schema.Finite,
+});
 
 const identityErrors = [
   ShellAuthenticationRequiredProblemSchema,
@@ -694,7 +547,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           ],
           payload: SignInPayloadSchema,
           success: SignInResponseSchema,
-        })
+        }),
       )
       .add(
         HttpApiEndpoint.get('currentSession', '/auth/session', {
@@ -705,7 +558,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             AuthenticationInternalProblemSchema,
           ],
           success: CurrentSessionSchema,
-        })
+        }),
       )
       .add(
         HttpApiEndpoint.post('signOut', '/auth/sign-out', {
@@ -716,152 +569,104 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             AuthenticationInternalProblemSchema,
           ],
           success: SignOutResponseSchema,
-        })
-      )
+        }),
+      ),
   )
   .add(
     HttpApiGroup.make('identity')
       .add(
-        HttpApiEndpoint.post(
-          'createNonHumanPrincipal',
-          '/auth/identity/principals',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: CreateNonHumanPrincipalPayloadSchema,
-            success: PrincipalMutationResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('createNonHumanPrincipal', '/auth/identity/principals', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: CreateNonHumanPrincipalPayloadSchema,
+          success: PrincipalMutationResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'changePrincipalStatus',
-          '/auth/identity/principal-status',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: ChangePrincipalStatusPayloadSchema,
-            success: PrincipalMutationResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('changePrincipalStatus', '/auth/identity/principal-status', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ChangePrincipalStatusPayloadSchema,
+          success: PrincipalMutationResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'issueSelfApiKey',
-          '/auth/identity/api-keys/self',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: IssueApiKeyPayloadSchema,
-            success: ApiKeyIssueResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('issueSelfApiKey', '/auth/identity/api-keys/self', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: IssueApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'listSelfApiKeys',
-          '/auth/identity/api-keys/self/list',
-          {
-            error: identityErrors,
-            payload: IdentityListPayloadSchema,
-            success: SelfApiKeyListResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('listSelfApiKeys', '/auth/identity/api-keys/self/list', {
+          error: identityErrors,
+          payload: IdentityListPayloadSchema,
+          success: SelfApiKeyListResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'issueManagedApiKey',
-          '/auth/identity/api-keys/managed',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: IssueManagedApiKeyPayloadSchema,
-            success: ApiKeyIssueResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('issueManagedApiKey', '/auth/identity/api-keys/managed', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: IssueManagedApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'listManagedApiKeys',
-          '/auth/identity/api-keys/managed/list',
-          {
-            error: identityErrors,
-            payload: IdentityListPayloadSchema,
-            success: ManagedApiKeyListResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('listManagedApiKeys', '/auth/identity/api-keys/managed/list', {
+          error: identityErrors,
+          payload: IdentityListPayloadSchema,
+          success: ManagedApiKeyListResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'setSelfApiKeyStatus',
-          '/auth/identity/api-keys/self/status',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: SetApiKeyStatusPayloadSchema,
-            success: ApiKeyLifecycleResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('setSelfApiKeyStatus', '/auth/identity/api-keys/self/status', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetApiKeyStatusPayloadSchema,
+          success: ApiKeyLifecycleResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'setManagedApiKeyStatus',
-          '/auth/identity/api-keys/managed/status',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: SetManagedApiKeyStatusPayloadSchema,
-            success: ApiKeyLifecycleResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('setManagedApiKeyStatus', '/auth/identity/api-keys/managed/status', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetManagedApiKeyStatusPayloadSchema,
+          success: ApiKeyLifecycleResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'rotateSelfApiKey',
-          '/auth/identity/api-keys/self/rotate',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: RotateApiKeyPayloadSchema,
-            success: ApiKeyIssueResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('rotateSelfApiKey', '/auth/identity/api-keys/self/rotate', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: RotateApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'rotateManagedApiKey',
-          '/auth/identity/api-keys/managed/rotate',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: RotateManagedApiKeyPayloadSchema,
-            success: ApiKeyIssueResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('rotateManagedApiKey', '/auth/identity/api-keys/managed/rotate', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: RotateManagedApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'startSupportImpersonation',
-          '/auth/identity/impersonation/start',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            payload: StartSupportImpersonationPayloadSchema,
-            success: SupportImpersonationResponseSchema,
-          }
-        )
+        HttpApiEndpoint.post('startSupportImpersonation', '/auth/identity/impersonation/start', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: StartSupportImpersonationPayloadSchema,
+          success: SupportImpersonationResponseSchema,
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'stopSupportImpersonation',
-          '/auth/identity/impersonation/stop',
-          {
-            error: identityErrors,
-            headers: IdentityRequestHeadersSchema,
-            success: SupportImpersonationResponseSchema,
-          }
-        )
-      )
+        HttpApiEndpoint.post('stopSupportImpersonation', '/auth/identity/impersonation/stop', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          success: SupportImpersonationResponseSchema,
+        }),
+      ),
   )
   .add(
     HttpApiGroup.make('composition')
@@ -876,7 +681,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             ShellInternalProblemSchema,
           ],
           success: ShellCompositionSchema,
-        })
+        }),
       )
       .add(
         HttpApiEndpoint.post('resolveModuleTarget', '/shell/module-target', {
@@ -892,8 +697,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           ],
           payload: ResolveModuleTargetPayloadSchema,
           success: ResolvedModuleTargetSchema,
-        })
-      )
+        }),
+      ),
   )
   .add(
     HttpApiGroup.make('legalEntities')
@@ -905,7 +710,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             TenantInternalProblemSchema,
           ],
           success: AvailableLegalEntitiesResponseSchema,
-        })
+        }),
       )
       .add(
         HttpApiEndpoint.post('switchLegalEntity', '/auth/legal-entity/switch', {
@@ -917,8 +722,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           ],
           payload: SwitchLegalEntityPayloadSchema,
           success: SwitchLegalEntityResponseSchema,
-        })
-      )
+        }),
+      ),
   )
   .add(
     HttpApiGroup.make('tenants')
@@ -930,7 +735,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             TenantInternalProblemSchema,
           ],
           success: AvailableTenantsResponseSchema,
-        })
+        }),
       )
       .add(
         HttpApiEndpoint.post('switchTenant', '/auth/tenant/switch', {
@@ -942,8 +747,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           ],
           payload: SwitchTenantPayloadSchema,
           success: SwitchTenantResponseSchema,
-        })
-      )
+        }),
+      ),
   )
   .add(
     HttpApiGroup.make('resources')
@@ -960,7 +765,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           ],
           payload: ShellSearchPayloadSchema,
           success: ShellSearchResponseSchema,
-        })
+        }),
       )
       .add(
         HttpApiEndpoint.post('resourceDetail', '/shell/resource', {
@@ -976,28 +781,24 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           ],
           payload: ResourceRefSchema,
           success: ShellResourceResponseSchema,
-        })
+        }),
       )
       .add(
-        HttpApiEndpoint.post(
-          'attachMedia',
-          '/shell/resource/media-attachment',
-          {
-            error: [
-              ShellAuthenticationRequiredProblemSchema,
-              ShellTargetForbiddenProblemSchema,
-              ShellTargetNotFoundProblemSchema,
-              ShellPolicyConflictProblemSchema,
-              ShellPolicyUnprocessableProblemSchema,
-              ShellSelectionRequiredProblemSchema,
-              ShellCapabilityUnavailableProblemSchema,
-              ShellInternalProblemSchema,
-            ],
-            payload: ResourceRefSchema,
-            success: MediaAttachmentResponseSchema,
-          }
-        )
-      )
+        HttpApiEndpoint.post('attachMedia', '/shell/resource/media-attachment', {
+          error: [
+            ShellAuthenticationRequiredProblemSchema,
+            ShellTargetForbiddenProblemSchema,
+            ShellTargetNotFoundProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
+            ShellSelectionRequiredProblemSchema,
+            ShellCapabilityUnavailableProblemSchema,
+            ShellInternalProblemSchema,
+          ],
+          payload: ResourceRefSchema,
+          success: MediaAttachmentResponseSchema,
+        }),
+      ),
   )
   .add(GatewayContextApiGroup);
 
@@ -1006,10 +807,6 @@ const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
 
 export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
-  signInPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.authentication.endpoints.signIn
-  ),
-  switchTenantPath: authenticationEndpointPath(
-    ShellAuthenticationApi.groups.tenants.endpoints.switchTenant
-  ),
+  signInPath: authenticationEndpointPath(ShellAuthenticationApi.groups.authentication.endpoints.signIn),
+  switchTenantPath: authenticationEndpointPath(ShellAuthenticationApi.groups.tenants.endpoints.switchTenant),
 } as const;

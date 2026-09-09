@@ -1,10 +1,6 @@
 import { Schema } from 'effect';
 
-import {
-  RelationshipEndpointSchema,
-  RelationshipErrorBase,
-  RelationshipErrorPartyTypeSchema,
-} from './shared.ts';
+import { RelationshipEndpointSchema, RelationshipErrorBase, RelationshipErrorPartyTypeSchema } from './shared.ts';
 
 export class PartyRelationshipEndpointTypeMismatch extends Schema.TaggedError<PartyRelationshipEndpointTypeMismatch>()(
   'PartyRelationshipEndpointTypeMismatch',
@@ -14,5 +10,5 @@ export class PartyRelationshipEndpointTypeMismatch extends Schema.TaggedError<Pa
     code: Schema.Literal('party_relationship_endpoint_type_mismatch'),
     endpoint: RelationshipEndpointSchema,
     expectedPartyType: RelationshipErrorPartyTypeSchema,
-  }
+  },
 ) {}

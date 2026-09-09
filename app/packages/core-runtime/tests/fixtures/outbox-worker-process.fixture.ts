@@ -29,15 +29,14 @@ const registration = defineOutboxWorker(
     topic: 'producer.message-created',
     workerKey: 'process-fixture.lifecycle',
   },
-  () => Effect.void
+  () => Effect.void,
 );
 
 const runtimeLayer = Layer.effect(
   OutboxRuntime,
   Effect.acquireRelease(
     Effect.succeed({
-      matchMessages: () =>
-        Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
+      matchMessages: () => Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
       runCycle: () =>
         Effect.sync(() => {
           process.stdout.write(`cycle:${process.listenerCount('SIGTERM')}\n`);
@@ -55,8 +54,8 @@ const runtimeLayer = Layer.effect(
     () =>
       Effect.sync(() => {
         process.stdout.write('disposed\n');
-      })
-  )
+      }),
+  ),
 );
 
 startOutboxWorkerProcess({

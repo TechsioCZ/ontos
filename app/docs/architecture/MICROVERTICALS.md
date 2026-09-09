@@ -12,9 +12,9 @@ The current generated manifest/catalog does not yet implement `implementationId`
 
 OntOS has two different kinds of seams. Do not treat them as equivalent.
 
-| Seam | Location | Meaning |
-| --- | --- | --- |
-| Vertical | Between MicroVerticals | A strict physical deployment seam that must always be preserved. |
+| Seam       | Location                                     | Meaning                                                                                 |
+| ---------- | -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Vertical   | Between MicroVerticals                       | A strict physical deployment seam that must always be preserved.                        |
 | Horizontal | Between frontend and backend in one vertical | A virtual seam represented by the generated, Effect-based BFF client—not a domain seam. |
 
 ## Vertical Seams: Strict and Independently Deployable

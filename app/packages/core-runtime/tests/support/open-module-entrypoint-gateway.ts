@@ -12,24 +12,17 @@ const unavailable = () =>
     reason: 'Module state could not be checked safely',
   });
 
-const prepareSnapshotInput = <Input>(
-  context: Input,
-  entrypoints: readonly ModuleEntrypointDescriptor[]
-) =>
+const prepareSnapshotInput = <Input>(context: Input, entrypoints: readonly ModuleEntrypointDescriptor[]) =>
   decodeTrustedPrincipalContext(context).pipe(
     Effect.mapError(unavailable),
-    Effect.flatMap((trustedContext) =>
-      openModuleStateGate.prepareSnapshot(trustedContext.tenantId, entrypoints)
-    )
+    Effect.flatMap((trustedContext) => openModuleStateGate.prepareSnapshot(trustedContext.tenantId, entrypoints)),
   );
 
-const run: ModuleEntrypointGatewayService['run'] = (input) =>
-  input.authorize.pipe(Effect.andThen(input.load));
+const run: ModuleEntrypointGatewayService['run'] = (input) => input.authorize.pipe(Effect.andThen(input.load));
 
-export const openModuleEntrypointGateway: ModuleEntrypointGatewayService =
-  Object.freeze({
-    check: () => Effect.void,
-    prepareSnapshot: prepareSnapshotInput,
-    prepareSnapshotInput,
-    run,
-  });
+export const openModuleEntrypointGateway: ModuleEntrypointGatewayService = Object.freeze({
+  check: () => Effect.void,
+  prepareSnapshot: prepareSnapshotInput,
+  prepareSnapshotInput,
+  run,
+});

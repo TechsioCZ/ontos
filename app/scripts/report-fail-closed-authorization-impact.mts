@@ -18,28 +18,24 @@ import {
 } from 'effect';
 import { Argument, Command } from 'effect/unstable/cli';
 
-const InventoryHashSchema = Schema.String.check(
-  Schema.isPattern(/^[a-f0-9]{64}$/u)
-);
+const InventoryHashSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const SourceRevisionSchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(100),
-  Schema.isPattern(/^[a-zA-Z0-9._-]+$/u)
+  Schema.isPattern(/^[a-zA-Z0-9._-]+$/u),
 );
-const EntrypointKeySchema = Schema.String.check(
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[./_-][a-z0-9]+)*$/u)
-).pipe(Schema.brand('EntrypointKey'));
+const EntrypointKeySchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[./_-][a-z0-9]+)*$/u)).pipe(
+  Schema.brand('EntrypointKey'),
+);
 const CanonicalTimestampStringSchema = Schema.String.check(
   Schema.makeFilter((value) => {
     const parsed = DateTime.make(value);
     return Option.isSome(parsed) && DateTime.formatIso(parsed.value) === value
       ? undefined
       : 'timestamp must use canonical UTC ISO 8601 encoding';
-  })
+  }),
 );
-const CanonicalTimestampSchema = CanonicalTimestampStringSchema.pipe(
-  Schema.decodeTo(Schema.DateTimeUtcFromString)
-);
+const CanonicalTimestampSchema = CanonicalTimestampStringSchema.pipe(Schema.decodeTo(Schema.DateTimeUtcFromString));
 
 const WouldDenyEvidenceSchema = Schema.Struct({
   denialReason: Schema.Literals([
@@ -64,17 +60,11 @@ const WouldDenyEvidenceSchema = Schema.Struct({
   ]),
   schemaVersion: Schema.Literal(1),
   sourceRevision: SourceRevisionSchema,
-  surface: Schema.Literals([
-    'action',
-    'capability_issuance',
-    'route',
-    'worker',
-  ]),
+  surface: Schema.Literals(['action', 'capability_issuance', 'route', 'worker']),
   timestamp: CanonicalTimestampSchema,
   type: Schema.Literal('authorization.would_deny'),
 }).annotate({
-  identifier:
-    'authorization evidence is malformed or contains prohibited fields',
+  identifier: 'authorization evidence is malformed or contains prohibited fields',
 });
 
 const NonEmptyEvidenceSchema = Schema.NonEmptyArray(WouldDenyEvidenceSchema);
@@ -87,8 +77,7 @@ const EmptyAuthorizationObservationSchema = Schema.Struct({
   startedAt: CanonicalTimestampSchema,
 });
 
-export type EmptyAuthorizationObservation =
-  (typeof EmptyAuthorizationObservationSchema)['Encoded'];
+export type EmptyAuthorizationObservation = (typeof EmptyAuthorizationObservationSchema)['Encoded'];
 
 const AuthorizationImpactAggregateSchema = Schema.Struct({
   count: Schema.Number,
@@ -110,19 +99,17 @@ const AuthorizationImpactReportSchema = Schema.Struct({
   totalWouldDeny: Schema.Number,
 });
 
-export type AuthorizationImpactReport =
-  (typeof AuthorizationImpactReportSchema)['Encoded'];
+export type AuthorizationImpactReport = (typeof AuthorizationImpactReportSchema)['Encoded'];
 
 class AuthorizationImpactValidationError extends Schema.TaggedError<AuthorizationImpactValidationError>()(
   'AuthorizationImpactValidationError',
-  { message: Schema.String }
+  { message: Schema.String },
 ) {}
 
 const validationError = (message: string): AuthorizationImpactValidationError =>
   new AuthorizationImpactValidationError({ message });
 
-type AuthorizationImpactAggregate =
-  AuthorizationImpactReport['aggregates'][number];
+type AuthorizationImpactAggregate = AuthorizationImpactReport['aggregates'][number];
 const localeStringOrder = Order.make<string>((left, right) => {
   const comparison = left.localeCompare(right);
   if (comparison < 0) {
@@ -131,55 +118,25 @@ const localeStringOrder = Order.make<string>((left, right) => {
   return comparison > 0 ? 1 : 0;
 });
 const aggregateOrder = Order.combineAll<AuthorizationImpactAggregate>([
-  Order.mapInput(
-    localeStringOrder,
-    (aggregate: AuthorizationImpactAggregate) => aggregate.surface
-  ),
-  Order.mapInput(
-    localeStringOrder,
-    (aggregate: AuthorizationImpactAggregate) => aggregate.entrypointKey
-  ),
-  Order.mapInput(
-    localeStringOrder,
-    (aggregate: AuthorizationImpactAggregate) => aggregate.policyClass
-  ),
-  Order.mapInput(
-    localeStringOrder,
-    (aggregate: AuthorizationImpactAggregate) => aggregate.denialReason
-  ),
+  Order.mapInput(localeStringOrder, (aggregate: AuthorizationImpactAggregate) => aggregate.surface),
+  Order.mapInput(localeStringOrder, (aggregate: AuthorizationImpactAggregate) => aggregate.entrypointKey),
+  Order.mapInput(localeStringOrder, (aggregate: AuthorizationImpactAggregate) => aggregate.policyClass),
+  Order.mapInput(localeStringOrder, (aggregate: AuthorizationImpactAggregate) => aggregate.denialReason),
 ]);
 
-const reduceDecodedEvidence = (
-  events: NonEmptyEvidence
-): AuthorizationImpactReport => {
+const reduceDecodedEvidence = (events: NonEmptyEvidence): AuthorizationImpactReport => {
   const [first] = events;
   if (
-    events.some(
-      (event) =>
-        event.sourceRevision !== first.sourceRevision ||
-        event.inventoryHash !== first.inventoryHash
-    )
+    events.some((event) => event.sourceRevision !== first.sourceRevision || event.inventoryHash !== first.inventoryHash)
   ) {
     return Result.getOrThrow(
-      Result.fail(
-        validationError(
-          'authorization evidence mixes source revisions or inventory hashes'
-        )
-      )
+      Result.fail(validationError('authorization evidence mixes source revisions or inventory hashes')),
     );
   }
 
-  const counts = new Map<
-    string,
-    AuthorizationImpactReport['aggregates'][number]
-  >();
+  const counts = new Map<string, AuthorizationImpactReport['aggregates'][number]>();
   for (const event of events) {
-    const key = [
-      event.surface,
-      event.entrypointKey,
-      event.policyClass,
-      event.denialReason,
-    ].join('\0');
+    const key = [event.surface, event.entrypointKey, event.policyClass, event.denialReason].join('\0');
     const current = counts.get(key);
     counts.set(key, {
       count: (current?.count ?? 0) + 1,
@@ -192,7 +149,7 @@ const reduceDecodedEvidence = (
 
   const timestamps = EffectArray.sort(
     events.map((event) => DateTime.formatIso(event.timestamp)),
-    Order.String
+    Order.String,
   );
   return {
     aggregates: EffectArray.sort([...counts.values()], aggregateOrder),
@@ -209,17 +166,14 @@ const reduceDecodedEvidence = (
 
 export const reduceAuthorizationImpact = (
   rawEvents: readonly object[],
-  emptyObservation?: EmptyAuthorizationObservation
+  emptyObservation?: EmptyAuthorizationObservation,
 ): AuthorizationImpactReport => {
   if (rawEvents.length > 0) {
     const events = Result.getOrThrowWith(
       Schema.decodeUnknownResult(NonEmptyEvidenceSchema, {
         onExcessProperty: 'error',
       })(rawEvents),
-      () =>
-        validationError(
-          'authorization evidence is malformed or contains prohibited fields'
-        )
+      () => validationError('authorization evidence is malformed or contains prohibited fields'),
     );
     return reduceDecodedEvidence(events);
   }
@@ -228,21 +182,11 @@ export const reduceAuthorizationImpact = (
     Schema.decodeUnknownResult(EmptyAuthorizationObservationSchema, {
       onExcessProperty: 'preserve',
     })(emptyObservation),
-    () =>
-      validationError(
-        'empty authorization impact requires explicit observation bounds'
-      )
+    () => validationError('empty authorization impact requires explicit observation bounds'),
   );
-  if (
-    DateTime.toEpochMillis(observation.startedAt) >
-    DateTime.toEpochMillis(observation.endedAt)
-  ) {
+  if (DateTime.toEpochMillis(observation.startedAt) > DateTime.toEpochMillis(observation.endedAt)) {
     return Result.getOrThrow(
-      Result.fail(
-        validationError(
-          'empty authorization impact requires explicit observation bounds'
-        )
-      )
+      Result.fail(validationError('empty authorization impact requires explicit observation bounds')),
     );
   }
   return {
@@ -265,34 +209,21 @@ const BoundedEvidenceBatchSchema = Schema.Struct({
   sourceRevision: SourceRevisionSchema,
   startedAt: CanonicalTimestampSchema,
 });
-const EvidenceDocumentSchema = Schema.Union([
-  Schema.Array(WouldDenyEvidenceSchema),
-  BoundedEvidenceBatchSchema,
-]);
+const EvidenceDocumentSchema = Schema.Union([Schema.Array(WouldDenyEvidenceSchema), BoundedEvidenceBatchSchema]);
 
-const writeAuthorizationImpactReport = Effect.fn(
-  'writeAuthorizationImpactReport'
-)(function* writeReport(inputPath: Option.Option<string>) {
+const writeAuthorizationImpactReport = Effect.fn('writeAuthorizationImpactReport')(function* writeReport(
+  inputPath: Option.Option<string>,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configuredRoot = yield* Config.option(
-    Config.string('ULTRAMODERN_WORKSPACE_ROOT')
-  );
-  const root = Option.getOrElse(configuredRoot, () =>
-    path.resolve(import.meta.dirname, '..')
-  );
-  const input = Option.getOrElse(inputPath, () =>
-    path.join(root, '.codex/reports/authorization/would-deny.json')
-  );
-  const output = path.join(
-    root,
-    '.codex/reports/authorization/fail-closed-impact.json'
-  );
+  const configuredRoot = yield* Config.option(Config.string('ULTRAMODERN_WORKSPACE_ROOT'));
+  const root = Option.getOrElse(configuredRoot, () => path.resolve(import.meta.dirname, '..'));
+  const input = Option.getOrElse(inputPath, () => path.join(root, '.codex/reports/authorization/would-deny.json'));
+  const output = path.join(root, '.codex/reports/authorization/fail-closed-impact.json');
   const source = yield* fileSystem.readFileString(input);
-  const document = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(EvidenceDocumentSchema),
-    { onExcessProperty: 'error' }
-  )(source);
+  const document = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(EvidenceDocumentSchema), {
+    onExcessProperty: 'error',
+  })(source);
 
   let report: AuthorizationImpactReport;
   if (Schema.is(Schema.Array(WouldDenyEvidenceSchema))(document)) {
@@ -310,12 +241,10 @@ const writeAuthorizationImpactReport = Effect.fn(
     });
   }
 
-  const decodedReport = yield* Schema.decodeUnknownEffect(
-    AuthorizationImpactReportSchema
-  )(report);
-  const outputJson = yield* Schema.encodeEffect(
-    Schema.fromJsonString(AuthorizationImpactReportSchema, { space: 2 })
-  )(decodedReport);
+  const decodedReport = yield* Schema.decodeUnknownEffect(AuthorizationImpactReportSchema)(report);
+  const outputJson = yield* Schema.encodeEffect(Schema.fromJsonString(AuthorizationImpactReportSchema, { space: 2 }))(
+    decodedReport,
+  );
   yield* fileSystem.makeDirectory(path.dirname(output), { recursive: true });
   yield* fileSystem.writeFileString(output, `${outputJson}\n`);
   yield* Console.log(output);
@@ -324,18 +253,13 @@ const writeAuthorizationImpactReport = Effect.fn(
 const command = Command.make(
   'report-fail-closed-authorization-impact',
   { input: Argument.file('input').pipe(Argument.optional) },
-  ({ input }) => writeAuthorizationImpactReport(input)
+  ({ input }) => writeAuthorizationImpactReport(input),
 );
 
 const [, invokedPath] = process.argv;
-if (
-  invokedPath !== undefined &&
-  import.meta.url === pathToFileURL(invokedPath).href
-) {
-  const mainLayer = Layer.effectDiscard(
-    Command.run(command, { version: '1.0.0' })
-  ).pipe(Layer.provide(NodeServices.layer));
-  NodeRuntime.runMain(
-    Effect.scoped(Layer.build(mainLayer)).pipe(Effect.asVoid)
+if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+  const mainLayer = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
+    Layer.provide(NodeServices.layer),
   );
+  NodeRuntime.runMain(Effect.scoped(Layer.build(mainLayer)).pipe(Effect.asVoid));
 }

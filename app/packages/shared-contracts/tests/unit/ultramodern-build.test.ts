@@ -17,11 +17,7 @@ it('injected build identity updates all surfaces without mutating generated meta
       ui: { ...deliveryUnit, surface: 'ui' },
     },
   } as const;
-  const result = withUltramodernBuildIdentity(
-    artifact,
-    'injected-build',
-    'source-revision'
-  );
+  const result = withUltramodernBuildIdentity(artifact, 'injected-build', 'source-revision');
   const expectedIdentity = {
     ...deliveryUnit,
     build: 'injected-build',

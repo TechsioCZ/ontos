@@ -68,21 +68,10 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  memberName,
-  keyName,
-  skipWrappers,
-  unwrapNode,
-} from '../shared/ast.ts';
+import { memberName, keyName, skipWrappers, unwrapNode } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
-import {
-  collectEffectBindings,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
-import {
-  collectNamedImports,
-  collectRootNamespaces,
-} from '../shared/imports.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
+import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray, stringOption, safeRegExp } from '../shared/options.ts';
 import { matchesGlobs } from '../shared/paths.ts';
@@ -95,12 +84,7 @@ const SCHEMA_NAMESPACE = 'Schema';
 const EFFECT_ROOT_MODULE = 'effect';
 const EFFECT_SCHEMA_MODULE = /^effect\/(?:.*\/)?Schema$/u;
 
-const DEFAULT_INCLUDE = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 const DEFAULT_IGNORE: string[] = [];
 const DEFAULT_KEY_PATTERN = '^(?:.*(?:Ids?|Keys?)|ico|dic)$';
 const DEFAULT_SCHEMA_NAME_PATTERN = '(?:Ids?|Ico|Keys?)Schema$';
@@ -162,12 +146,7 @@ const TRANSPARENT_WRAPPERS = new Set([
 ]);
 
 /** Instance methods that refine/annotate without changing identity: `Schema.String.check(...)`. */
-const TRANSPARENT_METHODS = new Set([
-  'annotate',
-  'annotateKey',
-  'check',
-  'pipe',
-]);
+const TRANSPARENT_METHODS = new Set(['annotate', 'annotateKey', 'check', 'pipe']);
 
 /** Anything named like this introduces a brand — `Schema.brand`, `Schema.Brand`, `.brand(...)`. */
 const BRAND_MEMBERS = new Set(['brand', 'Brand', 'TaggedBrand']);
@@ -207,23 +186,12 @@ function readOptions(context: Context): RuleOptions {
   const record = optionRecord(context.options?.[0]);
   return {
     brandHelpers: stringArray(record.brandHelpers, DEFAULT_BRAND_HELPERS),
-    identifierKeyPattern: stringOption(
-      record.identifierKeyPattern,
-      DEFAULT_KEY_PATTERN,
-      false
-    ),
-    identifierSchemaNamePattern: stringOption(
-      record.identifierSchemaNamePattern,
-      DEFAULT_SCHEMA_NAME_PATTERN,
-      false
-    ),
+    identifierKeyPattern: stringOption(record.identifierKeyPattern, DEFAULT_KEY_PATTERN, false),
+    identifierSchemaNamePattern: stringOption(record.identifierSchemaNamePattern, DEFAULT_SCHEMA_NAME_PATTERN, false),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     ignoreTests: record.ignoreTests === true,
     include: stringArray(record.include, DEFAULT_INCLUDE),
-    reexportModules: stringArray(
-      record.reexportModules,
-      DEFAULT_REEXPORT_MODULES
-    ),
+    reexportModules: stringArray(record.reexportModules, DEFAULT_REEXPORT_MODULES),
   };
 }
 
@@ -259,40 +227,28 @@ interface SchemaLocals {
 function collectSchemaLocals(
   program: ESTree.Program,
   bindings: EffectBindings,
-  reexportModules: readonly string[]
+  reexportModules: readonly string[],
 ): SchemaLocals {
-  const isReexport = (source: string): boolean =>
-    matchesGlobs(source, reexportModules);
+  const isReexport = (source: string): boolean => matchesGlobs(source, reexportModules);
   const schema = new Set<string>();
   const pipe = new Set<string>();
   for (const [local, namespace] of bindings.namespaces) {
     if (namespace === SCHEMA_NAMESPACE) schema.add(local);
     if (namespace === 'pipe') pipe.add(local);
   }
-  const barrel = collectRootNamespaces(
-    program,
-    (source) => source === EFFECT_ROOT_MODULE || isReexport(source)
-  );
+  const barrel = collectRootNamespaces(program, (source) => source === EFFECT_ROOT_MODULE || isReexport(source));
   const reexports = collectNamedImports(program, isReexport);
   for (const [local, member] of reexports) {
     if (member === SCHEMA_NAMESPACE) schema.add(local);
     if (member === 'pipe') pipe.add(local);
   }
-  const direct = collectNamedImports(program, (source) =>
-    EFFECT_SCHEMA_MODULE.test(source)
-  );
+  const direct = collectNamedImports(program, (source) => EFFECT_SCHEMA_MODULE.test(source));
   const members = new Map<string, MemberBinding>();
   for (const [local, member] of reexports) {
-    if (KNOWN_SCHEMA_MEMBERS.has(member))
-      members.set(local, { declarator: null, member });
+    if (KNOWN_SCHEMA_MEMBERS.has(member)) members.set(local, { declarator: null, member });
   }
-  for (const [local, member] of direct)
-    members.set(local, { declarator: null, member });
-  const brandDirect = new Set(
-    [...direct]
-      .filter(([, member]) => BRAND_MEMBERS.has(member))
-      .map(([local]) => local)
-  );
+  for (const [local, member] of direct) members.set(local, { declarator: null, member });
+  const brandDirect = new Set([...direct].filter(([, member]) => BRAND_MEMBERS.has(member)).map(([local]) => local));
   return { barrel, brandDirect, members, pipe, schema };
 }
 
@@ -353,14 +309,8 @@ export const rule = defineRule({
     const options = readOptions(context);
     if (!isSchemaRuleInScope(context.filename, options)) return {};
 
-    const keyPattern = safeRegExp(
-      options.identifierKeyPattern,
-      DEFAULT_KEY_PATTERN
-    );
-    const schemaNamePattern = safeRegExp(
-      options.identifierSchemaNamePattern,
-      DEFAULT_SCHEMA_NAME_PATTERN
-    );
+    const keyPattern = safeRegExp(options.identifierKeyPattern, DEFAULT_KEY_PATTERN);
+    const schemaNamePattern = safeRegExp(options.identifierSchemaNamePattern, DEFAULT_SCHEMA_NAME_PATTERN);
 
     let bindings: EffectBindings = {
       importsEffect: false,
@@ -385,21 +335,15 @@ export const rule = defineRule({
     const resolvesToImport = (node: ESTree.Node, name: string): boolean => {
       const variable = resolveVariable(context, name, node);
       if (variable === null || variable.defs.length === 0) return true;
-      return variable.defs.some(
-        (definition) => definition.type === 'ImportBinding'
-      );
+      return variable.defs.some((definition) => definition.type === 'ImportBinding');
     };
 
     /** The in-file `const` declarator an identifier resolves to, or `null` for imports/params/globals. */
-    const localDeclarator = (
-      node: ESTree.Node,
-      name: string
-    ): ESTree.VariableDeclarator | null => {
+    const localDeclarator = (node: ESTree.Node, name: string): ESTree.VariableDeclarator | null => {
       const variable = resolveVariable(context, name, node);
       if (variable === null || variable.defs.length !== 1) return null;
       const definition = variable.defs[0];
-      if (definition === undefined || definition.type !== 'Variable')
-        return null;
+      if (definition === undefined || definition.type !== 'Variable') return null;
       const declarator = definition.node;
       return declarator.type === 'VariableDeclarator' ? declarator : null;
     };
@@ -410,57 +354,34 @@ export const rule = defineRule({
      * shadow (a parameter, another `const`) does not resolve.
      */
     const destructuredMembers = new Map<number, Map<string, string>>();
-    const memberOfIdentifier = (
-      node: ESTree.Node,
-      name: string
-    ): string | null => {
+    const memberOfIdentifier = (node: ESTree.Node, name: string): string | null => {
       const local = localDeclarator(node, name);
-      const destructured =
-        local === null
-          ? undefined
-          : destructuredMembers.get(local.start)?.get(name);
+      const destructured = local === null ? undefined : destructuredMembers.get(local.start)?.get(name);
       if (destructured !== undefined) return destructured;
       const binding = locals.members.get(name);
       if (binding === undefined) return null;
-      if (binding.declarator === null)
-        return resolvesToImport(node, name) ? binding.member : null;
+      if (binding.declarator === null) return resolvesToImport(node, name) ? binding.member : null;
       const declarator = localDeclarator(node, name);
-      return declarator !== null && declarator.start === binding.declarator
-        ? binding.member
-        : null;
+      return declarator !== null && declarator.start === binding.declarator ? binding.member : null;
     };
 
-    const isImportedLocal = (
-      node: ESTree.Node,
-      names: ReadonlySet<string>
-    ): boolean =>
-      node.type === 'Identifier' &&
-      names.has(node.name) &&
-      resolvesToImport(node, node.name);
+    const isImportedLocal = (node: ESTree.Node, names: ReadonlySet<string>): boolean =>
+      node.type === 'Identifier' && names.has(node.name) && resolvesToImport(node, node.name);
 
     const isSchemaSource = (node: ESTree.Node): boolean => {
       const source = unwrap(node);
-      if (source.type === 'Identifier')
-        return isImportedLocal(source, locals.schema);
-      if (
-        source.type !== 'MemberExpression' ||
-        memberName(source) !== SCHEMA_NAMESPACE
-      )
-        return false;
+      if (source.type === 'Identifier') return isImportedLocal(source, locals.schema);
+      if (source.type !== 'MemberExpression' || memberName(source) !== SCHEMA_NAMESPACE) return false;
       return isImportedLocal(unwrap(source.object), locals.barrel);
     };
 
     const schemaMember = (node: ESTree.Node): string | null => {
-      if (node.type === 'Identifier')
-        return memberOfIdentifier(node, node.name);
-      if (node.type !== 'MemberExpression' || !isSchemaSource(node.object))
-        return null;
+      if (node.type === 'Identifier') return memberOfIdentifier(node, node.name);
+      if (node.type !== 'MemberExpression' || !isSchemaSource(node.object)) return null;
       return memberName(node);
     };
 
-    const isBrandIdentifier = (
-      node: Extract<ESTree.Node, { type: 'Identifier' }>
-    ): boolean => {
+    const isBrandIdentifier = (node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean => {
       if (isImportedLocal(node, locals.brandDirect)) return true;
       if (options.brandHelpers.includes(node.name)) return true;
       const member = memberOfIdentifier(node, node.name);
@@ -469,98 +390,63 @@ export const rule = defineRule({
 
     const isBrandExpression = (node: ESTree.Node): boolean => {
       const expression = unwrap(node);
-      if (expression.type === 'CallExpression')
-        return isBrandExpression(expression.callee);
-      if (expression.type === 'Identifier')
-        return isBrandIdentifier(expression);
+      if (expression.type === 'CallExpression') return isBrandExpression(expression.callee);
+      if (expression.type === 'Identifier') return isBrandIdentifier(expression);
       if (expression.type !== 'MemberExpression') return false;
       const member = memberName(expression);
       if (member === null) return false;
-      return (
-        (BRAND_MEMBERS.has(member) && schemaMember(expression) !== null) ||
-        options.brandHelpers.includes(member)
-      );
+      return (BRAND_MEMBERS.has(member) && schemaMember(expression) !== null) || options.brandHelpers.includes(member);
     };
 
     const recordDestructuredProperty = (
       declarator: ESTree.VariableDeclarator,
-      property: ESTree.ObjectPattern['properties'][number]
+      property: ESTree.ObjectPattern['properties'][number],
     ): void => {
-      if (
-        property.type !== 'Property' ||
-        property.computed ||
-        property.value.type !== 'Identifier'
-      )
-        return;
+      if (property.type !== 'Property' || property.computed || property.value.type !== 'Identifier') return;
       const member = keyName(property.key);
       if (member === null) return;
-      const members =
-        destructuredMembers.get(declarator.start) ?? new Map<string, string>();
+      const members = destructuredMembers.get(declarator.start) ?? new Map<string, string>();
       members.set(property.value.name, member);
       destructuredMembers.set(declarator.start, members);
     };
 
     const collectDestructuredMembers = (): void => {
       for (const declarator of declarators) {
-        if (declarator.id.type !== 'ObjectPattern' || declarator.init == null)
-          continue;
+        if (declarator.id.type !== 'ObjectPattern' || declarator.init == null) continue;
         if (!isSchemaSource(declarator.init)) continue;
-        for (const property of declarator.id.properties)
-          recordDestructuredProperty(declarator, property);
+        for (const property of declarator.id.properties) recordDestructuredProperty(declarator, property);
       }
     };
 
     const identityResult = (body: ESTree.Node): ESTree.Node | null => {
       if (body.type !== 'BlockStatement') return body;
-      if (body.body.length !== 1 || body.body[0]?.type !== 'ReturnStatement')
-        return null;
+      if (body.body.length !== 1 || body.body[0]?.type !== 'ReturnStatement') return null;
       return body.body[0].argument;
     };
 
     const isIdentityFunction = (step: ESTree.Node): boolean => {
-      if (
-        step.type !== 'ArrowFunctionExpression' &&
-        step.type !== 'FunctionExpression'
-      )
-        return false;
-      if (
-        step.body === null ||
-        step.params.length !== 1 ||
-        step.params[0]?.type !== 'Identifier'
-      )
-        return false;
+      if (step.type !== 'ArrowFunctionExpression' && step.type !== 'FunctionExpression') return false;
+      if (step.body === null || step.params.length !== 1 || step.params[0]?.type !== 'Identifier') return false;
       const returned = identityResult(step.body);
-      return (
-        returned?.type === 'Identifier' && returned.name === step.params[0].name
-      );
+      return returned?.type === 'Identifier' && returned.name === step.params[0].name;
     };
 
     const isTransparentMember = (member: string): boolean =>
-      TRANSPARENT_WRAPPERS.has(member) ||
-      (TRANSPARENT_METHODS.has(member) && member !== 'pipe');
+      TRANSPARENT_WRAPPERS.has(member) || (TRANSPARENT_METHODS.has(member) && member !== 'pipe');
 
     /** A pipe step must visibly preserve the string schema; arbitrary transforms may decode it
      * to a branded or non-string target. Do not infer their output from the encoded input. */
     const isTransparentStep = (node: ESTree.Node, depth = 0): boolean => {
       if (depth > 16) return false;
       const step = unwrap(node);
-      const member = schemaMember(
-        step.type === 'CallExpression' ? unwrap(step.callee) : step
-      );
+      const member = schemaMember(step.type === 'CallExpression' ? unwrap(step.callee) : step);
       if (member !== null) {
         return isTransparentMember(member);
       }
       if (step.type === 'Identifier') {
         const declaration = localDeclarator(step, step.name);
-        if (
-          declaration?.parent?.type !== 'VariableDeclaration' ||
-          declaration.parent.kind !== 'const'
-        )
-          return false;
-        return (
-          declaration.init !== null &&
-          isTransparentStep(declaration.init, depth + 1)
-        );
+        if (declaration?.parent?.type !== 'VariableDeclaration' || declaration.parent.kind !== 'const') return false;
+        return declaration.init !== null && isTransparentStep(declaration.init, depth + 1);
       }
       return isIdentityFunction(step);
     };
@@ -569,11 +455,7 @@ export const rule = defineRule({
      * A schema expression whose runtime identity is still "any string": no brand anywhere in the
      * chain. `seen` guards mutually-referential `const`s.
      */
-    const isStringRooted = (
-      node: ESTree.Node | null,
-      seen: Set<number>,
-      depth: number
-    ): boolean => {
+    const isStringRooted = (node: ESTree.Node | null, seen: Set<number>, depth: number): boolean => {
       if (node === null || depth > 24) return false;
       const expression = unwrap(node);
 
@@ -596,59 +478,29 @@ export const rule = defineRule({
       return isStringRootedCall(expression, seen, depth);
     };
 
-    const firstArgumentRooted = (
-      expression: ESTree.CallExpression,
-      seen: Set<number>,
-      depth: number
-    ): boolean => {
+    const firstArgumentRooted = (expression: ESTree.CallExpression, seen: Set<number>, depth: number): boolean => {
       const first = expression.arguments[0];
-      return (
-        first !== undefined &&
-        first.type !== 'SpreadElement' &&
-        isStringRooted(first, seen, depth + 1)
-      );
+      return first !== undefined && first.type !== 'SpreadElement' && isStringRooted(first, seen, depth + 1);
     };
 
     const isStringRootedMethod = (
       expression: ESTree.CallExpression,
       callee: ESTree.MemberExpression,
       seen: Set<number>,
-      depth: number
+      depth: number,
     ): boolean => {
       const method = memberName(callee);
-      if (
-        method === null ||
-        BRAND_MEMBERS.has(method) ||
-        !TRANSPARENT_METHODS.has(method)
-      )
-        return false;
-      if (expression.arguments.some((argument) => isBrandExpression(argument)))
-        return false;
-      if (
-        method === 'pipe' &&
-        !expression.arguments.every((argument) => isTransparentStep(argument))
-      )
-        return false;
+      if (method === null || BRAND_MEMBERS.has(method) || !TRANSPARENT_METHODS.has(method)) return false;
+      if (expression.arguments.some((argument) => isBrandExpression(argument))) return false;
+      if (method === 'pipe' && !expression.arguments.every((argument) => isTransparentStep(argument))) return false;
       return isStringRooted(callee.object, seen, depth + 1);
     };
 
-    const isStringRootedCall = (
-      expression: ESTree.CallExpression,
-      seen: Set<number>,
-      depth: number
-    ): boolean => {
+    const isStringRootedCall = (expression: ESTree.CallExpression, seen: Set<number>, depth: number): boolean => {
       const callee = unwrap(expression.callee);
       if (isImportedLocal(callee, locals.pipe)) {
-        if (
-          expression.arguments.some((argument) => isBrandExpression(argument))
-        )
-          return false;
-        if (
-          !expression.arguments
-            .slice(1)
-            .every((argument) => isTransparentStep(argument))
-        )
-          return false;
+        if (expression.arguments.some((argument) => isBrandExpression(argument))) return false;
+        if (!expression.arguments.slice(1).every((argument) => isTransparentStep(argument))) return false;
         return firstArgumentRooted(expression, seen, depth);
       }
       const wrapper = schemaMember(callee);
@@ -659,10 +511,7 @@ export const rule = defineRule({
           firstArgumentRooted(expression, seen, depth)
         );
       }
-      return (
-        callee.type === 'MemberExpression' &&
-        isStringRootedMethod(expression, callee, seen, depth)
-      );
+      return callee.type === 'MemberExpression' && isStringRootedMethod(expression, callee, seen, depth);
     };
 
     /** Is `node` an argument of a `Schema.Struct` / `Schema.TaggedError<E>()('T', ...)` style call? */
@@ -682,8 +531,7 @@ export const rule = defineRule({
       const { node: current } = skipWrappers(node, UNWRAPPABLE);
       const parent = current.parent;
       if (parent === null || parent === undefined) return false;
-      if (parent.type !== 'VariableDeclarator' || parent.init !== current)
-        return false;
+      if (parent.type !== 'VariableDeclarator' || parent.init !== current) return false;
       if (parent.id.type !== 'Identifier') return false;
       const name = parent.id.name;
       if (bagIdentifierNames.has(name)) return true;
@@ -699,15 +547,11 @@ export const rule = defineRule({
       return keyName(property.key, property.computed);
     };
 
-    const isModuleDeclarator = (
-      declarator: ESTree.VariableDeclarator
-    ): boolean => {
+    const isModuleDeclarator = (declarator: ESTree.VariableDeclarator): boolean => {
       const declaration = declarator.parent;
       if (declaration?.type !== 'VariableDeclaration') return false;
       const owner = declaration.parent;
-      return (
-        owner?.type === 'Program' || owner?.type === 'ExportNamedDeclaration'
-      );
+      return owner?.type === 'Program' || owner?.type === 'ExportNamedDeclaration';
     };
 
     const reportedDeclarators = new Set<number>();
@@ -733,9 +577,7 @@ export const rule = defineRule({
       });
     };
 
-    const reportProperty = (
-      property: ESTree.ObjectExpression['properties'][number]
-    ): void => {
+    const reportProperty = (property: ESTree.ObjectExpression['properties'][number]): void => {
       if (property.type !== 'Property') return;
       if (property.kind !== 'init' || property.method) return;
       const key = propertyKey(property);
@@ -745,8 +587,7 @@ export const rule = defineRule({
       // same defect: fixing the shared schema fixes the field. Report the source only.
       if (value.type === 'Identifier') {
         const declarator = localDeclarator(value, value.name);
-        if (declarator !== null && reportedDeclarators.has(declarator.start))
-          return;
+        if (declarator !== null && reportedDeclarators.has(declarator.start)) return;
       }
       if (!isStringRooted(property.value, new Set(), 0)) return;
       reports.push({
@@ -761,11 +602,7 @@ export const rule = defineRule({
       for (const call of calls) {
         for (const argument of call.arguments) {
           const value = unwrap(argument);
-          if (
-            value.type === 'Identifier' &&
-            isSchemaConstructorArgument(argument)
-          )
-            bagIdentifierNames.add(value.name);
+          if (value.type === 'Identifier' && isSchemaConstructorArgument(argument)) bagIdentifierNames.add(value.name);
         }
       }
     };
@@ -789,12 +626,7 @@ export const rule = defineRule({
         declarators.push(node);
       },
       'Program:exit'() {
-        if (
-          locals.schema.size === 0 &&
-          locals.barrel.size === 0 &&
-          locals.members.size === 0
-        )
-          return;
+        if (locals.schema.size === 0 && locals.barrel.size === 0 && locals.members.size === 0) return;
         collectDestructuredMembers();
         collectBagIdentifiers();
         for (const declarator of declarators) reportDeclarator(declarator);

@@ -38,6 +38,6 @@ export const partyOfficialIdentifierHistoryReadApiLive = HttpApiBuilder.group(
         authenticatePrincipal: authenticateOperationPrincipal,
         problems,
         registration: partyOfficialIdentifierHistoryRead,
-      })
-    )
+      }),
+    ),
 );

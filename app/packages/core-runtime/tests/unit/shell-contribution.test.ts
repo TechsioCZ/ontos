@@ -13,9 +13,7 @@ const first = <Value>(values: readonly Value[]): Value => {
   }
   return value;
 };
-const entrypoint = (
-  role: 'api' | 'page' | 'public_component' | 'report' | 'search'
-) => ({
+const entrypoint = (role: 'api' | 'page' | 'public_component' | 'report' | 'search') => ({
   access: 'read' as const,
   authorization: {
     kind: 'context_permission' as const,
@@ -128,23 +126,17 @@ it('accepts safe dynamic page templates as plain serialized data', () => {
   const decoded = validateShellContributions(dynamic, references);
   expect(decoded.pages[0]?.routePath).toBe('/contacts/customers/:id/edit');
   expect(structuredClone(decoded)).toEqual(decoded);
-  expect(encodeJson(decoded)).not.toMatch(
-    /handler|loader|sourcePath|remote|import/iu
-  );
+  expect(encodeJson(decoded)).not.toMatch(/handler|loader|sourcePath|remote|import/iu);
 });
 
 it('rejects extra keys, duplicates, cross-owner entrypoints, and missing references', () => {
-  expect(() =>
-    validateShellContributions({ ...full(), route: '/private' }, references)
-  ).toThrow();
+  expect(() => validateShellContributions({ ...full(), route: '/private' }, references)).toThrow();
   const duplicate = full();
   duplicate.publicComponents[0] = {
     ...first(duplicate.publicComponents),
     contributionKey: first(duplicate.pages).contributionKey,
   };
-  expect(() => validateShellContributions(duplicate, references)).toThrow(
-    /duplicate/u
-  );
+  expect(() => validateShellContributions(duplicate, references)).toThrow(/duplicate/u);
   const crossOwner = full();
   crossOwner.pages[0] = {
     ...first(crossOwner.pages),
@@ -153,14 +145,12 @@ it('rejects extra keys, duplicates, cross-owner entrypoints, and missing referen
       moduleKey: 'billing.core',
     },
   };
-  expect(() => validateShellContributions(crossOwner, references)).toThrow(
-    /owner/u
-  );
+  expect(() => validateShellContributions(crossOwner, references)).toThrow(/owner/u);
   expect(() =>
     validateShellContributions(full(), {
       ...references,
       componentKeys: new Set(),
-    })
+    }),
   ).toThrow();
 });
 
@@ -172,8 +162,8 @@ it('rejects incompatible entrypoint roles and arbitrary transport metadata', () 
         ...baseline,
         search: [{ ...first(baseline.search), entrypoint: entrypoint('page') }],
       },
-      references
-    )
+      references,
+    ),
   ).toThrow();
   expect(() =>
     validateShellContributions(
@@ -189,8 +179,8 @@ it('rejects incompatible entrypoint roles and arbitrary transport metadata', () 
           },
         ],
       },
-      references
-    )
+      references,
+    ),
   ).toThrow();
   expect(() =>
     validateShellContributions(
@@ -206,8 +196,8 @@ it('rejects incompatible entrypoint roles and arbitrary transport metadata', () 
           },
         ],
       },
-      references
-    )
+      references,
+    ),
   ).toThrow();
   expect(() =>
     validateShellContributions(
@@ -215,17 +205,15 @@ it('rejects incompatible entrypoint roles and arbitrary transport metadata', () 
         ...baseline,
         pages: [{ ...first(baseline.pages), remote: 'private/remote' }],
       },
-      references
-    )
+      references,
+    ),
   ).toThrow();
   const withUnsafeRoute = full();
   withUnsafeRoute.pages[0] = {
     ...first(withUnsafeRoute.pages),
     routePath: '/modules/:module-id',
   };
-  expect(() =>
-    validateShellContributions(withUnsafeRoute, references)
-  ).toThrow();
+  expect(() => validateShellContributions(withUnsafeRoute, references)).toThrow();
 });
 
 for (const routePath of [

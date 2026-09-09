@@ -2,9 +2,9 @@ import { Schema } from 'effect';
 
 import { PartyRefSchema } from '../resources/party.ts';
 
-const MergeReadinessOwnerKeySchema = Schema.String.check(
-  Schema.isMinLength(1)
-).pipe(Schema.brand('MergeReadinessOwnerKey'));
+const MergeReadinessOwnerKeySchema = Schema.String.check(Schema.isMinLength(1)).pipe(
+  Schema.brand('MergeReadinessOwnerKey'),
+);
 
 const MergeReadinessBlockerCodeSchema = Schema.Literals([
   'PRODUCTION_MERGE_DISABLED',
@@ -37,14 +37,10 @@ export const MergeReadinessResultSchema = Schema.Struct({
   analysis: Schema.Struct({
     collisionCodes: Schema.Array(MergeReadinessBlockerCodeSchema),
     referencePlanStatus: Schema.Literals(['BLOCKED', 'PLANNED']),
-    selectedSurvivorPartyRef: Schema.toEncoded(
-      Schema.OptionFromNullOr(PartyRefSchema)
-    ),
+    selectedSurvivorPartyRef: Schema.toEncoded(Schema.OptionFromNullOr(PartyRefSchema)),
     selectionStatus: Schema.Literals(['BLOCKED', 'SELECTED']),
   }),
-  blockers: Schema.Array(MergeReadinessBlockerSchema).check(
-    Schema.isMinLength(1)
-  ),
+  blockers: Schema.Array(MergeReadinessBlockerSchema).check(Schema.isMinLength(1)),
   mergeExecutionEnabled: Schema.Literal(false),
   partyRefs: Schema.Array(PartyRefSchema).check(Schema.isMinLength(2)),
   status: Schema.Literal('DISABLED'),

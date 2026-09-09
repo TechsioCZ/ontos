@@ -26,15 +26,15 @@ This is not a general PostgreSQL reachability analyzer. Indirect execution throu
 
 **VERIFIED** against a freshly migrated local database:
 
-| Surface | `ontos_runtime` authority |
-| --- | --- |
-| Cluster and roles | Login only; no superuser, `BYPASSRLS`, database/role creation, replication, inheritance, memberships, or parameter grants |
-| Database and schemas | `CONNECT` and temporary objects; `USAGE` on application schemas; no database or schema `CREATE` |
-| Relations | DML across 27 owner tables; no migration-journal access or relation-control privileges |
-| Sequences | `USAGE` and `SELECT` on one application sequence; no `UPDATE` |
-| Ownership and privileged execution | No application-object ownership and no executable `SECURITY DEFINER` path |
-| RLS | Two tables have enabled and forced RLS |
-| Trusted settings | Can set both `ontos.tenant_id` and `ontos.legal_entity_id`; local values disappear after rollback |
+| Surface                            | `ontos_runtime` authority                                                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Cluster and roles                  | Login only; no superuser, `BYPASSRLS`, database/role creation, replication, inheritance, memberships, or parameter grants |
+| Database and schemas               | `CONNECT` and temporary objects; `USAGE` on application schemas; no database or schema `CREATE`                           |
+| Relations                          | DML across 27 owner tables; no migration-journal access or relation-control privileges                                    |
+| Sequences                          | `USAGE` and `SELECT` on one application sequence; no `UPDATE`                                                             |
+| Ownership and privileged execution | No application-object ownership and no executable `SECURITY DEFINER` path                                                 |
+| RLS                                | Two tables have enabled and forced RLS                                                                                    |
+| Trusted settings                   | Can set both `ontos.tenant_id` and `ontos.legal_entity_id`; local values disappear after rollback                         |
 
 Exact counts describe this local database, not production. Re-run the audit against each target environment.
 
@@ -47,15 +47,15 @@ The first is a blast-radius problem. The second is a trust-root problem; splitti
 
 ## Process-to-identity map
 
-| Boundary | Current evidence | Status |
-| --- | --- | --- |
-| Migration/bootstrap | Drizzle and role bootstrap use `DATABASE_ADMIN_URL`. | Repository wiring **VERIFIED**; deployed secret and rotation **UNKNOWN**. |
-| Shell requests | Auth and Core persistence use the shared `DATABASE_URL`. | Code **VERIFIED**; deployed login **UNKNOWN**. |
-| Contacts requests | Contacts persistence and assertion redemption use the shared `DATABASE_URL`. | Code **VERIFIED**; deployed login **UNKNOWN**. |
-| Core | Package/schema boundary composed into its caller; no independent process or credential. | **VERIFIED**. |
-| Workers | Generated workers compose the shared database layers; no production worker is installed. | Current code **VERIFIED**; future identity **INFERRED**. |
-| SpiceDB | Separate datastore login; applications use gRPC plus a pre-shared key. | Bootstrap **VERIFIED**; deployed distribution **UNKNOWN**. |
-| Browser/remotes | Boundary checks reject database imports outside server owners. | Static boundary **VERIFIED**; not protection from a compromised server process. |
+| Boundary            | Current evidence                                                                         | Status                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Migration/bootstrap | Drizzle and role bootstrap use `DATABASE_ADMIN_URL`.                                     | Repository wiring **VERIFIED**; deployed secret and rotation **UNKNOWN**.       |
+| Shell requests      | Auth and Core persistence use the shared `DATABASE_URL`.                                 | Code **VERIFIED**; deployed login **UNKNOWN**.                                  |
+| Contacts requests   | Contacts persistence and assertion redemption use the shared `DATABASE_URL`.             | Code **VERIFIED**; deployed login **UNKNOWN**.                                  |
+| Core                | Package/schema boundary composed into its caller; no independent process or credential.  | **VERIFIED**.                                                                   |
+| Workers             | Generated workers compose the shared database layers; no production worker is installed. | Current code **VERIFIED**; future identity **INFERRED**.                        |
+| SpiceDB             | Separate datastore login; applications use gRPC plus a pre-shared key.                   | Bootstrap **VERIFIED**; deployed distribution **UNKNOWN**.                      |
+| Browser/remotes     | Boundary checks reject database imports outside server owners.                           | Static boundary **VERIFIED**; not protection from a compromised server process. |
 
 External service configuration may supply production credentials, so their absence from `zerops.yaml` proves nothing about deployed identity distribution.
 
@@ -77,13 +77,13 @@ validated request context
 
 ## Negative evidence and remaining gaps
 
-| Threat | Current evidence | Gap |
-| --- | --- | --- |
-| Cross-tenant SQL | RLS integration tests prove filtering for selected context. | They do not prove the context is authentic. |
-| Raw database access | Static boundaries reject imports from non-owner surfaces. | Arbitrary code inside an allowed server process retains the credential. |
-| DDL and role escalation | The audit checks effective privileges, ownership, grant authority, and reachable roles; local baseline has none. | Production needs its own audit and pilot denial probes. |
-| Privileged execution | The audit checks directly executable `SECURITY DEFINER` routines and privileged owner-context views; local baseline has none. | Every future privileged path needs a narrow contract and review. |
-| Unrelated-schema DML | The audit enumerates effective relation and sequence access. | Denial is impossible today because the shared role intentionally spans three schemas. |
+| Threat                  | Current evidence                                                                                                              | Gap                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Cross-tenant SQL        | RLS integration tests prove filtering for selected context.                                                                   | They do not prove the context is authentic.                                           |
+| Raw database access     | Static boundaries reject imports from non-owner surfaces.                                                                     | Arbitrary code inside an allowed server process retains the credential.               |
+| DDL and role escalation | The audit checks effective privileges, ownership, grant authority, and reachable roles; local baseline has none.              | Production needs its own audit and pilot denial probes.                               |
+| Privileged execution    | The audit checks directly executable `SECURITY DEFINER` routines and privileged owner-context views; local baseline has none. | Every future privileged path needs a narrow contract and review.                      |
+| Unrelated-schema DML    | The audit enumerates effective relation and sequence access.                                                                  | Denial is impossible today because the shared role intentionally spans three schemas. |
 
 ## Pilot options
 

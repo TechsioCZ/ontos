@@ -7,9 +7,7 @@ import { partyRegistryI18nResources } from '../../src/i18n/resources.ts';
 import runtime from '../../src/modern.runtime.ts';
 
 it('runtime registers the Party Registry page namespace alongside shared translations', () => {
-  const configuration = Predicate.isFunction(runtime)
-    ? runtime('index')
-    : runtime;
+  const configuration = Predicate.isFunction(runtime) ? runtime('index') : runtime;
   const { i18n } = configuration;
   expect(i18n?.i18nInstance).toBeTruthy();
   if (i18n?.i18nInstance === undefined) {

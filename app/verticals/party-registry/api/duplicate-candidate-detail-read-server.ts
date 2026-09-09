@@ -38,6 +38,6 @@ export const duplicateCandidateDetailReadApiLive = HttpApiBuilder.group(
         authenticatePrincipal: authenticateOperationPrincipal,
         problems,
         registration: duplicateCandidateDetailRead,
-      })
-    )
+      }),
+    ),
 );

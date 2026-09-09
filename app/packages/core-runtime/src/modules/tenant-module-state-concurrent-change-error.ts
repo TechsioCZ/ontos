@@ -5,5 +5,5 @@ export class TenantModuleStateConcurrentChangeError extends Schema.TaggedError<T
   {
     code: Schema.Literal('tenant_module_state_changed_concurrently'),
     reason: Schema.String,
-  }
+  },
 ) {}

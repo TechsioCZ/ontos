@@ -1,9 +1,6 @@
 /* eslint-disable oxc/no-barrel-file -- The published client entrypoint must aggregate the governed generated operation clients. expires: 2026-12-31. */
 import { Effect } from '@modern-js/plugin-bff/effect-client';
-import type {
-  HttpClientError,
-  Schema,
-} from '@modern-js/plugin-bff/effect-client';
+import type { HttpClientError, Schema } from '@modern-js/plugin-bff/effect-client';
 
 import { partyRegistryOperationContexts } from '../../shared/api.ts';
 import type { PartyRegistryReadiness } from '../../shared/api.ts';
@@ -84,25 +81,18 @@ export interface PartyRegistryClient {
   readonly getPartyRegistryReadiness: typeof getPartyRegistryReadiness;
 }
 
-export type PartyRegistryClientError =
-  | HttpClientError.HttpClientError
-  | Schema.SchemaError;
+export type PartyRegistryClientError = HttpClientError.HttpClientError | Schema.SchemaError;
 
-export type PartyRegistryClientEffect<Success> = Effect.Effect<
-  Success,
-  PartyRegistryClientError,
-  never
->;
+export type PartyRegistryClientEffect<Success> = Effect.Effect<Success, PartyRegistryClientError, never>;
 
 export type PartyRegistryClientOptions = PartyRegistryHttpClientOptions;
 
 export const getPartyRegistryReadiness = (
-  options: PartyRegistryClientOptions = {}
+  options: PartyRegistryClientOptions = {},
 ): PartyRegistryClientEffect<PartyRegistryReadiness> =>
   createPartyRegistryHttpClient({
     ...options,
-    operationContext:
-      options.operationContext ?? partyRegistryOperationContexts.readiness,
+    operationContext: options.operationContext ?? partyRegistryOperationContexts.readiness,
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
 
 export const partyRegistryClient = {

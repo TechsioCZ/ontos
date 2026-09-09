@@ -3,15 +3,12 @@
 // @ontos-outbox-topic party.registry.search-rebuild-requested.v1
 import { Schema } from 'effect';
 
-const SearchRebuildRequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('SearchRebuildRequestId')
-);
+const SearchRebuildRequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SearchRebuildRequestId'));
 
 export const OutboxPayloadSchema = Schema.Struct({
   requestId: Schema.toEncoded(SearchRebuildRequestIdSchema),
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
-export const outboxTopic =
-  'party.registry.search-rebuild-requested.v1' as const;
+export const outboxTopic = 'party.registry.search-rebuild-requested.v1' as const;
 export const outboxProducerModuleKey = 'party.registry' as const;

@@ -1,9 +1,6 @@
 import { expect, it } from 'effect-rstest';
 
-import {
-  buildInstalledModuleCatalog,
-  resolveInstalledModuleCatalog,
-} from '../../src/modules/catalog.ts';
+import { buildInstalledModuleCatalog, resolveInstalledModuleCatalog } from '../../src/modules/catalog.ts';
 import type { OntosOutboxSubscriptionContract } from '../../src/modules/manifest.ts';
 import { validateOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
@@ -11,7 +8,7 @@ import { makeModuleContractFixture } from '../../src/testing/module-contract.ts'
 const contract = (
   appId: string,
   moduleId: string,
-  outboxSubscriptions: readonly OntosOutboxSubscriptionContract[] = []
+  outboxSubscriptions: readonly OntosOutboxSubscriptionContract[] = [],
 ) =>
   makeModuleContractFixture({
     appId,
@@ -32,17 +29,10 @@ it('builds immutable deterministic dual indexes for distinct deployment and modu
     },
   ]);
 
-  expect(catalog.deploymentAppIds).toEqual([
-    'documents-center',
-    'property-registry',
-  ]);
+  expect(catalog.deploymentAppIds).toEqual(['documents-center', 'property-registry']);
   expect(catalog.moduleIds).toEqual(['documents.center', 'property.registry']);
-  expect(
-    catalog.getByDeploymentAppId('property-registry')?.manifest.module.id
-  ).toBe('property.registry');
-  expect(catalog.getByModuleId('property.registry')?.deployment.appId).toBe(
-    'property-registry'
-  );
+  expect(catalog.getByDeploymentAppId('property-registry')?.manifest.module.id).toBe('property.registry');
+  expect(catalog.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
   expect(Object.isFrozen(catalog)).toBe(true);
   expect(Object.isFrozen(catalog.contracts)).toBe(true);
   expect(Object.isFrozen(catalog.outboxSubscriptions)).toBe(true);
@@ -65,19 +55,13 @@ it('accepts a valid owner-local subscription whose producer is not installed', (
   } as const;
   const catalog = buildInstalledModuleCatalog([
     {
-      contract: contract('property-registry', 'property.registry', [
-        subscription,
-      ]),
+      contract: contract('property-registry', 'property.registry', [subscription]),
       expectedAppId: 'property-registry',
     },
   ]);
   expect(catalog.outboxSubscriptions).toEqual([subscription]);
-  expect(() =>
-    validateOutboxWorkerSubscriptions(catalog.outboxSubscriptions)
-  ).not.toThrow();
-  expect(Object.isFrozen(catalog.outboxSubscriptions[0]?.entrypoint)).toBe(
-    true
-  );
+  expect(() => validateOutboxWorkerSubscriptions(catalog.outboxSubscriptions)).not.toThrow();
+  expect(Object.isFrozen(catalog.outboxSubscriptions[0]?.entrypoint)).toBe(true);
   expect(Object.isFrozen(subscription.entrypoint)).toBe(false);
 });
 
@@ -99,12 +83,10 @@ it('rejects contradictory or incomplete Outbox subscription snapshots', () => {
   expect(() =>
     buildInstalledModuleCatalog([
       {
-        contract: contract('property-registry', 'property.registry', [
-          invalidSubscription,
-        ]),
+        contract: contract('property-registry', 'property.registry', [invalidSubscription]),
         expectedAppId: 'property-registry',
       },
-    ])
+    ]),
   ).toThrow();
   expect(() =>
     buildInstalledModuleCatalog([
@@ -117,7 +99,7 @@ it('rejects contradictory or incomplete Outbox subscription snapshots', () => {
         ]),
         expectedAppId: 'property-registry',
       },
-    ])
+    ]),
   ).toThrow();
 
   const duplicateWorkerKey = 'shared.projector';
@@ -161,7 +143,7 @@ it('rejects contradictory or incomplete Outbox subscription snapshots', () => {
         ]),
         expectedAppId: 'documents-center',
       },
-    ])
+    ]),
   ).toThrow();
 });
 
@@ -172,7 +154,7 @@ it('rejects deployment mismatch, duplicate deployment IDs, and duplicate module 
         contract: contract('property-registry', 'property.registry'),
         expectedAppId: 'different-app',
       },
-    ])
+    ]),
   ).toThrow();
   expect(() =>
     buildInstalledModuleCatalog([
@@ -184,7 +166,7 @@ it('rejects deployment mismatch, duplicate deployment IDs, and duplicate module 
         contract: contract('property-registry', 'property.other'),
         expectedAppId: 'property-registry',
       },
-    ])
+    ]),
   ).toThrow();
   expect(() =>
     buildInstalledModuleCatalog([
@@ -196,7 +178,7 @@ it('rejects deployment mismatch, duplicate deployment IDs, and duplicate module 
         contract: contract('property-other', 'property.registry'),
         expectedAppId: 'property-other',
       },
-    ])
+    ]),
   ).toThrow();
 });
 
@@ -210,7 +192,7 @@ it('rejects unsupported contract versions without weakening catalog safety', () 
         },
         expectedAppId: 'property-registry',
       },
-    ])
+    ]),
   ).toThrow();
 });
 
@@ -308,7 +290,7 @@ for (const scenario of [
         contract: contract(appId, moduleId),
         expectedAppId: appId,
         outcome: 'fetched',
-      }))
+      })),
     );
     expect(catalog.moduleIds).toEqual(scenario.moduleIds);
     expect(catalog.deploymentStatuses).toEqual(scenario.statuses);

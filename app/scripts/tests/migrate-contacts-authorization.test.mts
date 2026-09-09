@@ -17,9 +17,7 @@ const finalizeMode = 'finalize';
 const alreadyPreparedState = 'already_prepared';
 
 it('prepare creates Contacts relationships from a legacy-only context', () => {
-  expect(
-    planContactsAuthorizationContext(prepareMode, legacyRelationships, [])
-  ).toEqual({
+  expect(planContactsAuthorizationContext(prepareMode, legacyRelationships, [])).toEqual({
     deleteLegacy: false,
     state: 'legacy_only',
     touchContacts: true,
@@ -28,27 +26,14 @@ it('prepare creates Contacts relationships from a legacy-only context', () => {
 
 it('prepare and verify accept an exactly prepared context', () => {
   const reordered = [legacyRelationships[1], legacyRelationships[0]] as const;
-  expect(
-    planContactsAuthorizationContext(
-      prepareMode,
-      legacyRelationships,
-      reordered
-    ).state
-  ).toBe(alreadyPreparedState);
-  expect(
-    planContactsAuthorizationContext(verifyMode, legacyRelationships, reordered)
-      .state
-  ).toBe(alreadyPreparedState);
+  expect(planContactsAuthorizationContext(prepareMode, legacyRelationships, reordered).state).toBe(
+    alreadyPreparedState,
+  );
+  expect(planContactsAuthorizationContext(verifyMode, legacyRelationships, reordered).state).toBe(alreadyPreparedState);
 });
 
 it('finalize removes only an exactly matched legacy context', () => {
-  expect(
-    planContactsAuthorizationContext(
-      finalizeMode,
-      legacyRelationships,
-      legacyRelationships
-    )
-  ).toEqual({
+  expect(planContactsAuthorizationContext(finalizeMode, legacyRelationships, legacyRelationships)).toEqual({
     deleteLegacy: true,
     state: alreadyPreparedState,
     touchContacts: false,
@@ -57,9 +42,7 @@ it('finalize removes only an exactly matched legacy context', () => {
 
 it('all modes are idempotent after legacy relationships are gone', () => {
   for (const mode of [prepareMode, verifyMode, finalizeMode] as const) {
-    expect(
-      planContactsAuthorizationContext(mode, [], legacyRelationships)
-    ).toEqual({
+    expect(planContactsAuthorizationContext(mode, [], legacyRelationships)).toEqual({
       deleteLegacy: false,
       state: 'already_finalized',
       touchContacts: false,
@@ -69,17 +52,15 @@ it('all modes are idempotent after legacy relationships are gone', () => {
 
 it('verify and finalize fail closed when Contacts relationships are missing', () => {
   for (const mode of [verifyMode, finalizeMode] as const) {
-    expect(() =>
-      planContactsAuthorizationContext(mode, legacyRelationships, [])
-    ).toThrow(/Contacts authorization is missing/u);
+    expect(() => planContactsAuthorizationContext(mode, legacyRelationships, [])).toThrow(
+      /Contacts authorization is missing/u,
+    );
   }
 });
 
 it('every mode rejects partial or divergent relationship sets', () => {
   const partial = legacyRelationships.slice(0, 1);
   for (const mode of [prepareMode, verifyMode, finalizeMode] as const) {
-    expect(() =>
-      planContactsAuthorizationContext(mode, legacyRelationships, partial)
-    ).toThrow(/relationships differ/u);
+    expect(() => planContactsAuthorizationContext(mode, legacyRelationships, partial)).toThrow(/relationships differ/u);
   }
 });

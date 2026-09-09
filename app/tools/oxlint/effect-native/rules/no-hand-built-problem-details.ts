@@ -77,18 +77,9 @@ import { unwrapNode } from '../shared/ast.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
 import { optionRecord } from '../shared/options.ts';
 import { compile, stringArray } from '../shared/options.ts';
-import {
-  isScriptFile,
-  isTestFile,
-  matchesGlobs,
-  scopePath,
-} from '../shared/paths.ts';
+import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
-const DEFAULT_INCLUDE: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-];
+const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 
 const DEFAULT_IGNORE: readonly string[] = [
   '**/dist/**',
@@ -120,16 +111,10 @@ const DEFAULT_SCHEMA_NAMESPACES: readonly string[] = [
 const DEFAULT_TAG_SUFFIXES: readonly string[] = ['Problem'];
 
 /** Identifier roots that carry a driver failure: `error`, `dbError`, `cause`, `rootCause`, … */
-const DEFAULT_ERROR_IDENTIFIER_PATTERN =
-  '^[A-Za-z_$]*(?:error|cause|defect|failure|exception)$';
+const DEFAULT_ERROR_IDENTIFIER_PATTERN = '^[A-Za-z_$]*(?:error|cause|defect|failure|exception)$';
 
 /** Property values that end up in the public Problem Details body as prose. */
-const DEFAULT_MESSAGE_KEYS: readonly string[] = [
-  'detail',
-  'title',
-  'reason',
-  'message',
-];
+const DEFAULT_MESSAGE_KEYS: readonly string[] = ['detail', 'title', 'reason', 'message'];
 
 /** Depth guard for the ancestor walk; real nesting never approaches this. */
 const MAX_ANCESTOR_DEPTH = 64;
@@ -151,15 +136,11 @@ interface RuleOptions {
   readonly reportRawDriverMessages: boolean;
 }
 
-function statusRange(
-  value: unknown,
-  fallback: readonly [number, number]
-): readonly [number, number] {
+function statusRange(value: unknown, fallback: readonly [number, number]): readonly [number, number] {
   if (!Array.isArray(value) || value.length !== 2) return fallback;
   const [low, high] = value;
   if (typeof low !== 'number' || typeof high !== 'number') return fallback;
-  if (!Number.isFinite(low) || !Number.isFinite(high) || low > high)
-    return fallback;
+  if (!Number.isFinite(low) || !Number.isFinite(high) || low > high) return fallback;
   return [low, high];
 }
 
@@ -171,17 +152,10 @@ function readOptions(context: Context): RuleOptions {
     includeTests: record.includeTests === true,
     allowPaths: stringArray(record.allowPaths, DEFAULT_ALLOW_PATHS),
     statusRange: statusRange(record.statusRange, DEFAULT_STATUS_RANGE),
-    schemaNamespaces: stringArray(
-      record.schemaNamespaces,
-      DEFAULT_SCHEMA_NAMESPACES
-    ),
+    schemaNamespaces: stringArray(record.schemaNamespaces, DEFAULT_SCHEMA_NAMESPACES),
     tagSuffixes: stringArray(record.tagSuffixes, DEFAULT_TAG_SUFFIXES),
     messageKeys: stringArray(record.messageKeys, DEFAULT_MESSAGE_KEYS),
-    errorIdentifier: compile(
-      record.errorIdentifierPattern,
-      DEFAULT_ERROR_IDENTIFIER_PATTERN,
-      'iu'
-    ),
+    errorIdentifier: compile(record.errorIdentifierPattern, DEFAULT_ERROR_IDENTIFIER_PATTERN, 'iu'),
     reportTagOnlyLiterals: record.reportTagOnlyLiterals !== false,
     reportRawDriverMessages: record.reportRawDriverMessages !== false,
   };
@@ -201,9 +175,7 @@ function propertyName(node: ESTree.Node): string | null {
 }
 
 /** Index the non-computed properties of an object literal by key name (first occurrence wins). */
-function indexProperties(
-  node: ESTree.ObjectExpression
-): Map<string, ESTree.Node> {
+function indexProperties(node: ESTree.ObjectExpression): Map<string, ESTree.Node> {
   const properties = new Map<string, ESTree.Node>();
   for (const property of node.properties) {
     const name = propertyName(property);
@@ -220,12 +192,9 @@ function propertyValue(node: ESTree.Node): ESTree.Node | null {
 
 function stringLiteralValue(node: ESTree.Node | null): string | null {
   if (node === null) return null;
-  if (node.type === 'Literal' && typeof node.value === 'string')
-    return node.value;
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
   if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
-    return node.quasis
-      .map((quasi) => quasi.value.cooked ?? quasi.value.raw)
-      .join('');
+    return node.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join('');
   }
   return null;
 }
@@ -234,24 +203,15 @@ function stringLiteralValue(node: ESTree.Node | null): string | null {
 function isUriLike(node: ESTree.Node | null): boolean {
   if (node === null) return false;
   const text = stringLiteralValue(node);
-  if (text !== null)
-    return /^(?:https?:\/\/|urn:|about:blank$|\/|#)/u.test(text);
+  if (text !== null) return /^(?:https?:\/\/|urn:|about:blank$|\/|#)/u.test(text);
   return (
-    node.type === 'TemplateLiteral' &&
-    node.quasis.some((quasi) =>
-      /(?:problems?\/|https?:\/\/)/u.test(quasi.value.raw)
-    )
+    node.type === 'TemplateLiteral' && node.quasis.some((quasi) => /(?:problems?\/|https?:\/\/)/u.test(quasi.value.raw))
   );
 }
 
 function integerLiteral(node: ESTree.Node | null): number | null {
   if (node === null) return null;
-  if (
-    node.type === 'Literal' &&
-    typeof node.value === 'number' &&
-    Number.isInteger(node.value)
-  )
-    return node.value;
+  if (node.type === 'Literal' && typeof node.value === 'number' && Number.isInteger(node.value)) return node.value;
   return null;
 }
 
@@ -260,26 +220,12 @@ function endsWithAny(value: string, suffixes: readonly string[]): boolean {
 }
 
 /** `Schema.Struct`, `HttpApiSchema.annotations`, `S.TaggedStruct`, `ContactsResponseSchema` … */
-function isSchemaCallee(
-  context: Context,
-  callee: ESTree.Node,
-  options: RuleOptions
-): boolean {
+function isSchemaCallee(context: Context, callee: ESTree.Node, options: RuleOptions): boolean {
   let target = unwrap(callee);
-  for (
-    let depth = 0;
-    depth < MAX_EXPRESSION_DEPTH && target.type === 'CallExpression';
-    depth += 1
-  )
+  for (let depth = 0; depth < MAX_EXPRESSION_DEPTH && target.type === 'CallExpression'; depth += 1)
     target = unwrap(target.callee);
-  const origin = effectOrigin(context, target, [
-    '@modern-js/plugin-bff/effect-edge',
-  ]);
-  return (
-    origin !== null &&
-    origin.length >= 2 &&
-    options.schemaNamespaces.includes(origin[0]!)
-  );
+  const origin = effectOrigin(context, target, ['@modern-js/plugin-bff/effect-edge']);
+  return origin !== null && origin.length >= 2 && options.schemaNamespaces.includes(origin[0]!);
 }
 
 /**
@@ -296,35 +242,20 @@ const EXEMPT_WALK_BOUNDARIES: ReadonlySet<string> = new Set([
   'BlockStatement',
 ]);
 
-function isSchemaArgument(
-  context: Context,
-  node: ESTree.Node,
-  argument: ESTree.Node,
-  options: RuleOptions
-): boolean {
-  if (node.type !== 'CallExpression' && node.type !== 'NewExpression')
-    return false;
+function isSchemaArgument(context: Context, node: ESTree.Node, argument: ESTree.Node, options: RuleOptions): boolean {
+  if (node.type !== 'CallExpression' && node.type !== 'NewExpression') return false;
   return (
-    node.arguments.some((candidate) => Object.is(candidate, argument)) &&
-    isSchemaCallee(context, node.callee, options)
+    node.arguments.some((candidate) => Object.is(candidate, argument)) && isSchemaCallee(context, node.callee, options)
   );
 }
 
-function isExemptContext(
-  context: Context,
-  node: ESTree.ObjectExpression,
-  options: RuleOptions
-): boolean {
+function isExemptContext(context: Context, node: ESTree.ObjectExpression, options: RuleOptions): boolean {
   let previous: ESTree.Node = node;
   let current: ESTree.Node | null | undefined = node.parent;
   for (let depth = 0; depth < MAX_ANCESTOR_DEPTH; depth += 1) {
     if (current === null || current === undefined) return false;
     if (EXEMPT_WALK_BOUNDARIES.has(current.type)) return false;
-    if (
-      current.type === 'JSXAttribute' ||
-      current.type === 'JSXSpreadAttribute'
-    )
-      return true;
+    if (current.type === 'JSXAttribute' || current.type === 'JSXSpreadAttribute') return true;
     if (isSchemaArgument(context, current, previous, options)) return true;
     previous = current;
     current = current.parent;
@@ -351,8 +282,7 @@ function rootIdentifier(node: ESTree.Node): string | null {
 }
 
 function memberPropertyName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed)
-    return node.property.type === 'Identifier' ? node.property.name : null;
+  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
   const key = unwrap(node.property);
   return stringLiteralValue(key);
 }
@@ -360,20 +290,14 @@ function memberPropertyName(node: ESTree.MemberExpression): string | null {
 /** `error`, `dbError`, `cause` … — an identifier that names a failure value. */
 function isErrorIdentifier(node: ESTree.Node, options: RuleOptions): boolean {
   const target = unwrap(node);
-  return (
-    target.type === 'Identifier' && options.errorIdentifier.test(target.name)
-  );
+  return target.type === 'Identifier' && options.errorIdentifier.test(target.name);
 }
 
 /**
  * `true` when the expression surfaces a raw driver message: `error.message`, `cause?.stack`,
  * `String(defect)`, template interpolation, `+` concatenation, ternaries and `??` fallbacks.
  */
-function leaksDriverMessage(
-  node: ESTree.Node,
-  options: RuleOptions,
-  depth: number
-): boolean {
+function leaksDriverMessage(node: ESTree.Node, options: RuleOptions, depth: number): boolean {
   if (depth > MAX_EXPRESSION_DEPTH) return false;
   const target = unwrap(node);
   switch (target.type) {
@@ -384,9 +308,7 @@ function leaksDriverMessage(
     case 'CallExpression':
       return leaksCallMessage(target, options, depth);
     default:
-      return messageExpressions(target).some((expression) =>
-        leaksDriverMessage(expression, options, depth + 1)
-      );
+      return messageExpressions(target).some((expression) => leaksDriverMessage(expression, options, depth + 1));
   }
 }
 
@@ -405,30 +327,21 @@ function messageExpressions(node: ESTree.Node): readonly ESTree.Node[] {
   }
 }
 
-function leaksMemberMessage(
-  node: ESTree.MemberExpression,
-  options: RuleOptions
-): boolean {
+function leaksMemberMessage(node: ESTree.MemberExpression, options: RuleOptions): boolean {
   const property = memberPropertyName(node);
-  if (property === null || !['message', 'stack', 'cause'].includes(property))
-    return false;
+  if (property === null || !['message', 'stack', 'cause'].includes(property)) return false;
   const root = rootIdentifier(node.object);
   return root !== null && options.errorIdentifier.test(root);
 }
 
 function isJsonStringify(node: ESTree.Node): boolean {
-  if (
-    node.type !== 'MemberExpression' ||
-    memberPropertyName(node) !== 'stringify'
-  )
-    return false;
+  if (node.type !== 'MemberExpression' || memberPropertyName(node) !== 'stringify') return false;
   const object = unwrap(node.object);
   return object.type === 'Identifier' && object.name === 'JSON';
 }
 
 function isStringifyCallee(node: ESTree.Node): boolean {
-  if (node.type === 'Identifier')
-    return node.name === 'String' || node.name === 'inspect';
+  if (node.type === 'Identifier') return node.name === 'String' || node.name === 'inspect';
   return (
     node.type === 'MemberExpression' &&
     !node.computed &&
@@ -437,11 +350,7 @@ function isStringifyCallee(node: ESTree.Node): boolean {
   );
 }
 
-function leaksCallMessage(
-  node: ESTree.CallExpression,
-  options: RuleOptions,
-  depth: number
-): boolean {
+function leaksCallMessage(node: ESTree.CallExpression, options: RuleOptions, depth: number): boolean {
   const callee = unwrap(node.callee);
   const jsonStringify = isJsonStringify(callee);
   if (!jsonStringify && !isStringifyCallee(callee)) return false;
@@ -450,8 +359,7 @@ function leaksCallMessage(
   return node.arguments.some(
     (argument) =>
       argument.type !== 'SpreadElement' &&
-      (isErrorIdentifier(argument, options) ||
-        leaksDriverMessage(argument, options, depth + 1))
+      (isErrorIdentifier(argument, options) || leaksDriverMessage(argument, options, depth + 1)),
   );
 }
 
@@ -479,12 +387,8 @@ function problemFields(properties: Properties, options: RuleOptions) {
 function problemShape(properties: Properties, options: RuleOptions) {
   const fields = problemFields(properties, options);
   const status = integerLiteral(indexedValue(properties, 'status'));
-  const inRange =
-    status !== null &&
-    status >= options.statusRange[0] &&
-    status <= options.statusRange[1];
-  const corroborated =
-    fields.taggedProblem || (fields.hasProblemType && fields.hasProse);
+  const inRange = status !== null && status >= options.statusRange[0] && status <= options.statusRange[1];
+  const corroborated = fields.taggedProblem || (fields.hasProblemType && fields.hasProse);
   const reportStatus = inRange && corroborated;
   const reportTag = shouldReportTag(fields, reportStatus, options);
   return {
@@ -494,28 +398,21 @@ function problemShape(properties: Properties, options: RuleOptions) {
     reportTag,
     statusProperty: properties.get('status'),
     tagProperty: properties.get('_tag'),
-    problemShaped:
-      reportStatus || reportTag || (fields.hasTitle && fields.hasProblemType),
+    problemShaped: reportStatus || reportTag || (fields.hasTitle && fields.hasProblemType),
   };
 }
 
 function shouldReportTag(
   fields: ReturnType<typeof problemFields>,
   reportStatus: boolean,
-  options: RuleOptions
+  options: RuleOptions,
 ): boolean {
   return (
-    !reportStatus &&
-    options.reportTagOnlyLiterals &&
-    fields.taggedProblem &&
-    (fields.hasProse || fields.hasProblemType)
+    !reportStatus && options.reportTagOnlyLiterals && fields.taggedProblem && (fields.hasProse || fields.hasProblemType)
   );
 }
 
-function reportProblemShape(
-  context: Context,
-  shape: ReturnType<typeof problemShape>
-): void {
+function reportProblemShape(context: Context, shape: ReturnType<typeof problemShape>): void {
   if (shape.reportStatus && shape.statusProperty !== undefined) {
     context.report({
       node: shape.statusProperty,
@@ -534,11 +431,7 @@ function reportProblemShape(
   }
 }
 
-function reportDriverMessages(
-  context: Context,
-  properties: Properties,
-  options: RuleOptions
-): void {
+function reportDriverMessages(context: Context, properties: Properties, options: RuleOptions): void {
   for (const key of options.messageKeys) {
     const property = properties.get(key);
     if (property === undefined) continue;
@@ -628,16 +521,11 @@ export const rule = defineRule({
 
     return {
       ObjectExpression(node) {
-        if (
-          node.properties.length === 0 ||
-          isExemptContext(context, node, options)
-        )
-          return;
+        if (node.properties.length === 0 || isExemptContext(context, node, options)) return;
         const properties = indexProperties(node);
         const shape = problemShape(properties, options);
         reportProblemShape(context, shape);
-        if (shape.problemShaped && options.reportRawDriverMessages)
-          reportDriverMessages(context, properties, options);
+        if (shape.problemShaped && options.reportRawDriverMessages) reportDriverMessages(context, properties, options);
       },
     };
   },

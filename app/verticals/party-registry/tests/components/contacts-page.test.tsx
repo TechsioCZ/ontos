@@ -21,12 +21,10 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
     language: localeState.current,
     t: (key: string) => {
       if (key === 'party-registry.pages.contacts.description') {
-        return catalogs[localeState.current]['party-registry'].pages.contacts
-          .description;
+        return catalogs[localeState.current]['party-registry'].pages.contacts.description;
       }
       if (key === 'party-registry.pages.contacts.title') {
-        return catalogs[localeState.current]['party-registry'].pages.contacts
-          .title;
+        return catalogs[localeState.current]['party-registry'].pages.contacts.title;
       }
       return key;
     },
@@ -45,18 +43,11 @@ afterEach(() => {
 test.each([
   { language: 'cs' as const, title: 'Kontakty' },
   { language: 'en' as const, title: 'Contacts' },
-])(
-  'presents the localized engagement profile boundary for $language',
-  ({ language, title }) => {
-    localeState.current = language;
-    render(<ContactsPage />);
+])('presents the localized engagement profile boundary for $language', ({ language, title }) => {
+  localeState.current = language;
+  render(<ContactsPage />);
 
-    expect(screen.getByRole('heading', { level: 1, name: title })).toBeTruthy();
-    expect(
-      screen.getByText(
-        catalogs[language]['party-registry'].pages.contacts.description
-      )
-    ).toBeTruthy();
-    expect(screen.queryByRole('link')).toBeNull();
-  }
-);
+  expect(screen.getByRole('heading', { level: 1, name: title })).toBeTruthy();
+  expect(screen.getByText(catalogs[language]['party-registry'].pages.contacts.description)).toBeTruthy();
+  expect(screen.queryByRole('link')).toBeNull();
+});

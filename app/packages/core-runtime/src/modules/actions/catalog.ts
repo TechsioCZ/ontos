@@ -12,17 +12,15 @@ import { setSelfApiKeyBindingStatusAction } from './set-self-api-key-binding-sta
 
 export type CoreActionDescriptor = AnyActionRegistration['descriptor'];
 
-export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
-  [
-    // <generated-core-action-catalog-values>
-    bindManagedApiKeyAction.descriptor,
-    bindSelfApiKeyAction.descriptor,
-    changePrincipalStatusAction.descriptor,
-    changeTenantModuleStateAction.descriptor,
-    createNonHumanPrincipalAction.descriptor,
-    recordSupportImpersonationAction.descriptor,
-    setManagedApiKeyBindingStatusAction.descriptor,
-    setSelfApiKeyBindingStatusAction.descriptor,
-    // </generated-core-action-catalog-values>
-  ]
-);
+export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze([
+  // <generated-core-action-catalog-values>
+  bindManagedApiKeyAction.descriptor,
+  bindSelfApiKeyAction.descriptor,
+  changePrincipalStatusAction.descriptor,
+  changeTenantModuleStateAction.descriptor,
+  createNonHumanPrincipalAction.descriptor,
+  recordSupportImpersonationAction.descriptor,
+  setManagedApiKeyBindingStatusAction.descriptor,
+  setSelfApiKeyBindingStatusAction.descriptor,
+  // </generated-core-action-catalog-values>
+]);

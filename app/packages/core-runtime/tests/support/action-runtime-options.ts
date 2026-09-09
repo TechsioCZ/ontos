@@ -5,7 +5,4 @@ import { openModuleStateGate } from './open-module-state-gate.ts';
 export const openActionRuntimeOptions = {
   moduleEntrypointGateway: openModuleEntrypointGateway,
   moduleStateGate: openModuleStateGate,
-} satisfies Pick<
-  ActionRuntimeOptions,
-  'moduleEntrypointGateway' | 'moduleStateGate'
->;
+} satisfies Pick<ActionRuntimeOptions, 'moduleEntrypointGateway' | 'moduleStateGate'>;

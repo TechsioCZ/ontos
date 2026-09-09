@@ -10,19 +10,13 @@ import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-auth
 import { loadHomePageModel } from '../../page.data.ts';
 import type { HomePageModel } from '../../page.data.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing
-) =>
-  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 interface ModuleTargetLoaderArguments {
   readonly params: {
@@ -33,10 +27,7 @@ interface ModuleTargetLoaderArguments {
   readonly routeParams?: Readonly<Record<string, string>>;
 }
 
-const RouteParameterInputSchema = Schema.Record(
-  Schema.String,
-  Schema.Union([Schema.String, Schema.Undefined])
-);
+const RouteParameterInputSchema = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Undefined]));
 type RouteParameterInput = typeof RouteParameterInputSchema.Type;
 
 export type ModulePageRouteParams = Readonly<Record<string, string>>;
@@ -47,7 +38,7 @@ const routeParameterValueLengthLimit = 200;
 
 export const selectRouteParams = (
   params: RouteParameterInput,
-  declaredNames: readonly string[]
+  declaredNames: readonly string[],
 ): ModulePageRouteParams =>
   Object.freeze(
     Object.fromEntries(
@@ -58,18 +49,14 @@ export const selectRouteParams = (
           value.length <= routeParameterValueLengthLimit
           ? [[name, value] as const]
           : [];
-      })
-    )
+      }),
+    ),
   );
 
 export type ModuleTargetPageModel =
   | {
       readonly shell: HomePageModel;
-      readonly state:
-        | 'forbidden'
-        | 'not_found'
-        | 'selection_required'
-        | 'unavailable';
+      readonly state: 'forbidden' | 'not_found' | 'selection_required' | 'unavailable';
     }
   | {
       readonly routeParams: ModulePageRouteParams;
@@ -78,19 +65,12 @@ export type ModuleTargetPageModel =
       readonly target: ResolvedModuleTarget;
     };
 
-const safeState = (
-  error: Config.ConfigError | ShellTargetClientError,
-  shell: HomePageModel
-): ModuleTargetPageModel =>
+const safeState = (error: Config.ConfigError | ShellTargetClientError, shell: HomePageModel): ModuleTargetPageModel =>
   Match.value(error).pipe(
-    Match.tag(
-      'ShellAuthenticationRequiredProblem',
-      'ShellSelectionRequiredProblem',
-      () => ({
-        shell,
-        state: 'selection_required' as const,
-      })
-    ),
+    Match.tag('ShellAuthenticationRequiredProblem', 'ShellSelectionRequiredProblem', () => ({
+      shell,
+      state: 'selection_required' as const,
+    })),
     Match.tag('ShellTargetForbiddenProblem', () => ({
       shell,
       state: 'forbidden' as const,
@@ -110,48 +90,33 @@ const safeState = (
       'ShellPolicyUnprocessableProblem',
       'ShellPreconditionRequiredProblem',
       'ShellRateLimitedProblem',
-      () => ({ shell, state: 'unavailable' as const })
+      () => ({ shell, state: 'unavailable' as const }),
     ),
-    Match.exhaustive
+    Match.exhaustive,
   );
 
 export const loadModulePageModel = ({
   params,
   request,
   routeParams = {},
-}: ModuleTargetLoaderArguments): Effect.Effect<
-  ModuleTargetPageModel,
-  Cause.TimeoutError
-> =>
+}: ModuleTargetLoaderArguments): Effect.Effect<ModuleTargetPageModel, Cause.TimeoutError> =>
   loadHomePageModel(request).pipe(
     Effect.timeout('30 seconds'),
     Effect.flatMap((shell) => {
       if (shell.state !== 'authenticated') {
         return Effect.succeed<ModuleTargetPageModel>({
           shell,
-          state:
-            shell.state === 'unavailable'
-              ? 'unavailable'
-              : 'selection_required',
+          state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
         });
       }
-      const boundedRouteParams = selectRouteParams(
-        routeParams,
-        Object.keys(routeParams)
-      );
+      const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
       return shellAuthenticationClientOptionsFromRequest(request).pipe(
         Effect.flatMap((options) =>
           Schema.decodeEffect(ResolveModuleTargetPayloadSchema)(
-            withOptionalProperty(
-              {},
-              params.entrypointKey !== undefined,
-              'entrypointKey',
-              params.entrypointKey,
-              { moduleId: params.moduleId }
-            )
-          ).pipe(
-            Effect.flatMap((payload) => resolveModuleTarget(payload, options))
-          )
+            withOptionalProperty({}, params.entrypointKey !== undefined, 'entrypointKey', params.entrypointKey, {
+              moduleId: params.moduleId,
+            }),
+          ).pipe(Effect.flatMap((payload) => resolveModuleTarget(payload, options))),
         ),
         Effect.map((target): ModuleTargetPageModel => ({
           routeParams: boundedRouteParams,
@@ -162,14 +127,12 @@ export const loadModulePageModel = ({
         Effect.matchEffect({
           onFailure: (error) => Effect.succeed(safeState(error, shell)),
           onSuccess: Effect.succeed,
-        })
+        }),
       );
-    })
+    }),
   );
 
-export const loader = (
-  input: ModuleTargetLoaderArguments
-): Promise<ModuleTargetPageModel> =>
+export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
   browserRuntime.runPromise(loadModulePageModel(input), {
     signal: input.request.signal,
   });

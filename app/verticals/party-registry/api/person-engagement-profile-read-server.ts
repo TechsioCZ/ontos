@@ -38,6 +38,6 @@ export const personEngagementProfileReadApiLive = HttpApiBuilder.group(
         authenticatePrincipal: authenticateOperationPrincipal,
         problems,
         registration: personEngagementProfileRead,
-      })
-    )
+      }),
+    ),
 );

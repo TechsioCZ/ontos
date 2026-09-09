@@ -82,10 +82,7 @@ export type {
   SupportRecoveryPrincipalContextError,
   SupportRecoveryPrincipalContextResolverService,
 } from './auth/support-recovery-principal-context.ts';
-export type {
-  SystemPrincipalContextError,
-  SystemWorkloadRegistration,
-} from './auth/system-principal-context.ts';
+export type { SystemPrincipalContextError, SystemWorkloadRegistration } from './auth/system-principal-context.ts';
 export {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
@@ -93,10 +90,7 @@ export {
   PrincipalManagementErrorSchema,
 } from './auth/principal-management-errors.ts';
 export type { PrincipalManagementError } from './auth/principal-management-errors.ts';
-export {
-  managedPrincipalsRead,
-  selfApiKeyBindingsRead,
-} from './auth/principal-administration-reads.ts';
+export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-administration-reads.ts';
 export {
   LegalEntityContext,
   LegalEntityContextAmbiguousError,
@@ -116,10 +110,7 @@ export type {
   SafeLegalEntity,
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
-export {
-  DEFAULT_DATABASE_POOL_DEADLINES,
-  configureDatabasePool,
-} from './db/pool-configuration.ts';
+export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
@@ -142,16 +133,8 @@ export {
   PRINCIPAL_KINDS,
   PRINCIPAL_STATUSES,
 } from './db/schema.ts';
-export type {
-  BindingStatus,
-  BindingSubjectType,
-  PrincipalKind,
-  PrincipalStatus,
-} from './db/schema.ts';
-export {
-  tenantLegalEntityRlsPolicies,
-  tenantRlsPolicies,
-} from './db/scoped-transaction.ts';
+export type { BindingStatus, BindingSubjectType, PrincipalKind, PrincipalStatus } from './db/schema.ts';
+export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from './db/scoped-transaction.ts';
 export {
   DatabaseCommitAcknowledgementAmbiguous,
   DatabaseDriverFailureKindSchema,
@@ -190,11 +173,7 @@ export type {
   ResourceAccessTarget,
   TenantPermissionKey,
 } from './permissions/context-access.ts';
-export {
-  defineAction,
-  defineActionResourcePermission,
-  isActionRegistration,
-} from './actions/definition.ts';
+export { defineAction, defineActionResourcePermission, isActionRegistration } from './actions/definition.ts';
 export type {
   ActionAuditProfile,
   ActionDescriptor,
@@ -210,12 +189,7 @@ export type {
   ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
-export {
-  PolicyDenied,
-  defineGlobalPolicy,
-  defineMicroverticalPolicy,
-  denyPolicy,
-} from './actions/policy.ts';
+export { PolicyDenied, defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from './actions/policy.ts';
 export type {
   ActionPolicy,
   ActionPolicyEvaluator,
@@ -227,22 +201,14 @@ export type {
   GlobalActionPolicy,
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
-export {
-  ActionRuntime,
-  ActionRuntimeLive,
-  resolveActionCommit,
-  runAction,
-} from './actions/runtime.ts';
+export { ActionRuntime, ActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
 export type {
   ActionCommitOpen,
   ActionRuntimeService,
   ResolveActionCommitInput,
   RunActionInput,
 } from './actions/runtime.ts';
-export {
-  ActionTransportMetadataSchema,
-  TrustedPrincipalContextSchema,
-} from './actions/context.ts';
+export { ActionTransportMetadataSchema, TrustedPrincipalContextSchema } from './actions/context.ts';
 export type {
   ActionCollectorMethods,
   ActionHandlerContext,
@@ -296,21 +262,9 @@ export type {
   ReadServiceFactory,
   ResolvedReadPermissionTarget,
 } from './reads/definition.ts';
-export type {
-  ReadEvidenceMetadata,
-  ReadHandlerContext,
-  ReadHandlerResult,
-} from './reads/context.ts';
-export {
-  READ_RUNTIME_STAGES,
-  ReadRuntime,
-  ReadRuntimeLive,
-} from './reads/runtime.ts';
-export type {
-  ReadRuntimeOptions,
-  ReadRuntimeService,
-  ReadRuntimeStage,
-} from './reads/runtime.ts';
+export type { ReadEvidenceMetadata, ReadHandlerContext, ReadHandlerResult } from './reads/context.ts';
+export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
+export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {
   ReadEvidencePersistenceError,
   ReadEvidenceValidationError,
@@ -378,20 +332,13 @@ export type {
   CoreSearchPartyLifecycleTopic,
   CoreSearchPartyProjectorWorkerKey,
 } from './search/ingestion.ts';
-export {
-  CoreSearchWorkerSnapshot,
-  CoreSearchWorkerSnapshotLive,
-} from './search/worker-snapshot.ts';
+export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from './search/worker-snapshot.ts';
 export type {
   CoreSearchSnapshotReadExecutor,
   CoreSearchWorkerSnapshotService,
   CoreSearchWorkerSnapshotView,
 } from './search/worker-snapshot.ts';
-export {
-  DataAccessEventSchema,
-  DomainEventSchema,
-  OutboxMessageSchema,
-} from './actions/events.ts';
+export { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema } from './actions/events.ts';
 export type {
   ActionAccessEvidencePolicy,
   DataAccessEvent,
@@ -484,10 +431,7 @@ export type {
   SystemModuleEntrypoint,
   TenantModuleEntrypoint,
 } from './modules/module-entrypoint.ts';
-export {
-  ModuleStateCheckUnavailableError,
-  ModuleStateDeniedError,
-} from './modules/module-state-gate-errors.ts';
+export { ModuleStateCheckUnavailableError, ModuleStateDeniedError } from './modules/module-state-gate-errors.ts';
 export type { ModuleStateGateError } from './modules/module-state-gate-errors.ts';
 export {
   ModuleStateGate,
@@ -495,14 +439,8 @@ export {
   decideModuleStateAccess,
   tenantStatesAllowingAccess,
 } from './modules/module-state-gate.ts';
-export type {
-  ModuleStateGateService,
-  ModuleStateSnapshot,
-} from './modules/module-state-gate.ts';
-export {
-  ModuleEntrypointGateway,
-  ModuleEntrypointGatewayLive,
-} from './modules/module-entrypoint-gateway.ts';
+export type { ModuleStateGateService, ModuleStateSnapshot } from './modules/module-state-gate.ts';
+export { ModuleEntrypointGateway, ModuleEntrypointGatewayLive } from './modules/module-entrypoint-gateway.ts';
 export type {
   ModuleEntrypointGatewayService,
   RunGatedModuleEntrypointInput,
@@ -551,10 +489,7 @@ export {
   ShellTimelineContributionSchema,
   validateShellContributions,
 } from './modules/shell-contribution.ts';
-export type {
-  OntosShellContributions,
-  ShellContributionReferenceSets,
-} from './modules/shell-contribution.ts';
+export type { OntosShellContributions, ShellContributionReferenceSets } from './modules/shell-contribution.ts';
 export type {
   OntosActionContract,
   OntosApiContract,
@@ -623,10 +558,7 @@ export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-manag
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
 
-export {
-  defineOutboxWorker,
-  extractOutboxWorkerSubscriptions,
-} from './outbox/definition.ts';
+export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './outbox/definition.ts';
 export type {
   AnyOutboxWorkerRegistration,
   OutboxWorkerDescriptor,
@@ -645,14 +577,8 @@ export {
   OutboxPersistenceError,
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
-export type {
-  OutboxWorkerHealth,
-  OutboxWorkerHealthServer,
-} from './outbox/health.ts';
-export {
-  parseOutboxPollingConfig,
-  runOutboxPollingLoop,
-} from './outbox/poller.ts';
+export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
+export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {
   OutboxCycleRunner,
   OutboxPollingConfig,
@@ -660,16 +586,8 @@ export type {
   RunOutboxPollingLoopInput,
 } from './outbox/poller.ts';
 export { OutboxRepositoryLive } from './outbox/repository.ts';
-export type {
-  RunOutboxWorkerProcessInput,
-  StartOutboxWorkerProcessInput,
-} from './outbox/process.ts';
-export {
-  OutboxRuntime,
-  OutboxRuntimeLive,
-  matchOutboxMessages,
-  runOutboxCycle,
-} from './outbox/runtime.ts';
+export type { RunOutboxWorkerProcessInput, StartOutboxWorkerProcessInput } from './outbox/process.ts';
+export { OutboxRuntime, OutboxRuntimeLive, matchOutboxMessages, runOutboxCycle } from './outbox/runtime.ts';
 export type {
   MatchOutboxMessagesInput,
   OutboxCycleError,

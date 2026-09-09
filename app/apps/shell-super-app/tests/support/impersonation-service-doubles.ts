@@ -1,14 +1,10 @@
 import { Effect } from 'effect';
 import { rs } from 'effect-rstest';
 
-import type {
-  SupportAuthProvider,
-  SupportImpersonationStore,
-} from '../../api/auth/impersonation-service.ts';
+import type { SupportAuthProvider, SupportImpersonationStore } from '../../api/auth/impersonation-service.ts';
 import type { AuthenticationServiceContract } from '../../api/auth/service.ts';
 
-const unconfiguredEffect = (operation: string) =>
-  Effect.die(`${operation} is not configured in this test`);
+const unconfiguredEffect = (operation: string) => Effect.die(`${operation} is not configured in this test`);
 const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
   createFixtureUser: () => unconfiguredEffect('createFixtureUser'),
@@ -27,14 +23,10 @@ const providerDefaults: SupportAuthProvider['api'] = {
     .mockRejectedValue(new Error('getSession is not configured in this test')),
   impersonateUser: rs
     .fn<SupportAuthProvider['api']['impersonateUser']>()
-    .mockRejectedValue(
-      new Error('impersonateUser is not configured in this test')
-    ),
+    .mockRejectedValue(new Error('impersonateUser is not configured in this test')),
   stopImpersonating: rs
     .fn<SupportAuthProvider['api']['stopImpersonating']>()
-    .mockRejectedValue(
-      new Error('stopImpersonating is not configured in this test')
-    ),
+    .mockRejectedValue(new Error('stopImpersonating is not configured in this test')),
 };
 
 const storeDefaults: SupportImpersonationStore = {
@@ -44,21 +36,20 @@ const storeDefaults: SupportImpersonationStore = {
   loadExpiredRecovery: () => unconfiguredEffect('loadExpiredRecovery'),
   loadOriginalSession: () => unconfiguredEffect('loadOriginalSession'),
   loadRecoveries: () => unconfiguredEffect('loadRecoveries'),
-  updateImpersonationSession: () =>
-    unconfiguredEffect('updateImpersonationSession'),
+  updateImpersonationSession: () => unconfiguredEffect('updateImpersonationSession'),
 };
 
 export const makeAuthenticationServiceDouble = (
-  overrides: Partial<AuthenticationServiceContract> = {}
+  overrides: Partial<AuthenticationServiceContract> = {},
 ): AuthenticationServiceContract => ({
   ...authenticationDefaults,
   ...overrides,
 });
 
 export const makeSupportAuthProviderDouble = (
-  overrides: Partial<SupportAuthProvider['api']> = {}
+  overrides: Partial<SupportAuthProvider['api']> = {},
 ): SupportAuthProvider => ({ api: { ...providerDefaults, ...overrides } });
 
 export const makeSupportImpersonationStoreDouble = (
-  overrides: Partial<SupportImpersonationStore> = {}
+  overrides: Partial<SupportImpersonationStore> = {},
 ): SupportImpersonationStore => ({ ...storeDefaults, ...overrides });

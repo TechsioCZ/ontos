@@ -21,34 +21,23 @@ const endpointApi = (endpointPath: string, extra = '') =>
 const stockReadPath = '/reads/stock';
 
 it('balanced traversal ignores nested separators but preserves source offsets', () => {
-  const source =
-    "call({ nested: [1, 2], literal: ',);' }, /[,)]/, () => [3, 4]); next();";
+  const source = "call({ nested: [1, 2], literal: ',);' }, /[,)]/, () => [3, 4]); next();";
   const structure = maskNonCode(source);
   const close = matchingDelimiter(structure, source.indexOf('('), '(', ')');
   expect(close).toBe(source.indexOf('; next') - 1);
   // The semicolon in the string must not terminate the statement.
-  expect(topLevelSeparators(structure, ';')).toEqual([
-    source.indexOf('; next'),
-    source.length - 1,
+  expect(topLevelSeparators(structure, ';')).toEqual([source.indexOf('; next'), source.length - 1]);
+  expect(separatedSource(source, topLevelSeparators(structure, ',', 5, close), 5, close)).toEqual([
+    "{ nested: [1, 2], literal: ',);' }",
+    '/[,)]/',
+    '() => [3, 4]',
   ]);
-  expect(
-    separatedSource(
-      source,
-      topLevelSeparators(structure, ',', 5, close),
-      5,
-      close
-    )
-  ).toEqual(["{ nested: [1, 2], literal: ',);' }", '/[,)]/', '() => [3, 4]']);
 });
 
 it('generic parameter commas and arrow returns remain separate lexical concerns', () => {
   const source = 'value: Map<string, () => number>, next: number';
-  expect(topLevelSeparators(source, ',', 0, source.length, true)).toEqual([
-    source.indexOf(', next'),
-  ]);
-  expect(topLevelSeparators('value < maximum; next > minimum;', ';')).toEqual([
-    15, 31,
-  ]);
+  expect(topLevelSeparators(source, ',', 0, source.length, true)).toEqual([source.indexOf(', next')]);
+  expect(topLevelSeparators('value < maximum; next > minimum;', ';')).toEqual([15, 31]);
   const depth = new DelimiterDepth();
   depth.update(']');
   expect(depth.hasUnmatchedClose()).toBe(true);
@@ -59,58 +48,34 @@ it('generic parameter commas and arrow returns remain separate lexical concerns'
 it('token rescan retains nested template expressions and excludes regex punctuation', () => {
   const source = `const result = \`outer \${ { nested: \`inner \${value}\` } }\`; const pattern = /[},;]/;`;
   const kinds = tokenizeGovernedClient(source).map(({ kind }) => kind);
-  expect(kinds.filter((kind) => kind === SyntaxKind.TemplateTail).length).toBe(
-    2
-  );
-  expect(
-    kinds.filter((kind) => kind === SyntaxKind.RegularExpressionLiteral).length
-  ).toBe(1);
-  expect(
-    kinds.filter((kind) => kind === SyntaxKind.SemicolonToken).length
-  ).toBe(2);
+  expect(kinds.filter((kind) => kind === SyntaxKind.TemplateTail).length).toBe(2);
+  expect(kinds.filter((kind) => kind === SyntaxKind.RegularExpressionLiteral).length).toBe(1);
+  expect(kinds.filter((kind) => kind === SyntaxKind.SemicolonToken).length).toBe(2);
 });
 
 it('endpoint grammar shares only topology, preserving owner path and endpoint identity', () => {
-  expect(
-    hasGeneratedModuleApiContract(
-      endpointApi(stockReadPath),
-      'StockApi',
-      'stock',
-      'stock'
-    )
-  ).toBe(true);
+  expect(hasGeneratedModuleApiContract(endpointApi(stockReadPath), 'StockApi', 'stock', 'stock')).toBe(true);
   expect(
     hasGeneratedProviderApiContract(
       endpointApi('/inventory.stock/reports/stock'),
       'StockApi',
       'inventory.stock',
       'stock',
-      'report'
-    )
+      'report',
+    ),
   ).toBe(true);
   expect(
-    hasGeneratedProviderApiContract(
-      endpointApi(stockReadPath),
-      'StockApi',
-      'inventory.stock',
-      'stock',
-      'report'
-    )
+    hasGeneratedProviderApiContract(endpointApi(stockReadPath), 'StockApi', 'inventory.stock', 'stock', 'report'),
   ).toBe(false);
   expect(
-    hasGeneratedModuleApiContract(
-      endpointApi(stockReadPath, 'UnrelatedEndpoint'),
-      'StockApi',
-      'stock',
-      'stock'
-    )
+    hasGeneratedModuleApiContract(endpointApi(stockReadPath, 'UnrelatedEndpoint'), 'StockApi', 'stock', 'stock'),
   ).toBe(false);
   expect(
     hasGeneratedModuleApiContract(
       endpointApi(stockReadPath).replace("'execute'", "'bypass'"),
       'StockApi',
       'stock',
-      'stock'
-    )
+      'stock',
+    ),
   ).toBe(false);
 });

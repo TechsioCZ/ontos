@@ -7,10 +7,7 @@ import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
 
 type LocaleResource = string | { readonly [key: string]: LocaleResource };
 
-const flattenLocaleResource = (
-  resource: LocaleResource,
-  prefix = ''
-): Record<string, string> => {
+const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<string, string> => {
   if (Predicate.isString(resource)) {
     return prefix.length > 0 ? { [prefix]: resource } : {};
   }
@@ -18,10 +15,8 @@ const flattenLocaleResource = (
   return Object.fromEntries(
     Object.entries(resource).flatMap(([key, value]) => {
       const nextKey = prefix.length > 0 ? `${prefix}.${key}` : key;
-      return Predicate.isString(value)
-        ? [[nextKey, value]]
-        : Object.entries(flattenLocaleResource(value, nextKey));
-    })
+      return Predicate.isString(value) ? [[nextKey, value]] : Object.entries(flattenLocaleResource(value, nextKey));
+    }),
   );
 };
 

@@ -89,12 +89,7 @@ import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
 const DEFAULT_DISCRIMINANT_KEYS: readonly string[] = ['_tag'];
 
-const DEFAULT_INCLUDE: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const DEFAULT_IGNORE: readonly string[] = [];
 
@@ -121,10 +116,7 @@ type RuleOptions = Readonly<ReturnType<typeof readOptions>>;
 function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
-    discriminantKeys: stringArray(
-      record.discriminantKeys,
-      DEFAULT_DISCRIMINANT_KEYS
-    ),
+    discriminantKeys: stringArray(record.discriminantKeys, DEFAULT_DISCRIMINANT_KEYS),
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
     ignoreTests: record.ignoreTests === true,
@@ -145,10 +137,7 @@ function propertyKeyName(node: ESTree.TSPropertySignature): string | null {
  * same TypeScript type as `'Found'`, so swapping the quote style must not defeat the rule. A
  * template with substitutions (`` `contacts/${string}` ``) is a *derived* tag and returns `null`.
  */
-function noSubstitutionTemplate(
-  quasis: readonly ESTree.TemplateElement[],
-  substitutions: number
-): string | null {
+function noSubstitutionTemplate(quasis: readonly ESTree.TemplateElement[], substitutions: number): string | null {
   if (substitutions !== 0 || quasis.length !== 1) return null;
   const only = quasis[0];
   if (only === undefined) return null;
@@ -166,12 +155,9 @@ function singletonTag(value: string | null): readonly string[] | null {
 }
 
 function literalTags(literal: ESTree.Node): readonly string[] | null {
-  if (literal.type === 'Literal')
-    return typeof literal.value === 'string' ? [literal.value] : null;
+  if (literal.type === 'Literal') return typeof literal.value === 'string' ? [literal.value] : null;
   if (literal.type === 'TemplateLiteral')
-    return singletonTag(
-      noSubstitutionTemplate(literal.quasis, literal.expressions.length)
-    );
+    return singletonTag(noSubstitutionTemplate(literal.quasis, literal.expressions.length));
   return null;
 }
 
@@ -186,8 +172,7 @@ function unionTags(types: readonly ESTree.Node[]): readonly string[] | null {
 }
 
 function tagLiterals(type: ESTree.Node): readonly string[] | null {
-  if (type.type === 'TSParenthesizedType')
-    return tagLiterals(type.typeAnnotation);
+  if (type.type === 'TSParenthesizedType') return tagLiterals(type.typeAnnotation);
   if (type.type === 'TSLiteralType') return literalTags(type.literal);
   if (type.type === 'TSTemplateLiteralType')
     return singletonTag(noSubstitutionTemplate(type.quasis, type.types.length));
@@ -196,12 +181,9 @@ function tagLiterals(type: ESTree.Node): readonly string[] | null {
 }
 
 /** `Readonly` → `{ name: "Readonly", qualifier: null }`; `Types.Simplify` → `{ …, qualifier: "Types" }`. */
-function referenceName(
-  node: ESTree.TSTypeReference
-): { name: string; qualifier: string | null } | null {
+function referenceName(node: ESTree.TSTypeReference): { name: string; qualifier: string | null } | null {
   const typeName = node.typeName;
-  if (typeName.type === 'Identifier')
-    return { name: typeName.name, qualifier: null };
+  if (typeName.type === 'Identifier') return { name: typeName.name, qualifier: null };
   if (typeName.type !== 'TSQualifiedName') return null;
   let root: ESTree.Node = typeName.left;
   while (root.type === 'TSQualifiedName') root = root.left;
@@ -214,17 +196,11 @@ function referenceName(
  * *declared* here. A qualified wrapper (`Types.Simplify<…>`) is only transparent when its qualifier
  * is a tracked `effect` / `effect/*` namespace binding, so a same-named local helper stays opaque.
  */
-function isTransparentWrapper(
-  node: ESTree.TSTypeReference,
-  options: RuleOptions,
-  bindings: EffectBindings
-): boolean {
+function isTransparentWrapper(node: ESTree.TSTypeReference, options: RuleOptions, bindings: EffectBindings): boolean {
   const reference = referenceName(node);
   if (reference === null) return false;
   if (!options.wrapperTypes.includes(reference.name)) return false;
-  return (
-    reference.qualifier === null || bindings.namespaces.has(reference.qualifier)
-  );
+  return reference.qualifier === null || bindings.namespaces.has(reference.qualifier);
 }
 
 /**
@@ -235,20 +211,16 @@ function isTransparentWrapper(
 function isTransparentHeritage(
   node: ESTree.TSInterfaceHeritage,
   options: RuleOptions,
-  bindings: EffectBindings
+  bindings: EffectBindings,
 ): boolean {
   const resolved = expressionReferenceName(node.expression);
   if (resolved === null) return false;
   if (!options.wrapperTypes.includes(resolved.name)) return false;
-  return (
-    resolved.qualifier === null || bindings.namespaces.has(resolved.qualifier)
-  );
+  return resolved.qualifier === null || bindings.namespaces.has(resolved.qualifier);
 }
 
 /** `Readonly` / `Types.Simplify` written as an expression (heritage clauses, `extends` bases). */
-function expressionReferenceName(
-  node: ESTree.Node
-): { name: string; qualifier: string | null } | null {
+function expressionReferenceName(node: ESTree.Node): { name: string; qualifier: string | null } | null {
   if (node.type === 'Identifier') return { name: node.name, qualifier: null };
   if (node.type !== 'MemberExpression' || node.computed) return null;
   if (node.property.type !== 'Identifier') return null;
@@ -279,17 +251,11 @@ const TRANSPARENT_TYPE_ANCESTORS: ReadonlySet<string> = new Set([
   'TSTypeReference',
 ]);
 
-function hasTransparentParameterOwner(
-  node: ESTree.Node,
-  options: RuleOptions,
-  bindings: EffectBindings
-): boolean {
+function hasTransparentParameterOwner(node: ESTree.Node, options: RuleOptions, bindings: EffectBindings): boolean {
   const owner = node.parent;
   if (owner == null) return false;
-  if (owner.type === 'TSTypeReference')
-    return isTransparentWrapper(owner, options, bindings);
-  if (owner.type === 'TSInterfaceHeritage')
-    return isTransparentHeritage(owner, options, bindings);
+  if (owner.type === 'TSTypeReference') return isTransparentWrapper(owner, options, bindings);
+  if (owner.type === 'TSInterfaceHeritage') return isTransparentHeritage(owner, options, bindings);
   return false;
 }
 
@@ -297,7 +263,7 @@ function isTransparentAncestor(
   current: ESTree.Node,
   previous: ESTree.Node,
   options: RuleOptions,
-  bindings: EffectBindings
+  bindings: EffectBindings,
 ): boolean {
   if (TRANSPARENT_TYPE_ANCESTORS.has(current.type)) return true;
   switch (current.type) {
@@ -314,24 +280,19 @@ function isTransparentAncestor(
   }
 }
 
-function declarationName(
-  current: ESTree.Node,
-  previous: ESTree.Node
-): string | null {
+function declarationName(current: ESTree.Node, previous: ESTree.Node): string | null {
   if (current.type === 'TSInterfaceDeclaration') {
-    const owns =
-      current.body === previous || previous.type === 'TSInterfaceHeritage';
+    const owns = current.body === previous || previous.type === 'TSInterfaceHeritage';
     return owns ? current.id.name : null;
   }
-  if (current.type === 'TSTypeAliasDeclaration')
-    return current.typeAnnotation === previous ? current.id.name : null;
+  if (current.type === 'TSTypeAliasDeclaration') return current.typeAnnotation === previous ? current.id.name : null;
   return null;
 }
 
 function owningDeclaration(
   signature: ESTree.TSPropertySignature,
   options: RuleOptions,
-  bindings: EffectBindings
+  bindings: EffectBindings,
 ): string | null {
   let previous: ESTree.Node = signature;
   let current: ESTree.Node | null | undefined = signature.parent;
@@ -339,8 +300,7 @@ function owningDeclaration(
     if (current == null) return null;
     const name = declarationName(current, previous);
     if (name !== null) return name;
-    if (!isTransparentAncestor(current, previous, options, bindings))
-      return null;
+    if (!isTransparentAncestor(current, previous, options, bindings)) return null;
     previous = current;
     current = current.parent;
   }
@@ -358,29 +318,21 @@ function classKeyName(node: ESTree.PropertyDefinition): string | null {
  * `null` when the initialiser is anything else (a parameter, a computed value, a call, …).
  */
 function initialiserTag(node: ESTree.Node): string | null {
-  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression')
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression') return initialiserTag(node.expression);
+  if (node.type === 'ParenthesizedExpression' || node.type === 'TSNonNullExpression')
     return initialiserTag(node.expression);
-  if (
-    node.type === 'ParenthesizedExpression' ||
-    node.type === 'TSNonNullExpression'
-  )
-    return initialiserTag(node.expression);
-  if (node.type === 'Literal')
-    return typeof node.value === 'string' ? node.value : null;
-  if (node.type === 'TemplateLiteral')
-    return noSubstitutionTemplate(node.quasis, node.expressions.length);
+  if (node.type === 'Literal') return typeof node.value === 'string' ? node.value : null;
+  if (node.type === 'TemplateLiteral') return noSubstitutionTemplate(node.quasis, node.expressions.length);
   return null;
 }
 
 /** The enclosing `class` of a class member, or `null`. */
 function enclosingClass(node: ESTree.PropertyDefinition): ESTree.Class | null {
   const body = node.parent;
-  if (body === null || body === undefined || body.type !== 'ClassBody')
-    return null;
+  if (body === null || body === undefined || body.type !== 'ClassBody') return null;
   const owner = body.parent;
   if (owner === null || owner === undefined) return null;
-  if (owner.type !== 'ClassDeclaration' && owner.type !== 'ClassExpression')
-    return null;
+  if (owner.type !== 'ClassDeclaration' && owner.type !== 'ClassExpression') return null;
   return owner;
 }
 
@@ -406,10 +358,7 @@ function baseExpression(node: ESTree.Node): ESTree.Node | null {
   }
 }
 
-function derivesFromEffectBase(
-  node: ESTree.Class,
-  bindings: EffectBindings
-): boolean {
+function derivesFromEffectBase(node: ESTree.Class, bindings: EffectBindings): boolean {
   let base: ESTree.Node | null | undefined = node.superClass;
   for (let depth = 0; depth < MAX_ANCESTOR_DEPTH; depth += 1) {
     if (base === null || base === undefined) return false;
@@ -434,10 +383,7 @@ function isAmbient(node: ESTree.Node): boolean {
   while (current != null && current.type !== 'Program') {
     if ((current as { declare?: boolean }).declare === true) return true;
     if (current.type === 'TSModuleDeclaration') {
-      if (
-        current.kind === 'global' ||
-        (current.id.type === 'Literal' && typeof current.id.value === 'string')
-      )
+      if (current.kind === 'global' || (current.id.type === 'Literal' && typeof current.id.value === 'string'))
         return true;
     }
     current = current.parent;
@@ -445,20 +391,12 @@ function isAmbient(node: ESTree.Node): boolean {
   return false;
 }
 
-function shouldCheckClassField(
-  node: ESTree.PropertyDefinition,
-  options: RuleOptions
-): boolean {
-  return (
-    options.includeClassFields && !(options.ignoreAmbient && isAmbient(node))
-  );
+function shouldCheckClassField(node: ESTree.PropertyDefinition, options: RuleOptions): boolean {
+  return options.includeClassFields && !(options.ignoreAmbient && isAmbient(node));
 }
 
-function classFieldTags(
-  node: ESTree.PropertyDefinition
-): readonly string[] | null {
-  if (node.typeAnnotation != null)
-    return tagLiterals(node.typeAnnotation.typeAnnotation);
+function classFieldTags(node: ESTree.PropertyDefinition): readonly string[] | null {
+  if (node.typeAnnotation != null) return tagLiterals(node.typeAnnotation.typeAnnotation);
   if (node.value == null) return null;
   return singletonTag(initialiserTag(node.value));
 }
@@ -580,8 +518,7 @@ export const rule = defineRule({
         if (owner === null) return;
         context.report({
           node,
-          messageId:
-            literals.length > 1 ? 'handRolledTagUnion' : 'handRolledTag',
+          messageId: literals.length > 1 ? 'handRolledTagUnion' : 'handRolledTag',
           data: {
             key,
             owner,

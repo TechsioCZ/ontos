@@ -14,25 +14,17 @@ export const AttachEngagementError = Schema.Union([
 
 interface EngagementServices<Payload, Result> {
   readonly create: (
-    payload: Payload
-  ) => Effect.Effect<
-    Result,
-    EngagementProfileConflict | EngagementProfilePersistenceUnavailable
-  >;
+    payload: Payload,
+  ) => Effect.Effect<Result, EngagementProfileConflict | EngagementProfilePersistenceUnavailable>;
   readonly validate: (
-    payload: Payload
-  ) => Effect.Effect<
-    void,
-    EngagementProfileConflict | PartyRegistryReferenceUnavailable
-  >;
+    payload: Payload,
+  ) => Effect.Effect<void, EngagementProfileConflict | PartyRegistryReferenceUnavailable>;
 }
 
-export const handleAttachEngagement = Effect.fn(
-  'AttachEngagementAction.handle'
-)(function* handleAttachEngagement<Payload, Result>(
-  payload: Payload,
-  context: { readonly services: EngagementServices<Payload, Result> }
-) {
+export const handleAttachEngagement = Effect.fn('AttachEngagementAction.handle')(function* handleAttachEngagement<
+  Payload,
+  Result,
+>(payload: Payload, context: { readonly services: EngagementServices<Payload, Result> }) {
   yield* context.services.validate(payload);
   return yield* context.services.create(payload);
 });

@@ -9,17 +9,7 @@ import type {
   InstalledDeploymentResolutionInput,
   InstalledModuleCatalog,
 } from '@app/core-runtime';
-import {
-  Cause,
-  Chunk,
-  Context,
-  Duration,
-  Effect,
-  Function as Fn,
-  Layer,
-  Schema,
-  Semaphore,
-} from 'effect';
+import { Cause, Chunk, Context, Duration, Effect, Function as Fn, Layer, Schema, Semaphore } from 'effect';
 
 import type { DeploymentAllowlist } from './deployment-allowlist.ts';
 import { deploymentAllowlist } from './deployment-allowlist.ts';
@@ -32,15 +22,13 @@ const unavailableErrorFields = {
 
 const InstalledModuleCatalogUnavailableErrorSchema = Schema.TaggedStruct(
   'InstalledModuleCatalogUnavailableError',
-  unavailableErrorFields
+  unavailableErrorFields,
 );
-type InstalledModuleCatalogUnavailableFailure =
-  typeof InstalledModuleCatalogUnavailableErrorSchema.Type;
-const InstalledModuleCatalogUnavailableError =
-  Schema.TaggedError<InstalledModuleCatalogUnavailableFailure>()(
-    'InstalledModuleCatalogUnavailableError',
-    unavailableErrorFields
-  );
+type InstalledModuleCatalogUnavailableFailure = typeof InstalledModuleCatalogUnavailableErrorSchema.Type;
+const InstalledModuleCatalogUnavailableError = Schema.TaggedError<InstalledModuleCatalogUnavailableFailure>()(
+  'InstalledModuleCatalogUnavailableError',
+  unavailableErrorFields,
+);
 
 const invalidErrorFields = {
   cause: Schema.optionalKey(Schema.Defect()),
@@ -49,15 +37,13 @@ const invalidErrorFields = {
 };
 const InstalledModuleCatalogInvalidErrorSchema = Schema.TaggedStruct(
   'InstalledModuleCatalogInvalidError',
-  invalidErrorFields
+  invalidErrorFields,
 );
-type InstalledModuleCatalogInvalidFailure =
-  typeof InstalledModuleCatalogInvalidErrorSchema.Type;
-const InstalledModuleCatalogInvalidError =
-  Schema.TaggedError<InstalledModuleCatalogInvalidFailure>()(
-    'InstalledModuleCatalogInvalidError',
-    invalidErrorFields
-  );
+type InstalledModuleCatalogInvalidFailure = typeof InstalledModuleCatalogInvalidErrorSchema.Type;
+const InstalledModuleCatalogInvalidError = Schema.TaggedError<InstalledModuleCatalogInvalidFailure>()(
+  'InstalledModuleCatalogInvalidError',
+  invalidErrorFields,
+);
 
 export type InstalledModuleCatalogError =
   | InstalledModuleCatalogInvalidFailure
@@ -76,18 +62,13 @@ type InstalledModuleCatalogLoaderArguments = readonly [
 ];
 
 export interface ShellInstalledModuleCatalogService {
-  readonly load: Effect.Effect<
-    InstalledModuleCatalog,
-    InstalledModuleCatalogError
-  >;
+  readonly load: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>;
 }
 
 export class ShellInstalledModuleCatalog extends Context.Service<
   ShellInstalledModuleCatalog,
   ShellInstalledModuleCatalogService
->()(
-  '@app/shell-super-app/api/modules/installed-module-catalog/ShellInstalledModuleCatalog'
-) {}
+>()('@app/shell-super-app/api/modules/installed-module-catalog/ShellInstalledModuleCatalog') {}
 
 const unavailable = (cause?: unknown) => {
   const error = new InstalledModuleCatalogUnavailableError({
@@ -112,10 +93,9 @@ const invalid = (cause?: unknown) => {
 };
 
 const isInvalid = Schema.is(InstalledModuleCatalogInvalidErrorSchema);
-const decodeContractDocument = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OntosModuleDeploymentContractSchema),
-  { onExcessProperty: 'error' }
-);
+const decodeContractDocument = Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
+  onExcessProperty: 'error',
+});
 
 interface ResponseBodyState {
   readonly chunks: Chunk.Chunk<Uint8Array>;
@@ -126,10 +106,7 @@ const emptyResponseBodyState: ResponseBodyState = {
   size: 0,
 };
 
-const concatenateChunks = (
-  chunks: Iterable<Uint8Array>,
-  size: number
-): Uint8Array => {
+const concatenateChunks = (chunks: Iterable<Uint8Array>, size: number): Uint8Array => {
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {
@@ -143,11 +120,8 @@ const readResponseChunks = (
   reader: ReadableStreamDefaultReader<Uint8Array>,
   maxBytes: number,
   timeout: Duration.Duration,
-  state: ResponseBodyState
-): Effect.Effect<
-  ResponseBodyState,
-  InstalledModuleCatalogUnavailableFailure | Cause.TimeoutError
-> =>
+  state: ResponseBodyState,
+): Effect.Effect<ResponseBodyState, InstalledModuleCatalogUnavailableFailure | Cause.TimeoutError> =>
   Effect.tryPromise({
     catch: unavailable,
     // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign stream Promise boundary.
@@ -166,117 +140,94 @@ const readResponseChunks = (
         chunks: Chunk.append(state.chunks, next.value),
         size,
       });
-    })
+    }),
   );
 
-const collectResponseBody = Effect.fn(
-  'ShellInstalledModuleCatalog.collectResponseBody'
-)(function* collectResponseBodyEffect(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  maxBytes: number,
-  timeout: Duration.Duration
-) {
-  const { chunks, size } = yield* readResponseChunks(
-    reader,
-    maxBytes,
-    timeout,
-    emptyResponseBodyState
-  );
-  return new TextDecoder().decode(concatenateChunks(chunks, size));
-});
-
-const readBoundedContract = Effect.fn(
-  'ShellInstalledModuleCatalog.readBoundedContract'
-)(function* readBoundedContractEffect(
-  response: Response,
-  maxBytes: number,
-  timeout: Duration.Duration
-) {
-  if (response.status < 200 || response.status >= 300 || response.redirected) {
-    return yield* unavailable();
-  }
-  const contentType = response.headers.get('content-type')?.trim() ?? '';
-  if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(contentType)) {
-    return yield* invalid();
-  }
-  const declaredLength = response.headers.get('content-length');
-  if (declaredLength !== null && Number(declaredLength) > maxBytes) {
-    return yield* unavailable();
-  }
-  const reader = response.body?.getReader();
-  if (reader === undefined) {
-    return yield* unavailable();
-  }
-  const text = yield* Effect.acquireUseRelease(
-    Effect.succeed(reader),
-    (bodyReader) => collectResponseBody(bodyReader, maxBytes, timeout),
-    (bodyReader) =>
-      Effect.promise(bodyReader.cancel.bind(bodyReader, undefined)).pipe(
-        Effect.ignore
-      )
-  );
-  return yield* decodeContractDocument(text).pipe(
-    Effect.mapError((cause) => invalid(cause))
-  );
-});
-
-const fetchContract = Effect.fn('ShellInstalledModuleCatalog.fetchContract')(
-  function* fetchContractEffect(
-    appId: string,
-    contractUrl: string,
-    fetchContractDocument: ModuleContractFetch,
-    options: Required<InstalledModuleCatalogLoaderOptions>
+const collectResponseBody = Effect.fn('ShellInstalledModuleCatalog.collectResponseBody')(
+  function* collectResponseBodyEffect(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    maxBytes: number,
+    timeout: Duration.Duration,
   ) {
-    const timeout = Duration.millis(options.timeoutMs);
-    const requestContractDocument = Fn.flow(
-      (signal: AbortSignal): RequestInit => ({
-        headers: { accept: 'application/json' },
-        redirect: 'manual',
-        signal,
-      }),
-      fetchContractDocument.bind(undefined, contractUrl)
-    );
-    const attempt = Effect.gen(function* fetchContractAttempt() {
-      const response = yield* Effect.tryPromise({
-        catch: unavailable,
-        try: requestContractDocument,
-      }).pipe(Effect.timeout(timeout));
-      const contract = yield* readBoundedContract(
-        response,
-        options.maxBytes,
-        timeout
-      );
-      return {
-        contract,
-        expectedAppId: appId,
-        outcome: 'fetched' as const,
-      } satisfies InstalledDeploymentResolutionInput;
-    }).pipe(Effect.timeout(timeout));
-    return yield* attempt.pipe(
-      Effect.catch((error) => {
-        let reason: InstalledDeploymentFailureReason = 'unavailable';
-        if (Cause.isTimeoutError(error)) {
-          reason = 'timeout';
-        } else if (isInvalid(error)) {
-          reason = 'incompatible';
-        }
-        return Effect.succeed({
-          expectedAppId: appId,
-          outcome: 'failed',
-          reason,
-        } satisfies InstalledDeploymentResolutionInput);
-      })
-    );
-  }
+    const { chunks, size } = yield* readResponseChunks(reader, maxBytes, timeout, emptyResponseBodyState);
+    return new TextDecoder().decode(concatenateChunks(chunks, size));
+  },
 );
+
+const readBoundedContract = Effect.fn('ShellInstalledModuleCatalog.readBoundedContract')(
+  function* readBoundedContractEffect(response: Response, maxBytes: number, timeout: Duration.Duration) {
+    if (response.status < 200 || response.status >= 300 || response.redirected) {
+      return yield* unavailable();
+    }
+    const contentType = response.headers.get('content-type')?.trim() ?? '';
+    if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(contentType)) {
+      return yield* invalid();
+    }
+    const declaredLength = response.headers.get('content-length');
+    if (declaredLength !== null && Number(declaredLength) > maxBytes) {
+      return yield* unavailable();
+    }
+    const reader = response.body?.getReader();
+    if (reader === undefined) {
+      return yield* unavailable();
+    }
+    const text = yield* Effect.acquireUseRelease(
+      Effect.succeed(reader),
+      (bodyReader) => collectResponseBody(bodyReader, maxBytes, timeout),
+      (bodyReader) => Effect.promise(bodyReader.cancel.bind(bodyReader, undefined)).pipe(Effect.ignore),
+    );
+    return yield* decodeContractDocument(text).pipe(Effect.mapError((cause) => invalid(cause)));
+  },
+);
+
+const fetchContract = Effect.fn('ShellInstalledModuleCatalog.fetchContract')(function* fetchContractEffect(
+  appId: string,
+  contractUrl: string,
+  fetchContractDocument: ModuleContractFetch,
+  options: Required<InstalledModuleCatalogLoaderOptions>,
+) {
+  const timeout = Duration.millis(options.timeoutMs);
+  const requestContractDocument = Fn.flow(
+    (signal: AbortSignal): RequestInit => ({
+      headers: { accept: 'application/json' },
+      redirect: 'manual',
+      signal,
+    }),
+    fetchContractDocument.bind(undefined, contractUrl),
+  );
+  const attempt = Effect.gen(function* fetchContractAttempt() {
+    const response = yield* Effect.tryPromise({
+      catch: unavailable,
+      try: requestContractDocument,
+    }).pipe(Effect.timeout(timeout));
+    const contract = yield* readBoundedContract(response, options.maxBytes, timeout);
+    return {
+      contract,
+      expectedAppId: appId,
+      outcome: 'fetched' as const,
+    } satisfies InstalledDeploymentResolutionInput;
+  }).pipe(Effect.timeout(timeout));
+  return yield* attempt.pipe(
+    Effect.catch((error) => {
+      let reason: InstalledDeploymentFailureReason = 'unavailable';
+      if (Cause.isTimeoutError(error)) {
+        reason = 'timeout';
+      } else if (isInvalid(error)) {
+        reason = 'incompatible';
+      }
+      return Effect.succeed({
+        expectedAppId: appId,
+        outcome: 'failed',
+        reason,
+      } satisfies InstalledDeploymentResolutionInput);
+    }),
+  );
+});
 
 /** Creates one lazy cache for a fully healthy allowlist revision; degraded reads retry. */
 export const makeInstalledModuleCatalogLoader = (
   allowlist: DeploymentAllowlist,
-  ...[
-    fetchContractDocument = globalThis.fetch,
-    inputOptions = {},
-  ]: InstalledModuleCatalogLoaderArguments
+  ...[fetchContractDocument = globalThis.fetch, inputOptions = {}]: InstalledModuleCatalogLoaderArguments
 ): Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> => {
   const options = {
     maxBytes: inputOptions.maxBytes ?? ONTOS_MODULE_CONTRACT_MAX_BYTES,
@@ -284,33 +235,30 @@ export const makeInstalledModuleCatalogLoader = (
   };
   const cacheLock = Semaphore.makeUnsafe(1);
   let cached: InstalledModuleCatalog | undefined;
-  let loading:
-    | Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>
-    | undefined;
+  let loading: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> | undefined;
   const loadCatalog = Effect.forEach(
     allowlist.entries,
-    ({ appId, contractUrl }) =>
-      fetchContract(appId, contractUrl, fetchContractDocument, options),
-    { concurrency: 8 }
+    ({ appId, contractUrl }) => fetchContract(appId, contractUrl, fetchContractDocument, options),
+    { concurrency: 8 },
   ).pipe(
     Effect.flatMap((contracts) =>
       Effect.try({
         catch: invalid,
         try: () => resolveInstalledModuleCatalog(contracts),
-      })
+      }),
     ),
     Effect.tap((catalog) =>
       catalog.deploymentStatuses.every(({ status }) => status === 'available')
         ? Effect.sync(() => {
             cached = catalog;
           })
-        : Effect.void
+        : Effect.void,
     ),
     Effect.ensuring(
       Effect.sync(() => {
         loading = undefined;
-      })
-    )
+      }),
+    ),
   );
   const resolveCachedCatalog = Effect.suspend(() => {
     if (cached !== undefined) {
@@ -323,8 +271,8 @@ export const makeInstalledModuleCatalogLoader = (
       Effect.tap((memoizedLoad) =>
         Effect.sync(() => {
           loading = memoizedLoad;
-        })
-      )
+        }),
+      ),
     );
   });
   return cacheLock.withPermit(resolveCachedCatalog).pipe(Effect.flatten);
@@ -347,9 +295,7 @@ export const installedModuleCatalog: Effect.Effect<
 export const ShellInstalledModuleCatalogLive = Layer.sync(
   ShellInstalledModuleCatalog,
   (): ShellInstalledModuleCatalogService => {
-    let loader:
-      | Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>
-      | undefined;
+    let loader: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> | undefined;
     return {
       load: deploymentAllowlist.pipe(
         Effect.mapError((cause) => invalid(cause)),
@@ -358,8 +304,8 @@ export const ShellInstalledModuleCatalogLive = Layer.sync(
           // creates a new build/runtime Layer instead of mutating a live catalog entry-by-entry.
           loader ??= makeInstalledModuleCatalogLoader(allowlist);
           return loader;
-        })
+        }),
       ),
     };
-  }
+  },
 );

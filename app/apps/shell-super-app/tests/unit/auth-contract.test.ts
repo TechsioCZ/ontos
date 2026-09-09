@@ -35,9 +35,7 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
   if (!SchemaAST.isObjects(schema.ast)) {
     throw new Error('Expected an object problem schema');
   }
-  const tag = schema.ast.propertySignatures.find(
-    ({ name }) => name === '_tag'
-  )?.type;
+  const tag = schema.ast.propertySignatures.find(({ name }) => name === '_tag')?.type;
   expect(tag !== undefined && SchemaAST.isLiteral(tag)).toBe(true);
   if (tag === undefined || !SchemaAST.isLiteral(tag)) {
     throw new Error('Expected a literal problem tag');
@@ -46,34 +44,15 @@ const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
 };
 
 it('publishes authentication, identity lifecycle, and gateway operations', () => {
-  const authenticationEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.authentication.endpoints
-  ).toSorted();
-  const gatewayEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.gatewayContext.endpoints
-  );
-  const identityEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.identity.endpoints
-  ).toSorted();
-  const legalEntityEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.legalEntities.endpoints
-  ).toSorted();
-  const tenantEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.tenants.endpoints
-  ).toSorted();
-  const resourceEndpoints = Object.keys(
-    ShellAuthenticationApi.groups.resources.endpoints
-  ).toSorted();
+  const authenticationEndpoints = Object.keys(ShellAuthenticationApi.groups.authentication.endpoints).toSorted();
+  const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
+  const identityEndpoints = Object.keys(ShellAuthenticationApi.groups.identity.endpoints).toSorted();
+  const legalEntityEndpoints = Object.keys(ShellAuthenticationApi.groups.legalEntities.endpoints).toSorted();
+  const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
+  const resourceEndpoints = Object.keys(ShellAuthenticationApi.groups.resources.endpoints).toSorted();
 
-  expect(authenticationEndpoints).toEqual([
-    'currentSession',
-    'signIn',
-    'signOut',
-  ]);
-  expect(gatewayEndpoints).toEqual([
-    'issueGatewayContext',
-    'issueApiKeyGatewayContext',
-  ]);
+  expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
+  expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
     'createNonHumanPrincipal',
@@ -88,25 +67,15 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     'startSupportImpersonation',
     'stopSupportImpersonation',
   ]);
-  expect(legalEntityEndpoints).toEqual([
-    'availableLegalEntities',
-    'switchLegalEntity',
-  ]);
+  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
-  expect(resourceEndpoints).toEqual([
-    'attachMedia',
-    'resourceDetail',
-    'search',
-  ]);
+  expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
   expect(
     Object.fromEntries(
       Object.values(ShellAuthenticationApi.groups).flatMap((group) =>
-        Object.entries(group.endpoints).map(([name, endpoint]) => [
-          name,
-          endpoint.path,
-        ])
-      )
-    )
+        Object.entries(group.endpoints).map(([name, endpoint]) => [name, endpoint.path]),
+      ),
+    ),
   ).toEqual({
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
@@ -140,9 +109,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     signInPath: '/shell-super-app-api/auth/sign-in',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
   });
-  expect(
-    [...authenticationEndpoints, ...gatewayEndpoints].join(':')
-  ).not.toMatch(/testing|actionKey/u);
+  expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(/testing|actionKey/u);
 });
 
 it('preserves migrated Shell Problem Details wire shapes and ordered membership', () => {
@@ -169,43 +136,21 @@ it('preserves migrated Shell Problem Details wire shapes and ordered membership'
     title: 'Rate limited',
     type: 'https://ontos.dev/problems/shell-rate-limited',
   } as const;
-  const decodedUnavailable = Schema.decodeUnknownSync(
-    AuthenticationUnavailableProblemSchema
-  )(unavailable);
-  expect(
-    Schema.is(AuthenticationUnavailableProblemSchema)(decodedUnavailable)
-  ).toBe(true);
-  expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(
-    Struct.omit(unavailable, ['_tag'])
-  );
-  const decodedRetryable = Schema.decodeUnknownSync(
-    TenantCapabilityUnavailableProblemSchema
-  )(retryable);
-  expect(
-    Schema.is(TenantCapabilityUnavailableProblemSchema)(decodedRetryable)
-  ).toBe(true);
-  expect(Struct.omit(decodedRetryable, ['_tag'])).toEqual(
-    Struct.omit(retryable, ['_tag'])
-  );
-  const decodedRateLimited = Schema.decodeUnknownSync(
-    ShellRateLimitedProblemSchema
-  )(rateLimited);
-  expect(Schema.is(ShellRateLimitedProblemSchema)(decodedRateLimited)).toBe(
-    true
-  );
-  expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(
-    Struct.omit(rateLimited, ['_tag'])
-  );
+  const decodedUnavailable = Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema)(unavailable);
+  expect(Schema.is(AuthenticationUnavailableProblemSchema)(decodedUnavailable)).toBe(true);
+  expect(Struct.omit(decodedUnavailable, ['_tag'])).toEqual(Struct.omit(unavailable, ['_tag']));
+  const decodedRetryable = Schema.decodeUnknownSync(TenantCapabilityUnavailableProblemSchema)(retryable);
+  expect(Schema.is(TenantCapabilityUnavailableProblemSchema)(decodedRetryable)).toBe(true);
+  expect(Struct.omit(decodedRetryable, ['_tag'])).toEqual(Struct.omit(retryable, ['_tag']));
+  const decodedRateLimited = Schema.decodeUnknownSync(ShellRateLimitedProblemSchema)(rateLimited);
+  expect(Schema.is(ShellRateLimitedProblemSchema)(decodedRateLimited)).toBe(true);
+  expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(Struct.omit(rateLimited, ['_tag']));
   expect(() =>
     Schema.decodeUnknownSync(AuthenticationUnavailableProblemSchema, {
       onExcessProperty: 'error',
-    })({ ...unavailable, retryable: true })
+    })({ ...unavailable, retryable: true }),
   ).toThrow();
-  expect(
-    [
-      ...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error,
-    ].map(problemTag)
-  ).toEqual([
+  expect([...ShellAuthenticationApi.groups.authentication.endpoints.signIn.error].map(problemTag)).toEqual([
     'InvalidCredentialsProblem',
     'OntosIdentityForbiddenProblem',
     'AuthenticationUnavailableProblem',
@@ -213,103 +158,89 @@ it('preserves migrated Shell Problem Details wire shapes and ordered membership'
   ]);
 });
 
-it.effect(
-  'decodes a missing identity idempotency header so handlers can return declared 428',
-  () =>
-    Effect.gen(function* testProgram1() {
-      expect(
-        yield* Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})
-      ).toEqual({});
-      expect(
-        yield* Effect.flip(
-          Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({
-            'idempotency-key': '',
-          })
-        )
-      ).toBeDefined();
-    })
+it.effect('decodes a missing identity idempotency header so handlers can return declared 428', () =>
+  Effect.gen(function* testProgram1() {
+    expect(yield* Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})).toEqual({});
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({
+          'idempotency-key': '',
+        }),
+      ),
+    ).toBeDefined();
+  }),
 );
 
-it.effect(
-  'publishes exact legal-entity endpoints with an ID-only switch payload',
-  () =>
-    Effect.gen(function* testProgram2() {
-      const { availableLegalEntities, switchLegalEntity } =
-        ShellAuthenticationApi.groups.legalEntities.endpoints;
-      expect({
-        method: availableLegalEntities.method,
-        path: availableLegalEntities.path,
-      }).toEqual({
-        method: 'GET',
-        path: '/auth/legal-entities',
-      });
-      expect({
-        method: switchLegalEntity.method,
-        path: switchLegalEntity.path,
-      }).toEqual({
-        method: 'POST',
-        path: '/auth/legal-entity/switch',
-      });
-      const legalEntityId = '35000000-0000-4000-8000-000000000001';
-      expect(
-        yield* Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({
-          authorization: 'must-not-pass',
-          legalEntityId,
-          tenantId: 'must-not-pass',
-        })
-      ).toEqual({ legalEntityId });
-      expect(
-        yield* Schema.decodeUnknownEffect(AvailableLegalEntitiesResponseSchema)(
-          {
-            legalEntities: [
-              { legalEntityId, legalName: 'Alpha', token: 'must-not-pass' },
-            ],
-            selectedLegalEntityId: legalEntityId,
-            state: 'authenticated',
-          }
-        )
-      ).toEqual({
-        legalEntities: [{ legalEntityId, legalName: 'Alpha' }],
+it.effect('publishes exact legal-entity endpoints with an ID-only switch payload', () =>
+  Effect.gen(function* testProgram2() {
+    const { availableLegalEntities, switchLegalEntity } = ShellAuthenticationApi.groups.legalEntities.endpoints;
+    expect({
+      method: availableLegalEntities.method,
+      path: availableLegalEntities.path,
+    }).toEqual({
+      method: 'GET',
+      path: '/auth/legal-entities',
+    });
+    expect({
+      method: switchLegalEntity.method,
+      path: switchLegalEntity.path,
+    }).toEqual({
+      method: 'POST',
+      path: '/auth/legal-entity/switch',
+    });
+    const legalEntityId = '35000000-0000-4000-8000-000000000001';
+    expect(
+      yield* Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({
+        authorization: 'must-not-pass',
+        legalEntityId,
+        tenantId: 'must-not-pass',
+      }),
+    ).toEqual({ legalEntityId });
+    expect(
+      yield* Schema.decodeUnknownEffect(AvailableLegalEntitiesResponseSchema)({
+        legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
         selectedLegalEntityId: legalEntityId,
         state: 'authenticated',
-      });
-    })
+      }),
+    ).toEqual({
+      legalEntities: [{ legalEntityId, legalName: 'Alpha' }],
+      selectedLegalEntityId: legalEntityId,
+      state: 'authenticated',
+    });
+  }),
 );
 
-it.effect(
-  'decodes an optional exact page entrypoint without accepting private routing fields',
-  () =>
-    Effect.gen(function* testProgram3() {
-      expect(
-        yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
-          entrypointKey: 'contacts.core.page.customers',
-          importPath: 'must-not-pass',
-          moduleId: 'contacts.core',
-          routePath: '/contacts/customers',
-        })
-      ).toEqual({
+it.effect('decodes an optional exact page entrypoint without accepting private routing fields', () =>
+  Effect.gen(function* testProgram3() {
+    expect(
+      yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
         entrypointKey: 'contacts.core.page.customers',
+        importPath: 'must-not-pass',
         moduleId: 'contacts.core',
-      });
-      expect(
-        yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        routePath: '/contacts/customers',
+      }),
+    ).toEqual({
+      entrypointKey: 'contacts.core.page.customers',
+      moduleId: 'contacts.core',
+    });
+    expect(
+      yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        moduleId: 'contacts.core',
+      }),
+    ).toEqual({ moduleId: 'contacts.core' });
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+          entrypointKey: '../private-page',
           moduleId: 'contacts.core',
-        })
-      ).toEqual({ moduleId: 'contacts.core' });
-      expect(
-        yield* Effect.flip(
-          Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
-            entrypointKey: '../private-page',
-            moduleId: 'contacts.core',
-          })
-        )
-      ).toBeDefined();
-    })
+        }),
+      ),
+    ).toBeDefined();
+  }),
 );
 
 it('publishes exact tenant methods, paths, and declared failure statuses', () => {
-  const { availableTenants, switchTenant } =
-    ShellAuthenticationApi.groups.tenants.endpoints;
+  const { availableTenants, switchTenant } = ShellAuthenticationApi.groups.tenants.endpoints;
   expect({
     method: availableTenants.method,
     path: availableTenants.path,
@@ -326,16 +257,12 @@ it('publishes exact tenant methods, paths, and declared failure statuses', () =>
 });
 
 it('publishes the exhaustive identity failure status contract', () => {
-  for (const endpoint of Object.values(
-    ShellAuthenticationApi.groups.identity.endpoints
-  )) {
+  for (const endpoint of Object.values(ShellAuthenticationApi.groups.identity.endpoints)) {
     const identityStatuses = [...endpoint.error]
       .map((schema) => schema.ast.annotations?.['httpApiStatus'])
       .toSorted((left, right) => Number(left) - Number(right));
 
-    expect(identityStatuses).toEqual([
-      400, 401, 403, 404, 409, 422, 428, 429, 500, 503,
-    ]);
+    expect(identityStatuses).toEqual([400, 401, 403, 404, 409, 422, 428, 429, 500, 503]);
   }
 });
 
@@ -354,27 +281,25 @@ it.effect('validates tenant UUIDs and strips all non-contract fields', () =>
             token: 'must-not-pass',
           },
         ],
-      })
+      }),
     ).toEqual({ tenants: [{ name: 'Alpha tenant', tenantId }] });
     expect(
       yield* Schema.decodeUnknownEffect(SwitchTenantResponseSchema)({
         principalId: 'must-not-pass',
         selectedTenantId: tenantId,
         sessionId: 'must-not-pass',
-      })
+      }),
     ).toEqual({ selectedTenantId: tenantId });
-    expect(
-      yield* Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })
-    ).toEqual({
+    expect(yield* Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({ tenantId })).toEqual({
       tenantId,
     });
     const invalidPayload = yield* Effect.flip(
       Schema.decodeUnknownEffect(SwitchTenantPayloadSchema)({
         tenantId: 'not-a-uuid',
-      })
+      }),
     );
     expect(Predicate.isTagged(invalidPayload, 'SchemaError')).toBe(true);
-  })
+  }),
 );
 
 it.effect('rejects malformed credentials through Effect Schema', () =>
@@ -383,74 +308,64 @@ it.effect('rejects malformed credentials through Effect Schema', () =>
       Schema.decodeUnknownEffect(SignInPayloadSchema)({
         email: '',
         password: '',
-      })
+      }),
     );
     expect(Predicate.isTagged(error, 'SchemaError')).toBe(true);
-  })
+  }),
 );
 
-it.effect(
-  'requires lifecycle reasons and strips provider-private API key identifiers',
-  () =>
-    Effect.gen(function* testProgram6() {
-      const principalId = '00000000-0000-4000-8000-000000000001';
-      const authBindingId = '00000000-0000-4000-8000-000000000002';
-      const createdAt = '2026-08-09T00:00:00.000Z';
-      const missingPrincipalReason = yield* Effect.flip(
-        Schema.decodeUnknownEffect(ChangePrincipalStatusPayloadSchema)({
-          expectedStatus: 'active',
-          newStatus: 'disabled',
-          principalId,
-        })
-      );
-      const missingRevocationReason = yield* Effect.flip(
-        Schema.decodeUnknownEffect(SetApiKeyStatusPayloadSchema)({
-          authBindingId,
-          expectedStatus: 'active',
-          newStatus: 'revoked',
-        })
-      );
-      expect(Predicate.isTagged(missingPrincipalReason, 'SchemaError')).toBe(
-        true
-      );
-      expect(Predicate.isTagged(missingRevocationReason, 'SchemaError')).toBe(
-        true
-      );
+it.effect('requires lifecycle reasons and strips provider-private API key identifiers', () =>
+  Effect.gen(function* testProgram6() {
+    const principalId = '00000000-0000-4000-8000-000000000001';
+    const authBindingId = '00000000-0000-4000-8000-000000000002';
+    const createdAt = '2026-08-09T00:00:00.000Z';
+    const missingPrincipalReason = yield* Effect.flip(
+      Schema.decodeUnknownEffect(ChangePrincipalStatusPayloadSchema)({
+        expectedStatus: 'active',
+        newStatus: 'disabled',
+        principalId,
+      }),
+    );
+    const missingRevocationReason = yield* Effect.flip(
+      Schema.decodeUnknownEffect(SetApiKeyStatusPayloadSchema)({
+        authBindingId,
+        expectedStatus: 'active',
+        newStatus: 'revoked',
+      }),
+    );
+    expect(Predicate.isTagged(missingPrincipalReason, 'SchemaError')).toBe(true);
+    expect(Predicate.isTagged(missingRevocationReason, 'SchemaError')).toBe(true);
 
-      const lifecycle = yield* Schema.decodeUnknownEffect(
-        ApiKeyLifecycleResponseSchema
-      )({
-        authBindingId,
-        cleanupPending: false,
-        createdAt,
-        enabled: true,
-        expiresAt: null,
-        id: 'private-provider-key-id',
-        name: null,
-        providerKeyId: 'private-provider-key-id',
-        start: 'onto',
-      });
-      expect(lifecycle).toEqual({
-        authBindingId,
-        cleanupPending: false,
-        createdAt: DateTime.makeUnsafe(createdAt),
-        enabled: true,
-        expiresAt: null,
-        name: null,
-        start: 'onto',
-      });
-      expect(
-        yield* Schema.encodeEffect(ApiKeyLifecycleResponseSchema)(lifecycle)
-      ).toEqual({
-        authBindingId,
-        cleanupPending: false,
-        createdAt,
-        enabled: true,
-        expiresAt: null,
-        name: null,
-        start: 'onto',
-      });
-    })
+    const lifecycle = yield* Schema.decodeUnknownEffect(ApiKeyLifecycleResponseSchema)({
+      authBindingId,
+      cleanupPending: false,
+      createdAt,
+      enabled: true,
+      expiresAt: null,
+      id: 'private-provider-key-id',
+      name: null,
+      providerKeyId: 'private-provider-key-id',
+      start: 'onto',
+    });
+    expect(lifecycle).toEqual({
+      authBindingId,
+      cleanupPending: false,
+      createdAt: DateTime.makeUnsafe(createdAt),
+      enabled: true,
+      expiresAt: null,
+      name: null,
+      start: 'onto',
+    });
+    expect(yield* Schema.encodeEffect(ApiKeyLifecycleResponseSchema)(lifecycle)).toEqual({
+      authBindingId,
+      cleanupPending: false,
+      createdAt,
+      enabled: true,
+      expiresAt: null,
+      name: null,
+      start: 'onto',
+    });
+  }),
 );
 
 it.effect('decodes only safe current-session identity fields', () =>
@@ -479,5 +394,5 @@ it.effect('decodes only safe current-session identity fields', () =>
       },
       state: 'authenticated',
     });
-  })
+  }),
 );

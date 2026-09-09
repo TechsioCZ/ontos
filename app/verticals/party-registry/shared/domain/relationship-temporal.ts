@@ -1,9 +1,6 @@
 import { DateTime, Option } from 'effect';
 
-import type {
-  PartyRelationshipState,
-  RelationshipIsoTimestamp,
-} from './relationship-contract.ts';
+import type { PartyRelationshipState, RelationshipIsoTimestamp } from './relationship-contract.ts';
 
 interface RelationshipPeriod {
   readonly relationshipId: string;
@@ -42,47 +39,34 @@ interface RelationshipEndRequest {
 export const classifyRelationshipValidity = (
   validFrom: Option.Option<RelationshipIsoTimestamp>,
   validTo: Option.Option<RelationshipIsoTimestamp>,
-  now: RelationshipIsoTimestamp
+  now: RelationshipIsoTimestamp,
 ): PartyRelationshipState => {
   if (Option.isSome(validFrom) && DateTime.Order(now, validFrom.value) < 0) {
     return 'SCHEDULED';
   }
-  return Option.isNone(validTo) || DateTime.Order(now, validTo.value) < 0
-    ? 'CURRENT'
-    : 'HISTORICAL';
+  return Option.isNone(validTo) || DateTime.Order(now, validTo.value) < 0 ? 'CURRENT' : 'HISTORICAL';
 };
 
 const lowerBeforeUpper = (
   lower: Option.Option<RelationshipIsoTimestamp>,
-  upper: Option.Option<RelationshipIsoTimestamp>
-) =>
-  Option.isNone(upper) ||
-  Option.isNone(lower) ||
-  DateTime.Order(lower.value, upper.value) < 0;
+  upper: Option.Option<RelationshipIsoTimestamp>,
+) => Option.isNone(upper) || Option.isNone(lower) || DateTime.Order(lower.value, upper.value) < 0;
 
-const sameInstant = (
-  left: RelationshipIsoTimestamp,
-  right: RelationshipIsoTimestamp
-): boolean => DateTime.Equivalence(left, right);
+const sameInstant = (left: RelationshipIsoTimestamp, right: RelationshipIsoTimestamp): boolean =>
+  DateTime.Equivalence(left, right);
 
 const sameOptionalInstant = (
   left: Option.Option<RelationshipIsoTimestamp>,
-  right: Option.Option<RelationshipIsoTimestamp>
+  right: Option.Option<RelationshipIsoTimestamp>,
 ): boolean =>
-  Option.isNone(left)
-    ? Option.isNone(right)
-    : Option.isSome(right) && sameInstant(left.value, right.value);
+  Option.isNone(left) ? Option.isNone(right) : Option.isSome(right) && sameInstant(left.value, right.value);
 
-const overlaps = (
-  left: RelationshipPeriod,
-  right: RelationshipPeriod
-): boolean =>
-  lowerBeforeUpper(left.validFrom, right.validTo) &&
-  lowerBeforeUpper(right.validFrom, left.validTo);
+const overlaps = (left: RelationshipPeriod, right: RelationshipPeriod): boolean =>
+  lowerBeforeUpper(left.validFrom, right.validTo) && lowerBeforeUpper(right.validFrom, left.validTo);
 
 export const decideRelationshipCreate = (
   existingPeriods: readonly RelationshipPeriod[],
-  requestedPeriod: RelationshipPeriod
+  requestedPeriod: RelationshipPeriod,
 ):
   | Readonly<{ readonly _tag: 'create' }>
   | Readonly<{ readonly _tag: 'overlap'; readonly relationshipId: string }>
@@ -90,14 +74,12 @@ export const decideRelationshipCreate = (
   const exact = existingPeriods.find(
     (period) =>
       sameOptionalInstant(period.validFrom, requestedPeriod.validFrom) &&
-      sameOptionalInstant(period.validTo, requestedPeriod.validTo)
+      sameOptionalInstant(period.validTo, requestedPeriod.validTo),
   );
   if (exact !== undefined) {
     return { _tag: 'reuse', relationshipId: exact.relationshipId };
   }
-  const overlapping = existingPeriods.find((period) =>
-    overlaps(period, requestedPeriod)
-  );
+  const overlapping = existingPeriods.find((period) => overlaps(period, requestedPeriod));
   return overlapping === undefined
     ? { _tag: 'create' }
     : { _tag: 'overlap', relationshipId: overlapping.relationshipId };
@@ -106,18 +88,17 @@ export const decideRelationshipCreate = (
 const requiresStartCorrection = (
   current: RelationshipUpdateState,
   request: RelationshipUpdateRequest,
-  now: RelationshipIsoTimestamp
+  now: RelationshipIsoTimestamp,
 ): boolean =>
   request.validFrom !== undefined &&
   Option.isSome(current.validFrom) &&
   !sameInstant(request.validFrom, current.validFrom.value) &&
-  (DateTime.Order(current.validFrom.value, now) <= 0 ||
-    DateTime.Order(request.validFrom, now) <= 0);
+  (DateTime.Order(current.validFrom.value, now) <= 0 || DateTime.Order(request.validFrom, now) <= 0);
 
 const requiresEndCorrection = (
   current: RelationshipUpdateState,
   request: RelationshipUpdateRequest,
-  now: RelationshipIsoTimestamp
+  now: RelationshipIsoTimestamp,
 ): boolean =>
   request.validTo !== undefined &&
   Option.isSome(current.validTo) &&
@@ -127,7 +108,7 @@ const requiresEndCorrection = (
 const requiresExplicitEnd = (
   current: RelationshipUpdateState,
   request: RelationshipUpdateRequest,
-  now: RelationshipIsoTimestamp
+  now: RelationshipIsoTimestamp,
 ): boolean =>
   Option.isNone(current.validTo) &&
   request.validTo !== undefined &&
@@ -137,7 +118,7 @@ const requiresExplicitEnd = (
 export const decideRelationshipUpdate = (
   current: RelationshipUpdateState,
   request: RelationshipUpdateRequest,
-  now: RelationshipIsoTimestamp
+  now: RelationshipIsoTimestamp,
 ):
   | Readonly<{
       readonly _tag: 'correction_required';
@@ -153,12 +134,8 @@ export const decideRelationshipUpdate = (
   if (current.revision !== request.expectedRevision) {
     return { _tag: 'revision_conflict', actualRevision: current.revision };
   }
-  const nextValidFrom =
-    request.validFrom === undefined
-      ? current.validFrom
-      : Option.some(request.validFrom);
-  const nextValidTo =
-    request.validTo === undefined ? current.validTo : request.validTo;
+  const nextValidFrom = request.validFrom === undefined ? current.validFrom : Option.some(request.validFrom);
+  const nextValidTo = request.validTo === undefined ? current.validTo : request.validTo;
   if (
     Option.isSome(nextValidFrom) &&
     Option.isSome(nextValidTo) &&
@@ -178,10 +155,7 @@ export const decideRelationshipUpdate = (
   return { _tag: 'update' };
 };
 
-const decideRepeatedRelationshipEnd = (
-  current: RelationshipEndState,
-  request: RelationshipEndRequest
-) => {
+const decideRepeatedRelationshipEnd = (current: RelationshipEndState, request: RelationshipEndRequest) => {
   if (
     current.endReason === (request.reason ?? null) &&
     current.endProvenanceMethod === request.provenance.method &&
@@ -189,11 +163,7 @@ const decideRepeatedRelationshipEnd = (
   ) {
     return { _tag: 'unchanged' } as const;
   }
-  if (
-    current.endReason === null &&
-    current.endProvenanceMethod === null &&
-    current.endProvenanceSource === null
-  ) {
+  if (current.endReason === null && current.endProvenanceMethod === null && current.endProvenanceSource === null) {
     return { _tag: 'attach_end_evidence' } as const;
   }
   return { _tag: 'correction_required', fact: 'validTo' } as const;
@@ -202,7 +172,7 @@ const decideRepeatedRelationshipEnd = (
 export const decideRelationshipEnd = (
   current: RelationshipEndState,
   request: RelationshipEndRequest,
-  now: RelationshipIsoTimestamp
+  now: RelationshipIsoTimestamp,
 ):
   | Readonly<{ readonly _tag: 'attach_end_evidence' }>
   | Readonly<{ readonly _tag: 'correction_required'; readonly fact: 'validTo' }>
@@ -217,16 +187,10 @@ export const decideRelationshipEnd = (
   if (current.revision !== request.expectedRevision) {
     return { _tag: 'revision_conflict', actualRevision: current.revision };
   }
-  if (
-    Option.isSome(current.validFrom) &&
-    DateTime.Order(request.effectiveAt, current.validFrom.value) <= 0
-  ) {
+  if (Option.isSome(current.validFrom) && DateTime.Order(request.effectiveAt, current.validFrom.value) <= 0) {
     return { _tag: 'invalid_interval' };
   }
-  if (
-    Option.isSome(current.validTo) &&
-    sameInstant(current.validTo.value, request.effectiveAt)
-  ) {
+  if (Option.isSome(current.validTo) && sameInstant(current.validTo.value, request.effectiveAt)) {
     return decideRepeatedRelationshipEnd(current, request);
   }
   if (Option.isSome(current.validTo)) {

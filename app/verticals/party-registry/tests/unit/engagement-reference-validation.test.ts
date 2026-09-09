@@ -24,27 +24,15 @@ const operations: PartyRegistryReferenceOperations = {
     }),
 };
 
-it.effect(
-  'validates engagement references through owner-local Party Registry operations',
-  () =>
-    validatePartyRegistryReferences(
-      operations,
-      { partyRef },
-      { expectedPartyType: 'ORGANIZATION' }
-    )
+it.effect('validates engagement references through owner-local Party Registry operations', () =>
+  validatePartyRegistryReferences(operations, { partyRef }, { expectedPartyType: 'ORGANIZATION' }),
 );
 
-it.effect(
-  'rejects a profile whose Party type belongs to a different engagement kind',
-  () =>
-    Effect.gen(function* verifyPartyTypeMismatch() {
-      const error = yield* Effect.flip(
-        validatePartyRegistryReferences(
-          operations,
-          { partyRef },
-          { expectedPartyType: 'PERSON' }
-        )
-      );
-      expect(error.code).toBe('contacts_party_type_mismatch');
-    })
+it.effect('rejects a profile whose Party type belongs to a different engagement kind', () =>
+  Effect.gen(function* verifyPartyTypeMismatch() {
+    const error = yield* Effect.flip(
+      validatePartyRegistryReferences(operations, { partyRef }, { expectedPartyType: 'PERSON' }),
+    );
+    expect(error.code).toBe('contacts_party_type_mismatch');
+  }),
 );

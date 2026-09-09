@@ -24,7 +24,7 @@ type PartyContactPointsOperationInvocation = readonly [
 const partyContactPointsClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartyContactPointsClientOptions
+  options: PartyContactPointsClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,30 +33,22 @@ const partyContactPointsClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executePartyContactPointsWithAuthorization = (
   payload: PartyContactPointsRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartyContactPointsAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartyContactPointsAuthorizedInvocation
 ) =>
-  partyContactPointsClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  partyContactPointsClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.partyContactPoints.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executePartyContactPoints = (
@@ -64,10 +56,5 @@ export const executePartyContactPoints = (
   ...[requestCorrelation, options = {}]: PartyContactPointsOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePartyContactPointsWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executePartyContactPointsWithAuthorization(payload, credential, requestCorrelation, options),
   );

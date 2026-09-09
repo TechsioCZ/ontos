@@ -25,14 +25,7 @@ interface FixtureCoverage {
   weightedFindings?: number;
   workspaces?: string[];
 }
-const names = [
-  'knip',
-  'jscpd',
-  FALLOW_FILES,
-  'fallow-clones',
-  FALLOW_SIMILARITY,
-  FALLOW_HEALTH,
-];
+const names = ['knip', 'jscpd', FALLOW_FILES, 'fallow-clones', FALLOW_SIMILARITY, FALLOW_HEALTH];
 const clean = () => ({
   results: names.map((name) => {
     const coverage: FixtureCoverage = { tokenEligibleFiles: 2 };
@@ -71,12 +64,8 @@ const clean = () => ({
   status: 'reported',
 });
 const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const validate = Effect.fn(function* mergedScenario1(
-  summary: ReturnType<typeof clean> | Schema.Json
-) {
-  return yield* encode(summary).pipe(
-    Effect.flatMap(validateQualityAuditSummary)
-  );
+const validate = Effect.fn(function* mergedScenario1(summary: ReturnType<typeof clean> | Schema.Json) {
+  return yield* encode(summary).pipe(Effect.flatMap(validateQualityAuditSummary));
 });
 
 it.effect(
@@ -84,9 +73,7 @@ it.effect(
   Effect.fn(function* mergedScenario2() {
     yield* validate(clean());
     const summary = clean();
-    const semantic = summary.results.find(
-      ({ name }) => name === FALLOW_SIMILARITY
-    );
+    const semantic = summary.results.find(({ name }) => name === FALLOW_SIMILARITY);
     const health = summary.results.find(({ name }) => name === FALLOW_HEALTH);
     expect(semantic && health).toBeTruthy();
     if (!(semantic && health)) {
@@ -96,7 +83,7 @@ it.effect(
     health.coverage.uiOnlyFindings = 2;
     health.coverage.weightedFindings = 2;
     yield* validate(summary);
-  })
+  }),
 );
 
 const positiveReports = [
@@ -185,14 +172,12 @@ for (const [name, source] of positiveReports) {
       }
       yield* Effect.matchCause(validate(summary), {
         onFailure: (cause) =>
-          expect(String(Cause.squash(cause))).toMatch(
-            new RegExp(`Quality audit gate failed: ${name}=1`, 'u')
-          ),
+          expect(String(Cause.squash(cause))).toMatch(new RegExp(`Quality audit gate failed: ${name}=1`, 'u')),
         onSuccess: () => {
           throw new Error(EXPECTED_EFFECT_FAILURE);
         },
       });
-    })
+    }),
   );
 }
 
@@ -210,35 +195,31 @@ it.effect(
     yield* validate(summary);
     knip.coverage.modeledUsages = 5;
     yield* Effect.matchCause(validate(summary), {
-      onFailure: (cause) =>
-        expect(String(Cause.squash(cause))).toMatch(/inconsistent/u),
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/inconsistent/u),
       onSuccess: () => {
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
-  })
+  }),
 );
 
 it.effect(
   'partial, duplicate, unknown, failed and empty reports fail closed',
   Effect.fn(function* mergedScenario8() {
     yield* Effect.matchCause(validate({}), {
-      onFailure: (cause) =>
-        expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
       onSuccess: () => {
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
     yield* Effect.matchCause(validate({ ...clean(), status: 'error' }), {
-      onFailure: (cause) =>
-        expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
       onSuccess: () => {
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
     yield* Effect.matchCause(validate({ results: [], status: 'reported' }), {
-      onFailure: (cause) =>
-        expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
       onSuccess: () => {
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
@@ -253,32 +234,26 @@ it.effect(
               results: summary.results.filter((entry) => entry.name !== name),
             }),
             {
-              onFailure: (cause) =>
-                expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+              onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
               onSuccess: () => {
                 throw new Error(EXPECTED_EFFECT_FAILURE);
               },
-            }
+            },
           );
           const result = summary.results.find((entry) => entry.name === name);
           expect(result).toBeTruthy();
           if (!result) {
             throw new Error(EXPECTED_PROOF_VALUE);
           }
-          yield* Effect.matchCause(
-            validate({ ...summary, results: [...summary.results, result] }),
-            {
-              onFailure: (cause) =>
-                expect(String(Cause.squash(cause))).toMatch(/six unique/u),
-              onSuccess: () => {
-                throw new Error(EXPECTED_EFFECT_FAILURE);
-              },
-            }
-          );
+          yield* Effect.matchCause(validate({ ...summary, results: [...summary.results, result] }), {
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+            onSuccess: () => {
+              throw new Error(EXPECTED_EFFECT_FAILURE);
+            },
+          });
           result.status = 'error';
           yield* Effect.matchCause(validate(summary), {
-            onFailure: (cause) =>
-              expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
             onSuccess: () => {
               throw new Error(EXPECTED_EFFECT_FAILURE);
             },
@@ -286,22 +261,20 @@ it.effect(
           result.status = 'reported';
           result.files = 0;
           yield* Effect.matchCause(validate(summary), {
-            onFailure: (cause) =>
-              expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
             onSuccess: () => {
               throw new Error(EXPECTED_EFFECT_FAILURE);
             },
           });
-        })
+        }),
       ),
-      { concurrency: 'unbounded' }
+      { concurrency: 'unbounded' },
     );
     const summary = clean();
     const [first] = summary.results;
     first.name = 'unknown';
     yield* Effect.matchCause(validate(summary), {
-      onFailure: (cause) =>
-        expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
       onSuccess: () => {
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
@@ -310,17 +283,16 @@ it.effect(
       ['', '{broken', 'null', '{"status":"reported","results":{}}'].map(
         Effect.fn(function* mergedScenario7(source) {
           yield* Effect.matchCause(validateQualityAuditSummary(source), {
-            onFailure: (cause) =>
-              expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
             onSuccess: () => {
               throw new Error(EXPECTED_EFFECT_FAILURE);
             },
           });
-        })
+        }),
       ),
-      { concurrency: 'unbounded' }
+      { concurrency: 'unbounded' },
     );
-  })
+  }),
 );
 
 it.effect(
@@ -330,39 +302,28 @@ it.effect(
       names.map(
         Effect.fn(function* mergedScenario10(name) {
           yield* Effect.all(
-            [
-              -1,
-              0.5,
-              null,
-              '0',
-              undefined,
-              Number.NaN,
-              Number.POSITIVE_INFINITY,
-            ].map(
+            [-1, 0.5, null, '0', undefined, Number.NaN, Number.POSITIVE_INFINITY].map(
               Effect.fn(function* mergedScenario9(invalid) {
                 const summary = clean();
-                const result = summary.results.find(
-                  (entry) => entry.name === name
-                );
+                const result = summary.results.find((entry) => entry.name === name);
                 expect(result).toBeTruthy();
                 if (!result) {
                   throw new Error(EXPECTED_PROOF_VALUE);
                 }
                 Object.assign(result, { findings: invalid });
                 yield* Effect.matchCause(validate(summary), {
-                  onFailure: (cause) =>
-                    expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
+                  onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
                   onSuccess: () => {
                     throw new Error(EXPECTED_EFFECT_FAILURE);
                   },
                 });
-              })
+              }),
             ),
-            { concurrency: 'unbounded' }
+            { concurrency: 'unbounded' },
           );
-        })
+        }),
       ),
-      { concurrency: 'unbounded' }
+      { concurrency: 'unbounded' },
     );
     yield* Effect.all(
       [
@@ -381,19 +342,16 @@ it.effect(
           }
           Object.assign(result, patch);
           yield* Effect.matchCause(validate(summary), {
-            onFailure: (cause) =>
-              expect(String(Cause.squash(cause))).toMatch(
-                /Malformed|inconsistent/u
-              ),
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
             onSuccess: () => {
               throw new Error(EXPECTED_EFFECT_FAILURE);
             },
           });
-        })
+        }),
       ),
-      { concurrency: 'unbounded' }
+      { concurrency: 'unbounded' },
     );
-  })
+  }),
 );
 
 it.effect(
@@ -403,8 +361,7 @@ it.effect(
     const [, repeated] = duplicate.results;
     duplicate.results[0] = repeated;
     yield* Effect.matchCause(validate(duplicate), {
-      onFailure: (cause) =>
-        expect(String(Cause.squash(cause))).toMatch(/six unique/u),
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),
       onSuccess: () => {
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
@@ -431,17 +388,14 @@ it.effect(
           }
           Object.assign(result.coverage, coverage);
           yield* Effect.matchCause(validate(summary), {
-            onFailure: (cause) =>
-              expect(String(Cause.squash(cause))).toMatch(
-                /Malformed|inconsistent/u
-              ),
+            onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed|inconsistent/u),
             onSuccess: () => {
               throw new Error(EXPECTED_EFFECT_FAILURE);
             },
           });
-        })
+        }),
       ),
-      { concurrency: 'unbounded' }
+      { concurrency: 'unbounded' },
     );
-  })
+  }),
 );

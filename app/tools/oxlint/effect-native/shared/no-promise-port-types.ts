@@ -18,10 +18,7 @@ type VariableLookup = (node: any, name: string) => any;
 
 /** Same-file type resolution: applied arguments belong to the caller's environment,
  * while defaults and constraints belong to the progressively bound declaration. */
-export function createPromisePortTypeResolver(
-  variableFor: VariableLookup,
-  promiseTypes: readonly string[]
-) {
+export function createPromisePortTypeResolver(variableFor: VariableLookup, promiseTypes: readonly string[]) {
   const branch = (state: Resolution): Resolution => ({
     ...state,
     seen: new Set(state.seen),
@@ -29,10 +26,7 @@ export function createPromisePortTypeResolver(
   const promiseName = (name: string, state: Resolution): string | null =>
     state.functionAliasOnly && !state.insideFunction ? null : `${name}<…>`;
 
-  const resolveFirst = (
-    nodes: readonly any[],
-    state: Resolution
-  ): string | null => {
+  const resolveFirst = (nodes: readonly any[], state: Resolution): string | null => {
     for (const node of nodes) {
       const result = resolve(node, branch(state));
       if (result) return result;
@@ -45,16 +39,11 @@ export function createPromisePortTypeResolver(
     // fluent continuations, not service ports, even with applied arguments.
     if (state.substitutions.size === 0 || state.insideFunction) return null;
     for (const member of raw.members ?? raw.body) {
-      const isValue =
-        member.type === 'TSPropertySignature' ||
-        member.type === 'TSIndexSignature';
-      const result = resolve(
-        isValue ? member.typeAnnotation : member.returnType,
-        {
-          ...branch(state),
-          insideFunction: state.insideFunction || !isValue,
-        }
-      );
+      const isValue = member.type === 'TSPropertySignature' || member.type === 'TSIndexSignature';
+      const result = resolve(isValue ? member.typeAnnotation : member.returnType, {
+        ...branch(state),
+        insideFunction: state.insideFunction || !isValue,
+      });
       if (result) return result;
     }
     return null;
@@ -62,9 +51,7 @@ export function createPromisePortTypeResolver(
 
   const bindArguments = (raw: any, alias: any, state: Resolution) => {
     const applied = new Map(state.substitutions);
-    for (const [index, parameter] of (
-      alias.typeParameters?.params ?? []
-    ).entries()) {
+    for (const [index, parameter] of (alias.typeParameters?.params ?? []).entries()) {
       const argument = raw.typeArguments?.params[index];
       const value = argument ?? parameter.default ?? parameter.constraint;
       if (!value) continue;
@@ -78,28 +65,16 @@ export function createPromisePortTypeResolver(
     return applied;
   };
 
-  const resolveAlias = (
-    raw: any,
-    alias: any,
-    state: Resolution
-  ): string | null => {
+  const resolveAlias = (raw: any, alias: any, state: Resolution): string | null => {
     const applied = bindArguments(raw, alias, state);
     if (state.seen.has(alias)) return null;
     state.seen.add(alias);
     const inheritedState = { ...state, substitutions: applied };
-    const own = resolve(
-      alias.typeAnnotation ?? alias.body,
-      branch(inheritedState)
-    );
+    const own = resolve(alias.typeAnnotation ?? alias.body, branch(inheritedState));
     return own ?? resolveFirst(alias.extends ?? [], inheritedState);
   };
 
-  const resolveLocalReference = (
-    raw: any,
-    typeName: any,
-    name: string,
-    state: Resolution
-  ): string | null => {
+  const resolveLocalReference = (raw: any, typeName: any, name: string, state: Resolution): string | null => {
     const variable = variableFor(typeName, name);
     const bound = state.substitutions.get(variable);
     if (bound)
@@ -108,14 +83,10 @@ export function createPromisePortTypeResolver(
         substitutions: bound.substitutions,
       });
     const alias = variable?.defs.find((def: any) =>
-      ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(
-        def.node.type
-      )
+      ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(def.node.type),
     )?.node;
     if (alias) return resolveAlias(raw, alias, state);
-    const parameter = variable?.defs.find(
-      (def: any) => def.node.type === 'TSTypeParameter'
-    )?.node;
+    const parameter = variable?.defs.find((def: any) => def.node.type === 'TSTypeParameter')?.node;
     if (parameter) return resolve(parameter, state);
     if (variable?.defs.length || !promiseTypes.includes(name)) return null;
     return promiseName(name, state);
@@ -126,8 +97,7 @@ export function createPromisePortTypeResolver(
     const names = typeNameSegments(typeName);
     if (!names) return null;
     const name = names.at(-1)!;
-    if (names.length === 1)
-      return resolveLocalReference(raw, typeName, name, state);
+    if (names.length === 1) return resolveLocalReference(raw, typeName, name, state);
     if (
       names.length === 2 &&
       names[0] === 'globalThis' &&
@@ -140,13 +110,9 @@ export function createPromisePortTypeResolver(
 
   const resolveShape = (raw: any, state: Resolution): string | null => {
     if (raw.type === 'TSFunctionType')
-      return state.substitutions.size === 0
-        ? null
-        : resolve(raw.returnType, { ...state, insideFunction: true });
-    if (raw.type === 'TSTypeLiteral' || raw.type === 'TSInterfaceBody')
-      return resolveMembers(raw, state);
-    if (raw.type === 'TSTypeReference' || raw.type === 'TSInterfaceHeritage')
-      return resolveReference(raw, state);
+      return state.substitutions.size === 0 ? null : resolve(raw.returnType, { ...state, insideFunction: true });
+    if (raw.type === 'TSTypeLiteral' || raw.type === 'TSInterfaceBody') return resolveMembers(raw, state);
+    if (raw.type === 'TSTypeReference' || raw.type === 'TSInterfaceHeritage') return resolveReference(raw, state);
     return null;
   };
 
@@ -155,21 +121,14 @@ export function createPromisePortTypeResolver(
     state.seen.add(raw);
     if (raw.type === 'TSTypeAnnotation' || raw.type === 'TSParenthesizedType')
       return resolve(raw.typeAnnotation, state);
-    if (raw.type === 'TSTypeParameter')
-      return resolveFirst([raw.constraint, raw.default], state);
-    if (raw.type === 'TSUnionType' || raw.type === 'TSIntersectionType')
-      return resolveFirst(raw.types, state);
+    if (raw.type === 'TSTypeParameter') return resolveFirst([raw.constraint, raw.default], state);
+    if (raw.type === 'TSUnionType' || raw.type === 'TSIntersectionType') return resolveFirst(raw.types, state);
     return resolveShape(raw, state);
   };
 
   return function promiseReference(
-    annotation:
-      | ESTree.TSTypeAnnotation
-      | ESTree.TSTypeReference
-      | ESTree.TSInterfaceHeritage
-      | null
-      | undefined,
-    functionAliasOnly = false
+    annotation: ESTree.TSTypeAnnotation | ESTree.TSTypeReference | ESTree.TSInterfaceHeritage | null | undefined,
+    functionAliasOnly = false,
   ): string | null {
     return resolve(annotation, {
       seen: new Set(),

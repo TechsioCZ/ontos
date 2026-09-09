@@ -6,11 +6,5 @@ import { ROOT_ENV_PATH as databaseEnvironmentPath } from '../../packages/core-ru
 import { SPICEDB_ROOT_ENV_PATH } from '../../packages/core-runtime/src/permissions/config.ts';
 
 NodeRuntime.runMain(
-  Console.log(
-    JSON.stringify([
-      databaseEnvironmentPath,
-      SPICEDB_ROOT_ENV_PATH,
-      authenticationEnvironmentPath,
-    ])
-  )
+  Console.log(JSON.stringify([databaseEnvironmentPath, SPICEDB_ROOT_ENV_PATH, authenticationEnvironmentPath])),
 );

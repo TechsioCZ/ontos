@@ -24,7 +24,7 @@ type PartyRelationshipDetailOperationInvocation = readonly [
 const partyRelationshipDetailClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartyRelationshipDetailClientOptions
+  options: PartyRelationshipDetailClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,44 +33,28 @@ const partyRelationshipDetailClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executePartyRelationshipDetailWithAuthorization = (
   payload: PartyRelationshipDetailRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartyRelationshipDetailAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartyRelationshipDetailAuthorizedInvocation
 ) =>
-  partyRelationshipDetailClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  partyRelationshipDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.partyRelationshipDetail.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executePartyRelationshipDetail = (
   payload: PartyRelationshipDetailRequest,
-  ...[
-    requestCorrelation,
-    options = {},
-  ]: PartyRelationshipDetailOperationInvocation
+  ...[requestCorrelation, options = {}]: PartyRelationshipDetailOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePartyRelationshipDetailWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executePartyRelationshipDetailWithAuthorization(payload, credential, requestCorrelation, options),
   );

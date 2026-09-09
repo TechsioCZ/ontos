@@ -11,20 +11,15 @@ type TypedGeneratorContext<Config> = Omit<GeneratorContext, 'config'> & {
 
 type EffectScaffoldPlanner<Config, Result, PlannerError, Services> = (
   workspaceRoot: string,
-  config: Config
+  config: Config,
 ) => Effect.Effect<ScaffoldPlan<Result>, PlannerError, Services>;
 
-export const createCodesmithGenerator = <
-  Config,
-  Result,
-  PlannerError,
-  Services extends NodeServices.NodeServices,
->(
-  planner: EffectScaffoldPlanner<Config, Result, PlannerError, Services>
+export const createCodesmithGenerator = <Config, Result, PlannerError, Services extends NodeServices.NodeServices>(
+  planner: EffectScaffoldPlanner<Config, Result, PlannerError, Services>,
 ) =>
   Effect.fn('planAndApplyScaffold')(function* planAndApplyScaffold(
     context: TypedGeneratorContext<Config>,
-    core: GeneratorCore
+    core: GeneratorCore,
   ) {
     const plan = yield* planner(core.outputPath, context.config);
     return yield* applyMutationPlanEffect(core, plan);

@@ -24,7 +24,7 @@ type OrganizationEngagementProfileOperationInvocation = readonly [
 const organizationEngagementProfileClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: OrganizationEngagementProfileClientOptions
+  options: OrganizationEngagementProfileClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,44 +33,28 @@ const organizationEngagementProfileClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executeOrganizationEngagementProfileWithAuthorization = (
   payload: OrganizationEngagementProfileRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: OrganizationEngagementProfileAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: OrganizationEngagementProfileAuthorizedInvocation
 ) =>
-  organizationEngagementProfileClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  organizationEngagementProfileClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.organizationEngagementProfile.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executeOrganizationEngagementProfile = (
   payload: OrganizationEngagementProfileRequest,
-  ...[
-    requestCorrelation,
-    options = {},
-  ]: OrganizationEngagementProfileOperationInvocation
+  ...[requestCorrelation, options = {}]: OrganizationEngagementProfileOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeOrganizationEngagementProfileWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executeOrganizationEngagementProfileWithAuthorization(payload, credential, requestCorrelation, options),
   );

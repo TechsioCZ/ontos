@@ -8,5 +8,5 @@ export class CounterpartyRoleAlreadyEnded extends Schema.TaggedError<Counterpart
     code: Schema.Literal('counterparty_role_already_ended'),
     reason: Schema.String,
     rolePeriodId: CounterpartyUuidSchema,
-  }
+  },
 ) {}

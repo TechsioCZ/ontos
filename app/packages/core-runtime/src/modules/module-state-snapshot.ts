@@ -22,7 +22,7 @@ export class ModuleStateSnapshotValue implements ModuleStateSnapshot {
     tenantId: string,
     entrypointKeys: readonly string[],
     moduleKeys: readonly string[],
-    data: ModuleStateSnapshotData
+    data: ModuleStateSnapshotData,
   ) {
     this.#data = data;
     this.entrypointKeys = entrypointKeys;
@@ -31,9 +31,7 @@ export class ModuleStateSnapshotValue implements ModuleStateSnapshot {
     Object.freeze(this);
   }
 
-  static dataOf(
-    snapshot: ModuleStateSnapshot
-  ): ModuleStateSnapshotData | undefined {
+  static dataOf(snapshot: ModuleStateSnapshot): ModuleStateSnapshotData | undefined {
     return #data in snapshot ? snapshot.#data : undefined;
   }
 }

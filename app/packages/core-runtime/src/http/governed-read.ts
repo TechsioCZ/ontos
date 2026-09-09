@@ -45,18 +45,10 @@ export interface GovernedReadHttpProblemSet<
   readonly unavailable: ProblemFactory<Unavailable>;
 }
 
-export type GovernedReadPrincipalAuthentication<
-  Requirements,
-  Authentication,
-  Unavailable,
-> = (
+export type GovernedReadPrincipalAuthentication<Requirements, Authentication, Unavailable> = (
   authorization: Redacted.Redacted<string | undefined>,
-  problems: PrincipalAuthenticationProblems<Authentication, Unavailable>
-) => Effect.Effect<
-  TrustedPrincipalContext,
-  Authentication | Unavailable,
-  Requirements
->;
+  problems: PrincipalAuthenticationProblems<Authentication, Unavailable>,
+) => Effect.Effect<TrustedPrincipalContext, Authentication | Unavailable, Requirements>;
 
 interface PrincipalAuthenticationProblems<Authentication, Unavailable> {
   readonly authentication: ProblemFactory<Authentication>;
@@ -84,16 +76,8 @@ export function classifyReadCoreError<
     PolicyConflict,
     PolicyIneligible,
     Unavailable
-  >
-):
-  | Authentication
-  | Forbidden
-  | Internal
-  | Invalid
-  | NotFound
-  | PolicyConflict
-  | PolicyIneligible
-  | Unavailable;
+  >,
+): Authentication | Forbidden | Internal | Invalid | NotFound | PolicyConflict | PolicyIneligible | Unavailable;
 export function classifyReadCoreError(
   error: ReadCoreError,
   problems: GovernedReadHttpProblemSet<
@@ -105,14 +89,10 @@ export function classifyReadCoreError(
     HttpProblem<409>,
     HttpProblem<422>,
     HttpProblem<503>
-  >
+  >,
 ): HttpProblem<number> {
-  const readPolicyDenied = (
-    denial: Extract<ReadCoreError, { _tag: 'ReadPolicyDenied' }>
-  ) =>
-    denial.httpStatus === 409
-      ? problems.policyConflict()
-      : problems.policyIneligible();
+  const readPolicyDenied = (denial: Extract<ReadCoreError, { _tag: 'ReadPolicyDenied' }>) =>
+    denial.httpStatus === 409 ? problems.policyConflict() : problems.policyIneligible();
   return Match.value(error).pipe(
     Match.tags({
       ModuleStateCheckUnavailableError: problems.unavailable,
@@ -133,21 +113,16 @@ export function classifyReadCoreError(
       ReadPolicyEvaluationError: problems.unavailable,
       ReadResultValidationError: problems.internal,
     }),
-    Match.exhaustive
+    Match.exhaustive,
   );
 }
 
-const bearerChallenge = HttpEffect.appendPreResponseHandler(
-  (_request, response) =>
-    Effect.succeed(
-      HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')
-    )
+const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
 
 const failProblem = <Problem extends HttpProblem<number>>(problem: Problem) =>
-  (problem.status === 401 ? bearerChallenge : Effect.void).pipe(
-    Effect.andThen(Effect.fail(problem))
-  );
+  (problem.status === 401 ? bearerChallenge : Effect.void).pipe(Effect.andThen(Effect.fail(problem)));
 
 interface GovernedReadRequest<Payload> {
   readonly payload: Payload;
@@ -186,14 +161,7 @@ export const makeGovernedReadHttpHandler = <
     PolicyIneligible,
     Unavailable
   >;
-  readonly registration: ReadRegistration<
-    InputSchema,
-    ResultSchema,
-    Owner,
-    Services,
-    HandlerError,
-    ReadRequirements
-  >;
+  readonly registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, HandlerError, ReadRequirements>;
 }) =>
   Effect.fn('GovernedReadHttp.handle')(function* handleGovernedRead({
     payload,
@@ -205,13 +173,10 @@ export const makeGovernedReadHttpHandler = <
       if (correlationId === undefined || correlationId.trim().length === 0) {
         return yield* Effect.fail(options.problems.invalid());
       }
-      const principal = yield* options.authenticatePrincipal(
-        Redacted.make(request.headers['authorization']),
-        {
-          authentication: options.problems.authentication,
-          unavailable: options.problems.unavailable,
-        }
-      );
+      const principal = yield* options.authenticatePrincipal(Redacted.make(request.headers['authorization']), {
+        authentication: options.problems.authentication,
+        unavailable: options.problems.unavailable,
+      });
       const runtime = yield* ReadRuntime;
       return yield* runtime
         .runRead({
@@ -220,24 +185,14 @@ export const makeGovernedReadHttpHandler = <
           registration: options.registration,
           transport: { correlationId },
         })
-        .pipe(
-          Effect.catch((error) =>
-            failProblem(classifyReadCoreError(error, options.problems))
-          )
-        );
+        .pipe(Effect.catch((error) => failProblem(classifyReadCoreError(error, options.problems))));
     });
 
     return yield* execute.pipe(
       Effect.catchCauseIf(Cause.hasDies, () =>
-        Effect.annotateLogs(
-          Effect.logError('Unexpected governed-read HTTP defect'),
-          {
-            correlationId:
-              correlationId === undefined || correlationId.trim().length === 0
-                ? 'missing'
-                : correlationId,
-          }
-        ).pipe(Effect.andThen(Effect.fail(options.problems.internal())))
-      )
+        Effect.annotateLogs(Effect.logError('Unexpected governed-read HTTP defect'), {
+          correlationId: correlationId === undefined || correlationId.trim().length === 0 ? 'missing' : correlationId,
+        }).pipe(Effect.andThen(Effect.fail(options.problems.internal()))),
+      ),
     );
   });

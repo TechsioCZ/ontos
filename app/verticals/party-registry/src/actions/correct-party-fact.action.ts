@@ -20,62 +20,49 @@ import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolut
 import { correctPartyFactRecord } from '../services/party-correction.service.ts';
 import { createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage } from './correct-party-fact.party-registry-party-fact-corrected-v1.outbox-message.ts';
 
-const ErrorSchema = Schema.Union([
-  PartyCorrectionConflict,
-  PartyPersistenceUnavailable,
-  PartyAliasWriteRejected,
-]);
+const ErrorSchema = Schema.Union([PartyCorrectionConflict, PartyPersistenceUnavailable, PartyAliasWriteRejected]);
 const domainEvents = {
   'party.registry.party-fact-corrected.v1': PartyCorrectionResultJsonSchema,
 } as const;
 interface Services {
   readonly correct: (
     payload: PartyCorrectionCommand,
-    actionInvocationId: string
+    actionInvocationId: string,
   ) => ReturnType<typeof correctPartyFactRecord>;
 }
-const handle = Effect.fn('CorrectPartyFactAction.handle')(
-  function* handleCorrectPartyFact(
-    payload: PartyCorrectionCommand,
-    context: ActionHandlerContext<typeof domainEvents, Services>
-  ) {
-    const result = yield* context.services.correct(
-      payload,
-      context.actionInvocationId
-    );
-    const relationshipRef = Option.getOrUndefined(result.relationshipRef);
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `party-correction:${result.retractedAssertionId}`,
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId:
-        relationshipRef?.resourceId ?? result.partyRef.resourceId,
-      targetResourceType:
-        relationshipRef?.resourceType ?? result.partyRef.resourceType,
-    });
-    const payloadJson = yield* Schema.encodeEffect(PartyCorrectionResultSchema)(
-      result
-    ).pipe(Effect.orDie);
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.party-fact-corrected.v1',
-      payloadJson,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.correctionRef.resourceId,
-      subjectResourceType: result.correctionRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage({
-        correctionRef: result.correctionRef,
-        partyRef: result.partyRef,
-      })
-    );
-    return result;
-  }
-);
+const handle = Effect.fn('CorrectPartyFactAction.handle')(function* handleCorrectPartyFact(
+  payload: PartyCorrectionCommand,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const result = yield* context.services.correct(payload, context.actionInvocationId);
+  const relationshipRef = Option.getOrUndefined(result.relationshipRef);
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `party-correction:${result.retractedAssertionId}`,
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: relationshipRef?.resourceId ?? result.partyRef.resourceId,
+    targetResourceType: relationshipRef?.resourceType ?? result.partyRef.resourceType,
+  });
+  const payloadJson = yield* Schema.encodeEffect(PartyCorrectionResultSchema)(result).pipe(Effect.orDie);
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.party-fact-corrected.v1',
+    payloadJson,
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: result.correctionRef.resourceId,
+    subjectResourceType: result.correctionRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage({
+      correctionRef: result.correctionRef,
+      partyRef: result.partyRef,
+    }),
+  );
+  return result;
+});
 export const correctPartyFactAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -104,9 +91,7 @@ export const correctPartyFactAction = defineAction(
     resultSchema: CorrectPartyFactResultSchema,
     schemaVersion: '1',
     tenantPermission: (payload) =>
-      payload.factKind === 'RELATIONSHIP'
-        ? 'manage_party_relationships'
-        : 'manage_party_identity',
+      payload.factKind === 'RELATIONSHIP' ? 'manage_party_relationships' : 'manage_party_identity',
   },
   handle,
   (transaction, scope) =>
@@ -116,5 +101,5 @@ export const correctPartyFactAction = defineAction(
           actionInvocationId,
           principalId: scope.principalId,
         }),
-    })
+    }),
 );

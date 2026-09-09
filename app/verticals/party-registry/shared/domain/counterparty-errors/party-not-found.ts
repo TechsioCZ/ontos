@@ -8,5 +8,5 @@ export class CounterpartyPartyNotFound extends Schema.TaggedError<CounterpartyPa
     code: Schema.Literal('counterparty_party_not_found'),
     partyId: CounterpartyUuidSchema,
     reason: Schema.String,
-  }
+  },
 ) {}

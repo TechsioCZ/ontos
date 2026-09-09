@@ -13,15 +13,8 @@ import {
 } from 'effect';
 import type { Layer } from 'effect';
 
-import type {
-  AnyOutboxWorkerRegistration,
-  OutboxWorkerRequirements,
-  OutboxWorkerSubscription,
-} from './definition.ts';
-import type {
-  createOutboxWorkerHealth,
-  serveOutboxWorkerHealth,
-} from './health.ts';
+import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements, OutboxWorkerSubscription } from './definition.ts';
+import type { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './health.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
@@ -30,8 +23,7 @@ const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
 export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
 
 export interface RunOutboxWorkerProcessInput<
-  Registration extends AnyOutboxWorkerRegistration =
-    AnyOutboxWorkerRegistration,
+  Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
 > {
   readonly claimOwnerPrefix: string;
   readonly health?: boolean;
@@ -43,15 +35,11 @@ export interface StartOutboxWorkerProcessInput<
   Registration extends AnyOutboxWorkerRegistration,
   LayerError,
 > extends RunOutboxWorkerProcessInput<Registration> {
-  readonly layer: Layer.Layer<
-    OutboxRuntime | OutboxWorkerRequirements<Registration>,
-    LayerError
-  >;
+  readonly layer: Layer.Layer<OutboxRuntime | OutboxWorkerRequirements<Registration>, LayerError>;
 }
 
 const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
-  const onSignal = (signal: ShutdownSignal) => (): void =>
-    resume(Effect.succeed(signal));
+  const onSignal = (signal: ShutdownSignal) => (): void => resume(Effect.succeed(signal));
   const onSigint = onSignal('SIGINT');
   const onSigterm = onSignal('SIGTERM');
   process.on('SIGINT', onSigint);
@@ -63,9 +51,7 @@ const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
   });
 });
 
-const healthPortConfig = Config.option(
-  Config.port('OUTBOX_WORKER_HEALTH_PORT')
-);
+const healthPortConfig = Config.option(Config.port('OUTBOX_WORKER_HEALTH_PORT'));
 
 export { OutboxRuntimeLive as OutboxWorkerInfrastructureLive } from './runtime.ts';
 
@@ -80,16 +66,11 @@ interface OutboxWorkerHealthApi {
 
 const loadOutboxWorkerHealthApi = Effect.suspend(() => {
   const healthApi: Promise<OutboxWorkerHealthApi> = import('./health.ts');
-  return Effect.promise(Fn.constant(healthApi)).pipe(
-    Effect.timeout('30 seconds'),
-    Effect.orDie
-  );
+  return Effect.promise(Fn.constant(healthApi)).pipe(Effect.timeout('30 seconds'), Effect.orDie);
 });
 
-export const runOutboxWorkerProcess = <
-  Registration extends AnyOutboxWorkerRegistration,
->(
-  input: RunOutboxWorkerProcessInput<Registration>
+export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration>(
+  input: RunOutboxWorkerProcessInput<Registration>,
 ) =>
   Effect.scoped(
     Effect.gen(function* runOutboxWorkerProcessEffect() {
@@ -97,8 +78,7 @@ export const runOutboxWorkerProcess = <
       const config = yield* parseOutboxPollingConfig({
         defaultClaimOwner: `${input.claimOwnerPrefix}:${process.pid}:${processNonce}`,
       });
-      const healthApi =
-        input.health === true ? yield* loadOutboxWorkerHealthApi : undefined;
+      const healthApi = input.health === true ? yield* loadOutboxWorkerHealthApi : undefined;
       const health =
         healthApi === undefined
           ? undefined
@@ -113,15 +93,12 @@ export const runOutboxWorkerProcess = <
           });
         }
       }
-      yield* Effect.annotateLogs(
-        Effect.logInfo('Outbox Worker process started'),
-        {
-          claimOwner: config.claimOwner,
-          maxDeliveries: config.maxDeliveries,
-          pollIntervalMs: config.pollIntervalMs,
-          registrations: input.registrations.length,
-        }
-      );
+      yield* Effect.annotateLogs(Effect.logInfo('Outbox Worker process started'), {
+        claimOwner: config.claimOwner,
+        maxDeliveries: config.maxDeliveries,
+        pollIntervalMs: config.pollIntervalMs,
+        registrations: input.registrations.length,
+      });
 
       let pollingInput: RunOutboxPollingLoopInput<Registration> = {
         config,
@@ -132,23 +109,14 @@ export const runOutboxWorkerProcess = <
         pollingInput = { ...pollingInput, health };
       }
       const signal = yield* waitForShutdownSignal.pipe(
-        Effect.raceFirst(
-          runOutboxPollingLoop(pollingInput).pipe(
-            Effect.as<ShutdownSignal>('SIGTERM')
-          )
-        )
+        Effect.raceFirst(runOutboxPollingLoop(pollingInput).pipe(Effect.as<ShutdownSignal>('SIGTERM'))),
       );
-      yield* Effect.logInfo(
-        `Outbox Worker process received ${signal}; shutting down`
-      );
-    })
+      yield* Effect.logInfo(`Outbox Worker process received ${signal}; shutting down`);
+    }),
   );
 
-export const startOutboxWorkerProcess = <
-  Registration extends AnyOutboxWorkerRegistration,
-  LayerError,
->(
-  input: StartOutboxWorkerProcessInput<Registration, LayerError>
+export const startOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
+  input: StartOutboxWorkerProcessInput<Registration, LayerError>,
 ): void => {
   let processInput: RunOutboxWorkerProcessInput<Registration> = {
     claimOwnerPrefix: input.claimOwnerPrefix,
@@ -164,12 +132,12 @@ export const startOutboxWorkerProcess = <
       Effect.withLogger(Logger.defaultLogger),
       Effect.withTracer(processTracer),
       Effect.provideService(References.MinimumLogLevel, 'Info'),
-      Effect.ensuring(runtime.disposeEffect)
+      Effect.ensuring(runtime.disposeEffect),
     ),
     {
       onExit: (exit) => {
         process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
       },
-    }
+    },
   );
 };

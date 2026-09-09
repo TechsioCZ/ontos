@@ -9,25 +9,23 @@ import type { transitionDuplicateCandidateCase } from '../services/party-matchin
 interface Services {
   readonly resolve: (
     payload: ConfirmDuplicatePartiesPayload,
-    invocationId: string
+    invocationId: string,
   ) => ReturnType<typeof transitionDuplicateCandidateCase>;
 }
 export const handleDuplicateCaseResolution = (
   payload: ConfirmDuplicatePartiesPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>
+  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
 ) =>
   context.services.resolve(payload, context.actionInvocationId).pipe(
     Effect.tap((result) =>
       context.recordDataAccess({
         accessKind: 'read',
-        queryHash: createHash('sha256')
-          .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
-          .digest('hex'),
+        queryHash: createHash('sha256').update(`duplicate-case-invariants:${payload.caseRef.resourceId}`).digest('hex'),
         resultCount: 1,
         servingModuleKey: 'party.registry',
         targetModuleKey: 'party.registry',
         targetResourceId: result.caseRef.resourceId,
         targetResourceType: result.caseRef.resourceType,
-      })
-    )
+      }),
+    ),
   );

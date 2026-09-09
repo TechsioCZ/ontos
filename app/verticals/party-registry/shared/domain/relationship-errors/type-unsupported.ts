@@ -7,5 +7,5 @@ export class PartyRelationshipTypeUnsupported extends Schema.TaggedError<PartyRe
   {
     ...RelationshipErrorBase,
     code: Schema.Literal('party_relationship_type_unsupported'),
-  }
+  },
 ) {}

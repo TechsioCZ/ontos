@@ -24,7 +24,7 @@ type PartyMergeReadinessOperationInvocation = readonly [
 const partyMergeReadinessClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartyMergeReadinessClientOptions
+  options: PartyMergeReadinessClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,30 +33,22 @@ const partyMergeReadinessClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executePartyMergeReadinessWithAuthorization = (
   payload: PartyMergeReadinessRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartyMergeReadinessAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartyMergeReadinessAuthorizedInvocation
 ) =>
-  partyMergeReadinessClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  partyMergeReadinessClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.partyMergeReadiness.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executePartyMergeReadiness = (
@@ -64,10 +56,5 @@ export const executePartyMergeReadiness = (
   ...[requestCorrelation, options = {}]: PartyMergeReadinessOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePartyMergeReadinessWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executePartyMergeReadinessWithAuthorization(payload, credential, requestCorrelation, options),
   );

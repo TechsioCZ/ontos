@@ -5,5 +5,5 @@ export class PartyAliasResolutionUnavailable extends Schema.TaggedError<PartyAli
   {
     code: Schema.Literal('party_alias_resolution_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

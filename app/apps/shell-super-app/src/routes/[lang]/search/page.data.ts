@@ -28,22 +28,17 @@ export type SearchPageModel =
 export const SearchRouteSearch = Schema.Struct({
   q: Schema.optionalKey(Schema.String),
 });
-export const SearchRouteSearchStandard =
-  Schema.toStandardSchemaV1(SearchRouteSearch);
+export const SearchRouteSearchStandard = Schema.toStandardSchemaV1(SearchRouteSearch);
 
 const searchFromRequest = (request: Request): typeof SearchRouteSearch.Type => {
   const query = UrlParams.getFirst(Url.urlParams(new URL(request.url)), 'q');
   return Option.getOrElse(
-    Schema.decodeOption(SearchRouteSearch)(
-      Option.isSome(query) ? { q: query.value } : {}
-    ),
-    () => ({})
+    Schema.decodeOption(SearchRouteSearch)(Option.isSome(query) ? { q: query.value } : {}),
+    () => ({}),
   );
 };
 
-export const loader = ({
-  request,
-}: SearchLoaderArguments): Promise<SearchPageModel> => {
+export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageModel> => {
   const query = (searchFromRequest(request).q ?? '').trim();
   return browserRuntime.runPromise(
     loadHomePageModel(request).pipe(
@@ -53,10 +48,7 @@ export const loader = ({
           return Effect.succeed<SearchPageModel>({
             query,
             shell,
-            state:
-              shell.state === 'unavailable'
-                ? 'unavailable'
-                : 'selection_required',
+            state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
           });
         }
         if (shell.contextState !== 'authenticated') {
@@ -91,7 +83,7 @@ export const loader = ({
                   Match.tag(
                     'ShellAuthenticationRequiredProblem',
                     'ShellSelectionRequiredProblem',
-                    () => 'selection_required' as const
+                    () => 'selection_required' as const,
                   ),
                   Match.tag(
                     'ConfigError',
@@ -106,16 +98,16 @@ export const loader = ({
                     'ShellRateLimitedProblem',
                     'ShellTargetForbiddenProblem',
                     'ShellTargetNotFoundProblem',
-                    () => 'unavailable' as const
+                    () => 'unavailable' as const,
                   ),
-                  Match.exhaustive
+                  Match.exhaustive,
                 ),
               }),
             onSuccess: Effect.succeed,
-          })
+          }),
         );
-      })
+      }),
     ),
-    { signal: request.signal }
+    { signal: request.signal },
   );
 };

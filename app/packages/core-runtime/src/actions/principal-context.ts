@@ -4,10 +4,7 @@ import { decodedStringBrand, nonEmptyString } from './string-schemas.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const AuthBindingIdSchema = decodedStringBrand(uuid, 'AuthBindingId');
-const ImpersonatedByPrincipalIdSchema = decodedStringBrand(
-  uuid,
-  'ImpersonatedByPrincipalId'
-);
+const ImpersonatedByPrincipalIdSchema = decodedStringBrand(uuid, 'ImpersonatedByPrincipalId');
 const LegalEntityIdSchema = decodedStringBrand(uuid, 'LegalEntityId');
 const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
 const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
@@ -15,29 +12,17 @@ const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
 const TrustedPrincipalContextFieldsSchema = Schema.Struct({
   authBindingId: Schema.optionalKey(AuthBindingIdSchema),
   authContextRef: Schema.optionalKey(nonEmptyString),
-  authMethod: Schema.Literals([
-    'session',
-    'api_key',
-    'system',
-    'support_impersonation',
-  ]),
-  impersonatedByPrincipalId: Schema.optionalKey(
-    ImpersonatedByPrincipalIdSchema
-  ),
+  authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation']),
+  impersonatedByPrincipalId: Schema.optionalKey(ImpersonatedByPrincipalIdSchema),
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
 });
 
-type TrustedPrincipalContextFields =
-  typeof TrustedPrincipalContextFieldsSchema.Type;
-type PrincipalContextValidator = (
-  context: TrustedPrincipalContextFields
-) => readonly Schema.FilterIssue[];
+type TrustedPrincipalContextFields = typeof TrustedPrincipalContextFieldsSchema.Type;
+type PrincipalContextValidator = (context: TrustedPrincipalContextFields) => readonly Schema.FilterIssue[];
 
-const issue = (message: string): readonly Schema.FilterIssue[] => [
-  { issue: message, path: ['authMethod'] },
-];
+const issue = (message: string): readonly Schema.FilterIssue[] => [{ issue: message, path: ['authMethod'] }];
 
 const validateApiKeyContext: PrincipalContextValidator = (context) =>
   context.authBindingId === undefined ||
@@ -53,16 +38,12 @@ const validateSessionContext: PrincipalContextValidator = (context) =>
     ? issue('session context requires a binding and safe session reference')
     : [];
 
-const validateSupportImpersonationContext: PrincipalContextValidator = (
-  context
-) =>
+const validateSupportImpersonationContext: PrincipalContextValidator = (context) =>
   context.authBindingId === undefined ||
   context.authContextRef?.startsWith('better-auth-session:') !== true ||
   context.impersonatedByPrincipalId === undefined ||
   context.impersonatedByPrincipalId === context.principalId
-    ? issue(
-        'support impersonation requires distinct effective and original principals'
-      )
+    ? issue('support impersonation requires distinct effective and original principals')
     : [];
 
 const validateSystemContext: PrincipalContextValidator = (context) =>
@@ -78,18 +59,10 @@ const principalContextValidators = {
   session: validateSessionContext,
   support_impersonation: validateSupportImpersonationContext,
   system: validateSystemContext,
-} satisfies Record<
-  TrustedPrincipalContextFields['authMethod'],
-  PrincipalContextValidator
->;
+} satisfies Record<TrustedPrincipalContextFields['authMethod'], PrincipalContextValidator>;
 
-export const TrustedPrincipalContextSchema =
-  TrustedPrincipalContextFieldsSchema.check(
-    Schema.makeFilter((context) =>
-      principalContextValidators[context.authMethod](context)
-    )
-  );
+export const TrustedPrincipalContextSchema = TrustedPrincipalContextFieldsSchema.check(
+  Schema.makeFilter((context) => principalContextValidators[context.authMethod](context)),
+);
 
-export type TrustedPrincipalContext = Schema.Schema.Type<
-  typeof TrustedPrincipalContextSchema
->;
+export type TrustedPrincipalContext = Schema.Schema.Type<typeof TrustedPrincipalContextSchema>;

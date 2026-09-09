@@ -14,8 +14,8 @@ it('scaffold masking preserves astral comment offsets and CRLF', () => {
   const masked = maskText(text);
   expect(masked.length).toBe(text.length);
   expect(masked.indexOf('throw')).toBe(text.indexOf('throw'));
-  expect(
-    [...masked.matchAll(/\r\n/gu)].map((match) => match.index)
-  ).toStrictEqual([...text.matchAll(/\r\n/gu)].map((match) => match.index));
+  expect([...masked.matchAll(/\r\n/gu)].map((match) => match.index)).toStrictEqual(
+    [...text.matchAll(/\r\n/gu)].map((match) => match.index),
+  );
   expect(masked.endsWith('throw new Error("bad");')).toBeTruthy();
 });

@@ -33,11 +33,8 @@ const counterpartiesEntrypoint = defineTenantModuleEntrypoint({
 
 interface CounterpartiesSearchServices {
   readonly load: (
-    input: CounterpartiesProviderRequest
-  ) => Effect.Effect<
-    CounterpartiesProviderResponse,
-    PartySearchProjectionUnavailable
-  >;
+    input: CounterpartiesProviderRequest,
+  ) => Effect.Effect<CounterpartiesProviderResponse, PartySearchProjectionUnavailable>;
 }
 
 const readHandlerUnavailable = (cause: PartySearchProjectionUnavailable) => {
@@ -56,7 +53,7 @@ export const loadCounterpartySearch = (
     readonly tenantId: string;
   }>,
   input: CounterpartiesProviderRequest,
-  effectiveAt: string
+  effectiveAt: string,
 ) => {
   const baseQuery = {
     effectiveAt,
@@ -65,15 +62,10 @@ export const loadCounterpartySearch = (
     query: input.query,
     tenantId: scope.tenantId,
   };
-  const query =
-    input.role === undefined ? baseQuery : { ...baseQuery, role: input.role };
+  const query = input.role === undefined ? baseQuery : { ...baseQuery, role: input.role };
   return gateway
     .searchCounterparties(query)
-    .pipe(
-      Effect.flatMap((hits) =>
-        resolveSearchNormalization(normalizeCounterpartySearchHits(query, hits))
-      )
-    );
+    .pipe(Effect.flatMap((hits) => resolveSearchNormalization(normalizeCounterpartySearchHits(query, hits))));
 };
 
 export const counterpartiesRead = defineRead(
@@ -99,34 +91,27 @@ export const counterpartiesRead = defineRead(
       Effect.map((result) => ({
         evidence: { resultCount: result.length },
         result,
-      }))
+      })),
     ),
-  Effect.fn('CounterpartiesProvider.counterpartiesRead')(
-    function* makeCounterpartySearchServices(_transaction, scope) {
-      const gateway = yield* PartySearchProjectionGateway;
-      const { legalEntityId } = scope;
-      if (legalEntityId === undefined) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Counterparty Search requires trusted Legal Entity context',
-        });
-      }
-      return {
-        load: (input: CounterpartiesProviderRequest) =>
-          DateTime.now.pipe(
-            Effect.map(DateTime.formatIso),
-            Effect.flatMap((effectiveAt) =>
-              loadCounterpartySearch(
-                gateway,
-                { legalEntityId, tenantId: scope.tenantId },
-                input,
-                effectiveAt
-              )
-            )
-          ),
-      };
+  Effect.fn('CounterpartiesProvider.counterpartiesRead')(function* makeCounterpartySearchServices(_transaction, scope) {
+    const gateway = yield* PartySearchProjectionGateway;
+    const { legalEntityId } = scope;
+    if (legalEntityId === undefined) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Counterparty Search requires trusted Legal Entity context',
+      });
     }
-  ),
+    return {
+      load: (input: CounterpartiesProviderRequest) =>
+        DateTime.now.pipe(
+          Effect.map(DateTime.formatIso),
+          Effect.flatMap((effectiveAt) =>
+            loadCounterpartySearch(gateway, { legalEntityId, tenantId: scope.tenantId }, input, effectiveAt),
+          ),
+        ),
+    };
+  }),
   () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
-  (result) => result.map(({ ref }) => ref)
+  (result) => result.map(({ ref }) => ref),
 );

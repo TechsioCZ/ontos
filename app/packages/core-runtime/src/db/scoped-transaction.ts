@@ -8,9 +8,7 @@ import type { OperationalScope } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { CoreTransaction } from './types.ts';
 
-const scopedTransaction: unique symbol = Symbol(
-  '@app/core-runtime/db/scoped-transaction'
-);
+const scopedTransaction: unique symbol = Symbol('@app/core-runtime/db/scoped-transaction');
 
 /** Private owner-factory capability. It is never supplied to an Action or read handler. */
 export interface ScopedTransactionExecutor {
@@ -29,15 +27,10 @@ interface SettingRow extends Record<string, unknown> {
 export interface OperationalScopeTransactionService {
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
-  readonly install: (
-    scope: OperationalScope
-  ) => Effect.Effect<void, OperationContextUnavailable>;
+  readonly install: (scope: OperationalScope) => Effect.Effect<void, OperationContextUnavailable>;
   readonly select: CoreTransaction['select'];
   readonly update: CoreTransaction['update'];
-  readonly verify: Effect.Effect<
-    Option.Option<SettingRow>,
-    OperationContextUnavailable
-  >;
+  readonly verify: Effect.Effect<Option.Option<SettingRow>, OperationContextUnavailable>;
 }
 
 export class OperationalScopeTransaction extends Context.Service<
@@ -60,7 +53,7 @@ const operationContextUnavailable = (cause?: unknown) => {
 };
 
 const operationalScopeTransactionFromCoreTransaction = (
-  transaction: CoreTransaction
+  transaction: CoreTransaction,
 ): OperationalScopeTransactionService => ({
   delete: transaction.delete.bind(transaction),
   insert: transaction.insert.bind(transaction),
@@ -68,7 +61,7 @@ const operationalScopeTransactionFromCoreTransaction = (
     transaction
       .execute(
         sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
-        'objects'
+        'objects',
       )
       .pipe(Effect.mapError(operationContextUnavailable), Effect.asVoid),
   select: transaction.select.bind(transaction),
@@ -80,50 +73,44 @@ const operationalScopeTransactionFromCoreTransaction = (
         current_setting('ontos.tenant_id', true) as tenant_id,
         current_setting('ontos.legal_entity_id', true) as legal_entity_id
     `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(operationContextUnavailable),
-      Effect.map((verified) => Option.fromUndefinedOr(verified[0]))
+      Effect.map((verified) => Option.fromUndefinedOr(verified[0])),
     ),
 });
 
-export const installOperationalScopeFromTransactionService = Effect.fn(
-  'installOperationalScopeFromTransactionService'
-)(function* installOperationalScopeFromTransactionServiceEffect(
-  scope: OperationalScope
-) {
-  const transaction = yield* OperationalScopeTransaction;
-  yield* transaction.install(scope);
-  const setting = yield* transaction.verify;
-  if (
-    Option.isNone(setting) ||
-    setting.value.tenant_id !== scope.tenantId ||
-    setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
-  ) {
-    return yield* operationContextUnavailable();
-  }
-  return Object.freeze({
-    delete: transaction.delete.bind(transaction),
-    insert: transaction.insert.bind(transaction),
-    [scopedTransaction]: true as const,
-    select: transaction.select.bind(transaction),
-    update: transaction.update.bind(transaction),
-  });
-});
+export const installOperationalScopeFromTransactionService = Effect.fn('installOperationalScopeFromTransactionService')(
+  function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
+    const transaction = yield* OperationalScopeTransaction;
+    yield* transaction.install(scope);
+    const setting = yield* transaction.verify;
+    if (
+      Option.isNone(setting) ||
+      setting.value.tenant_id !== scope.tenantId ||
+      setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
+    ) {
+      return yield* operationContextUnavailable();
+    }
+    return Object.freeze({
+      delete: transaction.delete.bind(transaction),
+      insert: transaction.insert.bind(transaction),
+      [scopedTransaction]: true as const,
+      select: transaction.select.bind(transaction),
+      update: transaction.update.bind(transaction),
+    });
+  },
+);
 
 export const installOperationalScope = (
   transaction: CoreTransaction,
-  scope: OperationalScope
+  scope: OperationalScope,
 ): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
   installOperationalScopeFromTransactionService(scope).pipe(
     Effect.updateContext((context: Context.Context<never>) =>
-      Context.add(
-        context,
-        OperationalScopeTransaction,
-        operationalScopeTransactionFromCoreTransaction(transaction)
-      )
-    )
+      Context.add(context, OperationalScopeTransaction, operationalScopeTransactionFromCoreTransaction(transaction)),
+    ),
   );
 
 const operationalRlsPolicies = (prefix: string, predicate: SQL) =>
@@ -151,10 +138,7 @@ const operationalRlsPolicies = (prefix: string, predicate: SQL) =>
     }),
   ] as const;
 
-export const tenantRlsPolicies = (
-  prefix: string,
-  tenantColumn: AnyPgColumn
-) => {
+export const tenantRlsPolicies = (prefix: string, tenantColumn: AnyPgColumn) => {
   const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
   return operationalRlsPolicies(prefix, predicate);
 };
@@ -162,7 +146,7 @@ export const tenantRlsPolicies = (
 export const tenantLegalEntityRlsPolicies = (
   prefix: string,
   tenantColumn: AnyPgColumn,
-  legalEntityColumn: AnyPgColumn
+  legalEntityColumn: AnyPgColumn,
 ) => {
   const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${legalEntityColumn} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   return operationalRlsPolicies(prefix, predicate);

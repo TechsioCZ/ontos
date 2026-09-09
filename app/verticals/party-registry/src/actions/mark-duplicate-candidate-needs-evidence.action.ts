@@ -17,8 +17,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
   {
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
-      policyKey:
-        'party.registry.mark-duplicate-candidate-needs-evidence.access.v1',
+      policyKey: 'party.registry.mark-duplicate-candidate-needs-evidence.access.v1',
     },
     actionKey: 'party.registry.mark-duplicate-candidate-needs-evidence',
     auditProfile: 'standard',
@@ -44,12 +43,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     tenantPermission: () => 'review_party_identity',
   },
   handleDuplicateCaseResolution,
-  (transaction, scope) =>
-    duplicateCaseResolutionService(
-      transaction,
-      scope.tenantId,
-      'NEEDS_EVIDENCE'
-    )
+  (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'NEEDS_EVIDENCE'),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

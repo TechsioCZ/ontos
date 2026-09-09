@@ -5,5 +5,5 @@ export class OutboxWorkerDescriptorError extends Schema.TaggedError<OutboxWorker
   {
     code: Schema.Literal('outbox_worker_descriptor_invalid'),
     reason: Schema.String,
-  }
+  },
 ) {}

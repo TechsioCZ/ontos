@@ -35,20 +35,10 @@ type OutboxWorkerHandlerLayers = Readonly<{
   projector: Layer.Layer<
     PartySearchProjector,
     never,
-    | CoreSearchIngestion
-    | CoreSearchProjectionStore
-    | PartySearchProjectionSource
+    CoreSearchIngestion | CoreSearchProjectionStore | PartySearchProjectionSource
   >;
-  projectionSource: Layer.Layer<
-    PartySearchProjectionSource,
-    never,
-    CoreSearchWorkerSnapshot
-  >;
-  searchIngestion: Layer.Layer<
-    CoreSearchIngestion,
-    never,
-    CoreSearchProjectionStore
-  >;
+  projectionSource: Layer.Layer<PartySearchProjectionSource, never, CoreSearchWorkerSnapshot>;
+  searchIngestion: Layer.Layer<CoreSearchIngestion, never, CoreSearchProjectionStore>;
   searchProjectionStore: Layer.Layer<
     CoreSearchProjectionStore,
     never,
@@ -62,14 +52,13 @@ type OutboxWorkerHandlerLayers = Readonly<{
 }>;
 
 /** Private canonical reads run post-commit; only sanitized projections cross into Core Search. */
-export const outboxWorkerHandlerLayers: OutboxWorkerHandlerLayers =
-  Object.freeze({
-    projector: PartySearchProjectorLive,
-    projectionSource: PartySearchProjectionSourceLive,
-    searchIngestion: CoreSearchIngestionLive,
-    searchProjectionStore: CoreSearchProjectionStoreLive,
-    searchWorkerSnapshot: CoreSearchWorkerSnapshotLive,
-  });
+export const outboxWorkerHandlerLayers: OutboxWorkerHandlerLayers = Object.freeze({
+  projector: PartySearchProjectorLive,
+  projectionSource: PartySearchProjectionSourceLive,
+  searchIngestion: CoreSearchIngestionLive,
+  searchProjectionStore: CoreSearchProjectionStoreLive,
+  searchWorkerSnapshot: CoreSearchWorkerSnapshotLive,
+});
 
 export const outboxWorkerLayer: Layer.Layer<
   OutboxRuntime | PartySearchProjector,
@@ -78,7 +67,4 @@ export const outboxWorkerLayer: Layer.Layer<
   | CoreSearchIngestion
   | CoreSearchProjectionStore
   | PartySearchProjectionSource
-> = Layer.merge(
-  outboxWorkerInfrastructureLayer,
-  outboxWorkerHandlerLayers.projector
-);
+> = Layer.merge(outboxWorkerInfrastructureLayer, outboxWorkerHandlerLayers.projector);

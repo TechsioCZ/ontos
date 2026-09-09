@@ -14,19 +14,13 @@ export interface GatewayAssertionRedemptionInput {
   readonly jti: string;
 }
 
-export type GatewayAssertionRedemptionError =
-  | GatewayAssertionReplayError
-  | GatewayAssertionRedemptionUnavailableError;
+export type GatewayAssertionRedemptionError = GatewayAssertionReplayError | GatewayAssertionRedemptionUnavailableError;
 
 export interface GatewayAssertionRedemption {
-  readonly consume: (
-    input: GatewayAssertionRedemptionInput
-  ) => Effect.Effect<void, GatewayAssertionRedemptionError>;
+  readonly consume: (input: GatewayAssertionRedemptionInput) => Effect.Effect<void, GatewayAssertionRedemptionError>;
 }
 
 export class GatewayAssertionRedemptionService extends Context.Service<
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemption
->()(
-  '@app/core-runtime/auth/gateway-assertion-redemption/GatewayAssertionRedemptionService'
-) {}
+>()('@app/core-runtime/auth/gateway-assertion-redemption/GatewayAssertionRedemptionService') {}

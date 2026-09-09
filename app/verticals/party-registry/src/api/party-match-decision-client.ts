@@ -24,7 +24,7 @@ type PartyMatchDecisionOperationInvocation = readonly [
 const partyMatchDecisionClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartyMatchDecisionClientOptions
+  options: PartyMatchDecisionClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,30 +33,22 @@ const partyMatchDecisionClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executePartyMatchDecisionWithAuthorization = (
   payload: PartyMatchDecisionRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartyMatchDecisionAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartyMatchDecisionAuthorizedInvocation
 ) =>
-  partyMatchDecisionClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  partyMatchDecisionClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.partyMatchDecision.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executePartyMatchDecision = (
@@ -64,10 +56,5 @@ export const executePartyMatchDecision = (
   ...[requestCorrelation, options = {}]: PartyMatchDecisionOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executePartyMatchDecisionWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executePartyMatchDecisionWithAuthorization(payload, credential, requestCorrelation, options),
   );

@@ -4,5 +4,5 @@ export class AuthDatabaseConnectionError extends Schema.TaggedError<AuthDatabase
   'AuthDatabaseConnectionError',
   {
     reason: Schema.String,
-  }
+  },
 ) {}

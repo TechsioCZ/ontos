@@ -7,5 +7,5 @@ export class PartyContactPointCorrectionRequired extends Schema.TaggedError<Part
   {
     code: Schema.Literal('party_contact_point_correction_required'),
     reason: ContactPointErrorReasonSchema,
-  }
+  },
 ) {}

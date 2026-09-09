@@ -25,75 +25,64 @@ const unavailable = (cause?: unknown) => {
   return error;
 };
 
-export const findPartyDetailAssertions = Effect.fn(
-  'PartyDetailPersistenceService.findPartyDetailAssertions'
-)(function* readSafeFactAssertions(
-  transaction: Pick<PartyTransaction, 'select'>,
-  tenantId: string,
-  partyId: string,
-  includeFactHistory: boolean
-) {
-  // Ordinary reads omit provenance. Reviewer-authorized history may include bounded provider
-  // evidence; actor and sensitive Correction metadata remain private. SQL NULL keeps the same
-  // projection shape without selecting protected evidence for ordinary reads.
-  const rows = yield* transaction
-    .select({
-      assertionId: partyFactAssertions.assertionId,
-      externalEvidence: includeFactHistory
-        ? partyFactAssertions.externalEvidence
-        : sql<null>`null`,
-      factKind: partyFactAssertions.factKind,
-      isCurrent: partyFactAssertions.isCurrent,
-      recordedAt: partyFactAssertions.recordedAt,
-      retractsAssertionId: partyFactAssertions.retractsAssertionId,
-      state: partyFactAssertions.state,
-      supersedesAssertionId: partyFactAssertions.supersedesAssertionId,
-      validFrom: partyFactAssertions.validFrom,
-      validTo: partyFactAssertions.validTo,
-      value: partyFactAssertions.normalizedValue,
-    })
-    .from(partyFactAssertions)
-    .where(
-      and(
-        eq(partyFactAssertions.tenantId, tenantId),
-        eq(partyFactAssertions.partyId, partyId),
-        includeFactHistory
-          ? undefined
-          : and(
-              eq(partyFactAssertions.state, 'ACTIVE'),
-              eq(partyFactAssertions.isCurrent, true)
-            )
+export const findPartyDetailAssertions = Effect.fn('PartyDetailPersistenceService.findPartyDetailAssertions')(
+  function* readSafeFactAssertions(
+    transaction: Pick<PartyTransaction, 'select'>,
+    tenantId: string,
+    partyId: string,
+    includeFactHistory: boolean,
+  ) {
+    // Ordinary reads omit provenance. Reviewer-authorized history may include bounded provider
+    // evidence; actor and sensitive Correction metadata remain private. SQL NULL keeps the same
+    // projection shape without selecting protected evidence for ordinary reads.
+    const rows = yield* transaction
+      .select({
+        assertionId: partyFactAssertions.assertionId,
+        externalEvidence: includeFactHistory ? partyFactAssertions.externalEvidence : sql<null>`null`,
+        factKind: partyFactAssertions.factKind,
+        isCurrent: partyFactAssertions.isCurrent,
+        recordedAt: partyFactAssertions.recordedAt,
+        retractsAssertionId: partyFactAssertions.retractsAssertionId,
+        state: partyFactAssertions.state,
+        supersedesAssertionId: partyFactAssertions.supersedesAssertionId,
+        validFrom: partyFactAssertions.validFrom,
+        validTo: partyFactAssertions.validTo,
+        value: partyFactAssertions.normalizedValue,
+      })
+      .from(partyFactAssertions)
+      .where(
+        and(
+          eq(partyFactAssertions.tenantId, tenantId),
+          eq(partyFactAssertions.partyId, partyId),
+          includeFactHistory
+            ? undefined
+            : and(eq(partyFactAssertions.state, 'ACTIVE'), eq(partyFactAssertions.isCurrent, true)),
+        ),
       )
-    )
-    .orderBy(
-      asc(partyFactAssertions.recordedAt),
-      asc(partyFactAssertions.assertionId)
+      .orderBy(asc(partyFactAssertions.recordedAt), asc(partyFactAssertions.assertionId));
+    const assertions = yield* Schema.decodeUnknownEffect(Schema.Array(PartyFactAssertionSchema))(
+      rows.map(({ externalEvidence, ...row }) => {
+        const assertion = {
+          ...row,
+          partyRef: PartyRefSchema.make({
+            moduleId: 'party.registry',
+            resourceId: partyId,
+            resourceType: 'party.registry.party',
+            tenantId,
+          }),
+          recordedAt: row.recordedAt.toISOString(),
+          validFrom: row.validFrom.toISOString(),
+          validTo: row.validTo?.toISOString() ?? null,
+        };
+        return externalEvidence === null || externalEvidence === undefined
+          ? assertion
+          : { ...assertion, externalEvidence };
+      }),
     );
-  const assertions = yield* Schema.decodeUnknownEffect(
-    Schema.Array(PartyFactAssertionSchema)
-  )(
-    rows.map(({ externalEvidence, ...row }) => {
-      const assertion = {
-        ...row,
-        partyRef: PartyRefSchema.make({
-          moduleId: 'party.registry',
-          resourceId: partyId,
-          resourceType: 'party.registry.party',
-          tenantId,
-        }),
-        recordedAt: row.recordedAt.toISOString(),
-        validFrom: row.validFrom.toISOString(),
-        validTo: row.validTo?.toISOString() ?? null,
-      };
-      return externalEvidence === null || externalEvidence === undefined
-        ? assertion
-        : { ...assertion, externalEvidence };
-    })
-  );
-  return {
-    currentFactAssertions: assertions.filter(
-      (assertion) => assertion.state === 'ACTIVE' && assertion.isCurrent
-    ),
-    factHistory: includeFactHistory ? Option.some(assertions) : Option.none(),
-  } satisfies PartyDetailAssertions;
-}, Effect.mapError(unavailable));
+    return {
+      currentFactAssertions: assertions.filter((assertion) => assertion.state === 'ACTIVE' && assertion.isCurrent),
+      factHistory: includeFactHistory ? Option.some(assertions) : Option.none(),
+    } satisfies PartyDetailAssertions;
+  },
+  Effect.mapError(unavailable),
+);

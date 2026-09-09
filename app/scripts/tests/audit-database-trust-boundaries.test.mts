@@ -154,13 +154,11 @@ const hardenedSnapshot = {
   },
 } as const satisfies DatabaseTrustBoundarySnapshot;
 
-const buildHardenedReport = (
-  overrides: Partial<DatabaseTrustBoundarySnapshot> = {}
-) => buildDatabaseTrustBoundaryReport({ ...hardenedSnapshot, ...overrides });
+const buildHardenedReport = (overrides: Partial<DatabaseTrustBoundarySnapshot> = {}) =>
+  buildDatabaseTrustBoundaryReport({ ...hardenedSnapshot, ...overrides });
 
-const findingCodes = (
-  report: ReturnType<typeof buildDatabaseTrustBoundaryReport>
-) => report.findings.map(({ code }) => code);
+const findingCodes = (report: ReturnType<typeof buildDatabaseTrustBoundaryReport>) =>
+  report.findings.map(({ code }) => code);
 
 const reversed = <Value extends object>(values: readonly Value[]): Value[] => {
   const [head, ...tail] = values;
@@ -174,26 +172,18 @@ it('builds deterministic current-state evidence and identifies the material trus
     tables: reversed(snapshot.tables),
   });
 
-  expect(report.schemas.map(({ schema }) => schema)).toEqual([
-    'auth',
-    'contacts',
-    'core',
+  expect(report.schemas.map(({ schema }) => schema)).toEqual(['auth', 'contacts', 'core']);
+  expect(report.tables.map(({ schema, table }) => `${schema}.${table}`)).toEqual([
+    'auth.user',
+    'contacts.customers',
+    'core.tenants',
   ]);
-  expect(
-    report.tables.map(({ schema, table }) => `${schema}.${table}`)
-  ).toEqual(['auth.user', 'contacts.customers', 'core.tenants']);
-  expect(
-    report.defaultPrivileges.map(
-      ({ grantee, schema, source }) => `${source}:${grantee}:${schema}`
-    )
-  ).toEqual([
+  expect(report.defaultPrivileges.map(({ grantee, schema, source }) => `${source}:${grantee}:${schema}`)).toEqual([
     'inherited:analytics_reader:null',
     'public:PUBLIC:auth',
     'direct:ontos_runtime:contacts',
   ]);
-  expect(
-    report.findings.map(({ code, severity }) => `${severity}:${code}`)
-  ).toEqual([
+  expect(report.findings.map(({ code, severity }) => `${severity}:${code}`)).toEqual([
     'high:runtime_role_can_forge_trusted_context',
     'high:runtime_role_has_cross_schema_dml',
   ]);
@@ -224,10 +214,7 @@ it('orders audit evidence by code units rather than locale collation', () => {
     ],
   });
 
-  expect(report.types.map(({ schema, type }) => `${schema}.${type}`)).toEqual([
-    'zeta.status',
-    'ärea.status',
-  ]);
+  expect(report.types.map(({ schema, type }) => `${schema}.${type}`)).toEqual(['zeta.status', 'ärea.status']);
 });
 
 it('totally orders default privileges from distinct creator roles', () => {
@@ -247,25 +234,18 @@ it('totally orders default privileges from distinct creator roles', () => {
     ],
   });
 
-  expect(report.defaultPrivileges.map(({ owner }) => owner)).toEqual([
-    'alpha_owner',
-    'zeta_owner',
-  ]);
+  expect(report.defaultPrivileges.map(({ owner }) => owner)).toEqual(['alpha_owner', 'zeta_owner']);
 });
 
 it('extracts typed audit failures from an Effect cause', () => {
   const reason = 'DATABASE_ADMIN_URL and DATABASE_URL must use distinct roles';
 
-  expect(
-    getDatabaseTrustBoundaryFailureMessage(
-      Cause.fail(new DatabaseTrustBoundaryAuditError({ reason }))
-    )
-  ).toBe(reason);
-  expect(
-    getDatabaseTrustBoundaryFailureMessage(
-      Cause.die(new Error('driver defect'))
-    )
-  ).toBe('Database trust-boundary audit failed');
+  expect(getDatabaseTrustBoundaryFailureMessage(Cause.fail(new DatabaseTrustBoundaryAuditError({ reason })))).toBe(
+    reason,
+  );
+  expect(getDatabaseTrustBoundaryFailureMessage(Cause.die(new Error('driver defect')))).toBe(
+    'Database trust-boundary audit failed',
+  );
 });
 
 it('treats any non-empty post-rollback trusted context as retained', () => {
@@ -295,10 +275,7 @@ it('reports privilege escalation paths without embedding credentials or context 
       },
     ],
     role: { ...snapshot.role, bypassRls: true },
-    schemas: [
-      ...snapshot.schemas,
-      { create: true, owner: 'empty_owner', schema: 'empty', usage: true },
-    ],
+    schemas: [...snapshot.schemas, { create: true, owner: 'empty_owner', schema: 'empty', usage: true }],
   });
 
   expect(findingCodes(report)).toEqual([
@@ -308,9 +285,7 @@ it('reports privilege escalation paths without embedding credentials or context 
     'runtime_role_can_forge_trusted_context',
     'runtime_role_has_cross_schema_dml',
   ]);
-  expect(JSON.stringify(report)).not.toMatch(
-    /postgresql:|password|secret|tenant-id|entity-id/iu
-  );
+  expect(JSON.stringify(report)).not.toMatch(/postgresql:|password|secret|tenant-id|entity-id/iu);
 });
 
 it('flags database-level CREATE even when no existing schema is writable', () => {
@@ -344,9 +319,7 @@ it('classifies reachable predefined PostgreSQL roles as privileged', () => {
     ],
   });
 
-  expect(findingCodes(report)).toEqual([
-    'runtime_role_can_assume_privileged_role',
-  ]);
+  expect(findingCodes(report)).toEqual(['runtime_role_can_assume_privileged_role']);
 });
 
 it('classifies a directly authenticated predefined PostgreSQL role as privileged', () => {
@@ -360,14 +333,10 @@ it('classifies a directly authenticated predefined PostgreSQL role as privileged
 
 it('flags effective configuration parameter authority', () => {
   const report = buildHardenedReport({
-    parameterPrivileges: [
-      { alterSystem: false, parameter: 'session_replication_role', set: true },
-    ],
+    parameterPrivileges: [{ alterSystem: false, parameter: 'session_replication_role', set: true }],
   });
 
-  expect(findingCodes(report)).toEqual([
-    'runtime_role_has_parameter_authority',
-  ]);
+  expect(findingCodes(report)).toEqual(['runtime_role_has_parameter_authority']);
   expect(report.summary.parameterPrivilegeCount).toBe(1);
 });
 
@@ -422,9 +391,7 @@ it('flags selectable privileged owner-context views but accepts security invoker
   };
 
   const ownerContextReport = buildDatabaseTrustBoundaryReport(base);
-  expect(ownerContextReport.findings.map(({ code }) => code)).toEqual([
-    'runtime_role_can_use_privileged_owner_view',
-  ]);
+  expect(ownerContextReport.findings.map(({ code }) => code)).toEqual(['runtime_role_can_use_privileged_owner_view']);
   expect(ownerContextReport.summary.privilegedOwnerViewCount).toBe(1);
 
   const writableReport = buildDatabaseTrustBoundaryReport({
@@ -440,9 +407,7 @@ it('flags selectable privileged owner-context views but accepts security invoker
       },
     ],
   });
-  expect(findingCodes(writableReport)).toEqual([
-    'runtime_role_can_use_privileged_owner_view',
-  ]);
+  expect(findingCodes(writableReport)).toEqual(['runtime_role_can_use_privileged_owner_view']);
 
   const readOnlyReport = buildDatabaseTrustBoundaryReport({
     ...base,
@@ -487,9 +452,7 @@ it('flags owner-context views that bypass RLS through owner-matched dependencies
     },
   });
 
-  expect(findingCodes(report)).toEqual([
-    'runtime_role_can_use_privileged_owner_view',
-  ]);
+  expect(findingCodes(report)).toEqual(['runtime_role_can_use_privileged_owner_view']);
   expect(report.summary.privilegedOwnerViewCount).toBe(1);
 });
 
@@ -513,9 +476,7 @@ it('flags privileged owners in nested owner-context views', () => {
     },
   });
 
-  expect(findingCodes(report)).toEqual([
-    'runtime_role_can_use_privileged_owner_view',
-  ]);
+  expect(findingCodes(report)).toEqual(['runtime_role_can_use_privileged_owner_view']);
 });
 
 it('flags ownership of an audited relation as DDL authority', () => {
@@ -622,9 +583,7 @@ it('flags direct sequence mutation authority', () => {
     ],
   });
 
-  expect(findingCodes(report)).toEqual([
-    'runtime_role_has_sequence_mutation_authority',
-  ]);
+  expect(findingCodes(report)).toEqual(['runtime_role_has_sequence_mutation_authority']);
 });
 
 it('classifies every assumable role and escalates relation authority', () => {
@@ -705,39 +664,22 @@ it.live(
   'traverses SET OPTION descendants after every ADMIN OPTION role',
   Effect.fn(function* scenario1() {
     const source = yield* Effect.promise(() =>
-      readFile(
-        new URL(
-          '../database-trust-audit/collect-snapshot.mts',
-          import.meta.url
-        ),
-        'utf-8'
-      )
+      readFile(new URL('../database-trust-audit/collect-snapshot.mts', import.meta.url), 'utf-8'),
     );
 
-    expect(
-      source.match(/where membership\.admin_option or membership\.set_option/gu)
-        ?.length
-    ).toBe(3);
-    expect(source).toMatch(
-      /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u
-    );
+    expect(source.match(/where membership\.admin_option or membership\.set_option/gu)?.length).toBe(3);
+    expect(source).toMatch(/candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u);
     expect(source).not.toMatch(
-      /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u
+      /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
     );
-    expect(source).toMatch(
-      /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u
-    );
+    expect(source).toMatch(/view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
     expect(source).toMatch(/target_roles\(role_oid, role_name\)/u);
+    expect(source).toMatch(/format\('role:%I:%s', target\.role_name, authority\.grant_option\)/u);
+    expect(source).toMatch(/pg_has_role\(effective_owner\.oid, \$3, 'USAGE'\)/u);
     expect(source).toMatch(
-      /format\('role:%I:%s', target\.role_name, authority\.grant_option\)/u
+      /pg_has_role\(\s*dependency\.effective_owner_oid,\s*referenced_relation\.relowner,\s*'USAGE'\s*\)/u,
     );
-    expect(source).toMatch(
-      /pg_has_role\(effective_owner\.oid, \$3, 'USAGE'\)/u
-    );
-    expect(source).toMatch(
-      /pg_has_role\(\s*dependency\.effective_owner_oid,\s*referenced_relation\.relowner,\s*'USAGE'\s*\)/u
-    );
-  })
+  }),
 );
 
 it('treats inherited owner-role authority as effective runtime DDL authority', () => {
@@ -761,10 +703,7 @@ it('treats inherited owner-role authority as effective runtime DDL authority', (
     ],
   });
 
-  expect(findingCodes(report)).toEqual([
-    'runtime_role_can_assume_privileged_role',
-    'runtime_role_has_ddl_authority',
-  ]);
+  expect(findingCodes(report)).toEqual(['runtime_role_can_assume_privileged_role', 'runtime_role_has_ddl_authority']);
 });
 
 it('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () => {
@@ -807,20 +746,20 @@ it('requires direct, distinct live database session identities', () => {
   expect(() =>
     assertDatabaseSessionIdentities(
       { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
-      { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' }
-    )
+      { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' },
+    ),
   ).not.toThrow();
   expect(() =>
     assertDatabaseSessionIdentities(
       { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
-      { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' }
-    )
+      { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
+    ),
   ).toThrow(/distinct authenticated PostgreSQL roles/u);
   expect(() =>
     assertDatabaseSessionIdentities(
       { currentRole: 'startup_role', sessionRole: 'ontos_runtime' },
-      { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' }
-    )
+      { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' },
+    ),
   ).toThrow(/current_user must equal session_user/u);
 });
 
@@ -836,14 +775,14 @@ it('rejects evidence collected from different servers or databases', () => {
   };
 
   expect(() => assertSameDatabaseTarget(target, { ...target })).not.toThrow();
-  expect(() =>
-    assertSameDatabaseTarget(target, { ...target, database: 'other' })
-  ).toThrow(/same PostgreSQL server and database/u);
+  expect(() => assertSameDatabaseTarget(target, { ...target, database: 'other' })).toThrow(
+    /same PostgreSQL server and database/u,
+  );
   expect(() =>
     assertSameDatabaseTarget(target, {
       ...target,
       serverAddress: alternateServerAddress,
-    })
+    }),
   ).toThrow(/same PostgreSQL server and database/u);
   expect(() =>
     assertSameDatabaseTarget(
@@ -858,8 +797,8 @@ it('rejects evidence collected from different servers or databases', () => {
         configuredHost: '/var/run/postgresql-b',
         serverAddress: null,
         serverPort: null,
-      }
-    )
+      },
+    ),
   ).toThrow(/same PostgreSQL server and database/u);
 });
 
@@ -873,9 +812,7 @@ it('treats transaction-local context retention as a critical boundary failure', 
     },
   });
 
-  expect(
-    report.findings.map(({ code, severity }) => `${severity}:${code}`)
-  ).toEqual([
+  expect(report.findings.map(({ code, severity }) => `${severity}:${code}`)).toEqual([
     'high:runtime_role_can_forge_trusted_context',
     'critical:trusted_context_survives_transaction',
   ]);

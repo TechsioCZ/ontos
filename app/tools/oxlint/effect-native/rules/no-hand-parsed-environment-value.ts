@@ -92,24 +92,14 @@ type AnyNode = ESTree.Node;
  * Stripping that prefix lets fixtures exercise the production `includePaths` defaults instead of
  * forcing the fixture config (which `run-on-repo.mts` reuses verbatim) to loosen the scope.
  */
-const FIXTURE_PREFIX =
-  /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
+const FIXTURE_PREFIX = /^tools\/oxlint\/[^/]+\/tests\/fixtures\/[^/]+\/(?:valid|invalid)\//u;
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const DEFAULT_ENVIRONMENT_IDENTIFIERS =
   '^(env|environment|processEnv|fileEnvironment|environmentVariables|buildEnvironment)$';
 
-const DEFAULT_ENVIRONMENT_READERS: readonly string[] = [
-  'readEnvironment',
-  'getBuildConfigEnvironment',
-  'envValue',
-];
+const DEFAULT_ENVIRONMENT_READERS: readonly string[] = ['readEnvironment', 'getBuildConfigEnvironment', 'envValue'];
 
 /** Wrappers that never change the value: `(x)`, `x as T`, `x satisfies T`, `x!`, `x?.y` chains. */
 const TRANSPARENT = new Set([
@@ -201,16 +191,7 @@ const NAMESPACED_PARSERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
 /** Constructors that turn an environment string into a structured value. */
 const STRUCTURED_CONSTRUCTORS = new Set(['URL', 'Date']);
 
-const COMPARISON_OPERATORS = new Set([
-  '===',
-  '!==',
-  '==',
-  '!=',
-  '<',
-  '<=',
-  '>',
-  '>=',
-]);
+const COMPARISON_OPERATORS = new Set(['===', '!==', '==', '!=', '<', '<=', '>', '>=']);
 
 const SCREAMING_KEY = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/u;
 
@@ -235,16 +216,10 @@ function readOptions(raw: unknown): RuleOptions {
   return {
     allowPaths: stringArray(given.allowPaths, []),
     ignoreTestFiles: given.ignoreTestFiles === true,
-    includePaths:
-      includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
+    includePaths: includePaths.length > 0 ? includePaths : DEFAULT_INCLUDE_PATHS,
     environmentIdentifiers:
-      typeof identifiers === 'string' && identifiers.length > 0
-        ? identifiers
-        : DEFAULT_ENVIRONMENT_IDENTIFIERS,
-    environmentReaders: stringArray(
-      given.environmentReaders,
-      DEFAULT_ENVIRONMENT_READERS
-    ),
+      typeof identifiers === 'string' && identifiers.length > 0 ? identifiers : DEFAULT_ENVIRONMENT_IDENTIFIERS,
+    environmentReaders: stringArray(given.environmentReaders, DEFAULT_ENVIRONMENT_READERS),
   };
 }
 
@@ -261,8 +236,7 @@ function unwrap(node: AnyNode | null | undefined): AnyNode | null {
   let current: AnyNode | null = node ?? null;
   for (let guard = 0; guard < 16; guard += 1) {
     if (current === null || !TRANSPARENT.has(current.type)) return current;
-    current = ((current as { expression?: AnyNode }).expression ??
-      null) as AnyNode | null;
+    current = ((current as { expression?: AnyNode }).expression ?? null) as AnyNode | null;
   }
   return current;
 }
@@ -272,26 +246,17 @@ function staticKey(node: ESTree.MemberExpression): string | null {
   const property = unwrap(node.property as AnyNode) as AnyNode;
   if (property.type === 'TemplateLiteral' && property.expressions.length === 0)
     return property.quasis[0]?.value.cooked ?? null;
-  if (!node.computed)
-    return property.type === 'Identifier'
-      ? (property as ESTree.IdentifierName).name
-      : null;
+  if (!node.computed) return property.type === 'Identifier' ? (property as ESTree.IdentifierName).name : null;
   if (property.type !== 'Literal') return null;
   const value = (property as { value?: unknown }).value;
   return typeof value === 'string' ? value : null;
 }
 
 function identifierName(node: AnyNode | null): string | null {
-  return node !== null && node.type === 'Identifier'
-    ? (node as ESTree.IdentifierReference).name
-    : null;
+  return node !== null && node.type === 'Identifier' ? (node as ESTree.IdentifierReference).name : null;
 }
 
-function resolveVariable(
-  context: Context,
-  name: string,
-  from: AnyNode
-): Variable | null {
+function resolveVariable(context: Context, name: string, from: AnyNode): Variable | null {
   let scope: Scope | null = context.sourceCode.getScope(from);
   while (scope !== null) {
     const variable = scope.set.get(name);
@@ -302,37 +267,27 @@ function resolveVariable(
 }
 
 /** `true` when `node` is the real global `name` — not a local, parameter, class or import binding. */
-function isUnshadowedGlobal(
-  context: Context,
-  node: AnyNode,
-  name: string
-): boolean {
+function isUnshadowedGlobal(context: Context, node: AnyNode, name: string): boolean {
   if (identifierName(node) !== name) return false;
   const variable = resolveVariable(context, name, node);
   return variable === null || variable.defs.length === 0;
 }
 
 /** The single `const`/`let` declarator an identifier reference resolves to, if any. */
-function declaratorOf(
-  context: Context,
-  node: AnyNode
-): ESTree.VariableDeclarator | null {
+function declaratorOf(context: Context, node: AnyNode): ESTree.VariableDeclarator | null {
   const name = identifierName(node);
   if (name === null) return null;
   const variable = resolveVariable(context, name, node);
   if (
     variable === null ||
     variable.defs.length !== 1 ||
-    variable.references.some(
-      (reference) => reference.isWrite() && !reference.init
-    )
+    variable.references.some((reference) => reference.isWrite() && !reference.init)
   )
     return null;
   for (const definition of variable.defs) {
     if (definition.type !== 'Variable') continue;
     const declaration = definition.node as AnyNode;
-    if (declaration.type === 'VariableDeclarator')
-      return declaration as ESTree.VariableDeclarator;
+    if (declaration.type === 'VariableDeclarator') return declaration as ESTree.VariableDeclarator;
   }
   return null;
 }
@@ -340,11 +295,7 @@ function declaratorOf(
 function isStringOrNumberLiteral(node: AnyNode | null): boolean {
   if (node === null || node.type !== 'Literal') return false;
   const value = (node as { value?: unknown }).value;
-  return (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'bigint'
-  );
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint';
 }
 
 function spanOf(node: AnyNode): string {
@@ -353,8 +304,7 @@ function spanOf(node: AnyNode): string {
 }
 
 function parentOf(node: AnyNode): AnyNode | null {
-  return ((node as { parent?: AnyNode | null }).parent ??
-    null) as AnyNode | null;
+  return ((node as { parent?: AnyNode | null }).parent ?? null) as AnyNode | null;
 }
 
 /** Effect-native rule: environment values are declared as `Config`, never parsed by hand. */
@@ -423,8 +373,7 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
           environmentIdentifiers: {
             type: 'string',
@@ -465,19 +414,14 @@ export const rule = defineRule({
     }
     const readers = new Set(options.environmentReaders);
 
-    const importOf = (
-      node: AnyNode
-    ): { source: string; member: string } | null => {
+    const importOf = (node: AnyNode): { source: string; member: string } | null => {
       const name = identifierName(node);
       if (!name) return null;
       const variable = resolveVariable(context, name, node);
-      const definition =
-        variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
       if (definition?.type !== 'ImportBinding') return null;
       const specifier = definition.node as ESTree.ImportSpecifier;
-      const declaration = parentOf(
-        specifier as AnyNode
-      ) as ESTree.ImportDeclaration;
+      const declaration = parentOf(specifier as AnyNode) as ESTree.ImportDeclaration;
       if (
         declaration?.type !== 'ImportDeclaration' ||
         declaration.importKind === 'type' ||
@@ -486,57 +430,36 @@ export const rule = defineRule({
         return null;
       return {
         source: declaration.source.value,
-        member:
-          specifier.type === 'ImportSpecifier'
-            ? importedName(specifier)
-            : 'default',
+        member: specifier.type === 'ImportSpecifier' ? importedName(specifier) : 'default',
       };
     };
-    const processModule = (source: string) =>
-      source === 'process' || source === 'node:process';
+    const processModule = (source: string) => source === 'process' || source === 'node:process';
     const staticString = (node: AnyNode | null): string | null => {
       const value = unwrap(node);
-      if (value?.type === 'Literal' && typeof value.value === 'string')
-        return value.value;
+      if (value?.type === 'Literal' && typeof value.value === 'string') return value.value;
       if (value?.type === 'TemplateLiteral' && value.expressions.length === 0)
         return value.quasis[0]?.value.cooked ?? null;
       return null;
     };
-    const isNamedEnvHost = (
-      host: AnyNode,
-      name: string,
-      depth: number
-    ): boolean => {
+    const isNamedEnvHost = (host: AnyNode, name: string, depth: number): boolean => {
       const imported = importOf(host);
-      if (imported)
-        return processModule(imported.source) && imported.member === 'default';
-      if (ENV_HOSTS.has(name) && isUnshadowedGlobal(context, host, name))
-        return true;
+      if (imported) return processModule(imported.source) && imported.member === 'default';
+      if (ENV_HOSTS.has(name) && isUnshadowedGlobal(context, host, name)) return true;
       const declaration = declaratorOf(context, host);
-      return (
-        declaration?.id.type === 'Identifier' &&
-        isEnvHost(declaration.init as AnyNode, depth + 1)
-      );
+      return declaration?.id.type === 'Identifier' && isEnvHost(declaration.init as AnyNode, depth + 1);
     };
     const isEnvHost = (node: AnyNode | null, depth = 0): boolean => {
       const host = unwrap(node);
       if (!host || depth > MAX_DEPTH) return false;
-      if (host.type === 'AwaitExpression')
-        return isEnvHost(host.argument, depth + 1);
-      if (host.type === 'ImportExpression')
-        return processModule(staticString(host.source) ?? '');
-      if (host.type === 'MetaProperty')
-        return host.meta.name === 'import' && host.property.name === 'meta';
+      if (host.type === 'AwaitExpression') return isEnvHost(host.argument, depth + 1);
+      if (host.type === 'ImportExpression') return processModule(staticString(host.source) ?? '');
+      if (host.type === 'MetaProperty') return host.meta.name === 'import' && host.property.name === 'meta';
       const name = identifierName(host);
       if (name) return isNamedEnvHost(host, name, depth);
       return isGlobalEnvHostMember(host);
     };
     const isGlobalEnvHostMember = (host: AnyNode): boolean => {
-      if (
-        host.type !== 'MemberExpression' ||
-        !ENV_HOSTS.has(staticKey(host) ?? '')
-      )
-        return false;
+      if (host.type !== 'MemberExpression' || !ENV_HOSTS.has(staticKey(host) ?? '')) return false;
       const owner = unwrap(host.object as AnyNode);
       const ownerName = identifierName(owner);
       return (
@@ -545,39 +468,28 @@ export const rule = defineRule({
         isUnshadowedGlobal(context, owner as AnyNode, ownerName)
       );
     };
-    const isDestructuredEnvBag = (
-      declaration: ESTree.VariableDeclarator,
-      name: string
-    ): boolean => {
-      if (
-        declaration.id.type !== 'ObjectPattern' ||
-        !isEnvHost(declaration.init as AnyNode)
-      )
-        return false;
+    const isDestructuredEnvBag = (declaration: ESTree.VariableDeclarator, name: string): boolean => {
+      if (declaration.id.type !== 'ObjectPattern' || !isEnvHost(declaration.init as AnyNode)) return false;
       return declaration.id.properties.some(
         (property) =>
           property.type === 'Property' &&
           (property.computed
             ? staticString(property.key)
-            : (identifierName(property.key) ?? staticString(property.key))) ===
-            'env' &&
-          identifierName(property.value) === name
+            : (identifierName(property.key) ?? staticString(property.key))) === 'env' &&
+          identifierName(property.value) === name,
       );
     };
     /** Only statically known local aliases are followed; arbitrary returned records are unknown. */
     const isAmbientEnvBag = (node: AnyNode | null, depth = 0): boolean => {
       const bag = unwrap(node);
       if (!bag || depth > MAX_DEPTH) return false;
-      if (bag.type === 'MemberExpression')
-        return staticKey(bag) === 'env' && isEnvHost(bag.object as AnyNode);
+      if (bag.type === 'MemberExpression') return staticKey(bag) === 'env' && isEnvHost(bag.object as AnyNode);
       if (bag.type !== 'Identifier') return false;
       const imported = importOf(bag);
-      if (imported)
-        return processModule(imported.source) && imported.member === 'env';
+      if (imported) return processModule(imported.source) && imported.member === 'env';
       const declaration = declaratorOf(context, bag);
       if (!declaration) return false;
-      if (declaration.id.type === 'Identifier')
-        return isAmbientEnvBag(declaration.init as AnyNode, depth + 1);
+      if (declaration.id.type === 'Identifier') return isAmbientEnvBag(declaration.init as AnyNode, depth + 1);
       return isDestructuredEnvBag(declaration, bag.name);
     };
     const isLiteralObject = (node: AnyNode | null, depth = 0): boolean => {
@@ -590,33 +502,23 @@ export const rule = defineRule({
           property.type === 'Property' &&
           !property.method &&
           (!property.computed || staticString(property.key) !== null) &&
-          isLiteralObject(property.value, depth + 1)
+          isLiteralObject(property.value, depth + 1),
       );
     };
     /** Named injected records are a documented heuristic, rebutted by local literal tables. */
-    const isEnvironmentRecord = (
-      node: AnyNode | null,
-      depth: number
-    ): boolean => {
+    const isEnvironmentRecord = (node: AnyNode | null, depth: number): boolean => {
       const record = unwrap(node);
       if (!record || depth > MAX_DEPTH) return false;
       if (isAmbientEnvBag(record)) return true;
       return isNamedEnvironmentRecord(record, depth);
     };
-    const isNamedEnvironmentRecord = (
-      record: AnyNode,
-      depth: number
-    ): boolean => {
+    const isNamedEnvironmentRecord = (record: AnyNode, depth: number): boolean => {
       const name = identifierName(record);
       if (!name) return false;
       const declaration = declaratorOf(context, record);
-      if (declaration?.init && isLiteralObject(declaration.init as AnyNode))
-        return false;
+      if (declaration?.init && isLiteralObject(declaration.init as AnyNode)) return false;
       if (environmentIdentifier.test(name) && !importOf(record)) return true;
-      return (
-        declaration?.id.type === 'Identifier' &&
-        isEnvironmentRecord(declaration.init as AnyNode, depth + 1)
-      );
+      return declaration?.id.type === 'Identifier' && isEnvironmentRecord(declaration.init as AnyNode, depth + 1);
     };
     const isReader = (node: AnyNode, depth = 0): boolean => {
       if (depth > MAX_DEPTH) return false;
@@ -625,26 +527,18 @@ export const rule = defineRule({
       const name = identifierName(node);
       if (name === null) return false;
       const declaration = declaratorOf(context, node);
-      if (
-        declaration?.init &&
-        unwrap(declaration.init as AnyNode)?.type === 'Identifier'
-      )
-        return isReader(
-          unwrap(declaration.init as AnyNode) as AnyNode,
-          depth + 1
-        );
+      if (declaration?.init && unwrap(declaration.init as AnyNode)?.type === 'Identifier')
+        return isReader(unwrap(declaration.init as AnyNode) as AnyNode, depth + 1);
       return readers.has(name);
     };
     const isLiteralValue = (node: AnyNode | null, depth = 0): boolean => {
       const value = unwrap(node);
       if (!value || depth > MAX_DEPTH) return false;
-      if (isStringOrNumberLiteral(value) || staticString(value) !== null)
-        return true;
+      if (isStringOrNumberLiteral(value) || staticString(value) !== null) return true;
       const declaration = declaratorOf(context, value);
       return (
         declaration?.id.type === 'Identifier' &&
-        (parentOf(declaration) as ESTree.VariableDeclaration)?.kind ===
-          'const' &&
+        (parentOf(declaration) as ESTree.VariableDeclaration)?.kind === 'const' &&
         isLiteralValue(declaration.init as AnyNode, depth + 1)
       );
     };
@@ -658,15 +552,11 @@ export const rule = defineRule({
       const value = (property as { value?: unknown }).value;
       return typeof value === 'string' && SCREAMING_KEY.test(value);
     };
-    const isEnvironmentMemberRead = (
-      member: ESTree.MemberExpression,
-      depth: number
-    ): boolean => {
+    const isEnvironmentMemberRead = (member: ESTree.MemberExpression, depth: number): boolean => {
       const object = member.object as AnyNode;
       if (isAmbientEnvBag(object)) return true;
       if (!isEnvironmentRecord(object, depth)) return false;
-      if (member.computed)
-        return isComputedEnvironmentKey(member.property as AnyNode);
+      if (member.computed) return isComputedEnvironmentKey(member.property as AnyNode);
       const key = staticKey(member);
       return key !== null && SCREAMING_KEY.test(key);
     };
@@ -680,25 +570,16 @@ export const rule = defineRule({
       if (readers.has(key)) return true;
       return key === 'get' && isAmbientEnvBag(callee.object as AnyNode);
     };
-    const isEnvironmentBindingRead = (
-      read: AnyNode,
-      depth: number
-    ): boolean => {
+    const isEnvironmentBindingRead = (read: AnyNode, depth: number): boolean => {
       const declarator = declaratorOf(context, read);
       if (declarator === null) return false;
       const target = declarator.id as AnyNode;
       if (target.type === 'ObjectPattern' || target.type === 'ArrayPattern')
-        return isEnvironmentRecord(
-          declarator.init as AnyNode | null,
-          depth + 1
-        );
+        return isEnvironmentRecord(declarator.init as AnyNode | null, depth + 1);
       return isEnvironmentDerived(declarator.init as AnyNode | null, depth + 1);
     };
     /** A read of a single environment variable. */
-    const isEnvironmentRead = (
-      node: AnyNode | null,
-      depth: number
-    ): boolean => {
+    const isEnvironmentRead = (node: AnyNode | null, depth: number): boolean => {
       const read = unwrap(node);
       if (read === null || depth > MAX_DEPTH) return false;
       switch (read.type) {
@@ -713,56 +594,37 @@ export const rule = defineRule({
       }
     };
 
-    const isDerivedLogical = (
-      logical: ESTree.LogicalExpression,
-      depth: number
-    ): boolean => {
+    const isDerivedLogical = (logical: ESTree.LogicalExpression, depth: number): boolean => {
       if (logical.operator !== '??' && logical.operator !== '||') return false;
       return (
         isEnvironmentDerived(logical.left as AnyNode, depth + 1) ||
         isEnvironmentDerived(logical.right as AnyNode, depth + 1)
       );
     };
-    const isDerivedStringCall = (
-      value: ESTree.CallExpression,
-      depth: number
-    ): boolean => {
+    const isDerivedStringCall = (value: ESTree.CallExpression, depth: number): boolean => {
       const callee = unwrap((value as ESTree.CallExpression).callee as AnyNode);
       if (callee === null || callee.type !== 'MemberExpression') return false;
       const key = staticKey(callee as ESTree.MemberExpression);
       if (key === null || !DERIVING_STRING_OPS.has(key)) return false;
-      return isEnvironmentDerived(
-        (callee as ESTree.MemberExpression).object as AnyNode,
-        depth + 1
-      );
+      return isEnvironmentDerived((callee as ESTree.MemberExpression).object as AnyNode, depth + 1);
     };
     /** An environment read, possibly defaulted, interpolated or passed through a string op. */
-    function isEnvironmentDerived(
-      node: AnyNode | null,
-      depth: number
-    ): boolean {
+    function isEnvironmentDerived(node: AnyNode | null, depth: number): boolean {
       const value = unwrap(node);
       if (value === null || depth > MAX_DEPTH) return false;
       if (isEnvironmentRead(value, depth)) return true;
 
-      if (value.type === 'LogicalExpression')
-        return isDerivedLogical(value, depth);
+      if (value.type === 'LogicalExpression') return isDerivedLogical(value, depth);
 
       if (value.type === 'ConditionalExpression')
-        return (
-          isEnvironmentDerived(value.consequent, depth + 1) ||
-          isEnvironmentDerived(value.alternate, depth + 1)
-        );
+        return isEnvironmentDerived(value.consequent, depth + 1) || isEnvironmentDerived(value.alternate, depth + 1);
 
       if (value.type === 'TemplateLiteral') {
         const template = value as ESTree.TemplateLiteral;
-        return template.expressions.some((expression) =>
-          isEnvironmentDerived(expression as AnyNode, depth + 1)
-        );
+        return template.expressions.some((expression) => isEnvironmentDerived(expression as AnyNode, depth + 1));
       }
 
-      if (value.type === 'CallExpression')
-        return isDerivedStringCall(value, depth);
+      if (value.type === 'CallExpression') return isDerivedStringCall(value, depth);
 
       return false;
     }
@@ -771,12 +633,8 @@ export const rule = defineRule({
     const isEnvironmentLength = (node: AnyNode | null): boolean => {
       const member = unwrap(node);
       if (member === null || member.type !== 'MemberExpression') return false;
-      if (staticKey(member as ESTree.MemberExpression) !== 'length')
-        return false;
-      return isEnvironmentDerived(
-        (member as ESTree.MemberExpression).object as AnyNode,
-        0
-      );
+      if (staticKey(member as ESTree.MemberExpression) !== 'length') return false;
+      return isEnvironmentDerived((member as ESTree.MemberExpression).object as AnyNode, 0);
     };
 
     const reportable = new Map<
@@ -789,7 +647,7 @@ export const rule = defineRule({
 
     /** The diagnostic `node` would raise on its own, or `null` when it is not a hand parse. */
     const classify = (
-      node: AnyNode
+      node: AnyNode,
     ): {
       readonly messageId: string;
       readonly data: Record<string, string>;
@@ -807,20 +665,17 @@ export const rule = defineRule({
     } | null;
     function namespaceMessage(name: string | null): string {
       if (name === 'JSON') return 'envJsonParse';
-      return name === 'URL' || name === 'Date'
-        ? 'envStructuredParse'
-        : 'envCoercion';
+      return name === 'URL' || name === 'Date' ? 'envStructuredParse' : 'envCoercion';
     }
     function classifyNamespacedCall(
       member: ESTree.MemberExpression,
       key: string,
-      firstArgument: AnyNode | null
+      firstArgument: AnyNode | null,
     ): Classification {
       const owner = unwrap(member.object as AnyNode);
       const ownerName = identifierName(owner);
       // `JSON.parse(...)` / `Number.parseInt(...)`.
-      const namespaced =
-        ownerName === null ? undefined : NAMESPACED_PARSERS.get(ownerName);
+      const namespaced = ownerName === null ? undefined : NAMESPACED_PARSERS.get(ownerName);
       if (
         namespaced !== undefined &&
         namespaced.has(key) &&
@@ -836,10 +691,7 @@ export const rule = defineRule({
       }
       return null;
     }
-    function classifyMemberCall(
-      member: ESTree.MemberExpression,
-      firstArgument: AnyNode | null
-    ): Classification {
+    function classifyMemberCall(member: ESTree.MemberExpression, firstArgument: AnyNode | null): Classification {
       const key = staticKey(member);
       if (key === null) return null;
       const namespaced = classifyNamespacedCall(member, key, firstArgument);
@@ -856,13 +708,11 @@ export const rule = defineRule({
       if (callee === null) return null;
       const firstArgument = (call.arguments[0] as AnyNode | undefined) ?? null;
 
-      if (callee.type === 'MemberExpression')
-        return classifyMemberCall(callee, firstArgument);
+      if (callee.type === 'MemberExpression') return classifyMemberCall(callee, firstArgument);
       const calleeName = identifierName(callee);
       if (calleeName === null || !GLOBAL_COERCIONS.has(calleeName)) return null;
       if (!isUnshadowedGlobal(context, callee, calleeName)) return null;
-      if (firstArgument === null || firstArgument.type === 'SpreadElement')
-        return null;
+      if (firstArgument === null || firstArgument.type === 'SpreadElement') return null;
       return isEnvironmentDerived(firstArgument, 0)
         ? { messageId: 'envCoercion', data: { operation: calleeName } }
         : null;
@@ -871,14 +721,10 @@ export const rule = defineRule({
       const construction = node as ESTree.NewExpression;
       const callee = unwrap(construction.callee as AnyNode);
       const calleeName = identifierName(callee);
-      if (calleeName === null || !STRUCTURED_CONSTRUCTORS.has(calleeName))
-        return null;
-      if (!isUnshadowedGlobal(context, callee as AnyNode, calleeName))
-        return null;
-      const firstArgument =
-        (construction.arguments[0] as AnyNode | undefined) ?? null;
-      if (firstArgument === null || firstArgument.type === 'SpreadElement')
-        return null;
+      if (calleeName === null || !STRUCTURED_CONSTRUCTORS.has(calleeName)) return null;
+      if (!isUnshadowedGlobal(context, callee as AnyNode, calleeName)) return null;
+      const firstArgument = (construction.arguments[0] as AnyNode | undefined) ?? null;
+      if (firstArgument === null || firstArgument.type === 'SpreadElement') return null;
       return isEnvironmentDerived(firstArgument, 0)
         ? { messageId: 'envStructuredParse', data: { operation: calleeName } }
         : null;
@@ -886,10 +732,7 @@ export const rule = defineRule({
     function classifyUnary(node: ESTree.UnaryExpression): Classification {
       if (node.operator === '!' && isEnvironmentLength(node.argument))
         return { messageId: 'envLengthCheck', data: { operation: 'length' } };
-      if (
-        (node.operator === '+' || node.operator === '-') &&
-        isEnvironmentDerived(node.argument, 0)
-      )
+      if ((node.operator === '+' || node.operator === '-') && isEnvironmentDerived(node.argument, 0))
         return { messageId: 'envCoercion', data: { operation: node.operator } };
       return null;
     }
@@ -902,9 +745,7 @@ export const rule = defineRule({
         data: { literal: context.sourceCode.getText(branch.test) },
       };
     }
-    function classifyComparison(
-      node: ESTree.BinaryExpression | ESTree.PrivateInExpression
-    ): Classification {
+    function classifyComparison(node: ESTree.BinaryExpression | ESTree.PrivateInExpression): Classification {
       const comparison = node as ESTree.BinaryExpression;
       if (!COMPARISON_OPERATORS.has(comparison.operator)) return null;
       const left = comparison.left as AnyNode;
@@ -915,10 +756,8 @@ export const rule = defineRule({
       const leftValue = unwrap(left);
       const rightValue = unwrap(right);
       let literal: AnyNode | null = null;
-      if (isLiteralValue(rightValue) && isEnvironmentDerived(left, 0))
-        literal = rightValue;
-      else if (isLiteralValue(leftValue) && isEnvironmentDerived(right, 0))
-        literal = leftValue;
+      if (isLiteralValue(rightValue) && isEnvironmentDerived(left, 0)) literal = rightValue;
+      else if (isLiteralValue(leftValue) && isEnvironmentDerived(right, 0)) literal = leftValue;
       if (literal === null) return null;
       const raw = (literal as { raw?: string | null }).raw;
       return {
@@ -951,19 +790,9 @@ export const rule = defineRule({
       let current = parentOf(node);
       for (let depth = 0; depth < MAX_ANCESTORS; depth += 1) {
         if (current === null || current.type === 'Program') return false;
-        if (
-          classify(current) !== null &&
-          (current.type !== 'SwitchStatement' ||
-            node.end <= current.discriminant.end)
-        )
+        if (classify(current) !== null && (current.type !== 'SwitchStatement' || node.end <= current.discriminant.end))
           return true;
-        if (
-          [
-            'ArrowFunctionExpression',
-            'FunctionExpression',
-            'FunctionDeclaration',
-          ].includes(current.type)
-        )
+        if (['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(current.type))
           return false;
         current = parentOf(current);
       }

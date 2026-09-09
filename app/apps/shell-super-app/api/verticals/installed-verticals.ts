@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect';
 
 export class InstalledVerticalTopologyError extends Schema.TaggedError<InstalledVerticalTopologyError>()(
   'InstalledVerticalTopologyError',
-  { cause: Schema.Defect(), reason: Schema.String }
+  { cause: Schema.Defect(), reason: Schema.String },
 ) {}
 
 const stableAppIdPattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
@@ -15,13 +15,11 @@ const InstalledVerticalTopologySchema = Schema.Struct({
   verticals: Schema.Array(InstalledVerticalSchema),
 }).check(
   Schema.makeFilter((topology) => {
-    const installedVerticalIds = new Set(
-      topology.verticals.map(({ id }) => id)
-    );
+    const installedVerticalIds = new Set(topology.verticals.map(({ id }) => id));
     return installedVerticalIds.size === topology.verticals.length
       ? undefined
       : 'topology contains duplicate vertical IDs';
-  })
+  }),
 );
 
 interface InstalledVerticalInput {
@@ -37,12 +35,10 @@ export interface InstalledVerticalTopologyInput {
 
 declare const ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: InstalledVerticalTopologyInput;
 
-const decodeInstalledVerticalTopology = Schema.decodeUnknownEffect(
-  InstalledVerticalTopologySchema
-);
+const decodeInstalledVerticalTopology = Schema.decodeUnknownEffect(InstalledVerticalTopologySchema);
 
 export const deriveInstalledVerticalIds = (
-  input: InstalledVerticalTopologyInput
+  input: InstalledVerticalTopologyInput,
 ): Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError> =>
   decodeInstalledVerticalTopology(input).pipe(
     Effect.map((topology) => new Set(topology.verticals.map(({ id }) => id))),
@@ -50,15 +46,11 @@ export const deriveInstalledVerticalIds = (
       (cause) =>
         new InstalledVerticalTopologyError({
           cause,
-          reason:
-            'The authoritative installed MicroVertical topology is malformed',
-        })
-    )
+          reason: 'The authoritative installed MicroVertical topology is malformed',
+        }),
+    ),
   );
 
-export const installedVerticalIds: Effect.Effect<
-  ReadonlySet<string>,
-  InstalledVerticalTopologyError
-> = Effect.suspend(() =>
-  deriveInstalledVerticalIds(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY)
+export const installedVerticalIds: Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError> = Effect.suspend(
+  () => deriveInstalledVerticalIds(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY),
 );

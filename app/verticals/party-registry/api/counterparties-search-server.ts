@@ -29,16 +29,13 @@ const problems = makeGovernedReadProblems({
   unavailable: CounterpartiesProviderUnavailableProblemSchema,
 });
 
-export const counterpartiesReadApiLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'counterpartiesSearch',
-  (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: counterpartiesRead,
-      })
-    )
+export const counterpartiesReadApiLive = HttpApiBuilder.group(partyRegistryApi, 'counterpartiesSearch', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: counterpartiesRead,
+    }),
+  ),
 );

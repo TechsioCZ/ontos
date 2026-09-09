@@ -17,15 +17,12 @@ type PartiesSearchAuthorizedInvocation = readonly [
   options?: PartiesSearchClientOptions,
 ];
 
-type PartiesSearchOperationInvocation = readonly [
-  requestCorrelation: string,
-  options?: PartiesSearchClientOptions,
-];
+type PartiesSearchOperationInvocation = readonly [requestCorrelation: string, options?: PartiesSearchClientOptions];
 
 const partiesClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: PartiesSearchClientOptions
+  options: PartiesSearchClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -34,19 +31,15 @@ const partiesClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const loadPartiesClientWithAuthorization = (
   payload: PartiesProviderRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: PartiesSearchAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: PartiesSearchAuthorizedInvocation
 ) =>
   partiesClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.partiesSearch.execute({ payload }))
+    Effect.flatMap((client) => client.partiesSearch.execute({ payload })),
   );
 
 export const loadPartiesClient = (
@@ -54,10 +47,5 @@ export const loadPartiesClient = (
   ...[requestCorrelation, options = {}]: PartiesSearchOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    loadPartiesClientWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    loadPartiesClientWithAuthorization(payload, credential, requestCorrelation, options),
   );

@@ -4,8 +4,7 @@ import { Schema } from 'effect';
 import { ActionInvocationIdSchema } from '../domain/correction-contracts.ts';
 
 export const RequestSearchRebuildPayloadSchema = Schema.Struct({});
-export type RequestSearchRebuildPayload =
-  typeof RequestSearchRebuildPayloadSchema.Type;
+export type RequestSearchRebuildPayload = typeof RequestSearchRebuildPayloadSchema.Type;
 
 export const RequestSearchRebuildResultSchema = Schema.Struct({
   requestId: ActionInvocationIdSchema,

@@ -29,10 +29,10 @@ The gate requires all six unique expected analyzer results, reported statuses, e
 
 ## What each report answers
 
-| Tool | Report | Interpretation |
-| --- | --- | --- |
-| Knip | Unused files, exports, types, dependencies, and import/dependency problems | No consumer was found in the configured model. Framework roots and external consumers need review before removal. |
-| JSCPD | Substantial repeated token sequences | Candidate shared implementation, including copies of unchanged files. |
+| Tool   | Report                                                                                 | Interpretation                                                                                                                         |
+| ------ | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Knip   | Unused files, exports, types, dependencies, and import/dependency problems             | No consumer was found in the configured model. Framework roots and external consumers need review before removal.                      |
+| JSCPD  | Substantial repeated token sequences                                                   | Candidate shared implementation, including copies of unchanged files.                                                                  |
 | Fallow | Strict clones, separate semantic similarities, and control-flow complexity above 10/15 | Strict matches are primary clone observations; semantic matches are advisory. Complexity separates React heuristics from control flow. |
 
 Use the checked-in analyzer configs and runner as the command and scope authority. They account for runtime source, tooling, tests, and framework consumers. Intentionally invalid custom-rule fixtures, dependencies, and generated build output require explicit handling; editable Codesmith starter files remain source. Discovery totals and clone-eligible file totals differ because clone detectors omit files shorter than their token/line minimums. Do not compare duplication percentages between tools as if they used the same denominator.

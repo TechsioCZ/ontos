@@ -23,19 +23,15 @@ const CanonicalPartyResolutionSchema = Schema.Union([
     traversedAliasPartyRefs: Schema.Array(PartyRefSchema),
   }),
 ]);
-export type CanonicalPartyResolution =
-  typeof CanonicalPartyResolutionSchema.Type;
+export type CanonicalPartyResolution = typeof CanonicalPartyResolutionSchema.Type;
 
-const keyOf = ({ resourceId, tenantId }: PartyRef) =>
-  `${tenantId}:${resourceId}`;
+const keyOf = ({ resourceId, tenantId }: PartyRef) => `${tenantId}:${resourceId}`;
 
 export const resolveCanonicalPartyRef = (
   requested: PartyRef,
-  aliases: readonly PartyAlias[]
+  aliases: readonly PartyAlias[],
 ): CanonicalPartyResolution => {
-  const byAlias = new Map(
-    aliases.map((alias) => [keyOf(alias.aliasPartyRef), alias])
-  );
+  const byAlias = new Map(aliases.map((alias) => [keyOf(alias.aliasPartyRef), alias]));
   const seen = new Set<string>();
   const traversed: PartyRef[] = [];
   let current = requested;
@@ -48,9 +44,7 @@ export const resolveCanonicalPartyRef = (
         canonicalPartyRef: current,
         traversedAliasPartyRefs: traversed,
       };
-      return traversed.length > 0
-        ? { ...resolved, requestedAlias: requested }
-        : resolved;
+      return traversed.length > 0 ? { ...resolved, requestedAlias: requested } : resolved;
     }
     if (alias.aliasPartyRef.tenantId !== alias.survivorPartyRef.tenantId) {
       return {
@@ -77,10 +71,7 @@ export const resolveCanonicalPartyRef = (
   }
 };
 
-export const assertCanonicalWriteTarget = (
-  requested: PartyRef,
-  aliases: readonly PartyAlias[]
-) => {
+export const assertCanonicalWriteTarget = (requested: PartyRef, aliases: readonly PartyAlias[]) => {
   const resolved = resolveCanonicalPartyRef(requested, aliases);
   return Match.value(resolved).pipe(
     Match.tag('CanonicalPartyResolved', (resolution) =>
@@ -94,11 +85,11 @@ export const assertCanonicalWriteTarget = (
             aliasPartyRef: requested,
             canonicalPartyRef: resolution.canonicalPartyRef,
             code: 'ALIAS_WRITE_FORBIDDEN',
-          } as const)
+          } as const),
     ),
     Match.tag('PartyAliasCycleRejected', (rejection) => rejection),
     Match.tag('PartyAliasSelfReferenceRejected', (rejection) => rejection),
     Match.tag('PartyAliasCrossTenantRejected', (rejection) => rejection),
-    Match.exhaustive
+    Match.exhaustive,
   );
 };

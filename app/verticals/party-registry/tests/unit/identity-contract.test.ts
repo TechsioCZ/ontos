@@ -32,7 +32,7 @@ it('Party V1 admits only PERSON, ORGANIZATION, and evidenced UNRESOLVED identity
       partyType: 'UNRESOLVED',
       provenance: { method: 'MANUAL', source: 'test' },
       validFrom: '2026-01-01T00:00:00.000Z',
-    })
+    }),
   ).toThrow();
 });
 
@@ -44,87 +44,66 @@ it('Party Type update is enrichment-only; cross-kind changes require Correction'
 });
 
 it('identity timestamps decode to canonical UTC values', () => {
-  expect(() =>
-    Schema.decodeSync(IsoTimestampSchema)('not-a-timestamp')
-  ).toThrow();
+  expect(() => Schema.decodeSync(IsoTimestampSchema)('not-a-timestamp')).toThrow();
   const leapDay = Schema.decodeSync(IsoTimestampSchema)('2024-02-29T00:00:00Z');
   expect(DateTime.formatIso(leapDay)).toBe('2024-02-29T00:00:00.000Z');
 });
 
-it.effect(
-  'Party JSON round-trips timestamps as strings and absent values as null',
-  () =>
-    Effect.gen(function* verifySchema1() {
-      const encoded = {
-        archivedAt: null,
-        createdAt: '2025-01-01T00:00:00.000Z',
-        displayName: null,
-        partyRef: makePartyRef(
-          '11111111-1111-4111-8111-111111111111',
-          '22222222-2222-4222-8222-222222222222'
-        ),
-        partyType: 'UNRESOLVED' as const,
-        revision: 1,
-        updatedAt: '2026-01-01T00:00:00.000Z',
-      };
-      const decoded = yield* Schema.decodeEffect(PartySchema)(encoded);
+it.effect('Party JSON round-trips timestamps as strings and absent values as null', () =>
+  Effect.gen(function* verifySchema1() {
+    const encoded = {
+      archivedAt: null,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      displayName: null,
+      partyRef: makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'),
+      partyType: 'UNRESOLVED' as const,
+      revision: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const decoded = yield* Schema.decodeEffect(PartySchema)(encoded);
 
-      expect(Option.isNone(decoded.archivedAt)).toBe(true);
-      expect(Option.isNone(decoded.displayName)).toBe(true);
-      expect(yield* Schema.encodeEffect(PartySchema)(decoded)).toEqual(encoded);
-      expect(() =>
-        decode(PartySchema)({ ...encoded, archivedAt: undefined })
-      ).toThrow();
-      const { displayName: _displayName, ...missingDisplayName } = encoded;
-      expect(() => decode(PartySchema)(missingDisplayName)).toThrow();
+    expect(Option.isNone(decoded.archivedAt)).toBe(true);
+    expect(Option.isNone(decoded.displayName)).toBe(true);
+    expect(yield* Schema.encodeEffect(PartySchema)(decoded)).toEqual(encoded);
+    expect(() => decode(PartySchema)({ ...encoded, archivedAt: undefined })).toThrow();
+    const { displayName: _displayName, ...missingDisplayName } = encoded;
+    expect(() => decode(PartySchema)(missingDisplayName)).toThrow();
 
-      const presentEncoded = {
-        ...encoded,
-        archivedAt: '2026-02-01T00:00:00.000Z',
-        displayName: 'Example organization',
-      };
-      expect(
-        yield* Schema.encodeEffect(PartySchema)(
-          yield* Schema.decodeEffect(PartySchema)(presentEncoded)
-        )
-      ).toEqual(presentEncoded);
-    })
+    const presentEncoded = {
+      ...encoded,
+      archivedAt: '2026-02-01T00:00:00.000Z',
+      displayName: 'Example organization',
+    };
+    expect(yield* Schema.encodeEffect(PartySchema)(yield* Schema.decodeEffect(PartySchema)(presentEncoded))).toEqual(
+      presentEncoded,
+    );
+  }),
 );
 
-it.effect(
-  'Party Candidate accepts an evidenced identifier without inventing a display name',
-  () =>
-    Effect.gen(function* verifySchema2() {
-      const encoded = {
-        evidenceRefs: ['source:official-record'],
-        officialIdentifiers: [
-          {
-            identifierType: 'ICO',
-            value: '27074358',
-            verification: 'VERIFIED',
-          },
-        ],
-        partyType: 'ORGANIZATION' as const,
-        provenance: { method: 'IMPORT', source: 'official-register' },
-        validFrom: '2026-01-01T00:00:00.000Z',
-      };
-      const candidate =
-        yield* Schema.decodeUnknownEffect(PartyCandidateSchema)(encoded);
-      expect(candidate.displayName).toBe(undefined);
-      expect(candidate.officialIdentifiers.length).toBe(1);
-      expect(
-        yield* Schema.encodeEffect(PartyCandidateSchema)(candidate)
-      ).toEqual(encoded);
-    })
+it.effect('Party Candidate accepts an evidenced identifier without inventing a display name', () =>
+  Effect.gen(function* verifySchema2() {
+    const encoded = {
+      evidenceRefs: ['source:official-record'],
+      officialIdentifiers: [
+        {
+          identifierType: 'ICO',
+          value: '27074358',
+          verification: 'VERIFIED',
+        },
+      ],
+      partyType: 'ORGANIZATION' as const,
+      provenance: { method: 'IMPORT', source: 'official-register' },
+      validFrom: '2026-01-01T00:00:00.000Z',
+    };
+    const candidate = yield* Schema.decodeUnknownEffect(PartyCandidateSchema)(encoded);
+    expect(candidate.displayName).toBe(undefined);
+    expect(candidate.officialIdentifiers.length).toBe(1);
+    expect(yield* Schema.encodeEffect(PartyCandidateSchema)(candidate)).toEqual(encoded);
+  }),
 );
 
 it('Party references retain tenant, module, resource type, and resource identity', () => {
-  expect(
-    makePartyRef(
-      '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222'
-    )
-  ).toEqual({
+  expect(makePartyRef('11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222')).toEqual({
     moduleId: 'party.registry',
     resourceId: '22222222-2222-4222-8222-222222222222',
     resourceType: 'party.registry.party',
@@ -132,41 +111,31 @@ it('Party references retain tenant, module, resource type, and resource identity
   });
 });
 
-it.effect(
-  'Party identity failures retain branded identifiers in encoded JSON',
-  () =>
-    Effect.gen(function* verifySchema3() {
-      const partyId = '22222222-2222-4222-8222-222222222222';
-      const failure = new PartyNotFound({
-        code: 'party_not_found',
-        partyId: partyIdFromString(partyId),
-        reason: 'The Party does not exist',
-      });
+it.effect('Party identity failures retain branded identifiers in encoded JSON', () =>
+  Effect.gen(function* verifySchema3() {
+    const partyId = '22222222-2222-4222-8222-222222222222';
+    const failure = new PartyNotFound({
+      code: 'party_not_found',
+      partyId: partyIdFromString(partyId),
+      reason: 'The Party does not exist',
+    });
 
-      const encodedFailure = yield* Schema.encodeEffect(PartyNotFound)(failure);
-      expect(Schema.is(Schema.toEncoded(PartyNotFound))(encodedFailure)).toBe(
-        true
-      );
-      expect(Struct.omit(encodedFailure, ['_tag'])).toEqual({
-        code: 'party_not_found',
-        partyId,
-        reason: 'The Party does not exist',
-      });
-    })
+    const encodedFailure = yield* Schema.encodeEffect(PartyNotFound)(failure);
+    expect(Schema.is(Schema.toEncoded(PartyNotFound))(encodedFailure)).toBe(true);
+    expect(Struct.omit(encodedFailure, ['_tag'])).toEqual({
+      code: 'party_not_found',
+      partyId,
+      reason: 'The Party does not exist',
+    });
+  }),
 );
 
 it('Party identity Actions are tenant-authorized, optionally scoped, and idempotent', () => {
-  for (const action of [
-    createPartyAction,
-    updatePartyAction,
-    unarchivePartyAction,
-  ]) {
+  for (const action of [createPartyAction, updatePartyAction, unarchivePartyAction]) {
     expect(action.descriptor.legalEntityScope).toBe('optional');
     expect(action.descriptor.idempotency).toBe('required');
     // SAFETY: These identity permission callbacks are constant and do not inspect payload fields.
-    expect(action.descriptor.tenantPermission?.({} as never)).toBe(
-      'manage_party_identity'
-    );
+    expect(action.descriptor.tenantPermission?.({} as never)).toBe('manage_party_identity');
   }
 });
 

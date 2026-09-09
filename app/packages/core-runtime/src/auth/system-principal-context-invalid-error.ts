@@ -5,5 +5,5 @@ export class SystemPrincipalContextInvalidError extends Schema.TaggedError<Syste
   {
     code: Schema.Literal('system_principal_context_invalid'),
     reason: Schema.String,
-  }
+  },
 ) {}

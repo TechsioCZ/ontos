@@ -23,9 +23,7 @@ const principal = {
   tenantId: 'a3000000-0000-4000-8000-000000000001',
 };
 
-const verificationFailure = (
-  _tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']
-) =>
+const verificationFailure = (_tag: (typeof OperationPrincipalVerificationErrorSchema.Type)['_tag']) =>
   Schema.decodeEffect(OperationPrincipalVerificationErrorSchema)({
     _tag,
     reason: 'Private verifier diagnostic',
@@ -47,23 +45,17 @@ const unavailableProblem = () => ({
   type: 'https://ontos.dev/problems/fixture-unavailable',
 });
 const ProblemResponseSchema = Schema.Struct({
-  _tag: Schema.Literals([
-    'FixtureAuthenticationProblem',
-    'FixtureUnavailableProblem',
-  ]),
+  _tag: Schema.Literals(['FixtureAuthenticationProblem', 'FixtureUnavailableProblem']),
   status: Schema.Literals([401, 503]),
 });
 const SuccessResponseSchema = Schema.Struct({ principal: Schema.Unknown });
 
-const problemResponse = (
-  problem: ReturnType<typeof authenticationProblem | typeof unavailableProblem>
-) =>
+const problemResponse = (problem: ReturnType<typeof authenticationProblem | typeof unavailableProblem>) =>
   HttpServerResponse.jsonUnsafe(problem, { status: problem.status }).pipe(
-    HttpServerResponse.setHeader('content-type', 'application/problem+json')
+    HttpServerResponse.setHeader('content-type', 'application/problem+json'),
   );
-const respondWithProblem = (
-  error: ReturnType<typeof authenticationProblem | typeof unavailableProblem>
-) => Effect.succeed(problemResponse(error));
+const respondWithProblem = (error: ReturnType<typeof authenticationProblem | typeof unavailableProblem>) =>
+  Effect.succeed(problemResponse(error));
 
 it.live(
   'mounted HTTP authentication maps verifier classes, challenges unusable credentials, and stops before private logic',
@@ -80,21 +72,19 @@ it.live(
       ['Bearer misconfigured', 'ActionPrincipalConfigurationError'],
       ['Bearer unavailable', 'ActionPrincipalUnavailableError'],
     ]);
-    const authenticate = makeMicroverticalHttpPrincipalAuthentication(
-      (authorization) => {
-        const raw = Redacted.value(authorization);
-        const failure = failureByCredential.get(raw);
-        return failure === undefined
-          ? Effect.succeed(principal)
-          : verificationFailure(failure).pipe(Effect.flatMap(Effect.fail));
-      }
-    );
+    const authenticate = makeMicroverticalHttpPrincipalAuthentication((authorization) => {
+      const raw = Redacted.value(authorization);
+      const failure = failureByCredential.get(raw);
+      return failure === undefined
+        ? Effect.succeed(principal)
+        : verificationFailure(failure).pipe(Effect.flatMap(Effect.fail));
+    });
 
     return Effect.gen(function* mountedAuthenticationHandler() {
-      const server = yield* NodeHttpServer.make(
-        () => process.getBuiltinModule('http').createServer(),
-        { host: '127.0.0.1', port: 0 }
-      );
+      const server = yield* NodeHttpServer.make(() => process.getBuiltinModule('http').createServer(), {
+        host: '127.0.0.1',
+        port: 0,
+      });
       const application = HttpServerRequest.HttpServerRequest.use((request) =>
         authenticate(Redacted.make(request.headers['authorization']), {
           authentication: authenticationProblem,
@@ -106,17 +96,15 @@ it.live(
               return HttpServerResponse.jsonUnsafe({
                 principal: trustedPrincipal,
               });
-            })
+            }),
           ),
-          Effect.catch(respondWithProblem)
-        )
+          Effect.catch(respondWithProblem),
+        ),
       );
       yield* server.serve(application);
       const address = yield* Match.value(server.address).pipe(
         Match.tag('TcpAddress', (tcpAddress) => Effect.succeed(tcpAddress)),
-        Match.orElse(() =>
-          Effect.die('HTTP authentication fixture did not bind to TCP')
-        )
+        Match.orElse(() => Effect.die('HTTP authentication fixture did not bind to TCP')),
       );
       const client = yield* HttpClient.HttpClient;
       const url = `http://127.0.0.1:${address.port}/operation`;
@@ -131,49 +119,31 @@ it.live(
         const request =
           authorization === undefined
             ? HttpClientRequest.get(url)
-            : HttpClientRequest.get(url).pipe(
-                HttpClientRequest.setHeader('authorization', authorization)
-              );
+            : HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader('authorization', authorization));
         const response = yield* client.execute(request);
         expect(response.status).toBe(expectedStatus);
-        expect(response.headers['content-type']).toBe(
-          'application/problem+json'
-        );
-        expect(response.headers['www-authenticate']).toBe(
-          expectedStatus === 401 ? 'Bearer' : undefined
-        );
+        expect(response.headers['content-type']).toBe('application/problem+json');
+        expect(response.headers['www-authenticate']).toBe(expectedStatus === 401 ? 'Bearer' : undefined);
         const rawBody = yield* response.json;
-        expect(rawBody).toEqual(
-          expectedStatus === 401
-            ? authenticationProblem()
-            : unavailableProblem()
-        );
-        const body = yield* Schema.decodeUnknownEffect(ProblemResponseSchema)(
-          rawBody
-        );
+        expect(rawBody).toEqual(expectedStatus === 401 ? authenticationProblem() : unavailableProblem());
+        const body = yield* Schema.decodeUnknownEffect(ProblemResponseSchema)(rawBody);
         expect(
           Predicate.isTagged(
             body,
-            expectedStatus === 401
-              ? 'FixtureAuthenticationProblem'
-              : 'FixtureUnavailableProblem'
-          )
+            expectedStatus === 401 ? 'FixtureAuthenticationProblem' : 'FixtureUnavailableProblem',
+          ),
         ).toBe(true);
         expect(body.status).toBe(expectedStatus);
       }
       expect(privateOperationReached).toBe(0);
 
       const success = yield* client.execute(
-        HttpClientRequest.get(url).pipe(
-          HttpClientRequest.setHeader('authorization', 'Bearer valid')
-        )
+        HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader('authorization', 'Bearer valid')),
       );
       expect(success.status).toBe(200);
-      const successBody = yield* success.json.pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema))
-      );
+      const successBody = yield* success.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SuccessResponseSchema)));
       expect(successBody.principal).toEqual(principal);
       expect(privateOperationReached).toBe(1);
     }).pipe(Effect.provide(FetchHttpClient.layer));
-  }
+  },
 );

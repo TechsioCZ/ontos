@@ -1,9 +1,6 @@
 import { Match } from 'effect';
 
-import type {
-  MergeReadinessBlocker,
-  MergeReadinessResult,
-} from '../../shared/domain/merge-readiness.ts';
+import type { MergeReadinessBlocker, MergeReadinessResult } from '../../shared/domain/merge-readiness.ts';
 import type { MergeSurvivorSelectionInput } from '../../shared/domain/merge-selection.ts';
 import type { PartyAlias } from '../../shared/resources/party-alias.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
@@ -11,10 +8,7 @@ import { selectCanonicalSurvivor } from './canonical-survivor-selection.ts';
 import { analyzeMergeCollisions } from './merge-collision-analysis.ts';
 import type { MergeCollisionInput } from './merge-collision-analysis.ts';
 import { planReferencePreservation } from './reference-preservation-plan.ts';
-import type {
-  ConsumerReconciliationContract,
-  PartyReferenceInventoryItem,
-} from './reference-preservation-plan.ts';
+import type { ConsumerReconciliationContract, PartyReferenceInventoryItem } from './reference-preservation-plan.ts';
 
 export const rejectProductionMergeExecution = () =>
   ({
@@ -59,55 +53,41 @@ const baseBlockers = () =>
     },
     {
       code: 'WRONG_MERGE_RECOVERY_UNPROVEN' as const,
-      detail:
-        'A behaviorally tested wrong-merge recovery path is required before merge execution can be enabled.',
+      detail: 'A behaviorally tested wrong-merge recovery path is required before merge execution can be enabled.',
       ownerKey: 'party.registry',
     },
   ] as const;
 
-export const analyzePreparedMergeReadiness = (
-  input: PreparedMergeReadinessInput
-): MergeReadinessResult => {
+export const analyzePreparedMergeReadiness = (input: PreparedMergeReadinessInput): MergeReadinessResult => {
   const selection = selectCanonicalSurvivor(input.selectionInput);
-  const partyRefs = input.selectionInput.candidates.map(
-    ({ partyRef }) => partyRef
-  );
+  const partyRefs = input.selectionInput.candidates.map(({ partyRef }) => partyRef);
   const selectionAnalysis = Match.value(selection).pipe(
-    Match.tag(
-      'CanonicalSurvivorSelected',
-      ({ survivorPartyRef }): SelectionReadinessAnalysis => ({
-        blockers: [],
-        selectedSurvivorPartyRef: survivorPartyRef,
-        status: 'SELECTED',
-      })
-    ),
-    Match.tag(
-      'SurvivorSelectionBlocked',
-      ({ blocker }): SelectionReadinessAnalysis => ({
-        blockers: [
-          {
-            code: blocker,
-            detail: `Canonical survivor selection is blocked: ${blocker}.`,
-            ownerKey: 'party.registry',
-          },
-        ],
-        selectedSurvivorPartyRef: null,
-        status: 'BLOCKED',
-      })
-    ),
-    Match.exhaustive
+    Match.tag('CanonicalSurvivorSelected', ({ survivorPartyRef }): SelectionReadinessAnalysis => ({
+      blockers: [],
+      selectedSurvivorPartyRef: survivorPartyRef,
+      status: 'SELECTED',
+    })),
+    Match.tag('SurvivorSelectionBlocked', ({ blocker }): SelectionReadinessAnalysis => ({
+      blockers: [
+        {
+          code: blocker,
+          detail: `Canonical survivor selection is blocked: ${blocker}.`,
+          ownerKey: 'party.registry',
+        },
+      ],
+      selectedSurvivorPartyRef: null,
+      status: 'BLOCKED',
+    })),
+    Match.exhaustive,
   );
   const survivorPartyRef =
-    selectionAnalysis.selectedSurvivorPartyRef ??
-    partyRefs[0] ??
-    input.collisionInput.survivorPartyRef;
+    selectionAnalysis.selectedSurvivorPartyRef ?? partyRefs[0] ?? input.collisionInput.survivorPartyRef;
   // Analyze the actual selection set, never a separately supplied collision target set.
   const collisions = analyzeMergeCollisions({
     ...input.collisionInput,
     absorbedPartyRefs: partyRefs.filter(
       (partyRef) =>
-        partyRef.resourceId !== survivorPartyRef.resourceId ||
-        partyRef.tenantId !== survivorPartyRef.tenantId
+        partyRef.resourceId !== survivorPartyRef.resourceId || partyRef.tenantId !== survivorPartyRef.tenantId,
     ),
     survivorPartyRef,
   });
@@ -116,38 +96,30 @@ export const analyzePreparedMergeReadiness = (
     consumerReconciliation: input.consumerReconciliation,
     references: input.references,
   });
-  const collisionBlockers: MergeReadinessBlocker[] = collisions.map(
-    ({ code, ownerKey }) => ({
-      code,
-      detail: `Merge preflight found ${code}; owner reconciliation is required.`,
-      ownerKey,
-    })
-  );
+  const collisionBlockers: MergeReadinessBlocker[] = collisions.map(({ code, ownerKey }) => ({
+    code,
+    detail: `Merge preflight found ${code}; owner reconciliation is required.`,
+    ownerKey,
+  }));
   const referenceAnalysis = Match.value(referencePlan).pipe(
-    Match.tag(
-      'ReferencePreservationPlanned',
-      (): ReferenceReadinessAnalysis => ({
-        blockers: [],
-        status: 'PLANNED',
-      })
-    ),
-    Match.tag(
-      'ReferencePreservationBlocked',
-      ({ blockers }): ReferenceReadinessAnalysis => ({
-        blockers: blockers.map(({ code, ownerKey }) => ({
-          code:
-            code === 'UNSUPPORTED_REFERENCE_CLASS' ||
-            code === 'CONSUMER_RECONCILIATION_UNPROVEN' ||
-            code === 'CONSUMER_PARTIAL_RETRY_UNPROVEN'
-              ? code
-              : ('UNSUPPORTED_REFERENCE_CLASS' as const),
-          detail: `Reference preservation is blocked: ${code}.`,
-          ownerKey,
-        })),
-        status: 'BLOCKED',
-      })
-    ),
-    Match.exhaustive
+    Match.tag('ReferencePreservationPlanned', (): ReferenceReadinessAnalysis => ({
+      blockers: [],
+      status: 'PLANNED',
+    })),
+    Match.tag('ReferencePreservationBlocked', ({ blockers }): ReferenceReadinessAnalysis => ({
+      blockers: blockers.map(({ code, ownerKey }) => ({
+        code:
+          code === 'UNSUPPORTED_REFERENCE_CLASS' ||
+          code === 'CONSUMER_RECONCILIATION_UNPROVEN' ||
+          code === 'CONSUMER_PARTIAL_RETRY_UNPROVEN'
+            ? code
+            : ('UNSUPPORTED_REFERENCE_CLASS' as const),
+        detail: `Reference preservation is blocked: ${code}.`,
+        ownerKey,
+      })),
+      status: 'BLOCKED',
+    })),
+    Match.exhaustive,
   );
   return {
     analysis: {
@@ -156,21 +128,14 @@ export const analyzePreparedMergeReadiness = (
       selectedSurvivorPartyRef: selectionAnalysis.selectedSurvivorPartyRef,
       selectionStatus: selectionAnalysis.status,
     },
-    blockers: [
-      ...baseBlockers(),
-      ...selectionAnalysis.blockers,
-      ...collisionBlockers,
-      ...referenceAnalysis.blockers,
-    ],
+    blockers: [...baseBlockers(), ...selectionAnalysis.blockers, ...collisionBlockers, ...referenceAnalysis.blockers],
     mergeExecutionEnabled: false,
     partyRefs,
     status: 'DISABLED',
   };
 };
 
-export const evaluateDisabledMergeReadiness = (
-  partyRefs: readonly PartyRef[]
-): MergeReadinessResult => {
+export const evaluateDisabledMergeReadiness = (partyRefs: readonly PartyRef[]): MergeReadinessResult => {
   const unavailable = analyzePreparedMergeReadiness({
     aliases: [],
     collisionInput: {
@@ -209,8 +174,7 @@ export const evaluateDisabledMergeReadiness = (
       ...unavailable.blockers,
       {
         code: 'PREPARED_STATE_UNAVAILABLE',
-        detail:
-          'This read-only boundary has no canonical prepared merge state for the requested Parties.',
+        detail: 'This read-only boundary has no canonical prepared merge state for the requested Parties.',
         ownerKey: 'party.registry',
       },
     ],

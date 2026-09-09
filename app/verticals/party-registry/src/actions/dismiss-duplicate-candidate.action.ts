@@ -43,12 +43,7 @@ export const dismissDuplicateCandidateAction = defineAction(
     tenantPermission: () => 'review_party_identity',
   },
   handleDuplicateCaseResolution,
-  (transaction, scope) =>
-    duplicateCaseResolutionService(
-      transaction,
-      scope.tenantId,
-      'DISMISSED_AS_NON_SUBJECT'
-    )
+  (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'DISMISSED_AS_NON_SUBJECT'),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

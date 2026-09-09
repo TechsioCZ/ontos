@@ -5,9 +5,10 @@ import {
 } from '@app/party-registry/outbox/party-registry-contact-point-updated-v1';
 import type { OutboxPayload } from '@app/party-registry/outbox/party-registry-contact-point-updated-v1';
 
-export const createUpdateContactPointPartyRegistryContactPointUpdatedV1OutboxMessage =
-  (payload: OutboxPayload): OutboxMessage => ({
-    payloadJson: payload,
-    producerModuleKey: outboxProducerModuleKey,
-    topic: outboxTopic,
-  });
+export const createUpdateContactPointPartyRegistryContactPointUpdatedV1OutboxMessage = (
+  payload: OutboxPayload,
+): OutboxMessage => ({
+  payloadJson: payload,
+  producerModuleKey: outboxProducerModuleKey,
+  topic: outboxTopic,
+});

@@ -18,20 +18,14 @@ export const resolveUltramodernInvocation = <E,>(options: CommandOptions<E>) =>
     const moduleDirectory = yield* path
       .fromFileUrl(new URL('.', options.moduleUrl))
       .pipe(Effect.mapError(() => options.failure(options.directoryFailure)));
-    const workspaceRoot = yield* Config.string(
-      'ULTRAMODERN_WORKSPACE_ROOT'
-    ).pipe(
+    const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
       Config.withDefault(path.resolve(moduleDirectory, '..')),
-      Effect.mapError(() =>
-        options.failure('ULTRAMODERN_WORKSPACE_ROOT is invalid')
-      )
+      Effect.mapError(() => options.failure('ULTRAMODERN_WORKSPACE_ROOT is invalid')),
     );
     const createBin = yield* Config.string('ULTRAMODERN_CREATE_BIN').pipe(
       Config.option,
       Effect.map(Option.filter((value) => value.length > 0)),
-      Effect.mapError(() =>
-        options.failure('ULTRAMODERN_CREATE_BIN is invalid')
-      )
+      Effect.mapError(() => options.failure('ULTRAMODERN_CREATE_BIN is invalid')),
     );
     const forwardedArgs = yield* stdio.args;
     const args = ['ultramodern', options.command, ...forwardedArgs];
@@ -59,34 +53,25 @@ export const resolveUltramodernInvocation = <E,>(options: CommandOptions<E>) =>
       }),
       forwardedArgs,
       launchFailure: (error: PlatformError.PlatformError) => {
-        const detail =
-          options.launchErrorDetail?.(error) ?? `: ${String(error)}`;
+        const detail = options.launchErrorDetail?.(error) ?? `: ${String(error)}`;
         return options.failure(
-          `Failed to launch ${launch.target} for UltraModern command "${args.slice(1).join(' ')}"${detail}`
+          `Failed to launch ${launch.target} for UltraModern command "${args.slice(1).join(' ')}"${detail}`,
         );
       },
       workspaceRoot,
     };
   });
 
-export const launchUltramodern = <E,>(
-  invocation: Effect.Success<ReturnType<typeof resolveUltramodernInvocation<E>>>
-) =>
+export const launchUltramodern = <E,>(invocation: Effect.Success<ReturnType<typeof resolveUltramodernInvocation<E>>>) =>
   Effect.gen(function* launchUltramodernEffect() {
     const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return Number(
-      yield* processSpawner
-        .exitCode(invocation.command)
-        .pipe(Effect.mapError(invocation.launchFailure))
-    );
+    return Number(yield* processSpawner.exitCode(invocation.command).pipe(Effect.mapError(invocation.launchFailure)));
   });
 
-export const runUltramodernScript = <E extends { readonly reason: string }>(
-  options: CommandOptions<E>
-) =>
+export const runUltramodernScript = <E extends { readonly reason: string }>(options: CommandOptions<E>) =>
   resolveUltramodernInvocation(options).pipe(
     Effect.flatMap(launchUltramodern),
-    Effect.tapError(({ reason }) => Console.error(reason))
+    Effect.tapError(({ reason }) => Console.error(reason)),
   );
 
 export const ultramodernExitCode = Exit.match<number, unknown, number, number>({

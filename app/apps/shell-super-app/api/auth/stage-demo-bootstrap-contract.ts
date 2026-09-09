@@ -18,9 +18,7 @@ type ExactRecord = Readonly<Record<string, Comparable>>;
 type DecodedConfigString = Schema.Schema.Type<typeof Schema.String>;
 type OptionalDecodedConfigString = DecodedConfigString | undefined;
 
-export type StageDemoEnvironment = Readonly<
-  Record<string, OptionalDecodedConfigString>
->;
+export type StageDemoEnvironment = Readonly<Record<string, OptionalDecodedConfigString>>;
 
 export interface StageDemoBootstrapConfig {
   readonly accounts: readonly [StageDemoAccountConfig, StageDemoAccountConfig];
@@ -47,17 +45,10 @@ export interface StageDemoBootstrapResult {
   readonly accounts: readonly StageDemoAccountResult[];
 }
 
-export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstrapError>()(
-  'StageDemoBootstrapError',
-  {
-    code: Schema.Literals([
-      'stage_demo_configuration_invalid',
-      'stage_demo_conflict',
-      'stage_demo_persistence_failed',
-    ]),
-    reason: Schema.String,
-  }
-) {}
+export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstrapError>()('StageDemoBootstrapError', {
+  code: Schema.Literals(['stage_demo_configuration_invalid', 'stage_demo_conflict', 'stage_demo_persistence_failed']),
+  reason: Schema.String,
+}) {}
 
 const configurationFailure = (reason: string): StageDemoBootstrapError =>
   new StageDemoBootstrapError({
@@ -65,35 +56,26 @@ const configurationFailure = (reason: string): StageDemoBootstrapError =>
     reason,
   });
 
-const StageEnvironmentSchema = Schema.Trim.pipe(
-  Schema.decodeTo(Schema.Literal('stage'))
-);
-const StageDemoPasswordSchema = Schema.Redacted(
-  Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(8))
-);
-const StageAuthSecretSchema = Schema.Redacted(
-  Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(32))
-);
+const StageEnvironmentSchema = Schema.Trim.pipe(Schema.decodeTo(Schema.Literal('stage')));
+const StageDemoPasswordSchema = Schema.Redacted(Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(8)));
+const StageAuthSecretSchema = Schema.Redacted(Schema.Trim.check(Schema.isNonEmpty(), Schema.isMinLength(32)));
 const HttpOriginSchema = Schema.Trim.check(
   Schema.isNonEmpty(),
   Schema.makeFilter((value) => {
     const url = URL.parse(value);
-    return url !== null &&
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      url.origin === value
+    return url !== null && (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value
       ? undefined
       : 'URL must be an HTTP origin';
-  })
+  }),
 );
 const PostgreSqlUrlSchema = Schema.Trim.check(
   Schema.isNonEmpty(),
   Schema.makeFilter((value) => {
     const url = URL.parse(value);
-    return url !== null &&
-      (url.protocol === 'postgres:' || url.protocol === 'postgresql:')
+    return url !== null && (url.protocol === 'postgres:' || url.protocol === 'postgresql:')
       ? undefined
       : 'URL must use PostgreSQL';
-  })
+  }),
 );
 
 const stageDemoBootstrapSource = Config.all({
@@ -101,14 +83,8 @@ const stageDemoBootstrapSource = Config.all({
   authSecret: Config.schema(StageAuthSecretSchema, 'BETTER_AUTH_SECRET'),
   databaseAdminUrl: Config.schema(PostgreSqlUrlSchema, 'DATABASE_ADMIN_URL'),
   demoPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_DEMO_PASSWORD'),
-  deploymentEnvironment: Config.schema(
-    StageEnvironmentSchema,
-    'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'
-  ),
-  siamparkPassword: Config.schema(
-    StageDemoPasswordSchema,
-    'STAGE_SIAMPARK_PASSWORD'
-  ),
+  deploymentEnvironment: Config.schema(StageEnvironmentSchema, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
+  siamparkPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_SIAMPARK_PASSWORD'),
 });
 
 const configurationRequirements = [
@@ -119,50 +95,35 @@ const configurationRequirements = [
   ['DATABASE_ADMIN_URL', 'must use PostgreSQL'],
 ] as const;
 
-const configurationFailureFromConfigError = (
-  error: Config.ConfigError
-): StageDemoBootstrapError => {
+const configurationFailureFromConfigError = (error: Config.ConfigError): StageDemoBootstrapError => {
   const { message } = error;
   if (message.includes('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')) {
-    return configurationFailure(
-      'The demo bootstrap can run only in the stage environment'
-    );
+    return configurationFailure('The demo bootstrap can run only in the stage environment');
   }
-  const requirement = configurationRequirements.find(([key]) =>
-    message.includes(key)
-  );
+  const requirement = configurationRequirements.find(([key]) => message.includes(key));
   if (requirement === undefined) {
     return configurationFailure('The stage demo configuration is invalid');
   }
   const [key, invalidReason] = requirement;
-  return configurationFailure(
-    `${key} ${message.includes('Expected string') ? 'is required' : invalidReason}`
-  );
+  return configurationFailure(`${key} ${message.includes('Expected string') ? 'is required' : invalidReason}`);
 };
 
-const environmentProvider = (
-  environment: StageDemoEnvironment
-): ConfigProvider.ConfigProvider =>
+const environmentProvider = (environment: StageDemoEnvironment): ConfigProvider.ConfigProvider =>
   ConfigProvider.fromEnvRecord({
     BETTER_AUTH_SECRET: environment['BETTER_AUTH_SECRET'],
     BETTER_AUTH_URL: environment['BETTER_AUTH_URL'],
     DATABASE_ADMIN_URL: environment['DATABASE_ADMIN_URL'],
     STAGE_DEMO_PASSWORD: environment['STAGE_DEMO_PASSWORD'],
     STAGE_SIAMPARK_PASSWORD: environment['STAGE_SIAMPARK_PASSWORD'],
-    ULTRAMODERN_DEPLOYMENT_ENVIRONMENT:
-      environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'],
+    ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'],
   });
 
 const parseStageDemoBootstrapConfigFromProvider = Effect.fn(
-  'StageDemoBootstrapContract.parseStageDemoBootstrapConfigFromProvider'
+  'StageDemoBootstrapContract.parseStageDemoBootstrapConfigFromProvider',
 )(function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
   const source = yield* stageDemoBootstrapSource
     .parse(provider)
-    .pipe(
-      Effect.catchTag('ConfigError', (error) =>
-        Effect.fail(configurationFailureFromConfigError(error))
-      )
-    );
+    .pipe(Effect.catchTag('ConfigError', (error) => Effect.fail(configurationFailureFromConfigError(error))));
   return {
     accounts: [
       {
@@ -183,28 +144,28 @@ const parseStageDemoBootstrapConfigFromProvider = Effect.fn(
 });
 
 export const parseStageDemoBootstrapConfig = (
-  environment: StageDemoEnvironment
+  environment: StageDemoEnvironment,
 ): Effect.Effect<StageDemoBootstrapConfig, StageDemoBootstrapError> =>
   parseStageDemoBootstrapConfigFromProvider(environmentProvider(environment));
 
 export const classifyExactStageDemoRecord = <Expected extends ExactRecord>(
   label: string,
   existing: ExactRecord | undefined,
-  expected: Expected
+  expected: Expected,
 ): Effect.Effect<'create' | 'existing', StageDemoBootstrapError> =>
   Effect.suspend(() => {
     if (existing === undefined) {
       return Effect.succeed('create' as const);
     }
-    const conflictingFields = Object.entries(expected).flatMap(
-      ([key, value]) => (existing[key] === value ? [] : [key])
+    const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
+      existing[key] === value ? [] : [key],
     );
     if (conflictingFields.length > 0) {
       return Effect.fail(
         new StageDemoBootstrapError({
           code: 'stage_demo_conflict',
           reason: `Existing ${label} conflicts with the stage demo definition (${conflictingFields.join(', ')})`,
-        })
+        }),
       );
     }
     return Effect.succeed('existing' as const);

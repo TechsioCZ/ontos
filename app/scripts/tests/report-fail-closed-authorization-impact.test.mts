@@ -32,10 +32,7 @@ const event = (changed: EvidenceFixtureOverride = {}) => ({
 });
 
 it('impact reduction is deterministic and aggregates sanitized evidence', () => {
-  const report = reduceAuthorizationImpact([
-    event({ timestamp: observationEndedAt }),
-    event(),
-  ]);
+  const report = reduceAuthorizationImpact([event({ timestamp: observationEndedAt }), event()]);
   expect(report.totalWouldDeny).toBe(2);
   expect(report.aggregates[0]?.count).toBe(2);
   expect(report.observation).toEqual({
@@ -45,15 +42,9 @@ it('impact reduction is deterministic and aggregates sanitized evidence', () => 
 });
 
 it('impact reduction rejects mixed build evidence and sensitive extra fields', () => {
-  expect(() =>
-    reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })])
-  ).toThrow(/mixes/u);
-  expect(() =>
-    reduceAuthorizationImpact([event({ principalId: 'secret' })])
-  ).toThrow(/prohibited/u);
-  expect(() =>
-    reduceAuthorizationImpact([event({ tenantId: 'secret' })])
-  ).toThrow(/prohibited/u);
+  expect(() => reduceAuthorizationImpact([event(), event({ sourceRevision: 'other' })])).toThrow(/mixes/u);
+  expect(() => reduceAuthorizationImpact([event({ principalId: 'secret' })])).toThrow(/prohibited/u);
+  expect(() => reduceAuthorizationImpact([event({ tenantId: 'secret' })])).toThrow(/prohibited/u);
 });
 
 it('a bounded empty observation produces a zero-impact report', () => {
@@ -68,13 +59,13 @@ it('a bounded empty observation produces a zero-impact report', () => {
 });
 
 it('impact reduction rejects sensitive values smuggled into allowed evidence fields', () => {
-  expect(() =>
-    reduceAuthorizationImpact([event({ entrypointKey: 'tenant@example.com' })])
-  ).toThrow(prohibitedValuePattern);
-  expect(() =>
-    reduceAuthorizationImpact([event({ denialReason: 'principal-a2000000' })])
-  ).toThrow(prohibitedValuePattern);
-  expect(() =>
-    reduceAuthorizationImpact([event({ policyClass: 'raw-relation-tuple' })])
-  ).toThrow(prohibitedValuePattern);
+  expect(() => reduceAuthorizationImpact([event({ entrypointKey: 'tenant@example.com' })])).toThrow(
+    prohibitedValuePattern,
+  );
+  expect(() => reduceAuthorizationImpact([event({ denialReason: 'principal-a2000000' })])).toThrow(
+    prohibitedValuePattern,
+  );
+  expect(() => reduceAuthorizationImpact([event({ policyClass: 'raw-relation-tuple' })])).toThrow(
+    prohibitedValuePattern,
+  );
 });

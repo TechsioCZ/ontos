@@ -12,19 +12,19 @@ Rename the existing CRM MicroVertical to Contacts across every current applicati
 
 The target naming contract is:
 
-| Surface | Current | Target |
-| --- | --- | --- |
-| Display name | `CRM` / `Crm` | `Contacts` |
-| Deployment/topology `appId` | `crm` | `contacts` |
-| Module Contract Identity | `crm.core` | `contacts.core` |
-| Workspace path/package | `verticals/crm`, `@app/crm` | `verticals/contacts`, `@app/contacts` |
-| Shell and owner routes | `/crm/**` | `/contacts/**` |
-| BFF prefix/base | `/crm-api/crm/**` | `/contacts-api/contacts/**` |
-| Module Federation | `crm`, `verticalCrm`, `PageCrm` | `contacts`, `verticalContacts`, `PageContacts` |
-| Locale namespace/catalog | `crm`, `crm.json` | `contacts`, `contacts.json` |
-| PostgreSQL ownership | schema/object prefix/journal `crm` | schema/object prefix/journal `contacts` |
-| Environment/CI names | `*_CRM_*`, `*_URL_CRM`, `ZEROPS_CRM_SERVICE_ID` | `*_CONTACTS_*`, `*_URL_CONTACTS`, `ZEROPS_CONTACTS_SERVICE_ID` |
-| Zerops/Cloudflare identity | `crm`, `app-crm` | `contacts`, `app-contacts` |
+| Surface                     | Current                                         | Target                                                         |
+| --------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
+| Display name                | `CRM` / `Crm`                                   | `Contacts`                                                     |
+| Deployment/topology `appId` | `crm`                                           | `contacts`                                                     |
+| Module Contract Identity    | `crm.core`                                      | `contacts.core`                                                |
+| Workspace path/package      | `verticals/crm`, `@app/crm`                     | `verticals/contacts`, `@app/contacts`                          |
+| Shell and owner routes      | `/crm/**`                                       | `/contacts/**`                                                 |
+| BFF prefix/base             | `/crm-api/crm/**`                               | `/contacts-api/contacts/**`                                    |
+| Module Federation           | `crm`, `verticalCrm`, `PageCrm`                 | `contacts`, `verticalContacts`, `PageContacts`                 |
+| Locale namespace/catalog    | `crm`, `crm.json`                               | `contacts`, `contacts.json`                                    |
+| PostgreSQL ownership        | schema/object prefix/journal `crm`              | schema/object prefix/journal `contacts`                        |
+| Environment/CI names        | `*_CRM_*`, `*_URL_CRM`, `ZEROPS_CRM_SERVICE_ID` | `*_CONTACTS_*`, `*_URL_CONTACTS`, `ZEROPS_CONTACTS_SERVICE_ID` |
+| Zerops/Cloudflare identity  | `crm`, `app-crm`                                | `contacts`, `app-contacts`                                     |
 
 The migration must preserve existing Customer and Contact rows, tenant module state, authorization, and structured Core references. It must fail closed on ambiguous mixed CRM/Contacts database or authorization state. Historical specifications, ADRs, and already-applied Drizzle migrations remain immutable provenance and are the only allowed legacy-name exceptions; new compatibility migrations may mention the old identifiers only where required to recognize and migrate them.
 

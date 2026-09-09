@@ -1,12 +1,4 @@
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 import { loadConfigurationProvider } from './configuration-provider.ts';
 
@@ -39,7 +31,7 @@ export interface AuthConfigValue {
 }
 
 export class AuthConfig extends Context.Service<AuthConfig, AuthConfigValue>()(
-  '@app/shell-super-app/api/auth/config/AuthConfig'
+  '@app/shell-super-app/api/auth/config/AuthConfig',
 ) {}
 
 const malformedConfiguration = () =>
@@ -52,21 +44,15 @@ const unableToLoadEnvironment = () =>
     reason: 'Unable to load the root authentication environment',
   });
 
-const isHttpUrl = (url: URL): boolean =>
-  url.protocol === 'http:' || url.protocol === 'https:';
+const isHttpUrl = (url: URL): boolean => url.protocol === 'http:' || url.protocol === 'https:';
 
-const isPostgreSqlUrl = (url: URL): boolean =>
-  url.protocol === 'postgres:' || url.protocol === 'postgresql:';
+const isPostgreSqlUrl = (url: URL): boolean => url.protocol === 'postgres:' || url.protocol === 'postgresql:';
 
 const HttpUrlSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    isHttpUrl(url) ? undefined : 'URL must use http or https'
-  )
+  Schema.makeFilter((url) => (isHttpUrl(url) ? undefined : 'URL must use http or https')),
 );
 const PostgreSqlUrlSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    isPostgreSqlUrl(url) ? undefined : 'URL must use the PostgreSQL protocol'
-  )
+  Schema.makeFilter((url) => (isPostgreSqlUrl(url) ? undefined : 'URL must use the PostgreSQL protocol')),
 );
 
 const authConfigSource = Config.all({
@@ -74,37 +60,25 @@ const authConfigSource = Config.all({
   databaseUrl: Config.redacted('DATABASE_URL'),
   nodeEnvironment: Config.string('NODE_ENV').pipe(Config.withDefault('')),
   secret: Config.redacted('BETTER_AUTH_SECRET'),
-  supportUserIds: Config.schema(
-    Schema.Trim,
-    'BETTER_AUTH_SUPPORT_USER_IDS'
-  ).pipe(Config.withDefault('')),
-  trustedOrigins: Config.schema(
-    Schema.Trim,
-    'BETTER_AUTH_TRUSTED_ORIGINS'
-  ).pipe(Config.withDefault('')),
+  supportUserIds: Config.schema(Schema.Trim, 'BETTER_AUTH_SUPPORT_USER_IDS').pipe(Config.withDefault('')),
+  trustedOrigins: Config.schema(Schema.Trim, 'BETTER_AUTH_TRUSTED_ORIGINS').pipe(Config.withDefault('')),
 });
 
-const parseHttpOrigin = (
-  value: string
-): Effect.Effect<string, AuthConfigFailure> =>
+const parseHttpOrigin = (value: string): Effect.Effect<string, AuthConfigFailure> =>
   Schema.decodeEffect(HttpUrlSchema)(value).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
-    Effect.map((url) => url.origin)
+    Effect.map((url) => url.origin),
   );
 
-const parseAuthConfigFromProvider = Effect.fn(
-  'AuthConfig.parseAuthConfigFromProvider'
-)(function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
+const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromProvider')(function* parseConfiguration(
+  provider: ConfigProvider.ConfigProvider,
+) {
   const source = yield* authConfigSource
     .parse(provider)
-    .pipe(
-      Effect.catchTag('ConfigError', () =>
-        Effect.fail(malformedConfiguration())
-      )
-    );
+    .pipe(Effect.catchTag('ConfigError', () => Effect.fail(malformedConfiguration())));
   const connectionString = Redacted.value(source.databaseUrl).trim();
   yield* Schema.decodeEffect(PostgreSqlUrlSchema)(connectionString).pipe(
-    Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration()))
+    Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
   );
   const secret = Redacted.value(source.secret).trim();
   if (secret.length < 32) {
@@ -116,17 +90,15 @@ const parseAuthConfigFromProvider = Effect.fn(
     .split(',')
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
-  const trustedOrigins = yield* Effect.forEach(
-    [...new Set([baseUrl, ...configuredTrustedOrigins])],
-    parseHttpOrigin,
-    { concurrency: 1 }
-  );
+  const trustedOrigins = yield* Effect.forEach([...new Set([baseUrl, ...configuredTrustedOrigins])], parseHttpOrigin, {
+    concurrency: 1,
+  });
   const supportUserIds = [
     ...new Set(
       source.supportUserIds
         .split(',')
         .map((userId) => userId.trim())
-        .filter((userId) => userId.length > 0)
+        .filter((userId) => userId.length > 0),
     ),
   ];
 
@@ -134,17 +106,13 @@ const parseAuthConfigFromProvider = Effect.fn(
     baseUrl,
     connectionString,
     secret,
-    secureCookies:
-      source.baseUrl.protocol === 'https:' ||
-      source.nodeEnvironment === 'production',
+    secureCookies: source.baseUrl.protocol === 'https:' || source.nodeEnvironment === 'production',
     supportUserIds,
     trustedOrigins,
   };
 });
 
-export const parseAuthConfig = (
-  environment: Environment
-): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
+export const parseAuthConfig = (environment: Environment): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
   parseAuthConfigFromProvider(ConfigProvider.fromEnvRecord(environment));
 
 export interface LoadAuthConfigOptions {
@@ -153,10 +121,8 @@ export interface LoadAuthConfigOptions {
 }
 
 export const loadAuthConfig = (
-  options: LoadAuthConfigOptions = {}
+  options: LoadAuthConfigOptions = {},
 ): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
-  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(
-    Effect.flatMap(parseAuthConfigFromProvider)
-  );
+  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(Effect.flatMap(parseAuthConfigFromProvider));
 
 export const AuthConfigLive = Layer.effect(AuthConfig, loadAuthConfig());

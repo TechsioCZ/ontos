@@ -12,9 +12,9 @@ const TopologySchema = Schema.fromJsonString(
         moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
         package: Schema.String,
         path: Schema.String,
-      })
+      }),
     ),
-  })
+  }),
 );
 
 class OutboxWorkerDeploymentError extends Error {
@@ -39,22 +39,17 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
   Effect.gen(function* generateDeployment() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const topologySource = yield* fs.readFileString(
-      path.join(root, 'topology/reference-topology.json')
-    );
-    const topology =
-      yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
+    const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
+    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
     let result = source.replace(
       /\n {2}# <generated-outbox-worker-deployments>[\s\S]*? {2}# <\/generated-outbox-worker-deployments>\n?/u,
-      '\n'
+      '\n',
     );
     /** @type {string[]} */
     const services = [];
     for (const vertical of topology.verticals) {
       const delivery = yield* outboxWorkerDelivery(root, vertical).pipe(
-        Effect.mapError(() =>
-          failure(`Invalid generated worker delivery for ${vertical.id}`)
-        )
+        Effect.mapError(() => failure(`Invalid generated worker delivery for ${vertical.id}`)),
       );
       if (delivery === undefined) {
         continue;
@@ -63,21 +58,15 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         .split(/(?=^ {2}- setup:)/mu)
         .find((section) => section.startsWith(`  - setup: '${vertical.id}'\n`));
       if (ownerSection === undefined) {
-        return yield* Effect.fail(
-          failure(`Missing owner deployment for ${vertical.id}`)
-        );
+        return yield* Effect.fail(failure(`Missing owner deployment for ${vertical.id}`));
       }
-      const port = /^ {8}PORT: '(?<port>[0-9]+)'$/mu.exec(ownerSection)?.groups
-        ?.port;
+      const port = /^ {8}PORT: '(?<port>[0-9]+)'$/mu.exec(ownerSection)?.groups?.port;
       const topologyPort = yield* Effect.try({
-        catch: () =>
-          failure(`Invalid topology manifest URL for ${vertical.id}`),
+        catch: () => failure(`Invalid topology manifest URL for ${vertical.id}`),
         try: () => new URL(vertical.moduleFederation.manifestUrl).port,
       });
       if (port === undefined || port.length === 0 || port !== topologyPort) {
-        return yield* Effect.fail(
-          failure(`Owner port disagrees with topology for ${vertical.id}`)
-        );
+        return yield* Effect.fail(failure(`Owner port disagrees with topology for ${vertical.id}`));
       }
       const ownerServiceHostname = vertical.id.replaceAll('-', '');
       const service = ownerSection
@@ -87,31 +76,20 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         .split('\n')
         .filter(
           (line) =>
-            !line.includes(' run build') &&
-            !line.includes("- cp 'app/topology/") &&
-            !line.includes('VERTICAL_')
+            !line.includes(' run build') && !line.includes("- cp 'app/topology/") && !line.includes('VERTICAL_'),
         )
         .map((line) =>
           line.includes('run zerops:materialize')
-            ? line.replace(
-                'cd app && ',
-                'cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" '
-              )
-            : line
+            ? line.replace('cd app && ', 'cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ')
+            : line,
         )
         .join('\n')
-        .replace(
-          /(?<command>run zerops:materialize[^\n]*)/u,
-          '$<command> --worker'
-        )
+        .replace(/(?<command>run zerops:materialize[^\n]*)/u, '$<command> --worker')
         .replaceAll(`/${vertical.id}-api/${vertical.id}/readiness`, '/ready')
-        .replace(
-          `ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`,
-          `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`
-        )
+        .replace(`ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`, `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`)
         .replace(
           `        PORT: '${port}'`,
-          `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'\n        DATABASE_URL: \${${ownerServiceHostname}_DATABASE_URL}`
+          `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'\n        DATABASE_URL: \${${ownerServiceHostname}_DATABASE_URL}`,
         );
       services.push(service);
     }
@@ -143,9 +121,7 @@ const runCommand = ({ write }) =>
       yield* fs.writeFileString(file, generated);
     } else if (source !== generated) {
       yield* Effect.fail(
-        failure(
-          'Worker deployment drift: run node scripts/generate-outbox-worker-deployment.mjs --write'
-        )
+        failure('Worker deployment drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
       );
     }
   });
@@ -153,7 +129,7 @@ const runCommand = ({ write }) =>
 const command = Command.make(
   'generate-outbox-worker-deployment',
   { write: Flag.boolean('write').pipe(Flag.withDefault(false)) },
-  runCommand
+  runCommand,
 );
 
 if (import.meta.main) {

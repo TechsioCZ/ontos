@@ -46,11 +46,7 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import {
-  unwrap as unwrapAst,
-  memberName as astMemberName,
-  keyName,
-} from '../shared/ast.ts';
+import { unwrap as unwrapAst, memberName as astMemberName, keyName } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { importedName } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
@@ -96,10 +92,7 @@ function readOptions(context: Context) {
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
     untypedHooks: stringArray(record.untypedHooks, DEFAULT_UNTYPED_HOOKS),
     routerModules: stringArray(record.routerModules, DEFAULT_ROUTER_MODULES),
-    manualConstructors: stringArray(
-      record.manualConstructors,
-      DEFAULT_MANUAL_CONSTRUCTORS
-    ),
+    manualConstructors: stringArray(record.manualConstructors, DEFAULT_MANUAL_CONSTRUCTORS),
     flagStrictFalseOnly: record.flagStrictFalseOnly !== false,
     flagUrlSearchParams: record.flagUrlSearchParams !== false,
     allowTestFiles: record.allowTestFiles === true,
@@ -125,12 +118,8 @@ function memberName(node: ESTree.MemberExpression): string | null {
   });
 }
 
-function propertyKeyName(
-  property: Extract<ESTree.Node, { type: 'Property' }>
-): string | null {
-  return property.computed
-    ? null
-    : keyName(property.key, false, { templates: false });
+function propertyKeyName(property: Extract<ESTree.Node, { type: 'Property' }>): string | null {
+  return property.computed ? null : keyName(property.key, false, { templates: false });
 }
 
 /**
@@ -142,11 +131,7 @@ function collectWrites(variable: Variable): readonly ESTree.Node[] {
   for (const definition of variable.defs) {
     if (definition.type !== 'Variable') continue;
     const declarator = definition.node;
-    if (
-      declarator.type === 'VariableDeclarator' &&
-      declarator.init !== null &&
-      declarator.init !== undefined
-    ) {
+    if (declarator.type === 'VariableDeclarator' && declarator.init !== null && declarator.init !== undefined) {
       writes.push(declarator.init);
     }
   }
@@ -157,20 +142,12 @@ function collectWrites(variable: Variable): readonly ESTree.Node[] {
   return writes;
 }
 
-function writesOf(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>
-): readonly ESTree.Node[] {
+function writesOf(context: Context, identifier: Extract<ESTree.Node, { type: 'Identifier' }>): readonly ESTree.Node[] {
   const variable = lookupVariable(context, identifier);
   if (variable === null) return [];
   // Options/constructor aliases must have a stable value; an earlier false/global assignment
   // does not prove the value used by a later call.
-  if (
-    variable.references.some(
-      (reference) => reference.isWrite() && !reference.init
-    )
-  )
-    return [];
+  if (variable.references.some((reference) => reference.isWrite() && !reference.init)) return [];
   return collectWrites(variable);
 }
 
@@ -179,24 +156,17 @@ function writesOf(
  * no declaration (the implicit global scope). Any real declaration — `const`, class, function,
  * parameter, catch clause or `import` — means this is not the browser API and must not be reported.
  */
-function isUnshadowedGlobal(
-  context: Context,
-  identifier: Extract<ESTree.Node, { type: 'Identifier' }>
-): boolean {
+function isUnshadowedGlobal(context: Context, identifier: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   const variable = lookupVariable(context, identifier);
   if (variable === null) return true;
   return variable.defs.length === 0;
 }
 
 /** `Foo` / `globalThis.Foo` → `"Foo"`, only when `Foo` (or the global object) is unshadowed. */
-function directGlobalName(
-  context: Context,
-  node: ESTree.Node | null
-): string | null {
+function directGlobalName(context: Context, node: ESTree.Node | null): string | null {
   const target = unwrap(node);
   if (target === null) return null;
-  if (target.type === 'Identifier')
-    return isUnshadowedGlobal(context, target) ? target.name : null;
+  if (target.type === 'Identifier') return isUnshadowedGlobal(context, target) ? target.name : null;
   if (target.type !== 'MemberExpression') return null;
   const name = memberName(target);
   if (name === null) return null;
@@ -211,11 +181,7 @@ function directGlobalName(
  * (`const Params = URLSearchParams` / `const Form = globalThis.FormData`) so a one-line rebinding does
  * not defeat the check.
  */
-function globalName(
-  context: Context,
-  node: ESTree.Node | null,
-  depth = 0
-): string | null {
+function globalName(context: Context, node: ESTree.Node | null, depth = 0): string | null {
   const direct = directGlobalName(context, node);
   if (direct !== null) return direct;
   if (depth >= MAX_ALIAS_DEPTH) return null;
@@ -229,10 +195,7 @@ function globalName(
 }
 
 /** `new Foo(...)`, `new globalThis.Foo(...)`, `new AliasOfFoo(...)` → `"Foo"`. */
-function globalConstructorName(
-  context: Context,
-  node: ESTree.NewExpression
-): string | null {
+function globalConstructorName(context: Context, node: ESTree.NewExpression): string | null {
   return globalName(context, node.callee);
 }
 
@@ -240,36 +203,23 @@ function globalConstructorName(
  * An expression that yields a `URL`: `new URL(...)`, `URL.parse(...)` (the non-throwing static), or
  * either of those chosen by a `?:` / `||` / `??` branch.
  */
-function isUrlExpression(
-  context: Context,
-  node: ESTree.Node | null,
-  depth = 0
-): boolean {
+function isUrlExpression(context: Context, node: ESTree.Node | null, depth = 0): boolean {
   const target = unwrap(node);
   if (target === null || depth >= MAX_ALIAS_DEPTH) return false;
-  if (target.type === 'NewExpression')
-    return globalConstructorName(context, target) === URL_CONSTRUCTOR;
-  if (target.type === 'CallExpression')
-    return isUrlFactoryCall(context, target);
+  if (target.type === 'NewExpression') return globalConstructorName(context, target) === URL_CONSTRUCTOR;
+  if (target.type === 'CallExpression') return isUrlFactoryCall(context, target);
   if (target.type === 'ConditionalExpression') {
     return (
-      isUrlExpression(context, target.consequent, depth + 1) ||
-      isUrlExpression(context, target.alternate, depth + 1)
+      isUrlExpression(context, target.consequent, depth + 1) || isUrlExpression(context, target.alternate, depth + 1)
     );
   }
   if (target.type === 'LogicalExpression') {
-    return (
-      isUrlExpression(context, target.left, depth + 1) ||
-      isUrlExpression(context, target.right, depth + 1)
-    );
+    return isUrlExpression(context, target.left, depth + 1) || isUrlExpression(context, target.right, depth + 1);
   }
   return false;
 }
 
-function isUrlFactoryCall(
-  context: Context,
-  target: ESTree.CallExpression
-): boolean {
+function isUrlFactoryCall(context: Context, target: ESTree.CallExpression): boolean {
   const callee = unwrap(target.callee);
   if (callee === null || callee.type !== 'MemberExpression') return false;
   const name = memberName(callee);
@@ -281,7 +231,7 @@ function isUrlFactoryCall(
 function isUrlBinding(
   context: Context,
   identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-  seen: Set<Variable> = new Set()
+  seen: Set<Variable> = new Set(),
 ): boolean {
   const variable = lookupVariable(context, identifier);
   if (variable === null || seen.has(variable)) return false;
@@ -290,12 +240,7 @@ function isUrlBinding(
   for (const write of collectWrites(variable)) {
     if (isUrlExpression(context, write)) return true;
     const target = unwrap(write);
-    if (
-      target !== null &&
-      target.type === 'Identifier' &&
-      isUrlBinding(context, target, seen)
-    )
-      return true;
+    if (target !== null && target.type === 'Identifier' && isUrlBinding(context, target, seen)) return true;
   }
   return false;
 }
@@ -309,11 +254,7 @@ function isUrlSource(context: Context, node: ESTree.Node | null): boolean {
 }
 
 /** Resolve an expression to the object literal it denotes, following local `const` bindings. */
-function resolveObject(
-  context: Context,
-  node: ESTree.Node | null,
-  depth = 0
-): ESTree.ObjectExpression | null {
+function resolveObject(context: Context, node: ESTree.Node | null, depth = 0): ESTree.ObjectExpression | null {
   const target = unwrap(node);
   if (target === null || depth >= MAX_ALIAS_DEPTH) return null;
   if (target.type === 'ObjectExpression') return target;
@@ -326,46 +267,33 @@ function resolveObject(
 }
 
 /** `false`, or a binding whose value is `false` (`const strict = false; useParams({ strict })`). */
-function isFalseValue(
-  context: Context,
-  node: ESTree.Node | null,
-  depth = 0
-): boolean {
+function isFalseValue(context: Context, node: ESTree.Node | null, depth = 0): boolean {
   const target = unwrap(node);
   if (target === null || depth >= MAX_ALIAS_DEPTH) return false;
   if (target.type === 'Literal') return target.value === false;
   if (target.type !== 'Identifier') return false;
-  return writesOf(context, target).some((write) =>
-    isFalseValue(context, write, depth + 1)
-  );
+  return writesOf(context, target).some((write) => isFalseValue(context, write, depth + 1));
 }
 
 /**
  * `{ strict: false }` as the hook's first argument — as a literal, through a binding
  * (`const untyped = { strict: false } as const`) or spread in from one.
  */
-function spreadMaySetStrict(
-  entry: ESTree.ObjectExpression['properties'][number]
-): boolean {
-  return (
-    entry.type === 'SpreadElement' ||
-    (entry.type === 'Property' && propertyKeyName(entry) === 'strict')
-  );
+function spreadMaySetStrict(entry: ESTree.ObjectExpression['properties'][number]): boolean {
+  return entry.type === 'SpreadElement' || (entry.type === 'Property' && propertyKeyName(entry) === 'strict');
 }
 
 function nextStrictValue(
   context: Context,
   property: ESTree.ObjectExpression['properties'][number],
   value: boolean | undefined,
-  depth: number
+  depth: number,
 ): boolean | undefined {
   if (property.type === 'SpreadElement') {
     // Unknown later spreads may overwrite strict; never infer false through them.
     const spread = resolveObject(context, property.argument, depth + 1);
     if (spread === null) return undefined;
-    return spread.properties.some(spreadMaySetStrict)
-      ? strictValue(context, spread, depth + 1)
-      : value;
+    return spread.properties.some(spreadMaySetStrict) ? strictValue(context, spread, depth + 1) : value;
   }
   if (property.type !== 'Property') return value;
   if (property.computed) return undefined;
@@ -373,16 +301,11 @@ function nextStrictValue(
   return isFalseValue(context, property.value) ? false : undefined;
 }
 
-function strictValue(
-  context: Context,
-  node: ESTree.Node | null,
-  depth = 0
-): boolean | undefined {
+function strictValue(context: Context, node: ESTree.Node | null, depth = 0): boolean | undefined {
   const object = resolveObject(context, node, depth);
   if (object === null || depth >= MAX_ALIAS_DEPTH) return undefined;
   let value: boolean | undefined;
-  for (const property of object.properties)
-    value = nextStrictValue(context, property, value, depth);
+  for (const property of object.properties) value = nextStrictValue(context, property, value, depth);
   return value;
 }
 
@@ -390,22 +313,14 @@ function outputUseNode(node: ESTree.Node): ESTree.Node {
   let current = node;
   while (current.parent != null) {
     const inner = unwrap(current.parent);
-    if (inner === null || inner.start !== node.start || inner.end !== node.end)
-      break;
+    if (inner === null || inner.start !== node.start || inner.end !== node.end) break;
     current = current.parent;
   }
   return current;
 }
 
-function isOutputMethodCall(
-  parent: ESTree.Node | null | undefined,
-  current: ESTree.Node
-): boolean {
-  if (
-    parent?.type !== 'MemberExpression' ||
-    parent.object.start !== current.start
-  )
-    return false;
+function isOutputMethodCall(parent: ESTree.Node | null | undefined, current: ESTree.Node): boolean {
+  if (parent?.type !== 'MemberExpression' || parent.object.start !== current.start) return false;
   const method = memberName(parent);
   if (method === null || !OUTPUT_METHODS.has(method)) return false;
   const call = parent.parent;
@@ -413,11 +328,7 @@ function isOutputMethodCall(
 }
 
 /** A mutation or serialization is output construction, not an input read. */
-function isOutputUse(
-  context: Context,
-  node: ESTree.Node,
-  seen: Set<number> = new Set()
-): boolean {
+function isOutputUse(context: Context, node: ESTree.Node, seen: Set<number> = new Set()): boolean {
   const current = outputUseNode(node);
   const parent = current.parent;
   if (
@@ -433,21 +344,14 @@ function isOutputUse(
 function isOutputBinding(
   context: Context,
   identifier: Extract<ESTree.Node, { type: 'Identifier' }>,
-  seen: Set<number> = new Set()
+  seen: Set<number> = new Set(),
 ): boolean {
   const variable = lookupVariable(context, identifier);
-  if (
-    variable === null ||
-    seen.has(identifier.start) ||
-    seen.size > MAX_ALIAS_DEPTH
-  )
-    return false;
+  if (variable === null || seen.has(identifier.start) || seen.size > MAX_ALIAS_DEPTH) return false;
   seen.add(identifier.start);
   return variable.references
     .filter((reference) => reference.isRead())
-    .every((reference) =>
-      isOutputUse(context, reference.identifier, new Set(seen))
-    );
+    .every((reference) => isOutputUse(context, reference.identifier, new Set(seen)));
 }
 
 interface HookBindings {
@@ -461,7 +365,7 @@ function collectHookSpecifiers(
   statement: ESTree.ImportDeclaration,
   hooks: readonly string[],
   locals: Map<string, string>,
-  moduleObjects: Set<string>
+  moduleObjects: Set<string>,
 ): void {
   for (const specifier of statement.specifiers) {
     if (specifier.type !== 'ImportSpecifier') {
@@ -477,17 +381,13 @@ function collectHookSpecifiers(
 function collectHookBindings(
   program: ESTree.Program,
   hooks: readonly string[],
-  modules: readonly string[]
+  modules: readonly string[],
 ): HookBindings {
   const locals = new Map<string, string>();
   const moduleObjects = new Set<string>();
   for (const statement of program.body) {
     if (statement.type !== 'ImportDeclaration') continue;
-    if (
-      statement.importKind === 'type' ||
-      !matchesGlobs(statement.source.value, modules)
-    )
-      continue;
+    if (statement.importKind === 'type' || !matchesGlobs(statement.source.value, modules)) continue;
     collectHookSpecifiers(statement, hooks, locals, moduleObjects);
   }
   return { locals, moduleObjects };
@@ -498,7 +398,7 @@ function hookCallName(
   context: Context,
   node: ESTree.CallExpression,
   bindings: HookBindings,
-  hooks: readonly string[]
+  hooks: readonly string[],
 ): string | null {
   const callee = unwrap(node.callee);
   if (callee === null) return null;
@@ -515,7 +415,7 @@ function moduleHookName(
   context: Context,
   callee: ESTree.MemberExpression,
   bindings: HookBindings,
-  hooks: readonly string[]
+  hooks: readonly string[],
 ): string | null {
   const name = memberName(callee);
   if (name === null || !hooks.includes(name)) return null;
@@ -594,24 +494,14 @@ export const rule = defineRule({
     if (!matchesGlobs(path, options.routeGlobs)) return {};
     if (!options.allowTestFiles && isTestFile(path)) return {};
 
-    const bindings = collectHookBindings(
-      context.sourceCode.ast,
-      options.untypedHooks,
-      options.routerModules
-    );
+    const bindings = collectHookBindings(context.sourceCode.ast, options.untypedHooks, options.routerModules);
 
     /** `const { searchParams } = <url>` / `const { searchParams: alias } = <url>`. */
-    const reportDestructuredSearchParams = (
-      pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>
-    ): void => {
+    const reportDestructuredSearchParams = (pattern: Extract<ESTree.Node, { type: 'ObjectPattern' }>): void => {
       for (const property of pattern.properties) {
         if (property.type !== 'Property') continue;
         if (propertyKeyName(property) !== SEARCH_PARAMS) continue;
-        if (
-          property.value.type === 'Identifier' &&
-          isOutputBinding(context, property.value)
-        )
-          continue;
+        if (property.value.type === 'Identifier' && isOutputBinding(context, property.value)) continue;
         context.report({ node: property, messageId: 'rawUrlSearchParams' });
       }
     };
@@ -623,29 +513,18 @@ export const rule = defineRule({
         // Empty multipart/search containers carry outgoing data; they parse no route input.
         if (node.arguments.length === 0) return;
         const input = unwrap(node.arguments[0]);
-        if (
-          name === 'URLSearchParams' &&
-          (input?.type === 'ObjectExpression' ||
-            input?.type === 'ArrayExpression')
-        )
+        if (name === 'URLSearchParams' && (input?.type === 'ObjectExpression' || input?.type === 'ArrayExpression'))
           return;
         context.report({
           node,
-          messageId:
-            name === 'FormData' ? 'manualFormParsing' : 'manualSearchParsing',
+          messageId: name === 'FormData' ? 'manualFormParsing' : 'manualSearchParsing',
           data: { constructor: name },
         });
       },
       CallExpression(node) {
-        const hook = hookCallName(
-          context,
-          node,
-          bindings,
-          options.untypedHooks
-        );
+        const hook = hookCallName(context, node, bindings, options.untypedHooks);
         if (hook === null) return;
-        const strictFalse =
-          strictValue(context, node.arguments[0] ?? null) === false;
+        const strictFalse = strictValue(context, node.arguments[0] ?? null) === false;
         if (options.flagStrictFalseOnly && !strictFalse) return;
         context.report({
           node,
@@ -655,10 +534,8 @@ export const rule = defineRule({
       },
       MemberExpression(node) {
         if (!options.flagUrlSearchParams) return;
-        if (memberName(node) !== SEARCH_PARAMS || isOutputUse(context, node))
-          return;
-        if (isUrlSource(context, node.object))
-          context.report({ node, messageId: 'rawUrlSearchParams' });
+        if (memberName(node) !== SEARCH_PARAMS || isOutputUse(context, node)) return;
+        if (isUrlSource(context, node.object)) context.report({ node, messageId: 'rawUrlSearchParams' });
       },
       VariableDeclarator(node) {
         if (!options.flagUrlSearchParams) return;

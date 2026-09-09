@@ -5,7 +5,5 @@ import { Effect } from 'effect';
  * the first deletion that fails. Callers build the delete Effects inline, which keeps the
  * owned table order explicit at the call site instead of behind a generic cascade.
  */
-export const purgeFixtureRows = <A, E>(
-  deletions: readonly Effect.Effect<A, E>[]
-): Effect.Effect<void, E> =>
+export const purgeFixtureRows = <A, E>(deletions: readonly Effect.Effect<A, E>[]): Effect.Effect<void, E> =>
   Effect.all(deletions, { concurrency: 1, discard: true });

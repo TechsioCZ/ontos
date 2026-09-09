@@ -24,7 +24,7 @@ type CounterpartyRoleHistoryOperationInvocation = readonly [
 const counterpartyRoleHistoryClient = (
   credential: Redacted.Redacted<string>,
   requestCorrelation: string,
-  options: CounterpartyRoleHistoryClientOptions
+  options: CounterpartyRoleHistoryClientOptions,
 ) =>
   makeGovernedEffectBffClient(
     {
@@ -33,44 +33,28 @@ const counterpartyRoleHistoryClient = (
       defaultApiPrefix: '/party-registry-api',
       requestCorrelation,
     },
-    options
+    options,
   );
 
 export const executeCounterpartyRoleHistoryWithAuthorization = (
   payload: CounterpartyRoleHistoryRequest,
-  ...[
-    credential,
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyRoleHistoryAuthorizedInvocation
+  ...[credential, requestCorrelation, options = {}]: CounterpartyRoleHistoryAuthorizedInvocation
 ) =>
-  counterpartyRoleHistoryClient(
-    Redacted.make(credential),
-    requestCorrelation,
-    options
-  ).pipe(
+  counterpartyRoleHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) =>
       client.counterpartyRoleHistory.execute({
         headers: {},
         params: {},
         payload,
         query: {},
-      })
-    )
+      }),
+    ),
   );
 
 export const executeCounterpartyRoleHistory = (
   payload: CounterpartyRoleHistoryRequest,
-  ...[
-    requestCorrelation,
-    options = {},
-  ]: CounterpartyRoleHistoryOperationInvocation
+  ...[requestCorrelation, options = {}]: CounterpartyRoleHistoryOperationInvocation
 ) =>
   operationGateway.invoke((credential) =>
-    executeCounterpartyRoleHistoryWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options
-    )
+    executeCounterpartyRoleHistoryWithAuthorization(payload, credential, requestCorrelation, options),
   );

@@ -19,9 +19,7 @@ const reactDomVersion = packageVersion('react-dom/package.json');
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({
   from: import.meta.url,
 });
-const moduleFederationConfig: Parameters<
-  typeof createModuleFederationConfig
->[0] = createModuleFederationConfig({
+const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
     enableBridgeRouter: false,
   },
@@ -43,9 +41,7 @@ const moduleFederationConfig: Parameters<
           ...expose.assets,
           css: {
             ...expose.assets.css,
-            async: expose.assets.css.async.filter(
-              (asset) => !asset.includes('/async-index.')
-            ),
+            async: expose.assets.css.async.filter((asset) => !asset.includes('/async-index.')),
           },
         },
       })),

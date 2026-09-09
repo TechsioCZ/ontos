@@ -33,9 +33,6 @@ export default defineConfig({
   ],
   rules: {
     'effect-native/no-instanceof': 'error',
-    'effect-native/no-manual-tag-comparison': [
-      'error',
-      { adtTags: [], include: ['**'] },
-    ],
+    'effect-native/no-manual-tag-comparison': ['error', { adtTags: [], include: ['**'] }],
   },
 });

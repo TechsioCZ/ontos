@@ -57,13 +57,7 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import {
-  keyName as sharedKeyName,
-  memberName,
-  parentOf,
-  skipWrappers,
-  unwrapNode as unwrap,
-} from '../shared/ast.ts';
+import { keyName as sharedKeyName, memberName, parentOf, skipWrappers, unwrapNode as unwrap } from '../shared/ast.ts';
 import { isUnshadowedGlobal, resolveVariable } from '../shared/bindings.ts';
 import { booleanOption, stringList } from '../shared/options.ts';
 import { includesRuleFile } from '../shared/paths.ts';
@@ -86,12 +80,7 @@ const MUTATING_CALLS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['Reflect', new Set(['set', 'defineProperty', 'deleteProperty'])],
 ]);
 
-const DEFAULT_INCLUDE_PATHS: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 interface RuleOptions {
   readonly allowPaths: readonly string[];
@@ -110,12 +99,8 @@ function readOptions(raw: unknown): RuleOptions {
   const includePaths = stringList(given.includePaths, DEFAULTS.includePaths);
   return {
     allowPaths: stringList(given.allowPaths, DEFAULTS.allowPaths),
-    ignoreTestFiles: booleanOption(
-      given.ignoreTestFiles,
-      DEFAULTS.ignoreTestFiles
-    ),
-    includePaths:
-      includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
+    ignoreTestFiles: booleanOption(given.ignoreTestFiles, DEFAULTS.ignoreTestFiles),
+    includePaths: includePaths.length > 0 ? includePaths : DEFAULTS.includePaths,
   };
 }
 
@@ -130,35 +115,19 @@ function keyName(key: AnyNode | undefined): string | null {
 function isProcessSource(node: AnyNode | undefined): boolean {
   if (!node) return false;
   const source = unwrap(node);
-  return (
-    source.type !== 'Identifier' && PROCESS_MODULES.has(keyName(source) ?? '')
-  );
+  return source.type !== 'Identifier' && PROCESS_MODULES.has(keyName(source) ?? '');
 }
 
-function isProcessImport(
-  specifier: ESTree.ImportDeclaration['specifiers'][number]
-): boolean {
+function isProcessImport(specifier: ESTree.ImportDeclaration['specifiers'][number]): boolean {
   const declaration = parentOf(specifier);
-  if (
-    declaration?.type !== 'ImportDeclaration' ||
-    declaration.importKind === 'type'
-  )
-    return false;
+  if (declaration?.type !== 'ImportDeclaration' || declaration.importKind === 'type') return false;
   if (!PROCESS_MODULES.has(declaration.source.value)) return false;
   if (specifier.type !== 'ImportSpecifier') return true;
-  return (
-    specifier.importKind !== 'type' && keyName(specifier.imported) === 'default'
-  );
+  return specifier.importKind !== 'type' && keyName(specifier.imported) === 'default';
 }
 
-function immutableInitializer(
-  declaration: ESTree.VariableDeclarator
-): AnyNode | null {
-  if (
-    declaration.id.type !== 'Identifier' ||
-    parentOf(declaration)?.kind !== 'const'
-  )
-    return null;
+function immutableInitializer(declaration: ESTree.VariableDeclarator): AnyNode | null {
+  if (declaration.id.type !== 'Identifier' || parentOf(declaration)?.kind !== 'const') return null;
   return declaration.init;
 }
 
@@ -166,10 +135,7 @@ function isImportMeta(node: ESTree.MetaProperty): boolean {
   return node.meta.name === 'import' && node.property.name === 'meta';
 }
 
-function isContainerHost(
-  context: Context,
-  member: ESTree.MemberExpression
-): boolean {
+function isContainerHost(context: Context, member: ESTree.MemberExpression): boolean {
   const hostName = staticPropertyName(member);
   if (hostName === null || !ENV_HOSTS.has(hostName)) return false;
   const container = unwrap(member.object);
@@ -180,16 +146,8 @@ function isContainerHost(
   );
 }
 
-function isMutatingCall(
-  context: Context,
-  call: ESTree.CallExpression,
-  reference: AnyNode
-): boolean {
-  if (
-    call.arguments[0] !== reference ||
-    call.callee.type !== 'MemberExpression'
-  )
-    return false;
+function isMutatingCall(context: Context, call: ESTree.CallExpression, reference: AnyNode): boolean {
+  if (call.arguments[0] !== reference || call.callee.type !== 'MemberExpression') return false;
   const member = call.callee;
   if (member.object.type !== 'Identifier') return false;
   const namespace = member.object;
@@ -203,11 +161,7 @@ function isMutatingCall(
   );
 }
 
-function isMutation(
-  context: Context,
-  parent: AnyNode | null,
-  reference: AnyNode
-): boolean {
+function isMutation(context: Context, parent: AnyNode | null, reference: AnyNode): boolean {
   switch (parent?.type) {
     case 'AssignmentExpression':
       return parent.left === reference;
@@ -235,9 +189,7 @@ function patternSource(node: AnyNode): AnyNode | null {
   }
 }
 
-function isEnvProperty(
-  property: ESTree.ObjectPattern['properties'][number]
-): boolean {
+function isEnvProperty(property: ESTree.ObjectPattern['properties'][number]): boolean {
   if (property.type !== 'Property') return false;
   return (
     sharedKeyName(property.key, property.computed, {
@@ -281,8 +233,7 @@ export const rule = defineRule({
           includePaths: {
             type: 'array',
             items: { type: 'string' },
-            description:
-              'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
+            description: 'Globs the rule applies to (default: apps/**, verticals/**, packages/**, scripts/**).',
           },
         },
       },
@@ -299,35 +250,23 @@ export const rule = defineRule({
     const options = readOptions(context.options[0]);
     if (!includesRuleFile(context.filename, options)) return {};
 
-    const printed = (node: AnyNode): string =>
-      snippet(context.sourceCode.getText(node), 72, 69, '...');
+    const printed = (node: AnyNode): string => snippet(context.sourceCode.getText(node), 72, 69, '...');
 
     const report = (node: AnyNode, messageId: string): void => {
       context.report({ node, messageId, data: { expression: printed(node) } });
     };
 
-    const identifierHost = (
-      inner: AnyNode & { readonly name: string },
-      depth: number
-    ): boolean => {
+    const identifierHost = (inner: AnyNode & { readonly name: string }, depth: number): boolean => {
       const variable = resolveVariable(context, inner.name, inner);
-      const definition =
-        variable?.defs.length === 1 ? variable.defs[0] : undefined;
+      const definition = variable?.defs.length === 1 ? variable.defs[0] : undefined;
       if (definition?.type === 'ImportBinding') {
-        return isProcessImport(
-          definition.node as ESTree.ImportDeclaration['specifiers'][number]
-        );
+        return isProcessImport(definition.node as ESTree.ImportDeclaration['specifiers'][number]);
       }
       if (definition?.type === 'Variable') {
-        const initializer = immutableInitializer(
-          definition.node as ESTree.VariableDeclarator
-        );
+        const initializer = immutableInitializer(definition.node as ESTree.VariableDeclarator);
         if (initializer) return isEnvHost(initializer, depth + 1);
       }
-      return (
-        ENV_HOSTS.has(inner.name) &&
-        isUnshadowedGlobal(context, inner, inner.name)
-      );
+      return ENV_HOSTS.has(inner.name) && isUnshadowedGlobal(context, inner, inner.name);
     };
 
     // Bounded immutable aliases only; no cross-module flow or reassignment inference.
@@ -340,10 +279,7 @@ export const rule = defineRule({
         case 'ImportExpression':
           return isProcessSource(inner.source);
         case 'CallExpression':
-          return (
-            isUnshadowedGlobal(context, unwrap(inner.callee), 'require') &&
-            isProcessSource(inner.arguments[0])
-          );
+          return isUnshadowedGlobal(context, unwrap(inner.callee), 'require') && isProcessSource(inner.arguments[0]);
         case 'MetaProperty':
           return isImportMeta(inner);
         case 'Identifier':
@@ -358,54 +294,30 @@ export const rule = defineRule({
     /** Climb the continued member chain before classifying its consumer. */
     const classify = (envNode: AnyNode): string => {
       let current = skipWrappers(envNode);
-      while (
-        current.parent?.type === 'MemberExpression' &&
-        current.parent.object === current.node
-      ) {
+      while (current.parent?.type === 'MemberExpression' && current.parent.object === current.node) {
         current = skipWrappers(current.parent);
       }
-      return isMutation(context, current.parent, current.node)
-        ? 'ambientEnvMutation'
-        : 'ambientEnvRead';
+      return isMutation(context, current.parent, current.node) ? 'ambientEnvMutation' : 'ambientEnvRead';
     };
 
     return {
       // `import process from "node:process"` / `import { env } from "process"`.
       ImportDeclaration(node) {
-        if (
-          node.importKind === 'type' ||
-          !PROCESS_MODULES.has(node.source.value)
-        )
-          return;
+        if (node.importKind === 'type' || !PROCESS_MODULES.has(node.source.value)) return;
         for (const specifier of node.specifiers) {
-          if (
-            specifier.type === 'ImportDefaultSpecifier' ||
-            specifier.type === 'ImportNamespaceSpecifier'
-          ) {
+          if (specifier.type === 'ImportDefaultSpecifier' || specifier.type === 'ImportNamespaceSpecifier') {
             continue;
           }
-          if (
-            specifier.type !== 'ImportSpecifier' ||
-            specifier.importKind === 'type'
-          )
-            continue;
+          if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') continue;
           const imported =
-            specifier.imported.type === 'Identifier'
-              ? specifier.imported.name
-              : specifier.imported.value;
+            specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
           // `import { env } from "node:process"` *is* the ambient environment bag.
-          if (imported === 'env')
-            report(specifier as unknown as AnyNode, 'ambientEnvRead');
+          if (imported === 'env') report(specifier as unknown as AnyNode, 'ambientEnvRead');
         }
       },
 
       ExportNamedDeclaration(node) {
-        if (
-          !node.source ||
-          node.exportKind === 'type' ||
-          !PROCESS_MODULES.has(node.source.value)
-        )
-          return;
+        if (!node.source || node.exportKind === 'type' || !PROCESS_MODULES.has(node.source.value)) return;
         for (const specifier of node.specifiers) {
           if (
             specifier.type === 'ExportSpecifier' &&
@@ -420,10 +332,7 @@ export const rule = defineRule({
       MemberExpression(node) {
         if (staticPropertyName(node) !== 'env') return;
         if (!isEnvHost(node.object as AnyNode)) return;
-        report(
-          node as unknown as AnyNode,
-          classify(node as unknown as AnyNode)
-        );
+        report(node as unknown as AnyNode, classify(node as unknown as AnyNode));
       },
 
       // `const { env } = process` / `const { env: environment } = globalThis.process`.

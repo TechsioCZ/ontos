@@ -28,16 +28,13 @@ const problems = makeGovernedReadProblems({
   unavailable: PartyMatchDecisionUnavailableProblemSchema,
 });
 
-export const partyMatchDecisionReadApiLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'partyMatchDecision',
-  (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: partyMatchDecisionRead,
-      })
-    )
+export const partyMatchDecisionReadApiLive = HttpApiBuilder.group(partyRegistryApi, 'partyMatchDecision', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: partyMatchDecisionRead,
+    }),
+  ),
 );

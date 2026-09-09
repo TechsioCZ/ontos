@@ -14,11 +14,7 @@ import type { SpiceDbConfigError } from './config-error.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 
-const ContextAccessDecisionSchema = Schema.Literals([
-  'allowed',
-  'denied',
-  'unavailable',
-]);
+const ContextAccessDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 export type ContextAccessDecision = typeof ContextAccessDecisionSchema.Type;
 
 export const TENANT_PERMISSION_KEYS = [
@@ -32,13 +28,8 @@ export const TENANT_PERMISSION_KEYS = [
   'review_party_identity',
 ] as const;
 export type TenantPermissionKey = (typeof TENANT_PERMISSION_KEYS)[number];
-export const LEGAL_ENTITY_PERMISSION_KEYS = [
-  'access',
-  'manage_counterparty',
-  'read_counterparty',
-] as const;
-export type LegalEntityPermissionKey =
-  (typeof LEGAL_ENTITY_PERMISSION_KEYS)[number];
+export const LEGAL_ENTITY_PERMISSION_KEYS = ['access', 'manage_counterparty', 'read_counterparty'] as const;
+export type LegalEntityPermissionKey = (typeof LEGAL_ENTITY_PERMISSION_KEYS)[number];
 
 export interface ContextAccessResult {
   readonly decision: ContextAccessDecision;
@@ -78,14 +69,13 @@ export interface ContextAccessService {
   }) => Effect.Effect<readonly ContextAccessResult[]>;
 }
 
-export class ContextAccess extends Context.Service<
-  ContextAccess,
-  ContextAccessService
->()('@app/core-runtime/permissions/context-access/ContextAccess') {}
+export class ContextAccess extends Context.Service<ContextAccess, ContextAccessService>()(
+  '@app/core-runtime/permissions/context-access/ContextAccess',
+) {}
 
 export type ContextAccessClientFactory = (
   configuration: SpiceDbConfigValue,
-  timeoutMilliseconds: number
+  timeoutMilliseconds: number,
 ) => SpiceDbPermissionClient;
 
 interface BatchItem {
@@ -95,12 +85,8 @@ interface BatchItem {
   readonly resourceType: string;
 }
 
-const ContextAccessObjectIdParts = Schema.fromJsonString(
-  Schema.Array(Schema.String)
-);
-const encodeContextAccessObjectIdParts = Schema.encodeResult(
-  ContextAccessObjectIdParts
-);
+const ContextAccessObjectIdParts = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeContextAccessObjectIdParts = Schema.encodeResult(ContextAccessObjectIdParts);
 
 const principalReference = (principalId: string) =>
   v1.SubjectReference.create({
@@ -114,55 +100,36 @@ const encodeObjectId = (parts: readonly string[]): string | undefined => {
   if (parts.some((part) => part.length === 0)) {
     return undefined;
   }
-  const encodedParts = Result.getOrThrow(
-    encodeContextAccessObjectIdParts(parts)
-  );
+  const encodedParts = Result.getOrThrow(encodeContextAccessObjectIdParts(parts));
   const encoded = `ctx_${Buffer.from(encodedParts, 'utf-8').toString('base64url')}`;
   return encoded.length <= 1024 ? encoded : undefined;
 };
 
-export const toLegalEntityAccessObjectId = (
-  tenantId: string,
-  legalEntityId: string
-): string | undefined => encodeObjectId([tenantId, legalEntityId]);
+export const toLegalEntityAccessObjectId = (tenantId: string, legalEntityId: string): string | undefined =>
+  encodeObjectId([tenantId, legalEntityId]);
 
-export const toModuleAccessObjectId = (
-  tenantId: string,
-  legalEntityId: string,
-  moduleId: string
-): string | undefined => encodeObjectId([tenantId, legalEntityId, moduleId]);
+export const toModuleAccessObjectId = (tenantId: string, legalEntityId: string, moduleId: string): string | undefined =>
+  encodeObjectId([tenantId, legalEntityId, moduleId]);
 
 export const toResourceAccessObjectId = (
   tenantId: string,
   legalEntityId: string,
-  resource: ResourceAccessTarget
+  resource: ResourceAccessTarget,
 ): string | undefined =>
-  encodeObjectId([
-    tenantId,
-    legalEntityId,
-    resource.moduleId,
-    resource.resourceType,
-    resource.resourceId,
-  ]);
+  encodeObjectId([tenantId, legalEntityId, resource.moduleId, resource.resourceType, resource.resourceId]);
 
 const unavailable = (keys: readonly string[]): readonly ContextAccessResult[] =>
   keys.map((key) => ({ decision: 'unavailable' as const, key }));
 
-const classifyPair = (
-  pair: v1.CheckBulkPermissionsPair
-): ContextAccessDecision => {
+const classifyPair = (pair: v1.CheckBulkPermissionsPair): ContextAccessDecision => {
   if (pair.response.oneofKind !== 'item') {
     return 'unavailable';
   }
   const { permissionship } = pair.response.item;
-  if (
-    permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
-  ) {
+  if (permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
     return 'allowed';
   }
-  if (
-    permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION
-  ) {
+  if (permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
     return 'denied';
   }
   return 'unavailable';
@@ -180,25 +147,21 @@ const makeRequestItem = (item: BatchItem, principalId: string) =>
 
 const sameObjectReference = (
   expected: v1.ObjectReference | undefined,
-  actual: v1.ObjectReference | undefined
-): boolean =>
-  actual?.objectId === expected?.objectId &&
-  actual?.objectType === expected?.objectType;
+  actual: v1.ObjectReference | undefined,
+): boolean => actual?.objectId === expected?.objectId && actual?.objectType === expected?.objectType;
 
 const sameRequest = (
   expected: v1.CheckBulkPermissionsRequestItem,
-  actual: v1.CheckBulkPermissionsRequestItem | undefined
+  actual: v1.CheckBulkPermissionsRequestItem | undefined,
 ): boolean =>
   actual?.permission === expected.permission &&
   sameObjectReference(expected.resource, actual.resource) &&
   sameObjectReference(expected.subject?.object, actual.subject?.object);
 
-export const makeContextAccess = (
-  client: SpiceDbPermissionClient
-): ContextAccessService => {
+export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
   const checkBatch = (
     items: readonly BatchItem[],
-    principalId: string
+    principalId: string,
   ): Effect.Effect<readonly ContextAccessResult[]> => {
     const keys = items.map(({ key }) => key);
     if (
@@ -218,7 +181,7 @@ export const makeContextAccess = (
           consistency: fullyConsistent,
           items: requests,
           withTracing: false,
-        })
+        }),
       )
       .pipe(
         Effect.map((response) => {
@@ -229,73 +192,50 @@ export const makeContextAccess = (
           const decisions = response.pairs.map((pair, index) => {
             const expected = requests[index];
             const key = keys[index];
-            if (
-              expected === undefined ||
-              key === undefined ||
-              !sameRequest(expected, pair.request) ||
-              seen.has(key)
-            ) {
+            if (expected === undefined || key === undefined || !sameRequest(expected, pair.request) || seen.has(key)) {
               return null;
             }
             seen.add(key);
             return { decision: classifyPair(pair), key };
           });
-          return decisions.every(
-            (decision): decision is ContextAccessResult => decision !== null
-          )
+          return decisions.every((decision): decision is ContextAccessResult => decision !== null)
             ? decisions
             : unavailable(keys);
         }),
-        Effect.catchTag('SpiceDbPermissionClientError', () =>
-          Effect.succeed(unavailable(keys))
-        )
+        Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailable(keys))),
       );
   };
 
   const service: ContextAccessService = {
-    legalEntities: ({
-      legalEntityIds,
-      permission = 'access',
-      principalId,
-      tenantId,
-    }) =>
+    legalEntities: ({ legalEntityIds, permission = 'access', principalId, tenantId }) =>
       checkBatch(
         legalEntityIds.map((legalEntityId) => ({
           key: legalEntityId,
           permission,
-          resourceId:
-            toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
+          resourceId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
           resourceType: 'legal_entity',
         })),
-        principalId
+        principalId,
       ),
     modules: ({ legalEntityId, moduleIds, principalId, tenantId }) =>
       checkBatch(
         moduleIds.map((moduleId) => ({
           key: moduleId,
           permission: 'access',
-          resourceId:
-            toModuleAccessObjectId(tenantId, legalEntityId, moduleId) ?? '',
+          resourceId: toModuleAccessObjectId(tenantId, legalEntityId, moduleId) ?? '',
           resourceType: 'module_access',
         })),
-        principalId
+        principalId,
       ),
-    resources: ({
-      legalEntityId,
-      permission = 'read',
-      principalId,
-      resources,
-      tenantId,
-    }) =>
+    resources: ({ legalEntityId, permission = 'read', principalId, resources, tenantId }) =>
       checkBatch(
         resources.map((resource) => ({
           key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
           permission,
-          resourceId:
-            toResourceAccessObjectId(tenantId, legalEntityId, resource) ?? '',
+          resourceId: toResourceAccessObjectId(tenantId, legalEntityId, resource) ?? '',
           resourceType: 'resource',
         })),
-        principalId
+        principalId,
       ),
     tenants: ({ permission, principalId, tenantIds }) =>
       checkBatch(
@@ -305,7 +245,7 @@ export const makeContextAccess = (
           resourceId: tenantId,
           resourceType: 'tenant',
         })),
-        principalId
+        principalId,
       ),
   };
   return Object.freeze(service);
@@ -313,17 +253,13 @@ export const makeContextAccess = (
 
 const unavailableContextAccess = (): ContextAccessService => {
   const service: ContextAccessService = {
-    legalEntities: ({ legalEntityIds }) =>
-      Effect.succeed(unavailable(legalEntityIds)),
+    legalEntities: ({ legalEntityIds }) => Effect.succeed(unavailable(legalEntityIds)),
     modules: ({ moduleIds }) => Effect.succeed(unavailable(moduleIds)),
     resources: ({ resources }) =>
       Effect.succeed(
         unavailable(
-          resources.map(
-            ({ moduleId, resourceId, resourceType }) =>
-              `${moduleId}:${resourceType}:${resourceId}`
-          )
-        )
+          resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
+        ),
       ),
     tenants: ({ tenantIds }) => Effect.succeed(unavailable(tenantIds)),
   };
@@ -332,29 +268,19 @@ const unavailableContextAccess = (): ContextAccessService => {
 
 export const makeContextAccessLive = (
   clientFactory: ContextAccessClientFactory = createSpiceDbPermissionClient,
-  loadConfiguration: () => Effect.Effect<
-    SpiceDbConfigValue,
-    SpiceDbConfigError
-  > = loadSpiceDbConfig
+  loadConfiguration: () => Effect.Effect<SpiceDbConfigValue, SpiceDbConfigError> = loadSpiceDbConfig,
 ): Effect.Effect<ContextAccessService, never, Scope.Scope> =>
   loadConfiguration().pipe(
     Effect.flatMap((configuration) =>
       acquireSpiceDbClientResource(
         () => clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS),
-        spiceDbPermissionClientError
+        spiceDbPermissionClientError,
       ).pipe(
         Effect.map(makeContextAccess),
-        Effect.catchTag('SpiceDbPermissionClientError', () =>
-          Effect.succeed(unavailableContextAccess())
-        )
-      )
+        Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailableContextAccess())),
+      ),
     ),
-    Effect.catchTag('SpiceDbConfigError', () =>
-      Effect.succeed(unavailableContextAccess())
-    )
+    Effect.catchTag('SpiceDbConfigError', () => Effect.succeed(unavailableContextAccess())),
   );
 
-export const ContextAccessLive = Layer.effect(
-  ContextAccess,
-  makeContextAccessLive()
-);
+export const ContextAccessLive = Layer.effect(ContextAccess, makeContextAccessLive());

@@ -1,12 +1,7 @@
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  defineGlobalPolicy,
-  defineMicroverticalPolicy,
-  denyPolicy,
-  isActionPolicy,
-} from '../../src/actions/policy.ts';
+import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy, isActionPolicy } from '../../src/actions/policy.ts';
 import type { ActionPolicyEvaluatorInput } from '../../src/actions/policy.ts';
 
 const input = {
@@ -34,10 +29,7 @@ it('defines immutable global and owner-local Policy references', () => {
     evaluate: () => Effect.void,
     policyKey: 'global.tenant-active.v1',
   });
-  const modulePolicy = defineMicroverticalPolicy<
-    typeof input.payload,
-    'inventory.stock'
-  >({
+  const modulePolicy = defineMicroverticalPolicy<typeof input.payload, 'inventory.stock'>({
     evaluate: () => Effect.void,
     owningModuleKey: 'inventory.stock',
     policyKey: 'inventory.stock.available.v1',
@@ -76,17 +68,8 @@ it.effect(
       },
       policyKey: 'global.allowed.v1',
     });
-    const denied = defineMicroverticalPolicy<
-      typeof input.payload,
-      'inventory.stock'
-    >({
-      evaluate: () =>
-        Effect.fail(
-          denyPolicy(
-            'stock_unavailable',
-            'Requested stock is unavailable — retry later'
-          )
-        ),
+    const denied = defineMicroverticalPolicy<typeof input.payload, 'inventory.stock'>({
+      evaluate: () => Effect.fail(denyPolicy('stock_unavailable', 'Requested stock is unavailable — retry later')),
       owningModuleKey: 'inventory.stock',
       policyKey: 'inventory.stock.available.v1',
     });
@@ -100,13 +83,11 @@ it.effect(
     expect(denial.reasonCode).toBe('stock_unavailable');
     expect(denial.reason).toBe('Requested stock is unavailable — retry later');
     expect(Object.isFrozen(denial)).toBe(true);
-  })
+  }),
 );
 
 it('rejects empty stable identifiers and denial messages', () => {
-  expect(() =>
-    defineGlobalPolicy({ evaluate: () => Effect.void, policyKey: '  ' })
-  ).toThrow(TypeError);
+  expect(() => defineGlobalPolicy({ evaluate: () => Effect.void, policyKey: '  ' })).toThrow(TypeError);
   expect(() => denyPolicy('', 'Safe message')).toThrow(TypeError);
   expect(() => denyPolicy('stable_code', '')).toThrow(TypeError);
 });

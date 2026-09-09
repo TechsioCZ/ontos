@@ -5,5 +5,5 @@ export class TenantModuleStateUnsupportedChangeSourceError extends Schema.Tagged
   {
     code: Schema.Literal('tenant_module_state_change_source_unsupported'),
     reason: Schema.String,
-  }
+  },
 ) {}

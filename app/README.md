@@ -6,22 +6,22 @@
 
 Read this guide, then only the rows that govern the task.
 
-| Concern | Current authority |
-| --- | --- |
-| MicroVertical seams, BFFs, and staff identity | [MicroVertical Architecture](docs/architecture/MICROVERTICALS.md) |
-| State-changing operations | [Action Execution](docs/architecture/ACTIONS.md) |
-| Typed failures and HTTP responses | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md) |
-| PostgreSQL ownership and governed access | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md) |
-| Drizzle cohort, migration layout, and re-proof steps | [Drizzle v1 Upgrade](docs/architecture/DRIZZLE_V1_UPGRADE.md) |
-| Asynchronous consumers | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md) |
-| Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md) |
-| Deployment contracts and module identity | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md) |
-| Commerce surfaces | [Commerce Application Boundaries](docs/architecture/COMMERCE_APPLICATIONS.md) |
-| Shared Party identity and operational boundaries | [Party Registry](docs/architecture/PARTY_REGISTRY.md) |
-| Entities versus value objects | [Value Objects](docs/architecture/VALUE_OBJECTS.md) |
-| Deployment and release work | [Deployment Playbook](docs/architecture/DEPLOYMENT.md) |
-| Frontend work, including Figma | [Frontend Architecture](docs/frontend/FRONTEND.md) |
-| ARES provider lookup and Party application | [ARES reference](docs/integrations/ares.md) and [Party Registry](docs/architecture/PARTY_REGISTRY.md) |
+| Concern                                               | Current authority                                                                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| MicroVertical seams, BFFs, and staff identity         | [MicroVertical Architecture](docs/architecture/MICROVERTICALS.md)                                                   |
+| State-changing operations                             | [Action Execution](docs/architecture/ACTIONS.md)                                                                    |
+| Typed failures and HTTP responses                     | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md)                                                      |
+| PostgreSQL ownership and governed access              | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md) |
+| Drizzle cohort, migration layout, and re-proof steps  | [Drizzle v1 Upgrade](docs/architecture/DRIZZLE_V1_UPGRADE.md)                                                       |
+| Asynchronous consumers                                | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md)                                                   |
+| Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md)                                                       |
+| Deployment contracts and module identity              | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md)                                                           |
+| Commerce surfaces                                     | [Commerce Application Boundaries](docs/architecture/COMMERCE_APPLICATIONS.md)                                       |
+| Shared Party identity and operational boundaries      | [Party Registry](docs/architecture/PARTY_REGISTRY.md)                                                               |
+| Entities versus value objects                         | [Value Objects](docs/architecture/VALUE_OBJECTS.md)                                                                 |
+| Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                              |
+| Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                  |
+| ARES provider lookup and Party application            | [ARES reference](docs/integrations/ares.md) and [Party Registry](docs/architecture/PARTY_REGISTRY.md)               |
 
 Read a specification only when the task or GitHub issue names it. A specification with `status: done`, `status: complete`, or `status: superseded` is historical implementation evidence, not current guidance. Do not browse `specs/` for background.
 
@@ -58,15 +58,15 @@ Then generate its MicroVertical module contract before its business artifacts. G
 
 ## Sources of truth
 
-| Fact | Source |
-| --- | --- |
-| Workspace packages and scripts | `package.json`, `pnpm-workspace.yaml` |
-| Node and pnpm versions | `.mise.toml`, `package.json#packageManager` |
-| Package-source and generated profile data | `.modernjs/ultramodern.json` |
-| Deployments, remotes, ports, and owners | `topology/` and generated ownership metadata |
-| Agent skill sources and install target | `.agents/skills-lock.json` and its bootstrap script |
-| CI and stage delivery | `../.github/workflows/ultramodern-workspace-gates.yml` |
-| Local database defaults | `.env.example`, Compose configuration, and database scripts |
+| Fact                                      | Source                                                      |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| Workspace packages and scripts            | `package.json`, `pnpm-workspace.yaml`                       |
+| Node and pnpm versions                    | `.mise.toml`, `package.json#packageManager`                 |
+| Package-source and generated profile data | `.modernjs/ultramodern.json`                                |
+| Deployments, remotes, ports, and owners   | `topology/` and generated ownership metadata                |
+| Agent skill sources and install target    | `.agents/skills-lock.json` and its bootstrap script         |
+| CI and stage delivery                     | `../.github/workflows/ultramodern-workspace-gates.yml`      |
+| Local database defaults                   | `.env.example`, Compose configuration, and database scripts |
 
 Do not cache current versions, vertical inventory, generated fields, or package-source strategy in prose. Where source files describe the same contract, they must agree; a mismatch is a generator or validation defect, not a choice for documentation to resolve. Use the mise-managed toolchain; do not reintroduce Corepack or alternate pnpm aliases. The repository typecheck script owns the TS-Go/TS7 invocation; do not replace it with an ad hoc compiler command.
 
@@ -90,11 +90,11 @@ Each owner keeps its own schema, migration journal, and verifier. See [Database 
 
 ## Public URLs and Cloudflare proof
 
-| Variable | Role |
-| --- | --- |
-| `MODERN_PUBLIC_SITE_URL` | Canonical origin for public SEO output |
-| `MODERN_ASSET_PREFIX` | Preferred JS, CSS, and static-asset prefix |
-| `ULTRAMODERN_ASSET_PREFIX` | Compatibility asset prefix |
+| Variable                          | Role                                         |
+| --------------------------------- | -------------------------------------------- |
+| `MODERN_PUBLIC_SITE_URL`          | Canonical origin for public SEO output       |
+| `MODERN_ASSET_PREFIX`             | Preferred JS, CSS, and static-asset prefix   |
+| `ULTRAMODERN_ASSET_PREFIX`        | Compatibility asset prefix                   |
 | `ULTRAMODERN_PUBLIC_URL_<APP_ID>` | Per-app deployment, proof, and remote origin |
 
 Do not bake absolute localhost URLs into production asset configuration. Shell assets resolve `MODERN_ASSET_PREFIX`, then `ULTRAMODERN_ASSET_PREFIX`, then origin-relative `/`. Module Federation remotes use the same prefix precedence, then their configured per-app origin. `MODERN_PUBLIC_SITE_URL` is SEO-only and never an asset-prefix fallback. When it is unset, local and preview output remains non-public. App-specific public URL keys are generated from topology; hyphens become underscores and letters become uppercase.
@@ -174,13 +174,13 @@ Run `mise exec -- pnpm build` when build output, routes, public surfaces, Module
 
 ## Troubleshooting
 
-| Symptom | First source or check |
-| --- | --- |
-| Toolchain mismatch | `.mise.toml`, `package.json#packageManager`, then `mise install` |
-| Package cohort mismatch | `.modernjs/ultramodern.json`, workspace policy, then a frozen install |
-| Old API path | `mise exec -- pnpm api:check` |
+| Symptom                      | First source or check                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| Toolchain mismatch           | `.mise.toml`, `package.json#packageManager`, then `mise install`                |
+| Package cohort mismatch      | `.modernjs/ultramodern.json`, workspace policy, then a frozen install           |
+| Old API path                 | `mise exec -- pnpm api:check`                                                   |
 | Type, lint, or contract fail | Run the matching primitive script from `package.json` before the aggregate gate |
-| Missing public URL | The app key generated in `.modernjs/ultramodern.json` |
-| Asset or CSS 404 | Rebuild and inspect emitted asset paths; do not hardcode URLs |
-| Federation failure | Build host and remote, then verify each configured `mf-manifest.json` |
-| Deployment or rollback issue | [Deployment Playbook](docs/architecture/DEPLOYMENT.md) |
+| Missing public URL           | The app key generated in `.modernjs/ultramodern.json`                           |
+| Asset or CSS 404             | Rebuild and inspect emitted asset paths; do not hardcode URLs                   |
+| Federation failure           | Build host and remote, then verify each configured `mf-manifest.json`           |
+| Deployment or rollback issue | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                          |

@@ -51,16 +51,9 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
-import {
-  unwrap as unwrapExpression,
-  staticString,
-  keyName,
-} from '../shared/ast.ts';
+import { unwrap as unwrapExpression, staticString, keyName } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
-import {
-  collectEffectBindings,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
 import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
@@ -68,37 +61,15 @@ import { isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 const DEFAULT_PATHS = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 /** Generated output that is never hand-edited (and is git-ignored, so normally never linted). */
-const DEFAULT_EXCLUDE = [
-  '**/dist/**',
-  '**/.output/**',
-  '**/node_modules/**',
-  '**/*.d.ts',
-];
+const DEFAULT_EXCLUDE = ['**/dist/**', '**/.output/**', '**/node_modules/**', '**/*.d.ts'];
 
 /** Effect HTTP namespaces that own cookie serialization. A call into these is the target shape. */
-const DEFAULT_COOKIE_NAMESPACES = [
-  'Cookies',
-  'Cookie',
-  'HttpServerResponse',
-  'HttpServerRespondable',
-];
+const DEFAULT_COOKIE_NAMESPACES = ['Cookies', 'Cookie', 'HttpServerResponse', 'HttpServerRespondable'];
 
-const DEFAULT_CONTRACT_NAMES = [
-  'setCookieHeaders',
-  'setCookieHeader',
-  'cookieHeaders',
-];
+const DEFAULT_CONTRACT_NAMES = ['setCookieHeaders', 'setCookieHeader', 'cookieHeaders'];
 
 /** Methods that write a header value (`Headers`, node `ServerResponse`, Effect response builders). */
-const HEADER_WRITERS = new Set([
-  'append',
-  'set',
-  'setHeader',
-  'setHeaders',
-  'add',
-  'put',
-  'writeHead',
-]);
+const HEADER_WRITERS = new Set(['append', 'set', 'setHeader', 'setHeaders', 'add', 'put', 'writeHead']);
 
 const SET_COOKIE_HEADER = 'set-cookie';
 
@@ -130,10 +101,7 @@ function readOptions(context: Context): RuleOptions {
     allowPaths: stringArray(record.allowPaths, []),
     exclude: stringArray(record.exclude, DEFAULT_EXCLUDE),
     ignoreTestFiles: record.ignoreTestFiles !== false,
-    cookieNamespaces: stringArray(
-      record.cookieNamespaces,
-      DEFAULT_COOKIE_NAMESPACES
-    ),
+    cookieNamespaces: stringArray(record.cookieNamespaces, DEFAULT_COOKIE_NAMESPACES),
     flagCookieStringContracts: record.flagCookieStringContracts === true,
     contractNames: stringArray(record.contractNames, DEFAULT_CONTRACT_NAMES),
   };
@@ -146,8 +114,7 @@ function unwrap(node: ESTree.Node | null | undefined): ESTree.Node | null {
 
 /** Non-computed `.foo`, or computed `["foo"]`. */
 function memberName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed)
-    return node.property.type === 'Identifier' ? node.property.name : null;
+  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
   const property = unwrap(node.property);
   return literalString(property);
 }
@@ -179,7 +146,7 @@ function isCookieNamespaceMember(
   context: Context,
   node: ESTree.Node | null,
   bindings: EffectBindings,
-  namespaces: readonly string[]
+  namespaces: readonly string[],
 ): boolean {
   const target = unwrap(node);
   if (target === null || target.type !== 'MemberExpression') return false;
@@ -196,8 +163,7 @@ function isCookieNamespaceMember(
           def.type === 'ImportBinding' &&
           def.parent?.type === 'ImportDeclaration' &&
           def.parent.importKind !== 'type' &&
-          (def.node.type !== 'ImportSpecifier' ||
-            def.node.importKind !== 'type')
+          (def.node.type !== 'ImportSpecifier' || def.node.importKind !== 'type'),
       );
     scope = scope.upper;
   }
@@ -213,50 +179,30 @@ function isCookieOwnedValue(
   node: ESTree.Node | null,
   bindings: EffectBindings,
   namespaces: readonly string[],
-  depth = 0
+  depth = 0,
 ): boolean {
   const target = unwrap(node);
   if (target === null || depth > 6) return false;
   switch (target.type) {
     case 'CallExpression': {
       // An unrelated wrapper can replace its argument; merely containing Cookies is not ownership.
-      return isCookieOwnedValue(
-        context,
-        target.callee,
-        bindings,
-        namespaces,
-        depth + 1
-      );
+      return isCookieOwnedValue(context, target.callee, bindings, namespaces, depth + 1);
     }
     case 'MemberExpression':
       // `Cookies.toSetCookieHeaders(…)[0]` / `HttpServerResponse.setCookie(…).headers`.
       return (
         isCookieNamespaceMember(context, target, bindings, namespaces) ||
-        isCookieOwnedValue(
-          context,
-          target.object,
-          bindings,
-          namespaces,
-          depth + 1
-        )
+        isCookieOwnedValue(context, target.object, bindings, namespaces, depth + 1)
       );
     default:
-      return isOwnedComposite(target, (child) =>
-        isCookieOwnedValue(context, child, bindings, namespaces, depth + 1)
-      );
+      return isOwnedComposite(target, (child) => isCookieOwnedValue(context, child, bindings, namespaces, depth + 1));
   }
 }
 
-function isOwnedComposite(
-  target: ESTree.Node,
-  owned: (node: ESTree.Node | null) => boolean
-): boolean {
+function isOwnedComposite(target: ESTree.Node, owned: (node: ESTree.Node | null) => boolean): boolean {
   switch (target.type) {
     case 'LogicalExpression':
-      return (
-        owned(target.left) &&
-        (literalString(target.right) === '' || owned(target.right))
-      );
+      return owned(target.left) && (literalString(target.right) === '' || owned(target.right));
     case 'AwaitExpression':
     case 'YieldExpression':
       return owned(target.argument);
@@ -265,12 +211,7 @@ function isOwnedComposite(
     case 'ArrayExpression':
       return (
         target.elements.length > 0 &&
-        target.elements.every(
-          (element) =>
-            element !== null &&
-            element.type !== 'SpreadElement' &&
-            owned(element)
-        )
+        target.elements.every((element) => element !== null && element.type !== 'SpreadElement' && owned(element))
       );
     default:
       return false;
@@ -289,16 +230,10 @@ function isHandBuiltValue(node: ESTree.Node | null, depth = 0): boolean {
     case 'BinaryExpression':
       return isHandBuiltConcatenation(target, depth);
     case 'ConditionalExpression':
-      return (
-        isHandBuiltValue(target.consequent, depth + 1) ||
-        isHandBuiltValue(target.alternate, depth + 1)
-      );
+      return isHandBuiltValue(target.consequent, depth + 1) || isHandBuiltValue(target.alternate, depth + 1);
     case 'ArrayExpression':
       return target.elements.some(
-        (element) =>
-          element !== null &&
-          element.type !== 'SpreadElement' &&
-          isHandBuiltValue(element, depth + 1)
+        (element) => element !== null && element.type !== 'SpreadElement' && isHandBuiltValue(element, depth + 1),
       );
     default:
       return false;
@@ -307,35 +242,27 @@ function isHandBuiltValue(node: ESTree.Node | null, depth = 0): boolean {
 
 function isHandBuiltConcatenation(
   target: ESTree.BinaryExpression | ESTree.PrivateInExpression,
-  depth: number
+  depth: number,
 ): boolean {
   return (
-    target.operator === '+' &&
-    (isHandBuiltValue(target.left, depth + 1) ||
-      isHandBuiltValue(target.right, depth + 1))
+    target.operator === '+' && (isHandBuiltValue(target.left, depth + 1) || isHandBuiltValue(target.right, depth + 1))
   );
 }
 
 function propertyKeyName(node: ESTree.Node): string | null {
-  if (
-    node.type !== 'Property' &&
-    node.type !== 'TSPropertySignature' &&
-    node.type !== 'PropertyDefinition'
-  )
+  if (node.type !== 'Property' && node.type !== 'TSPropertySignature' && node.type !== 'PropertyDefinition')
     return null;
   return keyName(
     node.key,
     node.computed,
-    node.computed
-      ? { unwrap: {}, templates: true, rawTemplates: true }
-      : { templates: false }
+    node.computed ? { unwrap: {}, templates: true, rawTemplates: true } : { templates: false },
   );
 }
 
 /** The header name a header-writing call targets, plus the argument holding the written value. */
 function headerWrite(
   context: Context,
-  node: ESTree.CallExpression
+  node: ESTree.CallExpression,
 ): { name: string; value: ESTree.Node | null } | null {
   const callee = unwrap(node.callee);
   if (callee === null || callee.type !== 'MemberExpression') return null;
@@ -346,7 +273,7 @@ function headerWrite(
 
 function cookieHeaderArgument(
   context: Context,
-  args: ESTree.CallExpression['arguments']
+  args: ESTree.CallExpression['arguments'],
 ): { name: string; value: ESTree.Node | null } | null {
   for (const [index, argument] of args.entries()) {
     if (argument.type === 'SpreadElement') continue;
@@ -360,11 +287,7 @@ function cookieHeaderArgument(
 }
 
 /** Static local constants only; names and mutable assignments are not header identity. */
-function constantString(
-  context: Context,
-  input: ESTree.Node,
-  depth = 0
-): string | null {
+function constantString(context: Context, input: ESTree.Node, depth = 0): string | null {
   if (depth > 12) return null;
   const literal = literalString(input);
   if (literal !== null) return literal;
@@ -373,22 +296,14 @@ function constantString(
   const variable = lookupVariable(context, node);
   for (const def of variable?.defs ?? []) {
     const initializer = constantInitializer(def);
-    if (initializer !== null)
-      return constantString(context, initializer, depth + 1);
+    if (initializer !== null) return constantString(context, initializer, depth + 1);
   }
   return null;
 }
 
-function constantInitializer(
-  def: Variable['defs'][number]
-): ESTree.Node | null {
-  if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator')
-    return null;
-  if (
-    def.node.parent?.type !== 'VariableDeclaration' ||
-    def.node.parent.kind !== 'const'
-  )
-    return null;
+function constantInitializer(def: Variable['defs'][number]): ESTree.Node | null {
+  if (def.type !== 'Variable' || def.node.type !== 'VariableDeclarator') return null;
+  if (def.node.parent?.type !== 'VariableDeclaration' || def.node.parent.kind !== 'const') return null;
   return def.node.init ?? null;
 }
 
@@ -473,11 +388,7 @@ export const rule = defineRule({
     const isCoveredByOuterReport = (node: ESTree.Node): boolean => {
       let current: ESTree.Node | null = node.parent ?? null;
       while (current !== null) {
-        if (
-          current.type === 'TemplateLiteral' &&
-          templateHasCookieText(current)
-        )
-          return true;
+        if (current.type === 'TemplateLiteral' && templateHasCookieText(current)) return true;
         if (reported.has(current)) return true;
 
         current = current.parent ?? null;
@@ -496,8 +407,7 @@ export const rule = defineRule({
         });
         return;
       }
-      const fragment =
-        COOKIE_ATTRIBUTE.exec(text)?.[0].replace(/^;\s*/u, '').trim() ?? text;
+      const fragment = COOKIE_ATTRIBUTE.exec(text)?.[0].replace(/^;\s*/u, '').trim() ?? text;
       context.report({
         node,
         messageId: 'cookieAttributeString',
@@ -507,11 +417,7 @@ export const rule = defineRule({
 
     return {
       Literal(node) {
-        if (
-          typeof node.value !== 'string' ||
-          node.parent?.type === 'TSLiteralType'
-        )
-          return;
+        if (typeof node.value !== 'string' || node.parent?.type === 'TSLiteralType') return;
         if (!isCookieText(node.value)) return;
         reportCookieText(node, node.value);
       },
@@ -523,20 +429,9 @@ export const rule = defineRule({
       CallExpression(node) {
         const write = headerWrite(context, node);
         if (write === null) return;
-        if (
-          isCookieOwnedValue(
-            context,
-            write.value,
-            bindings,
-            options.cookieNamespaces
-          )
-        )
-          return;
+        if (isCookieOwnedValue(context, write.value, bindings, options.cookieNamespaces)) return;
         const callee = unwrap(node.callee);
-        const method =
-          callee !== null && callee.type === 'MemberExpression'
-            ? memberName(callee)
-            : null;
+        const method = callee !== null && callee.type === 'MemberExpression' ? memberName(callee) : null;
         reported.add(node);
         context.report({
           node,
@@ -547,15 +442,7 @@ export const rule = defineRule({
       Property(node) {
         const name = propertyKeyName(node);
         if (name === null || name.toLowerCase() !== SET_COOKIE_HEADER) return;
-        if (
-          isCookieOwnedValue(
-            context,
-            node.value,
-            bindings,
-            options.cookieNamespaces
-          )
-        )
-          return;
+        if (isCookieOwnedValue(context, node.value, bindings, options.cookieNamespaces)) return;
         if (!isHandBuiltValue(node.value)) return;
         reported.add(node);
         context.report({

@@ -23,23 +23,21 @@ it('audit evidence requires finite nonnegative integer source positions', () => 
   }
 });
 
-it.effect(
-  'audit and gate reject nonfinite, negative and fractional report counts',
-  () =>
-    Effect.gen(function* invalidCountReports() {
-      for (const count of ['1e400', '-1e400', '-1', '0.5']) {
-        const audit = yield* validateReport(
-          'jscpd',
-          `{"duplicates":[],"statistics":{"total":{"clones":0,"sources":${count}}}}`
-        ).pipe(Effect.result);
-        expect(Result.isFailure(audit)).toBe(true);
-        const gate = yield* validateQualityAuditSummary(
-          `{"status":"reported","results":[{"name":"jscpd","status":"reported","diagnostic":"","advisory":false,"files":${count},"findings":0,"coverage":{"tokenEligibleFiles":${count}}}]}`
-        ).pipe(Effect.result);
-        expect(Result.isFailure(gate)).toBe(true);
-        if (Result.isFailure(gate)) {
-          expect(gate.failure.message).toMatch(/Malformed audit summary/u);
-        }
+it.effect('audit and gate reject nonfinite, negative and fractional report counts', () =>
+  Effect.gen(function* invalidCountReports() {
+    for (const count of ['1e400', '-1e400', '-1', '0.5']) {
+      const audit = yield* validateReport(
+        'jscpd',
+        `{"duplicates":[],"statistics":{"total":{"clones":0,"sources":${count}}}}`,
+      ).pipe(Effect.result);
+      expect(Result.isFailure(audit)).toBe(true);
+      const gate = yield* validateQualityAuditSummary(
+        `{"status":"reported","results":[{"name":"jscpd","status":"reported","diagnostic":"","advisory":false,"files":${count},"findings":0,"coverage":{"tokenEligibleFiles":${count}}}]}`,
+      ).pipe(Effect.result);
+      expect(Result.isFailure(gate)).toBe(true);
+      if (Result.isFailure(gate)) {
+        expect(gate.failure.message).toMatch(/Malformed audit summary/u);
       }
-    })
+    }
+  }),
 );

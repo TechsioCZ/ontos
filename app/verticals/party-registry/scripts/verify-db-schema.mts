@@ -1,9 +1,5 @@
 // @effect-diagnostics globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
-import {
-  DatabaseConfig,
-  loadDatabaseConfig,
-  loadDatabaseConnectionPair,
-} from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Effect, Layer, Schema } from 'effect';
@@ -16,7 +12,7 @@ class PartyDatabaseVerificationError extends Schema.TaggedError<PartyDatabaseVer
   'PartyDatabaseVerificationError',
   {
     reason: Schema.String,
-  }
+  },
 ) {}
 
 interface TableCatalogRow extends Readonly<Record<string, string>> {
@@ -28,9 +24,7 @@ interface ColumnCatalogRow extends Readonly<Record<string, string>> {
   readonly table_name: string;
 }
 
-interface TableInfrastructureRow extends Readonly<
-  Record<string, boolean | number | string>
-> {
+interface TableInfrastructureRow extends Readonly<Record<string, boolean | number | string>> {
   readonly force_rls: boolean;
   readonly policy_count: number;
   readonly row_security: boolean;
@@ -42,9 +36,7 @@ interface TableInfrastructureRow extends Readonly<
   readonly table_owner: string;
 }
 
-interface OwnerInfrastructureRow extends Readonly<
-  Record<string, boolean | number>
-> {
+interface OwnerInfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly correction_trigger_count: number;
   readonly counterparty_role_exclusion_count: number;
   readonly external_foreign_key_count: number;
@@ -63,10 +55,7 @@ const expectedColumns = PARTY_TABLES.flatMap((table) => {
 }).toSorted();
 
 const ownerPrivilegesMismatch = (owner: OwnerInfrastructureRow): boolean =>
-  owner.runtime_create ||
-  !owner.runtime_usage ||
-  owner.role_super ||
-  owner.role_bypass_rls;
+  owner.runtime_create || !owner.runtime_usage || owner.role_super || owner.role_bypass_rls;
 
 const ownerConstraintsMismatch = (owner: OwnerInfrastructureRow): boolean =>
   owner.journal_count !== 1 ||
@@ -76,12 +65,8 @@ const ownerConstraintsMismatch = (owner: OwnerInfrastructureRow): boolean =>
   owner.counterparty_role_exclusion_count !== 1 ||
   owner.correction_trigger_count !== 1;
 
-const ownerInfrastructureMismatch = (
-  owner: OwnerInfrastructureRow | undefined
-): boolean =>
-  owner === undefined ||
-  ownerPrivilegesMismatch(owner) ||
-  ownerConstraintsMismatch(owner);
+const ownerInfrastructureMismatch = (owner: OwnerInfrastructureRow | undefined): boolean =>
+  owner === undefined || ownerPrivilegesMismatch(owner) || ownerConstraintsMismatch(owner);
 
 const verification = Effect.gen(function* verifyPartyDatabase() {
   const connections = yield* loadDatabaseConnectionPair();
@@ -97,8 +82,8 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
           () =>
             new PartyDatabaseVerificationError({
               reason: `Typed verification failed for one ${PARTY_SCHEMA_NAME} table`,
-            })
-        )
+            }),
+        ),
       );
   }
 
@@ -113,19 +98,17 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
           and relation.relkind in (${'r'}, ${'p'})
         order by relation.relname
       `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(
         () =>
           new PartyDatabaseVerificationError({
             reason: 'Unable to compare the PostgreSQL Party Registry catalog',
-          })
-      )
+          }),
+      ),
     );
-  const difference = comparePartyCatalog(
-    catalog.map((row) => `${PARTY_SCHEMA_NAME}.${row.table_name}`)
-  );
+  const difference = comparePartyCatalog(catalog.map((row) => `${PARTY_SCHEMA_NAME}.${row.table_name}`));
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     return yield* new PartyDatabaseVerificationError({
       reason: `Party Registry catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
@@ -140,20 +123,17 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
         where table_schema = ${PARTY_SCHEMA_NAME}
         order by table_name, column_name
       `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(
         () =>
           new PartyDatabaseVerificationError({
-            reason:
-              'Unable to compare the PostgreSQL Party Registry column catalog',
-          })
-      )
+            reason: 'Unable to compare the PostgreSQL Party Registry column catalog',
+          }),
+      ),
     );
-  const actualColumns = columns
-    .map((row) => `${row.table_name}.${row.column_name}`)
-    .toSorted();
+  const actualColumns = columns.map((row) => `${row.table_name}.${row.column_name}`).toSorted();
   if (
     actualColumns.length !== expectedColumns.length ||
     actualColumns.some((column, index) => column !== expectedColumns[index])
@@ -184,16 +164,15 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
           and relation.relkind in (${'r'}, ${'p'})
         order by relation.relname
       `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(
         () =>
           new PartyDatabaseVerificationError({
-            reason:
-              'Unable to verify Party Registry table ownership, RLS, policies, or grants',
-          })
-      )
+            reason: 'Unable to verify Party Registry table ownership, RLS, policies, or grants',
+          }),
+      ),
     );
   if (
     tables.length !== PARTY_TABLES.length ||
@@ -206,12 +185,11 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
         !row.runtime_select ||
         !row.runtime_insert ||
         !row.runtime_update ||
-        !row.runtime_delete
+        !row.runtime_delete,
     )
   ) {
     return yield* new PartyDatabaseVerificationError({
-      reason:
-        'Party Registry tables do not match their ownership, forced-RLS, policy, or runtime-grant contract',
+      reason: 'Party Registry tables do not match their ownership, forced-RLS, policy, or runtime-grant contract',
     });
   }
 
@@ -277,16 +255,15 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
         from pg_catalog.pg_roles as runtime_role
         where runtime_role.rolname = ${'ontos_runtime'}
       `,
-      'objects'
+      'objects',
     )
     .pipe(
       Effect.mapError(
         () =>
           new PartyDatabaseVerificationError({
-            reason:
-              'Unable to verify Party Registry migration and constraint infrastructure',
-          })
-      )
+            reason: 'Unable to verify Party Registry migration and constraint infrastructure',
+          }),
+      ),
     );
   const [owner] = infrastructure;
   if (ownerInfrastructureMismatch(owner)) {
@@ -299,11 +276,7 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
   return { typedTableCount: PARTY_TABLES.length };
 });
 
-const runtime = PartyDatabaseLive.pipe(
-  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig()))
-);
+const runtime = PartyDatabaseLive.pipe(Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConfig())));
 const result = await Effect.runPromise(Effect.provide(verification, runtime));
 
-console.log(
-  `Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PARTY_SCHEMA_NAME}`
-);
+console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PARTY_SCHEMA_NAME}`);

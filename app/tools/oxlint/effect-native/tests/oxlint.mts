@@ -9,10 +9,7 @@ export const pluginDirectory = resolve(testsDirectory, '..');
 export const appRoot = resolve(pluginDirectory, '..', '..', '..');
 export const fixturesDirectory = join(testsDirectory, 'fixtures');
 // Rstest bundles this harness through Rspack, which has no `import.meta.resolve`.
-const oxlintEntryPoint = join(
-  dirname(createRequire(import.meta.url).resolve('oxlint/package.json')),
-  'bin/oxlint'
-);
+const oxlintEntryPoint = join(dirname(createRequire(import.meta.url).resolve('oxlint/package.json')), 'bin/oxlint');
 
 interface Diagnostic {
   readonly code: string;
@@ -40,15 +37,13 @@ function validateDiagnostic(diagnostic: Diagnostic): void {
     !Array.isArray(diagnostic.labels) ||
     !['error', 'warning'].includes(diagnostic.severity)
   ) {
-    throw new Error(
-      `Oxlint returned a malformed diagnostic: ${JSON.stringify(diagnostic)}`
-    );
+    throw new Error(`Oxlint returned a malformed diagnostic: ${JSON.stringify(diagnostic)}`);
   }
 }
 
 function validateReport(
   parsed: { diagnostics?: Diagnostic[]; number_of_files?: number },
-  stdout: string
+  stdout: string,
 ): asserts parsed is { diagnostics: Diagnostic[]; number_of_files: number } {
   if (
     parsed === null ||
@@ -56,25 +51,16 @@ function validateReport(
     !Number.isInteger(parsed.number_of_files) ||
     (parsed.number_of_files ?? 0) <= 0
   ) {
-    throw new Error(
-      `Oxlint returned an incomplete or empty-file report:\n${stdout}`
-    );
+    throw new Error(`Oxlint returned an incomplete or empty-file report:\n${stdout}`);
   }
 }
 
 /** A crashed loader, empty run, or malformed output must never look like zero violations. */
-export function parseOxlintOutput(
-  stdout: string,
-  stderr: string,
-  status: number | null
-): LintRun {
+export function parseOxlintOutput(stdout: string, stderr: string, status: number | null): LintRun {
   if (status !== 0 && status !== 1) {
-    throw new Error(
-      `Oxlint did not complete (status ${status}):\n${stderr}\n${stdout}`
-    );
+    throw new Error(`Oxlint did not complete (status ${status}):\n${stderr}\n${stdout}`);
   }
-  if (stderr.trim() !== '')
-    throw new Error(`Oxlint wrote to stderr:\n${stderr}`);
+  if (stderr.trim() !== '') throw new Error(`Oxlint wrote to stderr:\n${stderr}`);
   let parsed: { diagnostics?: Diagnostic[]; number_of_files?: number };
   try {
     parsed = JSON.parse(stdout);
@@ -85,16 +71,9 @@ export function parseOxlintOutput(
   }
   validateReport(parsed, stdout);
   for (const diagnostic of parsed.diagnostics) validateDiagnostic(diagnostic);
-  const hasErrors = parsed.diagnostics.some(
-    (diagnostic) => diagnostic.severity === 'error'
-  );
-  if (
-    (status === 0 && hasErrors) ||
-    (status === 1 && parsed.diagnostics.length === 0)
-  ) {
-    throw new Error(
-      `Oxlint exit status ${status} contradicts its diagnostics.`
-    );
+  const hasErrors = parsed.diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+  if ((status === 0 && hasErrors) || (status === 1 && parsed.diagnostics.length === 0)) {
+    throw new Error(`Oxlint exit status ${status} contradicts its diagnostics.`);
   }
   return {
     diagnostics: parsed.diagnostics,
@@ -105,44 +84,25 @@ export function parseOxlintOutput(
 }
 
 /** Run oxlint with a fixture config against the given paths (relative to `cwd`). */
-export function runOxlint(
-  configPath: string,
-  paths: readonly string[],
-  cwd: string,
-  selectedRule?: string
-): LintRun {
+export function runOxlint(configPath: string, paths: readonly string[], cwd: string, selectedRule?: string): LintRun {
   const fixtureRule =
-    selectedRule ??
-    (basename(dirname(dirname(configPath))) === 'fixtures'
-      ? basename(dirname(configPath))
-      : undefined);
+    selectedRule ?? (basename(dirname(dirname(configPath))) === 'fixtures' ? basename(dirname(configPath)) : undefined);
   const result = spawnSync(
     process.execPath,
-    [
-      oxlintEntryPoint,
-      '-c',
-      configPath,
-      '--format=json',
-      '--disable-nested-config',
-      ...paths,
-    ],
+    [oxlintEntryPoint, '-c', configPath, '--format=json', '--disable-nested-config', ...paths],
     {
       cwd,
       encoding: 'utf8',
       maxBuffer: 256 * 1024 * 1024,
       timeout: 120_000,
       env: { ...process.env, EFFECT_NATIVE_FIXTURE_RULE: fixtureRule },
-    }
+    },
   );
   if (result.error)
     throw new Error(`Could not execute Oxlint: ${result.error.message}`, {
       cause: result.error,
     });
-  return parseOxlintOutput(
-    result.stdout ?? '',
-    result.stderr ?? '',
-    result.status
-  );
+  return parseOxlintOutput(result.stdout ?? '', result.stderr ?? '', result.status);
 }
 
 export function listFixtureRules(): readonly string[] {

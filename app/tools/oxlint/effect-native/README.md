@@ -65,9 +65,7 @@ Fixture config template:
 
 ```json
 {
-  "jsPlugins": [
-    { "name": "effect-native", "specifier": "../../fixture-plugin.ts" }
-  ],
+  "jsPlugins": [{ "name": "effect-native", "specifier": "../../fixture-plugin.ts" }],
   "categories": { "correctness": "off" },
   "rules": { "effect-native/<name>": "error" }
 }

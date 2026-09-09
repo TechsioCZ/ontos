@@ -3,10 +3,7 @@ import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ReadHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 
-import {
-  PartyMatchRequestSchema,
-  PartyMatchResponseSchema,
-} from '../../shared/apis/party-match.ts';
+import { PartyMatchRequestSchema, PartyMatchResponseSchema } from '../../shared/apis/party-match.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { previewPartyMatch } from '../services/party-matching-persistence.service.ts';
 import { readUnavailable } from './read-outcome.ts';
@@ -19,13 +16,9 @@ const partyMatchEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 interface Services {
-  readonly preview: (
-    candidate: PartyCandidate
-  ) => ReturnType<typeof previewPartyMatch>;
+  readonly preview: (candidate: PartyCandidate) => ReturnType<typeof previewPartyMatch>;
 }
-const partyMatchUnavailable = readUnavailable(
-  'Party match preview is unavailable'
-);
+const partyMatchUnavailable = readUnavailable('Party match preview is unavailable');
 /** UX preview only. Use the match-party Action for a durable identity decision and review case. */
 export const partyMatchRead = defineRead(
   {
@@ -50,12 +43,11 @@ export const partyMatchRead = defineRead(
       Effect.map((result) => ({
         evidence: { resultCount: result.candidateParties.length },
         result,
-      }))
+      })),
     ),
   (transaction, scope) =>
     Effect.succeed({
-      preview: (candidate: PartyCandidate) =>
-        previewPartyMatch(transaction, scope.tenantId, candidate),
+      preview: (candidate: PartyCandidate) => previewPartyMatch(transaction, scope.tenantId, candidate),
     }),
-  () => ({ kind: 'tenant', permission: 'manage_party_identity' })
+  () => ({ kind: 'tenant', permission: 'manage_party_identity' }),
 );

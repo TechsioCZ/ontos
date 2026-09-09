@@ -16,7 +16,7 @@ interface BuildArtifact {
 export const withUltramodernBuildIdentity = <Artifact extends BuildArtifact>(
   artifact: Artifact,
   buildMarker: string,
-  sourceRevision: string
+  sourceRevision: string,
 ) => {
   const identity = { build: buildMarker, buildMarker, sourceRevision };
   return {

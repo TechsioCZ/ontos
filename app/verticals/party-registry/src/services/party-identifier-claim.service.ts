@@ -19,17 +19,12 @@ const unavailable = (cause?: unknown) => {
 };
 
 const TenantIdentityWriteLockKeyCodec = Schema.fromJsonString(
-  Schema.Tuple([
-    Schema.Literal('party.registry.identity-write.v1'),
-    Schema.String,
-  ])
+  Schema.Tuple([Schema.Literal('party.registry.identity-write.v1'), Schema.String]),
 );
 const TenantClaimLockKeyCodec = Schema.fromJsonString(
-  Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String])
+  Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]),
 );
-const encodeTenantIdentityWriteLockKey = Schema.encodeResult(
-  TenantIdentityWriteLockKeyCodec
-);
+const encodeTenantIdentityWriteLockKey = Schema.encodeResult(TenantIdentityWriteLockKeyCodec);
 const encodeTenantClaimLockKey = Schema.encodeResult(TenantClaimLockKeyCodec);
 
 /**
@@ -39,17 +34,9 @@ const encodeTenantClaimLockKey = Schema.encodeResult(TenantClaimLockKeyCodec);
  * The capability remains owner-local and exposes no general SQL executor.
  */
 export const tenantIdentityWriteLockKey = (tenantId: string): string =>
-  Result.getOrThrow(
-    encodeTenantIdentityWriteLockKey([
-      'party.registry.identity-write.v1',
-      tenantId,
-    ])
-  );
+  Result.getOrThrow(encodeTenantIdentityWriteLockKey(['party.registry.identity-write.v1', tenantId]));
 
-export const lockTenantIdentityWrites = (
-  transaction: Pick<PartyTransaction, 'select'>,
-  tenantId: string
-) =>
+export const lockTenantIdentityWrites = (transaction: Pick<PartyTransaction, 'select'>, tenantId: string) =>
   transaction
     .select({
       lock: sql`pg_advisory_xact_lock(hashtextextended(${tenantIdentityWriteLockKey(tenantId)}, 0))`,
@@ -57,22 +44,14 @@ export const lockTenantIdentityWrites = (
     .from(sql`(values (1)) as party_identity_lock_anchor(value)`)
     .pipe(Effect.mapError(unavailable), Effect.asVoid);
 
-export const tenantClaimLockKeys = (
-  tenantId: string,
-  claims: readonly NormalizedOfficialIdentifier[]
-) =>
+export const tenantClaimLockKeys = (tenantId: string, claims: readonly NormalizedOfficialIdentifier[]) =>
   [
     ...new Set(
       claims.map((claim) =>
         Result.getOrThrow(
-          encodeTenantClaimLockKey([
-            tenantId,
-            claim.identifierType,
-            claim.namespace,
-            claim.normalizedValue,
-          ])
-        )
-      )
+          encodeTenantClaimLockKey([tenantId, claim.identifierType, claim.namespace, claim.normalizedValue]),
+        ),
+      ),
     ),
   ].toSorted();
 
@@ -82,64 +61,64 @@ interface ResolvedClaim {
   readonly partyId?: string;
 }
 
-export const lockAndResolveClaims = Effect.fn(
-  'PartyIdentifierClaimService.lockAndResolveClaims'
-)(function* lockAndResolveClaimsInOrder(
-  transaction: Pick<PartyTransaction, 'select'>,
-  tenantId: string,
-  claims: readonly NormalizedOfficialIdentifier[]
-) {
-  if (claims.length > 100) {
-    return yield* new PartyPersistenceUnavailable({
-      code: 'party_persistence_unavailable',
-      reason: 'The bounded identity claim lock batch exceeds 100 claims',
-    });
-  }
-  const lockKeys = tenantClaimLockKeys(tenantId, claims);
-  yield* Effect.forEach(
-    lockKeys,
-    (key) =>
-      transaction
-        .select({
-          lock: sql`pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
-        })
-        .from(sql`(values (1)) as party_claim_lock_anchor(value)`)
-        .pipe(Effect.mapError(unavailable)),
-    { concurrency: 1, discard: true }
-  );
-  return yield* Effect.forEach(
-    claims,
-    (claim) =>
-      transaction
-        .select({
-          officialIdentifierId: partyIdentifierClaims.officialIdentifierId,
-          partyId: partyIdentifierClaims.partyId,
-        })
-        .from(partyIdentifierClaims)
-        .where(
-          and(
-            eq(partyIdentifierClaims.tenantId, tenantId),
-            eq(partyIdentifierClaims.identifierTypeKey, claim.identifierType),
-            eq(partyIdentifierClaims.namespace, claim.namespace),
-            eq(partyIdentifierClaims.normalizedValue, claim.normalizedValue)
+export const lockAndResolveClaims = Effect.fn('PartyIdentifierClaimService.lockAndResolveClaims')(
+  function* lockAndResolveClaimsInOrder(
+    transaction: Pick<PartyTransaction, 'select'>,
+    tenantId: string,
+    claims: readonly NormalizedOfficialIdentifier[],
+  ) {
+    if (claims.length > 100) {
+      return yield* new PartyPersistenceUnavailable({
+        code: 'party_persistence_unavailable',
+        reason: 'The bounded identity claim lock batch exceeds 100 claims',
+      });
+    }
+    const lockKeys = tenantClaimLockKeys(tenantId, claims);
+    yield* Effect.forEach(
+      lockKeys,
+      (key) =>
+        transaction
+          .select({
+            lock: sql`pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
+          })
+          .from(sql`(values (1)) as party_claim_lock_anchor(value)`)
+          .pipe(Effect.mapError(unavailable)),
+      { concurrency: 1, discard: true },
+    );
+    return yield* Effect.forEach(
+      claims,
+      (claim) =>
+        transaction
+          .select({
+            officialIdentifierId: partyIdentifierClaims.officialIdentifierId,
+            partyId: partyIdentifierClaims.partyId,
+          })
+          .from(partyIdentifierClaims)
+          .where(
+            and(
+              eq(partyIdentifierClaims.tenantId, tenantId),
+              eq(partyIdentifierClaims.identifierTypeKey, claim.identifierType),
+              eq(partyIdentifierClaims.namespace, claim.namespace),
+              eq(partyIdentifierClaims.normalizedValue, claim.normalizedValue),
+            ),
           )
-        )
-        .limit(1)
-        .pipe(
-          Effect.mapError(unavailable),
-          Effect.map(([record]): ResolvedClaim =>
-            Option.fromUndefinedOr(record).pipe(
-              Option.match({
-                onNone: () => ({ claim }),
-                onSome: (found) => ({
-                  claim,
-                  officialIdentifierId: found.officialIdentifierId,
-                  partyId: found.partyId,
+          .limit(1)
+          .pipe(
+            Effect.mapError(unavailable),
+            Effect.map(([record]): ResolvedClaim =>
+              Option.fromUndefinedOr(record).pipe(
+                Option.match({
+                  onNone: () => ({ claim }),
+                  onSome: (found) => ({
+                    claim,
+                    officialIdentifierId: found.officialIdentifierId,
+                    partyId: found.partyId,
+                  }),
                 }),
-              })
-            )
-          )
-        ),
-    { concurrency: 1 }
-  );
-});
+              ),
+            ),
+          ),
+      { concurrency: 1 },
+    );
+  },
+);

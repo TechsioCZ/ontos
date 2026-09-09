@@ -19,12 +19,12 @@ import {
 } from 'effect/Schema';
 import type { FilterIssue, Schema } from 'effect/Schema';
 
-const ONTOS_MODULE_CONTRACT_PATH =
-  '/.well-known/ontos-module-manifest.json' as const;
+const ONTOS_MODULE_CONTRACT_PATH = '/.well-known/ontos-module-manifest.json' as const;
 const deploymentIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
-const OntosDeploymentAppIdSchema = StringSchema.check(
-  isPattern(deploymentIdPattern)
-).pipe(brand('OntosDeploymentAppId'), decodeTo(StringSchema));
+const OntosDeploymentAppIdSchema = StringSchema.check(isPattern(deploymentIdPattern)).pipe(
+  brand('OntosDeploymentAppId'),
+  decodeTo(StringSchema),
+);
 type OntosDeploymentAppId = typeof OntosDeploymentAppIdSchema.Type;
 
 class DeploymentAllowlistConfigurationError extends TaggedError<DeploymentAllowlistConfigurationError>()(
@@ -33,7 +33,7 @@ class DeploymentAllowlistConfigurationError extends TaggedError<DeploymentAllowl
     cause: StringSchema,
     code: Literal('deployment_allowlist_invalid'),
     reason: StringSchema,
-  }
+  },
 ) {}
 
 interface DeploymentAllowlistEntry {
@@ -50,7 +50,7 @@ const DeploymentAllowlistVerticalSchema = Struct({
   cloudflare: optionalKey(
     Struct({
       publicUrlEnv: NonEmptyString,
-    })
+    }),
   ),
   id: OntosDeploymentAppIdSchema,
   kind: Literal('vertical'),
@@ -60,9 +60,7 @@ export const DeploymentAllowlistTopologySchema = Struct({
   verticals: ArraySchema(DeploymentAllowlistVerticalSchema),
 });
 
-export type DeploymentAllowlistTopology = Schema.Type<
-  typeof DeploymentAllowlistTopologySchema
->;
+export type DeploymentAllowlistTopology = Schema.Type<typeof DeploymentAllowlistTopologySchema>;
 
 export const DeploymentAllowlistOverlaySchema = Struct({
   environment: NonEmptyString,
@@ -70,9 +68,7 @@ export const DeploymentAllowlistOverlaySchema = Struct({
   schemaVersion: Json,
 });
 
-export type DeploymentAllowlistOverlay = Schema.Type<
-  typeof DeploymentAllowlistOverlaySchema
->;
+export type DeploymentAllowlistOverlay = Schema.Type<typeof DeploymentAllowlistOverlaySchema>;
 
 export interface DeploymentAllowlistInput {
   readonly environment: unknown;
@@ -81,10 +77,7 @@ export interface DeploymentAllowlistInput {
 }
 
 const isLoopback = (hostname: string): boolean =>
-  hostname === 'localhost' ||
-  hostname === '127.0.0.1' ||
-  hostname === '[::1]' ||
-  hostname.endsWith('.localhost');
+  hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname.endsWith('.localhost');
 
 const isContractDocumentUrl = (url: URL): boolean =>
   url.username === '' &&
@@ -93,32 +86,19 @@ const isContractDocumentUrl = (url: URL): boolean =>
   url.search === '' &&
   url.pathname === ONTOS_MODULE_CONTRACT_PATH;
 
-const normalizedContractUrl = (
-  value: string,
-  environment: string
-): string | undefined => {
+const normalizedContractUrl = (value: string, environment: string): string | undefined => {
   const url = URL.parse(value);
   if (url === null || !isContractDocumentUrl(url)) {
     return undefined;
   }
-  const developmentLoopback =
-    environment === 'development' &&
-    url.protocol === 'http:' &&
-    isLoopback(url.hostname);
-  return url.protocol === 'https:' || developmentLoopback
-    ? url.href
-    : undefined;
+  const developmentLoopback = environment === 'development' && url.protocol === 'http:' && isLoopback(url.hostname);
+  return url.protocol === 'https:' || developmentLoopback ? url.href : undefined;
 };
 
-const contractUrlIssues = (
-  overlay: DeploymentAllowlistOverlay,
-  environment: string
-): FilterIssue[] => {
+const contractUrlIssues = (overlay: DeploymentAllowlistOverlay, environment: string): FilterIssue[] => {
   const issues: FilterIssue[] = [];
   const normalizedUrls = new Set<string>();
-  for (const [appId, contractUrl] of Object.entries(
-    overlay.ontosModuleManifests
-  )) {
+  for (const [appId, contractUrl] of Object.entries(overlay.ontosModuleManifests)) {
     const normalized = normalizedContractUrl(contractUrl, environment);
     if (normalized === undefined) {
       issues.push({
@@ -182,7 +162,7 @@ const DeploymentAllowlistInputSchema = Struct({
 
     issues.push(...contractUrlIssues(input.overlay, input.environment));
     return issues;
-  })
+  }),
 );
 
 const DeploymentAllowlistRevisionSchema = fromJsonString(
@@ -191,11 +171,11 @@ const DeploymentAllowlistRevisionSchema = fromJsonString(
       Struct({
         appId: OntosDeploymentAppIdSchema,
         contractUrl: StringSchema,
-      })
+      }),
     ),
     environment: NonEmptyString,
     schemaVersion: Json,
-  })
+  }),
 );
 
 const DeploymentAllowlistInjectionSchema = DeploymentAllowlistInputSchema;
@@ -208,44 +188,37 @@ const invalid = (cause: unknown) =>
   });
 
 /** Decodes the generated topology/overlay pairing. Reachability never adds an entry. */
-export const deriveDeploymentAllowlist = effectFn(
-  'DeploymentAllowlist.deriveDeploymentAllowlist'
-)(function* deriveDeploymentAllowlist(input: DeploymentAllowlistInput) {
-  const decoded = yield* decodeUnknownEffect(DeploymentAllowlistInputSchema, {
-    onExcessProperty: 'preserve',
-  })(input).pipe(mapError(invalid));
-  const entries: DeploymentAllowlistEntry[] = [];
-  for (const appId of decoded.topology.verticals
-    .map(({ id }) => id)
-    .toSorted()) {
-    const configuredUrl = decoded.overlay.ontosModuleManifests[appId];
-    if (configuredUrl === undefined) {
-      return yield* invalid(`allowlist omits topology app ID ${appId}`);
+export const deriveDeploymentAllowlist = effectFn('DeploymentAllowlist.deriveDeploymentAllowlist')(
+  function* deriveDeploymentAllowlist(input: DeploymentAllowlistInput) {
+    const decoded = yield* decodeUnknownEffect(DeploymentAllowlistInputSchema, {
+      onExcessProperty: 'preserve',
+    })(input).pipe(mapError(invalid));
+    const entries: DeploymentAllowlistEntry[] = [];
+    for (const appId of decoded.topology.verticals.map(({ id }) => id).toSorted()) {
+      const configuredUrl = decoded.overlay.ontosModuleManifests[appId];
+      if (configuredUrl === undefined) {
+        return yield* invalid(`allowlist omits topology app ID ${appId}`);
+      }
+      const contractUrl = normalizedContractUrl(configuredUrl, decoded.environment);
+      if (contractUrl === undefined) {
+        return yield* invalid(`allowlist contains an invalid URL for ${appId}`);
+      }
+      entries.push(Object.freeze({ appId, contractUrl }));
     }
-    const contractUrl = normalizedContractUrl(
-      configuredUrl,
-      decoded.environment
-    );
-    if (contractUrl === undefined) {
-      return yield* invalid(`allowlist contains an invalid URL for ${appId}`);
-    }
-    entries.push(Object.freeze({ appId, contractUrl }));
-  }
-  const revision = yield* encodeEffect(DeploymentAllowlistRevisionSchema)({
-    entries,
-    environment: decoded.environment,
-    schemaVersion: decoded.overlay.schemaVersion,
-  }).pipe(mapError(invalid));
-  return Object.freeze({ entries: Object.freeze(entries), revision });
-});
+    const revision = yield* encodeEffect(DeploymentAllowlistRevisionSchema)({
+      entries,
+      environment: decoded.environment,
+      schemaVersion: decoded.overlay.schemaVersion,
+    }).pipe(mapError(invalid));
+    return Object.freeze({ entries: Object.freeze(entries), revision });
+  },
+);
 
 declare const ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: unknown;
 
-export const deploymentAllowlist = effectGen(
-  function* deploymentAllowlistProgram() {
-    const injected = yield* decodeUnknownEffect(
-      DeploymentAllowlistInjectionSchema
-    )(ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST).pipe(mapError(invalid));
-    return yield* deriveDeploymentAllowlist(injected);
-  }
-);
+export const deploymentAllowlist = effectGen(function* deploymentAllowlistProgram() {
+  const injected = yield* decodeUnknownEffect(DeploymentAllowlistInjectionSchema)(
+    ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST,
+  ).pipe(mapError(invalid));
+  return yield* deriveDeploymentAllowlist(injected);
+});

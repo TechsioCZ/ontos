@@ -5,5 +5,5 @@ export class TenantModuleStateValidationUnavailableError extends Schema.TaggedEr
   {
     code: Schema.Literal('tenant_module_state_validation_unavailable'),
     reason: Schema.String,
-  }
+  },
 ) {}

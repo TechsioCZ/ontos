@@ -44,19 +44,11 @@ for (const { descriptor, makeRef, schema, slug } of resources) {
       tenantId,
     });
     assert.equal(Schema.is(schema)(reference), true);
-    for (const other of resources.filter(
-      (resource) => resource.slug !== slug
-    )) {
-      assert.equal(
-        Schema.is(schema)(other.makeRef(tenantId, 'resource-1')),
-        false
-      );
+    for (const other of resources.filter((resource) => resource.slug !== slug)) {
+      assert.equal(Schema.is(schema)(other.makeRef(tenantId, 'resource-1')), false);
     }
     assert.equal(Schema.is(schema)({ ...reference, resourceId: '' }), false);
-    assert.equal(
-      Schema.is(schema)({ ...reference, tenantId: 'not-a-uuid' }),
-      false
-    );
+    assert.equal(Schema.is(schema)({ ...reference, tenantId: 'not-a-uuid' }), false);
     assert.equal(descriptor.key, reference.resourceType);
     assert.equal(descriptor.owningModuleId, reference.moduleId);
     assert.equal(descriptor.description, `${descriptor.label} resource.`);

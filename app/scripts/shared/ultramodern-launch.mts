@@ -5,7 +5,7 @@ export const ultramodernLaunch = (
   createBin: Option.Option<string>,
   ultramodernArgs: readonly string[],
   workspaceRoot: string,
-  pathSeparator: string
+  pathSeparator: string,
 ) => {
   const launch = Option.match(createBin, {
     onNone: () => ({

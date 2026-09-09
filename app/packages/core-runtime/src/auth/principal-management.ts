@@ -1,11 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { Context, DateTime, Effect, Option } from 'effect';
 
-import type {
-  BindingStatus,
-  PrincipalKind,
-  PrincipalStatus,
-} from '../db/schema.ts';
+import type { BindingStatus, PrincipalKind, PrincipalStatus } from '../db/schema.ts';
 import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { PrincipalManagementError } from './principal-management-errors.ts';
@@ -33,8 +29,7 @@ const conflict = (reason: string) =>
     code: 'identity_lifecycle_conflict',
     reason,
   });
-const invalid = (reason: string) =>
-  new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason });
+const invalid = (reason: string) => new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason });
 
 type PrincipalRecord = Readonly<{
   readonly kind: PrincipalKind;
@@ -49,63 +44,37 @@ type SupportBindingRecord = Readonly<{ readonly authBindingId: string }>;
 
 export interface PrincipalManagementPersistence {
   readonly createPrincipal: (
-    input: CreateNonHumanPrincipalInput
-  ) => Effect.Effect<
-    Option.Option<{ readonly principalId: string }>,
-    IdentityPersistenceUnavailableError
-  >;
+    input: CreateNonHumanPrincipalInput,
+  ) => Effect.Effect<Option.Option<{ readonly principalId: string }>, IdentityPersistenceUnavailableError>;
   readonly insertApiKeyBinding: (
-    input: BindApiKeyInput
-  ) => Effect.Effect<
-    Option.Option<{ readonly authBindingId: string }>,
-    IdentityPersistenceUnavailableError
-  >;
+    input: BindApiKeyInput,
+  ) => Effect.Effect<Option.Option<{ readonly authBindingId: string }>, IdentityPersistenceUnavailableError>;
   readonly loadApiKeyBinding: (
-    input: SetApiKeyBindingStatusInput
-  ) => Effect.Effect<
-    Option.Option<ApiKeyBindingRecord>,
-    IdentityPersistenceUnavailableError
-  >;
+    input: SetApiKeyBindingStatusInput,
+  ) => Effect.Effect<Option.Option<ApiKeyBindingRecord>, IdentityPersistenceUnavailableError>;
   readonly loadPrincipal: (
     tenantId: string,
-    principalId: string
-  ) => Effect.Effect<
-    Option.Option<PrincipalRecord>,
-    IdentityPersistenceUnavailableError
-  >;
+    principalId: string,
+  ) => Effect.Effect<Option.Option<PrincipalRecord>, IdentityPersistenceUnavailableError>;
   readonly loadSupportBindings: (input: {
     readonly activeOnly: boolean;
     readonly authBindingId?: string;
     readonly principalId: string;
     readonly tenantId: string;
-  }) => Effect.Effect<
-    readonly SupportBindingRecord[],
-    IdentityPersistenceUnavailableError
-  >;
+  }) => Effect.Effect<readonly SupportBindingRecord[], IdentityPersistenceUnavailableError>;
   readonly updateApiKeyBindingStatus: (
-    input: SetApiKeyBindingStatusInput
-  ) => Effect.Effect<
-    Option.Option<{ readonly status: BindingStatus }>,
-    IdentityPersistenceUnavailableError
-  >;
+    input: SetApiKeyBindingStatusInput,
+  ) => Effect.Effect<Option.Option<{ readonly status: BindingStatus }>, IdentityPersistenceUnavailableError>;
   readonly updatePrincipalStatus: (
-    input: ChangePrincipalStatusInput
-  ) => Effect.Effect<
-    Option.Option<{ readonly status: PrincipalStatus }>,
-    IdentityPersistenceUnavailableError
-  >;
+    input: ChangePrincipalStatusInput,
+  ) => Effect.Effect<Option.Option<{ readonly status: PrincipalStatus }>, IdentityPersistenceUnavailableError>;
 }
 
 export interface PrincipalManagementRepositoryService {
   readonly bindApiKey: (
-    input: BindApiKeyInput
-  ) => Effect.Effect<
-    { readonly authBindingId: string; readonly status: 'active' },
-    PrincipalManagementError
-  >;
-  readonly changePrincipalStatus: (
-    input: ChangePrincipalStatusInput
-  ) => Effect.Effect<
+    input: BindApiKeyInput,
+  ) => Effect.Effect<{ readonly authBindingId: string; readonly status: 'active' }, PrincipalManagementError>;
+  readonly changePrincipalStatus: (input: ChangePrincipalStatusInput) => Effect.Effect<
     {
       readonly previousStatus: PrincipalStatus;
       readonly status: PrincipalStatus;
@@ -113,31 +82,26 @@ export interface PrincipalManagementRepositoryService {
     PrincipalManagementError
   >;
   readonly createNonHumanPrincipal: (
-    input: CreateNonHumanPrincipalInput
-  ) => Effect.Effect<
-    { readonly principalId: string; readonly status: 'active' },
-    PrincipalManagementError
-  >;
+    input: CreateNonHumanPrincipalInput,
+  ) => Effect.Effect<{ readonly principalId: string; readonly status: 'active' }, PrincipalManagementError>;
   readonly setApiKeyBindingStatus: (
-    input: SetApiKeyBindingStatusInput
+    input: SetApiKeyBindingStatusInput,
   ) => Effect.Effect<
     { readonly previousStatus: BindingStatus; readonly status: BindingStatus },
     PrincipalManagementError
   >;
   readonly validateSupportImpersonation: (
-    input: ValidateSupportImpersonationInput
+    input: ValidateSupportImpersonationInput,
   ) => Effect.Effect<void, PrincipalManagementError>;
 }
 
 export class PrincipalManagementRepository extends Context.Service<
   PrincipalManagementRepository,
   PrincipalManagementRepositoryService
->()(
-  '@app/core-runtime/auth/principal-management/PrincipalManagementRepository'
-) {}
+>()('@app/core-runtime/auth/principal-management/PrincipalManagementRepository') {}
 
 const principalManagementPersistenceFromTransaction = (
-  transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>
+  transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
 ): PrincipalManagementPersistence => ({
   createPrincipal: (input) =>
     transaction
@@ -151,7 +115,7 @@ const principalManagementPersistenceFromTransaction = (
       .returning({ principalId: principals.principalId })
       .pipe(
         Effect.mapError(persistenceFailure),
-        Effect.map(([created]) => Option.fromNullishOr(created))
+        Effect.map(([created]) => Option.fromNullishOr(created)),
       ),
   insertApiKeyBinding: (input) =>
     transaction
@@ -170,7 +134,7 @@ const principalManagementPersistenceFromTransaction = (
       })
       .pipe(
         Effect.mapError(persistenceFailure),
-        Effect.map(([created]) => Option.fromNullishOr(created))
+        Effect.map(([created]) => Option.fromNullishOr(created)),
       ),
   loadApiKeyBinding: (input) =>
     transaction
@@ -184,36 +148,31 @@ const principalManagementPersistenceFromTransaction = (
         principals,
         and(
           eq(principals.tenantId, principalAuthBindings.tenantId),
-          eq(principals.principalId, principalAuthBindings.principalId)
-        )
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
       )
       .where(
         and(
           eq(principalAuthBindings.tenantId, input.tenantId),
           eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
           eq(principalAuthBindings.principalId, input.principalId),
-          eq(principalAuthBindings.subjectType, 'api_key')
-        )
+          eq(principalAuthBindings.subjectType, 'api_key'),
+        ),
       )
       .limit(1)
       .pipe(
         Effect.mapError(persistenceFailure),
-        Effect.map(([record]) => Option.fromNullishOr(record))
+        Effect.map(([record]) => Option.fromNullishOr(record)),
       ),
   loadPrincipal: (tenantId, principalId) =>
     transaction
       .select({ kind: principals.kind, status: principals.status })
       .from(principals)
-      .where(
-        and(
-          eq(principals.tenantId, tenantId),
-          eq(principals.principalId, principalId)
-        )
-      )
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
       .limit(1)
       .pipe(
         Effect.mapError(persistenceFailure),
-        Effect.map(([record]) => Option.fromNullishOr(record))
+        Effect.map(([record]) => Option.fromNullishOr(record)),
       ),
   loadSupportBindings: (input) =>
     transaction
@@ -223,8 +182,8 @@ const principalManagementPersistenceFromTransaction = (
         principals,
         and(
           eq(principals.tenantId, principalAuthBindings.tenantId),
-          eq(principals.principalId, principalAuthBindings.principalId)
-        )
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
       )
       .where(
         and(
@@ -241,13 +200,8 @@ const principalManagementPersistenceFromTransaction = (
             : []),
           ...(input.authBindingId === undefined
             ? []
-            : [
-                eq(
-                  principalAuthBindings.principalAuthBindingId,
-                  input.authBindingId
-                ),
-              ])
-        )
+            : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
+        ),
       )
       .limit(2)
       .pipe(Effect.mapError(persistenceFailure)),
@@ -263,36 +217,33 @@ const principalManagementPersistenceFromTransaction = (
       .where(
         and(
           eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
-          eq(principalAuthBindings.status, input.expectedStatus)
-        )
+          eq(principalAuthBindings.status, input.expectedStatus),
+        ),
       )
       .returning({ status: principalAuthBindings.status })
       .pipe(
         Effect.mapError(persistenceFailure),
-        Effect.map(([updated]) => Option.fromNullishOr(updated))
+        Effect.map(([updated]) => Option.fromNullishOr(updated)),
       );
   },
   updatePrincipalStatus: (input) =>
     transaction
       .update(principals)
       .set({
-        disabledAt:
-          input.newStatus === 'disabled'
-            ? DateTime.toDateUtc(DateTime.nowUnsafe())
-            : null,
+        disabledAt: input.newStatus === 'disabled' ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
         status: input.newStatus,
       })
       .where(
         and(
           eq(principals.tenantId, input.tenantId),
           eq(principals.principalId, input.principalId),
-          eq(principals.status, input.expectedStatus)
-        )
+          eq(principals.status, input.expectedStatus),
+        ),
       )
       .returning({ status: principals.status })
       .pipe(
         Effect.mapError(persistenceFailure),
-        Effect.map(([updated]) => Option.fromNullishOr(updated))
+        Effect.map(([updated]) => Option.fromNullishOr(updated)),
       ),
 });
 
@@ -302,21 +253,19 @@ export interface CreateNonHumanPrincipalInput {
   readonly tenantId: string;
 }
 
-const createNonHumanPrincipalFor = (
-  persistence: PrincipalManagementPersistence
-) =>
-  Effect.fn('PrincipalManagement.createNonHumanPrincipal')(
-    function* createPrincipal(input: CreateNonHumanPrincipalInput) {
-      const created = yield* persistence.createPrincipal(input);
-      if (Option.isNone(created)) {
-        return yield* persistenceFailure();
-      }
-      return {
-        principalId: created.value.principalId,
-        status: 'active' as const,
-      };
+const createNonHumanPrincipalFor = (persistence: PrincipalManagementPersistence) =>
+  Effect.fn('PrincipalManagement.createNonHumanPrincipal')(function* createPrincipal(
+    input: CreateNonHumanPrincipalInput,
+  ) {
+    const created = yield* persistence.createPrincipal(input);
+    if (Option.isNone(created)) {
+      return yield* persistenceFailure();
     }
-  );
+    return {
+      principalId: created.value.principalId,
+      status: 'active' as const,
+    };
+  });
 
 export interface ChangePrincipalStatusInput {
   readonly expectedStatus: PrincipalStatus;
@@ -326,37 +275,21 @@ export interface ChangePrincipalStatusInput {
   readonly tenantId: string;
 }
 
-const hasStatusChangeReason = (reason: string | undefined): boolean =>
-  reason !== undefined && reason.trim().length > 0;
+const hasStatusChangeReason = (reason: string | undefined): boolean => reason !== undefined && reason.trim().length > 0;
 
-const principalTransitionAllowed = (
-  current: PrincipalStatus,
-  next: PrincipalStatus
-): boolean =>
+const principalTransitionAllowed = (current: PrincipalStatus, next: PrincipalStatus): boolean =>
   (current === 'active' && ['disabled', 'archived'].includes(next)) ||
   (current === 'disabled' && ['active', 'archived'].includes(next));
 
-const bindingTransitionAllowed = (
-  current: BindingStatus,
-  next: BindingStatus
-): boolean =>
+const bindingTransitionAllowed = (current: BindingStatus, next: BindingStatus): boolean =>
   (current === 'active' && ['disabled', 'revoked'].includes(next)) ||
   (current === 'disabled' && ['active', 'revoked'].includes(next));
 
-const changePrincipalStatusFor = (
-  persistence: PrincipalManagementPersistence
-) =>
-  Effect.fn('PrincipalManagement.changePrincipalStatus')(function* changeStatus(
-    input: ChangePrincipalStatusInput
-  ) {
-    const target = yield* persistence.loadPrincipal(
-      input.tenantId,
-      input.principalId
-    );
+const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =>
+  Effect.fn('PrincipalManagement.changePrincipalStatus')(function* changeStatus(input: ChangePrincipalStatusInput) {
+    const target = yield* persistence.loadPrincipal(input.tenantId, input.principalId);
     if (Option.isNone(target) || target.value.kind === 'human') {
-      return yield* invalid(
-        'The target is not a tenant-local non-human principal'
-      );
+      return yield* invalid('The target is not a tenant-local non-human principal');
     }
     if (target.value.status !== input.expectedStatus) {
       return yield* conflict('The principal status changed concurrently');
@@ -385,21 +318,10 @@ export interface BindApiKeyInput {
 }
 
 const bindApiKeyFor = (persistence: PrincipalManagementPersistence) =>
-  Effect.fn('PrincipalManagement.bindApiKey')(function* bindKey(
-    input: BindApiKeyInput
-  ) {
-    const target = yield* persistence.loadPrincipal(
-      input.tenantId,
-      input.principalId
-    );
-    const allowedKinds: readonly PrincipalKind[] = input.managed
-      ? ['service', 'integration']
-      : ['human'];
-    if (
-      Option.isNone(target) ||
-      target.value.status !== 'active' ||
-      !allowedKinds.includes(target.value.kind)
-    ) {
+  Effect.fn('PrincipalManagement.bindApiKey')(function* bindKey(input: BindApiKeyInput) {
+    const target = yield* persistence.loadPrincipal(input.tenantId, input.principalId);
+    const allowedKinds: readonly PrincipalKind[] = input.managed ? ['service', 'integration'] : ['human'];
+    if (Option.isNone(target) || target.value.status !== 'active' || !allowedKinds.includes(target.value.kind)) {
       return yield* invalid('The API key target is not eligible');
     }
     const created = yield* persistence.insertApiKeyBinding(input);
@@ -430,102 +352,71 @@ export interface ValidateSupportImpersonationInput {
   readonly tenantId: string;
 }
 
-const validateSupportImpersonationFor = (
-  persistence: PrincipalManagementPersistence
-) =>
-  Effect.fn('PrincipalManagement.validateSupportImpersonation')(
-    function* validateSupportParticipants(
-      input: ValidateSupportImpersonationInput
-    ) {
-      const loadHumanBindings = (
-        principalId: string,
-        authBindingId?: string
-      ) => {
-        const query = {
-          activeOnly: input.checkpoint !== 'stopped',
-          principalId,
-          tenantId: input.tenantId,
-        };
-        return persistence.loadSupportBindings(
-          authBindingId === undefined ? query : { ...query, authBindingId }
-        );
+const validateSupportImpersonationFor = (persistence: PrincipalManagementPersistence) =>
+  Effect.fn('PrincipalManagement.validateSupportImpersonation')(function* validateSupportParticipants(
+    input: ValidateSupportImpersonationInput,
+  ) {
+    const loadHumanBindings = (principalId: string, authBindingId?: string) => {
+      const query = {
+        activeOnly: input.checkpoint !== 'stopped',
+        principalId,
+        tenantId: input.tenantId,
       };
-      const [original, target] = yield* Effect.all(
-        [
-          loadHumanBindings(
-            input.originalPrincipalId,
-            input.originalAuthBindingId
-          ),
-          loadHumanBindings(input.targetPrincipalId),
-        ],
-        { concurrency: 1 }
+      return persistence.loadSupportBindings(authBindingId === undefined ? query : { ...query, authBindingId });
+    };
+    const [original, target] = yield* Effect.all(
+      [
+        loadHumanBindings(input.originalPrincipalId, input.originalAuthBindingId),
+        loadHumanBindings(input.targetPrincipalId),
+      ],
+      { concurrency: 1 },
+    );
+    if (original.length !== 1 || target.length === 0) {
+      return yield* invalid(
+        input.checkpoint === 'stopped'
+          ? 'The impersonation participants are not tenant-local users'
+          : 'The impersonation participants are not active tenant-local users',
       );
-      if (original.length !== 1 || target.length === 0) {
-        return yield* invalid(
-          input.checkpoint === 'stopped'
-            ? 'The impersonation participants are not tenant-local users'
-            : 'The impersonation participants are not active tenant-local users'
-        );
-      }
     }
-  );
+  });
 
-const isEligibleBindingTarget = (
-  managed: boolean,
-  status: PrincipalStatus,
-  kind: PrincipalKind
-): boolean => {
-  const allowedKinds: readonly PrincipalKind[] = managed
-    ? ['service', 'integration']
-    : ['human'];
+const isEligibleBindingTarget = (managed: boolean, status: PrincipalStatus, kind: PrincipalKind): boolean => {
+  const allowedKinds: readonly PrincipalKind[] = managed ? ['service', 'integration'] : ['human'];
   return status === 'active' && allowedKinds.includes(kind);
 };
 
-const setApiKeyBindingStatusFor = (
-  persistence: PrincipalManagementPersistence
-) =>
-  Effect.fn('PrincipalManagement.setApiKeyBindingStatus')(
-    function* setBindingStatus(input: SetApiKeyBindingStatusInput) {
-      const binding = yield* persistence.loadApiKeyBinding(input);
-      if (Option.isNone(binding)) {
-        return yield* invalid('The API key binding is unavailable');
-      }
-      if (
-        !isEligibleBindingTarget(
-          input.managed,
-          binding.value.principalStatus,
-          binding.value.principalKind
-        )
-      ) {
-        return yield* invalid('The API key binding target is not eligible');
-      }
-      if (binding.value.bindingStatus !== input.expectedStatus) {
-        return yield* conflict('The binding status changed concurrently');
-      }
-      if (
-        !bindingTransitionAllowed(binding.value.bindingStatus, input.newStatus)
-      ) {
-        return yield* conflict('The binding transition is not allowed');
-      }
-      if (
-        input.newStatus === 'revoked' &&
-        !hasStatusChangeReason(input.reason)
-      ) {
-        return yield* invalid('A reason is required for revocation');
-      }
-      const updated = yield* persistence.updateApiKeyBindingStatus(input);
-      if (Option.isNone(updated)) {
-        return yield* conflict('The binding status changed concurrently');
-      }
-      return {
-        previousStatus: input.expectedStatus,
-        status: updated.value.status,
-      };
+const setApiKeyBindingStatusFor = (persistence: PrincipalManagementPersistence) =>
+  Effect.fn('PrincipalManagement.setApiKeyBindingStatus')(function* setBindingStatus(
+    input: SetApiKeyBindingStatusInput,
+  ) {
+    const binding = yield* persistence.loadApiKeyBinding(input);
+    if (Option.isNone(binding)) {
+      return yield* invalid('The API key binding is unavailable');
     }
-  );
+    if (!isEligibleBindingTarget(input.managed, binding.value.principalStatus, binding.value.principalKind)) {
+      return yield* invalid('The API key binding target is not eligible');
+    }
+    if (binding.value.bindingStatus !== input.expectedStatus) {
+      return yield* conflict('The binding status changed concurrently');
+    }
+    if (!bindingTransitionAllowed(binding.value.bindingStatus, input.newStatus)) {
+      return yield* conflict('The binding transition is not allowed');
+    }
+    if (input.newStatus === 'revoked' && !hasStatusChangeReason(input.reason)) {
+      return yield* invalid('A reason is required for revocation');
+    }
+    const updated = yield* persistence.updateApiKeyBindingStatus(input);
+    if (Option.isNone(updated)) {
+      return yield* conflict('The binding status changed concurrently');
+    }
+    return {
+      previousStatus: input.expectedStatus,
+      status: updated.value.status,
+    };
+  });
 
 export const principalManagementRepositoryFromPersistence = (
-  persistence: PrincipalManagementPersistence
+  persistence: PrincipalManagementPersistence,
 ): PrincipalManagementRepositoryService =>
   Object.freeze({
     bindApiKey: bindApiKeyFor(persistence),
@@ -536,37 +427,21 @@ export const principalManagementRepositoryFromPersistence = (
   });
 
 export const principalManagementRepositoryFromTransaction = (
-  transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>
+  transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
 ): PrincipalManagementRepositoryService =>
-  principalManagementRepositoryFromPersistence(
-    principalManagementPersistenceFromTransaction(transaction)
-  );
+  principalManagementRepositoryFromPersistence(principalManagementPersistenceFromTransaction(transaction));
 
 export const createNonHumanPrincipal = (input: CreateNonHumanPrincipalInput) =>
-  PrincipalManagementRepository.pipe(
-    Effect.flatMap((repository) => repository.createNonHumanPrincipal(input))
-  );
+  PrincipalManagementRepository.pipe(Effect.flatMap((repository) => repository.createNonHumanPrincipal(input)));
 
 export const changePrincipalStatus = (input: ChangePrincipalStatusInput) =>
-  PrincipalManagementRepository.pipe(
-    Effect.flatMap((repository) => repository.changePrincipalStatus(input))
-  );
+  PrincipalManagementRepository.pipe(Effect.flatMap((repository) => repository.changePrincipalStatus(input)));
 
 export const bindApiKey = (input: BindApiKeyInput) =>
-  PrincipalManagementRepository.pipe(
-    Effect.flatMap((repository) => repository.bindApiKey(input))
-  );
+  PrincipalManagementRepository.pipe(Effect.flatMap((repository) => repository.bindApiKey(input)));
 
-export const validateSupportImpersonation = (
-  input: ValidateSupportImpersonationInput
-) =>
-  PrincipalManagementRepository.pipe(
-    Effect.flatMap((repository) =>
-      repository.validateSupportImpersonation(input)
-    )
-  );
+export const validateSupportImpersonation = (input: ValidateSupportImpersonationInput) =>
+  PrincipalManagementRepository.pipe(Effect.flatMap((repository) => repository.validateSupportImpersonation(input)));
 
 export const setApiKeyBindingStatus = (input: SetApiKeyBindingStatusInput) =>
-  PrincipalManagementRepository.pipe(
-    Effect.flatMap((repository) => repository.setApiKeyBindingStatus(input))
-  );
+  PrincipalManagementRepository.pipe(Effect.flatMap((repository) => repository.setApiKeyBindingStatus(input)));

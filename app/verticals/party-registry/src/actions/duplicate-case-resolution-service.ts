@@ -13,7 +13,7 @@ export const DuplicateCaseResolutionErrorSchema = Schema.Union([
 export const duplicateCaseResolutionService = (
   transaction: Parameters<typeof transitionDuplicateCandidateCase>[0],
   tenantId: string,
-  outcome: Parameters<typeof transitionDuplicateCandidateCase>[1]['outcome']
+  outcome: Parameters<typeof transitionDuplicateCandidateCase>[1]['outcome'],
 ) =>
   Effect.succeed({
     resolve: (payload: ConfirmDuplicatePartiesPayload, invocationId: string) =>

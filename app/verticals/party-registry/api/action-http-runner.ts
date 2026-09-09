@@ -10,12 +10,8 @@ import { authenticateOperationPrincipal } from './auth/action-principal.ts';
  * public Problem Details mappings remain explicit at each local HttpApi handler.
  */
 export const bindActionHttpRunner = <AuthenticationProblem, UnavailableProblem>(
-  problems: PrincipalAuthenticationProblems<
-    AuthenticationProblem,
-    UnavailableProblem
-  >
+  problems: PrincipalAuthenticationProblems<AuthenticationProblem, UnavailableProblem>,
 ) =>
   bindGovernedActionHttp({
-    authenticate: (authorization) =>
-      authenticateOperationPrincipal(authorization, problems),
+    authenticate: (authorization) => authenticateOperationPrincipal(authorization, problems),
   });

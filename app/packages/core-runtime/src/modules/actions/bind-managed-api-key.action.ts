@@ -10,56 +10,47 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('PrincipalId')
+const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
+const ProviderSubjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
+  Schema.brand('ProviderSubjectId'),
 );
-const ProviderSubjectIdSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500)
-).pipe(Schema.brand('ProviderSubjectId'));
-const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('AuthBindingId')
-);
+const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('AuthBindingId'));
 const BindManagedApiKeyPayloadSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   providerSubjectId: ProviderSubjectIdSchema,
 });
-export type BindManagedApiKeyPayload = Schema.Schema.Type<
-  typeof BindManagedApiKeyPayloadSchema
->;
+export type BindManagedApiKeyPayload = Schema.Schema.Type<typeof BindManagedApiKeyPayloadSchema>;
 const BindManagedApiKeyResultSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   status: Schema.Literal('active'),
 });
-const handle = Effect.fn('BindManagedApiKeyAction.handle')(
-  function* bindManagedApiKeyActionHandle(
-    payload: BindManagedApiKeyPayload,
-    context: ActionHandlerContext<
-      Readonly<Record<never, never>>,
-      { readonly bind: PrincipalManagementRepositoryService['bindApiKey'] }
-    >
-  ) {
-    const result = yield* context.services.bind({
-      managed: true,
-      principalId: payload.principalId,
-      providerSubjectId: payload.providerSubjectId,
-      tenantId: context.scope.tenantId,
-    });
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `principal-api-key-eligibility:${payload.principalId}`,
-      resultCount: 1,
-      servingModuleKey: 'core.identity',
-      targetModuleKey: 'core.identity',
-      targetResourceId: payload.principalId,
-      targetResourceType: 'principal',
-    });
-    return {
-      ...result,
-      authBindingId: AuthBindingIdSchema.make(result.authBindingId),
-    };
-  }
-);
+const handle = Effect.fn('BindManagedApiKeyAction.handle')(function* bindManagedApiKeyActionHandle(
+  payload: BindManagedApiKeyPayload,
+  context: ActionHandlerContext<
+    Readonly<Record<never, never>>,
+    { readonly bind: PrincipalManagementRepositoryService['bindApiKey'] }
+  >,
+) {
+  const result = yield* context.services.bind({
+    managed: true,
+    principalId: payload.principalId,
+    providerSubjectId: payload.providerSubjectId,
+    tenantId: context.scope.tenantId,
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `principal-api-key-eligibility:${payload.principalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: payload.principalId,
+    targetResourceType: 'principal',
+  });
+  return {
+    ...result,
+    authBindingId: AuthBindingIdSchema.make(result.authBindingId),
+  };
+});
 export const bindManagedApiKeyAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -91,8 +82,7 @@ export const bindManagedApiKeyAction = defineAction(
   },
   handle,
   (transaction) => {
-    const repository =
-      principalManagementRepositoryFromTransaction(transaction);
+    const repository = principalManagementRepositoryFromTransaction(transaction);
     return Effect.succeed({ bind: repository.bindApiKey });
-  }
+  },
 );

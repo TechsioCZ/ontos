@@ -78,21 +78,13 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { unwrapNode } from '../shared/ast.ts';
-import {
-  collectEffectBindings,
-  effectMember,
-} from '../shared/effect-imports.ts';
+import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray, positiveInteger } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
-const DEFAULT_INCLUDE: readonly string[] = [
-  'apps/**',
-  'verticals/**',
-  'packages/**',
-  'scripts/**',
-];
+const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
 const DEFAULT_IGNORE: readonly string[] = [];
 
@@ -110,14 +102,7 @@ const DEFAULT_DISCRIMINANT_PROPERTIES: readonly string[] = [
 ];
 
 /** Case literals that mean the switch is inspecting an Effect ADT rather than a domain union. */
-const DEFAULT_ADT_TAGS: readonly string[] = [
-  'Some',
-  'None',
-  'Success',
-  'Failure',
-  'Left',
-  'Right',
-];
+const DEFAULT_ADT_TAGS: readonly string[] = ['Some', 'None', 'Success', 'Failure', 'Left', 'Right'];
 
 const DEFAULT_EXHAUSTIVE_HELPERS: readonly string[] = ['absurd', 'assertNever'];
 
@@ -135,19 +120,10 @@ function readOptions(context: Context) {
   const record = optionRecord(context.options?.[0]);
   return {
     tagProperties: stringArray(record.tagProperties, DEFAULT_TAG_PROPERTIES),
-    discriminantProperties: stringArray(
-      record.discriminantProperties,
-      DEFAULT_DISCRIMINANT_PROPERTIES
-    ),
-    minLiteralCases: positiveInteger(
-      record.minLiteralCases,
-      DEFAULT_MIN_LITERAL_CASES
-    ),
+    discriminantProperties: stringArray(record.discriminantProperties, DEFAULT_DISCRIMINANT_PROPERTIES),
+    minLiteralCases: positiveInteger(record.minLiteralCases, DEFAULT_MIN_LITERAL_CASES),
     allowExhaustive: record.allowExhaustive === true,
-    exhaustiveHelpers: stringArray(
-      record.exhaustiveHelpers,
-      DEFAULT_EXHAUSTIVE_HELPERS
-    ),
+    exhaustiveHelpers: stringArray(record.exhaustiveHelpers, DEFAULT_EXHAUSTIVE_HELPERS),
     adtTags: stringArray(record.adtTags, DEFAULT_ADT_TAGS),
     include: stringArray(record.include, DEFAULT_INCLUDE),
     ignore: stringArray(record.ignore, DEFAULT_IGNORE),
@@ -163,11 +139,9 @@ function unwrapExpression(node: ESTree.Node): ESTree.Node {
 /** Static string value of a `case` test: `'ready'` and `` `ready` `` both yield `"ready"`. */
 function staticStringTest(node: ESTree.Node): string | null {
   const expression = unwrapExpression(node);
-  if (expression.type === 'Literal')
-    return typeof expression.value === 'string' ? expression.value : null;
+  if (expression.type === 'Literal') return typeof expression.value === 'string' ? expression.value : null;
   if (expression.type === 'TemplateLiteral') {
-    if (expression.expressions.length > 0 || expression.quasis.length !== 1)
-      return null;
+    if (expression.expressions.length > 0 || expression.quasis.length !== 1) return null;
     return expression.quasis[0]?.value.cooked ?? null;
   }
   return null;
@@ -181,15 +155,9 @@ function staticStringTest(node: ESTree.Node): string | null {
 function isNumericTest(node: ESTree.Node): boolean {
   const expression = unwrapExpression(node);
   if (expression.type === 'Literal') {
-    return (
-      typeof expression.value === 'number' ||
-      typeof expression.value === 'bigint'
-    );
+    return typeof expression.value === 'number' || typeof expression.value === 'bigint';
   }
-  if (
-    expression.type === 'UnaryExpression' &&
-    (expression.operator === '-' || expression.operator === '+')
-  ) {
+  if (expression.type === 'UnaryExpression' && (expression.operator === '-' || expression.operator === '+')) {
     return isNumericTest(expression.argument);
   }
   return false;
@@ -197,8 +165,7 @@ function isNumericTest(node: ESTree.Node): boolean {
 
 /** Static property name of a member access: `a._tag` and `a['_tag']` both yield `"_tag"`. */
 function memberPropertyName(node: ESTree.MemberExpression): string | null {
-  if (!node.computed)
-    return node.property.type === 'Identifier' ? node.property.name : null;
+  if (!node.computed) return node.property.type === 'Identifier' ? node.property.name : null;
   return staticStringTest(node.property);
 }
 
@@ -212,15 +179,13 @@ function memberPropertyName(node: ESTree.MemberExpression): string | null {
  */
 function discriminantProperty(
   node: ESTree.Node,
-  options: RuleOptions
+  options: RuleOptions,
 ): { name: string; kind: 'tag' | 'vocabulary' } | null {
   if (node.type !== 'MemberExpression') return null;
   const name = memberPropertyName(node);
   if (name === null) return null;
   if (options.tagProperties.includes(name)) return { name, kind: 'tag' };
-  return options.discriminantProperties.includes(name)
-    ? { name, kind: 'vocabulary' }
-    : null;
+  return options.discriminantProperties.includes(name) ? { name, kind: 'vocabulary' } : null;
 }
 
 /** Render `error.reason._tag` for the message; falls back to the raw source text, collapsed. */
@@ -244,35 +209,26 @@ function describeDiscriminant(context: Context, node: ESTree.Node): string {
   }
   const text = context.sourceCode.getText(node).replace(/\s+/gu, ' ').trim();
   if (text.length === 0) return '…';
-  return text.length > MAX_DISCRIMINANT_LENGTH
-    ? `${text.slice(0, MAX_DISCRIMINANT_LENGTH - 1)}…`
-    : text;
+  return text.length > MAX_DISCRIMINANT_LENGTH ? `${text.slice(0, MAX_DISCRIMINANT_LENGTH - 1)}…` : text;
 }
 
 /** Statements of a `default:` branch, unwrapping the common single-block form. */
 function defaultStatements(node: ESTree.SwitchCase): readonly ESTree.Node[] {
   const consequent = node.consequent;
-  if (consequent.length === 1 && consequent[0]?.type === 'BlockStatement')
-    return consequent[0].body;
+  if (consequent.length === 1 && consequent[0]?.type === 'BlockStatement') return consequent[0].body;
   return consequent;
 }
 
 function isNeverAnnotation(node: ESTree.Node | null | undefined): boolean {
   if (node === null || node === undefined) return false;
-  if (node.type === 'TSTypeAnnotation')
-    return node.typeAnnotation.type === 'TSNeverKeyword';
+  if (node.type === 'TSTypeAnnotation') return node.typeAnnotation.type === 'TSNeverKeyword';
   return node.type === 'TSNeverKeyword';
 }
 
-function isExhaustiveHelperCall(
-  node: ESTree.Node,
-  options: RuleOptions,
-  bindings: EffectBindings
-): boolean {
+function isExhaustiveHelperCall(node: ESTree.Node, options: RuleOptions, bindings: EffectBindings): boolean {
   if (node.type !== 'CallExpression') return false;
   const callee = unwrapExpression(node.callee);
-  if (callee.type === 'Identifier')
-    return options.exhaustiveHelpers.includes(callee.name);
+  if (callee.type === 'Identifier') return options.exhaustiveHelpers.includes(callee.name);
   if (callee.type !== 'MemberExpression') return false;
   const member = effectMember(callee, bindings);
   if (member !== null) return options.exhaustiveHelpers.includes(member.member);
@@ -280,53 +236,30 @@ function isExhaustiveHelperCall(
   return name !== null && options.exhaustiveHelpers.includes(name);
 }
 
-function statementExpression(
-  statement: ESTree.Node
-): ESTree.Node | null | undefined {
-  if (
-    statement.type === 'ReturnStatement' ||
-    statement.type === 'ThrowStatement'
-  )
-    return statement.argument;
+function statementExpression(statement: ESTree.Node): ESTree.Node | null | undefined {
+  if (statement.type === 'ReturnStatement' || statement.type === 'ThrowStatement') return statement.argument;
   return statement.type === 'ExpressionStatement' ? statement.expression : null;
 }
 
-function statementIsExhaustive(
-  statement: ESTree.Node,
-  options: RuleOptions,
-  bindings: EffectBindings
-): boolean {
+function statementIsExhaustive(statement: ESTree.Node, options: RuleOptions, bindings: EffectBindings): boolean {
   if (statement.type === 'VariableDeclaration') {
     return statement.declarations.some(
-      (declarator) =>
-        declarator.id.type === 'Identifier' &&
-        isNeverAnnotation(declarator.id.typeAnnotation)
+      (declarator) => declarator.id.type === 'Identifier' && isNeverAnnotation(declarator.id.typeAnnotation),
     );
   }
   const expression = statementExpression(statement);
   if (expression === null || expression === undefined) return false;
   if (
-    (expression.type === 'TSAsExpression' ||
-      expression.type === 'TSSatisfiesExpression') &&
+    (expression.type === 'TSAsExpression' || expression.type === 'TSSatisfiesExpression') &&
     isNeverAnnotation(expression.typeAnnotation)
   )
     return true;
-  return isExhaustiveHelperCall(
-    unwrapExpression(expression),
-    options,
-    bindings
-  );
+  return isExhaustiveHelperCall(unwrapExpression(expression), options, bindings);
 }
 
 /** `true` when the `default:` branch proves exhaustiveness to the compiler. */
-function hasExhaustiveGuard(
-  node: ESTree.SwitchCase,
-  options: RuleOptions,
-  bindings: EffectBindings
-): boolean {
-  return defaultStatements(node).some((statement) =>
-    statementIsExhaustive(statement, options, bindings)
-  );
+function hasExhaustiveGuard(node: ESTree.SwitchCase, options: RuleOptions, bindings: EffectBindings): boolean {
+  return defaultStatements(node).some((statement) => statementIsExhaustive(statement, options, bindings));
 }
 
 function summarizeCases(cases: readonly ESTree.SwitchCase[]) {
@@ -359,15 +292,10 @@ function reportSwitch(
   node: ESTree.SwitchStatement,
   options: RuleOptions,
   literals: readonly string[],
-  property: string | null
+  property: string | null,
 ): void {
   const adtTag = literals.find((literal) => options.adtTags.includes(literal));
-  const messageId =
-    adtTag !== undefined
-      ? 'adtSwitch'
-      : property !== null
-        ? 'tagSwitch'
-        : 'literalSwitch';
+  const messageId = adtTag !== undefined ? 'adtSwitch' : property !== null ? 'tagSwitch' : 'literalSwitch';
   context.report({
     node: node.discriminant,
     messageId,
@@ -459,23 +387,14 @@ export const rule = defineRule({
         const discriminant = unwrapExpression(node.discriminant);
         const candidate = discriminantProperty(discriminant, options);
 
-        const { literals, everyCaseIsLiteral, defaultCase, allTestsNumeric } =
-          summarizeCases(node.cases);
+        const { literals, everyCaseIsLiteral, defaultCase, allTestsNumeric } = summarizeCases(node.cases);
         // Numeric protocol spaces are allowed; Effect tag properties remain string discriminators.
-        const property =
-          candidate !== null && (candidate.kind === 'tag' || !allTestsNumeric)
-            ? candidate.name
-            : null;
+        const property = candidate !== null && (candidate.kind === 'tag' || !allTestsNumeric) ? candidate.name : null;
 
-        const closedVocabulary =
-          everyCaseIsLiteral && literals.length >= options.minLiteralCases;
+        const closedVocabulary = everyCaseIsLiteral && literals.length >= options.minLiteralCases;
         if (property === null && !closedVocabulary) return;
 
-        if (
-          options.allowExhaustive &&
-          defaultCase !== null &&
-          hasExhaustiveGuard(defaultCase, options, bindings)
-        ) {
+        if (options.allowExhaustive && defaultCase !== null && hasExhaustiveGuard(defaultCase, options, bindings)) {
           return;
         }
 

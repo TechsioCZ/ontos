@@ -25,16 +25,12 @@ export interface PersistReadEvidenceInput {
   readonly targetResourceType?: string;
 }
 
-const accessKind = (
-  kind: ReadAccessKind
-): 'download' | 'export' | 'list' | 'read' | 'search' =>
+const accessKind = (kind: ReadAccessKind): 'download' | 'export' | 'list' | 'read' | 'search' =>
   kind === 'detail' || kind === 'report' ? 'read' : kind;
 
 const READ_EVIDENCE_PERSISTENCE_TIMEOUT = Duration.seconds(30);
 
-const readEvidencePersistenceFailure = (
-  cause: unknown
-): ReadEvidencePersistenceError => {
+const readEvidencePersistenceFailure = (cause: unknown): ReadEvidencePersistenceError => {
   const failure = new ReadEvidencePersistenceError({
     code: 'read_evidence_persistence_failed',
     reason: 'Required read evidence could not be persisted',
@@ -47,7 +43,7 @@ const readEvidencePersistenceFailure = (
 
 export const persistReadEvidence = (
   executor: CoreDbExecutor,
-  input: PersistReadEvidenceInput
+  input: PersistReadEvidenceInput,
 ): Effect.Effect<void, ReadEvidencePersistenceError> =>
   executor
     .insert(dataAccessEvents)
@@ -78,12 +74,7 @@ export const persistReadEvidence = (
       Effect.mapError(readEvidencePersistenceFailure),
       Effect.timeoutOrElse({
         duration: READ_EVIDENCE_PERSISTENCE_TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            readEvidencePersistenceFailure(
-              'Read evidence persistence timed out'
-            )
-          ),
+        orElse: () => Effect.fail(readEvidencePersistenceFailure('Read evidence persistence timed out')),
       }),
-      Effect.asVoid
+      Effect.asVoid,
     );

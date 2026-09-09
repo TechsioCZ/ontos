@@ -26,71 +26,61 @@ interface Services {
   readonly update: (
     payload: Payload,
     principalId: string,
-    actionInvocationId: string
+    actionInvocationId: string,
   ) => Effect.Effect<RelationshipChangeResult, RelationshipMutationError>;
 }
 
-const handleUpdatePartyRelationship = Effect.fn(
-  'UpdatePartyRelationshipAction.handleUpdatePartyRelationship'
-)(function* handleUpdateRelationship(
-  payload: Payload,
-  context: ActionHandlerContext<
-    Readonly<{
-      'party.registry.relationship-updated.v1': typeof PartyRelationshipLifecycleEventPayloadJsonSchema;
-    }>,
-    Services
-  >
-) {
-  const result = yield* context.services.update(
-    payload,
-    context.scope.principalId,
-    context.actionInvocationId
-  );
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `party-relationship-update:${payload.relationshipRef.resourceId}:${payload.expectedRevision}`,
-    resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
-    targetResourceId: payload.relationshipRef.resourceId,
-    targetResourceType: payload.relationshipRef.resourceType,
-  });
-  if (result.outcome === 'CHANGED') {
-    const auditEvidence = yield* Schema.encodeEffect(
-      UpdateRelationshipAuditEvidenceSchema
-    )({
-      changeReason: payload.changeReason,
-      newEndHistory: result.relationship.endHistory,
-      newProvenance: payload.provenance,
-      newValidFrom: result.relationship.validFrom,
-      newValidTo: result.relationship.validTo,
-      previousEndHistory: result.previous.endHistory,
-      previousProvenance: result.previous.provenance,
-      previousValidFrom: result.previous.validFrom,
-      previousValidTo: result.previous.validTo,
-      relationshipRef: payload.relationshipRef,
-    }).pipe(Effect.orDie);
-    yield* context.recordAuditEvidence(auditEvidence);
-    const payloadJson = yield* encodeRelationshipEventPayload(
-      result.relationship
-    );
-    const domainEvent = yield* context.addDomainEvent({
-      eventType: 'party.registry.relationship-updated.v1',
-      payloadJson,
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.relationship.relationshipRef.resourceId,
-      subjectResourceType: result.relationship.relationshipRef.resourceType,
+const handleUpdatePartyRelationship = Effect.fn('UpdatePartyRelationshipAction.handleUpdatePartyRelationship')(
+  function* handleUpdateRelationship(
+    payload: Payload,
+    context: ActionHandlerContext<
+      Readonly<{
+        'party.registry.relationship-updated.v1': typeof PartyRelationshipLifecycleEventPayloadJsonSchema;
+      }>,
+      Services
+    >,
+  ) {
+    const result = yield* context.services.update(payload, context.scope.principalId, context.actionInvocationId);
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `party-relationship-update:${payload.relationshipRef.resourceId}:${payload.expectedRevision}`,
+      resultCount: 1,
+      servingModuleKey: 'party.registry',
+      targetModuleKey: 'party.registry',
+      targetResourceId: payload.relationshipRef.resourceId,
+      targetResourceType: payload.relationshipRef.resourceType,
     });
-    yield* context.addOutboxMessage(
-      domainEvent,
-      createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage(
-        payloadJson
-      )
-    );
-  }
-  return { outcome: result.outcome, relationship: result.relationship };
-});
+    if (result.outcome === 'CHANGED') {
+      const auditEvidence = yield* Schema.encodeEffect(UpdateRelationshipAuditEvidenceSchema)({
+        changeReason: payload.changeReason,
+        newEndHistory: result.relationship.endHistory,
+        newProvenance: payload.provenance,
+        newValidFrom: result.relationship.validFrom,
+        newValidTo: result.relationship.validTo,
+        previousEndHistory: result.previous.endHistory,
+        previousProvenance: result.previous.provenance,
+        previousValidFrom: result.previous.validFrom,
+        previousValidTo: result.previous.validTo,
+        relationshipRef: payload.relationshipRef,
+      }).pipe(Effect.orDie);
+      yield* context.recordAuditEvidence(auditEvidence);
+      const payloadJson = yield* encodeRelationshipEventPayload(result.relationship);
+      const domainEvent = yield* context.addDomainEvent({
+        eventType: 'party.registry.relationship-updated.v1',
+        payloadJson,
+        producerModuleKey: 'party.registry',
+        subjectModuleKey: 'party.registry',
+        subjectResourceId: result.relationship.relationshipRef.resourceId,
+        subjectResourceType: result.relationship.relationshipRef.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        domainEvent,
+        createUpdatePartyRelationshipPartyRegistryRelationshipUpdatedV1OutboxMessage(payloadJson),
+      );
+    }
+    return { outcome: result.outcome, relationship: result.relationship };
+  },
+);
 
 export const updatePartyRelationshipAction = defineAction(
   {
@@ -103,8 +93,7 @@ export const updatePartyRelationshipAction = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: PartyRelationshipMutationErrorSchema,
     domainEvents: {
-      'party.registry.relationship-updated.v1':
-        PartyRelationshipLifecycleEventPayloadJsonSchema,
+      'party.registry.relationship-updated.v1': PartyRelationshipLifecycleEventPayloadJsonSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -129,12 +118,6 @@ export const updatePartyRelationshipAction = defineAction(
   (transaction, scope) =>
     Effect.succeed({
       update: (payload, principalId, actionInvocationId) =>
-        updatePartyRelationshipRecord(
-          transaction,
-          scope.tenantId,
-          principalId,
-          actionInvocationId,
-          payload
-        ),
-    })
+        updatePartyRelationshipRecord(transaction, scope.tenantId, principalId, actionInvocationId, payload),
+    }),
 );

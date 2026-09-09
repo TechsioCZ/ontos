@@ -14,10 +14,7 @@ it('fluent slots split only outer calls, retaining nested multiline fluent chain
     .add(Group.make('nested'))
     .pipe(identity),
 )`;
-  expect(readEntries(`${nested}\n.addHttpApi(SecondApi)`)).toEqual([
-    nested,
-    '.addHttpApi(SecondApi)',
-  ]);
+  expect(readEntries(`${nested}\n.addHttpApi(SecondApi)`)).toEqual([nested, '.addHttpApi(SecondApi)']);
 });
 
 it('slot delimiters inside strings and comments do not terminate entries', () => {
@@ -28,25 +25,15 @@ it('slot delimiters inside strings and comments do not terminate entries', () =>
 
 it('line comments protect fluent-looking text until the newline', () => {
   const first = '.addHttpApi(\n  FirstApi // .addHttpApi(FakeApi);\n)';
-  expect(readEntries(`${first}\n.addHttpApi(SecondApi)`)).toEqual([
-    first,
-    '.addHttpApi(SecondApi)',
-  ]);
+  expect(readEntries(`${first}\n.addHttpApi(SecondApi)`)).toEqual([first, '.addHttpApi(SecondApi)']);
 });
 
 it('empty generated slots remain empty', () => {
   expect(readEntries('   \n')).toEqual([]);
 });
 
-for (const source of [
-  '.addHttpApi(FirstApi',
-  'first: "open,',
-  'first: /* open',
-  'first: ] ,',
-]) {
+for (const source of ['.addHttpApi(FirstApi', 'first: "open,', 'first: /* open', 'first: ] ,']) {
   it(`incomplete or unbalanced generated slot fails closed: ${source}`, () => {
-    expect(
-      Result.isFailure(Result.try(() => readEntries(source)))
-    ).toBeTruthy();
+    expect(Result.isFailure(Result.try(() => readEntries(source)))).toBeTruthy();
   });
 }

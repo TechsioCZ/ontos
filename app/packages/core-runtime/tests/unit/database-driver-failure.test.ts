@@ -55,8 +55,8 @@ it('ignores a non-string constraint while retaining a valid code', () => {
       findPostgresFailure({
         code: '23505',
         constraint: { private: 'diagnostic object' },
-      })
-    )
+      }),
+    ),
   ).toEqual({ code: '23505' });
 });
 
@@ -93,8 +93,8 @@ it('returns the first recognizable PostgreSQL metadata in root-to-cause order', 
         cause: { code: '23505', constraint: 'nested_constraint' },
         code: '40001',
         constraint: 'root_constraint',
-      })
-    )
+      }),
+    ),
   ).toEqual({ code: '40001', constraint: 'root_constraint' });
 });
 
@@ -109,12 +109,8 @@ it('supports owner-local matching without changing default root precedence', () 
   });
   expect(
     Option.getOrThrow(
-      findPostgresFailure(
-        failure,
-        ({ code, constraint }) =>
-          code === '23505' && constraint === 'owner_constraint'
-      )
-    )
+      findPostgresFailure(failure, ({ code, constraint }) => code === '23505' && constraint === 'owner_constraint'),
+    ),
   ).toEqual({ code: '23505', constraint: 'owner_constraint' });
 });
 
@@ -153,31 +149,17 @@ it('distinguishes commit ambiguity from definite transaction failures', () => {
 
   expect(
     Option.isSome(connectionFailure) &&
-      Predicate.isTagged(
-        connectionFailure.value,
-        'DatabaseCommitAcknowledgementAmbiguous'
-      )
+      Predicate.isTagged(connectionFailure.value, 'DatabaseCommitAcknowledgementAmbiguous'),
   ).toBe(true);
   expect(
     Option.isSome(administrativeShutdown) &&
-      Predicate.isTagged(
-        administrativeShutdown.value,
-        'DatabaseCommitAcknowledgementAmbiguous'
-      )
+      Predicate.isTagged(administrativeShutdown.value, 'DatabaseCommitAcknowledgementAmbiguous'),
   ).toBe(true);
   expect(
-    Option.isSome(serializationFailure) &&
-      Predicate.isTagged(
-        serializationFailure.value,
-        'DatabaseTransactionFailure'
-      )
+    Option.isSome(serializationFailure) && Predicate.isTagged(serializationFailure.value, 'DatabaseTransactionFailure'),
   ).toBe(true);
-  expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '40001' })).toBe(
-    false
-  );
-  expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '57014' })).toBe(
-    false
-  );
+  expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '40001' })).toBe(false);
+  expect(isDatabaseCommitAcknowledgementAmbiguous({ code: '57014' })).toBe(false);
 });
 
 it('classifies the exact commit-acknowledgement socket vocabulary', () => {
@@ -196,9 +178,7 @@ it('classifies the exact commit-acknowledgement socket vocabulary', () => {
     expect(isDatabaseCommitAcknowledgementAmbiguous({ code })).toBe(true);
   }
 
-  expect(
-    isDatabaseCommitAcknowledgementAmbiguous({ code: 'ECONNREFUSED' })
-  ).toBe(false);
+  expect(isDatabaseCommitAcknowledgementAmbiguous({ code: 'ECONNREFUSED' })).toBe(false);
 });
 
 it('preserves the auth-facing unavailable socket vocabulary', () => {
@@ -274,13 +254,9 @@ it('decodes native Drizzle and Effect SQL causes without exposing query data', (
 it('walks native mixed Causes in order and skips unrelated failures', () => {
   const failure = Cause.combine(
     Cause.fail({ code: '40001' }),
-    Cause.die({ code: '23505', constraint: 'owned_unique' })
+    Cause.die({ code: '23505', constraint: 'owned_unique' }),
   );
-  expect(
-    Option.getOrThrow(
-      findPostgresFailure(failure, ({ code }) => code === '23505')
-    )
-  ).toEqual({
+  expect(Option.getOrThrow(findPostgresFailure(failure, ({ code }) => code === '23505'))).toEqual({
     code: '23505',
     constraint: 'owned_unique',
   });

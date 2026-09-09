@@ -48,18 +48,18 @@ For the Shell-user MicroVertical Action identity boundary, the generated verifie
 
 Choose the status from the meaning of the failure, not from a generic domain-error default.
 
-| Status | Use when |
-| --- | --- |
-| `400` | The request cannot be decoded or structurally validated against its schema. |
-| `401` | Credentials are missing, invalid, expired, revoked, or otherwise unusable. Include a `WWW-Authenticate` challenge. |
-| `403` | Authentication succeeded, but the principal is not permitted to perform the operation. |
-| `404` | The requested resource is absent and revealing that fact is allowed. |
-| `409` | The operation conflicts with the current mutable state or a concurrency invariant and may succeed after resolution. |
-| `422` | The request is structurally valid but semantically ineligible, and the failure is not authorization or conflict. |
-| `429` | The caller exceeded a rate or quota limit. |
-| `500` | An unexpected internal defect was caught at the outer HTTP seam. |
-| `503` | A required capability is temporarily unavailable and retry may succeed later. |
-| `504` | A required upstream operation did not complete before its deadline. |
+| Status | Use when                                                                                                            |
+| ------ | ------------------------------------------------------------------------------------------------------------------- |
+| `400`  | The request cannot be decoded or structurally validated against its schema.                                         |
+| `401`  | Credentials are missing, invalid, expired, revoked, or otherwise unusable. Include a `WWW-Authenticate` challenge.  |
+| `403`  | Authentication succeeded, but the principal is not permitted to perform the operation.                              |
+| `404`  | The requested resource is absent and revealing that fact is allowed.                                                |
+| `409`  | The operation conflicts with the current mutable state or a concurrency invariant and may succeed after resolution. |
+| `422`  | The request is structurally valid but semantically ineligible, and the failure is not authorization or conflict.    |
+| `429`  | The caller exceeded a rate or quota limit.                                                                          |
+| `500`  | An unexpected internal defect was caught at the outer HTTP seam.                                                    |
+| `503`  | A required capability is temporarily unavailable and retry may succeed later.                                       |
+| `504`  | A required upstream operation did not complete before its deadline.                                                 |
 
 Identity endpoints apply the same meanings exhaustively. Missing or unusable Shell credentials use `401` with a Bearer challenge; the API-key exchange uses an API-key challenge. A definite permission denial or active credential bound to a forbidden tenant/principal/legal entity is `403`; lifecycle state races are `409`; missing runtime records are `404`; ineligible targets are `422`; a missing required idempotency key is `428`; provider throttling is `429`. Structurally invalid operation payloads are `400`. Database, SpiceDB, resolver, evidence, or provider uncertainty is retryable `503`, while only caught defects at the outer handler seam become sanitized `500`. Problem Details never include keys, hashes, cookies, provider diagnostics, identifiers, or signature details.
 

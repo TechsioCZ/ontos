@@ -12,21 +12,14 @@ import {
   ResolveDuplicateCandidateCreateResultSchema,
 } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
 import type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
-import {
-  PartyEvidenceInsufficient,
-  PartyPersistenceUnavailable,
-} from '../../shared/domain/identity-contracts.ts';
+import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import { DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
 import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { resolveDuplicateCandidateCreate } from '../services/party-matching-persistence.service.ts';
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
 
 export type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
-const ErrorSchema = Schema.Union([
-  DuplicateCandidateConflict,
-  PartyEvidenceInsufficient,
-  PartyPersistenceUnavailable,
-]);
+const ErrorSchema = Schema.Union([DuplicateCandidateConflict, PartyEvidenceInsufficient, PartyPersistenceUnavailable]);
 const domainEvents = {
   'party.registry.party-created.v1': Schema.Struct({
     partyRef: PartyRefSchema,
@@ -35,52 +28,45 @@ const domainEvents = {
 interface Services {
   readonly resolve: (
     payload: ResolveDuplicateCandidateCreatePayload,
-    invocationId: string
+    invocationId: string,
   ) => ReturnType<typeof resolveDuplicateCandidateCreate>;
 }
-const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(
-  function* resolveCreate(
-    payload: ResolveDuplicateCandidateCreatePayload,
-    context: ActionHandlerContext<typeof domainEvents, Services>
-  ) {
-    const result = yield* context.services.resolve(
-      payload,
-      context.actionInvocationId
-    );
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: createHash('sha256')
-        .update(`duplicate-case-invariants:${payload.caseRef.resourceId}`)
-        .digest('hex'),
-      resultCount: 1,
-      servingModuleKey: 'party.registry',
-      targetModuleKey: 'party.registry',
-      targetResourceId: result.caseRef.resourceId,
-      targetResourceType: result.caseRef.resourceType,
+const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(function* resolveCreate(
+  payload: ResolveDuplicateCandidateCreatePayload,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const result = yield* context.services.resolve(payload, context.actionInvocationId);
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: createHash('sha256').update(`duplicate-case-invariants:${payload.caseRef.resourceId}`).digest('hex'),
+    resultCount: 1,
+    servingModuleKey: 'party.registry',
+    targetModuleKey: 'party.registry',
+    targetResourceId: result.caseRef.resourceId,
+    targetResourceType: result.caseRef.resourceType,
+  });
+  if (result.partyRef === null) {
+    return yield* new DuplicateCandidateConflict({
+      code: 'duplicate_candidate_conflict',
+      reason: 'CREATE_NEW did not produce a Party',
     });
-    if (result.partyRef === null) {
-      return yield* new DuplicateCandidateConflict({
-        code: 'duplicate_candidate_conflict',
-        reason: 'CREATE_NEW did not produce a Party',
-      });
-    }
-    const event = yield* context.addDomainEvent({
-      eventType: 'party.registry.party-created.v1',
-      payloadJson: { partyRef: result.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
-      subjectResourceId: result.partyRef.resourceId,
-      subjectResourceType: result.partyRef.resourceType,
-    });
-    yield* context.addOutboxMessage(
-      event,
-      createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({
-        partyRef: result.partyRef,
-      })
-    );
-    return result;
   }
-);
+  const event = yield* context.addDomainEvent({
+    eventType: 'party.registry.party-created.v1',
+    payloadJson: { partyRef: result.partyRef },
+    producerModuleKey: 'party.registry',
+    subjectModuleKey: 'party.registry',
+    subjectResourceId: result.partyRef.resourceId,
+    subjectResourceType: result.partyRef.resourceType,
+  });
+  yield* context.addOutboxMessage(
+    event,
+    createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage({
+      partyRef: result.partyRef,
+    }),
+  );
+  return result;
+});
 export const resolveDuplicateCandidateCreateAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -113,10 +99,7 @@ export const resolveDuplicateCandidateCreateAction = defineAction(
   handle,
   (transaction, scope) =>
     Effect.succeed({
-      resolve: (
-        payload: ResolveDuplicateCandidateCreatePayload,
-        invocationId: string
-      ) =>
+      resolve: (payload: ResolveDuplicateCandidateCreatePayload, invocationId: string) =>
         resolveDuplicateCandidateCreate(transaction, {
           actionInvocationId: invocationId,
           candidateCaseId: payload.caseRef.resourceId,
@@ -125,7 +108,7 @@ export const resolveDuplicateCandidateCreateAction = defineAction(
           reason: payload.reason,
           tenantId: scope.tenantId,
         }),
-    })
+    }),
 );
 // <generated-outbox-message-exports>
 // </generated-outbox-message-exports>

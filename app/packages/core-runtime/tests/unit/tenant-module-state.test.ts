@@ -27,7 +27,7 @@ import { makeInstalledCatalogFixture as catalog } from '../support/installed-cat
 
 const contract = (
   moduleId: string,
-  supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates']
+  supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates'],
 ): OntosModuleDeploymentContract =>
   makeModuleContractFixture({
     appId: 'unit-module',
@@ -40,63 +40,37 @@ const contract = (
 
 it.effect('uses one canonical tenant module state schema', () =>
   Effect.gen(function* testScenario1() {
-    const decodedStates = yield* Effect.forEach(
-      (state: (typeof TENANT_MODULE_STATES)[number]) =>
-        Schema.decodeEffect(TenantModuleStateSchema)(state)
+    const decodedStates = yield* Effect.forEach((state: (typeof TENANT_MODULE_STATES)[number]) =>
+      Schema.decodeEffect(TenantModuleStateSchema)(state),
     )(TENANT_MODULE_STATES);
     expect(decodedStates).toEqual(TENANT_MODULE_STATES);
 
-    const failure = yield* Effect.flip(
-      Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled')
-    );
+    const failure = yield* Effect.flip(Schema.decodeUnknownEffect(TenantModuleStateSchema)('enabled'));
     expect(Predicate.isTagged(failure, 'SchemaError')).toBe(true);
-  })
+  }),
 );
 
-it.effect(
-  'maps only trusted supported authentication methods to history sources',
-  () =>
-    Effect.gen(function* testScenario2() {
-      expect(yield* resolveTenantModuleStateChangeSource('session')).toBe(
-        'user'
-      );
-      expect(
-        yield* resolveTenantModuleStateChangeSource('support_impersonation')
-      ).toBe('support');
-      expect(yield* resolveTenantModuleStateChangeSource('system')).toBe(
-        'system'
-      );
+it.effect('maps only trusted supported authentication methods to history sources', () =>
+  Effect.gen(function* testScenario2() {
+    expect(yield* resolveTenantModuleStateChangeSource('session')).toBe('user');
+    expect(yield* resolveTenantModuleStateChangeSource('support_impersonation')).toBe('support');
+    expect(yield* resolveTenantModuleStateChangeSource('system')).toBe('system');
 
-      const unsupported = yield* Effect.flip(
-        resolveTenantModuleStateChangeSource('api_key')
-      );
-      expect(
-        Predicate.isTagged(
-          unsupported,
-          'TenantModuleStateUnsupportedChangeSourceError'
-        )
-      ).toBe(true);
-      expect(unsupported.code).toBe(
-        'tenant_module_state_change_source_unsupported'
-      );
-    })
+    const unsupported = yield* Effect.flip(resolveTenantModuleStateChangeSource('api_key'));
+    expect(Predicate.isTagged(unsupported, 'TenantModuleStateUnsupportedChangeSourceError')).toBe(true);
+    expect(unsupported.code).toBe('tenant_module_state_change_source_unsupported');
+  }),
 );
 
-it.effect(
-  'rejects a no-op transition without changing first-state semantics',
-  () =>
-    Effect.gen(function* testScenario3() {
-      yield* rejectUnchangedTenantModuleState(null, 'active');
-      yield* rejectUnchangedTenantModuleState('inactive', 'active');
+it.effect('rejects a no-op transition without changing first-state semantics', () =>
+  Effect.gen(function* testScenario3() {
+    yield* rejectUnchangedTenantModuleState(null, 'active');
+    yield* rejectUnchangedTenantModuleState('inactive', 'active');
 
-      const unchanged = yield* Effect.flip(
-        rejectUnchangedTenantModuleState('active', 'active')
-      );
-      expect(
-        Predicate.isTagged(unchanged, 'TenantModuleStateUnchangedError')
-      ).toBe(true);
-      expect(unchanged.code).toBe('tenant_module_state_unchanged');
-    })
+    const unchanged = yield* Effect.flip(rejectUnchangedTenantModuleState('active', 'active'));
+    expect(Predicate.isTagged(unchanged, 'TenantModuleStateUnchangedError')).toBe(true);
+    expect(unchanged.code).toBe('tenant_module_state_unchanged');
+  }),
 );
 
 it('keeps Core module-state errors stable and sanitized', () => {
@@ -141,107 +115,68 @@ it('keeps Core module-state errors stable and sanitized', () => {
 
   for (const error of errors) {
     const serialized = JSON.stringify(error);
-    expect(serialized).not.toMatch(
-      /postgres|select |insert |tenant-[0-9]|principal-[0-9]/iu
-    );
+    expect(serialized).not.toMatch(/postgres|select |insert |tenant-[0-9]|principal-[0-9]/iu);
   }
 });
 
-it.effect(
-  'validates only installed membership and the target module supported states',
-  () =>
-    Effect.gen(function* testScenario4() {
-      const other = contract('documents.center', ['inactive', 'active']);
-      const target = contract('property.registry', [
-        'inactive',
-        'active',
-        'read_only',
-      ]);
-      const installed = catalog(other, target);
+it.effect('validates only installed membership and the target module supported states', () =>
+  Effect.gen(function* testScenario4() {
+    const other = contract('documents.center', ['inactive', 'active']);
+    const target = contract('property.registry', ['inactive', 'active', 'read_only']);
+    const installed = catalog(other, target);
 
-      const unknown = yield* Effect.flip(
-        validateTenantModuleStateTransition(
-          installed,
-          'unknown.module',
-          'active'
-        )
-      );
-      expect(
-        Predicate.isTagged(unknown, 'TenantModuleStateUnknownModuleError')
-      ).toBe(true);
-      const unsupported = yield* Effect.flip(
-        validateTenantModuleStateTransition(
-          installed,
-          'property.registry',
-          'archived'
-        )
-      );
-      expect(
-        Predicate.isTagged(
-          unsupported,
-          'TenantModuleStateUnsupportedStateError'
-        )
-      ).toBe(true);
-      yield* validateTenantModuleStateTransition(
-        installed,
-        'property.registry',
-        'active'
-      );
-      yield* validateTenantModuleStateTransition(
-        installed,
-        'stale.module',
-        'inactive'
-      );
-    })
+    const unknown = yield* Effect.flip(validateTenantModuleStateTransition(installed, 'unknown.module', 'active'));
+    expect(Predicate.isTagged(unknown, 'TenantModuleStateUnknownModuleError')).toBe(true);
+    const unsupported = yield* Effect.flip(
+      validateTenantModuleStateTransition(installed, 'property.registry', 'archived'),
+    );
+    expect(Predicate.isTagged(unsupported, 'TenantModuleStateUnsupportedStateError')).toBe(true);
+    yield* validateTenantModuleStateTransition(installed, 'property.registry', 'active');
+    yield* validateTenantModuleStateTransition(installed, 'stale.module', 'inactive');
+  }),
 );
 
-it.effect(
-  'declares the generated Core Action contract and bounded business payload',
-  () =>
-    Effect.gen(function* testScenario5() {
-      const { descriptor } = changeTenantModuleStateAction;
-      expect(descriptor.actionKey).toBe(
-        'core.modules.change-tenant-module-state'
-      );
-      expect(descriptor.owningModuleKey).toBe('core.modules');
-      expect(descriptor.auditProfile).toBe('sensitive');
-      expect(descriptor.idempotency).toBe('required');
-      expect(descriptor.policies).toEqual([]);
-      expect(Object.isFrozen(descriptor)).toBe(true);
-      expect(JSON.stringify(descriptor.domainErrorSchema.ast)).not.toMatch(
-        /dependency/iu
-      );
+it.effect('declares the generated Core Action contract and bounded business payload', () =>
+  Effect.gen(function* testScenario5() {
+    const { descriptor } = changeTenantModuleStateAction;
+    expect(descriptor.actionKey).toBe('core.modules.change-tenant-module-state');
+    expect(descriptor.owningModuleKey).toBe('core.modules');
+    expect(descriptor.auditProfile).toBe('sensitive');
+    expect(descriptor.idempotency).toBe('required');
+    expect(descriptor.policies).toEqual([]);
+    expect(Object.isFrozen(descriptor)).toBe(true);
+    expect(JSON.stringify(descriptor.domainErrorSchema.ast)).not.toMatch(/dependency/iu);
 
-      expect(
-        yield* Schema.decodeEffect(descriptor.payloadSchema)({
-          expectedState: 'inactive',
-          moduleKey: 'testing.module',
-          newState: 'active',
-          reason: 'Tenant administrator enabled the module',
-        })
-      ).toEqual({
+    expect(
+      yield* Schema.decodeEffect(descriptor.payloadSchema)({
         expectedState: 'inactive',
         moduleKey: 'testing.module',
         newState: 'active',
         reason: 'Tenant administrator enabled the module',
-      });
-      expect(
-        yield* Effect.flip(
-          Schema.decodeEffect(descriptor.payloadSchema)({
-            moduleKey: 'testing.module',
-            newState: 'active',
-            reason: 'x'.repeat(501),
-          })
-        )
-      ).toBeDefined();
-      expect(
-        yield* Effect.flip(
-          Schema.decodeUnknownEffect(descriptor.payloadSchema)({
-            moduleKey: 'testing.module',
-            newState: 'enabled',
-            tenantId: 'browser-supplied',
-          })
-        )
-      ).toBeDefined();
-    })
+      }),
+    ).toEqual({
+      expectedState: 'inactive',
+      moduleKey: 'testing.module',
+      newState: 'active',
+      reason: 'Tenant administrator enabled the module',
+    });
+    expect(
+      yield* Effect.flip(
+        Schema.decodeEffect(descriptor.payloadSchema)({
+          moduleKey: 'testing.module',
+          newState: 'active',
+          reason: 'x'.repeat(501),
+        }),
+      ),
+    ).toBeDefined();
+    expect(
+      yield* Effect.flip(
+        Schema.decodeUnknownEffect(descriptor.payloadSchema)({
+          moduleKey: 'testing.module',
+          newState: 'enabled',
+          tenantId: 'browser-supplied',
+        }),
+      ),
+    ).toBeDefined();
+  }),
 );

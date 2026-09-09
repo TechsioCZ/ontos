@@ -4,10 +4,7 @@
 import type { OntosResourceType } from '@app/core-runtime';
 import { Schema } from 'effect';
 
-import {
-  PartyRegistryResourceIdJsonSchema,
-  PartyRegistryTenantIdJsonSchema,
-} from './resource-ref-identifiers.ts';
+import { PartyRegistryResourceIdJsonSchema, PartyRegistryTenantIdJsonSchema } from './resource-ref-identifiers.ts';
 
 export const PartyRelationshipRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
@@ -25,8 +22,7 @@ export const partyRelationshipResourceDescriptor = {
     searchable: false,
     timelineVisible: true,
   },
-  description:
-    'Temporal, provenance-backed relationship between two Party resources.',
+  description: 'Temporal, provenance-backed relationship between two Party resources.',
   key: 'party.registry.party-relationship',
   label: 'Party Relationship',
   owningModuleId: 'party.registry',

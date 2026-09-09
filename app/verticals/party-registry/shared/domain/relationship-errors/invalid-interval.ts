@@ -7,5 +7,5 @@ export class PartyRelationshipInvalidInterval extends Schema.TaggedError<PartyRe
   {
     ...RelationshipErrorBase,
     code: Schema.Literal('party_relationship_invalid_interval'),
-  }
+  },
 ) {}

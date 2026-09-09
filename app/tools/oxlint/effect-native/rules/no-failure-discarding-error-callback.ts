@@ -53,31 +53,14 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import {
-  isNode,
-  keyName,
-  memberName,
-  EXPRESSION_WRAPPERS,
-  skipWrappers,
-} from '../shared/ast.ts';
+import { isNode, keyName, memberName, EXPRESSION_WRAPPERS, skipWrappers } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
 import { effectOrigin } from '../shared/effect-identity.ts';
-import {
-  collectEffectBindings,
-  type EffectBindings,
-} from '../shared/effect-imports.ts';
-import {
-  collectNamedImports,
-  collectRootNamespaces,
-} from '../shared/imports.ts';
+import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
+import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
-import {
-  isScriptFile,
-  isTestFile,
-  scopePath,
-  matchesGlobs,
-} from '../shared/paths.ts';
+import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const EFFECT_NAMESPACE = 'Effect';
 const EFFECT_ROOT_MODULE = 'effect';
@@ -85,13 +68,7 @@ const EFFECT_SUBMODULE = /^effect\/(?:.*\/)?Effect$/u;
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**'];
 
-const DEFAULT_IGNORE = [
-  '**/dist/**',
-  '**/build/**',
-  '**/node_modules/**',
-  'tools/**',
-  'scripts/**',
-];
+const DEFAULT_IGNORE = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tools/**', 'scripts/**'];
 
 /** Members whose error callback replaces or absorbs the failure channel wholesale. */
 const DEFAULT_MEMBERS = [
@@ -161,26 +138,15 @@ interface EffectLocals {
   readonly direct: ReadonlyMap<string, string>;
 }
 
-function collectEffectLocals(
-  program: ESTree.Program,
-  bindings: EffectBindings,
-  options: RuleOptions
-): EffectLocals {
+function collectEffectLocals(program: ESTree.Program, bindings: EffectBindings, options: RuleOptions): EffectLocals {
   const submodule = (source: string) => EFFECT_SUBMODULE.test(source);
   const root = (source: string) =>
-    !submodule(source) &&
-    (source === EFFECT_ROOT_MODULE ||
-      matchesGlobs(source, options.effectModules));
+    !submodule(source) && (source === EFFECT_ROOT_MODULE || matchesGlobs(source, options.effectModules));
   const namespace = collectRootNamespaces(program, submodule);
   for (const [local, exported] of bindings.namespaces) {
     if (exported === EFFECT_NAMESPACE) namespace.add(local);
   }
-  for (const local of collectNamedImports(
-    program,
-    root,
-    new Set([EFFECT_NAMESPACE])
-  ).keys())
-    namespace.add(local);
+  for (const local of collectNamedImports(program, root, new Set([EFFECT_NAMESPACE])).keys()) namespace.add(local);
   return {
     namespace,
     barrel: collectRootNamespaces(program, root),
@@ -201,10 +167,7 @@ function unwrap(node: unknown): AnyNode | null {
 }
 
 /** A later spread or unknown computed key prevents proving the selected value. */
-function selectedProperty(
-  property: unknown,
-  key: string
-): { value: unknown } | null {
+function selectedProperty(property: unknown, key: string): { value: unknown } | null {
   if (!isNode(property)) return null;
   if (property.type === 'SpreadElement') return { value: null };
   if (property.type !== 'Property' || !isNode(property.key)) return null;
@@ -212,9 +175,7 @@ function selectedProperty(
     templates: true,
   });
   if (name === null && property.computed === true) return { value: null };
-  return name === key
-    ? { value: property.kind === 'init' ? property.value : null }
-    : null;
+  return name === key ? { value: property.kind === 'init' ? property.value : null } : null;
 }
 
 /** Resolve the last statically selected object property, including method shorthand. */
@@ -232,11 +193,7 @@ function objectProperty(object: AnyNode, key: string): unknown {
  * puts it at argument 0; data-first (`Effect.mapError(self, f)`) at argument 1. Members listed in
  * `OPTION_PROPERTY` carry it on an options object in either position.
  */
-function errorCallback(
-  context: Context,
-  member: string,
-  argumentsList: readonly unknown[]
-): AnyNode | null {
+function errorCallback(context: Context, member: string, argumentsList: readonly unknown[]): AnyNode | null {
   const property = OPTION_PROPERTY.get(member);
   if (property !== undefined) {
     for (const argument of argumentsList) {
@@ -248,8 +205,7 @@ function errorCallback(
     return null;
   }
   if (argumentsList.length === 0) return null;
-  const positional =
-    argumentsList.length >= 2 ? argumentsList[1] : argumentsList[0];
+  const positional = argumentsList.length >= 2 ? argumentsList[1] : argumentsList[0];
   const candidate = unwrap(positional);
   if (candidate === null) return null;
   if (candidate.type === 'SpreadElement') return null;
@@ -270,8 +226,7 @@ function firstParameterName(parameters: readonly unknown[]): {
   if (target === null) return { name: null, pattern: true };
   if (target.type === 'TSParameterProperty') target = unwrap(target.parameter);
   if (target === null) return { name: null, pattern: true };
-  if (target.type === 'Identifier')
-    return { name: String(target.name), pattern: false };
+  if (target.type === 'Identifier') return { name: String(target.name), pattern: false };
   // ObjectPattern / ArrayPattern / RestElement all read the failure.
   return { name: null, pattern: true };
 }
@@ -281,56 +236,36 @@ function classifyFunction(context: Context, fn: AnyNode): Classification {
   if (parameters.length === 0) return 'zeroArity';
   const { name, pattern } = firstParameterName(parameters);
   if (pattern || name === null) return 'uses';
-  const declared = context.sourceCode.getDeclaredVariables(
-    fn as unknown as ESTree.Node
-  );
+  const declared = context.sourceCode.getDeclaredVariables(fn as unknown as ESTree.Node);
   const variable = declared.find(
-    (entry) =>
-      entry.name === name &&
-      entry.defs.some((definition) => definition.type === 'Parameter')
+    (entry) => entry.name === name && entry.defs.some((definition) => definition.type === 'Parameter'),
   );
   if (variable === undefined) return 'unknown';
-  return variable.references.some((reference) => reference.isRead())
-    ? 'uses'
-    : 'unusedParameter';
+  return variable.references.some((reference) => reference.isRead()) ? 'uses' : 'unusedParameter';
 }
 
 function isFunctionNode(node: AnyNode): boolean {
-  return (
-    node.type === 'ArrowFunctionExpression' ||
-    node.type === 'FunctionExpression'
-  );
+  return node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression';
 }
 
 /** Resolve an identifier callback to a same-file function definition, or `null`. */
-function resolveLocalFunction(
-  context: Context,
-  identifier: AnyNode,
-  depth = 0
-): AnyNode | null {
+function resolveLocalFunction(context: Context, identifier: AnyNode, depth = 0): AnyNode | null {
   if (depth > 24) return null;
   const variable = stableVariable(context, identifier);
   if (variable === null) return null;
   const definition = variable.defs[0];
   if (definition === undefined) return null;
-  if (definition.type === 'ImportBinding' || definition.type === 'Parameter')
-    return null;
+  if (definition.type === 'ImportBinding' || definition.type === 'Parameter') return null;
   return functionDefinition(context, definition.node, depth);
 }
 
-function functionDefinition(
-  context: Context,
-  node: unknown,
-  depth: number
-): AnyNode | null {
+function functionDefinition(context: Context, node: unknown, depth: number): AnyNode | null {
   if (!isNode(node)) return null;
   if (node.type === 'FunctionDeclaration') return node;
   if (node.type !== 'VariableDeclarator') return null;
   const init = unwrap(node.init);
   if (init !== null && isFunctionNode(init)) return init;
-  return init?.type === 'Identifier'
-    ? resolveLocalFunction(context, init, depth + 1)
-    : null;
+  return init?.type === 'Identifier' ? resolveLocalFunction(context, init, depth + 1) : null;
 }
 
 const OPTION_REFERENCE_WRAPPERS = new Set([
@@ -351,45 +286,22 @@ function mutatesMember(member: ESTree.MemberExpression): boolean {
 
 function mutatesOptionObject(identifier: ESTree.Node): boolean {
   const { node, parent } = skipWrappers(identifier, OPTION_REFERENCE_WRAPPERS);
-  return (
-    parent?.type === 'MemberExpression' &&
-    parent.object === node &&
-    mutatesMember(parent)
-  );
+  return parent?.type === 'MemberExpression' && parent.object === node && mutatesMember(parent);
 }
 
-function stableVariable(
-  context: Context,
-  identifier: AnyNode
-): Variable | null {
-  const variable = lookupVariable(
-    context,
-    identifier as unknown as ESTree.Node
-  );
+function stableVariable(context: Context, identifier: AnyNode): Variable | null {
+  const variable = lookupVariable(context, identifier as unknown as ESTree.Node);
   if (!variable || variable.defs.length !== 1) return null;
-  return variable.references.some(
-    (reference) => reference.isWrite() && !reference.init
-  )
-    ? null
-    : variable;
+  return variable.references.some((reference) => reference.isWrite() && !reference.init) ? null : variable;
 }
 
-function constDeclaration(
-  variable: Variable
-): ESTree.VariableDeclarator | null {
+function constDeclaration(variable: Variable): ESTree.VariableDeclarator | null {
   const declaration = variable.defs[0]?.node;
   if (declaration?.type !== 'VariableDeclarator') return null;
-  return declaration.parent?.type === 'VariableDeclaration' &&
-    declaration.parent.kind === 'const'
-    ? declaration
-    : null;
+  return declaration.parent?.type === 'VariableDeclaration' && declaration.parent.kind === 'const' ? declaration : null;
 }
 
-function resolveValue(
-  context: Context,
-  input: unknown,
-  depth = 0
-): AnyNode | null {
+function resolveValue(context: Context, input: unknown, depth = 0): AnyNode | null {
   const node = unwrap(input);
   if (!node || node.type !== 'Identifier' || depth > 24) return node;
   const variable = stableVariable(context, node);
@@ -398,12 +310,7 @@ function resolveValue(
   if (declaration === null) return node;
   // A const binding does not freeze its option properties. Visible writes/method calls
   // invalidate this local snapshot; arbitrary escaped-object mutation is not modeled.
-  if (
-    variable.references.some((reference) =>
-      mutatesOptionObject(reference.identifier)
-    )
-  )
-    return node;
+  if (variable.references.some((reference) => mutatesOptionObject(reference.identifier))) return node;
   return resolveValue(context, declaration.init, depth + 1);
 }
 
@@ -412,7 +319,7 @@ function reportFunction(
   callback: AnyNode,
   definition: AnyNode,
   member: string,
-  indirect: boolean
+  indirect: boolean,
 ): void {
   const classification = classifyFunction(context, definition);
   const node = callback as unknown as ESTree.Node;
@@ -420,20 +327,13 @@ function reportFunction(
   if (classification === 'zeroArity') {
     context.report({
       node,
-      messageId:
-        member === 'orElseFail'
-          ? 'discardingLazyFailure'
-          : indirect
-            ? 'indirectZeroArity'
-            : 'zeroArity',
+      messageId: member === 'orElseFail' ? 'discardingLazyFailure' : indirect ? 'indirectZeroArity' : 'zeroArity',
       data: { member, name },
     });
     return;
   }
   if (classification !== 'unusedParameter') return;
-  const parameter = firstParameterName(
-    Array.isArray(definition.params) ? definition.params : []
-  ).name;
+  const parameter = firstParameterName(Array.isArray(definition.params) ? definition.params : []).name;
   context.report({
     node,
     messageId: indirect ? 'indirectUnusedParameter' : 'unusedParameter',
@@ -441,20 +341,14 @@ function reportFunction(
   });
 }
 
-function reportCallback(
-  context: Context,
-  callback: AnyNode,
-  member: string,
-  flagMemberReferences: boolean
-): void {
+function reportCallback(context: Context, callback: AnyNode, member: string, flagMemberReferences: boolean): void {
   if (isFunctionNode(callback)) {
     reportFunction(context, callback, callback, member, false);
     return;
   }
   if (callback.type === 'Identifier') {
     const definition = resolveLocalFunction(context, callback);
-    if (definition !== null)
-      reportFunction(context, callback, definition, member, true);
+    if (definition !== null) reportFunction(context, callback, definition, member, true);
     return;
   }
   if (flagMemberReferences && callback.type === 'MemberExpression') {
@@ -541,23 +435,13 @@ export const rule = defineRule({
     const program = context.sourceCode.ast;
     const bindings = collectEffectBindings(program);
     const locals = collectEffectLocals(program, bindings, options);
-    if (
-      locals.namespace.size === 0 &&
-      locals.barrel.size === 0 &&
-      locals.direct.size === 0
-    )
-      return {};
+    if (locals.namespace.size === 0 && locals.barrel.size === 0 && locals.direct.size === 0) return {};
 
     return {
       CallExpression(node: ESTree.CallExpression): void {
         const raw = node as unknown as AnyNode;
-        const origin = effectOrigin(
-          context,
-          node.callee,
-          options.effectModules
-        );
-        const member =
-          origin?.length === 2 && origin[0] === 'Effect' ? origin[1]! : null;
+        const origin = effectOrigin(context, node.callee, options.effectModules);
+        const member = origin?.length === 2 && origin[0] === 'Effect' ? origin[1]! : null;
         if (member === null || !options.members.includes(member)) return;
         const argumentsList = Array.isArray(raw.arguments) ? raw.arguments : [];
         const callback = errorCallback(context, member, argumentsList);

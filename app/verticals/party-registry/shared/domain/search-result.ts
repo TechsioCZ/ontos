@@ -3,34 +3,20 @@ import { Schema } from 'effect';
 import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 
-const BoundedTitleSchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300)
-);
-const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('TenantId')
-);
-const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('LegalEntityId')
-);
+const BoundedTitleSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
+const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
 
-export const PartySearchQuerySchema = Schema.Trim.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(200)
-);
+export const PartySearchQuerySchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 
-export const CurrentCounterpartyRoleSchema = Schema.Literals([
-  'CUSTOMER',
-  'SUPPLIER',
-]);
+export const CurrentCounterpartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
 export type CurrentCounterpartyRole = typeof CurrentCounterpartyRoleSchema.Type;
 
 const SearchLegalEntityContextSchema = Schema.Struct({
   legalEntityId: Schema.toEncoded(LegalEntityIdSchema),
   tenantId: Schema.toEncoded(TenantIdSchema),
 });
-export type SearchLegalEntityContext =
-  typeof SearchLegalEntityContextSchema.Type;
+export type SearchLegalEntityContext = typeof SearchLegalEntityContextSchema.Type;
 
 export const PartySearchResultSchema = Schema.Struct({
   archived: Schema.Boolean,
@@ -57,5 +43,4 @@ export const CounterpartySearchResultSchema = Schema.Struct({
   }),
   ref: CounterpartyRefSchema,
 });
-export type CounterpartySearchResult =
-  typeof CounterpartySearchResultSchema.Type;
+export type CounterpartySearchResult = typeof CounterpartySearchResultSchema.Type;

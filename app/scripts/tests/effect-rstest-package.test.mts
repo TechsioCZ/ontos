@@ -20,12 +20,8 @@ class SemanticValue implements Equal.Equal {
 addEqualityTesters();
 
 it('the installed package honors Effect equality without replacing native assertions', () => {
-  expect(new SemanticValue('same', 'left')).toEqual(
-    new SemanticValue('same', 'right')
-  );
-  expect(new SemanticValue('left', 'same')).not.toEqual(
-    new SemanticValue('next', 'same')
-  );
+  expect(new SemanticValue('same', 'left')).toEqual(new SemanticValue('same', 'right'));
+  expect(new SemanticValue('left', 'same')).not.toEqual(new SemanticValue('next', 'same'));
   expect({ value: 1 }).toEqual({ value: 1 });
   expect({ value: 1 }).toEqual(expect.objectContaining({ value: 1 }));
 });
@@ -36,32 +32,22 @@ it.prop(
   ([label, value]) => {
     expect(label).toBe('schema');
     expect(Number.isInteger(value)).toBe(true);
-  }
+  },
 );
 
-it.prop(
-  'the installed package generates record schemas',
-  { value: Schema.Literal('schema') },
-  ({ value }) => {
-    expect(value).toBe('schema');
-  }
-);
+it.prop('the installed package generates record schemas', { value: Schema.Literal('schema') }, ({ value }) => {
+  expect(value).toBe('schema');
+});
 
 // Promise assimilation would inspect this success value for a `then` property.
 const value = new Proxy(
   {},
   {
     get(): never {
-      throw new Error(
-        'Effect success values must not reach Promise resolution'
-      );
+      throw new Error('Effect success values must not reach Promise resolution');
     },
-  }
+  },
 );
 
-it.effect('discards success values at the runner boundary', () =>
-  Effect.succeed(value)
-);
-it.live('discards live success values at the runner boundary', () =>
-  Effect.succeed(value)
-);
+it.effect('discards success values at the runner boundary', () => Effect.succeed(value));
+it.live('discards live success values at the runner boundary', () => Effect.succeed(value));

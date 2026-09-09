@@ -5,5 +5,5 @@ export class TenantModuleStateUnknownModuleError extends Schema.TaggedError<Tena
   {
     code: Schema.Literal('tenant_module_state_module_unknown'),
     reason: Schema.String,
-  }
+  },
 ) {}

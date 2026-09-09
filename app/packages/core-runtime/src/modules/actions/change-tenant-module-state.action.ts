@@ -29,25 +29,16 @@ import type {
   PersistTenantModuleStateChangeResult,
 } from '../tenant-module-state-service.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
   key: Key,
   value: Value,
-  trailing: Trailing
-) =>
-  condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing };
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const moduleKeySchema = OntosModuleIdSchema.check(Schema.isMaxLength(128));
-const reasonSchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(500)
-);
+const reasonSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
 const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
   expectedState: Schema.optionalKey(TenantModuleStateSchema),
@@ -55,9 +46,7 @@ const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
   newState: TenantModuleStateSchema,
   reason: Schema.optionalKey(reasonSchema),
 });
-export type ChangeTenantModuleStatePayload = Schema.Schema.Type<
-  typeof ChangeTenantModuleStatePayloadSchema
->;
+export type ChangeTenantModuleStatePayload = Schema.Schema.Type<typeof ChangeTenantModuleStatePayloadSchema>;
 
 const ChangeTenantModuleStateResultSchema = Schema.Struct({
   moduleKey: moduleKeySchema,
@@ -76,72 +65,60 @@ const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateValidationUnavailableError,
 ]);
 
-type ChangeTenantModuleStateDomainEvents = Readonly<
-  Record<never, Schema.ConstraintDecoder<unknown>>
->;
+type ChangeTenantModuleStateDomainEvents = Readonly<Record<never, Schema.ConstraintDecoder<unknown>>>;
 
 interface ChangeTenantModuleStateServices {
   readonly persist: (
-    input: PersistTenantModuleStateChangeInput
-  ) => Effect.Effect<
-    PersistTenantModuleStateChangeResult,
-    TenantModuleStateTransitionError
-  >;
+    input: PersistTenantModuleStateChangeInput,
+  ) => Effect.Effect<PersistTenantModuleStateChangeResult, TenantModuleStateTransitionError>;
 }
 
-const handleChangeTenantModuleState = Effect.fn(
-  'ChangeTenantModuleStateAction.handleChangeTenantModuleState'
-)(function* changeTenantModuleStateHandler(
-  payload: ChangeTenantModuleStatePayload,
-  context: ActionHandlerContext<
-    ChangeTenantModuleStateDomainEvents,
-    ChangeTenantModuleStateServices
-  >
-) {
-  const installedCatalog = yield* InstalledModuleCatalogService;
-  const catalog = yield* installedCatalog.load;
-  yield* validateTenantModuleStateTransition(
-    catalog,
-    payload.moduleKey,
-    payload.newState
-  );
-  const result = yield* context.services.persist(
-    withOptionalProperty(
+const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.handleChangeTenantModuleState')(
+  function* changeTenantModuleStateHandler(
+    payload: ChangeTenantModuleStatePayload,
+    context: ActionHandlerContext<ChangeTenantModuleStateDomainEvents, ChangeTenantModuleStateServices>,
+  ) {
+    const installedCatalog = yield* InstalledModuleCatalogService;
+    const catalog = yield* installedCatalog.load;
+    yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
+    const result = yield* context.services.persist(
       withOptionalProperty(
+        withOptionalProperty(
+          {
+            actionInvocationId: context.actionInvocationId,
+            authMethod: context.scope.authMethod,
+          },
+          payload.expectedState !== undefined,
+          'expectedState',
+          payload.expectedState,
+          {
+            moduleKey: payload.moduleKey,
+            newState: payload.newState,
+            principalId: context.scope.principalId,
+          },
+        ),
+        payload.reason !== undefined,
+        'reason',
+        payload.reason,
         {
-          actionInvocationId: context.actionInvocationId,
-          authMethod: context.scope.authMethod,
+          tenantId: context.scope.tenantId,
         },
-        payload.expectedState !== undefined,
-        'expectedState',
-        payload.expectedState,
-        {
-          moduleKey: payload.moduleKey,
-          newState: payload.newState,
-          principalId: context.scope.principalId,
-        }
       ),
-      payload.reason !== undefined,
-      'reason',
-      payload.reason,
-      {
-        tenantId: context.scope.tenantId,
-      }
-    )
-  );
+    );
 
-  yield* context.recordDataAccess({
-    accessKind: 'read',
-    queryHash: `tenant-module-state-prior:${payload.moduleKey}`,
-    resultCount: result.previousState === null ? 0 : 1,
-    servingModuleKey: 'core.modules',
-    targetModuleKey: payload.moduleKey,
-    targetResourceId: payload.moduleKey,
-    targetResourceType: 'tenant-module-state',
-  });
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `tenant-module-state-prior:${payload.moduleKey}`,
+      resultCount: result.previousState === null ? 0 : 1,
+      servingModuleKey: 'core.modules',
+      targetModuleKey: payload.moduleKey,
+      targetResourceId: payload.moduleKey,
+      targetResourceType: 'tenant-module-state',
+    });
 
-  return result;
-});
+    return result;
+  },
+);
 
 export const changeTenantModuleStateAction = defineAction(
   {
@@ -175,5 +152,5 @@ export const changeTenantModuleStateAction = defineAction(
   (transaction) =>
     Effect.succeed({
       persist: (input) => persistTenantModuleStateChange(transaction, input),
-    })
+    }),
 );

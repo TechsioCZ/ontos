@@ -8,5 +8,5 @@ export class CounterpartyPartyArchived extends Schema.TaggedError<CounterpartyPa
     code: Schema.Literal('counterparty_party_archived'),
     partyId: CounterpartyUuidSchema,
     reason: Schema.String,
-  }
+  },
 ) {}

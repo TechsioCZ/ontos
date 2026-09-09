@@ -28,16 +28,13 @@ const problems = makeGovernedReadProblems({
   unavailable: AresLookupUnavailableProblemSchema,
 });
 
-export const aresLookupReadApiLive = HttpApiBuilder.group(
-  partyRegistryApi,
-  'aresLookup',
-  (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: aresLookupRead,
-      })
-    )
+export const aresLookupReadApiLive = HttpApiBuilder.group(partyRegistryApi, 'aresLookup', (handlers) =>
+  handlers.handle(
+    'execute',
+    makeGovernedReadHttpHandler({
+      authenticatePrincipal: authenticateOperationPrincipal,
+      problems,
+      registration: aresLookupRead,
+    }),
+  ),
 );

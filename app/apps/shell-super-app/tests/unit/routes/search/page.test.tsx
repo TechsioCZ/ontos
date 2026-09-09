@@ -17,10 +17,7 @@ import SearchPage from '../../../../src/routes/[lang]/search/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts' with {
   rstest: 'importActual',
 };
-import type {
-  LocalizedLinkCall,
-  LocalizedLinkDoubleProps,
-} from '../../../support/localized-link-double.tsx';
+import type { LocalizedLinkCall, LocalizedLinkDoubleProps } from '../../../support/localized-link-double.tsx';
 import { renderLocalizedLinkDouble } from '../../../support/localized-link-double.tsx';
 
 const {
@@ -67,7 +64,7 @@ const translations = new Map(
     'shell.search.submit': 'Search',
     'shell.search.title': 'Search',
     'shell.search.unavailable': 'Search unavailable',
-  })
+  }),
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
@@ -100,24 +97,14 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
   browserRuntime: { runPromise: browserRunPromiseMock },
 }));
 
-const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)(
-  '00000000-0000-4000-8000-000000000001'
-);
-const tenantId = Schema.decodeUnknownSync(TenantIdSchema)(
-  '00000000-0000-4000-8000-000000000101'
-);
-const legalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)(
-  '00000000-0000-4000-8000-000000000201'
-);
+const principalId = Schema.decodeUnknownSync(PrincipalIdSchema)('00000000-0000-4000-8000-000000000001');
+const tenantId = Schema.decodeUnknownSync(TenantIdSchema)('00000000-0000-4000-8000-000000000101');
+const legalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('00000000-0000-4000-8000-000000000201');
 const inventoryAppId = Schema.decodeUnknownSync(AppIdSchema)('inventory-app');
-const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)(
-  'shell.navigation.modules'
-);
-const inventoryModuleId =
-  Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
+const navigationGroupKey = Schema.decodeUnknownSync(GroupKeySchema)('shell.navigation.modules');
+const inventoryModuleId = Schema.decodeUnknownSync(ModuleIdSchema)('inventory.stock');
 const plainResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit-1');
-const awkwardResourceId =
-  Schema.decodeUnknownSync(ResourceIdSchema)('unit #1/2');
+const awkwardResourceId = Schema.decodeUnknownSync(ResourceIdSchema)('unit #1/2');
 
 const authenticatedShell = (): HomePageModel => ({
   contextState: 'authenticated',
@@ -157,10 +144,7 @@ const authenticatedShell = (): HomePageModel => ({
   },
 });
 
-const readyModel = (
-  resourceType: string,
-  resourceId: typeof plainResourceId
-): SearchPageModel => ({
+const readyModel = (resourceType: string, resourceId: typeof plainResourceId): SearchPageModel => ({
   query: 'unit',
   response: {
     partial: false,
@@ -176,18 +160,13 @@ const readyModel = (
   state: 'ready',
 });
 
-const resourceLinkCalls = () =>
-  localizedLinkCalls.filter((call) => call.to.startsWith('/resources'));
+const resourceLinkCalls = () => localizedLinkCalls.filter((call) => call.to.startsWith('/resources'));
 
 beforeEach(() => {
   browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
-  switchTenantMock.mockReturnValue(
-    Effect.succeed({ selectedTenantId: tenantId })
-  );
-  switchLegalEntityMock.mockReturnValue(
-    Effect.succeed({ selectedLegalEntityId: legalEntityId })
-  );
+  switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId }));
+  switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId }));
   useLoaderDataMock.mockReturnValue(readyModel('stock-item', plainResourceId));
 });
 
@@ -210,27 +189,23 @@ test('a search result hands the canonical resource route to the framework link',
     resourceType: 'stock-item',
   });
   expect(resultCall?.href).toBeUndefined();
-  expect(
-    screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')
-  ).toBe('/en/resources/inventory.stock/stock-item/unit-1');
+  expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
+    '/en/resources/inventory.stock/stock-item/unit-1',
+  );
 });
 
 test('a search result resolves the Czech resource route from the same canonical target', () => {
   languageState.current = 'cs';
   render(<SearchPage />);
 
-  expect(resourceLinkCalls()[0]?.to).toBe(
-    '/resources/$moduleId/$resourceType/$resourceId'
+  expect(resourceLinkCalls()[0]?.to).toBe('/resources/$moduleId/$resourceType/$resourceId');
+  expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
+    '/cs/zdroje/inventory.stock/stock-item/unit-1',
   );
-  expect(
-    screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')
-  ).toBe('/cs/zdroje/inventory.stock/stock-item/unit-1');
 });
 
 test('resource path segments stay percent-encoded per segment', () => {
-  useLoaderDataMock.mockReturnValue(
-    readyModel('stock item', awkwardResourceId)
-  );
+  useLoaderDataMock.mockReturnValue(readyModel('stock item', awkwardResourceId));
   render(<SearchPage />);
 
   expect(resourceLinkCalls()[0]?.params).toEqual({
@@ -238,9 +213,9 @@ test('resource path segments stay percent-encoded per segment', () => {
     resourceId: 'unit #1/2',
     resourceType: 'stock item',
   });
-  expect(
-    screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')
-  ).toBe('/en/resources/inventory.stock/stock%20item/unit%20%231%2F2');
+  expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
+    '/en/resources/inventory.stock/stock%20item/unit%20%231%2F2',
+  );
 });
 
 test('an empty result set exposes no resource affordance', () => {

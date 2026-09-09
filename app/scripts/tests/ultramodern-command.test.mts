@@ -25,30 +25,21 @@ const wrappers = [
 const fixtureDirectory = () =>
   Effect.acquireRelease(
     Effect.sync(() => mkdtempSync(path.join(os.tmpdir(), 'ontos-command-'))),
-    (directory) =>
-      Effect.sync(() => rmSync(directory, { force: true, recursive: true }))
+    (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
   );
 
-const invokeWrapper = (
-  script: string,
-  environment: Readonly<Record<string, string>>,
-  args: readonly string[] = []
-) =>
+const invokeWrapper = (script: string, environment: Readonly<Record<string, string>>, args: readonly string[] = []) =>
   Effect.gen(function* invokeWrapperEffect() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make(
-        process.execPath,
-        [path.join(workspaceRoot, 'scripts', `${script}.mts`), ...args],
-        {
-          cwd: workspaceRoot,
-          env: environment,
-          extendEnv: true,
-          stderr: 'pipe',
-          stdin: 'ignore',
-          stdout: 'pipe',
-        }
-      )
+      ChildProcess.make(process.execPath, [path.join(workspaceRoot, 'scripts', `${script}.mts`), ...args], {
+        cwd: workspaceRoot,
+        env: environment,
+        extendEnv: true,
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
+      }),
     );
     return yield* Effect.all(
       {
@@ -56,7 +47,7 @@ const invokeWrapper = (
         stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
         stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
       },
-      { concurrency: 'unbounded' }
+      { concurrency: 'unbounded' },
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -68,7 +59,7 @@ for (const [script, command] of wrappers) {
       const createBin = path.join(fixture, createFilename);
       writeFileSync(
         createBin,
-        'console.log(process.argv.slice(2).join("|")); console.log(process.env.ULTRAMODERN_WORKSPACE_ROOT); process.exitCode = 7;'
+        'console.log(process.argv.slice(2).join("|")); console.log(process.env.ULTRAMODERN_WORKSPACE_ROOT); process.exitCode = 7;',
       );
       const result = yield* invokeWrapper(
         script,
@@ -76,13 +67,11 @@ for (const [script, command] of wrappers) {
           ULTRAMODERN_CREATE_BIN: createBin,
           ULTRAMODERN_WORKSPACE_ROOT: fixture,
         },
-        ['--probe', 'argument with spaces']
+        ['--probe', 'argument with spaces'],
       );
       expect(result.status, result.stderr).toBe(7);
-      expect(result.stdout).toBe(
-        `ultramodern|${command}|--probe|argument with spaces\n${fixture}\n`
-      );
-    })
+      expect(result.stdout).toBe(`ultramodern|${command}|--probe|argument with spaces\n${fixture}\n`);
+    }),
   );
 }
 
@@ -93,19 +82,14 @@ it.live(
     const createBin = path.join(fixture, createFilename);
     writeFileSync(createBin, 'process.exitCode = 7;');
     mkdirSync(path.join(fixture, '.modernjs'));
-    writeFileSync(
-      path.join(fixture, '.modernjs/ultramodern.json'),
-      '{"topology":{"apps":[]}}'
-    );
+    writeFileSync(path.join(fixture, '.modernjs/ultramodern.json'), '{"topology":{"apps":[]}}');
     const result = yield* invokeWrapper(routeGeneratorScript, {
       ULTRAMODERN_CREATE_BIN: createBin,
       ULTRAMODERN_WORKSPACE_ROOT: fixture,
     });
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toMatch(
-      /Framework route-artifact generation failed: exit 7/u
-    );
-  })
+    expect(result.stderr).toMatch(/Framework route-artifact generation failed: exit 7/u);
+  }),
 );
 
 it.live(
@@ -118,11 +102,9 @@ it.live(
       ULTRAMODERN_WORKSPACE_ROOT: fixture,
     });
     expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(
-      /Failed to launch ultramodern-create from PATH/u
-    );
+    expect(result.stderr).toMatch(/Failed to launch ultramodern-create from PATH/u);
     expect(result.stderr).toMatch(/UltraModern command "mf-types"/u);
-  })
+  }),
 );
 
 const routeFixture = Effect.fn(function* routeFixture(scope: string) {
@@ -140,13 +122,13 @@ const routeFixture = Effect.fn(function* routeFixture(scope: string) {
     path.join(fixture, '.modernjs/ultramodern.json'),
     JSON.stringify({
       topology: { apps: [{ id: 'inventory', path: ownerPath }] },
-    })
+    }),
   );
   writeFileSync(
     path.join(fixture, ownerPath, 'package.json'),
     JSON.stringify({
       modernjs: { ontosModule: { moduleId: 'inventory' } },
-    })
+    }),
   );
   const metadata = {
     canonicalPath: '/items',
@@ -169,7 +151,7 @@ const routeFixture = Effect.fn(function* routeFixture(scope: string) {
   };
   writeFileSync(
     path.join(fixture, ownerPath, 'src/routes/items/route.meta.ts'),
-    `export const routeMeta = ${JSON.stringify(metadata)};\n`
+    `export const routeMeta = ${JSON.stringify(metadata)};\n`,
   );
   const createBin = path.join(fixture, createFilename);
   writeFileSync(
@@ -181,7 +163,7 @@ const manifest = readFileSync(path.join(process.env.ULTRAMODERN_WORKSPACE_ROOT, 
 const urls = JSON.parse(manifest.split('export const ultramodernLocalisedUrls = ')[1].split(' as const;')[0]);
 assert.deepEqual(urls, { '/items': { cs: '/polozky', en: '/items' } });
 console.log('framework observed canonical-only metadata');
-`
+`,
   );
   return { createBin, fixture };
 });
@@ -196,10 +178,8 @@ it.live(
       ULTRAMODERN_WORKSPACE_ROOT: fixture,
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(
-      /framework observed canonical-only metadata/u
-    );
-  })
+    expect(result.stdout).toMatch(/framework observed canonical-only metadata/u);
+  }),
 );
 
 it.live(
@@ -212,9 +192,7 @@ it.live(
       ULTRAMODERN_WORKSPACE_ROOT: fixture,
     });
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toMatch(
-      /must declare one governed tenant page entrypoint owned by inventory/u
-    );
+    expect(result.stderr).toMatch(/must declare one governed tenant page entrypoint owned by inventory/u);
     expect(result.stdout).not.toMatch(/framework observed/u);
-  })
+  }),
 );

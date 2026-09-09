@@ -1,10 +1,7 @@
 import { expect, it } from 'effect-rstest';
 
 import type { ProtectedEntrypointInventory } from '../authorization/protected-entrypoint-inventory.mts';
-import {
-  checkAuthorizationReadiness,
-  hashAuthorizationEvidence,
-} from '../check-authorization-readiness.mts';
+import { checkAuthorizationReadiness, hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import type {
   AuthorizationNegativeSmokeEvidence,
   AuthorizationReadinessInput,
@@ -70,7 +67,7 @@ const negativeSmoke: AuthorizationNegativeSmokeEvidence = {
       credential,
       outcome: 'denied' as const,
       scenario,
-    }))
+    })),
   ),
   schemaVersion: 1,
   sourceRevision: inventory.sourceRevision,
@@ -159,19 +156,19 @@ it('readiness rejects unapproved contexts and unresolved or stale impact evidenc
     checkAuthorizationReadiness({
       ...ready,
       context: { ...ready.context, approvalStatus: 'pending' },
-    })
+    }),
   ).toThrow(/unapproved/u);
   expect(() =>
     checkAuthorizationReadiness({
       ...ready,
       impact: { ...ready.impact, totalWouldDeny: 1 },
-    })
+    }),
   ).toThrow(/stale or unresolved/u);
   expect(() =>
     checkAuthorizationReadiness({
       ...ready,
       impact: { ...ready.impact, sourceRevision: 'other' },
-    })
+    }),
   ).toThrow(/stale or unresolved/u);
 });
 
@@ -186,7 +183,7 @@ it('readiness rejects missing relationships, module state, worker ownership, and
       checkAuthorizationReadiness({
         ...ready,
         observation: { ...ready.observation, [key]: [] },
-      })
+      }),
     ).toThrow(/incomplete/u);
   }
   expect(() =>
@@ -196,7 +193,7 @@ it('readiness rejects missing relationships, module state, worker ownership, and
         ...ready.observation,
         replayMigrationHash: 'f'.repeat(64),
       },
-    })
+    }),
   ).toThrow(/stale/u);
 });
 
@@ -205,7 +202,7 @@ it('readiness rejects incorrect issuer/audience topology, short observations, an
     checkAuthorizationReadiness({
       ...ready,
       observation: { ...ready.observation, gatewayAudiences: ['other'] },
-    })
+    }),
   ).toThrow(/issuer or audience/u);
   expect(() =>
     checkAuthorizationReadiness({
@@ -214,7 +211,7 @@ it('readiness rejects incorrect issuer/audience topology, short observations, an
         ...ready.observation,
         gatewayIssuer: 'http://insecure.test',
       },
-    })
+    }),
   ).toThrow(/issuer or audience/u);
   expect(() =>
     checkAuthorizationReadiness({
@@ -226,7 +223,7 @@ it('readiness rejects incorrect issuer/audience topology, short observations, an
           startedAt: '2026-09-02T00:00:00.000Z',
         },
       },
-    })
+    }),
   ).toThrow(/observation/u);
   expect(() =>
     checkAuthorizationReadiness({
@@ -235,6 +232,6 @@ it('readiness rejects incorrect issuer/audience topology, short observations, an
         ...negativeSmoke,
         scenarios: negativeSmoke.scenarios.slice(1),
       },
-    })
+    }),
   ).toThrow(/smoke evidence is incomplete/u);
 });

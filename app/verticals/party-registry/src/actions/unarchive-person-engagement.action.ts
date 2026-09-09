@@ -18,36 +18,24 @@ import { engagementLifecycleRegistration } from './engagement-lifecycle-registra
 
 export const unarchivePersonEngagementAction = defineAction(
   {
-    ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>(
-      'party.registry.unarchive-person-engagement'
-    ),
+    ...engagementLifecycleRegistration<PersonEngagementLifecyclePayload>('party.registry.unarchive-person-engagement'),
     payloadSchema: PersonEngagementLifecyclePayloadSchema,
     resultSchema: PersonEngagementProfileSchema,
   },
-  handleEngagementLifecycle<
-    PersonEngagementLifecyclePayload,
-    PersonEngagementProfile
-  >('active'),
+  handleEngagementLifecycle<PersonEngagementLifecyclePayload, PersonEngagementProfile>('active'),
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
           code: 'operation_context_unavailable',
-          reason:
-            'Person engagement unarchive requires a trusted Legal Entity scope',
-        })
+          reason: 'Person engagement unarchive requires a trusted Legal Entity scope',
+        }),
       );
     }
     return Effect.succeed({
-      transition: (profileId) =>
-        transitionPersonEngagementProfile(
-          transaction,
-          scope.tenantId,
-          profileId,
-          'active'
-        ),
+      transition: (profileId) => transitionPersonEngagementProfile(transaction, scope.tenantId, profileId, 'active'),
     });
-  }
+  },
 );
 
 // <generated-outbox-message-exports>

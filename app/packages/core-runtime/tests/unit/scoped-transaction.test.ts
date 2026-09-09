@@ -15,7 +15,7 @@ const unusedOperation = (): never => {
 };
 const transactionService = (
   install: OperationalScopeTransactionService['install'],
-  verify: OperationalScopeTransactionService['verify']
+  verify: OperationalScopeTransactionService['verify'],
 ): OperationalScopeTransactionService => ({
   delete: unusedOperation,
   insert: unusedOperation,
@@ -24,44 +24,42 @@ const transactionService = (
   update: unusedOperation,
   verify,
 });
-it.effect(
-  'installs and verifies transaction-local scope and exposes no transaction controls',
-  () =>
-    Effect.gen(function* migratedTest1() {
-      let calls = 0;
-      const transaction = transactionService(
-        () =>
-          Effect.sync(() => {
-            calls += 1;
-          }),
+it.effect('installs and verifies transaction-local scope and exposes no transaction controls', () =>
+  Effect.gen(function* migratedTest1() {
+    let calls = 0;
+    const transaction = transactionService(
+      () =>
         Effect.sync(() => {
           calls += 1;
-          return Option.some({
-            legal_entity_id: 'entity',
-            tenant_id: 'tenant',
-          });
-        })
-      );
-      const capability = yield* installOperationalScopeFromTransactionService({
-        authContextRef: 'job:test:run:scoped-transaction',
-        authMethod: 'system',
-        correlationId: 'c-1',
-        legalEntityId: 'entity',
-        principalId: 'principal',
-        tenantId: 'tenant',
-      }).pipe(Effect.provideService(OperationalScopeTransaction, transaction));
-      expect(calls).toBe(2);
-      expect('commit' in capability).toBe(false);
-      expect('query' in capability).toBe(false);
-      expect('rollback' in capability).toBe(false);
-      expect('transaction' in capability).toBe(false);
-    })
+        }),
+      Effect.sync(() => {
+        calls += 1;
+        return Option.some({
+          legal_entity_id: 'entity',
+          tenant_id: 'tenant',
+        });
+      }),
+    );
+    const capability = yield* installOperationalScopeFromTransactionService({
+      authContextRef: 'job:test:run:scoped-transaction',
+      authMethod: 'system',
+      correlationId: 'c-1',
+      legalEntityId: 'entity',
+      principalId: 'principal',
+      tenantId: 'tenant',
+    }).pipe(Effect.provideService(OperationalScopeTransaction, transaction));
+    expect(calls).toBe(2);
+    expect('commit' in capability).toBe(false);
+    expect('query' in capability).toBe(false);
+    expect('rollback' in capability).toBe(false);
+    expect('transaction' in capability).toBe(false);
+  }),
 );
 it.effect('fails closed when transaction settings do not match', () =>
   Effect.gen(function* migratedTest2() {
     const transaction = transactionService(
       () => Effect.void,
-      Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' })
+      Effect.succeedSome({ legal_entity_id: '', tenant_id: 'foreign' }),
     );
     const error = yield* Effect.flip(
       installOperationalScopeFromTransactionService({
@@ -70,10 +68,10 @@ it.effect('fails closed when transaction settings do not match', () =>
         correlationId: 'c-1',
         principalId: 'principal',
         tenantId: 'tenant',
-      }).pipe(Effect.provideService(OperationalScopeTransaction, transaction))
+      }).pipe(Effect.provideService(OperationalScopeTransaction, transaction)),
     );
     expect(Predicate.isTagged(error, 'OperationContextUnavailable')).toBe(true);
-  })
+  }),
 );
 it('creates complete CRUD RLS policies with update using and with-check predicates', () => {
   const fixture = pgTable.withRLS('fixture', {
@@ -83,18 +81,9 @@ it('creates complete CRUD RLS policies with update using and with-check predicat
   expect(getTableConfig(fixture).enableRLS).toBe(true);
   for (const policies of [
     tenantRlsPolicies('tenant_fixture', fixture.tenantId),
-    tenantLegalEntityRlsPolicies(
-      'entity_fixture',
-      fixture.tenantId,
-      fixture.legalEntityId
-    ),
+    tenantLegalEntityRlsPolicies('entity_fixture', fixture.tenantId, fixture.legalEntityId),
   ]) {
-    expect(policies.map((policy) => policy.for)).toEqual([
-      'select',
-      'insert',
-      'update',
-      'delete',
-    ]);
+    expect(policies.map((policy) => policy.for)).toEqual(['select', 'insert', 'update', 'delete']);
     expect(policies[2].using).toBeDefined();
     expect(policies[2].withCheck).toBeDefined();
   }
