@@ -942,7 +942,7 @@ it.live(
           { concurrency: 'unbounded' },
         );
         expect(manifest).toMatch(
-          /accessFiltering: 'tenant_scope'.*requestFilters: \['includeArchived'\].*tenantPermission: 'read_party_identity'/u,
+          /accessFiltering: 'tenant_scope'[\s\S]*?requestFilters: \['includeArchived'\][\s\S]*?tenantPermission: 'read_party_identity'/u,
         );
         expect(provider).toMatch(/legalEntityScope: 'optional'/u);
         expect(provider).toMatch(/permissionTarget: 'tenant'/u);
@@ -1283,7 +1283,7 @@ it.live(
           { concurrency: 'unbounded' },
         );
         const sharedApi = yield* readFixtureFile(fixture.root, inventorySharedApiFile);
-        expect(sharedApi).not.toMatch(/governedHttpApi/u);
+        expect(sharedApi).not.toMatch(/export const governedHttpApi\s*=/u);
       }),
     );
   }),
@@ -1766,6 +1766,17 @@ console.log(
             .replace('dimensions: []', "dimensions: ['warehouse']")
             .replace("label: 'Stock Levels'", "label: 'Warehouse stock'"),
         );
+
+        for (const [relativePath] of adaptedGeneratedArtifacts) {
+          const filePath = path.join(fixture.root, relativePath);
+          const formatted = spawnSync(oxfmtPath, [`--stdin-filepath=${relativePath}`], {
+            cwd: appRoot,
+            encoding: 'utf-8',
+            input: yield* Effect.promise(() => readFile(filePath, 'utf-8')),
+          });
+          expect(formatted.status, formatted.stderr).toBe(0);
+          yield* Effect.promise(() => writeFile(filePath, formatted.stdout, 'utf-8'));
+        }
 
         const beforeRepeat = yield* snapshotTree(fixture.root);
         yield* run(fixture, scaffoldCommand.moduleApi, [

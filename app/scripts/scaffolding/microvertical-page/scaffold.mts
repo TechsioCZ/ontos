@@ -833,7 +833,9 @@ const generatedFileMatches = (
   expected: string,
 ): Effect.Effect<boolean, PageScaffoldError, FileSystem.FileSystem> =>
   Effect.gen(function* generatedFileMatchesProgram() {
-    if (!(yield* fileExists(filePath))) return false;
+    if (!(yield* fileExists(filePath))) {
+      return false;
+    }
     const content = yield* readTextFile(filePath);
     const [actual, generated] = yield* Effect.all([
       formatGeneratedMutationContent(filePath, content),
@@ -1017,7 +1019,9 @@ const generatedPageState = (
       generatedFileMatches(pagePath, renderPage(vertical, page, route)),
       generatedFileMatches(routeMetadataPath, renderRouteMetadata(vertical, page, route, config)),
     ]);
-    if (!fileMatches.every(Boolean)) return 'invalid';
+    if (!fileMatches.every(Boolean)) {
+      return 'invalid';
+    }
     const pageKey = toCamelCase(page);
     const localeStates = yield* Effect.all(
       vertical.locales.map((locale) => generatedLocaleState(workspaceRoot, vertical, locale, pageKey)),

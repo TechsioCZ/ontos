@@ -1531,6 +1531,8 @@ const normalizeGeneratedSlotEntry = (entry: string): string =>
   entry
     .replaceAll(/,\s*(?<closing>[\]})])/gu, '$<closing>')
     .replaceAll(/\s+/gu, ' ')
+    .replaceAll(/\(\s+/gu, '(')
+    .replaceAll(/\s+\)/gu, ')')
     .replaceAll(/\s+(?<closing>[}\]])/gu, '$<closing>')
     .trim();
 

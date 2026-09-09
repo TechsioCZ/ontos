@@ -1436,6 +1436,23 @@ const withoutTrailingCommas = (tokens: readonly GovernedClientToken[]) =>
       ].includes(tokens[index + 1]?.kind ?? SyntaxKind.Unknown),
   );
 
+const engagementLifecyclePayloadUnionPrefix: readonly ExpectedToken[] = [
+  [SyntaxKind.TypeKeyword, 'type'],
+  [SyntaxKind.Identifier, 'EngagementLifecyclePayload'],
+  [SyntaxKind.EqualsToken],
+  [SyntaxKind.BarToken],
+];
+
+const withoutLeadingEngagementLifecycleUnionPipe = (
+  tokens: readonly GovernedClientToken[],
+): readonly GovernedClientToken[] => {
+  const prefix = findSequence(tokens, engagementLifecyclePayloadUnionPrefix);
+  if (prefix === undefined) {
+    return tokens;
+  }
+  return [...tokens.slice(0, prefix + 3), ...tokens.slice(prefix + 4)];
+};
+
 const SOURCE_VALUE_TOKEN_KINDS = new Set([
   SyntaxKind.Identifier,
   SyntaxKind.StringLiteral,
@@ -1448,16 +1465,30 @@ const SOURCE_VALUE_TOKEN_KINDS = new Set([
   SyntaxKind.RegularExpressionLiteral,
 ]);
 
-const hasExactSourceTokens = (tokens: readonly GovernedClientToken[], expected: string): boolean => {
+const sourceTokensMatch = (
+  actualTokens: readonly GovernedClientToken[],
+  expectedTokens: readonly GovernedClientToken[],
+): boolean =>
+  actualTokens.length === expectedTokens.length &&
+  expectedTokens.every(
+    (token, index) =>
+      actualTokens[index]?.kind === token.kind &&
+      (!SOURCE_VALUE_TOKEN_KINDS.has(token.kind) || actualTokens[index]?.value === token.value),
+  );
+
+const hasExactSourceTokens = (tokens: readonly GovernedClientToken[], expected: string): boolean =>
+  sourceTokensMatch(withoutTrailingCommas(tokens), withoutTrailingCommas(tokenizeGovernedClient(expected)));
+
+const hasExactSourceTokensAllowingEngagementLifecycleUnionPipe = (
+  tokens: readonly GovernedClientToken[],
+  expected: string,
+): boolean => {
   const actualTokens = withoutTrailingCommas(tokens);
   const expectedTokens = withoutTrailingCommas(tokenizeGovernedClient(expected));
   return (
-    actualTokens.length === expectedTokens.length &&
-    expectedTokens.every(
-      (token, index) =>
-        actualTokens[index]?.kind === token.kind &&
-        (!SOURCE_VALUE_TOKEN_KINDS.has(token.kind) || actualTokens[index]?.value === token.value),
-    )
+    sourceTokensMatch(actualTokens, expectedTokens) ||
+    sourceTokensMatch(actualTokens, withoutLeadingEngagementLifecycleUnionPipe(expectedTokens)) ||
+    sourceTokensMatch(withoutLeadingEngagementLifecycleUnionPipe(actualTokens), expectedTokens)
   );
 };
 
@@ -1471,7 +1502,10 @@ export const hasEngagementLifecycleRegistrationContract = (
   )?.groups;
   if (
     identity === undefined ||
-    !hasExactSourceTokens(tokenizeGovernedClient(registrationSource), engagementLifecycleRegistrationContract)
+    !hasExactSourceTokensAllowingEngagementLifecycleUnionPipe(
+      tokenizeGovernedClient(registrationSource),
+      engagementLifecycleRegistrationContract,
+    )
   ) {
     return false;
   }
