@@ -34,8 +34,8 @@ export const hasUltramodernSkillsDispatch = (
     wrapper.includes("['skills', 'check',") &&
     wrapper.includes("['skills', 'install',") &&
     wrapper.includes("['ultramodern', ...skillArgs]") &&
-    wrapper.includes(
-      'ultramodernLaunch(createBin, ultramodernArgs, workspaceRoot, path.sep)'
+    /ultramodernLaunch\(\s*createBin\s*,\s*ultramodernArgs\s*,\s*workspaceRoot\s*,\s*path\.sep\s*,?\s*\)/u.test(
+      wrapper
     ) &&
     wrapper.includes("Config.string('ULTRAMODERN_CREATE_BIN')") &&
     runner.includes("executable: 'ultramodern-create'") &&
@@ -53,7 +53,12 @@ export const hasUltramodernDispatch = (
     return false;
   }
   const wrapper = withoutComments(source);
-  if (wrapper.includes(`['ultramodern', '${command}', ...forwardedArgs]`)) {
+  if (
+    new RegExp(
+      `\\[\\s*['"]ultramodern['"]\\s*,\\s*['"]${command}['"]\\s*,\\s*\\.\\.\\.forwardedArgs\\s*,?\\s*\\]`,
+      'u'
+    ).test(wrapper)
+  ) {
     return true;
   }
   if (implementation === undefined) {

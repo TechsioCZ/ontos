@@ -51,7 +51,7 @@ it.effect(
       };
 
       expect(
-        yield* Schema.decodeUnknownEffect(MicroVerticalBuildMarkerSchema)(
+        yield* Schema.decodeEffect(MicroVerticalBuildMarkerSchema)(
           generatedBuildMetadata
         )
       ).toEqual(marker);
@@ -59,9 +59,7 @@ it.effect(
         yield* Schema.encodeEffect(MicroVerticalBuildMarkerSchema)(marker)
       ).toEqual(marker);
       expect(
-        yield* Schema.decodeUnknownEffect(MicroVerticalReadinessSchema)(
-          readiness
-        )
+        yield* Schema.decodeEffect(MicroVerticalReadinessSchema)(readiness)
       ).toEqual(readiness);
       expect(
         yield* Schema.encodeEffect(MicroVerticalReadinessSchema)(readiness)

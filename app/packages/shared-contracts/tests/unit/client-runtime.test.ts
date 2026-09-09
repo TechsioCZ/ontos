@@ -190,9 +190,9 @@ it.effect(
         operationContext.operationId
       );
       expect(
-        yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(Schema.Unknown)
-        )(request.headers.get('x-modernjs-bff-operation-context') ?? '')
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          request.headers.get('x-modernjs-bff-operation-context') ?? ''
+        )
       ).toEqual(operationContext);
       expect(request.headers.get('authorization')).toBe(
         'Bearer owner-resolved-assertion'

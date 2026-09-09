@@ -1,74 +1,57 @@
-import { withUltramodernBuildIdentity } from '@app/shared-contracts/ultramodern-build';
+import { resolveUltramodernBuildArtifact } from '@modern-js/runtime-extensions/build-identity';
 
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
 
-const ultramodernGeneratedBuildArtifact = {
-  deliveryUnit: {
-    appId: 'party-registry',
-    build: '3f023644c8a07e9a',
-    buildMarker: '3f023644c8a07e9a',
-    deployProfile: 'cloudflare-ssr-mf-effect-v1',
-    kind: 'microvertical-delivery-unit',
-    packageName: '@app/party-registry',
+const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(
+  {
+    deliveryUnit: {
+      appId: 'party-registry',
+      build: '3f023644c8a07e9a',
+      buildMarker: '3f023644c8a07e9a',
+      deployProfile: 'cloudflare-ssr-mf-effect-v1',
+      kind: 'microvertical-delivery-unit',
+      packageName: '@app/party-registry',
+      schemaVersion: 1,
+      sourceRevision: 'workspace',
+      unitId: 'app/party-registry',
+      version: '0.1.0',
+    },
+    kind: 'ultramodern-build-artifact',
     schemaVersion: 1,
-    sourceRevision: 'workspace',
-    unitId: 'app/party-registry',
-    version: '0.1.0',
-  },
-  kind: 'ultramodern-build-artifact',
-  schemaVersion: 1,
-  surfaces: {
-    api: {
-      appId: 'party-registry',
-      build: '3f023644c8a07e9a',
-      buildMarker: '3f023644c8a07e9a',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/party-registry',
-      schemaVersion: 1,
-      sourceRevision: 'workspace',
-      surface: 'api',
-      unitId: 'app/party-registry',
-      version: '0.1.0',
+    surfaces: {
+      api: {
+        appId: 'party-registry',
+        build: '3f023644c8a07e9a',
+        buildMarker: '3f023644c8a07e9a',
+        deployProfile: 'cloudflare-ssr-mf-effect-v1',
+        kind: 'microvertical-delivery-unit',
+        packageName: '@app/party-registry',
+        schemaVersion: 1,
+        sourceRevision: 'workspace',
+        surface: 'api',
+        unitId: 'app/party-registry',
+        version: '0.1.0',
+      },
+      ui: {
+        appId: 'party-registry',
+        build: '3f023644c8a07e9a',
+        buildMarker: '3f023644c8a07e9a',
+        deployProfile: 'cloudflare-ssr-mf-effect-v1',
+        kind: 'microvertical-delivery-unit',
+        packageName: '@app/party-registry',
+        schemaVersion: 1,
+        sourceRevision: 'workspace',
+        surface: 'ui',
+        unitId: 'app/party-registry',
+        version: '0.1.0',
+      },
     },
-    ui: {
-      appId: 'party-registry',
-      build: '3f023644c8a07e9a',
-      buildMarker: '3f023644c8a07e9a',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/party-registry',
-      schemaVersion: 1,
-      sourceRevision: 'workspace',
-      surface: 'ui',
-      unitId: 'app/party-registry',
-      version: '0.1.0',
-    },
-  },
-} as const;
-const readInjectedBuildMarker = (): string => {
-  try {
-    return ULTRAMODERN_BUILD_MARKER;
-  } catch {
-    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+  } as const,
+  {
+    buildMarker: () => ULTRAMODERN_BUILD_MARKER,
+    sourceRevision: () => ULTRAMODERN_SOURCE_REVISION,
   }
-};
-
-const readInjectedSourceRevision = (): string => {
-  try {
-    return ULTRAMODERN_SOURCE_REVISION;
-  } catch {
-    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
-  }
-};
-
-const ultramodernBuildMarker = readInjectedBuildMarker();
-const ultramodernSourceRevision = readInjectedSourceRevision();
-const ultramodernBuildArtifact = withUltramodernBuildIdentity(
-  ultramodernGeneratedBuildArtifact,
-  ultramodernBuildMarker,
-  ultramodernSourceRevision
 );
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;

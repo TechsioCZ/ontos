@@ -84,17 +84,6 @@ const route__lang__resources__moduleId___resourceType___resourceId__page = creat
   }),
 });
 
-const route__lang__resources__moduleId___resourceType___resourceId__page__localised_lang_zdroje_moduleId_resourceType_resourceId = createRoute({
-  getParentRoute: () => rootRoute,
-  component: component_4,
-  path: "$lang/zdroje/$moduleId/$resourceType/$resourceId",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
-  staticData: createRouteStaticData({
-    modernRouteId: "(lang)/resources/(moduleId)/(resourceType)/(resourceId)/page__localised_lang_zdroje_moduleId_resourceType_resourceId",
-    modernRouteLoader: loader_3,
-  }),
-});
-
 const route__lang__search_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_5,
@@ -106,18 +95,7 @@ const route__lang__search_page = createRoute({
   }),
 });
 
-const route__lang__search_page__localised_lang_hledat = createRoute({
-  getParentRoute: () => rootRoute,
-  component: component_5,
-  path: "$lang/hledat",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_4),
-  staticData: createRouteStaticData({
-    modernRouteId: "(lang)/search/page__localised_lang_hledat",
-    modernRouteLoader: loader_4,
-  }),
-});
-
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__contacts_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__resources__moduleId___resourceType___resourceId__page__localised_lang_zdroje_moduleId_resourceType_resourceId, route__lang__search_page, route__lang__search_page__localised_lang_hledat]);
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__contacts_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

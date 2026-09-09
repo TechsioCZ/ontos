@@ -19,7 +19,8 @@ import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const shellRoot = 'apps/shell';
 const layoutFile = `${shellRoot}/src/routes/layout.tsx`;
-const vendorRoot = 'node_modules/@modern-js/create/templates/workspace-scripts';
+const vendorRoot =
+  'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts';
 const resetFile = 'scripts/reset.mjs';
 const readinessConfig = 'scripts/readiness.config.mjs';
 const launchedFile = 'scripts/launched.mts';
@@ -283,7 +284,7 @@ it.live(
     const root = yield* fixture();
     const configFile = `${shellRoot}/module-federation.config.ts`;
     const source =
-      "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';\nconst compiler = resolveEffectTsgoCompiler({ from: import.meta.url });\nvoid compiler;";
+      "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';\nconst compiler = resolveEffectTsgoCompiler({\n from: import.meta.url,\n });\nvoid compiler;";
     write(root, configFile, source);
     write(
       root,

@@ -336,11 +336,14 @@ const importsSharedBaselinePrimitives = (
   sourceFile: SourceFile,
   expectedPackage: string
 ): boolean =>
-  importsExactBindings(sourceFile, expectedPackage, [
-    'MicroVerticalBuildMarkerSchema',
-    'MicroVerticalReadinessSchema',
-    'createMicroVerticalOperationContext',
-  ]);
+  [expectedPackage, `${expectedPackage}/microvertical-api-baseline`].some(
+    (specifier) =>
+      importsExactBindings(sourceFile, specifier, [
+        'MicroVerticalBuildMarkerSchema',
+        'MicroVerticalReadinessSchema',
+        'createMicroVerticalOperationContext',
+      ])
+  );
 
 const singleAddedArgument = (
   expression: Expression | undefined,

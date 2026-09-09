@@ -16,6 +16,7 @@ import { renderLocalizedLinkDouble } from '../../../support/localized-link-doubl
 
 const {
   browserRunPromiseMock,
+  invalidateMock,
   languageState,
   localizedLinkCalls,
   navigateMock,
@@ -24,6 +25,7 @@ const {
   const recordedLinkCalls: LocalizedLinkCall[] = [];
   return {
     browserRunPromiseMock: rstest.fn(),
+    invalidateMock: rstest.fn(),
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
     navigateMock: rstest.fn(),
@@ -32,6 +34,7 @@ const {
 });
 
 beforeEach(() => {
+  invalidateMock.mockImplementation(() => Promise.resolve());
   navigateMock.mockImplementation(() => Promise.resolve());
   browserRunPromiseMock.mockImplementation(browserRuntime.runPromise);
   signInMock.mockReturnValue(
@@ -81,6 +84,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useNavigate: () => navigateMock,
+  useRouter: () => ({ invalidate: invalidateMock }),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -307,6 +311,7 @@ it.effect(
             { locale: 'en' }
           );
           expect(browserRunPromiseMock).toHaveBeenCalledTimes(1);
+          expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
           expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
           expect(getSubmit().hasAttribute('disabled')).toBe(false);
           expect(screen.queryByText('shell.login.error.internal')).toBeNull();
@@ -329,6 +334,23 @@ it.effect(
           expect(screen.getByText('shell.login.error.internal')).toBeDefined();
           expect(getSubmit().hasAttribute('disabled')).toBe(false);
           expect(document.activeElement).toBe(getLogin());
+        })
+      );
+    })
+);
+
+it.effect(
+  'keeps navigation on the login route when auth cache refresh fails',
+  () =>
+    Effect.gen(function* reportsAuthenticationRefreshFailure() {
+      invalidateMock.mockRejectedValueOnce('Route refresh failed');
+      yield* submitLogin('admin', 'secret');
+      yield* Effect.promise(() =>
+        waitFor(() => {
+          expect(invalidateMock).toHaveBeenCalledWith({ sync: true });
+          expect(navigateMock).not.toHaveBeenCalled();
+          expect(screen.getByText('shell.login.error.internal')).toBeDefined();
+          expect(getSubmit().hasAttribute('disabled')).toBe(false);
         })
       );
     })

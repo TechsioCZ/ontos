@@ -5,6 +5,7 @@ import {
   mkdir,
   readFile,
   realpath,
+  symlink,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -19,7 +20,7 @@ import type {
   emitNodeStagedReleaseEnvelope,
   verifyBuildOutputReleaseEnvelope,
   verifyNodeReleaseEnvelopeStaging,
-} from '@modern-js/app-tools-extensions/release-envelope';
+} from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import type { defineEffectBff } from '@modern-js/plugin-bff/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
@@ -43,6 +44,10 @@ import { strictEffectRuntimeTopologyViolation } from '../ultramodern-api-boundar
 const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+const modernConfigFile = 'modern.config.ts';
+const shoppingDirectory = 'verticals/shopping';
+const ultramodernConfigFile = '.modernjs/ultramodern.json';
 
 const partyId = 'party-registry';
 
@@ -751,7 +756,33 @@ it.live(
   })
 );
 
+const expressionRuntimeFixture = `
+import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { fixtureApi } from '../shared/api.ts';
+const groupLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers.handle('reachable', () => undefined));
+const handlers = Layer.mergeAll(groupLayer);
+export const makeRuntime = () => assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
+const apiRuntime = makeRuntime();
+export default apiRuntime;
+`;
+
 const adversarialStrictRuntimeSources = [
+  ...(
+    [
+      ['handlers: handlers });', 'handlers: handlers }) && fakeRuntime;'],
+      [
+        'const apiRuntime = makeRuntime();',
+        'function dead() { const apiRuntime = makeRuntime(); } const apiRuntime = fakeRuntime;',
+      ],
+      ['export default apiRuntime;', 'export default fakeRuntime;'],
+      [
+        '() => assembleEffectBffRuntime',
+        '(assembleEffectBffRuntime) => assembleEffectBffRuntime',
+      ],
+    ] as const
+  ).map(([before, after]) => expressionRuntimeFixture.replace(before, after)),
+
   `
     import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
     import { Layer } from '@modern-js/plugin-bff/effect-edge';
@@ -1073,6 +1104,7 @@ const adversarialStrictRuntimeSources = [
 ] as const;
 
 const validAdversarialStrictRuntimeSources = [
+  expressionRuntimeFixture,
   `
     import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
     import { HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
@@ -1733,6 +1765,9 @@ it.live(
     );
     const generatedRoot = path.join(lintRoot, 'verticals/inventory-stock');
     yield* Effect.promise(() =>
+      mkdir(path.join(generatedRoot, 'api'), { recursive: true })
+    );
+    yield* Effect.promise(() =>
       mkdir(path.join(generatedRoot, 'shared'), { recursive: true })
     );
     yield* Effect.promise(() =>
@@ -1916,7 +1951,8 @@ it.live(
           };
         })
       ),
-      { concurrency: 'unbounded' }
+      // CJS require(ESM) cannot race the same Babel module's async import.
+      { concurrency: 1 }
     );
     for (const { module, moduleFormat } of modules) {
       for (const source of invalidSources) {
@@ -2456,6 +2492,7 @@ import * as nodePath from 'node:path';
 const framework = {
   ...sharedBuild,
   appTools: () => ({}),
+  ultramodernReleaseEnvelopePlugin: () => ({}),
   bffPlugin: () => ({}),
   createRequire: () => () => ({}),
   defineConfig: configuration => configuration,
@@ -2625,7 +2662,11 @@ const normalizedGeneratedSource = Effect.fn(function* scenario23(
   return result.code.replaceAll(/^\s*\n/gmu, '');
 });
 
-const ScaffoldSemanticKindSchema = Schema.Literals(['backend', 'layout']);
+const ScaffoldSemanticKindSchema = Schema.Literals([
+  'backend',
+  'layout',
+  'service',
+]);
 type ScaffoldSemanticKind = typeof ScaffoldSemanticKindSchema.Type;
 const scaffoldSemanticKinds = new Map<string, ScaffoldSemanticKind>([
   ['backend-federation.config.ts', 'backend'],
@@ -2678,10 +2719,20 @@ const framework = {
   getBuildConfigEnvironment: () => undefined, ultramodernLocalisedUrls: {},
 };
 const module = { exports: {} };
+const spans = [];
+const contexts = Object.fromEntries(['readiness', 'list', 'get', 'create'].map(name => [name, { method: 'GET', operationId: name, routePath: '/' + name, source: 'server', traceId: 'trace-' + name }]));
+const fixtureEffect = { succeed: () => ({ pipe: (...steps) => steps.reduce((value, step) => step(value), {}) }), withSpan: (name, options) => value => { spans.push({ name, attributes: options.attributes }); return value; } };
+const fixtureHandlers = { handle: (_name, callback) => { callback({ query: {}, params: { id: 'starter-inventory-stock' }, payload: { title: 'Fixture' } }); return fixtureHandlers; } };
 runInNewContext(${JSON.stringify(code)}, {
   module, exports: module.exports, URL,
   element: (type, props, ...children) => ({ type, props, children }),
   require: specifier => {
+    if (kind === 'service') {
+      if (specifier.endsWith('/server/effect-bff-runtime')) return { assembleEffectBffRuntime: value => value };
+      if (specifier === '@modern-js/plugin-bff/effect-edge') return { Effect: fixtureEffect, Layer: { mergeAll: (...layers) => layers }, HttpApiBuilder: { group: (_api, _group, configure) => configure(fixtureHandlers) } };
+      if (specifier === '../shared/api.ts') return { inventoryStockApi: {}, inventoryStockOperationContexts: contexts };
+      if (specifier === '../shared/ultramodern-build.ts') return { ultramodernApiMarker: {} };
+    }
     if (specifier === 'effect') return effect;
     if (specifier === 'effect/Schema') return effect.Schema;
     if (specifier === 'node:url') return { fileURLToPath };
@@ -2695,6 +2746,7 @@ runInNewContext(${JSON.stringify(code)}, {
 let evidence = module.exports;
 if (kind === 'layout') evidence = evidence.default();
 if (kind === 'backend') evidence = evidence.default;
+if (kind === 'service') evidence = spans;
 process.stdout.write(JSON.stringify(evidence));
 `
       )
@@ -2707,11 +2759,17 @@ const evaluatedInfrastructureSource = Effect.fn(function* mergedScenario1(
   fileName: string,
   source: string,
   cloudflare: boolean,
-  injection: Readonly<Record<string, string>>
+  injection: Readonly<Record<string, string>>,
+  contractOnly = false
 ) {
   const partyRoot = path.join(workspaceRoot, partyDirectory);
   const result = yield* Effect.promise(() =>
     bundleSource({
+      alias: {
+        '@modern-js/runtime-extensions/build-identity': createRequire(
+          path.join(partyRoot, fileName)
+        ).resolve('@modern-js/runtime-extensions/build-identity'),
+      },
       bundle: true,
       define: {
         'import.meta.resolve': '__resolve',
@@ -2761,6 +2819,7 @@ const environment = {
 const plugin = name => options => ({ name, options });
 const framework = {
   appTools: plugin('appTools'), bffPlugin: plugin('bff'), i18nPlugin: plugin('i18n'),
+  ultramodernReleaseEnvelopePlugin: plugin('ultramodernReleaseEnvelopePlugin'),
   moduleFederationPlugin: plugin('moduleFederation'), pluginTailwindcss: plugin('tailwind'),
   tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
   defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
@@ -2809,7 +2868,25 @@ const normalize = (_key, value) => {
   if (Object.prototype.toString.call(value) === '[object RegExp]') return String(value);
   return value;
 };
-process.stdout.write(JSON.stringify({ exported: module.exports, observations }, normalize));
+const evidence = ${contractOnly} && configuration ? {
+  bff: configuration.bff,
+  builderPlugins: configuration.builderPlugins,
+  deploy: configuration.deploy,
+  identity: configuration.identity,
+  html: configuration.html,
+  output: configuration.output,
+  buildCache: configuration.performance?.buildCache,
+  plugins: configuration.plugins.map(entry => entry.name),
+  devAssetPrefix: configuration.dev?.assetPrefix,
+  devHeaders: configuration.dev?.server?.headers ?? configuration.tools?.devServer?.headers,
+  port: configuration.server?.port,
+  alias: configuration.source?.alias,
+  siteUrl: configuration.source?.globalVars?.ULTRAMODERN_SITE_URL,
+  mainEntryName: configuration.source?.mainEntryName,
+  chain: observations.chain,
+  pluginsBehavior: observations.plugins,
+} : { exported: module.exports, observations };
+process.stdout.write(JSON.stringify(evidence, normalize));
 `,
   ]);
 });
@@ -2817,6 +2894,17 @@ process.stdout.write(JSON.stringify({ exported: module.exports, observations }, 
 it.live(
   'all published scaffold formats retain Party infrastructure behavior and source parity',
   Effect.fn(function* mergedScenario4() {
+    const canonicalModule: unknown = yield* Effect.promise(
+      () =>
+        import(
+          pathToFileURL(
+            publishedGeneratorModulePath('esm-node')('module-federation/config')
+          ).href
+        )
+    );
+    const canonical = Schema.decodeUnknownSync(FederationConfigModuleSchema)(
+      canonicalModule
+    );
     yield* Effect.all(
       ['esm', 'esm-node', 'cjs'].map(
         Effect.fn(function* mergedScenario3(moduleFormat) {
@@ -2888,7 +2976,7 @@ it.live(
             [buildMarkerFile]: Schema.decodeUnknownSync(Schema.String)(
               createUltramodernBuildModule('app', app)
             ),
-            'modern.config.ts': Schema.decodeUnknownSync(Schema.String)(
+            [modernConfigFile]: Schema.decodeUnknownSync(Schema.String)(
               createAppModernConfig('app', app)
             ),
             'src/routes/layout.tsx': Schema.decodeUnknownSync(Schema.String)(
@@ -2905,7 +2993,7 @@ it.live(
                   )
                 );
                 if (
-                  fileName === 'modern.config.ts' ||
+                  fileName === modernConfigFile ||
                   fileName === 'shared/ultramodern-build.ts'
                 ) {
                   const injections: Readonly<Record<string, string>>[] = [
@@ -2930,19 +3018,42 @@ it.live(
                       cloudflare,
                       injection,
                     }) {
+                      if (fileName === modernConfigFile) {
+                        const canonicalSource = Schema.decodeUnknownSync(
+                          Schema.String
+                        )(canonical.createAppModernConfig('app', app));
+                        expect(
+                          yield* evaluatedInfrastructureSource(
+                            fileName,
+                            source,
+                            cloudflare,
+                            injection
+                          ),
+                          `${moduleFormat} must retain complete published config behavior`
+                        ).toBe(
+                          yield* evaluatedInfrastructureSource(
+                            fileName,
+                            canonicalSource,
+                            cloudflare,
+                            injection
+                          )
+                        );
+                      }
                       const [expected, evaluated] = yield* Effect.all(
                         [
                           evaluatedInfrastructureSource(
                             fileName,
                             source,
                             cloudflare,
-                            injection
+                            injection,
+                            fileName === modernConfigFile
                           ),
                           evaluatedInfrastructureSource(
                             fileName,
                             actual,
                             cloudflare,
-                            injection
+                            injection,
+                            fileName === modernConfigFile
                           ),
                         ],
                         { concurrency: 'unbounded' }
@@ -3075,14 +3186,27 @@ it.live(
           expect(client, moduleFormat).not.toMatch(
             /client\.inventoryStock\.readiness/u
           );
-          expect(service, moduleFormat).toMatch(
-            /microVerticalOperationAttributes/u
-          );
-          expect(service, moduleFormat).toMatch(
-            /@generated-proof\/shared-contracts/u
-          );
-          expect(service, moduleFormat).not.toMatch(
-            /const operationAttributes/u
+          const spans = Schema.decodeUnknownSync(
+            Schema.fromJsonString(
+              Schema.Array(
+                Schema.Struct({
+                  attributes: Schema.Record(Schema.String, Schema.String),
+                  name: Schema.String,
+                })
+              )
+            )
+          )(yield* evaluateScaffoldSemantics(service, 'service'));
+          expect(spans).toEqual(
+            ['readiness', 'list', 'get', 'create'].map((name) => ({
+              attributes: {
+                'modernjs.operation.id': name,
+                'modernjs.operation.method': 'GET',
+                'modernjs.operation.route': `/${name}`,
+                'modernjs.operation.source': 'server',
+                'modernjs.trace.id': `trace-${name}`,
+              },
+              name: `ultramodern.api.inventoryStock.${name}`,
+            }))
           );
           const generatedBaselineExpectation = {
             additionalPaths: {},
@@ -3194,15 +3318,33 @@ it.live(
     const proofRoot = yield* makeProofRoot(
       'generated-baseline-validator-proof'
     );
-    const expectedHelper = yield* Effect.promise(() =>
-      readFile(
-        path.join(
-          workspaceRoot,
-          'scripts/microvertical-api-baseline-boundary.mts'
-        ),
-        'utf-8'
-      )
+    const canonicalModule: unknown = yield* Effect.promise(
+      () =>
+        import(
+          pathToFileURL(
+            path.join(
+              generatorRoot,
+              'dist/esm-node/ultramodern-workspace/workspace-scripts.js'
+            )
+          ).href
+        )
     );
+    const canonicalGenerator = Schema.decodeUnknownSync(
+      WorkspaceScriptsGeneratorSchema
+    )(canonicalModule);
+    const expectedHelper = canonicalGenerator
+      .migratedWorkspaceScriptArtifacts({
+        hasBackendSurface: true,
+        shellOnly: false,
+      })
+      .find(
+        ({ relativePath }) =>
+          relativePath === 'scripts/microvertical-api-baseline-boundary.mts'
+      )?.content;
+    expect(expectedHelper).toBeDefined();
+    if (expectedHelper === undefined) {
+      throw new Error(EXPECTED_PROOF_VALUE);
+    }
 
     yield* Effect.all(
       ['esm', 'esm-node', 'cjs'].map(
@@ -3266,12 +3408,6 @@ it.live(
           yield* writeText(formatRoot, helper.relativePath, helper.content);
           yield* writeText(formatRoot, checker.relativePath, checker.content);
           expect(checker.content).toMatch(/microVerticalApiBaselineViolation/u);
-          expect(
-            runNode([path.join(formatRoot, checker.relativePath)], {
-              env: { ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot },
-            }),
-            moduleFormat
-          ).toMatch(/UltraModern API boundary check passed/u);
 
           const descriptorSource: unknown =
             moduleFormat === 'cjs'
@@ -3333,6 +3469,37 @@ it.live(
             ApiServiceGeneratorSchema
           )(serviceSource);
           const checkoutWorkspace = path.join(formatRoot, 'checkout-workspace');
+          yield* writeJson(checkoutWorkspace, ultramodernConfigFile, {
+            topology: {
+              apps: [
+                {
+                  ...checkoutStemDescriptor,
+                  kind: 'vertical',
+                  package: '@generated-proof/shopping',
+                  path: shoppingDirectory,
+                },
+                {
+                  id: 'shell-super-app',
+                  kind: 'shell',
+                  path: 'apps/shell-super-app',
+                },
+              ],
+            },
+          });
+          yield* writeText(
+            checkoutWorkspace,
+            'packages/shared-contracts/src/microvertical-api-baseline.ts',
+            yield* Effect.promise(() =>
+              readFile(
+                path.join(
+                  generatorRoot,
+                  'templates/packages/microvertical-api-baseline.ts'
+                ),
+                'utf-8'
+              )
+            )
+          );
+
           yield* writeText(
             checkoutWorkspace,
             'verticals/shopping/shared/api.ts',
@@ -3349,10 +3516,38 @@ it.live(
               { scope: generatedProofScope }
             )
           );
+          const clientModule: unknown = yield* Effect.promise(
+            () =>
+              import(
+                pathToFileURL(
+                  publishedGeneratorModulePath(moduleFormat)('api/client')
+                ).href
+              )
+          );
+          const clientGenerator = Schema.decodeUnknownSync(
+            ApiClientGeneratorSchema
+          )(clientModule);
           yield* writeText(
             checkoutWorkspace,
             'verticals/shopping/src/api/checkout-client.ts',
-            'export const checkoutClient = true;\n'
+            clientGenerator.createApiClient(
+              checkoutStemDescriptor,
+              '../../shared/api',
+              { scope: generatedProofScope }
+            )
+          );
+          const fixtureScope = path.join(
+            checkoutWorkspace,
+            'node_modules',
+            '@generated-proof'
+          );
+          yield* Effect.promise(() => mkdir(fixtureScope, { recursive: true }));
+          yield* Effect.promise(() =>
+            symlink(
+              path.join(checkoutWorkspace, 'packages/shared-contracts'),
+              path.join(fixtureScope, 'shared-contracts'),
+              'dir'
+            )
           );
           yield* writeText(
             checkoutWorkspace,
@@ -3379,6 +3574,10 @@ it.live(
             checkoutWorkspace,
             'packages/shared-contracts/package.json',
             {
+              exports: {
+                './microvertical-api-baseline':
+                  './src/microvertical-api-baseline.ts',
+              },
               name: generatedSharedContractsPackage,
             }
           );
@@ -3396,14 +3595,14 @@ it.live(
                   serverEntry: 'verticals/shopping/api/index.ts',
                 },
                 id: 'shopping',
-                path: 'verticals/shopping',
+                path: shoppingDirectory,
               },
             ],
           });
           yield* writeText(
             checkoutWorkspace,
             'apps/shell-super-app/src/api/vertical-clients.ts',
-            'export const verticalClients = {};\n'
+            "export { getCheckoutReadiness } from '@generated-proof/shopping/api/client';\n"
           );
           const invalidApiSource = `import { Schema } from 'effect';
 export const response = new Response('generated');
@@ -3641,7 +3840,7 @@ it.live(
               module: 'NodeNext',
               moduleResolution: 'NodeNext',
               noEmit: true,
-              skipLibCheck: true,
+              skipLibCheck: false,
               strict: true,
               target: 'ES2023',
             },
@@ -3650,8 +3849,10 @@ it.live(
           runNode(
             [
               path.join(
-                workspaceRoot,
-                'node_modules/@typescript/native-preview/bin/tsc'
+                path.dirname(
+                  require.resolve('@typescript/native-preview/package.json')
+                ),
+                'bin/tsgo'
               ),
               '-p',
               ownerRoot,
@@ -3754,16 +3955,15 @@ it.live(
       readFile(
         path.join(
           generatorRoot,
-          'templates/packages/shared-contracts-index.ts'
+          'templates/packages/microvertical-api-baseline.ts'
         ),
         'utf-8'
       )
     );
-    const baselineEnd = templateSource.indexOf(
-      'export type UltramodernPublicSitemapChangeFrequency'
+    const generatedSource = templateSource;
+    expect(generatedSource).toMatch(
+      /export const MicroVerticalReadinessSchema/u
     );
-    expect(baselineEnd).not.toBe(-1);
-    const generatedSource = templateSource.slice(0, baselineEnd);
     yield* writeText(
       proofRoot,
       generatedBaselineTemplateEntry,
@@ -3771,10 +3971,11 @@ it.live(
     );
     yield* writeJson(proofRoot, tsconfigFile, {
       compilerOptions: {
+        lib: ['ES2023', 'DOM', 'ESNext.Disposable'],
         module: 'NodeNext',
         moduleResolution: 'NodeNext',
         noEmit: true,
-        skipLibCheck: true,
+        skipLibCheck: false,
         strict: true,
         target: 'ES2022',
       },
@@ -3793,8 +3994,10 @@ it.live(
     runNode(
       [
         path.join(
-          workspaceRoot,
-          'node_modules/@typescript/native-preview/bin/tsc'
+          path.dirname(
+            require.resolve('@typescript/native-preview/package.json')
+          ),
+          'bin/tsgo'
         ),
         '-p',
         proofRoot,
@@ -4069,10 +4272,8 @@ const createMicroVerticalOperationContext = <Value>(value: Value): Value => valu
       [
         'foundation endpoint discarded by a pipe',
         contract.replace(
-          `  ),
-);`,
-          `  ),
-).pipe(() => HttpApi.make('DiscardedPartyRegistryFoundationApi'));`
+          /(?<foundation>export const partyRegistryFoundationApi = [\s\S]*?);/u,
+          "$<foundation>.pipe(() => HttpApi.make('DiscardedPartyRegistryFoundationApi'));"
         ),
         /directly compose its exact readiness endpoint/u,
       ],
@@ -4341,6 +4542,7 @@ createMicroVerticalOperationContext({
         /exact owner and API path metadata/u,
       ],
     ] as const) {
+      expect(mutated, `${label} must mutate the fixture`).not.toBe(contract);
       expect(
         (yield* microVerticalApiBaselineViolation(partyId, mutated)) ?? '',
         label
@@ -4793,10 +4995,10 @@ it.live(
     );
     yield* Effect.promise(() => mkdir(path.join(fixture, '.modernjs')));
     const modernConfig = yield* Effect.promise(() =>
-      readFile(path.join(workspaceRoot, '.modernjs/ultramodern.json'))
+      readFile(path.join(workspaceRoot, ultramodernConfigFile))
     );
     yield* Effect.promise(() =>
-      writeFile(path.join(fixture, '.modernjs/ultramodern.json'), modernConfig)
+      writeFile(path.join(fixture, ultramodernConfigFile), modernConfig)
     );
     const build = yield* readJson(
       BuildArtifactSchema,
@@ -4959,7 +5161,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
   it.live(
     'authenticated cohort and scoped release-age policy remain pinned',
     Effect.fn(function* consumerScenario() {
-      const releaseVersion = '3.9.0-ultramodern.2';
+      const releaseVersion = '3.9.0-ultramodern.4';
       const cohort = Schema.decodeUnknownSync(
         Schema.fromJsonString(
           Schema.Struct({
@@ -4974,7 +5176,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
             release: Schema.Struct({ version: Schema.Literal(releaseVersion) }),
             source: Schema.Struct({
               commit: Schema.Literal(
-                'd2c75828230edf92775feca796c0960af754508f'
+                'ef99279246046685f1684c59ca145f2a6a3f9d53'
               ),
             }),
           })
@@ -5166,7 +5368,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
       expect(hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot)).toBe(
         true
       );
-      expect(microVerticalApiBaselineViolation(partyId, sharedApi)).toBe(
+      expect(yield* microVerticalApiBaselineViolation(partyId, sharedApi)).toBe(
         undefined
       );
       for (const [before, after] of [

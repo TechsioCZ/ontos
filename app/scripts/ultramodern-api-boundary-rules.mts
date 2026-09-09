@@ -1126,6 +1126,41 @@ const exportedFactoryOwnsCall = (
   );
 };
 
+const expressionFactoryOwnsCall = (
+  code: string,
+  callIndex: number,
+  callEnd: number
+): boolean => {
+  const expressionFactory = new RegExp(
+    String.raw`\bexport\s+const\s+(?<factory>${identifierPattern})\s*=\s*\(\s*\)\s*=>\s*$`,
+    'u'
+  ).exec(code.slice(0, callIndex));
+  const factory = expressionFactory?.groups?.factory;
+  if (
+    expressionFactory !== null &&
+    factory !== undefined &&
+    curlyDepthAt(code, expressionFactory.index) === 0 &&
+    /^\s*;/u.test(code.slice(callEnd))
+  ) {
+    const factoryResult = new RegExp(
+      String.raw`\bconst\s+(?<runtime>${identifierPattern})\s*=\s*${escapesRegularExpression(factory)}\s*\(\s*\)\s*;`,
+      'gu'
+    );
+    return [...code.slice(callEnd).matchAll(factoryResult)].some((match) => {
+      const runtime = match.groups?.runtime;
+      return (
+        runtime !== undefined &&
+        curlyDepthAt(code, callEnd + match.index) === 0 &&
+        new RegExp(
+          String.raw`\bexport\s+default\s+${escapesRegularExpression(runtime)}\s*;`,
+          'u'
+        ).test(code.slice(callEnd))
+      );
+    });
+  }
+  return false;
+};
+
 const isRuntimeRootCall = (
   code: string,
   callIndex: number,
@@ -1137,6 +1172,9 @@ const isRuntimeRootCall = (
   }
   if (/\breturn\s*$/u.test(prefix)) {
     return exportedFactoryOwnsCall(code, callIndex, callEnd);
+  }
+  if (expressionFactoryOwnsCall(code, callIndex, callEnd)) {
+    return true;
   }
   const assignment = new RegExp(
     String.raw`\bconst\s+(?<name>${identifierPattern})\s*=\s*$`,

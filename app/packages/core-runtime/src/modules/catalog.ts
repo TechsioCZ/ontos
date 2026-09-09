@@ -197,7 +197,19 @@ const assembleInstalledModuleCatalog = (
   );
   const outboxSubscriptions = Object.freeze(
     contractsInput
-      .flatMap(({ runtime }) => runtime.outboxSubscriptions)
+      .flatMap(({ runtime }) =>
+        runtime.outboxSubscriptions.map((subscription) =>
+          Object.freeze({
+            ...subscription,
+            entrypoint: Object.freeze({
+              ...subscription.entrypoint,
+              authorization: Object.freeze({
+                ...subscription.entrypoint.authorization,
+              }),
+            }),
+          })
+        )
+      )
       .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey))
   );
   const contracts = Object.freeze(

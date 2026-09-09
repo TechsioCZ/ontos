@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Path, Schema, Stream } from 'effect';
@@ -63,6 +64,15 @@ for (const format of ['cjs', 'esm', 'esm-node']) {
       );
       yield* fs.makeDirectory(path.join(root, 'node_modules'));
       yield* fs.symlink(oxlintRoot, path.join(root, 'node_modules', 'oxlint'));
+      yield* fs.makeDirectory(path.join(root, 'node_modules', '@babel'));
+      for (const dependency of ['parser', 'traverse', 'types']) {
+        yield* fs.symlink(
+          path.dirname(
+            packageRequire.resolve(`@babel/${dependency}/package.json`)
+          ),
+          path.join(root, 'node_modules', '@babel', dependency)
+        );
+      }
       yield* fs.makeDirectory(path.join(root, 'src'));
       yield* fs.writeFileString(
         path.join(root, 'src', 'fixture.tsx'),
@@ -119,7 +129,7 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
         },
         { concurrency: 'unbounded' }
       );
-      const output = result.stdout + result.stderr;
+      const output = stripVTControlCharacters(result.stdout + result.stderr);
       if (fixture.diagnostic === null) {
         expect(result.status, output).toBe(0);
         expect(output).toMatch(cleanOutput);

@@ -335,7 +335,15 @@ it.live('logout clears the authenticated composition together', () =>
     const logoutItem = yield* Effect.promise(() =>
       screen.findByRole('menuitem', { name: 'Logout' })
     );
+    // Happy DOM has no layout. Give pointer movement distinct coordinates so
+    // the menu can distinguish it from virtual focus after a prior selection.
+    yield* Effect.promise(() =>
+      user.pointer({ coords: { x: 10, y: 10 }, target: logoutItem })
+    );
     yield* Effect.promise(() => user.click(logoutItem));
+    yield* Effect.promise(() =>
+      waitFor(() => expect(signOutMock).toHaveBeenCalledWith({ locale: 'en' }))
+    );
     yield* Effect.promise(() =>
       waitFor(() =>
         expect(navigateMock).toHaveBeenCalledWith({

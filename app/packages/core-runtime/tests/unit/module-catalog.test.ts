@@ -5,6 +5,7 @@ import {
   resolveInstalledModuleCatalog,
 } from '../../src/modules/catalog.ts';
 import type { OntosOutboxSubscriptionContract } from '../../src/modules/manifest.ts';
+import { validateOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 
 const contract = (
@@ -71,6 +72,13 @@ it('accepts a valid owner-local subscription whose producer is not installed', (
     },
   ]);
   expect(catalog.outboxSubscriptions).toEqual([subscription]);
+  expect(() =>
+    validateOutboxWorkerSubscriptions(catalog.outboxSubscriptions)
+  ).not.toThrow();
+  expect(Object.isFrozen(catalog.outboxSubscriptions[0]?.entrypoint)).toBe(
+    true
+  );
+  expect(Object.isFrozen(subscription.entrypoint)).toBe(false);
 });
 
 it('rejects contradictory or incomplete Outbox subscription snapshots', () => {

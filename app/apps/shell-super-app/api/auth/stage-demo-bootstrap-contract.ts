@@ -36,7 +36,7 @@ export interface StageDemoAccountConfig {
 }
 
 export interface StageDemoAccountResult {
-  readonly authUser: 'created' | 'existing';
+  readonly authUser: 'created' | 'existing' | 'password-reset';
   readonly email: string;
   readonly legalEntityId: string;
   readonly principalId: string;

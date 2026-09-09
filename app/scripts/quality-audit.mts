@@ -16,6 +16,7 @@ import {
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
+import { importCloneEvidence } from '../quality-audit/import-clone-evidence.mts';
 import {
   buildKnipModel,
   KnipConfigSchema,
@@ -173,6 +174,7 @@ interface AuditResult {
     readonly analyzedFiles?: number;
     readonly analyzedFunctions?: number;
     readonly controlFlowFindings?: number;
+    readonly declarationOnlyClones?: number;
     readonly discoveredFiles?: number;
     readonly findingCounts?: Readonly<Record<string, number>>;
     readonly modeledUsages?: number;
@@ -888,6 +890,22 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(
         ),
         report
       );
+      if (step.name === 'jscpd') {
+        const validated = yield* validateReport(step.name, report);
+        const imports = yield* importCloneEvidence(root, report);
+        yield* writeJson(
+          path.join(directory, 'import-clone-evidence.json'),
+          imports
+        );
+        return {
+          ...validated,
+          coverage: {
+            ...validated.coverage,
+            declarationOnlyClones: imports.length,
+          },
+          findings: validated.findings - imports.length,
+        };
+      }
       return step.name === 'knip'
         ? yield* evaluateKnip(report, directory)
         : yield* validateReport(step.name, report);
@@ -1088,6 +1106,7 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(
             `Proven modeled usages retained separately: ${result.coverage.modeledUsages ?? 0}.`,
           ]),
         'Unused exports describe an unused public binding; they do not establish that the implementation body is unused.',
+        'JSCPD implementation counts exclude only complete static import-binding spans proven by parsing both files; raw clones and per-pair evidence remain in jscpd/report.json and jscpd/import-clone-evidence.json.',
         'Fallow strict clones preserve literal differences. Semantic similarity normalizes them and remains advisory; inspect both together with JSCPD before choosing a shared implementation.',
         `Health counts cyclomatic > ${COMPLEXITY_LIMITS.cyclomatic} or control-flow cognitive > ${COMPLEXITY_LIMITS.cognitive}. The latter subtracts hook-density and prop-count penalties from the native weighted metric, with contribution arithmetic verified for every finding.`,
         ...results

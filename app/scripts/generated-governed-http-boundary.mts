@@ -9,6 +9,7 @@ import {
 } from './boundary-source-structure.mts';
 import {
   hasGeneratedGovernedClientContract,
+  hasGeneratedSourceHeader,
   hasGeneratedModuleApiContract,
   hasGeneratedModuleApiReadContract,
   hasGeneratedOperationGatewayContract,
@@ -938,7 +939,7 @@ const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   return (
     type !== undefined &&
     new RegExp(
-      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<ReadRuntime\\s*[,>]`,
+      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<\\s*ReadRuntime\\s*[,>]`,
       'u'
     ).test(maskNonCode(source)) &&
     effectBffDefinition(source) !== undefined
@@ -1056,7 +1057,7 @@ const governedReadContribution = (
   contractStem: string,
   source: string
 ): GovernedReadContribution | undefined => {
-  if (source.startsWith(MODULE_API_HEADER)) {
+  if (hasGeneratedSourceHeader(source, MODULE_API_HEADER)) {
     return { contractStem, kind: MODULE_API_KIND, name: contractStem };
   }
   const candidateKind =
@@ -1064,7 +1065,7 @@ const governedReadContribution = (
       source
     )?.groups?.kind;
   if (
-    !source.startsWith(GOVERNED_CONTRIBUTION_HEADER) ||
+    !hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER) ||
     !isGovernedReadKind(candidateKind)
   ) {
     return undefined;
@@ -1624,9 +1625,7 @@ const hasHttpContract = (
 const hasManifestContract = (
   manifest: string,
   contribution: GovernedReadContribution,
-  moduleId: string,
-  escapedContractStem: string,
-  escapedApiValue: string
+  moduleId: string
 ): boolean => {
   const allOwnerManifestEntries = entriesAcrossSlots(manifest, [
     [MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END],
@@ -1646,14 +1645,10 @@ const hasManifestContract = (
       MANIFEST_API_SLOT_END
     );
     return (
-      slotHasExactlyOneCodeMatch(
+      hasExactValueImport(
         manifest,
-        '// <generated-module-manifest-imports>',
-        '// </generated-module-manifest-imports>',
-        new RegExp(
-          `import \\{ ${escapedApiValue} \\} from './shared/apis/${escapedContractStem}\\.ts';`,
-          'gu'
-        )
+        contributionApiValue(contribution.kind, contribution.name),
+        `./shared/apis/${contribution.contractStem}.ts`
       ) &&
       [apiEntries, allOwnerManifestEntries].every(
         (entries) =>
@@ -1774,28 +1769,24 @@ const hasPublishedRegistration = (
 
 const publishesSharedApiContribution = (
   sharedApi: string,
-  escapedApiValue: string,
-  escapedContractStem: string
-): boolean =>
-  hasExactlyOne(
-    maskComments(sharedApi),
-    new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu')
-  ) &&
-  slotHasExactlyOneCodeMatch(
-    sharedApi,
-    '// <generated-governed-http-api-imports>',
-    '// </generated-governed-http-api-imports>',
-    new RegExp(
-      `import \\{ ${escapedApiValue} \\} from './apis/${escapedContractStem}\\.ts';`,
-      'gu'
+  apiValue: string,
+  contractStem: string
+): boolean => {
+  const escapedApiValue = escapeRegExp(apiValue);
+  return (
+    hasExactlyOne(
+      maskComments(sharedApi),
+      new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu')
+    ) &&
+    hasExactValueImport(sharedApi, apiValue, `./apis/${contractStem}.ts`) &&
+    slotHasExactlyOneCodeMatch(
+      sharedApi,
+      GOVERNED_API_SLOT_START,
+      GOVERNED_API_SLOT_END,
+      new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu')
     )
-  ) &&
-  slotHasExactlyOneCodeMatch(
-    sharedApi,
-    GOVERNED_API_SLOT_START,
-    GOVERNED_API_SLOT_END,
-    new RegExp(`\\.addHttpApi\\(${escapedApiValue}\\)`, 'gu')
   );
+};
 
 const hasPublishedContract = (
   sharedApi: string,
@@ -1803,16 +1794,14 @@ const hasPublishedContract = (
   registration: string,
   handlerRoot: string,
   contribution: GovernedReadContribution,
-  moduleId: string
+  moduleId: string,
+  diagnostics?: string[]
 ): boolean => {
   const expectedApi = governedApiBinding(sharedApi);
   const apiValue = contributionApiValue(contribution.kind, contribution.name);
   const camel = toCamelCase(contribution.name);
   const serverStem = contributionServerStem(contribution);
-  const escapedContractStem = escapeRegExp(contribution.contractStem);
-  const escapedApiValue = escapeRegExp(apiValue);
   const escapedCamel = escapeRegExp(camel);
-  const escapedServerStem = escapeRegExp(serverStem);
   const handlerLayers = generatedSlotEntries(
     handlerRoot,
     GOVERNED_HANDLER_LAYER_SLOT_START,
@@ -1863,40 +1852,39 @@ const hasPublishedContract = (
     }
     return entry.startsWith(`${expectedLayer}.pipe(`);
   };
-  return (
-    expectedApi !== undefined &&
-    hasGovernedSharedApiRoot(sharedApi) &&
-    hasGovernedHandlerRoot(handlerRoot) &&
-    publishesSharedApiContribution(
+  const publicationChecks = {
+    apiBinding: expectedApi !== undefined,
+    handlerImport: hasExactValueImport(
+      handlerRoot,
+      `${camel}ReadApiLive`,
+      `./${serverStem}-server.ts`
+    ),
+    handlerLayer: handlerLayers?.filter(isExpectedHandlerLayer).length === 1,
+    handlerRoot: hasGovernedHandlerRoot(handlerRoot),
+    manifest: hasManifestContract(manifest, contribution, moduleId),
+    mountedLayer:
+      expectedApi !== undefined &&
+      slotIsInsideMountedLayer(
+        handlerRoot,
+        GOVERNED_HANDLER_LAYER_SLOT_START,
+        GOVERNED_HANDLER_LAYER_SLOT_END,
+        expectedApi
+      ),
+    registration: hasPublishedRegistration(registration, contribution),
+    sharedContribution: publishesSharedApiContribution(
       sharedApi,
-      escapedApiValue,
-      escapedContractStem
-    ) &&
-    hasManifestContract(
-      manifest,
-      contribution,
-      moduleId,
-      escapedContractStem,
-      escapedApiValue
-    ) &&
-    hasPublishedRegistration(registration, contribution) &&
-    slotHasExactlyOneCodeMatch(
-      handlerRoot,
-      '// <generated-governed-http-handler-imports>',
-      '// </generated-governed-http-handler-imports>',
-      new RegExp(
-        `import \\{ ${escapedCamel}ReadApiLive \\} from './${escapedServerStem}-server\\.ts';`,
-        'gu'
-      )
-    ) &&
-    handlerLayers?.filter(isExpectedHandlerLayer).length === 1 &&
-    slotIsInsideMountedLayer(
-      handlerRoot,
-      GOVERNED_HANDLER_LAYER_SLOT_START,
-      GOVERNED_HANDLER_LAYER_SLOT_END,
-      expectedApi
-    )
-  );
+      apiValue,
+      contribution.contractStem
+    ),
+    sharedRoot: hasGovernedSharedApiRoot(sharedApi),
+  };
+  const failed = Object.entries(publicationChecks)
+    .filter(([, valid]) => !valid)
+    .map(([name]) => name);
+  if (failed.length > 0) {
+    diagnostics?.push(`${contribution.name} publication: ${failed.join(', ')}`);
+  }
+  return failed.length === 0;
 };
 
 /**
@@ -1979,8 +1967,8 @@ const generatedReadContributions = (
       candidate.startsWith(contractPrefix) &&
       candidate.endsWith('.ts') &&
       !candidate.slice(contractPrefix.length).includes('/') &&
-      (source.startsWith(MODULE_API_HEADER) ||
-        source.startsWith(GOVERNED_CONTRIBUTION_HEADER))
+      (hasGeneratedSourceHeader(source, MODULE_API_HEADER) ||
+        hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER))
   );
   return generatedContracts.map(
     ([candidate, source]) =>
@@ -2027,7 +2015,7 @@ const loadContributionSources = (
     clientSource === undefined ||
     serverSource === undefined ||
     ![contractSource, readSource, clientSource, serverSource].every((source) =>
-      source.startsWith(header)
+      hasGeneratedSourceHeader(source, header)
     )
   ) {
     return undefined;
@@ -2045,7 +2033,8 @@ export const hasCompleteGeneratedModuleApiSeam = (
   sharedApiFile: string,
   deploymentAppId = path.posix.basename(
     sharedApiFile.slice(0, -'/shared/api.ts'.length)
-  )
+  ),
+  diagnostics?: string[]
 ): boolean => {
   const verticalPath = sharedApiFile.slice(0, -'/shared/api.ts'.length);
   const sharedApi = sources.get(sharedApiFile);
@@ -2068,6 +2057,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
     !hasActionBoundaryAuthentication(principal) ||
     !hasActionBoundaryGateway(gateway, deploymentAppId)
   ) {
+    diagnostics?.push('owner authentication or gateway');
     return false;
   }
 
@@ -2077,6 +2067,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
   }
 
   if (!hasMatchingModuleApiSlots(manifest, registration, contributions)) {
+    diagnostics?.push('manifest or registration contribution inventory');
     return false;
   }
 
@@ -2094,6 +2085,9 @@ export const hasCompleteGeneratedModuleApiSeam = (
       contractSource
     );
     if (loaded === undefined) {
+      diagnostics?.push(
+        `${contribution.name}: missing source or provenance marker`
+      );
       return false;
     }
     const { clientSource, readImport, readSource, serverSource } = loaded;
@@ -2134,7 +2128,8 @@ export const hasCompleteGeneratedModuleApiSeam = (
         registration,
         handlerRoot,
         contribution,
-        moduleId
+        moduleId,
+        diagnostics
       ),
       read:
         hasReadContract(readSource, contribution, moduleId) &&
@@ -2154,7 +2149,13 @@ export const hasCompleteGeneratedModuleApiSeam = (
         governedApiBinding(sharedApi) ?? ''
       ),
     };
-    return Object.values(checks).every(Boolean);
+    const failed = Object.entries(checks)
+      .filter(([, valid]) => !valid)
+      .map(([name]) => name);
+    if (failed.length > 0) {
+      diagnostics?.push(`${contribution.name}: ${failed.join(', ')}`);
+    }
+    return failed.length === 0;
   });
 };
 
@@ -2191,7 +2192,7 @@ export const hasGeneratedGovernedServerContract = (
     kind === MODULE_API_KIND ? name : `${name}-${contributionRole(kind)}`;
   const schemaStem = contributionSchemaStem(kind, name);
   return (
-    source.startsWith(generatedHeader(kind)) &&
+    hasGeneratedSourceHeader(source, generatedHeader(kind)) &&
     hasServerContract(
       source,
       escapeRegExp(camel),

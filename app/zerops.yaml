@@ -1,5 +1,7 @@
 # Stage deployment topology. Secrets are configured in the corresponding
 # Zerops services and are never stored in this file.
+# Stage topology provisioned for partyregistry and partyregistryworker.
+# Full stage rollout requested after PostgreSQL 18 migration.
 
 zerops:
   - setup: 'migrator'
@@ -7,7 +9,7 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
+        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
@@ -20,6 +22,7 @@ zerops:
         - 'app/pnpm-lock.yaml'
         - 'app/pnpm-workspace.yaml'
         - 'app/scripts'
+        - 'app/tsconfig.base.json'
         - 'app/verticals/party-registry'
     deploy:
       temporaryShutdown: false
@@ -93,12 +96,12 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
+        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
         - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/party-registry' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/party-registry/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/party-registry/local-overlay.json'
       deployFiles:
@@ -141,12 +144,12 @@ zerops:
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
+        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
         - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/shell-super-app' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/shell-super-app/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/shell-super-app/local-overlay.json'
       deployFiles:
@@ -188,11 +191,11 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
+        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 11.25.0
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
       deployFiles:
         - 'app/.zerops/runtime/party-registry-worker'
         - 'app/scripts/install-zerops-node.sh'

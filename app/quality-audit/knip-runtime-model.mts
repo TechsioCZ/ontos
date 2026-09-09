@@ -344,13 +344,11 @@ export const buildKnipRuntimeEvidence = Effect.fn(
       const federation = uncomment(federationFile, yield* read(federationFile));
       if (
         federation?.includes("from '@modern-js/app-tools/config'") === true &&
-        federation.includes(
-          'resolveEffectTsgoCompiler({ from: import.meta.url })'
+        /resolveEffectTsgoCompiler\s*\(\s*\{\s*from:\s*import\.meta\.url\s*,?\s*\}\s*\)/u.test(
+          federation
         )
       ) {
-        const offset = federation.indexOf(
-          'resolveEffectTsgoCompiler({ from: import.meta.url })'
-        );
+        const offset = federation.indexOf('resolveEffectTsgoCompiler');
         evidence.push(
           at(
             federationFile,
@@ -447,7 +445,7 @@ export const buildKnipRuntimeEvidence = Effect.fn(
       const typecheckFile = 'scripts/ultramodern-typecheck.mts';
       const typecheck = yield* read(typecheckFile);
       const vendorTypecheck = yield* read(
-        'node_modules/@modern-js/create/templates/workspace-scripts/ultramodern-typecheck.mjs'
+        'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-typecheck.mjs'
       );
       const usesTsgo =
         hasUltramodernDispatch(
@@ -511,7 +509,7 @@ export const buildKnipRuntimeEvidence = Effect.fn(
       const readinessFile = 'scripts/ultramodern-performance-readiness.mts';
       const readiness = yield* read(readinessFile);
       const vendorFile =
-        'node_modules/@modern-js/create/templates/workspace-scripts/ultramodern-performance-readiness.mjs';
+        'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-performance-readiness.mjs';
       const vendor = yield* read(vendorFile);
       if (
         hasUltramodernDispatch(

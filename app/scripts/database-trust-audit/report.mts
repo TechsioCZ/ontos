@@ -1,5 +1,5 @@
-import { Cause, Option, Schema } from 'effect';
 // oxlint-disable-next-line max-classes-per-file -- This report owns the three related tagged audit failures.
+import { Cause, Option, Schema } from 'effect';
 import type { Client } from 'pg';
 
 interface DatabasePrivileges {

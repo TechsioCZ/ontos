@@ -56,7 +56,7 @@ it.effect('decodes the exact versioned public assertion contract', () =>
   Effect.gen(function* testScenario1() {
     expect(yield* decodeGatewayContextClaims(claims)).toEqual(claims);
     expect(
-      yield* Schema.decodeUnknownEffect(GatewayContextProtectedHeaderSchema)({
+      yield* Schema.decodeEffect(GatewayContextProtectedHeaderSchema)({
         alg: 'EdDSA',
         kid: 'current-2026-08',
         typ: 'JWT',
@@ -67,12 +67,12 @@ it.effect('decodes the exact versioned public assertion contract', () =>
       typ: 'JWT',
     });
     expect(
-      yield* Schema.decodeUnknownEffect(GatewayContextRequestSchema)({
+      yield* Schema.decodeEffect(GatewayContextRequestSchema)({
         audience: 'inventory-stock',
       })
     ).toEqual({ audience: 'inventory-stock' });
     expect(
-      yield* Schema.decodeUnknownEffect(GatewayContextResponseSchema)({
+      yield* Schema.decodeEffect(GatewayContextResponseSchema)({
         expiresAt: claims.exp,
         token: 'header.payload.signature',
       })
@@ -86,7 +86,7 @@ it.effect(
     Effect.gen(function* testScenario2() {
       expect(
         yield* Effect.flip(
-          Schema.decodeUnknownEffect(GatewayContextRequestSchema)({
+          Schema.decodeEffect(GatewayContextRequestSchema)({
             audience: '',
           })
         )
@@ -193,18 +193,18 @@ it('preserves migrated gateway Problem Details shapes and ordered endpoint membe
     title: 'Gateway unavailable',
     type: 'https://ontos.dev/problems/gateway-unavailable',
   } as const;
-  const decodedRateLimited = Schema.decodeUnknownSync(
-    GatewayRateLimitedProblemSchema
-  )(rateLimited);
+  const decodedRateLimited = Schema.decodeSync(GatewayRateLimitedProblemSchema)(
+    rateLimited
+  );
   expect(Schema.is(GatewayRateLimitedProblemSchema)(decodedRateLimited)).toBe(
     true
   );
   expect(Struct.omit(decodedRateLimited, ['_tag'])).toEqual(
     Struct.omit(rateLimited, ['_tag'])
   );
-  const decodedUnavailable = Schema.decodeUnknownSync(
-    GatewayUnavailableProblemSchema
-  )(unavailable);
+  const decodedUnavailable = Schema.decodeSync(GatewayUnavailableProblemSchema)(
+    unavailable
+  );
   expect(Schema.is(GatewayUnavailableProblemSchema)(decodedUnavailable)).toBe(
     true
   );

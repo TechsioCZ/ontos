@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { pgPolicy } from 'drizzle-orm/pg-core';
 import { Context, Effect, Option } from 'effect';
@@ -125,12 +126,8 @@ export const installOperationalScope = (
     )
   );
 
-export const tenantRlsPolicies = (
-  prefix: string,
-  tenantColumn: AnyPgColumn
-) => {
-  const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
-  return [
+const operationalRlsPolicies = (prefix: string, predicate: SQL) =>
+  [
     pgPolicy(`${prefix}_select`, {
       for: 'select',
       to: 'ontos_runtime',
@@ -153,6 +150,13 @@ export const tenantRlsPolicies = (
       using: predicate,
     }),
   ] as const;
+
+export const tenantRlsPolicies = (
+  prefix: string,
+  tenantColumn: AnyPgColumn
+) => {
+  const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
+  return operationalRlsPolicies(prefix, predicate);
 };
 
 export const tenantLegalEntityRlsPolicies = (
@@ -161,27 +165,5 @@ export const tenantLegalEntityRlsPolicies = (
   legalEntityColumn: AnyPgColumn
 ) => {
   const predicate = sql`${tenantColumn} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${legalEntityColumn} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
-  return [
-    pgPolicy(`${prefix}_select`, {
-      for: 'select',
-      to: 'ontos_runtime',
-      using: predicate,
-    }),
-    pgPolicy(`${prefix}_insert`, {
-      for: 'insert',
-      to: 'ontos_runtime',
-      withCheck: predicate,
-    }),
-    pgPolicy(`${prefix}_update`, {
-      for: 'update',
-      to: 'ontos_runtime',
-      using: predicate,
-      withCheck: predicate,
-    }),
-    pgPolicy(`${prefix}_delete`, {
-      for: 'delete',
-      to: 'ontos_runtime',
-      using: predicate,
-    }),
-  ] as const;
+  return operationalRlsPolicies(prefix, predicate);
 };

@@ -57,16 +57,8 @@ const exportedConfiguration = (program: Program) => {
   return config;
 };
 
-/** Check the exported configuration, not an unexecuted decoy or obsolete always-on bridge rule. */
-export const moduleFederationBridgeViolation = (
-  source: string,
-  manifest: RouterDependencies
-): string | undefined => {
-  const parsed = parseSync('module-federation.config.ts', source);
-  if (parsed.errors.length !== 0) {
-    return 'Module Federation configuration must parse.';
-  }
-  const bindings = parsed.program.body.flatMap((statement) =>
+const configurationBindings = (program: Program) =>
+  program.body.flatMap((statement) =>
     statement.type === 'ImportDeclaration' &&
     statement.importKind !== 'type' &&
     statement.source.value === '@module-federation/modern-js-v3'
@@ -80,7 +72,12 @@ export const moduleFederationBridgeViolation = (
         )
       : []
   );
-  const config = exportedConfiguration(parsed.program);
+
+const configurationObject = (
+  program: Program
+): ObjectExpression | undefined => {
+  const bindings = configurationBindings(program);
+  const config = exportedConfiguration(program);
   if (
     config?.type !== 'CallExpression' ||
     config.callee.type !== 'Identifier' ||
@@ -88,27 +85,50 @@ export const moduleFederationBridgeViolation = (
     config.arguments.length !== 1 ||
     config.arguments[0]?.type !== 'ObjectExpression'
   ) {
-    return 'Module Federation must export a literal createModuleFederationConfig call or its top-level const binding.';
+    return undefined;
   }
-  const bridge = property(config.arguments[0], 'bridge');
+  return config.arguments[0];
+};
+
+const bridgeRouterEnabled = (config: ObjectExpression): boolean | undefined => {
+  const bridge = property(config, 'bridge');
   const enabled =
     bridge?.type === 'ObjectExpression'
       ? property(bridge, 'enableBridgeRouter')
       : undefined;
-  if (
-    enabled?.type !== 'Literal' ||
-    (enabled.value !== true && enabled.value !== false)
-  ) {
+  if (enabled?.type !== 'Literal') {
+    return undefined;
+  }
+  return enabled.value === true || enabled.value === false
+    ? enabled.value
+    : undefined;
+};
+
+const declaresBridgeRouter = (manifest: RouterDependencies): boolean =>
+  ['react-router', 'react-router-dom'].some(
+    (name) =>
+      Object.hasOwn(manifest.dependencies ?? {}, name) ||
+      Object.hasOwn(manifest.devDependencies ?? {}, name)
+  );
+
+/** Check the exported configuration, not an unexecuted decoy or obsolete always-on bridge rule. */
+export const moduleFederationBridgeViolation = (
+  source: string,
+  manifest: RouterDependencies
+): string | undefined => {
+  const parsed = parseSync('module-federation.config.ts', source);
+  if (parsed.errors.length !== 0) {
+    return 'Module Federation configuration must parse.';
+  }
+  const config = configurationObject(parsed.program);
+  if (config === undefined) {
+    return 'Module Federation must export a literal createModuleFederationConfig call or its top-level const binding.';
+  }
+  const enabled = bridgeRouterEnabled(config);
+  if (enabled === undefined) {
     return 'Module Federation must declare bridge.enableBridgeRouter as a boolean literal.';
   }
-  if (
-    enabled.value &&
-    !['react-router', 'react-router-dom'].some(
-      (name) =>
-        Object.hasOwn(manifest.dependencies ?? {}, name) ||
-        Object.hasOwn(manifest.devDependencies ?? {}, name)
-    )
-  ) {
+  if (enabled && !declaresBridgeRouter(manifest)) {
     return 'Module Federation may enable the React bridge router only when the app declares react-router or react-router-dom.';
   }
   return undefined;

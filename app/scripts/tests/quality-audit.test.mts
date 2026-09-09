@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Config, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
@@ -23,6 +23,7 @@ import {
 } from '../quality-audit.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
+const NATIVE_GIT = '/usr/bin/git';
 const FALLOW_CLONES = 'fallow-clones';
 const FALLOW_SIMILARITY = 'fallow-similarity';
 const FALLOW_HEALTH = 'fallow-health';
@@ -262,7 +263,39 @@ const runFixture = (
   output: string,
   tool: 'all' | 'knip' | 'jscpd' | 'fallow'
 ) =>
-  runQualityAudit(root, output, tool).pipe(Effect.provide(NodeServices.layer));
+  Effect.gen(function* runNativeFixture() {
+    const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimePath = yield* Config.string('PATH');
+    // Both fixtures and analyzer subprocesses use Git inside this test runtime.
+    const fixtureSpawner = ChildProcessSpawner.make((command) =>
+      Match.value(command).pipe(
+        Match.tag('StandardCommand', (standard) =>
+          nativeSpawner.spawn(
+            ChildProcess.make(
+              standard.command === 'git' ? NATIVE_GIT : standard.command,
+              standard.args,
+              {
+                ...standard.options,
+                env: {
+                  ...standard.options.env,
+                  PATH: `/usr/bin:${runtimePath}`,
+                },
+                extendEnv: true,
+              }
+            )
+          )
+        ),
+        Match.tag('PipedCommand', (piped) => nativeSpawner.spawn(piped)),
+        Match.exhaustive
+      )
+    );
+    return yield* runQualityAudit(root, output, tool).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        fixtureSpawner
+      )
+    );
+  }).pipe(Effect.provide(NodeServices.layer));
 
 const SummarySchema = Schema.Struct({
   mode: Schema.Literal('report-only'),
@@ -546,7 +579,9 @@ it.live(
     const output = path.join(root, REPORT_DIRECTORY);
     yield* Effect.gen(function* initializeFixtureRepository() {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      yield* spawner.string(ChildProcess.make('git', ['init', '-q', root]));
+      yield* spawner.string(
+        ChildProcess.make(NATIVE_GIT, ['init', '-q', root])
+      );
     }).pipe(Effect.provide(NodeServices.layer));
     mkdirSync(path.join(root, 'scripts/shared'), { recursive: true });
     copyFileSync(
@@ -559,7 +594,11 @@ it.live(
       path.join(appRoot, 'scripts/quality-cli-lifecycle.mts'),
       path.join(root, 'scripts/quality-cli-lifecycle.mts')
     );
-    for (const file of ['knip-model.mts', 'knip-runtime-model.mts']) {
+    for (const file of [
+      'knip-model.mts',
+      'knip-runtime-model.mts',
+      'import-clone-evidence.mts',
+    ]) {
       copyFileSync(
         path.join(appRoot, CONFIG_DIRECTORY, file),
         path.join(root, CONFIG_DIRECTORY, file)
@@ -576,6 +615,7 @@ it.live(
             FORCE_COLOR: '1',
             GITHUB_ACTIONS: 'true',
             NO_COLOR: '1',
+            PATH: `/usr/bin:${yield* Config.string('PATH')}`,
           },
           extendEnv: true,
           stderr: 'pipe',
@@ -689,7 +729,7 @@ it.live(
         commands,
         (args) =>
           spawner
-            .exitCode(ChildProcess.make('git', args, { cwd: root }))
+            .exitCode(ChildProcess.make(NATIVE_GIT, args, { cwd: root }))
             .pipe(Effect.map((code) => expect(Number(code)).toBe(0))),
         { concurrency: 1 }
       );
@@ -855,14 +895,14 @@ it.live(
       writeFileSync(path.join(root, GITIGNORE_FILE), '**/@mf-types/\n');
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const initialized = yield* spawner.exitCode(
-        ChildProcess.make('git', ['init', '-q'], { cwd: root })
+        ChildProcess.make(NATIVE_GIT, ['init', '-q'], { cwd: root })
       );
       expect(Number(initialized)).toBe(0);
       writeFileSync(
         path.join(generatedTypes, 'index.d.ts'),
         'export declare const remoteComponent: unknown;\n'
       );
-      yield* runQualityAudit(root, output, 'fallow');
+      yield* runFixture(root, output, 'fallow');
       const result = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(SummarySchema)
       )(readFileSync(path.join(output, SUMMARY_FILE), 'utf-8'));

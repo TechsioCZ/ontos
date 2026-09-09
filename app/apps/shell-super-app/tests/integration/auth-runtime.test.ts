@@ -521,6 +521,26 @@ it.live(
     expect(
       headerValue(anonymousPageResponse.headers, 'www-authenticate')
     ).toMatch(/^Bearer/u);
+    const invalidSignInResponse = yield* Effect.tryPromise(() =>
+      unavailableHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/sign-in`, {
+          body: JSON.stringify({ email, password: 'wrong-password' }),
+          headers: {
+            'content-type': 'application/json',
+            origin: configuration.baseUrl,
+          },
+          method: 'POST',
+        })
+      )
+    );
+    expect(invalidSignInResponse.status).toBe(401);
+    expect(headerValue(invalidSignInResponse.headers, 'content-type')).toMatch(
+      /^application\/problem\+json/u
+    );
+    const invalidSignInProblem = Schema.decodeUnknownSync(ProblemStatusSchema)(
+      yield* Effect.tryPromise(() => invalidSignInResponse.json())
+    );
+    expect(invalidSignInProblem.status).toBe(401);
     const signInResponse = yield* Effect.tryPromise(() =>
       unavailableHandler.handler(
         new Request(`${configuration.baseUrl}/auth/sign-in`, {

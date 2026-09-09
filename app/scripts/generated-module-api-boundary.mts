@@ -131,6 +131,70 @@ export const tokenizeGovernedClient = (
   return tokens;
 };
 
+const importStateAfter = (
+  kind: SyntaxKind,
+  inImport: boolean
+): boolean | undefined => {
+  if (
+    kind === SyntaxKind.SingleLineCommentTrivia ||
+    kind === SyntaxKind.MultiLineCommentTrivia
+  ) {
+    return inImport;
+  }
+  if (kind === SyntaxKind.ImportKeyword) {
+    return true;
+  }
+  return inImport ? kind !== SyntaxKind.SemicolonToken : undefined;
+};
+
+// Comments from the leading import section, with undefined marking interruptions.
+const leadingSourceComments = function* leadingSourceComments(
+  source: string
+): Generator<string | undefined> {
+  const scanner = createScanner(false, LanguageVariant.Standard, source);
+  let inImport = false;
+  for (
+    let kind = scanner.scan();
+    kind !== SyntaxKind.EndOfFile;
+    kind = scanner.scan()
+  ) {
+    if (
+      kind === SyntaxKind.WhitespaceTrivia ||
+      kind === SyntaxKind.NewLineTrivia
+    ) {
+      continue;
+    }
+    yield kind === SyntaxKind.SingleLineCommentTrivia
+      ? scanner.getTokenText().trim()
+      : undefined;
+    const nextState = importStateAfter(kind, inImport);
+    if (nextState === undefined) {
+      return;
+    }
+    inImport = nextState;
+  }
+};
+
+/** Import sorting may move provenance comments between leading imports. */
+export const hasGeneratedSourceHeader = (
+  source: string,
+  header: string
+): boolean => {
+  const expected = header.trim().split(/\r?\n/u);
+  let matched = 0;
+  for (const comment of leadingSourceComments(source)) {
+    if (comment === expected[matched]) {
+      matched += 1;
+    } else {
+      matched = comment === expected[0] ? 1 : 0;
+    }
+    if (matched === expected.length) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const matchesToken = (
   token: GovernedClientToken | undefined,
   expected: ExpectedToken
@@ -859,32 +923,38 @@ const hasGovernedTransportInvocation = (
   ownerApiValue: string,
   defaultApiPrefix: string
 ): boolean => {
-  const expected = [
-    [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
-    [SyntaxKind.OpenParenToken],
-    [SyntaxKind.OpenBraceToken],
-    [SyntaxKind.Identifier, 'api'],
-    [SyntaxKind.ColonToken],
-    [SyntaxKind.Identifier, ownerApiValue],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'credential'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'defaultApiPrefix'],
-    [SyntaxKind.ColonToken],
-    [SyntaxKind.StringLiteral, defaultApiPrefix],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'requestCorrelation'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.CloseBraceToken],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'options'],
-    [SyntaxKind.CommaToken],
-    [SyntaxKind.CloseParenToken],
-    [SyntaxKind.SemicolonToken],
-  ] satisfies readonly ExpectedToken[];
-  return (
-    helper.end === helper.start + expected.length &&
-    matchesSequence(tokens, helper.start, expected)
+  const expected = (objectTrailingComma: boolean, callTrailingComma: boolean) =>
+    [
+      [SyntaxKind.Identifier, 'makeGovernedEffectBffClient'],
+      [SyntaxKind.OpenParenToken],
+      [SyntaxKind.OpenBraceToken],
+      [SyntaxKind.Identifier, 'api'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.Identifier, ownerApiValue],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'credential'],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'defaultApiPrefix'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.StringLiteral, defaultApiPrefix],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'requestCorrelation'],
+      ...(objectTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+      [SyntaxKind.CloseBraceToken],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'options'],
+      ...(callTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+      [SyntaxKind.CloseParenToken],
+      [SyntaxKind.SemicolonToken],
+    ] satisfies readonly ExpectedToken[];
+  return [false, true].some((objectTrailingComma) =>
+    [false, true].some((callTrailingComma) => {
+      const sequence = expected(objectTrailingComma, callTrailingComma);
+      return (
+        helper.end === helper.start + sequence.length &&
+        matchesSequence(tokens, helper.start, sequence)
+      );
+    })
   );
 };
 
@@ -1041,25 +1111,27 @@ const hasExactGeneratedOperationParameters = (
     ] satisfies readonly ExpectedToken[];
   return (
     types.options.some((optionsType) =>
-      hasExactParameterTokens(tokens, helperOpen, helper.parametersEnd, [
-        [SyntaxKind.Identifier, 'credential'],
-        [SyntaxKind.ColonToken],
-        [SyntaxKind.Identifier, 'Redacted'],
-        [SyntaxKind.DotToken],
-        [SyntaxKind.Identifier, 'Redacted'],
-        [SyntaxKind.LessThanToken],
-        [SyntaxKind.StringKeyword],
-        [SyntaxKind.GreaterThanToken],
-        [SyntaxKind.CommaToken],
-        [SyntaxKind.Identifier, 'requestCorrelation'],
-        [SyntaxKind.ColonToken],
-        [SyntaxKind.StringKeyword],
-        [SyntaxKind.CommaToken],
-        [SyntaxKind.Identifier, 'options'],
-        [SyntaxKind.ColonToken],
-        [SyntaxKind.Identifier, optionsType],
-        [SyntaxKind.CommaToken],
-      ])
+      [false, true].some((trailingComma) =>
+        hasExactParameterTokens(tokens, helperOpen, helper.parametersEnd, [
+          [SyntaxKind.Identifier, 'credential'],
+          [SyntaxKind.ColonToken],
+          [SyntaxKind.Identifier, 'Redacted'],
+          [SyntaxKind.DotToken],
+          [SyntaxKind.Identifier, 'Redacted'],
+          [SyntaxKind.LessThanToken],
+          [SyntaxKind.StringKeyword],
+          [SyntaxKind.GreaterThanToken],
+          [SyntaxKind.CommaToken],
+          [SyntaxKind.Identifier, 'requestCorrelation'],
+          [SyntaxKind.ColonToken],
+          [SyntaxKind.StringKeyword],
+          [SyntaxKind.CommaToken],
+          [SyntaxKind.Identifier, 'options'],
+          [SyntaxKind.ColonToken],
+          [SyntaxKind.Identifier, optionsType],
+          ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+        ])
+      )
     ) &&
     authorizedClose !== undefined &&
     [false, true].some((trailingComma) =>
@@ -1123,13 +1195,15 @@ const hasInvocationClosure = (
 ): boolean =>
   start !== undefined &&
   [false, true].some((trailingComma) =>
-    matchesSequence(tokens, start, [
-      ...(trailingComma ? [[SyntaxKind.CommaToken] as const] : []),
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.CommaToken],
-      [SyntaxKind.CloseParenToken],
-      [SyntaxKind.SemicolonToken],
-    ])
+    [false, true].some((outerTrailingComma) =>
+      matchesSequence(tokens, start, [
+        ...(trailingComma ? [[SyntaxKind.CommaToken] as const] : []),
+        [SyntaxKind.CloseParenToken],
+        ...(outerTrailingComma ? [[SyntaxKind.CommaToken] as const] : []),
+        [SyntaxKind.CloseParenToken],
+        [SyntaxKind.SemicolonToken],
+      ])
+    )
   );
 
 const generatedInvocationPayloads = (
@@ -1633,6 +1707,7 @@ const withoutTrailingCommas = (tokens: readonly GovernedClientToken[]) =>
         SyntaxKind.CloseBraceToken,
         SyntaxKind.CloseParenToken,
         SyntaxKind.CloseBracketToken,
+        SyntaxKind.GreaterThanToken,
       ].includes(tokens[index + 1]?.kind ?? SyntaxKind.Unknown)
   );
 
@@ -2060,7 +2135,7 @@ export const hasGeneratedGovernedClientContract = (
   source: string,
   expectation: GovernedClientExpectation
 ): boolean => {
-  if (!source.startsWith(expectation.generatedHeader)) {
+  if (!hasGeneratedSourceHeader(source, expectation.generatedHeader)) {
     return false;
   }
   const tokens = tokenizeGovernedClient(source);

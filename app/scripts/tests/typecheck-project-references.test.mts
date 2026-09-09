@@ -75,7 +75,7 @@ const runTypecheck = (fixture: string, commandArguments: readonly string[]) =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 it.live(
-  'installed generator project default preserves the consumer reference-build gate',
+  'installed generator and consumer both check the full project reference graph',
   Effect.fn(function* testEffect2() {
     const generator = Schema.decodeUnknownSync(WorkspaceScriptPlanModuleSchema)(
       yield* Effect.tryPromise(
@@ -94,7 +94,7 @@ it.live(
       generator.createWorkspaceRootScriptPlan([])
     );
     expect(scriptPlan.typecheck).toBe(
-      'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json'
+      'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json'
     );
     expect(packageJson.scripts.typecheck).toBe(
       'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json'

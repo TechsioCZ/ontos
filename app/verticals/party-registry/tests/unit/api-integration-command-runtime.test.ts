@@ -465,6 +465,27 @@ const recoveryRequest = (invocationId: string, token?: string) => {
   );
 };
 
+const expectCommitResolution = Effect.fn('Test.expectCommitResolution')(
+  function* expectCommitResolution(
+    app: ReturnType<typeof mounted>,
+    invocationId: string,
+    token: string,
+    state: 'OPEN' | 'COMMITTED'
+  ) {
+    const resolution = yield* handle(app, recoveryRequest(invocationId, token));
+    expect(resolution.status).toBe(200);
+    const resolutionBody = yield* Effect.promise(() => resolution.json());
+    expect(
+      Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)
+    ).toBe(true);
+    expect(Struct.omit(resolutionBody, ['_tag'])).toEqual({
+      invocationId,
+      retryCommand: false,
+      state,
+    });
+  }
+);
+
 const decisionRequest = (
   actionInvocationId: string,
   token?: string,
@@ -1909,20 +1930,7 @@ it.live(
       if (invocationId === undefined || invocationId.length === 0) {
         throw new Error('Expected truthy value');
       }
-      const resolution = yield* handle(
-        app,
-        recoveryRequest(invocationId, assertion.token)
-      );
-      expect(resolution.status).toBe(200);
-      const resolutionBody = yield* Effect.promise(() => resolution.json());
-      expect(
-        Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)
-      ).toBe(true);
-      expect(Struct.omit(resolutionBody, ['_tag'])).toEqual({
-        invocationId,
-        retryCommand: false,
-        state: 'OPEN',
-      });
+      yield* expectCommitResolution(app, invocationId, assertion.token, 'OPEN');
       expect(harness.snapshot().invocations.length).toBe(1);
       expect(harness.snapshot().committed.length).toBe(0);
     })
@@ -2064,20 +2072,12 @@ it.live(
           recoveryRequest(invocationId, assertion.otherToken)
         );
         expect(deniedRecovery.status).toBe(404);
-        const resolution = yield* handle(
+        yield* expectCommitResolution(
           app,
-          recoveryRequest(invocationId, assertion.token)
-        );
-        expect(resolution.status).toBe(200);
-        const resolutionBody = yield* Effect.promise(() => resolution.json());
-        expect(
-          Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)
-        ).toBe(true);
-        expect(Struct.omit(resolutionBody, ['_tag'])).toEqual({
           invocationId,
-          retryCommand: false,
-          state: 'COMMITTED',
-        });
+          assertion.token,
+          'COMMITTED'
+        );
         const missingReadAuth = yield* handle(
           app,
           decisionRequest(invocationId)

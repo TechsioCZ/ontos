@@ -43,7 +43,7 @@ for (const status of statuses) {
       type: `urn:ontos:test:problem:${status}`,
     } as const;
 
-    const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+    const decodedProblem = Schema.decodeSync(schema)(problem);
     expect(Schema.is(schema)(decodedProblem)).toBe(true);
     expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(
       Struct.omit(problem, ['_tag'])
@@ -92,7 +92,7 @@ it('adds only the deliberate retryable literal marker', () => {
     type: 'urn:ontos:test:retryable',
   } as const;
 
-  const decodedProblem = Schema.decodeUnknownSync(schema)(problem);
+  const decodedProblem = Schema.decodeSync(schema)(problem);
   expect(Schema.is(schema)(decodedProblem)).toBe(true);
   expect(Struct.omit(decodedProblem, ['_tag'])).toEqual(
     Struct.omit(problem, ['_tag'])

@@ -2,7 +2,7 @@ import {
   Link as LocalizedLink,
   useModernI18n,
 } from '@modern-js/plugin-i18n/runtime';
-import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
+import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -64,6 +64,7 @@ const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
 const LoginPage = () => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
+  const router = useRouter();
   const toaster = useToast();
   const loginRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -139,7 +140,10 @@ const LoginPage = () => {
               loginRef.current?.focus();
             }),
           onSuccess: () =>
-            Effect.tryPromise(() => navigate({ to: `/${language}/` })).pipe(
+            Effect.tryPromise(() => router.invalidate({ sync: true })).pipe(
+              Effect.andThen(
+                Effect.tryPromise(() => navigate({ to: `/${language}/` }))
+              ),
               Effect.timeout('10 seconds'),
               Effect.matchEffect({
                 onFailure: handleNavigationFailure,

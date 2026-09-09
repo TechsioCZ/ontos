@@ -127,7 +127,7 @@ const SHARED_VALIDATOR_STRING_034 =
   '/party-registry-api/party-registry/readiness';
 const SHARED_VALIDATOR_STRING_035 = '#super-app-platform';
 const SHARED_VALIDATOR_STRING_036 = '2026-06-02';
-const SHARED_VALIDATOR_STRING_037 = '3.9.0-ultramodern.2';
+const SHARED_VALIDATOR_STRING_037 = '3.9.0-ultramodern.4';
 const SHARED_VALIDATOR_STRING_038 = '3f023644c8a07e9a';
 const SHARED_VALIDATOR_STRING_039 = '4.0.0-rc.112';
 const SHARED_VALIDATOR_STRING_040 = 'additionalShellBuildMarkerIds';
@@ -255,7 +255,7 @@ const SHARED_VALIDATOR_STRING_141 = 'super-app-platform';
 const SHARED_VALIDATOR_STRING_142 = 'traceparent';
 const SHARED_VALIDATOR_STRING_143 = 'ULTRAMODERN_ASSET_PREFIX';
 const SHARED_VALIDATOR_STRING_144 =
-  'ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json';
+  'cross-env ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json';
 const SHARED_VALIDATOR_STRING_145 =
   'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN';
 const SHARED_VALIDATOR_STRING_146 =
@@ -905,7 +905,7 @@ const workspaceValidationContractDefinition = {
       schema: 'bleedingdev.ultramodern.release-cohort',
       schemaVersion: 1,
       source: {
-        commit: 'd2c75828230edf92775feca796c0960af754508f',
+        commit: 'ef99279246046685f1684c59ca145f2a6a3f9d53',
         repository: 'BleedingDev/ultramodern.js',
       },
     },
@@ -1347,7 +1347,7 @@ const workspaceValidationContractDefinition = {
     'db:generate':
       'pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/party-registry db:generate',
     'db:migrate':
-      'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role',
+      'pnpm db:bootstrap-runtime-role && pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm --filter @app/party-registry db:migrate && pnpm db:bootstrap-runtime-role',
     'db:test':
       'pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/party-registry db:test',
     'db:verify': 'node ./scripts/verify-application-db-schema.mts',
@@ -1507,11 +1507,11 @@ const workspaceValidationContractDefinition = {
     backendFederationGenerate:
       'node ./scripts/generate-node-backend-federation.mts',
     build:
-      'pnpm -r --filter "./verticals/*" run build && pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types && pnpm performance:readiness',
+      'node ./scripts/ultramodern-typecheck.mts --build packages/shared-contracts/tsconfig.json && node ./scripts/ultramodern-typecheck.mts --build packages/shared-design-tokens/tsconfig.json && pnpm -r --filter "./verticals/*" run build && pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types && pnpm performance:readiness',
     check:
       'pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
     cloudflareBuild:
-      'pnpm -r --filter "./verticals/*" run cloudflare:build && pnpm --filter "./apps/shell-super-app" run cloudflare:build && ULTRAMODERN_MF_TYPES_ARCHIVE=dist-cloudflare/@mf-types.zip pnpm mf:types && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof',
+      'node ./scripts/ultramodern-typecheck.mts --build packages/shared-contracts/tsconfig.json && node ./scripts/ultramodern-typecheck.mts --build packages/shared-design-tokens/tsconfig.json && pnpm -r --filter "./verticals/*" run cloudflare:build && pnpm --filter "./apps/shell-super-app" run cloudflare:build && pnpm mf:types --target cloudflare && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof',
     cloudflareDeploy:
       'pnpm -r --filter "./verticals/*" run cloudflare:deploy && pnpm --filter "./apps/shell-super-app" run cloudflare:deploy',
     cloudflareOutputVerify: 'node ./scripts/verify-cloudflare-output.mts',
@@ -4917,35 +4917,60 @@ const assertVerticalTsConfigReferenceGraph = (
     ]),
   ].map((referencePath) => referenceFrom(vertical.path, referencePath));
   assertSameJson(
-    verticalTsConfig.references ?? [],
-    expectedVerticalReferences,
+    EffectArray.sort(
+      verticalTsConfig.references ?? [],
+      Order.mapInput(
+        Order.String,
+        (entry: { readonly path: string }) => entry.path
+      )
+    ),
+    EffectArray.sort(
+      expectedVerticalReferences,
+      Order.mapInput(
+        Order.String,
+        (entry: { readonly path: string }) => entry.path
+      )
+    ),
     `${vertical.path}/tsconfig.json references`,
     'restore the generated MicroVertical project-reference graph'
   );
   assertSameJson(
-    verticalTsConfig.include ?? [],
-    expectedVerticalTypecheckIncludes(vertical, verticalPackage),
+    EffectArray.sort(verticalTsConfig.include ?? [], Order.String),
+    EffectArray.sort(
+      expectedVerticalTypecheckIncludes(vertical, verticalPackage),
+      Order.String
+    ),
     `${vertical.path}/tsconfig.json include`,
     'restore the generated MicroVertical typecheck boundary'
   );
   assertProjectReferenceEmitConfig(verticalTsConfig, vertical.path);
+  const requiredMfTypeIncludes =
+    vertical.emitsUi && vertical.exposes.length > 0
+      ? [
+          SHARED_VALIDATOR_STRING_136,
+          ...vertical.componentPaths.map((componentPath) =>
+            componentPath.replace(`${vertical.path}/`, '')
+          ),
+          ...(vertical.emitsApi ? [vertical.apiContractPath] : []),
+          SHARED_VALIDATOR_STRING_137,
+        ]
+      : [SHARED_VALIDATOR_STRING_137];
   assertSameJson(
-    verticalMfTypesTsConfig,
     {
+      ...verticalMfTypesTsConfig,
+      // Migration retains consumer includes. Every exposed entry must remain
+      // in the DTS boundary, independently of ordering or additional inputs.
+      include: EffectArray.sort(
+        (verticalMfTypesTsConfig.include ?? []).filter((include) =>
+          requiredMfTypeIncludes.includes(include)
+        ),
+        Order.String
+      ),
+    },
+    {
+      compilerOptions: { skipLibCheck: true },
       extends: SHARED_VALIDATOR_STRING_001,
-      // A headless (api-only) unit exposes no Module Federation surface, so
-      // its DTS boundary only covers the ambient env declarations (G2a).
-      include:
-        vertical.emitsUi && vertical.exposes.length > 0
-          ? [
-              SHARED_VALIDATOR_STRING_136,
-              ...vertical.componentPaths.map((componentPath) =>
-                componentPath.replace(`${vertical.path}/`, '')
-              ),
-              ...(vertical.emitsApi ? [vertical.apiContractPath] : []),
-              SHARED_VALIDATOR_STRING_137,
-            ]
-          : [SHARED_VALIDATOR_STRING_137],
+      include: EffectArray.sort(requiredMfTypeIncludes, Order.String),
     },
     `${vertical.path}/tsconfig.mf-types.json`,
     'restore the generated MicroVertical Module Federation DTS boundary'
@@ -5052,6 +5077,7 @@ const assertTsConfigReferenceGraph = () => {
   assertSameJson(
     shellMfTypesTsConfig,
     {
+      compilerOptions: { skipLibCheck: true },
       extends: SHARED_VALIDATOR_STRING_001,
       include: [SHARED_VALIDATOR_STRING_137],
     },
@@ -5131,10 +5157,13 @@ const observeModernPackageDependencies = (
   for (const packageName of modernDependencyNames(packageJson)) {
     observedModernPackageNames.add(packageName);
     if (!modernPackageNameSet.has(packageName)) {
-      const expected = valueForKey(
-        Object.entries(standaloneModernTools),
-        packageName
+      const releasePackage = expectedReleaseCohort?.packages.find(
+        (entry) => entry.sourceName === packageName
       );
+      const expected =
+        releasePackage === undefined
+          ? valueForKey(Object.entries(standaloneModernTools), packageName)
+          : expectedModernPackageSpecifier(packageName);
       assert(
         expected !== undefined,
         `${relativePath} declares ${packageName} outside package source metadata`
@@ -5411,13 +5440,16 @@ const assertPublicHeadContract = (
     'name="twitter:card"',
     'application/ld+json',
     'route?.jsonLd',
-    "replaceAll('<', String.raw`\\u003c`)",
   ]) {
     assert(
       headModule.includes(snippet),
       `${appId} route head module is missing ${snippet}`
     );
   }
+  assert(
+    /replaceAll\(\s*'<',\s*String\.raw`\\u003c`\s*,?\s*\)/u.test(headModule),
+    `${appId} route head module must escape HTML opening brackets in JSON-LD`
+  );
 };
 const assertCloudflareQualityGates = (
   appId: string,
@@ -6009,11 +6041,15 @@ for (const [jobId, jobName] of [
 }
 assert(
   workflowText.includes('docker compose up --detach --wait') &&
+    workflowText.includes(
+      'name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering'
+    ) &&
+    workflowText.includes('DROP ROLE ontos_runtime;') &&
     workflowText.includes('mise exec -- pnpm db:migrate') &&
     workflowText.includes('mise exec -- pnpm db:verify') &&
     workflowText.includes('mise exec -- pnpm test:integration') &&
     workflowText.includes('docker compose down --volumes --remove-orphans'),
-  'CI service evidence must start fresh PostgreSQL and SpiceDB, apply and verify migrations, run complete integrations, and always remove volumes'
+  'CI service evidence must remove the pre-seeded runtime role, apply and verify migrations, run complete integrations, and always remove volumes'
 );
 assert(
   workflowText.includes(
@@ -6047,7 +6083,7 @@ assert(
 );
 assert(
   rootPackage.scripts?.[SHARED_VALIDATOR_STRING_059]?.includes(
-    'ULTRAMODERN_MF_TYPES_ARCHIVE=dist-cloudflare/@mf-types.zip pnpm mf:types'
+    'pnpm mf:types --target cloudflare'
   ),
   'Cloudflare builds must validate the Module Federation DTS archive from the Cloudflare output directory'
 );
@@ -6966,10 +7002,15 @@ assert(
   rootPackage.scripts?.check?.includes(SHARED_VALIDATOR_STRING_101) &&
     rootPackage.scripts.check.includes(SHARED_VALIDATOR_STRING_102) &&
     !rootPackage.scripts.check.includes('pnpm node:proof') &&
-    rootPackage.scripts.check.endsWith(
-      bridgeConfig
-        ? '&& pnpm performance:readiness && pnpm bridge:check && pnpm quality:check'
-        : '&& pnpm performance:readiness && pnpm quality:check'
+    [
+      'pnpm performance:readiness',
+      'pnpm quality:check',
+      ...(bridgeConfig ? ['pnpm bridge:check'] : []),
+    ].every((command) =>
+      rootPackage.scripts?.check
+        ?.split('&&')
+        .map((part) => part.trim())
+        .includes(command)
     ),
   'Root check must remain static while running default-on performance readiness diagnostics and bridge gates when configured'
 );
@@ -7039,6 +7080,12 @@ if (hasDeliveryUnits) {
       ),
     'Zerops Node services must install pinned Node during container initialization without a custom runtime image'
   );
+  const installZeropsBuildToolchain = `sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm ${packageManagerPnpmVersion}`;
+  assert(
+    zeropsYaml.split(installZeropsBuildToolchain).length - 1 ===
+      fullStackVerticals.length + 2 + workerDeliveryCount,
+    'Every Zerops Node build must install the packageManager-pinned pnpm version in its cache key'
+  );
   assert(
     zeropsYaml.includes(
       sourceFragment(
@@ -7067,6 +7114,11 @@ if (hasDeliveryUnits) {
   assert(
     zeropsYaml.includes('deployFiles:'),
     'Zerops manifest must deploy package-pruned runtime directories'
+  );
+  const migratorSetup = yamlListItemBlock(zeropsYaml, 'setup', 'migrator');
+  assert(
+    migratorSetup.includes("- 'app/tsconfig.base.json'"),
+    'Zerops migrator must deploy the root TypeScript config extended by migration packages'
   );
   const localVirtualStoreInstall =
     'PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm';
@@ -7139,6 +7191,46 @@ if (hasDeliveryUnits) {
       zeropsMigrator.includes("'node_modules', '.bin', 'drizzle-kit'"),
     'Zerops migrator must execute the relocated dependency tree without invoking pnpm runtime verification'
   );
+  const runtimeRoleBootstrapCall =
+    "yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');";
+  assert(
+    zeropsMigrator.indexOf(runtimeRoleBootstrapCall) <
+      zeropsMigrator.indexOf('yield* migrate(') &&
+      zeropsMigrator.lastIndexOf(runtimeRoleBootstrapCall) >
+        zeropsMigrator.lastIndexOf('yield* migrate('),
+    'Zerops migrator must provision the runtime role before RLS migrations and refresh grants afterward'
+  );
+  for (const migrationPackagePath of [
+    'packages/core-runtime',
+    SHARED_VALIDATOR_STRING_047,
+    ...fullStackVerticals.map((vertical) => vertical.path),
+  ]) {
+    const migrationPackage = readJson(
+      PackageJsonSchema,
+      `${migrationPackagePath}/package.json`
+    );
+    const migrationScript = migrationPackage.scripts?.['db:migrate'] ?? '';
+    const migrationConfigs = Array.from(
+      migrationScript.matchAll(
+        /drizzle-kit migrate --config (?<migrationConfig>[^\s&]+)/gu
+      ),
+      (match) => match.groups?.migrationConfig
+    ).filter((config): config is string => config !== undefined);
+    assert(
+      migrationConfigs.length > 0,
+      `${migrationPackagePath} must declare at least one Drizzle migration config`
+    );
+    let previousMigrationIndex = -1;
+    for (const migrationConfig of migrationConfigs) {
+      const migrationCall = `yield* migrate(${quoteYamlString(migrationPackagePath)}, ${quoteYamlString(migrationConfig)});`;
+      const migrationIndex = zeropsMigrator.indexOf(migrationCall);
+      assert(
+        migrationIndex > previousMigrationIndex,
+        `Zerops migrator must execute ${migrationPackagePath}/${migrationConfig} in package-declared order`
+      );
+      previousMigrationIndex = migrationIndex;
+    }
+  }
   for (const vertical of fullStackVerticals) {
     assert(
       zeropsYaml.includes(`setup: ${quoteYamlString(vertical.id)}`),
@@ -7146,7 +7238,7 @@ if (hasDeliveryUnits) {
     );
     assert(
       zeropsYaml.includes(
-        `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`
+        `PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`
       ),
       `${vertical.id} Zerops service must materialize its runtime package`
     );
@@ -7302,7 +7394,7 @@ assert(
 );
 assert(
   rootPackage.scripts?.postinstall ===
-    "node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt . '!repos/**'",
+    'node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt .',
   'Root postinstall must run the default-on Codex skills bootstrap, format installed skills, and leave reference repository installs explicit'
 );
 assert(
@@ -7331,8 +7423,9 @@ const agentReferenceRepoSetup = readText(
   'scripts/setup-agent-reference-repos.mts'
 );
 assert(
-  agentReferenceRepoSetup.includes("['commit', '--no-verify', '-m', message]"),
-  'Agent reference repo installer commits must skip hooks during postinstall'
+  agentReferenceRepoSetup.includes("['commit', '-m', message]") &&
+    !agentReferenceRepoSetup.includes('--no-verify'),
+  'Agent reference repo installer commits must run normal Git hooks'
 );
 assert(
   agentReferenceRepoSetup.includes(
@@ -7654,8 +7747,8 @@ assert(
 const shellAssetPrefixExpression =
   extractAssetPrefixExpression(shellModernConfig);
 assert(
-  shellAssetPrefixExpression.includes(
-    'configuredModernAssetPrefix || configuredUltramodernAssetPrefix || defaultAssetPrefix'
+  /configuredModernAssetPrefix\s*\|\|\s*configuredUltramodernAssetPrefix\s*\|\|\s*defaultAssetPrefix/u.test(
+    shellAssetPrefixExpression
   ),
   'Shell asset prefix fallback order is incorrect'
 );
@@ -8230,11 +8323,11 @@ for (const vertical of fullStackVerticals) {
   const verticalAssetPrefixExpression =
     extractAssetPrefixExpression(modernConfig);
   assert(
-    verticalAssetPrefixExpression.includes(
-      'configuredModernAssetPrefix || configuredUltramodernAssetPrefix || defaultAssetPrefix'
+    /configuredModernAssetPrefix\s*\|\|\s*configuredUltramodernAssetPrefix\s*\|\|\s*defaultAssetPrefix/u.test(
+      verticalAssetPrefixExpression
     ) ||
-      verticalAssetPrefixExpression.includes(
-        'configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix'
+      /configuredModernAssetPrefix\s*\?\?\s*configuredUltramodernAssetPrefix\s*\?\?\s*defaultAssetPrefix/u.test(
+        verticalAssetPrefixExpression
       ),
     `${vertical.id} asset prefix fallback order is incorrect`
   );
@@ -8244,9 +8337,10 @@ for (const vertical of fullStackVerticals) {
     `${vertical.id} asset prefix must not fall back to MODERN_PUBLIC_SITE_URL`
   );
   assert(
-    modernConfig.includes(
-      `envValue('ULTRAMODERN_PUBLIC_URL_${vertical.id.replaceAll('-', '_').toUpperCase()}')`
-    ),
+    new RegExp(
+      `envValue\\(\\s*'ULTRAMODERN_PUBLIC_URL_${vertical.id.replaceAll('-', '_').toUpperCase()}'\\s*,?\\s*\\)`,
+      'u'
+    ).test(modernConfig),
     `${vertical.id} asset prefix must read its per-app public URL`
   );
   assert(
@@ -8802,31 +8896,35 @@ assert(
   !legacyIdentityToken.test('scrm'),
   'Legacy identity guard must not match the CRM letters inside another word'
 );
+const staleNameScanRoot = path.resolve(root, '..');
 const staleNameScanPaths = [
-  '.',
-  '../README.md',
-  '../CONTEXT-MAP.md',
-  '../docs',
-  '../.github/workflows',
+  path.basename(root),
+  'README.md',
+  'CONTEXT-MAP.md',
+  'docs',
+  '.github/workflows',
 ];
-const gitExecutable = '/usr/bin/git';
+const gitExecutable = 'git';
 const trackedAndUntrackedFiles = [
   execFileSync(gitExecutable, ['ls-files', ...staleNameScanPaths], {
-    cwd: root,
+    cwd: staleNameScanRoot,
     encoding: 'utf-8',
   }),
   execFileSync(
     gitExecutable,
     ['ls-files', '--others', '--exclude-standard', ...staleNameScanPaths],
     {
-      cwd: root,
+      cwd: staleNameScanRoot,
       encoding: 'utf-8',
     }
   ),
 ]
   .join('\n')
   .split('\n')
-  .filter((filePath) => filePath.length > 0);
+  .filter((filePath) => filePath.length > 0)
+  .map((filePath) =>
+    path.relative(root, path.resolve(staleNameScanRoot, filePath))
+  );
 const legacyIdentityViolations = trackedAndUntrackedFiles.filter((filePath) => {
   const normalizedPath = filePath.replace(/^\.\//u, '');
   if (

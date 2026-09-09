@@ -27,6 +27,7 @@ import {
 } from 'effect/Schema';
 import { transform } from 'effect/SchemaTransformation';
 
+import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
 
 const nonEmptyBuildStringSchema = Trim.pipe(check(isMinLength(1)));
@@ -142,40 +143,13 @@ const moduleFederationConfig: Parameters<
       workerName: 'app-party-registry',
     }),
   },
-  shared: {
-    '@modern-js/plugin-i18n/runtime': {
-      import: '@modern-js/plugin-i18n/runtime/no-react-i18next',
-      requiredVersion: i18nVersion,
-      singleton: true,
-      strictVersion: true,
-      treeShaking: false,
-    },
-    '@modern-js/runtime': {
-      requiredVersion: runtimeVersion,
-      singleton: true,
-      treeShaking: false,
-    },
-    '@tanstack/react-router': {
-      requiredVersion: dependencies['@tanstack/react-router'],
-      singleton: true,
-      treeShaking: false,
-    },
-    react: {
-      requiredVersion: reactVersion,
-      singleton: true,
-      treeShaking: false,
-    },
-    'react-dom': {
-      requiredVersion: reactDomVersion,
-      singleton: true,
-      treeShaking: false,
-    },
-    'react-dom/client': {
-      requiredVersion: reactDomVersion,
-      singleton: true,
-      treeShaking: false,
-    },
-  },
+  shared: createSharedRuntimeConfig({
+    '@modern-js/plugin-i18n/runtime': i18nVersion,
+    '@modern-js/runtime': runtimeVersion,
+    '@tanstack/react-router': dependencies['@tanstack/react-router'],
+    react: reactVersion,
+    'react-dom': reactDomVersion,
+  }),
 });
 
 export default moduleFederationConfig;

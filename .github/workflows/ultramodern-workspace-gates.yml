@@ -143,6 +143,14 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
+      - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
+        working-directory: app
+        run: |
+          docker compose exec --no-TTY ontos-db psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 <<'SQL'
+          DROP OWNED BY ontos_runtime;
+          DROP ROLE ontos_runtime;
+          SQL
+
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
         working-directory: app
         run: |
