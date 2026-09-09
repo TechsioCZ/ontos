@@ -1,11 +1,12 @@
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
-import { verifyPassword } from 'better-auth/crypto';
+import { hashPassword, verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
 import { and, eq } from 'drizzle-orm';
-import { Config, Effect, Option, Redacted } from 'effect';
+import { Config, DateTime, Effect, Option, Redacted } from 'effect';
 import { AuthDatabase } from './db/client.ts';
-import { account, user } from './db/schema.ts';
+import { account, session, user } from './db/schema.ts';
+import type { AuthDatabaseExecutor } from './db/types.ts';
 import {
   StageDemoBootstrapError,
   classifyExactStageDemoRecord,
@@ -34,6 +35,32 @@ const bootstrapSdkTimeout = Effect.timeoutOrElse({
   orElse: () => Effect.fail(persistenceFailure()),
 });
 
+type AuthTransaction = Parameters<Parameters<AuthDatabaseExecutor['transaction']>[0]>[0];
+
+const replaceStagePassword = Effect.fn('StageDemoBootstrap.replacePassword')(
+  function* replacePassword(
+    transaction: AuthTransaction,
+    accountId: string,
+    userId: string,
+    replacementHash: string,
+    updatedAt: Date,
+  ) {
+    const updated = yield* transaction
+      .update(account)
+      .set({ password: replacementHash, updatedAt })
+      .where(eq(account.id, accountId))
+      .returning({ id: account.id });
+    if (updated.length !== 1) {
+      return yield* new StageDemoBootstrapError({
+        code: 'stage_demo_conflict',
+        reason: 'The existing stage demo credential changed during password replacement',
+      });
+    }
+    yield* transaction.delete(session).where(eq(session.userId, userId));
+    return yield* Effect.void;
+  },
+);
+
 const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* ensureUser(
   configuration: StageDemoBootstrapConfig,
   accountConfiguration: StageDemoAccountConfig,
@@ -58,7 +85,12 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
       name: accountConfiguration.principalDisplayName,
     });
     const credentials = yield* database
-      .select({ password: account.password })
+      .select({
+        accountId: account.accountId,
+        id: account.id,
+        issuer: account.issuer,
+        password: account.password,
+      })
       .from(account)
       .where(and(eq(account.userId, existingUser.id), eq(account.providerId, 'credential')))
       .limit(2)
@@ -70,17 +102,35 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
         reason: 'The existing stage demo user has conflicting credentials',
       });
     }
+    yield* classifyExactStageDemoRecord('Better Auth credential account', credential, {
+      accountId: existingUser.id,
+      issuer: 'local:credential',
+    });
     const hash = credential.password;
     const validPassword = yield* Effect.tryPromise({
       catch: persistenceFailure,
       // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
       try: () => verifyPassword({ hash, password: accountConfiguration.password }),
-    }).pipe(bootstrapSdkTimeout);
+    }).pipe(Effect.option, Effect.map(Option.getOrElse(() => false)), bootstrapSdkTimeout);
     if (!validPassword) {
-      return yield* new StageDemoBootstrapError({
-        code: 'stage_demo_conflict',
-        reason: 'The existing stage demo user has conflicting credentials',
-      });
+      const replacementHash = yield* Effect.tryPromise({
+        catch: persistenceFailure,
+        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
+        try: () => hashPassword(accountConfiguration.password),
+      }).pipe(bootstrapSdkTimeout);
+      const updatedAt = yield* DateTime.nowAsDate;
+      yield* database
+        .transaction((transaction) =>
+          replaceStagePassword(
+            transaction,
+            credential.id,
+            existingUser.id,
+            replacementHash,
+            updatedAt,
+          ),
+        )
+        .pipe(Effect.mapError(persistenceFailure));
+      return { status: 'password-reset' as const, userId: existingUser.id };
     }
     return { status: 'existing' as const, userId: existingUser.id };
   }
@@ -109,6 +159,8 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
   }).pipe(Effect.uninterruptible);
   return { status: 'created' as const, userId: created.user.id };
 });
+
+export { ensureAuthUser as ensureStageDemoAuthUser };
 
 const optionalString = (name: string) =>
   Config.option(Config.string(name)).pipe(Config.map(Option.getOrUndefined));
